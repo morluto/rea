@@ -5,9 +5,11 @@ task, such as "Build me an Inkscape environment where the agent changes a
 poster's headline and saves it". You are the building agent: you drive the
 app on a build computer through REA's MCP tools, write the task, export the
 bundle and witness it in a fresh computer. REA runs no model. The tools are
-MCP-only and need Docker, `REA_AGENT_ENV_COMMAND` and
-`REA_BUILD_COMPUTER_REA_ARCHIVE` where the REA server starts; when a start
-reports one missing, tell the person what to set and stop.
+MCP-only and need a Linux host with Docker, agentenv and REA's packed
+runtime. When a start reports one missing, tell the person to run
+`rea doctor --provider desktop_build` and apply its fixes, or
+`rea setup --client <client> --desktop-build` and restart the client, and
+stop.
 
 For the whole build:
 
@@ -31,6 +33,13 @@ start without asking:
 3. Whether they want solver runs after the witness: how many (the budget)
    and with which model.
 4. If so, whether they want to review the task before those runs.
+
+When you cannot ask, as in a headless `claude -p` run, do not stop: take
+these defaults for whatever the request leaves open, say which you took in
+your first message and in the report, and go on. Install from the Ubuntu
+archive, make a synthetic seed, skip the review, and make 3 solver runs
+within $4 in all, with the model the request names or else the runner's
+default.
 
 ## When you are blocked
 
@@ -538,10 +547,10 @@ Stop after three witnesses and report what still fails.
 
 ## Solver runs
 
-Only if the requester asked for them. If they wanted to review the task
-first, show them its prompt and checks and wait for their approval. Then run
-the bundle within the budget, one run at a time, with the runner
-`REA_AGENT_ENV_COMMAND` names:
+Only if the requester asked for them, or by the headless default above. If
+they wanted to review the task first, show them its prompt and checks and
+wait for their approval. Then run the bundle within the budget, one run at a
+time, with `REA_AGENT_ENV_COMMAND`'s runner, or else `agent-env` on PATH:
 `agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
 The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
 `LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in

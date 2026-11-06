@@ -18,6 +18,43 @@ app, exporting its bundle and witnessing the task on such a computer are in
 skill for doing all of it from a request is
 [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/desktop-build.md).
 
+## Set up a build host
+
+On a Linux host with Node.js and Docker, from a REA
+[checkout](installation.md#run-rea-from-a-checkout):
+
+```bash
+rea setup --client claude_code --desktop-build --install-agentenv
+rea doctor --provider desktop_build --client claude_code
+```
+
+Setup shows its plan and asks before it changes anything; `--dry-run` only
+prints it and `--yes` approves it. It packs REA's runtime archive into
+`~/.cache/rea/build-computer/rea-<version>.tar.xz` (under `$XDG_CACHE_HOME`
+when set, `~/Library/Caches` on macOS), and packs again once REA's version
+changes; an archive `REA_BUILD_COMPUTER_REA_ARCHIVE` already names is
+recorded instead. It records `REA_AGENT_ENV_COMMAND`, `REA_DOCKER_COMMAND` and
+`REA_BUILD_COMPUTER_REA_ARCHIVE` as absolute paths in that client's REA
+registration, keeping a value the registration already has other than an
+archive setup packed for an earlier REA version, and refreshes the skill.
+`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1431`
+when `uv` is on `PATH`, and otherwise prints the command. Setup never
+installs Docker or Node.js and never runs `sudo`. Restart the client
+afterwards.
+
+Doctor is read-only and checks, in order: a Linux amd64 or arm64 host,
+Node.js, procps `ps`, the Docker CLI, a Docker daemon reachable without
+`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1431,
+the runtime archive of this REA version, the build settings in the
+registration or the environment, and the skill. Each failure names its fix.
+It also reports, without counting them against `healthy`, whether a model
+endpoint for solver runs is configured and which agentenv containers
+earlier builds left. Pass `--json` for the full report.
+
+When a setting is unset where the server starts, REA uses `agent-env` and
+`docker` on `PATH` and the archive setup packed for this REA version. The
+rest of this page is the same setup by hand.
+
 ## Requirements
 
 - A Linux host on amd64 or arm64 with about 20 GB of free disk for the
@@ -55,7 +92,8 @@ that is already running.
 
 ## Claude Code
 
-`rea setup --client claude_code` registers REA without these variables. Either
+Without `--desktop-build`, `rea setup --client claude_code` registers REA
+without these variables. Either
 export them in the shell that starts `claude`, which starts REA's server with
 its environment:
 
