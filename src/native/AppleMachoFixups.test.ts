@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   decodeChainedPointer,
   parsePointerFixups,
+  type FixupCommands,
 } from "./AppleMachoFixups.js";
 import { parsePropertyAttributes } from "./AppleObjcProperties.js";
 import type { Segment } from "./AppleMachoSelection.js";
