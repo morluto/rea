@@ -532,9 +532,14 @@ export const launchDocumentNote = ({
       ? `\n- ${launchDocumentLimitation(opens)}`
       : "";
 
-/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
+/**
+ * Bundle files: seeds the export rewrote to remove the capture host's
+ * identity, gzip seeds it compressed again only to clear their headers, and
+ * files that still hold the identity.
+ */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
+  readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
 }
 
@@ -544,11 +549,20 @@ const homeList = (paths: readonly string[]) =>
 const bundleList = (paths: readonly string[]) =>
   paths.map((path) => `\`${path}\``).join(", ");
 
-const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+const scrubNotes = ({
+  scrubbed,
+  recompressed,
+  unscrubbed,
+}: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
       ? []
       : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(recompressed.length === 0
+      ? []
+      : [
+          `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
     ...(unscrubbed.length === 0
       ? []
       : [
@@ -561,7 +575,7 @@ const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
-  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
+  scrub: SeedScrubReport = { scrubbed: [], recompressed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 

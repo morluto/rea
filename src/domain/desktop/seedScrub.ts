@@ -14,6 +14,8 @@ export interface SeedScrub {
   readonly bytes: Buffer | undefined;
   /** Whether what it ships still holds the captured home, `user@host` or the host name, its escapes decoded. */
   readonly holdsIdentity: boolean;
+  /** The bytes are a gzip file compressed again only to clear its header: its document is as captured. */
+  readonly recompressed?: true;
 }
 
 /** Seeds up to this size are decoded, well inside a JavaScript string; a larger one is only searched byte for byte. */
@@ -436,8 +438,11 @@ export const scrubSeed = (
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
   const scrub = scrubDocument(document.value, seed, identity);
   const shipped = gzipDeterministic(scrub.bytes ?? document.value);
+  if (shipped.equals(bytes))
+    return { bytes: undefined, holdsIdentity: scrub.holdsIdentity };
   return {
-    bytes: shipped.equals(bytes) ? undefined : shipped,
+    bytes: shipped,
     holdsIdentity: scrub.holdsIdentity,
+    ...(scrub.bytes === undefined ? { recompressed: true as const } : {}),
   };
 };
