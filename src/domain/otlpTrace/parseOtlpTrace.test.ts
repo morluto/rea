@@ -433,3 +433,30 @@ describe("parseOtlpTrace deep cycles", () => {
     expect(report.summary.roots).toBe(1);
   });
 });
+
+describe("parseOtlpTrace resource attribute bound", () => {
+  it("says when a resource exceeds the attribute allowance", () => {
+    const report = parse({
+      resourceSpans: [
+        {
+          resource: {
+            attributes: Array.from({ length: 130 }, (_, n) => ({
+              key: `plain-${n}`,
+              value: { stringValue: "v" },
+            })),
+          },
+          scopeSpans: [
+            {
+              scope: { name: "lib" },
+              spans: [span({})],
+            },
+          ],
+        },
+      ],
+    });
+    expect(report.spans[0]!.resource_attributes).toHaveLength(128);
+    expect(report.limitations.join(" ")).toContain(
+      "Some resources declare more than 128 attributes",
+    );
+  });
+});

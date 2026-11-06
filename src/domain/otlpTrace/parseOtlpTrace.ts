@@ -339,12 +339,19 @@ const isServiceName = (entry: Json): boolean =>
   isRecord(entry) && entry.key === "service.name";
 
 /** Bounded to the per-span allowance so one resource cannot expand every span. */
-const resourceAttributes = (resource: Json): Attribute[] => {
-  if (!isRecord(resource) || !Array.isArray(resource.attributes)) return [];
-  const retained = resource.attributes
-    .filter((entry) => !isServiceName(entry))
-    .slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
-  return spanAttributes(retained);
+const resourceAttributes = (
+  resource: Json,
+): { attributes: Attribute[]; dropped: number } => {
+  if (!isRecord(resource) || !Array.isArray(resource.attributes))
+    return { attributes: [], dropped: 0 };
+  const candidates = resource.attributes.filter(
+    (entry) => !isServiceName(entry),
+  );
+  const retained = candidates.slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
+  return {
+    attributes: spanAttributes(retained),
+    dropped: candidates.length - retained.length,
+  };
 };
 
 const resourceServiceName = (resource: Json): string | null => {
@@ -364,6 +371,7 @@ type Walked = {
   droppedRecords: number;
   spansTruncated: boolean;
   attributesTruncated: boolean;
+  resourceAttributesTruncated: boolean;
 };
 
 const walkResourceSpans = (
@@ -377,6 +385,7 @@ const walkResourceSpans = (
     droppedRecords: 0,
     spansTruncated: false,
     attributesTruncated: false,
+    resourceAttributesTruncated: false,
   };
   if (!isRecord(envelope) || !Array.isArray(envelope.resourceSpans))
     return { walked, unsupported: true };
@@ -389,7 +398,9 @@ const walkResourceSpans = (
       continue;
     }
     const serviceName = resourceServiceName(resourceSpans.resource);
-    const resourceFacts = resourceAttributes(resourceSpans.resource);
+    const { attributes: resourceFacts, dropped: resourceDropped } =
+      resourceAttributes(resourceSpans.resource);
+    if (resourceDropped > 0) walked.resourceAttributesTruncated = true;
     if (!Array.isArray(resourceSpans.scopeSpans)) {
       walked.droppedRecords += 1;
       continue;
@@ -631,6 +642,11 @@ export const parseOtlpTrace = (
         ...(walked.attributesTruncated
           ? [
               `Some spans carry more attributes than the ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN}-attribute per-span allowance; the dropped count is reported per span.`,
+            ]
+          : []),
+        ...(walked.resourceAttributesTruncated
+          ? [
+              `Some resources declare more than ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN} attributes beyond service.name; the excess is dropped rather than repeated on every span of that resource.`,
             ]
           : []),
       ],
