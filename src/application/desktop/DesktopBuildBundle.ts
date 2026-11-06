@@ -120,7 +120,8 @@ export const writeRequestBundle = async (
 /**
  * The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home
  * path>`; none when it has no seed. A bundle records no state directories, so
- * only a profile lock's name or LibreOffice's document lock counts here.
+ * only a profile lock's name, LibreOffice's document lock or a `<file>.lck`
+ * beside a seeded file counts here.
  */
 export const seededLockFiles = async (
   bundle: string,
@@ -134,13 +135,17 @@ export const seededLockFiles = async (
       recursive: true,
       withFileTypes: true,
     }).catch(() => []);
-    for (const entry of entries) {
-      const home = relative(seed, join(entry.parentPath, entry.name))
-        .split(sep)
-        .join("/");
-      if (entry.isFile() && isLockFile(home, []))
-        locks.push(`envs/${name}/seed/${home}`);
-    }
+    const homes = new Set(
+      entries
+        .filter((entry) => entry.isFile())
+        .map((entry) =>
+          relative(seed, join(entry.parentPath, entry.name))
+            .split(sep)
+            .join("/"),
+        ),
+    );
+    for (const home of homes)
+      if (isLockFile(home, [], homes)) locks.push(`envs/${name}/seed/${home}`);
   }
   return locks.sort();
 };

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   heldOpenLimitation,
+  isAppLog,
   isLockFile,
   runtimeSeeds,
   unownedChangedFolders,
@@ -81,12 +82,13 @@ describe("unownedChangedFolders", () => {
     ]);
   });
 
-  it("names eight folders in its limitation and counts the rest", () => {
+  it("names eight files or folders in its limitation and counts the rest", () => {
+    // A file directly in a shared folder, such as ~/.config/QtProject.conf, is named as itself.
     const folders = Array.from({ length: 10 }, (_, n) => `.config/app${n}`);
 
     const limitation = unownedFoldersLimitation(folders) ?? "";
 
-    expect(limitation).toContain("10 folder(s)");
+    expect(limitation).toContain("10 file(s) or folder(s)");
     expect(limitation).toContain("~/.config/app7,");
     expect(limitation).not.toContain("~/.config/app8");
     expect(limitation).toContain("2 more");
@@ -150,6 +152,42 @@ describe("isLockFile", () => {
     expect(others.filter(isLock)).toEqual([]);
   });
 
+  it("knows a <file>.lck or .<file>.lock beside a file the capture recorded, as GnuCash's and Grisbi's, but not a lone one", () => {
+    const recorded = new Set([
+      "Documents/household.gnucash",
+      "Documents/household.gnucash.LCK",
+      "Documents/household.gsb",
+      "Documents/notes.lck",
+      "Documents/.notes.lock",
+    ]);
+    const isLock = (file: string) => isLockFile(file, [], recorded);
+
+    expect(
+      [
+        "Documents/household.gnucash.LCK",
+        "Documents/household.gnucash.lck",
+        // Grisbi's hidden lock beside its file.
+        "Documents/.household.gsb.lock",
+        "Documents/.household.gsb.lck",
+      ].filter(isLock),
+    ).toHaveLength(4);
+    expect(
+      [
+        "Documents/notes.lck",
+        "Documents/.notes.lock",
+        "Documents/household.gsb.lock",
+      ].filter(isLock),
+    ).toEqual([]);
+    // The file it locks lies in its own folder.
+    expect(
+      isLockFile(
+        "Backups/household.gnucash.LCK",
+        [],
+        new Set(["Documents/household.gnucash"]),
+      ),
+    ).toBe(false);
+  });
+
   it("knows a *.lock file directly in a state directory nested in another", () => {
     // A custom XDG_STATE_HOME can put one app's state folder inside another's.
     const stateDirectories = [".config/app", ".config/app/state/app"];
@@ -194,7 +232,59 @@ describe("the limitations on folders the app held files open in", () => {
   });
 });
 
+describe("isAppLog", () => {
+  it("knows a log by its name, its logs folder or as a log's lock, and nothing else", () => {
+    const logs = [
+      ".config/freeplane/1.7.x/logs/log.0",
+      ".config/freeplane/1.7.x/logs/log.0.lck",
+      ".qet/20261106.log",
+      ".config/app/App.LOG",
+      ".local/share/app/logs/session.txt",
+      ".config/app/log.12",
+      ".config/app/app.log.lock",
+    ];
+    const others = [
+      ".config/app/catalog.xml",
+      ".config/app/logo.png",
+      ".config/app/changelog",
+      ".config/app/logs.json",
+      ".config/app/blog.0",
+      ".config/app/log.txt",
+      ".config/app/settings.lck",
+    ];
+
+    expect(logs.filter(isAppLog)).toEqual(logs);
+    expect(others.filter(isAppLog)).toEqual([]);
+  });
+});
+
 describe("runtimeSeeds", () => {
+  it("counts a whole QtWebEngine profile, and Chromium's visited links, notifications and preferences, as browser storage", () => {
+    const qt = ".local/share/ghostwriter/QtWebEngine";
+
+    expect(
+      runtimeSeeds([
+        `${qt}/Default/Platform Notifications/000003.log`,
+        `${qt}/Default/Visited Links`,
+        `${qt}/Default/user_prefs.json`,
+        `${qt}/Default/GPUCache/data_0`,
+        ".config/Notes/Visited Links",
+        ".config/Notes/Platform Notifications/LOG",
+        ".config/Notes/user_prefs.json",
+        ".config/ghostwriter/ghostwriter.conf",
+      ]),
+    ).toEqual([
+      {
+        kind: "web_storage",
+        paths: [
+          ".config/Notes/Platform Notifications",
+          ".config/Notes/Visited Links",
+          qt,
+        ],
+      },
+    ]);
+  });
+
   it("finds WebKit and Chromium storage and caches, each by the folder that holds it, and nothing else", () => {
     expect(
       runtimeSeeds([

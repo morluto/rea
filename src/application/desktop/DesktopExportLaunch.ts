@@ -17,15 +17,16 @@ type StatePath = DesktopApplicationState["paths"][number];
 
 /**
  * The owned files present at the seed with their digests, and those read as
- * uncompressed text, which boot respells as UTF-8, but for the lock files
- * `isLeftOutLock` names, which the app holds while it runs: a copied one makes
- * the app find its profile or document in use, so those are left out.
+ * uncompressed text, which boot respells as UTF-8, but for those `isLeftOut`
+ * names: lock files the app holds while it runs, since a copied one makes it
+ * find its profile or document in use, and its logs, which record facts about
+ * the capture host.
  */
 export const seedVersions = (
   files: ReadonlyMap<string, StatePath>,
   paths: readonly string[],
   seed: number,
-  isLeftOutLock: (home: string) => boolean,
+  isLeftOut: (home: string) => boolean,
 ): {
   readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly textSeeds: readonly string[];
@@ -37,7 +38,7 @@ export const seedVersions = (
   for (const [home, path] of files) {
     const version = versionAt(path, seed);
     if (!isWithinAny(home, paths) || version?.present !== true) continue;
-    if (isLeftOutLock(home)) locks.push(home);
+    if (isLeftOut(home)) locks.push(home);
     else if (version.sha256 !== null) {
       seeds.set(home, { sha256: version.sha256, format: version.format });
       if (isTextualFormat(version.format) && version.compression === undefined)

@@ -161,5 +161,55 @@ describe.skipIf(process.platform === "win32")(
       expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(8 * 1024);
       expect(stderr_truncated).toBe(true);
     }, 30_000);
+
+    it("gives each checkpoint the titles the app's own windows have shown so far", async () => {
+      const root = await createTestTempDirectory("desktop-session-titles-");
+      const window = (id: string, name: string, title: string) => ({
+        id,
+        instance: name.toLowerCase(),
+        class: name,
+        title,
+        pid: null,
+        window_type: null,
+      });
+      let samples = 0;
+      // The app's window closes after a few samples, so the session ends with it.
+      const windows = {
+        sample: async () => ({
+          state: "listed",
+          windows:
+            (samples += 1) > 5
+              ? []
+              : [
+                  window("0x1", "Notes", "today.txt - Notes"),
+                  window("0x2", "Other", "unrelated.txt - Other"),
+                ],
+        }),
+      } as unknown as X11WindowObserver;
+      const seen: (readonly string[])[] = [];
+
+      await runDesktopSession({
+        ...shellPlan(root, "sleep 1", windows),
+        windowMatching: { names: new Set(["notes"]), byPid: false },
+        checkpoint: async (_name, _trigger, _atMs, { titles }) => {
+          seen.push(titles);
+        },
+      });
+
+      expect(seen.at(-1)).toEqual(["today.txt - Notes"]);
+    }, 30_000);
+
+    it("launches the app with glibc's fatal errors sent to its stderr, not its terminal", async () => {
+      const root = await createTestTempDirectory("desktop-session-libc-");
+
+      const outcome = await runDesktopSession(
+        shellPlan(
+          root,
+          'echo "LIBC_FATAL_STDERR_=$LIBC_FATAL_STDERR_" >&2; exit 1',
+        ),
+      );
+
+      expect(outcome.session.stderr).toContain("LIBC_FATAL_STDERR_=1");
+    }, 30_000);
   },
 );

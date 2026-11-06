@@ -68,7 +68,8 @@ and the recording and writes the record as Evidence.
   leaves lock files the app holds while it runs out of the seed, but never a
   document or selected path, listing them in its limitations and README; a
   start from a bundle whose computer never gets ready names the files its
-  seed holds by a profile lock's name or as a document lock.
+  seed holds by a profile lock's name, as a document lock or as a
+  `<file>.lck` beside a seeded file.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the
@@ -129,6 +130,57 @@ and the recording and writes the record as Evidence.
   fails on what the seed's view shows. The controller writes a folder's file
   list to a file that REA reads through `data/get`, so a large bundle's list
   is not cut at the 1 MiB of a command's output.
+- Gaps of the build batches: an archive request takes up to 16
+  `extra_packages`, archive package names validated as its `package` is,
+  installed beside the app and listed in `start_build_computer`'s result
+  (a `.deb` request's `dependencies` are listed there too), for a runtime
+  piece the app needs that its package does not install (MyPaint's SVG icon
+  loader `librsvg2-common`, which GTK only recommends; a Java 17 for
+  Freeplane, whose launcher refuses noble's Java 21). The export takes them
+  as repeatable `--extra-package` and installs them beside the app, and the
+  build export passes them, and a `.deb` request's `dependencies` too, so a
+  `.deb` apt also offers no longer loses them when it is installed by name.
+  The limitations and the README name them, leaving out only what the
+  bundle installs anyway: the app's own package and, when it is installed
+  from its `.deb`, the dependencies the `Packages` line names. A package the
+  captured `.deb` lists only as one alternative stays, since apt may pick
+  another, such as `openjdk-17-jre | java-runtime`.
+- Gaps of the third batch's GnuCash build: the build bundle installs
+  `dconf-cli`, so the capture reads the app's dconf settings, such as
+  GnuCash's "Show tips at startup" unticked before `seed`, and the seed
+  keeps them; an export whose dconf database changed by the seed but could
+  not be read names it, with the read error, in its limitations. A
+  `<file>.lck` or `<file>.LCK` beside a file the capture recorded in the
+  same folder, as GnuCash's `household.gnucash.LCK`, is a lock left out of
+  the seed; a lone `notes.lck` is seeded.
+- Gaps of the fourth batch: a desktop entry that is not reverse-DNS names
+  the environment whole, without a trailing version, so `glabels-3.0` gives
+  `glabels` rather than `0`, in the build computer and the export alike. The
+  capture launches the app with `LIBC_FATAL_STDERR_=1`, so a glibc abort's
+  reason reaches the app-exit error. A `.<file>.lock` or `.<file>.lck` beside
+  its file, as Grisbi's `.household.gsb.lock`, is a lock too, left out of the
+  seed and its text seeds; a lone `.notes.lock` is seeded. A seeded
+  LibreOffice `registrymodifications.xcu` ships without its `RecoveryList`
+  items, which started an Impress bundle into document recovery, and a
+  limitation and the README name the file. A checkpoint ranks caches and
+  browser-engine storage last under a selected folder too, unless named
+  themselves, so LibreOffice's icon cache no longer fills `changed_files`.
+- Gaps of the fifth batch: a checkpoint names first the files the app's
+  window titles have named so far, which the session now hands each
+  checkpoint, so a document saved and no longer held open (Gnumeric, LyX,
+  Tiled) leads; then files selected themselves; then those held open, under
+  a selected folder or in state directories; then the rest; then caches and
+  browser storage, which now include a whole `QtWebEngine` profile and
+  Chromium's `Visited Links`, `Platform Notifications` and `user_prefs.json`.
+  Example prompts name the app, and the export's limitations say when a
+  task's prompt names neither the app's title, environment nor package: a
+  solving agent's shell cannot see the computer's files. The unowned paths
+  limitation counts files or folders.
+- Gaps of the published bundles: the app's logs in its own state, `*.log`,
+  `log.<n>` and files under a `logs` folder with their `.lck` or `.lock`,
+  are left out of the seed and listed apart from the lock files, since
+  Freeplane's and QElectroTech's recorded the capture host's kernel, CPU,
+  memory and disk sizes; a document or a path selected itself is seeded.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

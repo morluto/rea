@@ -11,7 +11,7 @@ import {
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
 import {
-  isLockFile,
+  leftOutFiles,
   unownedReadmeNotes,
   type RuntimeSeeds,
 } from "./appExportUnowned.js";
@@ -45,6 +45,8 @@ export interface DesktopAppExportPlan {
   readonly packageFile: ExportPackageFile | null;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
+  /** Packages installed beside the app because the export was asked for them; absent when none. */
+  readonly extraPackages?: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
@@ -66,6 +68,8 @@ export interface DesktopAppExportPlan {
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
   readonly leftOutLocks: readonly string[];
+  /** The app's logs in its own state, left out of the seed since they record facts about the capture host. */
+  readonly leftOutLogs: readonly string[];
   /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
   readonly unownedFolders: readonly string[];
   /** Seed files the app keeps for its own running: web engine storage and caches. */
@@ -75,16 +79,23 @@ export interface DesktopAppExportPlan {
   readonly captureEvidenceId: string;
 }
 
-/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+/** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
+const REVERSE_DNS = /^[a-z][\w-]*(?:\.[a-z][\w-]*)+\.([^.]+)$/iu;
+/** A version at the end of another id, such as `-3.0` in `glabels-3.0`. */
+const TRAILING_VERSION = /(?<=.)[-_]\d+(?:\.\d+)*$/u;
+
+/**
+ * A lowercase environment name from a desktop entry id or program: a
+ * reverse-DNS id's last part, or else the whole id without a trailing
+ * version; prefixed `app-` when the name check refuses it.
+ */
 export const environmentName = (
   source: string,
   accepted: (name: string) => boolean,
 ): string => {
   const name =
-    source
-      .split(".")
-      .at(-1)
-      ?.toLowerCase()
+    (REVERSE_DNS.exec(source)?.[1] ?? source.replace(TRAILING_VERSION, ""))
+      .toLowerCase()
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+/u, "")
       .slice(0, 48)
@@ -256,9 +267,8 @@ export const exportedStateFiles = (
     ...withRole("document"),
     ...homePaths(roleFacts(capture).selectedRoots),
   ]);
-  const isLeftOutLock = (home: string) =>
-    !usersOwn.has(home) && isLockFile(home, stateDirectories);
-  return { homePath, files, dconf, collisions, paths, isLeftOutLock };
+  const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
+  return { homePath, files, dconf, collisions, paths, ...leftOut };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -357,10 +367,11 @@ const installName = (plan: DesktopAppExportPlan): string =>
     ? plan.aptPackage
     : `${plan.aptPackage}/${plan.aptRelease}`;
 
-/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
@@ -491,6 +502,12 @@ const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
 const installNotes = (plan: DesktopAppExportPlan): string =>
   [
     ...packageFileNotes(plan),
+    ...(plan.extraPackages === undefined
+      ? []
+      : [
+          `- Installed beside the app because the export was asked for them with \`--extra-package\`, as a build computer asks
+  for the packages its request named: ${plan.extraPackages.map((name) => `\`${name}\``).join(", ")}.`,
+        ]),
     ...(plan.executablePackage === undefined
       ? []
       : [
@@ -534,13 +551,16 @@ export const launchDocumentNote = ({
 
 /**
  * Bundle files: seeds the export rewrote to remove the capture host's
- * identity, gzip seeds it compressed again only to clear their headers, and
- * files that still hold the identity.
+ * identity, gzip seeds it compressed again only to clear their headers,
+ * files that still hold the identity, and seeds it left LibreOffice's
+ * recovery list out of.
  */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
   readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
+  /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
+  readonly recovered?: readonly string[];
 }
 
 const homeList = (paths: readonly string[]) =>
@@ -553,6 +573,7 @@ const scrubNotes = ({
   scrubbed,
   recompressed,
   unscrubbed,
+  recovered = [],
 }: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
@@ -562,6 +583,12 @@ const scrubNotes = ({
       ? []
       : [
           `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
+    ...(recovered.length === 0
+      ? []
+      : [
+          `\n- LibreOffice's list of the documents it had open, which would start it into document recovery instead of
+  its window, is left out of ${bundleList(recovered)}.`,
         ]),
     ...(unscrubbed.length === 0
       ? []
@@ -596,7 +623,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, { locks: plan.leftOutLocks, logs: plan.leftOutLogs })}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

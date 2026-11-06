@@ -397,6 +397,94 @@ and their fixtures added, and passes now.
 The capture's recording of selected paths runs only on Linux; its scope is
 tested on macOS, and the capture itself was not run.
 
+## GnuCash's dconf settings and book lock
+
+Run on macOS with source tests and gates; no build computer was started, so
+dconf-cli reading a real build computer's database is not verified here.
+Each test below failed before the change and passes now.
+
+- `appBuild.test.ts`, `buildComputerMcp.test.ts`: the build bundle installs
+  `dconf-cli` beside `libgtk-3-bin`, read from the module the fake runner
+  received.
+- `desktopCaptureCli.test.ts`: a dconf database created before `seed` that
+  the export cannot read (`REA_DCONF_COMMAND` names no program) leaves
+  `DCONF = ""` and one limitation naming `~/.config/dconf/user` with the read
+  error; exported with the seed at `baseline`, when it did not exist yet, no
+  limitation names it.
+- `appExportUnowned.test.ts`, `DesktopApplicationExport.test.ts`:
+  `Documents/household.gnucash.LCK` beside `Documents/household.gnucash` is
+  left out of the seed and listed after "Left out of the seed", in either
+  letter case, while a lone `Documents/notes.lck` is seeded and a `.LCK` whose
+  file lies in another folder is no lock.
+- `buildComputerMcp.test.ts`: a bundle start that never got ready names a
+  seeded `q1.ods.LCK` beside `q1.ods`, and not a lone `notes.lck`.
+
+## Version-dotted entries, glibc's fatal errors and Grisbi's lock
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `appExport.test.ts`: `org.gnumeric.gnumeric`, `com.github.xournalpp.xournalpp`,
+  `glabels-3.0`, `gimp-2.10`, `display-im6.q16` and `mousepad` name
+  `gnumeric`, `xournalpp`, `glabels`, `gimp`, `display-im6-q16` and
+  `mousepad`; before, `glabels-3.0` gave `app-0`.
+- `buildComputerMcp.test.ts`: `start_build_computer` with `glabels-3.0`
+  returns `environment: "glabels"` and renders `envs/glabels`; the
+  reverse-DNS and plain entries keep their names.
+- `DesktopApplicationExport.test.ts`: a capture whose desktop entry is
+  `glabels-3.0` exports as `glabels`, not `app-0`. With Grisbi's empty
+  `.household.gsb.lock` beside `household.gsb`, the lock is neither seeded,
+  in the bundle, nor named in the class module's text seeds, and is listed
+  after "Left out of the seed"; a lone `.notes.lock` is seeded.
+- `appExportUnowned.test.ts`: `.household.gsb.lock` and `.household.gsb.lck`
+  beside `household.gsb` are locks; `.notes.lock` and `household.gsb.lock`
+  are not.
+- `DesktopApplicationSession.test.ts`: the launched app's environment holds
+  `LIBC_FATAL_STDERR_=1`, read back from its stderr; this test runs on macOS
+  too. A real glibc abort was not reproduced.
+- `DesktopApplicationExport.test.ts`: a seeded `registrymodifications.xcu`
+  ships without its `RecoveryList` item and keeps its other items; one
+  limitation and the README name it, and with the item's home path gone the
+  file is not listed as scrubbed.
+- `desktopCapture.test.ts`: with `.config/libreoffice` selected, a file
+  there and a document the app held open precede twelve icons under its
+  `cache` folder, while a cache file selected itself still comes first.
+
+## Checkpoint order by window titles, and prompts that name the app
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `desktopCapture.test.ts`: eight changed files come back in the wanted
+  order: a document only a window title names, a file selected itself, one
+  the app held open, one under the selected `.config/libreoffice`, one in a
+  state directory, the rest, a LibreOffice icon cache, and ghostwriter's
+  `QtWebEngine/Default/Visited Links` though it lies in a state directory.
+- `DesktopApplicationSession.test.ts`: a checkpoint receives the titles the
+  app's own window has shown, not another app's; this runs on macOS too.
+  With the session's titles left out, it failed.
+- `appExportUnowned.test.ts`: a whole `QtWebEngine` profile collapses to
+  that folder as browser storage, as do Chromium's `Visited Links`,
+  `Platform Notifications` and `user_prefs.json` elsewhere; the unowned
+  limitation counts "file(s) or folder(s)".
+- `DesktopTaskExport.test.ts`: a task whose prompt does not name the app
+  gets one limitation naming the app; "In Notes, ..." gets none.
+
+## The app's logs
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now.
+
+- `appExportUnowned.test.ts`: `log.0`, `log.0.lck`, `20261106.log`,
+  `App.LOG`, `log.12`, `app.log.lock` and a file under `logs/` are logs;
+  `catalog.xml`, `logo.png`, `changelog`, `logs.json`, `blog.0`, `log.txt`
+  and `settings.lck` are not.
+- `DesktopApplicationExport.test.ts`: Freeplane's `1.7.x/logs/log.0` and
+  its `log.0.lck` in a state directory, and QElectroTech's `.qet/20261106.log`
+  the app held open, are neither seeded nor in the bundle, and one limitation
+  and the README list them apart from the lock files; a selected `notes.log`
+  in the state directory and a document `build.log` are seeded.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

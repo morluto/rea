@@ -175,15 +175,19 @@ const spelledIn = (title: string, spelling: string): boolean => {
   return false;
 };
 
-/** Whether an application window title spells the file's name or home path. */
-const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
+/** Whether one of an application's window titles spells the file's name or home path. */
+export const namedInTitles = (
+  path: string,
+  home: string,
+  titles: readonly string[],
+): boolean => {
   const name = path.split("/").at(-1) ?? "";
-  const relative = homePath(path, facts.home);
+  const relative = homePath(path, home);
   const spellings = [
     ...(name.length >= 3 ? [name] : []),
     ...(relative === null ? [] : [`~/${relative}`]),
   ];
-  return facts.titles.some((title) =>
+  return titles.some((title) =>
     spellings.some((spelling) => spelledIn(title, spelling)),
   );
 };
@@ -209,7 +213,8 @@ export const stateReasons = (
     facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitle(path, facts)) reasons.push("named_in_window_title");
+  if (namedInTitles(path, facts.home, facts.titles))
+    reasons.push("named_in_window_title");
   if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
   if (relative !== null && isWithinAny(relative, SHARED_DESKTOP_PATHS))

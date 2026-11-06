@@ -1,8 +1,9 @@
 import { randomUUID } from "node:crypto";
 
-import type {
-  BuildRequest,
-  BuildSource,
+import {
+  extraPackagesOf,
+  type BuildRequest,
+  type BuildSource,
 } from "../../domain/desktop/appBuild.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
@@ -292,6 +293,7 @@ export class DesktopBuildComputers {
         readonly computer_id: string;
         readonly sandbox_id: string;
         readonly environment: string;
+        readonly extra_packages: string[];
         readonly screenshot: Readonly<Record<string, JsonValue>> | null;
       }>,
       AnalysisError
@@ -384,6 +386,7 @@ export class DesktopBuildComputers {
           computer_id: id,
           sandbox_id: computer.sandboxId,
           environment: target.name,
+          extra_packages: [...extraPackagesOf(source)],
           screenshot: taken.isError ? null : taken.structured,
         },
         content: taken.content,

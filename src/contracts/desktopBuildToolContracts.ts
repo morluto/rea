@@ -40,7 +40,8 @@ const driverResult = jsonObjectSchema
 const EXAMPLE_ID = "00000000-0000-4000-8000-000000000001";
 const EXAMPLE_TASK: Readonly<Record<string, JsonValue>> = {
   name: "add-eggs",
-  prompt: "Add eggs to the shopping list in Documents/todo.txt and save it.",
+  prompt:
+    "In Mousepad, add eggs to the shopping list in Documents/todo.txt and save it.",
   checks: [
     { kind: "lines_present", file: "Documents/todo.txt", lines: ["eggs"] },
   ],
@@ -146,6 +147,11 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       environment: z
         .string()
         .describe("The rendered environment's name, or the bundle folder."),
+      extra_packages: z
+        .array(z.string())
+        .describe(
+          "The packages the request named beside the app, which the export installs beside it too: an archive install's extra_packages or a package file's dependencies; empty otherwise.",
+        ),
       screenshot: driverResult,
     }),
     examples: [
@@ -169,7 +175,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "act_on_build_computer",
     ...toolContractMetadata("act_on_build_computer"),
     kind: "application",
-    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
+    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; a drag's path takes 2 to 50 points; a screenshot with region does not capture the screen again, it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
     inputSchema: computerActionInputSchema,
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -260,7 +266,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those under state_paths first, then those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those a window title named first, then those under state_paths and those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -280,7 +286,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           .max(MAX_ACKNOWLEDGED_FILES)
           .nullable()
           .describe(
-            "Files, not folders, changed since the checkpoint before, relative to the home: those under state_paths, those the app held open, those in its state directories, the rest, then caches and browser-engine storage, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
+            "Files, not folders, changed since the checkpoint before, relative to the home: those an app window's title has named, those named themselves in state_paths, those the app held open, under a selected folder or in its state directories, the rest, then caches and browser-engine storage, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
           ),
         more_changed_files: z
           .int()

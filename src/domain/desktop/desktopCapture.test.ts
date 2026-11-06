@@ -82,41 +82,41 @@ describe("desktopApplicationInventorySchema", () => {
   });
 });
 
-describe("checkpointTaken", () => {
-  const HOME = "/home/ada";
-  const facts = (type: "file" | "directory") => ({
-    type,
-    size: 1,
-    mode: 0o644,
-    mtime_ns: "1",
-    sha256: null,
-  });
-  const change = (
-    path: string,
-    marks: Partial<DesktopStateChange> = {},
-  ): DesktopStateChange => ({
-    path,
-    kind: "modified",
-    before: facts("file"),
-    after: facts("file"),
-    in_state_directory: false,
-    opened_by_application: false,
-    ...marks,
-  });
-  const checkpoint = (changes: DesktopStateChange[]): DesktopCheckpoint => ({
-    name: "seed",
-    trigger: "request",
-    at_ms: 10,
-    entries: 40,
-    truncated: false,
-    unreadable_directories: 0,
-    unconfirmed_changes: 0,
-    changes,
-    retained: [
-      { path: `${HOME}/Documents/q1.ods`, sha256: "a".repeat(64), size: 9 },
-    ],
-  });
+const HOME = "/home/ada";
+const facts = (type: "file" | "directory") => ({
+  type,
+  size: 1,
+  mode: 0o644,
+  mtime_ns: "1",
+  sha256: null,
+});
+const change = (
+  path: string,
+  marks: Partial<DesktopStateChange> = {},
+): DesktopStateChange => ({
+  path,
+  kind: "modified",
+  before: facts("file"),
+  after: facts("file"),
+  in_state_directory: false,
+  opened_by_application: false,
+  ...marks,
+});
+const checkpoint = (changes: DesktopStateChange[]): DesktopCheckpoint => ({
+  name: "seed",
+  trigger: "request",
+  at_ms: 10,
+  entries: 40,
+  truncated: false,
+  unreadable_directories: 0,
+  unconfirmed_changes: 0,
+  changes,
+  retained: [
+    { path: `${HOME}/Documents/q1.ods`, sha256: "a".repeat(64), size: 9 },
+  ],
+});
 
+describe("checkpointTaken", () => {
   it("names the changed files, home-relative under the home, those the app held open first, then its state, each by path, leaving out folders", () => {
     const taken = checkpointTaken(
       checkpoint([
@@ -203,6 +203,38 @@ describe("checkpointTaken", () => {
       ".cache/ksycoca5_en_5",
     ]);
     expect(taken.more_changed_files).toBe(6);
+  });
+
+  it("names a document a window title shows first, then a file selected itself, then files held open, under a selected folder or in state, then the rest, then caches and browser storage", () => {
+    // A saved document the app no longer holds open, as Gnumeric's, LyX's and Tiled's, is named by the title alone.
+    const profile = `${HOME}/.config/libreoffice`;
+    const ordered = [
+      `${HOME}/Documents/drawing.odg`,
+      `${HOME}/Documents/pinned.txt`,
+      `${HOME}/Documents/held.txt`,
+      `${profile}/4/user/registrymodifications.xcu`,
+      `${HOME}/.config/app/app.conf`,
+      `${HOME}/.config/QtProject.conf`,
+      `${profile}/4/cache/icons/00.png`,
+      `${HOME}/.local/share/ghostwriter/QtWebEngine/Default/Visited Links`,
+    ];
+    const marks: Readonly<Record<string, Partial<DesktopStateChange>>> = {
+      [`${HOME}/Documents/held.txt`]: { opened_by_application: true },
+      [`${HOME}/.config/app/app.conf`]: { in_state_directory: true },
+      // ghostwriter's QtWebEngine profile lies in its state directory.
+      [ordered[7] ?? ""]: { in_state_directory: true },
+    };
+
+    const taken = checkpointTaken(
+      checkpoint(ordered.toReversed().map((path) => change(path, marks[path]))),
+      HOME,
+      [profile, `${HOME}/Documents/pinned.txt`],
+      ["Untitled 1 - LibreOffice Draw", "drawing.odg - LibreOffice Draw"],
+    );
+
+    expect(taken.changed_files).toEqual(
+      ordered.map((path) => path.slice(HOME.length + 1)),
+    );
   });
 
   it("names ten changed files and counts the rest", () => {
