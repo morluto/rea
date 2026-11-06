@@ -387,7 +387,9 @@ describe("diffStateViews zip member pairing", () => {
       complete: true,
     });
   });
+});
 
+describe("diffStateViews zip member pairing by identity", () => {
   it("pairs an element by an attribute both versions keep, so another attribute's new value is a change", () => {
     const item = (attributes: Record<string, string>) => ({
       name: "item",
@@ -424,6 +426,92 @@ describe("diffStateViews zip member pairing", () => {
       changed: [
         "/entries/[name=list.xml]/sha256",
         "/entries/[name=list.xml]/view/root/children/[name=item][@id=1]/attributes/color",
+      ],
+      complete: true,
+    });
+  });
+
+  it("counts every attribute of an identified element, so a selector it shares names nothing removed", () => {
+    const archive = (first: string, second: string): JsonValue => ({
+      entries: [
+        {
+          name: "list.xml",
+          size: 1,
+          sha256: first,
+          format: "xml",
+          view: {
+            root: {
+              name: "list",
+              attributes: {},
+              children: [
+                { name: "item", attributes: { id: "1", color: first } },
+                { name: "item", attributes: { color: second } },
+              ],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    expect(
+      diffStateViews("zip", archive("red", "blue"), archive("blue", "red")),
+    ).toMatchObject({
+      added: [],
+      removed: [],
+      changed: [
+        "/entries/[name=list.xml]/sha256",
+        "/entries/[name=list.xml]/view/root/children/[name=item][@id=1]/attributes/color",
+        "/entries/[name=list.xml]/view/root/children/1/attributes/color",
+      ],
+      complete: true,
+    });
+  });
+
+  it("keys an Inkscape group by its label when an identified group shares its fill", () => {
+    const archive = (transform: string): JsonValue => ({
+      entries: [
+        {
+          name: "poster.svg",
+          size: 1,
+          sha256: transform,
+          format: "xml",
+          view: {
+            root: {
+              name: "svg",
+              attributes: {},
+              children: [
+                {
+                  name: "g",
+                  attributes: {
+                    fill: "red",
+                    "inkscape:label": "note",
+                    transform,
+                  },
+                },
+                { name: "g", attributes: { fill: "red", id: "layer" } },
+              ],
+            },
+            truncated: false,
+          },
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+
+    expect(
+      diffStateViews("zip", archive("scale(1)"), archive("scale(2)")),
+    ).toMatchObject({
+      added: [],
+      removed: [],
+      changed: [
+        "/entries/[name=poster.svg]/sha256",
+        "/entries/[name=poster.svg]/view/root/children/[name=g][@inkscape:label=note]/attributes/transform",
       ],
       complete: true,
     });
