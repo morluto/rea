@@ -23,6 +23,8 @@ const REDACTED_ATTRIBUTE_KEYS = new Set([
   "set-cookie",
   "http.request.header.authorization",
   "http.request.header.cookie",
+  "http.request.header.proxy-authorization",
+  "http.response.header.set-cookie",
   "rpc.metadata.authorization",
 ]);
 
@@ -43,6 +45,15 @@ const readUInt64 = (value: Json): string | null => {
   if (typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value))
     return BigInt(value).toString();
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
+    return BigInt(value).toString();
+  return null;
+};
+
+/** OTLP intValue is a signed 64-bit integer. */
+const readInt64 = (value: Json): string | null => {
+  if (typeof value === "string" && /^-?(0|[1-9][0-9]*)$/u.test(value))
+    return BigInt(value).toString();
+  if (typeof value === "number" && Number.isSafeInteger(value))
     return BigInt(value).toString();
   return null;
 };
@@ -84,6 +95,9 @@ const kindName = (value: Json): OtlpSpan["kind"] => {
 };
 
 const statusCode = (value: Json): OtlpSpan["status_code"] => {
+  // OTLP's JSON mapping leaves an omitted code at its zero value, which the
+  // proto declares as UNSET.
+  if (value === undefined) return "unset";
   switch (value) {
     case 1:
       return "ok";
@@ -142,16 +156,11 @@ const readAttribute = (
         redacted: false,
       };
     case "intValue": {
-      const parsed = readUInt64(value);
       return {
         attribute: {
           ...empty,
           value_kind: "int",
-          int_value:
-            parsed ??
-            (typeof value === "string" && /^-?[0-9]+$/u.test(value)
-              ? value
-              : null),
+          int_value: readInt64(value),
         },
         redacted: false,
       };

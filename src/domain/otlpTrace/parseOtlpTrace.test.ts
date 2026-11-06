@@ -275,3 +275,66 @@ describe("parseOtlpTrace attributes", () => {
     });
   });
 });
+
+describe("parseOtlpTrace defaults and signed integers", () => {
+  it("reads an omitted status code as unset rather than an unknown code", () => {
+    const report = parse(envelope([span({})]));
+    expect(report.spans[0]?.status_code).toBe("unset");
+  });
+
+  it("keeps a negative intValue instead of dropping it", () => {
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            { key: "delta", value: { intValue: -5 } },
+            { key: "offset", value: { intValue: "-9007199254740993" } },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((a) => [a.key, a]),
+    );
+    expect(attributes.get("delta")).toMatchObject({
+      value_kind: "int",
+      int_value: "-5",
+    });
+    expect(attributes.get("offset")).toMatchObject({
+      value_kind: "int",
+      int_value: "-9007199254740993",
+    });
+  });
+});
+
+describe("parseOtlpTrace credential headers", () => {
+  it("redacts the semantic-convention cookie and proxy-authorization headers", () => {
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            {
+              key: "http.response.header.set-cookie",
+              value: { stringValue: "session=abc" },
+            },
+            {
+              key: "http.request.header.proxy-authorization",
+              value: { stringValue: "Basic dXNlcg==" },
+            },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((entry) => [entry.key, entry]),
+    );
+    expect(attributes.get("http.response.header.set-cookie")).toMatchObject({
+      redacted: true,
+      string_value: null,
+    });
+    expect(
+      attributes.get("http.request.header.proxy-authorization"),
+    ).toMatchObject({ redacted: true, string_value: null });
+    expect(report.summary.redacted_attributes).toBe(2);
+  });
+});
