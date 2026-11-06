@@ -1,7 +1,7 @@
 # Firmware analysis
 
-REA accepts **Binwalk 3.1.x** for region inspection and **Unblob 26.6.x** for
-explicit extraction. The report parsers are verified with Binwalk 3.1.0 and
+REA accepts **binwalk-ng 4.0.x** for region inspection and **Unblob 26.6.x** for
+explicit extraction. The report parsers are verified with binwalk-ng 4.0.0 and
 Unblob 26.6.4. Another build on those lines is accepted, the observed version
 is reported, and a limitation records that the parser was not verified against
 that build. Binwalk and Unblob operations run only on Linux; other hosts
@@ -210,8 +210,9 @@ export REA_UNBLOB_COMMAND=/absolute/path/to/unblob
 ```
 
 REA does not install these tools, their dependencies or system packages. It
-checks the tool's `--version` banner when executing a request. Binwalk must
-print `binwalk <version>` and Unblob must print the version alone. Inspection and
+checks the tool's `--version` banner when executing a request. The binwalk-ng
+release still installs a `binwalk` executable; it must print
+`binwalk-ng <version>`, while Unblob must print the version alone. Inspection and
 extraction have independent prerequisites; one does not require the other.
 Capability discovery recommends `REA_BINWALK_COMMAND` for missing inspection
 and `REA_UNBLOB_COMMAND` for missing extraction. Configuring the other engine
