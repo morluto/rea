@@ -166,13 +166,125 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       truncated: true,
     },
   },
+  "Documents/meeting.xml": {
+    format: "xml",
+    view: {
+      doctype: { name: "doc", public_id: null, system_id: "meeting.dtd" },
+      root: element("doc", { lang: "en" }, [
+        element("p", { id: "time" }, [
+          "Starts at ",
+          element("c", {}, ["3"]),
+          ":",
+          element("c", {}, ["30"]),
+          " today.",
+        ]),
+        element("p", { id: "spaced" }, [
+          "\n  Doors\topen ",
+          element("b", {}, ["  early "]),
+          "\n",
+        ]),
+        element("p", { id: "empty" }),
+        element("p", { id: "deep" }, [
+          element("q", {}, [element("r", {}, ["x"]), "y"]),
+          "z",
+        ]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/budget.xml": {
+    format: "xml",
+    view: {
+      root: element("Cells", {}, [
+        element("Cell", { Row: "2", Col: "3" }, ["437.80000000000001"]),
+        element("Cell", { Row: "2", Col: "2" }, ["398.2"]),
+        element("Cell", { Row: "3", Col: "3" }, ["174.9"]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/flyer.sla": {
+    format: "xml",
+    view: {
+      root: element("SCRIBUSUTF8NEW", { Version: "1.6.1" }, [
+        element("DOCUMENT", {}, [
+          element("PAGEOBJECT", { ANNAME: "Headline" }, [
+            element("StoryText", {}, [
+              element("DefaultStyle", {}),
+              element("ITEXT", { CH: "Spring " }),
+              element("ITEXT", { FONT: "Sans Bold", CH: "Fair" }),
+              "typed",
+            ]),
+          ]),
+          element("PAGEOBJECT", { ANNAME: "Body" }, [
+            element("StoryText", {}, [
+              element("ITEXT", { CH: "Doors \n open" }),
+              element("ITEXT", { CH: "  at noon" }),
+            ]),
+          ]),
+        ]),
+      ]),
+      truncated: false,
+    },
+  },
+  ".local/share/osmo/contacts_records.xml": {
+    format: "xml",
+    view: {
+      root: element("osmo_contacts", {}, [
+        contact("Delphine", "Moreau"),
+        contact("\n  Bastien\t", "Roy"),
+        contact("Delphine", "Abara"),
+        element("group", {}, [element("first_name", {}, ["Delphine"])]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/ledger.json": {
+    format: "json",
+    view: [
+      { payee: "Grocer", amount: 12 },
+      { payee: "Rent", amount: 900 },
+      { payee: "Grocer", amount: 30 },
+    ],
+  },
   "Documents/photo.png": { format: "binary", view: null },
   "Documents/huge.txt": {
     format: null,
     view: null,
     error: "larger than 64 MiB, the most the view reads",
   },
+  "Documents/Budget.gnumeric": {
+    format: "xml",
+    compression: "gzip",
+    view: {
+      root: element("gnm:Workbook", {}, [
+        element("gnm:Name", {}, ["Budget"]),
+        element("gnm:Cell", { Row: "1", Col: "2" }, ["437.80000000000001"]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/bomb.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "expands more than 100 times, so it is not read",
+  },
+  "Documents/damaged.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "not a readable gzip stream",
+  },
 };
+
+/** An Osmo contact: fields as child elements, no attributes. */
+function contact(first: string, last: string): JsonValue {
+  return element("contact", {}, [
+    element("first_name", {}, [first]),
+    element("last_name", {}, [last]),
+  ]);
+}
 
 /** An element of REA's XML view. */
 function element(
@@ -485,7 +597,769 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
       },
       false,
     ],
+    // A cell's text by two attributes together, in either order, as drafts name cells.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3][@Row=2]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]/children/0",
+        value: 437.9,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
   ];
+
+const meeting = "Documents/meeting.xml";
+const paragraph = (id: string) => `/root/children/[name=p][@id=${id}]`;
+
+/**
+ * Strings of an XML view that are no text of the document: a tag name, the
+ * DOCTYPE's fields. Each holds the value checked, and each fails; an
+ * attribute's value in an archive entry is text and passes.
+ */
+const METADATA_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    { kind: "text_equals", file: meeting, pointer: "/root/name", value: "doc" },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: `${paragraph("time")}/name`,
+      value: "p",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/doctype/system_id",
+      value: "meeting.dtd",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/doctype/name",
+      value: "doc",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=Document.xml]/view/root/name",
+      value: "Document",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+      value: "Part::Cylinder",
+    },
+    true,
+  ],
+];
+
+/** An element's whole text, its runs and descendants included, compared or searched, exactly or with whitespace collapsed. */
+const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "Starts at 3:30 today.",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "Starts at 3:30",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "3:30",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("time"),
+      value: "3:45",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "Doors open early",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "Doors open early",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "open\n early",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: meeting,
+      pointer: paragraph("spaced"),
+      value: "open early",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("empty"),
+      value: "",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("deep"),
+      value: "xyz",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: `${paragraph("time")}/children/0`,
+      value: "Starts at ",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/root/attributes/lang",
+      value: "en",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: "/root/attributes",
+      value: "en",
+    },
+    false,
+  ],
+  ...METADATA_CASES,
+  [
+    {
+      kind: "text_equals",
+      file: meeting,
+      pointer: paragraph("gone"),
+      value: "x",
+    },
+    false,
+  ],
+  [{ kind: "text_equals", file: absent, pointer: "/root", value: "" }, false],
+  [
+    { kind: "text_equals", file: settings, pointer: "/tags/0", value: "a" },
+    false,
+  ],
+  [
+    { kind: "text_contains", file: todo, pointer: "/lines/0", value: "b" },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/0",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/1",
+      value: "kept",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/[name=p]",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=Document.xml]/view/root",
+      value: "saved by hand",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=empty.json]/view/x",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/0/name",
+      value: "Document.xml",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root",
+      value: "",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/photo.png",
+      pointer: "/root",
+      value: "",
+    },
+    false,
+  ],
+];
+
+/** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
+const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [{ kind: "lines_present", file: "Documents/long.txt", lines: ["z"] }, false],
+  [{ kind: "row_present", file: db, table: "big", where: { id: 9 } }, false],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/long.txt",
+      pointer: "/lines/5500",
+      value: "z",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/many.zip",
+      pointer: "/entries/1100/name",
+      value: "a.txt",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "gone",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "kept",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/5",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/many.zip",
+      pointer: "/entries/1100/view/root",
+      value: "x",
+    },
+    false,
+  ],
+];
+
+const budget = "Documents/Budget.gnumeric";
+
+/** A gzip file's document checked as the document, and one past the limits or damaged read by no check. */
+const GZIP_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Cell][@Row=1][@Col=2]/children/0",
+      value: 437.8,
+      tolerance: 0.001,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Name]",
+      value: "Budget",
+    },
+    true,
+  ],
+  [{ kind: "lines_present", file: budget, lines: ["Budget"] }, false],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/bomb.gnumeric",
+      pointer: "/root/attributes/x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/damaged.gnumeric",
+      pointer: "/root",
+      value: "x",
+    },
+    false,
+  ],
+  [{ kind: "file_present", file: "Documents/damaged.gnumeric" }, true],
+];
+
+const flyer = "Documents/flyer.sla";
+const headline =
+  "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]";
+const body =
+  "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Body]";
+
+/** Text joined from one attribute's values on an element and its descendants, its text nodes left out. */
+const ATTRIBUTE_TEXT_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: headline,
+      value: "Spring Fair",
+      text_attribute: "CH",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: headline,
+      value: "Spring Fete",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: flyer,
+      pointer: headline,
+      value: "typed",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    { kind: "text_equals", file: flyer, pointer: headline, value: "typed" },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: body,
+      value: "Doors open at noon",
+      text_attribute: "CH",
+      normalize_whitespace: true,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: flyer,
+      pointer: body,
+      value: "open  at",
+      text_attribute: "CH",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: plate,
+      pointer: `${objects}/[name=Object][@name=Hole]`,
+      value: "HoleRadius",
+      text_attribute: "name",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: flyer,
+      pointer: `${headline}/attributes/ANNAME`,
+      value: "Headline",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: settings,
+      pointer: "/tags",
+      value: "ab",
+      text_attribute: "CH",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "1",
+      text_attribute: "id",
+    },
+    false,
+  ],
+];
+
+const contacts = ".local/share/osmo/contacts_records.xml";
+const ledger = "Documents/ledger.json";
+
+/** Members named by a child element's text, its whitespace collapsed, alone or with other conditions. */
+const CHILD_TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
+  [
+    [
+      {
+        kind: "text_equals",
+        file: contacts,
+        pointer:
+          "/root/children/[name=contact][>first_name=Bastien]/children/[name=last_name]",
+        value: "Roy",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: contacts,
+        pointer:
+          "/root/children/[name=contact][>first_name=Delphine][>last_name=Abara]/children/1/children/0",
+        value: "Abara",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Delphine]",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Zoe]",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Zoe]/children",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: contacts,
+        pointer: "/root/children/[name=group][>first_name=Delphine]/name",
+        value: "group",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: contacts,
+        pointer: "/root/children/[>first_name]/name",
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: settings,
+        pointer: "/tags/[>a=a]",
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_absent",
+        file: "Documents/cut.xml",
+        pointer: "/root/children/[name=p][>q=x]",
+      },
+      false,
+    ],
+  ];
+
+/** Counts of an array's members, every one or those a selector matches, decided only on an array the view holds whole. */
+const MEMBER_COUNT_CASES: readonly (readonly [
+  DesktopTaskCheckInput,
+  boolean,
+])[] = [
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[name=contact]",
+      equals: 3,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[name=contact][>first_name=Delphine]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children",
+      matching: "[>first_name=Delphine]",
+      at_most: 2,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: meeting,
+      pointer: `${paragraph("time")}/children`,
+      equals: 5,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: meeting,
+      pointer: `${paragraph("time")}/children`,
+      matching: "[name=c]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: settings,
+      pointer: "/tags",
+      at_least: 3,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: plate,
+      pointer: objects,
+      matching: "[name=Object][@type=Part::Box]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    { kind: "member_count", file: settings, pointer: "/size", equals: 0 },
+    false,
+  ],
+  [
+    { kind: "member_count", file: settings, pointer: "/missing", equals: 0 },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: contacts,
+      pointer: "/root/children/[name=contact][>first_name=Zoe]/children",
+      equals: 0,
+    },
+    false,
+  ],
+  [{ kind: "member_count", file: absent, pointer: "/x", equals: 0 }, false],
+  [{ kind: "member_count", file: ledger, pointer: "", equals: 3 }, true],
+  [
+    {
+      kind: "member_count",
+      file: ledger,
+      pointer: "",
+      matching: "[payee=Grocer]",
+      equals: 2,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: ledger,
+      pointer: "",
+      matching: "[payee=Rent]",
+      at_least: 2,
+    },
+    false,
+  ],
+  [{ kind: "member_count", file: settings, pointer: "", equals: 0 }, false],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/cut.xml",
+      pointer: "/root/children",
+      at_least: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/many.zip",
+      pointer: "/entries",
+      at_least: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children",
+      equals: 1,
+    },
+    false,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/listing.zip",
+      pointer: "/entries/0/view",
+      equals: 1,
+    },
+    false,
+  ],
+];
 
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
@@ -735,4 +1609,10 @@ export const CHECK_CASES: readonly (readonly [
   [{ kind: "row_count", file: absent, table: "notes", equals: 0 }, true],
   ...SELECTOR_CASES,
   ...TOLERANCE_CASES,
+  ...TEXT_CASES,
+  ...CUT_VIEW_CASES,
+  ...GZIP_CASES,
+  ...ATTRIBUTE_TEXT_CASES,
+  ...CHILD_TEXT_CASES,
+  ...MEMBER_COUNT_CASES,
 ];

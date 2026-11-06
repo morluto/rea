@@ -7,6 +7,7 @@ Setup previews configuration changes and asks for approval before applying them.
 | ---------------------------------- | --------------------------------------------------------------------------------------------------- |
 | Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                           |
 | Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                   |
+| Run unreleased code                | [Run REA from a checkout](#run-rea-from-a-checkout)                                                 |
 | Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                           |
 | Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), or [Kuna](kuna-provider.md) |
 | Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                          |
@@ -384,6 +385,7 @@ Select the part you want to check:
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
+| Desktop app environment builds      | `rea doctor --provider desktop_build --client claude_code --json`          |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
@@ -594,6 +596,28 @@ Use the connected server's actual tool list and advertised input schemas for
 feature selection. The same package version string in a development checkout
 does not establish that its bytes match the npm tarball. Update a registration
 through a reviewed, scoped setup plan, then restart/reconnect the agent.
+
+### Run REA from a checkout
+
+To run code that is not released yet, build a checkout with the Node.js
+version in `.nvmrc`:
+
+```bash
+git clone https://github.com/morluto/rea.git
+cd rea
+npm ci
+npm run build:cached
+```
+
+Then run `npm link` once in the checkout to put its `rea` on your `PATH`, or,
+wherever these docs say `rea …`, run
+`node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
+the checkout's `scripts/rea.mjs` with your agents.
+
+After `git pull`, run `npm ci` and `npm run build:cached` again and restart
+your agents. For desktop builds, also pack the
+[build computer's runtime archive](desktop-build-computer.md#requirements)
+again.
 
 ## Skill-only installation
 

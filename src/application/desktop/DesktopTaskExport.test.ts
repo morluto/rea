@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
   capture,
+  change,
   readers,
+  retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -83,7 +86,152 @@ const unretainedNoteCapture = () => {
   };
 };
 
+/** A note of 6,000 lines, more than the 5,000 a text view keeps, and the edit that adds `milk` at its top. */
+const LONG_NOTE = `${Array.from(
+  { length: 6000 },
+  (_, index) => `note ${String(index + 1)}`,
+).join("\n")}\n`;
+const MILK_NOTE = `milk\n${LONG_NOTE}`;
+
+/** The capture with the long note at the seed and `milk` added to it by the edit. */
+const longNoteCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? {
+              ...checkpoint,
+              retained: [
+                ...checkpoint.retained,
+                retained(NOTE_PATH, LONG_NOTE),
+              ],
+            }
+          : {
+              ...checkpoint,
+              changes: checkpoint.changes.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? change(NOTE_PATH, { before: LONG_NOTE, after: MILK_NOTE })
+                  : entry,
+              ),
+              retained: checkpoint.retained.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? retained(NOTE_PATH, MILK_NOTE)
+                  : entry,
+              ),
+            },
+      ),
+    },
+  };
+};
+
 describe("exportDesktopApplication with a task's seed", () => {
+  it("refuses a task whose only seed failure misses a line its cut view may have left out", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-");
+    const path = join(scratch, "task.json");
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+        ]),
+      ),
+    );
+    const directory = join(scratch, "bundle");
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+
+    expect(result).toBeInstanceOf(AnalysisInputError);
+    const { issues, userMessage } = result as AnalysisInputError;
+    expect(issues.map(({ path }) => path)).toEqual([["task"]]);
+    // The undecided check by id, with its file and line, in any wording.
+    for (const fact of [JSON.stringify("has-milk"), NOTE, '"milk"'])
+      expect(userMessage).toContain(fact);
+    expect(await exists(directory)).toBe(false);
+
+    // A failure on what the seed's view shows still keeps it, and only that one counts.
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+          {
+            id: "row",
+            kind: "row_present",
+            file: DATABASE,
+            table: "notes",
+            where: { id: 2 },
+          },
+        ]),
+      ),
+    );
+    const kept = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+    if (kept instanceof Error) throw kept;
+    expect(kept.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["row"] },
+    });
+  });
+
+  it("keeps a task whose one check failing on the seed is a member count", async () => {
+    const { result } = await exportWithTasks(
+      task([
+        {
+          id: "first",
+          kind: "row_present",
+          file: DATABASE,
+          table: "notes",
+          where: { id: 1 },
+        },
+        {
+          id: "notes",
+          kind: "member_count",
+          file: DATABASE,
+          pointer: "/tables/notes/rows",
+          equals: 2,
+        },
+      ]),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { checks: 2, failing_on_seed: ["notes"] },
+    });
+  });
+
   it("treats a file present but not retained at the baseline as absent on the seed, as the computer starts", async () => {
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");
@@ -199,6 +347,17 @@ describe("exportDesktopApplication with a task", () => {
     ],
     [
       task([
+        {
+          kind: "text_contains",
+          file: NOTE,
+          pointer: "/lines/0",
+          value: "milk",
+        },
+      ]),
+      "which is text; use lines_present",
+    ],
+    [
+      task([
         { id: "eggs", kind: "lines_present", file: NOTE, lines: ["eggs"] },
       ]),
       'Check "eggs" fails on the captured end state: Documents/today.txt has no line "eggs"',
@@ -224,6 +383,27 @@ describe("exportDesktopApplication with a task", () => {
       message,
     );
     expect(await exists(directory)).toBe(false);
+  });
+});
+
+describe("exportDesktopApplication with a task's prompt", () => {
+  it("names a prompt that does not name the app in its limitations, since a solver's shell cannot see the computer", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const unnamed = await exportWithTasks(task(checks));
+    const named = await exportWithTasks({
+      ...task(checks),
+      prompt: "In Notes, write down that I need milk.",
+    });
+
+    if (unnamed.result instanceof Error) throw unnamed.result;
+    if (named.result instanceof Error) throw named.result;
+    const naming = (limitations: readonly string[]) =>
+      limitations.filter((line) => line.includes("prompt"));
+    expect(naming(unnamed.result.limitations)).toHaveLength(1);
+    expect(naming(unnamed.result.limitations)[0]).toContain("notes");
+    expect(naming(named.result.limitations)).toEqual([]);
   });
 });
 

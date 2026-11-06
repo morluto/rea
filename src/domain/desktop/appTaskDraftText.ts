@@ -1,0 +1,684 @@
+import type { JsonValue } from "../jsonValue.js";
+import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
+import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
+import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
+import { addedTextChecks } from "./appTaskDraftTextAdded.js";
+import { rankAttributes } from "./attributeRank.js";
+import type { DesktopStateDifference } from "./stateChanges.js";
+import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
+
+/** The pointers a diff lists, of every kind. */
+type Listed = Pick<DesktopStateDifference, "added" | "changed" | "removed">;
+
+/** A file's views at its two ends. */
+interface Ends {
+  readonly baseline: JsonValue | null;
+  readonly final: JsonValue | null;
+}
+
+/** Where a format's text checks go, and how many and how long a draft keeps. */
+export interface TextPlacement {
+  /** Whether a pointer is an element of an XML tree both evaluators read alike. */
+  readonly inTree: (pointer: string) => boolean;
+  /** The pointer a check names an element by, or undefined when the final view cannot decide a check there. */
+  readonly name: (pointer: string) => string | undefined;
+  readonly limit: { readonly suggestions: number; readonly chars: number };
+  /** Whether a change at a pointer is noise, which never makes an ancestor's whole text a check. */
+  readonly noise: (pointer: string) => boolean;
+}
+
+/** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
+export interface WholeTextSuggestions {
+  readonly suggestions: readonly DesktopTaskCheckInput[];
+  /** Checks that text an addition kept is still there, for an author to add by choice. */
+  readonly guards: readonly DesktopTaskCheckInput[];
+  /** Elements whose text changed that no check took, because every place for one held more text than the limit. */
+  readonly long: readonly string[];
+  readonly covers: (pointer: string) => boolean;
+}
+
+/** The element a member of `children` sits in: the pointer up to its last `/children/N`; none for the root. */
+const parentOf = (pointer: string): string | undefined =>
+  /^(?<parent>.+)\/children\/[^/]+$/u.exec(pointer)?.groups?.parent;
+
+const isWhitespace = (text: string) => /^[ \t\r\n]*$/u.test(text);
+
+/** The element whose name or attribute a pointer reaches; none for text or a whole element. */
+const ownerOf = (pointer: string): string | undefined => {
+  const segments = pointer.split("/");
+  // An attribute's own key may be `name` or `attributes`, so `attributes` is read one up first.
+  if (segments.at(-2) === "attributes") return segments.slice(0, -2).join("/");
+  const last = segments.at(-1);
+  return last === "attributes" || last === "name"
+    ? segments.slice(0, -1).join("/")
+    : undefined;
+};
+
+/** Whether an element holds text of its own beside its children, as a paragraph holds the text between its runs. */
+const holdsText = (value: JsonValue | undefined): boolean =>
+  isXmlElement(value) &&
+  value.children.some(
+    (child) => typeof child === "string" && !isWhitespace(child),
+  );
+
+/** An element's parent below the document's root, whose text a check could read instead; none for a child of the root. */
+const parentBelowRoot = (pointer: string): string | undefined => {
+  const parent = parentOf(pointer);
+  return parent === undefined || parentOf(parent) === undefined
+    ? undefined
+    : parent;
+};
+
+/** Whether the diff names an element by one of its attributes, as `[name=p][@xid=6]`, rather than by its tag alone or its position. */
+const namedByAttribute = (pointer: string) =>
+  (pointer.split("/").at(-1) ?? "").includes("[@");
+
+const isRecord = (
+  value: JsonValue | undefined,
+): value is Record<string, JsonValue> =>
+  typeof value === "object" && value !== null && !Array.isArray(value);
+
+/** An element's attributes; none for any other value. */
+const attributesOf = (value: JsonValue | undefined) =>
+  isXmlElement(value) && isRecord(value.attributes) ? value.attributes : {};
+
+/** Whether an attribute identifies its element, as `id`, `xml:id` or AbiWord's `xid` do, rather than formatting it. */
+const isIdentifier = (key: string) => /^(?:[^:]*:)?x?id$/iu.test(key);
+
+/** Whether the diff names an element by an identifier, as `[name=p][@xid=6]`. */
+const namedByIdentifier = (pointer: string) => {
+  const key = /\]\[@(?<key>[^=]+)=/u.exec(pointer.split("/").at(-1) ?? "")
+    ?.groups?.key;
+  return key !== undefined && isIdentifier(key);
+};
+
+/** Whether an end holds an element at a pointer whose text a check reads as nothing, as an image or a break. */
+const textlessAt = (pointer: string, ends: Ends) =>
+  [ends.baseline, ends.final].some((view) => {
+    const value = resolvePointer(view, pointer);
+    return isXmlElement(value) && isWhitespace(elementText(value));
+  });
+
+/** Whether both ends hold an element at a pointer. */
+const keptAt = (element: string, ends: Ends) =>
+  [ends.baseline, ends.final].every((view) =>
+    isXmlElement(resolvePointer(view, element)),
+  );
+
+/** Whether an element holds text of its own, at either end. */
+const mixedAt = (element: string, ends: Ends) =>
+  [ends.baseline, ends.final].some((view) =>
+    holdsText(resolvePointer(view, element)),
+  );
+
+/** Where a text check may go: an element as the diff names it, the pointer the check names it by, and whether an identifier is in that pointer. */
+interface Candidate {
+  readonly element: string;
+  readonly pointer: string;
+  readonly identifier: boolean;
+}
+
+/**
+ * An element named by its tag and one of its own attributes, an identifier
+ * first: one with the same value at both ends that names the element alone
+ * among its siblings at each; none when no attribute does.
+ */
+const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
+  const parent = parentOf(element);
+  const before = resolvePointer(ends.baseline, element);
+  const after = resolvePointer(ends.final, element);
+  if (parent === undefined || !isXmlElement(before) || !isXmlElement(after))
+    return undefined;
+  const attributes = attributesOf(after);
+  const keys = Object.keys(attributes);
+  for (const key of [
+    ...keys.filter(isIdentifier),
+    ...rankAttributes(
+      keys
+        .filter((key) => !isIdentifier(key))
+        .map((key) => {
+          const value = attributes[key];
+          return { key, value: typeof value === "string" ? value : "" };
+        }),
+    ).map(({ key }) => key),
+  ]) {
+    const value = attributes[key];
+    if (
+      typeof value !== "string" ||
+      attributesOf(before)[key] !== value ||
+      /[=[\]]/u.test(key) ||
+      value.includes("][") ||
+      isStamp(value)
+    )
+      continue;
+    const selector = `[name=${after.name}][@${key}=${value}]`;
+    const pointer = `${parent}/children/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`;
+    if (
+      resolvePointer(ends.baseline, pointer) === before &&
+      resolvePointer(ends.final, pointer) === after
+    )
+      return { element, pointer, identifier: isIdentifier(key) };
+  }
+  return undefined;
+};
+
+/**
+ * Whether the element at a pointer is a field its tag names in a record of
+ * two or more fields holding text, at both ends, as QElectroTech's `<text>`
+ * beside `<info_name>` in a `<dynamic_elmt_text>`: a check reads it, not the
+ * record's text, which would join its fields; a Draw shape's one paragraph
+ * beside its geometry is the shape's text.
+ */
+const isField = (pointer: string, ends: Ends) => {
+  const parent = parentOf(pointer);
+  const tag = /^\[name=(?<tag>[^\]]+)\]$/u.exec(pointer.split("/").at(-1) ?? "")
+    ?.groups?.tag;
+  return (
+    parent !== undefined &&
+    tag !== undefined &&
+    [ends.baseline, ends.final].every((view) => {
+      const record = resolvePointer(view, parent);
+      const fields = isXmlElement(record)
+        ? record.children.filter(isXmlElement)
+        : [];
+      return (
+        holdsFields(record) &&
+        fields.filter((field) => elementText(field).trim() !== "").length > 1 &&
+        fields.filter(({ name }) => name === tag).length === 1
+      );
+    })
+  );
+};
+
+/** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
+const MAX_TAG_CLIMB = 3;
+
+/**
+ * Where a text check goes for an element whose text changed, best first, so
+ * the check names the paragraph, which a later save keeps, rather than a run
+ * it may split or merge: up from an element in mixed content (its parent
+ * holds text beside it, at either end) to the nearest that is not, which a
+ * field its tag names in a record of fields (`isField`) stays; then, from
+ * one named by tag or position alone, to the nearest ancestor named by an
+ * attribute, as AbiWord's `p` by its `xid`, where one is below the document's
+ * root. An element passed on the way that an identifier of its own names, the
+ * outermost first, goes ahead of that ancestor unless an identifier names the
+ * ancestor too; one that only another attribute names goes after it. Where no
+ * attribute names an ancestor, as MuseScore's `<Text>` in a `<VBox>`, the
+ * element itself and then up to three ancestors, nearest first; `name` keeps
+ * only one its tag names, with no step by position.
+ */
+const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
+  let current = pointer;
+  // A paragraph may be the document's root.
+  for (
+    let parent = parentOf(current);
+    parent !== undefined && mixedAt(parent, ends);
+    parent = parentOf(current)
+  )
+    current = parent;
+  if (isField(current, ends))
+    return [{ element: current, pointer: current, identifier: false }];
+  const passed: string[] = [];
+  let named = current;
+  while (!namedByAttribute(named)) {
+    const parent = parentBelowRoot(named);
+    if (parent === undefined)
+      return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
+        .filter((element, index, all) => all.indexOf(element) === index)
+        .map((element) => ({ element, pointer: element, identifier: false }));
+    passed.push(named);
+    named = parent;
+  }
+  const ranked = [
+    { element: named, pointer: named, identifier: namedByIdentifier(named) },
+    ...passed
+      .toReversed()
+      .flatMap((element) => byOwnAttribute(element, ends) ?? []),
+  ];
+  return [
+    ...ranked.filter(({ identifier }) => identifier),
+    ...ranked.filter(({ identifier }) => !identifier),
+  ];
+};
+
+/**
+ * Where a text check goes for an element only position reaches, as a
+ * spreadsheet cell in a row no attribute names: the ancestor above the
+ * outermost step by position, as the table holding the rows, by an attribute
+ * of its own that names it alone, as `[@table:name=Q1 Sales]`, and otherwise
+ * as the diff names it; none when there is no such step or that ancestor is
+ * the document's root.
+ */
+const abovePosition = (pointer: string, ends: Ends): readonly Candidate[] => {
+  const segments = pointer.split("/");
+  const step = segments.findIndex(
+    (segment, index) =>
+      segments[index - 1] === "children" && /^\d+$/u.test(segment),
+  );
+  if (step < 0) return [];
+  const element = segments.slice(0, step - 1).join("/");
+  if (parentOf(element) === undefined) return [];
+  const own = byOwnAttribute(element, ends);
+  return [
+    ...(own === undefined ? [] : [own]),
+    { element, pointer: element, identifier: false },
+  ];
+};
+
+/** Whether an element holds only elements, as a record holds its fields, layout whitespace aside. */
+const recordLike = (value: JsonValue | undefined): boolean =>
+  isXmlElement(value) &&
+  value.children.some((child) => isXmlElement(child)) &&
+  value.children.every(
+    (child) =>
+      isXmlElement(child) || (typeof child === "string" && isWhitespace(child)),
+  );
+
+/**
+ * A tag naming a paragraph or other piece of text, whose element children are
+ * runs of it: AbiWord's, HTML's and Word's `p` (`w:p`), ODF's `text:p` and
+ * `text:h`, HTML's `h1` to `h6` and `li`, DocBook's `para`, and SVG's `text`
+ * and `tspan`, or a span or link holding further runs. Compared as written,
+ * so MuseScore's `Text`, a record of `<style>` and `<text>`, is none.
+ */
+const TEXT_TAG = /^(?:p|h|h[1-6]|para|simpara|li|text|tspan|span|a)$/u;
+
+/**
+ * A tag of inline formatting, by its local name: bold, italic and the like,
+ * a span, link or code run, or Gnote's `size:` and `link:` runs. A record
+ * whose fields are only such, as `<list-item><bold>olive oil</bold>`, is text.
+ */
+const INLINE_TAG =
+  /^(?:b|i|u|s|em|strong|bold|italic|underline|strikethrough|emphasis|span|a|code|sub|sup|small|big|mark|font|tt|monospace|highlight|link)$/u;
+const INLINE_PREFIX = /^(?:size|link):/u;
+
+const isInline = (name: string) =>
+  INLINE_PREFIX.test(name) ||
+  INLINE_TAG.test((name.split(":").at(-1) ?? name).toLowerCase());
+
+/**
+ * Whether an element holds fields: only elements, layout whitespace aside, as
+ * Tellico's `<entry>` holds `<title>` and `<publisher>`, or a record holds
+ * repeated `<field>` elements, whatever they are called; unless it is text
+ * made of runs: its tag names a paragraph or other text (`TEXT_TAG`), its
+ * elements are all inline formatting (`INLINE_TAG`), or a child's text opens
+ * or closes with a space, as a sentence splits into runs, `Meet ` and a
+ * linked `Monday`, where a field holds a value whole; a line break and
+ * indentation the app lays out after a field's text, as KmPlot's, is none.
+ */
+export const holdsFields = (value: JsonValue | undefined): boolean =>
+  recordLike(value) &&
+  isXmlElement(value) &&
+  !TEXT_TAG.test(value.name.split(":").at(-1) ?? value.name) &&
+  !value.children.every(
+    (child) => !isXmlElement(child) || isInline(child.name),
+  ) &&
+  !value.children.some((child) => {
+    const text = isXmlElement(child) ? elementText(child) : "";
+    // A space, not a line break the app lays out, at either edge splits a sentence.
+    return /^[ \t]+\S|\S[ \t]+$/u.test(text);
+  });
+
+/** Whether an element at a pointer sits in a paragraph or other text, an ancestor's tag naming one (`TEXT_TAG`), as Word's `<w:r>` run in its `<w:p>`. */
+const inText = (view: JsonValue | null, pointer: string): boolean => {
+  for (
+    let parent = parentOf(pointer);
+    parent !== undefined;
+    parent = parentOf(parent)
+  ) {
+    const element = resolvePointer(view, parent);
+    if (
+      isXmlElement(element) &&
+      TEXT_TAG.test(element.name.split(":").at(-1) ?? element.name)
+    )
+      return true;
+  }
+  return false;
+};
+
+/** Whether an element at a pointer is a record: it `holdsFields`, and sits in no paragraph, where it is a run of its text. */
+export const isRecordAt = (
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue | undefined,
+): boolean => holdsFields(value) && !inText(view, pointer);
+
+/**
+ * Whether the kept ancestor of a record added or removed whole is a list of
+ * its kind, whose whole text would fold in records the edit left alone: it
+ * holds no text of its own, and another element of that tag with text that
+ * both ends hold alike, as Tellico's `<collection>` holds the other entries.
+ */
+const listOf = (
+  holder: string,
+  pointer: string,
+  element: JsonValue,
+  ends: Ends,
+) => {
+  if (
+    !isXmlElement(element) ||
+    !isRecordAt(ends.final, pointer, element) ||
+    !isRecordAt(ends.baseline, pointer, element) ||
+    mixedAt(holder, ends)
+  )
+    return false;
+  const like = (view: JsonValue | null) => {
+    const list = resolvePointer(view, holder);
+    return isXmlElement(list)
+      ? list.children.flatMap((child) =>
+          isXmlElement(child) &&
+          child !== element &&
+          child.name === element.name
+            ? [elementText(child)]
+            : [],
+        )
+      : [];
+  };
+  const before = new Set(like(ends.baseline));
+  return like(ends.final).some(
+    (text) => !isWhitespace(text) && before.has(text),
+  );
+};
+
+/**
+ * The nearest ancestor both ends hold of an element added or removed whole,
+ * where its text is checked; none when that is the document's root holding no
+ * text of its own, whose whole text a check would read instead.
+ */
+const keptAncestor = (pointer: string, ends: Ends): string | undefined => {
+  let parent = parentOf(pointer);
+  while (parent !== undefined && !keptAt(parent, ends))
+    parent = parentOf(parent);
+  return parent === undefined ||
+    (parentOf(parent) === undefined && !mixedAt(parent, ends))
+    ? undefined
+    : parent;
+};
+
+/**
+ * Where the text of an element added or removed whole is checked: its
+ * `keptAncestor`, but never a list of its kind, whose whole text would fold
+ * in the records the edit left alone, unless the element is a record
+ * `removed` whole that only position names, whose absence no other check can
+ * show; and whether a list is why it has none.
+ */
+const textHolder = (
+  pointer: string,
+  element: JsonValue,
+  ends: Ends,
+  removed: boolean,
+) => {
+  const kept = keptAncestor(pointer, ends);
+  const unnamed = removed && /^\d+$/u.test(pointer.split("/").at(-1) ?? "");
+  const listed =
+    kept !== undefined && !unnamed && listOf(kept, pointer, element, ends);
+  return { holder: listed ? undefined : kept, listed };
+};
+
+/** A text check, the element it reads as the diff names it, and guards of the text it kept. */
+interface Placed {
+  readonly element: string;
+  readonly check: DesktopTaskCheckInput;
+  readonly guards: readonly DesktopTaskCheckInput[];
+}
+
+/** What text checks read: the file, its two ends, and where checks go. */
+interface TextContext {
+  readonly file: string;
+  readonly ends: Ends;
+  readonly place: TextPlacement;
+}
+
+/** Whether text is one line the app lays out between line breaks. */
+const isLaidOutLine = (value: string) =>
+  /[\r\n]/u.test(value) && !/[\r\n]/u.test(value.trim());
+
+/**
+ * The check of an element's whole text: a decimal held as the element's one
+ * text node, as a spreadsheet keeps a cell's number, by its value within a
+ * tolerance, so another spelling of the number still passes; text that grew
+ * by whole lines by those lines, with guards of what it kept; any other text
+ * whole.
+ */
+export const wholeTextCheck = (
+  file: string,
+  pointer: string,
+  now: { readonly value: string; readonly children: readonly JsonValue[] },
+  before: string | undefined,
+): Pick<Placed, "check" | "guards"> => {
+  const { value, children } = now;
+  const [only] = children;
+  if (children.length === 1 && typeof only === "string") {
+    const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
+    if ("tolerance" in check) return { check, guards: [] };
+  }
+  // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
+  const laidOut = isLaidOutLine(value)
+    ? { value: collapseWhitespace(value), normalize_whitespace: true }
+    : { value };
+  return (
+    (before === undefined
+      ? undefined
+      : addedTextChecks(file, pointer, before, value)) ?? {
+      check: { kind: "text_equals", file, pointer, ...laidOut },
+      guards: [],
+    }
+  );
+};
+
+/** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
+const candidateAt = (
+  { ends, place }: TextContext,
+  { pointer: named }: Candidate,
+) => {
+  const pointer = place.name(named);
+  const now =
+    pointer === undefined ? undefined : resolvePointer(ends.final, pointer);
+  return pointer === undefined || !isXmlElement(now)
+    ? undefined
+    : { pointer, now };
+};
+
+/**
+ * The text check a candidate takes: an element the final view holds whole at
+ * the pointer `name` gives it, its text at most the limit, no timestamp and
+ * holding no date stamped in parts, and changed from the baseline's or, for
+ * an element `added` whole, absent there; never a line the app only laid
+ * out anew, which a check comparing collapsed whitespace finds at the seed.
+ */
+const textCheck = (
+  context: TextContext,
+  candidate: Candidate,
+  added: boolean,
+): Placed | undefined => {
+  const found = candidateAt(context, candidate);
+  if (found === undefined) return undefined;
+  const { pointer, now } = found;
+  const before = resolvePointer(context.ends.baseline, pointer);
+  if (!added && !isXmlElement(before)) return undefined;
+  const value = elementText(now);
+  const old = isXmlElement(before) ? elementText(before) : undefined;
+  const relaidOut =
+    old !== undefined &&
+    isLaidOutLine(value) &&
+    collapseWhitespace(old) === collapseWhitespace(value);
+  return value !== old &&
+    !relaidOut &&
+    value.length <= context.place.limit.chars &&
+    !isStamp(value) &&
+    !holdsSplitDate(context.ends.final, pointer)
+    ? {
+        element: candidate.element,
+        ...wholeTextCheck(
+          context.file,
+          pointer,
+          { value, children: now.children },
+          old,
+        ),
+      }
+    : undefined;
+};
+
+/** Whether a candidate's element holds text past the limit a text check compares. */
+const tooLong = (context: TextContext, candidate: Candidate) => {
+  const found = candidateAt(context, candidate);
+  return (
+    found !== undefined &&
+    elementText(found.now).length > context.place.limit.chars
+  );
+};
+
+/**
+ * The elements whose text a change may make a check: each holding a text
+ * node the diff lists with more than whitespace in it, in either version of
+ * a changed value, and the `textHolder` of each element it lists whole
+ * holding such text; and the elements added whole, each with its holder.
+ */
+const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
+  const holders = new Set<string>();
+  /** Elements added whole holding text, each with the ancestor checked for it, if any. */
+  const added = new Map<string, string | undefined>();
+  /** Items placed by their own position, added whole. */
+  const items: string[] = [];
+  const note = (
+    pointer: string,
+    view: JsonValue | null,
+    how: "changed" | "added" | "removed",
+  ) => {
+    const value = resolvePointer(view, pointer);
+    const parent = parentOf(pointer);
+    // Noise, such as a time the app stamps, never makes its ancestor's whole text a check.
+    if (place.noise(pointer)) return;
+    if (typeof value === "string") {
+      if (
+        parent !== undefined &&
+        !isWhitespace(value) &&
+        !isStamp(value) &&
+        place.inTree(parent)
+      )
+        holders.add(parent);
+    } else if (
+      isXmlElement(value) &&
+      !isWhitespace(elementText(value)) &&
+      place.inTree(pointer)
+    ) {
+      // An item placed by its own position is no run of its list's text.
+      if (isPlacedItem(view, pointer)) {
+        if (how === "added") items.push(pointer);
+        return;
+      }
+      const { holder, listed } = textHolder(
+        pointer,
+        value,
+        ends,
+        how === "removed",
+      );
+      if (holder !== undefined) holders.add(holder);
+      // A record in a list is checked by its fields, not its whole text.
+      if (how === "added" && !listed) added.set(pointer, holder);
+    }
+  };
+  // A value that changed may be text at one end only, as text an app wraps in a run.
+  for (const pointer of change.changed) {
+    note(pointer, ends.final, "changed");
+    note(pointer, ends.baseline, "changed");
+  }
+  for (const pointer of change.added) note(pointer, ends.final, "added");
+  for (const pointer of change.removed) note(pointer, ends.baseline, "removed");
+  return { holders, added, items };
+};
+
+/**
+ * Checks of an element's whole text where an edit changed it, for an app that
+ * splits a paragraph into runs as it saves: the element holding each text node
+ * the diff lists with more than whitespace in it, in either version of a
+ * changed value, and the nearest ancestor both ends hold of each element it
+ * lists whole holding such text, taken out of the runs it sits in, the
+ * outermost where one holds another, an element at both ends at the pointer
+ * `name` gives it, whose text changed and that the final view holds whole;
+ * never, for a record, a list of its kind, whose text holds records the edit
+ * left alone. An element added whole whose ancestors cannot take the check
+ * takes it itself, but a record in a list, which its fields check instead.
+ */
+export const wholeTextSuggestions = (
+  file: string,
+  change: Listed,
+  ends: Ends,
+  place: TextPlacement,
+): WholeTextSuggestions => {
+  const { holders, added, items } = textHolders(change, ends, place);
+  const context = { file, ends, place };
+  const checks = new Map<string, Placed | undefined>();
+  const check = (candidate: Candidate) => {
+    if (!checks.has(candidate.element))
+      checks.set(candidate.element, textCheck(context, candidate, false));
+    return checks.get(candidate.element);
+  };
+  const climbs = new Map<string, Placed | undefined>();
+  /** Elements whose text changed and that no check took because every place for it held too much text. */
+  const long = new Set<string>();
+  const climb = (holder: string) => {
+    if (!climbs.has(holder)) {
+      const candidates = [
+        ...outsideRuns(holder, ends),
+        ...abovePosition(holder, ends),
+      ];
+      const found = candidates.find(
+        (candidate) => check(candidate) !== undefined,
+      );
+      if (
+        found === undefined &&
+        candidates.some((candidate) => tooLong(context, candidate))
+      )
+        long.add(holder);
+      climbs.set(holder, found === undefined ? undefined : check(found));
+    }
+    return climbs.get(holder);
+  };
+  const placed: Placed[] = [];
+  const keep = (found: Placed | undefined) => {
+    if (found !== undefined && !placed.includes(found)) placed.push(found);
+  };
+  for (const holder of holders) keep(climb(holder));
+  for (const item of items)
+    keep(
+      placedItemCheck(
+        { file, ends, name: place.name, chars: place.limit.chars },
+        item,
+      ),
+    );
+  for (const [element, holder] of added)
+    if (holder === undefined || climb(holder) === undefined)
+      keep(
+        textCheck(
+          context,
+          { element, pointer: element, identifier: false },
+          true,
+        ),
+      );
+  const suggested = placed
+    .filter(
+      ({ element }) =>
+        !placed.some((other) => element.startsWith(`${other.element}/`)),
+    )
+    .slice(0, place.limit.suggestions);
+  return {
+    suggestions: suggested.map(({ check }) => check),
+    guards: suggested.flatMap(({ guards }) => guards),
+    long: [...long],
+    covers: (pointer) => {
+      if (
+        !suggested.some(
+          ({ element }) =>
+            pointer === element || pointer.startsWith(`${element}/children/`),
+        )
+      )
+        return false;
+      if (textlessAt(pointer, ends)) return false;
+      const owner = ownerOf(pointer);
+      return owner === undefined || !keptAt(owner, ends);
+    },
+  };
+};
