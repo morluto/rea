@@ -1,6 +1,11 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace } from "./appTask.js";
-import { bracketed, selectorOf, type Condition } from "./viewSelector.js";
+import {
+  bracketed,
+  insideSteps,
+  selectorOf,
+  type Condition,
+} from "./viewSelector.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
 interface ArraySteps {
@@ -74,7 +79,7 @@ export const elementText = (element: JsonValue, attribute?: string): string => {
   return parts.join("");
 };
 
-/** The field a condition reads from a member, when it is a string; a child's text is none, since several children may hold one. */
+/** The field a condition reads from a member, when it is a string; what a path inside it reads is none, since several elements may hold one. */
 const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   if (!isRecord(member) || prefix === ">") return undefined;
   const fields = prefix === "@" ? own(member, "attributes") : member;
@@ -82,22 +87,47 @@ const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   return typeof value === "string" ? value : undefined;
 };
 
-/** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
-const hasChildText = (member: JsonValue, { key, value }: Condition) =>
-  isXmlElement(member) &&
-  member.children.some(
+/**
+ * Whether an element has a child element named the first step that holds
+ * `value` along the rest: at the last step its text, whitespace collapsed,
+ * or with `NAME@ATTR` its attribute ATTR. Each element on the way is visited once.
+ */
+const elementHolds = (
+  element: { readonly children: readonly JsonValue[] },
+  steps: readonly string[],
+  value: string,
+): boolean => {
+  const [step = "", ...rest] = steps;
+  const at = rest.length === 0 ? step.indexOf("@") : -1;
+  const name = at < 0 ? step : step.slice(0, at);
+  return element.children.some(
     (child) =>
       isXmlElement(child) &&
-      child.name === key &&
-      collapseWhitespace(elementText(child)) === value,
+      child.name === name &&
+      (rest.length > 0
+        ? elementHolds(child, rest, value)
+        : at < 0
+          ? collapseWhitespace(elementText(child)) === value
+          : own(child.attributes, step.slice(at + 1)) === value),
   );
+};
+
+/** Whether a `>` condition's path inside a member holds its value: in an XML element as `elementHolds` reads it, in a JSON record the string at those keys. */
+const holdsInside = (member: JsonValue, { key, value }: Condition) => {
+  const steps = insideSteps(key) ?? [];
+  if (isXmlElement(member)) return elementHolds(member, steps, value);
+  let found: JsonValue | undefined = member;
+  for (const step of steps)
+    found = isRecord(found) ? own(found, step) : undefined;
+  return found === value;
+};
 
 /** Whether an array member meets every condition; selectors compare strings only. */
 const selects = (member: JsonValue, conditions: readonly Condition[]) =>
   isRecord(member) &&
   conditions.every((condition) =>
     condition.prefix === ">"
-      ? hasChildText(member, condition)
+      ? holdsInside(member, condition)
       : fieldOf(member, condition) === condition.value,
   );
 
@@ -148,9 +178,12 @@ const arrayStep = (
  * Follow an RFC 6901 pointer through a view, where a segment applied to an
  * array may also be a selector: `[KEY=VALUE]` one or more times, naming the one
  * member whose string field KEY equals VALUE, with `@KEY` whose `attributes`
- * hold it, as REA's XML view keeps them, or with `>KEY` that has a child
- * element KEY of that text. So `/root/children/[name=Object][@name=Hole]`
- * is the `Object` element named `Hole`, wherever it sits among its siblings.
+ * hold it, as REA's XML view keeps them, or with `>PATH` that holds it up to
+ * three steps inside: a child element KEY of that text, `KEY/SUB` a grandchild,
+ * `KEY@ATTR` a child's attribute, or in a JSON record the string at those keys.
+ * So `/root/children/[name=Object][@name=Hole]` is the `Object` element named
+ * `Hole`, wherever it sits among its siblings. A step is decoded before it is
+ * read as a selector, so a path's `/` is written `~1`.
  */
 export const locatePointer = (
   view: JsonValue | null,

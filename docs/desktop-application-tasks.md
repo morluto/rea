@@ -106,9 +106,16 @@ operation `describe_desktop_application_task` and predicate type
   by an id field each holds alone at both ends (`id`, `uid`, `uuid`, `guid`,
   `key` or a name ending in `_id` or `Id`), as TreeLine's
   `/nodes/[uid=7584d494d9f511f1a873edd4f1920549]`, whatever order the app
-  saves them in, and by position only where nothing names a record, as a
-  new record whose only id the app generated, with a `by_position` note
-  listing those checks; never a value that is a uid the app generates (a
+  saves them in; a record only one end holds whose id the app generated is
+  named by its kind field and its first name-like string field (a key
+  ending in `name`, `title`, `label` or `caption`), nearest first and up to
+  three keys deep, that names it alone at its end and nothing at the other,
+  as TreeLine's new book by
+  `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, its other fields
+  checked through that selector and the fields the selector reads not; and
+  by position only where nothing names a record, as a new book whose title
+  another book holds, with a `by_position` note listing those checks;
+  never a value that is a uid the app generates (a
   GUID, or 32 hex digits as TreeLine's uuid1), nor a check the seed already
   passes, as a new record's `format` where another record of that kind held
   its place; a removed record is checked gone by its own pointer, as
@@ -145,7 +152,12 @@ operation `describe_desktop_application_task` and predicate type
     record by `[>first_name=Delphine]`, MuseScore's `<Text>` by
     `[>style=Title]`, a spreadsheet row by its label cell, or GnuCash's
     transaction by `[>trn:description=Greenleaf Market]`: text of at most 64
-    characters, never a time or a token or id a program generates. A pair
+    characters, never a time or a token or id a program generates; then by
+    an identifier a child carries, `[>CHILD@ATTR=VALUE]`, as a GtkBuilder
+    `<child>` by `[>object@id=submit_button]`, never one an app generates or
+    numbers anew as it saves; and then by text a child joins from elements
+    of its own, as Glade's `[>packing=TrueTrue1]` from a widget's packing
+    properties, which moving the widget changes. A pair
     counts every member holding both its values, whichever attributes that
     member ranks first. An element with identifiers is named by those alone;
     an id the app generates, as Freeplane's `ID_329023692`, or a GUID in
@@ -408,8 +420,9 @@ operation `describe_desktop_application_task` and predicate type
   `[>object=CancelTrueTrueTrue]` for a button's `Cancel` label, is named by
   another identifier, name-like attribute or child's text it holds alone
   at both ends instead, as Tiled's objects by `[@id=2]` rather than the
-  `name` the guard reads, or Glade's button by `[>packing=TrueTrue0]`, or
-  else the guard reads another field, or there is none. A `text_equals` with `text_attribute`
+  `name` the guard reads, or a Glade button whose widget carries no id by
+  `[>packing=TrueTrue0]`, or else the guard reads another field, or there is
+  none. A `text_equals` with `text_attribute`
   reads its siblings the same way. Text that grew by lines gets a
   `text_contains` of each line it kept, of three or more characters, the
   four nearest the new text, so a correct edit that puts the line elsewhere
@@ -581,16 +594,31 @@ rather than by its position:
   `[name=Object]`.
 - `[@KEY=VALUE]` names the member whose `attributes` hold `KEY="VALUE"`, as
   the XML view keeps an element's attributes.
-- `[>CHILD=VALUE]` names the XML element that has a child element `CHILD`
-  whose text, every text node in it with each run of whitespace collapsed to
-  one space and none at either end, is `VALUE`, for records that keep their
-  fields as elements: Osmo's `<contact><first_name>Delphine</first_name>…`
-  is `[name=contact][>first_name=Delphine]`. Any such child will do, and a
-  member that is no element never matches.
+- `[>PATH=VALUE]` names the member that holds `VALUE` at a path of one to
+  three `/`-separated steps inside it. `>` reads XML and JSON differently:
+
+  | Form                                   | In an XML element                                                                                                                               | In a JSON record                                    |
+  | -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- |
+  | `[>CHILD=VALUE]`                       | a child element `CHILD` whose text, every text node in it with each run of whitespace collapsed to one space and none at either end, is `VALUE` | the string field `CHILD`, compared whole            |
+  | `[>A/B=VALUE]`, up to `[>A/B/C=VALUE]` | a child `A` with a child `B` of that text                                                                                                       | the string at `member.A.B`, compared whole          |
+  | `[>A@ATTR=VALUE]`, `[>A/B@ATTR=VALUE]` | a child `A` (or its child `B`) whose attribute `ATTR` is `VALUE`                                                                                | the field named `A@ATTR`: `@` is part of a JSON key |
+
+  Records that keep their fields as elements are named by a child's text:
+  Osmo's `<contact><first_name>Delphine</first_name>…` is
+  `[name=contact][>first_name=Delphine]`. A GtkBuilder `<child>` is named by
+  the id its widget carries, `[name=child][>object@id=submit_button]`, and a
+  TreeLine node by a field of its `data`,
+  `[format=BOOK][>data/Title=The Silk Roads]`. Any element on the way will
+  do; a path with more than three steps, or an empty one, is no selector;
+  and a missing step, or a value at its end that is not a string, matches
+  nothing.
+
 - Conditions can follow one another, `[name=Object][@name=Hole]`, and all must
   hold. They compare strings only, the selector is escaped like any pointer
-  segment (`~1` for `/`), and a value cannot hold `][`. A field whose key
-  begins with `@` or `>` cannot be selected by.
+  segment, so a path's `/` is `~1` inside a pointer,
+  `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, and a `/` in a key
+  cannot be a step; a value cannot hold `][`. A JSON field whose key begins
+  with `@` or `>` is selected through a path, `[>@type=Book]`.
 
 A selector must name exactly one member. When several match, or none does
 before the last segment, the check fails and says which selector matched what.
@@ -734,7 +762,7 @@ read the element's whole text instead:
 
 `member_count` counts the members of the array its pointer names: a JSON
 array, or an XML element's `children`. `matching`, a selector of one or more
-conditions as [above](#pointers-and-selectors), `[>CHILD=VALUE]` included,
+conditions as [above](#pointers-and-selectors), `[>PATH=VALUE]` included,
 counts only the members it matches, however many; without it every member
 counts. An element's children hold its text nodes too, so give `matching`
 for XML, such as `[name=entry]`. A Tellico task that adds one book to a

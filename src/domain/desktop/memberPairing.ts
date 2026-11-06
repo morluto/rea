@@ -15,7 +15,7 @@ import {
   savePositionKeys,
 } from "./positionalKeys.js";
 import {
-  childConditions,
+  childCandidates,
   condition,
   countUnspelledPairs,
   holdingCondition,
@@ -61,9 +61,11 @@ const pairsOf = (paired: readonly (Attribute & { tier: number })[]) =>
  * by itself, a name-like key, a worded value or a small integer first; then
  * two of the best `MAX_PAIRED` of those together; then a coordinate, a long
  * number or a token by itself, and an id an ODF app numbers anew on each save
- * (`isSaveNumberedId`); then a child element's text, as Osmo's record
- * by `[>first_name=Delphine]` (`childConditions`), for an element no
- * identifier names; last, an id the app generates (`isGeneratedId`), as
+ * (`isSaveNumberedId`); then what its children hold, for an element no
+ * identifier names (`childCandidates`): a child element's text, as Osmo's
+ * record by `[>first_name=Delphine]`, an identifier a child carries, as
+ * Glade's `<child>` by `[>object@id=submit_button]`, then text a child joins
+ * from its own elements; last, an id the app generates (`isGeneratedId`), as
  * Freeplane's `ID_329023692`, or a GUID in any attribute, as VYM's `uuid`,
  * after an identifier numbering the members by save position
  * (`savePositionKeys`), as Parley's `<entry id="6">`, where a child's text
@@ -97,7 +99,7 @@ const candidatesOf = (
       : [],
   );
   // An id the app generates names a kept member, but no new one another save would key alike, so it ranks last.
-  const children = childConditions(member);
+  const children = childCandidates(member);
   // An id numbering the members by save position names one after a child's text does.
   const placed =
     children.length === 0

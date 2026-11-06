@@ -69,16 +69,28 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
     expect(passing(reordered, file.suggested)).toEqual([true]);
   });
 
-  it("counts the records a new one joins, of its kind, never suggests the uid the app generated, and notes the checks only position reaches", () => {
+  it("counts the records a new one joins, of its kind, never suggests the uid the app generated, and names the new record by its kind and title, checking its other fields through that", () => {
     const book = [
       "fc11808dd9f511f181b7edd4f1920549",
       "The Silk Roads",
     ] as const;
-    const file = drafted(outline([GUNS, SPQR]), outline([GUNS, SPQR, book]));
+    const seed = outline([GUNS, SPQR]);
+    const file = drafted(seed, outline([GUNS, SPQR, book]));
 
-    expect(
-      file.suggested.filter(({ kind }) => kind === "member_count"),
-    ).toEqual([
+    const silk = "/nodes/[format=BOOK][>data~1Title=The Silk Roads]";
+    expect(file.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${silk}/children`,
+        value: [],
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: `${silk}/data/Year`,
+        value: "2015",
+      },
       {
         kind: "member_count",
         file: FILE,
@@ -93,16 +105,38 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
         equals: 3,
       },
     ]);
-    expect(
-      file.suggested.some(
-        (check) => "value" in check && check.value === book[0],
-      ),
-    ).toBe(false);
-    const positional = file.suggested
+    expect(file.notes).toEqual([]);
+    // Another run of the edit generates another uid, which sorts the new record elsewhere.
+    const rerun = outline([
+      GUNS,
+      SPQR,
+      ["0a11808dd9f511f181b7edd4f1920549", "The Silk Roads"],
+    ]);
+    expect(passing(seed, file.suggested)).toEqual([false, false, false, false]);
+    expect(passing(rerun, file.suggested)).toEqual([true, true, true, true]);
+  });
+
+  it("checks a removed record with a generated uid is gone by its kind and title, and keeps position and its note where a title another record shares names nothing", () => {
+    const book = [
+      "fc11808dd9f511f181b7edd4f1920549",
+      "The Silk Roads",
+    ] as const;
+    const removed = drafted(outline([GUNS, SPQR, book]), outline([GUNS, SPQR]));
+    const twin = drafted(
+      outline([GUNS, SPQR]),
+      outline([GUNS, SPQR, ["fc11808dd9f511f181b7edd4f1920549", "SPQR"]]),
+    );
+
+    expect(removed.suggested).toContainEqual({
+      kind: "value_absent",
+      file: FILE,
+      pointer: "/nodes/[format=BOOK][>data~1Title=The Silk Roads]",
+    });
+    const positional = twin.suggested
       .map(pointerOf)
       .filter((pointer) => pointer?.startsWith("/nodes/3"));
     expect(positional).toContain("/nodes/3/data/Title");
-    expect(file.notes).toMatchObject([
+    expect(twin.notes).toMatchObject([
       { code: "by_position", pointers: expect.arrayContaining(positional) },
     ]);
   });

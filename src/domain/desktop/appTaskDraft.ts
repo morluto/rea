@@ -7,6 +7,7 @@ import {
   jsonCounts,
   outermost,
   positionalNotes,
+  readsOwnName,
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
@@ -275,7 +276,8 @@ const valueSuggestions = (
       at !== "" &&
       value !== undefined &&
       !isTimestamp(value) &&
-      !(typeof value === "string" && isGeneratedUid(value))
+      !(typeof value === "string" && isGeneratedUid(value)) &&
+      !readsOwnName(at)
     )
       listed.push({ kind: "value_equals", file, pointer: at, value });
   }

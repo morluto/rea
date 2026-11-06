@@ -2,9 +2,10 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
 import { sameJson } from "./appTaskChecks.js";
+import { KIND_FIELD } from "./jsonRecordPairing.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { locatePointer, resolvePointer } from "./viewPointer.js";
-import { spellCondition } from "./viewSelector.js";
+import { selectorOf, spellCondition } from "./viewSelector.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -14,8 +15,25 @@ const MAX_COUNT_GUARDS = 1;
 /** Pointers a note lists. */
 const MAX_LISTED = 5;
 
-/** A field naming what kind of record a member is, as TreeLine's `format="BOOK"`. */
-const KIND_FIELD = /^(?:type|kind|format|category)$/iu;
+/**
+ * Whether a pointer reads a field its record's selector names it by, where
+ * that selector reads a path inside the record, as the `data/Title` and
+ * `format` of `/nodes/[format=BOOK][>data~1Title=The Silk Roads]`, which
+ * the selector already decides.
+ */
+export const readsOwnName = (pointer: string): boolean => {
+  const segments = pointer
+    .split("/")
+    .map((segment) => segment.replaceAll("~1", "/").replaceAll("~0", "~"));
+  return segments.some((segment, index) => {
+    const conditions = selectorOf(segment) ?? [];
+    const rest = segments.slice(index + 1).join("/");
+    return (
+      conditions.some(({ prefix }) => prefix === ">") &&
+      conditions.some(({ prefix, key }) => prefix !== "@" && key === rest)
+    );
+  });
+};
 
 const isRecord = (
   value: JsonValue | undefined,

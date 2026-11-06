@@ -1,3 +1,5 @@
+import { MAX_INSIDE_STEPS } from "./viewSelector.js";
+
 /** The verifier's XML elements, pointers and selectors, kept equal to `viewPointer`'s; it relies on `INDEX` and `_collapse_whitespace`. */
 export const PYTHON_POINTER = String.raw`def _is_element(value) -> bool:
     return (isinstance(value, dict) and isinstance(value.get("name"), str) and isinstance(value.get("attributes"), dict)
@@ -26,8 +28,8 @@ def _bracketed(token: str) -> bool:
 
 
 def _selector(token: str):
-    """A selector's conditions, [KEY=VALUE], [@KEY=VALUE] or [>KEY=VALUE] one or more times, or None when the token
-    is not one."""
+    """A selector's conditions, [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE] one or more times, or None when the token
+    is not one, or a path has an empty step or more than ${String(MAX_INSIDE_STEPS)}."""
     if not _bracketed(token):
         return None
     conditions = []
@@ -35,17 +37,44 @@ def _selector(token: str):
         key, equals, value = part.partition("=")
         prefix = key[:1] if key[:1] in ("@", ">") else ""
         name = key[len(prefix):]
-        if not equals or not name:
+        steps = name.split("/")
+        if not equals or not name or (prefix == ">" and (len(steps) > ${String(MAX_INSIDE_STEPS)} or "" in steps)):
             return None
         conditions.append((prefix, name, value))
     return conditions
 
 
-def _has_child_text(member, key: str, value: str) -> bool:
-    """Whether an element has a child element named key whose text, its whitespace collapsed, is value."""
-    return _is_element(member) and any(
-        _is_element(child) and child["name"] == key and _collapse_whitespace(_element_text(child)) == value
-        for child in member["children"])
+def _element_holds(element, steps, value: str) -> bool:
+    """Whether an element has a child element named the first step that holds value along the rest: at the last step
+    its text, whitespace collapsed, or with NAME@ATTR its attribute ATTR. Each element on the way is visited once."""
+    step, rest = steps[0], steps[1:]
+    name, at, attribute = step.partition("@") if not rest else (step, "", "")
+    for child in element["children"]:
+        if not _is_element(child) or child["name"] != name:
+            continue
+        if rest:
+            if _element_holds(child, rest, value):
+                return True
+        elif at:
+            if child["attributes"].get(attribute) == value:
+                return True
+        elif _collapse_whitespace(_element_text(child)) == value:
+            return True
+    return False
+
+
+def _holds_inside(member, path: str, value: str) -> bool:
+    """Whether a >PATH condition's path inside a member holds value: in an XML element as _element_holds reads it, in
+    a JSON record the string at those keys."""
+    steps = path.split("/")
+    if _is_element(member):
+        return _element_holds(member, steps, value)
+    found = member
+    for step in steps:
+        if not isinstance(found, dict) or step not in found:
+            return False
+        found = found[step]
+    return isinstance(found, str) and found == value
 
 
 def _selects(member, conditions) -> bool:
@@ -54,7 +83,7 @@ def _selects(member, conditions) -> bool:
         return False
     for prefix, key, value in conditions:
         if prefix == ">":
-            if not _has_child_text(member, key, value):
+            if not _holds_inside(member, key, value):
                 return False
             continue
         fields = member.get("attributes") if prefix == "@" else member

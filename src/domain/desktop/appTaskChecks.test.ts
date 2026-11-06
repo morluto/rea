@@ -292,7 +292,14 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     { checks: [{ kind: "member_count", file: "a", pointer: "x", equals: 1 }] },
     "must start with /",
   ],
-  ...["[>first_name]", "first_name=x", "[name=a]x"].map(
+  ...[
+    "[>first_name]",
+    "first_name=x",
+    "[name=a]x",
+    "[>data/info/label/x=Deep]",
+    "[>data//Title=x]",
+    "[>/Title=x]",
+  ].map(
     (matching) =>
       [
         {

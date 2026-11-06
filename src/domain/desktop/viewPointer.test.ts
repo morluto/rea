@@ -150,6 +150,59 @@ describe("locatePointer", () => {
   });
 });
 
+describe("locatePointer and memberLookup by a path inside a member", () => {
+  it("names a member by a path of up to three steps inside it: a JSON record's string, an element's descendant text or a child's attribute, alike in locatePointer and memberLookup", () => {
+    const book = (title: JsonValue, year: JsonValue = "2015") => ({
+      data: { Title: title, Year: year },
+      format: "BOOK",
+    });
+    const silk = book("The Silk Roads");
+    const spqr = book("SPQR", 2015);
+    const button = (id: string, label: string) =>
+      element("child", {}, [
+        element("object", { id }, [element("property", {}, [label])]),
+      ]);
+    const [submit, cancel] = [
+      button("submit_button", "\n Send "),
+      button("cancel_button", "Cancel"),
+    ];
+    const members: JsonValue[] = [
+      "The Silk Roads",
+      silk,
+      spqr,
+      book({ text: "SPQR" }, "1999"),
+      submit,
+      cancel,
+    ];
+    const named = (selector: string) => {
+      const located = locatePointer(
+        { members },
+        `/members/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`,
+      );
+      const looked = memberLookup(members, [selector])(selector);
+      return located.kind === "value" && located.value === looked
+        ? looked
+        : [located.kind, looked];
+    };
+
+    expect(named("[format=BOOK][>data/Title=The Silk Roads]")).toBe(silk);
+    expect(named("[>data/Year=2015]")).toBe(silk);
+    expect(named("[>data/Title/text=SPQR]")).toBe(members[3]);
+    expect(named("[>format=BOOK][>data/Title=SPQR]")).toBe(spqr);
+    expect(named("[>object@id=submit_button]")).toBe(submit);
+    expect(named("[>object/property=Send]")).toBe(submit);
+    expect(named("[name=child][>object/property=Cancel]")).toBe(cancel);
+    expect(named("[>data/Title=Missing]")).toEqual(["none", undefined]);
+    expect(named("[>object@id/property=Cancel]")).toEqual(["none", undefined]);
+    expect(named("[>object/property@id=x]")).toEqual(["none", undefined]);
+    expect(named("[>data/Title/text/x=SPQR]")).toEqual([
+      "unresolved",
+      undefined,
+    ]);
+    expect(named("[>data//Title=SPQR]")).toEqual(["unresolved", undefined]);
+  });
+});
+
 describe("pairMembers", () => {
   it("keys each member by the most general selector naming it alone, else by position", () => {
     const children = (VIEW as { root: { children: JsonValue[] } }).root

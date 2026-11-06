@@ -35,8 +35,11 @@ never runs code the agent wrote.
   `line_count` (`exact` or `contains`; `equals`, `at_least` or `at_most`),
   `value_equals` (optional numeric `tolerance`) and `value_absent` (RFC 6901
   pointer, with selectors on arrays: `[KEY=VALUE]` by a field, `[@KEY=VALUE]`
-  by an attribute, `[>CHILD=VALUE]` by a child element's text with its
-  whitespace collapsed), `text_equals` and `text_contains` (an XML element's
+  by an attribute, `[>PATH=VALUE]` by what one to three `/`-separated steps
+  inside the member hold: in XML a child element's text with its whitespace
+  collapsed, a grandchild's (`A/B`) or, ending `NAME@ATTR`, a child's
+  attribute; in JSON the string at those keys), `text_equals` and
+  `text_contains` (an XML element's
   whole text at a pointer, optional `normalize_whitespace`; see
   [XML text checks](../xml-text-checks/spec.md); with `text_attribute`, the
   values of that attribute on the element and its descendants in document

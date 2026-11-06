@@ -82,7 +82,7 @@ const checkSchema = z.discriminatedUnion("kind", [
       .string()
       .optional()
       .describe(
-        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE] conditions that a member must meet to count; every member counts without it, text nodes of an XML element's children included.",
+        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE] conditions that a member must meet to count, where PATH is up to three /-separated steps inside the member; every member counts without it, text nodes of an XML element's children included.",
       ),
     ...comparison,
   }),
@@ -223,7 +223,7 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
     check.matching !== undefined &&
     selectorOf(check.matching) === undefined
   )
-    return `matching ${JSON.stringify(check.matching)} is not a selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE]`;
+    return `matching ${JSON.stringify(check.matching)} is not a selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE], a PATH of one to three steps`;
   if (
     (check.kind === "lines_present" || check.kind === "lines_absent") &&
     new Set(check.lines).size !== check.lines.length
