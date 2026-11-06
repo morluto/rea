@@ -79,7 +79,7 @@ close_gdb_session {"session_id":"…"}
 
 ## Rizin
 
-`start_rizin_debug_session` and `rea debug-with-rizin` require an explicit `inferior_tty` on Linux. Rizin launches the target with stdout and stderr routed to that caller-selected TTY and `dbg.exitkills=false`; the target can therefore continue running and writing to the TTY after REA closes the debugger. This is a visible target output effect, and the caller is responsible for selecting a suitable terminal that remains available. Before closing, REA serializes after the active command, parses the structured `olj` descriptor list, detaches only a unique `ptrace://` descriptor, confirms its absence, reads back `dbg.exitkills=false`, and verifies `/proc/<pid>/fd/1` and `/proc/<pid>/fd/2` still identify the selected TTY by device and inode. If a previously identified inferior exits after Rizin confirms detach, REA verifies that the original process has ended instead of requiring output descriptors from an exited process. Unresolved identity or ambiguous readback keeps the Rizin session owned for retry. After output limits or a failed command interval, cleanup first waits up to 1000 ms for a fresh private NUL-delimited marker, discarding earlier frames before obtaining that new inferior readback. Synchronization never reopens user command admission. A missing marker, unavailable transport, or unknown inferior identity retains the cleanup owner. Caller cancellation keeps its exact reason and typed cancellation outcome even when cleanup remains incomplete; a successful retry resolves that retained cleanup state. Cancellation during final cleanup retains the captured observation and cleanup owner. An already observed startup or protocol failure remains primary and retains a later cancellation as a secondary failure; recovering the transport does not erase that original diagnosis. Persistent Rizin debugger sessions are unavailable outside Linux because this verification depends on `/proc`.
+`start_rizin_debug_session` and `rea debug-with-rizin` require an explicit `inferior_tty` on Linux. REA asks Rizin to launch the target with stdin, stdout and stderr routed to that caller-selected TTY and `dbg.exitkills=false`; the target can therefore continue running, reading input from the TTY and writing to it after REA closes the debugger. This is a visible target input and output effect, and the caller is responsible for selecting a suitable terminal that remains available. REA sends Rizin its commands on Rizin's own stdin, so a target left on that stream would read them. Before closing, REA serializes after the active command, parses the structured `olj` descriptor list, detaches only a unique `ptrace://` descriptor, confirms its absence, reads back `dbg.exitkills=false`, verifies `/proc/<pid>/fd/1` and `/proc/<pid>/fd/2` still identify the selected TTY by device and inode, and refuses to detach while `/proc/<pid>/fd/0` is Rizin's command stream. A target may close or replace its own stdin. If a previously identified inferior exits after Rizin confirms detach, REA verifies that the original process has ended instead of requiring output descriptors from an exited process. Unresolved identity or ambiguous readback keeps the Rizin session owned for retry. After output limits or a failed command interval, cleanup first waits up to 1000 ms for a fresh private NUL-delimited marker, discarding earlier frames before obtaining that new inferior readback. Synchronization never reopens user command admission. A missing marker, unavailable transport, or unknown inferior identity retains the cleanup owner. Caller cancellation keeps its exact reason and typed cancellation outcome even when cleanup remains incomplete; a successful retry resolves that retained cleanup state. Cancellation during final cleanup retains the captured observation and cleanup owner. An already observed startup or protocol failure remains primary and retains a later cancellation as a secondary failure; recovering the transport does not erase that original diagnosis. Persistent Rizin debugger sessions are unavailable outside Linux because this verification depends on `/proc`.
 
 Persistent command Evidence retains the caller-selected and resolved startup paths in `parameters.launch_provenance`. These paths describe launch provenance, not the current target after unrestricted commands. `rizin_debug_session_status.output_invalid_utf8` reports whether lossy frame decoding has been observed during the session. Command Evidence sets `output_invalid_utf8` only when loss was observed in frames collected for that command, including retained partial output; earlier startup or command frames do not mark later valid output as lossy.
 
@@ -123,6 +123,120 @@ rea execute-rizin-command ./program iI
 ```
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override.
+
+### Decoder and map inputs
+
+Four optional inputs select how Rizin decodes the artifact and where it maps
+it. REA passes each one to Rizin before the artifact path:
+
+| Input          | CLI option       | Rizin argument | Example              |
+| -------------- | ---------------- | -------------- | -------------------- |
+| `asm_arch`     | `--asm-arch`     | `-a`           | `arm`, `x86`, `6502` |
+| `asm_bits`     | `--asm-bits`     | `-b`           | `16` for Thumb       |
+| `asm_cpu`      | `--asm-cpu`      | `-e asm.cpu=`  | `cortexm`            |
+| `base_address` | `--base-address` | `-n -m`        | `0x08000000`         |
+
+Rizin 0.9.1 refuses `-e asm.arch=` and `-e asm.bits=` at startup, and Rizin
+0.7.4 accepts them, so REA uses `-a` and `-b`, which both accept. Rizin applies
+`-e` settings after `-a` and `-b`, so `asm_cpu` applies to the selected arch.
+
+`base_address` is the address of file offset 0, as in REA's raw-binary inputs.
+REA passes it as `-m` together with `-n`, so Rizin maps the whole file there as
+a raw image and loads no format information, such as sections, symbols or an
+entry point, even from an ELF file. Without `-n`, a Rizin format loader can
+claim a raw image and give wrong reads with no error. In Rizin 0.9.1 the AVR
+loader turns `io.va` off, so every read at the mapped address returns `0xff`.
+In Rizin 0.7.4 and 0.9.1 the BIOS loader maps the file at another address.
+A loader can also claim a raw image that you open with only `asm_*` inputs, so
+pass `base_address`, `0x0` if the image has no known address. Evidence records
+each input and the complete argument list.
+
+With `-n`, Rizin has no headers to read, so arch, bits and byte order stay at
+its defaults unless the call selects them. A Thumb image opened with only
+`base_address` decodes as plausible AArch64 on an arm64 host. Pass `asm_arch`
+and `asm_bits` with `base_address`, and for a big-endian image start the command
+with `e cfg.bigendian=true`.
+
+REA checks only the spelling. Arch and CPU names contain letters, digits, `_`,
+`.`, `+` and `-`, and start with a letter or a digit. `asm_bits` is an integer
+from 1 to 64. `base_address` is `0x` followed by 1 to 16 hexadecimal digits.
+Rizin owns the names, and its builds differ: for example, the Homebrew build of
+Rizin 0.9.1 has no `xtensa` or `riscv` plugin, while the official static Linux
+build of Rizin 0.7.4 has both. The commands `e asm.arch=?` and `e asm.cpu=?`
+list what the installed Rizin supports. To use another build, set
+`REA_RIZIN_COMMAND`. When Rizin cannot apply an arch or bits value, it uses
+another value and exits with status 0. Rizin 0.9.1 keeps its default and
+reports the value on stderr. Rizin 0.7.4 reports an unknown arch on stderr, but
+for `arm` it used 16 bits instead of 8 without a message. Both accept any
+`asm.cpu` value, and `e asm.cpu` then echoes it, so compare it with
+`e asm.cpu=?`, which lists the CPUs of the selected arch. Evidence therefore
+states that REA does not confirm the decoder that Rizin used. To check the
+decoder and the map, start the command with
+`e asm.arch; e asm.bits; e asm.cpu; e cfg.bigendian; oml`.
+
+This call reads a Cortex-M flash dump at its address, in Thumb state:
+
+```sh
+rea execute-rizin-command ./flash.bin "e asm.arch; e asm.bits; oml; pxw 8 @ 0x08000000" --asm-arch arm --asm-bits 16 --asm-cpu cortexm --base-address 0x08000000
+```
+
+Through MCP, the same call is:
+
+```json
+{
+  "path": "/firmware/flash.bin",
+  "command": "e asm.arch; e asm.bits; oml; pxw 8 @ 0x08000000",
+  "asm_arch": "arm",
+  "asm_bits": 16,
+  "asm_cpu": "cortexm",
+  "base_address": "0x08000000"
+}
+```
+
+`pxw 8` prints the initial stack pointer and the Reset vector. The Reset vector
+is a Thumb address with its low bit set. Disassemble the handler at the even
+address, for example `pd 16 @ 0x08000108` for a Reset vector of `0x08000109`.
+
+### Multi-segment ESP images
+
+An app or bootloader image of the ESP32 family (the ESP32, ESP32-S, ESP32-C,
+ESP32-H and ESP32-P series) starts with the magic byte `0xE9` and holds several
+segments. ESP8266 images use a different header, and this recipe does not
+cover them. Each segment loads at its own address, so one `base_address` cannot
+map the image. Instead, remove the default map and add one `om` map for each
+segment, in the same command:
+
+1. Find the load address and the length of each segment, and the file offset
+   of its data. The image header is 24 bytes. Each segment starts with an
+   8-byte header that holds the load address and the data length, both 32-bit
+   little-endian, and its data follows. So the data of the first segment
+   starts at file offset `0x20`, and each later segment header follows the
+   data of the segment before it. `esptool image-info` lists the same
+   segments; esptool v4 spells it `image_info --version 2`. Its `File offs`
+   column is the offset of the 8-byte segment header, so the data starts 8
+   bytes later. A padding segment carries no code or data, and you can skip
+   it.
+2. Start the command with `e io.va=true`. Reads use the maps only while
+   `io.va` is on, and a Rizin format loader can turn it off.
+3. Rizin opens the image as file descriptor 3, which `ol` shows. For each
+   segment, add this map, with `r-x` for code and `r--` for data:
+   `om 3 <load address> <length> <data offset> <permissions> <name>`. A map
+   cannot have more permissions than the opened file, which is read-only.
+4. Select the decoder with `asm_arch` and set `asm_bits` to 32. ESP32, ESP32-S2
+   and ESP32-S3 use Xtensa. The ESP32-C and ESP32-H series and ESP32-P4 use
+   RISC-V. Use the plugin name that `e asm.arch=?` lists for the installed
+   Rizin.
+
+For example, for an image with an IRAM segment of 8 bytes at `0x40080000` and
+a DRAM segment of 16 bytes at `0x3ffb0000`:
+
+```sh
+rea execute-rizin-command ./app.bin "e io.va=true; om-*; om 3 0x40080000 0x8 0x20 r-x iram0; om 3 0x3ffb0000 0x10 0x30 r-- dram0; oml; pd 4 @ 0x40080000" --asm-arch xtensa --asm-bits 32
+```
+
+`om-*` removes the maps that Rizin made when it opened the file, such as the
+default map of the whole file at address 0. The entry address is the 32-bit
+little-endian value at file offset 4.
 
 ## Cutter bridge
 

@@ -3,6 +3,10 @@ import {
   AnalysisInputError,
   type AnalysisInputIssue,
 } from "./analysisErrorCore.js";
+import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
+
+const isRootArgument = (path: readonly unknown[]): boolean =>
+  path.length === 0 || (path.length === 1 && path[0] === "input");
 
 /** Build the standard application input error while retaining schema causes and extra semantic issues. */
 export const analysisInputErrorFromIssues = (
@@ -23,7 +27,10 @@ export const analysisInputErrorFromIssues = (
         ? {}
         : { userMessage: options.userMessage }),
     },
-    [...projectInputIssues(issues, input), ...(options.additionalIssues ?? [])],
+    [
+      ...projectInputIssues(issues, input, operation),
+      ...(options.additionalIssues ?? []),
+    ],
   );
 
 /** Remove only the internal operation/input envelope from caller correction paths. */
@@ -36,7 +43,7 @@ export const analysisOperationInputErrorFromIssues = (
   new AnalysisInputError(
     operation,
     { cause },
-    projectInputIssues(issues, { operation, input }).map((issue) =>
+    projectInputIssues(issues, { operation, input }, operation).map((issue) =>
       issue.path[0] === "input"
         ? { ...issue, path: issue.path.slice(1) }
         : issue,
@@ -47,8 +54,9 @@ export const analysisOperationInputErrorFromIssues = (
 export const projectInputIssues = (
   issues: readonly z.core.$ZodIssue[],
   input: unknown,
+  operation?: string,
 ): readonly AnalysisInputIssue[] =>
-  issues.flatMap((issue) => projectIssue(issue, input));
+  issues.flatMap((issue) => projectIssue(issue, input, undefined, operation));
 
 const projectionBudgetExceeded = Symbol(
   "input issue projection budget exceeded",
@@ -59,12 +67,70 @@ export const projectInputIssuesWithinBudget = (
   issues: readonly z.core.$ZodIssue[],
   input: unknown,
   budgetBytes: number,
+  operation?: string,
 ): readonly AnalysisInputIssue[] | undefined => {
   return projectInputIssueGroupsWithinBudget(
     issues,
     input,
     budgetBytes,
+    operation,
   )?.flat();
+};
+
+/** Field diagnostics that fit a byte allowance, plus what was dropped. */
+export interface BoundedInputIssues {
+  readonly issues: readonly AnalysisInputIssue[];
+  /** Validator issues whose field diagnostics did not fit the allowance. */
+  readonly omittedIssueCount: number;
+}
+
+/**
+ * Project as many validator issues as fit, in one forward pass, and count the
+ * rest. A single pass keeps the returned group maximal: it stops exactly at the
+ * allowance instead of at a coarse fraction of the list, and a compound issue
+ * such as `unrecognized_keys` still charges every field diagnostic it expands
+ * into because the recursion goes through `projectIssue` per nested issue.
+ */
+export const projectInputIssuesBounded = (
+  issues: readonly z.core.$ZodIssue[],
+  input: unknown,
+  budgetBytes: number,
+): BoundedInputIssues => {
+  const budget = { remaining: budgetBytes };
+  const output: AnalysisInputIssue[] = [];
+  let index = 0;
+  try {
+    for (; index < issues.length; index += 1) {
+      const issue = issues[index];
+      if (issue === undefined) continue;
+      output.push(...projectIssue(issue, input, budget));
+    }
+  } catch (error) {
+    if (error !== projectionBudgetExceeded) throw error;
+    // The issue that crossed the allowance and every later one contribute at
+    // least one omitted field diagnostic each.
+    const omittedIssueCount = issues.length - index;
+    if (output.length > 0) return { issues: output, omittedIssueCount };
+    // One compound issue, such as `unrecognized_keys` naming hundreds of keys,
+    // can exceed the allowance on its own. Retain a diagnostic at its path so the
+    // caller keeps the location instead of only an omission notice.
+    const first = issues[0];
+    if (first === undefined) return { issues: output, omittedIssueCount };
+    const path = first.path.flatMap((part) =>
+      typeof part === "string" || typeof part === "number" ? [part] : [],
+    );
+    return {
+      issues: [
+        {
+          path,
+          reason: "invalid_value",
+          message: `${String(omittedIssueCount)} field diagnostics at this location were omitted because they do not fit the response budget.`,
+        },
+      ],
+      omittedIssueCount,
+    };
+  }
+  return { issues: output, omittedIssueCount: 0 };
 };
 
 /** Retain each projected issue's source through bounded SDK normalization. */
@@ -72,11 +138,13 @@ export const projectInputIssueGroupsWithinBudget = (
   issues: readonly z.core.$ZodIssue[],
   input: unknown,
   budgetBytes: number,
+  operation?: string,
 ): readonly (readonly AnalysisInputIssue[])[] | undefined => {
   const budget = { remaining: budgetBytes };
   try {
     const groups: (readonly AnalysisInputIssue[])[] = [];
-    for (const issue of issues) groups.push(projectIssue(issue, input, budget));
+    for (const issue of issues)
+      groups.push(projectIssue(issue, input, budget, operation));
     return groups;
   } catch (error) {
     if (error === projectionBudgetExceeded) return undefined;
@@ -87,6 +155,8 @@ export const projectInputIssueGroupsWithinBudget = (
 const chargeProjection = (
   issue: z.core.$ZodIssue,
   budget: { remaining: number },
+  operation?: string,
+  input?: unknown,
 ): void => {
   // Six bytes per UTF-16 code unit covers JSON escaping. The fixed allowance
   // covers the projected object, property names, scalar values and delimiters.
@@ -110,7 +180,19 @@ const chargeProjection = (
   }
   if (issue.code === "invalid_key") charge(32 * issue.issues.length);
   if (issue.code === "unrecognized_keys")
-    for (const key of issue.keys) charge(256 + pathCost + 6 * key.length);
+    for (const key of issue.keys) {
+      charge(256 + pathCost + 6 * key.length);
+      if (isRootArgument(issue.path)) {
+        const guidance = knownArgumentMistakeGuidance(operation, key);
+        const expectedAlreadyPresent =
+          guidance !== undefined &&
+          valueAtPath(input, [...issue.path, guidance.expected]) !== undefined;
+        if (guidance !== undefined && !expectedAlreadyPresent)
+          charge(
+            6 * guidance.expected.length + 6 * guidance.message.length + 32,
+          );
+      }
+    }
   if (issue.code === "invalid_value")
     for (const value of issue.values)
       charge(typeof value === "string" ? 6 * value.length + 32 : 32);
@@ -130,12 +212,39 @@ const nestedIssue = (
   return { ...child, path: [...parent.path, ...child.path] };
 };
 
+const projectUnrecognizedKeyIssues = (
+  keys: readonly string[],
+  path: readonly (string | number)[],
+  input: unknown,
+  operation?: string,
+): readonly AnalysisInputIssue[] =>
+  keys.map((key) => {
+    const guidance = isRootArgument(path)
+      ? knownArgumentMistakeGuidance(operation, key)
+      : undefined;
+    const expectedAlreadyPresent =
+      guidance !== undefined &&
+      valueAtPath(input, [...path, guidance.expected]) !== undefined;
+    const effectiveGuidance = expectedAlreadyPresent ? undefined : guidance;
+    return {
+      path: [...path, key],
+      reason: "unknown_argument" as const,
+      ...(effectiveGuidance === undefined
+        ? {}
+        : {
+            expected: effectiveGuidance.expected,
+            message: effectiveGuidance.message,
+          }),
+    };
+  });
+
 const projectIssue = (
   issue: z.core.$ZodIssue,
   input: unknown,
   budget?: { remaining: number },
+  operation?: string,
 ): readonly AnalysisInputIssue[] => {
-  if (budget !== undefined) chargeProjection(issue, budget);
+  if (budget !== undefined) chargeProjection(issue, budget, operation, input);
   const path = issue.path.flatMap((part) =>
     typeof part === "string" || typeof part === "number" ? [part] : [],
   );
@@ -160,20 +269,27 @@ const projectIssue = (
     return uniqueIssues(
       issue.errors.flatMap((branch) =>
         branch.flatMap((branchIssue) =>
-          projectIssue(nestedIssue(issue, branchIssue, budget), input, budget),
+          projectIssue(
+            nestedIssue(issue, branchIssue, budget),
+            input,
+            budget,
+            operation,
+          ),
         ),
       ),
     );
   }
   if (issue.code === "invalid_key")
     return issue.issues.flatMap((keyIssue) =>
-      projectIssue(nestedIssue(issue, keyIssue, budget), input, budget),
+      projectIssue(
+        nestedIssue(issue, keyIssue, budget),
+        input,
+        budget,
+        operation,
+      ),
     );
   if (issue.code === "unrecognized_keys")
-    return issue.keys.map((key) => ({
-      path: [...path, key],
-      reason: "unknown_argument" as const,
-    }));
+    return projectUnrecognizedKeyIssues(issue.keys, path, input, operation);
   if (issue.code === "invalid_type")
     return [
       {
@@ -223,10 +339,7 @@ const uniqueIssues = (
   ...new Map(issues.map((issue) => [JSON.stringify(issue), issue])).values(),
 ];
 
-const valueAtPath = (
-  input: unknown,
-  path: readonly (string | number)[],
-): unknown => {
+const valueAtPath = (input: unknown, path: readonly PropertyKey[]): unknown => {
   let current = input;
   for (const part of path) {
     if (typeof current !== "object" || current === null) return undefined;

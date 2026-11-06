@@ -4,6 +4,7 @@ import {
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
@@ -119,6 +120,7 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { processScenarioPlanSchema } from "../domain/process/processScenario.js";
 import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
@@ -236,7 +238,10 @@ export const officialOutputSchemas = {
       references: z.array(referenceEdgeSchema),
     }),
   ),
-  procedure_pseudo_code: evidenceResultOf(nullableText),
+  procedure_pseudo_code: analysisDetailOutputSchemaOf(
+    nullableText,
+    procedurePseudocodeSummaryViewResultSchema,
+  ),
   resolve_containing_procedure: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,
@@ -554,7 +559,13 @@ export const sessionOutputSchemas = {
       total: z.int().min(0),
     }),
   ),
-  capture_process_scenario: evidenceResultOf(processCaptureSchema),
+  capture_process_scenario: evidenceResultOf(
+    z
+      .union([processCaptureSchema, processScenarioPlanSchema])
+      .describe(
+        `A capture, or the plan a dry run produced without launching a process. ${processCaptureSchema.description ?? ""}`,
+      ),
+  ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),

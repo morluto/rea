@@ -1,4 +1,4 @@
-import { arch } from "node:os";
+import { arch, hostname, userInfo } from "node:os";
 import { dirname } from "node:path";
 
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
@@ -83,6 +83,21 @@ export interface DesktopCaptureErrorOutput extends AnalysisErrorProjection {
 }
 
 const unique = (paths: readonly string[]) => [...new Set(paths)];
+
+/** The host's name and the user's, each left out when the system cannot say, as for a user with no passwd entry. */
+const hostIdentity = (): { hostname?: string; user?: string } => {
+  const name = hostname();
+  let user: string | undefined;
+  try {
+    user = userInfo().username;
+  } catch {
+    user = undefined;
+  }
+  return {
+    ...(name.length === 0 ? {} : { hostname: name }),
+    ...(user === undefined || user.length === 0 ? {} : { user }),
+  };
+};
 
 const limitationsFor = (
   session: DesktopSession,
@@ -273,6 +288,7 @@ const recordCapture = async (
       architecture: arch(),
       display: admitted.display,
       home,
+      ...hostIdentity(),
     },
     application,
     session,
