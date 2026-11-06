@@ -90,6 +90,8 @@ const aptRepositorySchema = z.strictObject({
   signing_key: aptSigningKeySchema.nullable(),
   /** Why no signing key was verified, or why the repository was not checked. */
   signing_key_reason: z.string().optional(),
+  /** Installable library packages, and the executable's package, that the Ubuntu 24.04 archive does not offer and this repository's package files list; absent from captures written before it was recorded. */
+  supplies: z.array(z.string()).optional(),
 });
 export type AptRepository = z.infer<typeof aptRepositorySchema>;
 
@@ -110,7 +112,12 @@ export type DesktopPackageFile = z.infer<typeof packageFileSchema>;
 
 const packageSchema = z.strictObject({
   kind: z.enum(["deb", "snap", "flatpak", "appimage", "unknown"]),
+  /** A Debian package is the launched desktop entry's owner, or else the executable's. */
   name: z.string().nullable(),
+  /** The executable's Debian package when another package owns the desktop entry; absent otherwise. */
+  executable_package: z.string().optional(),
+  /** Why the computer cannot install the program the desktop entry runs: `executable_package` is not offered, or, without it, no package owns the program; absent when it can. */
+  executable_package_reason: z.string().optional(),
   version: z.string().nullable(),
   architecture: z.string().nullable(),
   /** Package sources listing the installed version; empty for local installs. */
@@ -224,6 +231,9 @@ export const desktopApplicationCaptureSchema = z.strictObject({
     architecture: z.string().min(1),
     display: z.string().min(1),
     home: z.string().min(1),
+    /** The host's name and the user's, which captured state can hold; absent from captures written before they were recorded, or when the system could not say. */
+    hostname: z.string().min(1).optional(),
+    user: z.string().min(1).optional(),
   }),
   application: desktopApplicationInventorySchema,
   session: desktopSessionSchema,

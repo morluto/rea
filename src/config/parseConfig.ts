@@ -119,6 +119,9 @@ export const parseConfig = (
     ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
+    ...(env.REA_MCP_TOOL_CATALOG_PROFILE === undefined
+      ? {}
+      : { mcpToolCatalogProfile: env.REA_MCP_TOOL_CATALOG_PROFILE }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
