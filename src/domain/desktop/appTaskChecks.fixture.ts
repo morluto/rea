@@ -735,15 +735,6 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     {
       kind: "text_contains",
       file: "Documents/cut.xml",
-      pointer: "/root",
-      value: "kept",
-    },
-    true,
-  ],
-  [
-    {
-      kind: "text_contains",
-      file: "Documents/cut.xml",
       pointer: "/root/children/[name=p]",
       value: "x",
     },
@@ -833,6 +824,15 @@ const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
       file: "Documents/cut.xml",
       pointer: "/root",
       value: "gone",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "kept",
     },
     false,
   ],

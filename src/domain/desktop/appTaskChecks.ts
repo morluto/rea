@@ -396,12 +396,10 @@ const textVerdict = (
     return fail(
       `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
     );
-  // A text node is whole. An element's text in a cut view may run on past the
-  // cut, so it equals no value there, and a value it lacks may lie in the cut.
-  const cut = typeof found !== "string" && truncated;
-  if (cut && check.kind === "text_equals") return undecided(check.file);
-  const verdict = comparedText(check, at, elementText(found));
-  return verdict.passed ? verdict : notFound(verdict.description, cut);
+  // A text node is whole. An element's text in a cut view may lack what the cut
+  // dropped from its middle, so its kept runs can read as text it never had.
+  if (typeof found !== "string" && truncated) return undecided(check.file);
+  return comparedText(check, at, elementText(found));
 };
 
 /** A table's columns and rows; a table the view lacks has none, unless the view left tables out. */

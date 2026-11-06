@@ -139,10 +139,12 @@ lie in what its view cut, is `undecided` in its result: it shows nothing
 about the task. That covers a line `lines_present` misses in a text view cut
 at 5,000 lines, a row `row_present` misses in a table whose view keeps only
 its first rows, a `value_equals` or text check pointer that names nothing
-in a truncated view or past a cut zip listing, a `text_contains` value the
-cut element's text lacks, and the absence checks, counts and `text_equals`
-of an element on a cut view. A check that passes on what the view kept stays
-decided, and so does a value found there that differs from the one expected.
+in a truncated view or past a cut zip listing, the absence checks and counts
+on a cut view, and `text_equals` or `text_contains` of an element on one,
+even where the element's kept text holds the value, since the cut may have
+dropped text from between its runs. Any other check that passes on what the
+view kept stays decided, and so does a value found there that differs from
+the one expected.
 The result's `passed` and description are the exported verifier's, which has
 no undecided results. A stage that only undecided checks would settle, such
 as a near miss whose one failing check could not read its file, files nothing

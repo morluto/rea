@@ -138,9 +138,11 @@ The rules both evaluators follow:
   the verifier, and JavaScript and Python read some patterns differently.
 - A check decided by what a view leaves out (`lines_absent`, `value_absent`,
   `row_absent`, the counts, `value_equals` of a whole object or array, and
-  `text_equals` of an element) fails when that view is truncated; a check
-  satisfied by what the view holds, such as `text_contains` finding its value
-  in what an element's view kept, is decided on it.
+  the text checks of an element) fails when that view is truncated; a check
+  satisfied by what the view holds is decided on it. An element's text is not:
+  the reader may have dropped text from between the runs it kept, so
+  `text_contains` fails on a truncated view even where the kept runs hold its
+  value. A text node or attribute value is whole, and decided.
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a file that is text
