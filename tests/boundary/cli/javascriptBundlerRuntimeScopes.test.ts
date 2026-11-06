@@ -26,16 +26,17 @@ const runtimeSource = (
 const appA = runtimeSource("webpackChunkAppA", "a");
 const appB = runtimeSource("webpackChunkAppB", "b");
 
-cliTest(
-  "retains Webpack Electron facts beside a large unrelated object union",
-  async ({ cli }) => {
-    const root = await createTestTempDirectory("rea-webpack-loader-union-");
-    const assignments = Array.from(
-      { length: 520 },
-      () => "if(flag)box={};",
-    ).join("");
-    await writeFixtureFiles(root, {
-      "main.cjs": `(()=>{
+for (const includesLoader of [false, true]) {
+  cliTest(
+    `preserves only proven Webpack Electron facts (conditional loader=${includesLoader})`,
+    async ({ cli }) => {
+      const root = await createTestTempDirectory("rea-webpack-loader-union-");
+      const assignments = Array.from(
+        { length: 520 },
+        () => `if(flag)box=${includesLoader ? "flag?load:{}" : "{}"};`,
+      ).join("");
+      await writeFixtureFiles(root, {
+        "main.cjs": `(()=>{
         var modules={
           1:module=>{module.exports=require("electron")},
           2:(module,exports,load)=>{
@@ -52,20 +53,24 @@ cliTest(
         load.n=value=>value&&value.__esModule?()=>value.default:()=>value;
         let box={};${assignments}box.n=()=>0;load(2);
       })();`,
-    });
-    const output = await cli.run({
-      arguments: ["analyze-javascript-application", root, "--json"],
-    });
-    expect(output.exitCode).toBe(0);
-    const result = javascriptApplicationAnalysisResultSchema.parse(
-      parseEvidence(output.json).normalized_result,
-    );
-    expect(result.summary).toMatchObject({
-      browser_windows: 1,
-      ipc: { operations: 1, main_handlers: 1 },
-    });
-  },
-);
+      });
+      const output = await cli.run({
+        arguments: ["analyze-javascript-application", root, "--json"],
+      });
+      expect(output.exitCode).toBe(0);
+      const result = javascriptApplicationAnalysisResultSchema.parse(
+        parseEvidence(output.json).normalized_result,
+      );
+      expect(result.summary).toMatchObject({
+        browser_windows: includesLoader ? 0 : 1,
+        ipc: {
+          operations: includesLoader ? 0 : 1,
+          main_handlers: includesLoader ? 0 : 1,
+        },
+      });
+    },
+  );
+}
 
 cliTest(
   "keeps source-derived runtime, module and chunk tuples collision-free",

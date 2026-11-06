@@ -6,6 +6,7 @@ import { proveJavaScriptBootstrapIntegrity } from "./javascriptBootstrapIntegrit
 import {
   semanticMemberChain,
   semanticStaticPropertyKey,
+  readExactJavaScriptLiteral,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { collectJavaScriptIdentityWritesSteps } from "./javascriptElectronMemberWrites.js";
@@ -159,11 +160,14 @@ const canonicalWebpackInteropBindings = (
   // The shared identity-write owner covers assignment, delete, destructuring,
   // and Object/Reflect mutators; any write that may select `n` counts.
   const writes = new Set<t.Node>();
+  const interop = createSemanticModuleInterop(state);
+  const excludesLoader = (node: t.Node): boolean =>
+    interop.isFreshObject(node) || readExactJavaScriptLiteral(node).found;
   const loaderMayOwnReference = (root: t.Node): boolean => {
     const first = unwrapJavaScriptExpression(root).node;
-    if (!t.isIdentifier(first)) return false;
-    // Only identifiers extend this alias graph. Terminal expressions cannot
-    // select the loader, so do not enqueue or charge them as selector states.
+    if (!t.isIdentifier(first)) return !excludesLoader(first);
+    // Only proven separate values are terminals. An unsupported expression
+    // might return the loader, so preserve that uncertainty instead of dropping it.
     const pending = [first];
     const seen = new Set<t.Identifier>();
     while (pending.length > 0) {
@@ -183,14 +187,15 @@ const canonicalWebpackInteropBindings = (
         selected.referenceInitializers,
       ])
         for (const source of initializers) {
-          if (source.projection.length !== 0) continue;
+          // A fresh container does not establish the selected property's value.
+          if (source.projection.length !== 0) return true;
           const next = unwrapJavaScriptExpression(source.node).node;
           if (t.isIdentifier(next)) pending.push(next);
+          else if (!excludesLoader(next)) return true;
         }
     }
     return false;
   };
-  const interop = createSemanticModuleInterop(state);
   completeSemanticSteps(
     collectJavaScriptIdentityWritesSteps(
       state.program,
