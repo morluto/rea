@@ -10,6 +10,7 @@ import {
 } from "../../../src/domain/desktop/appExportPython.js";
 import {
   detectStateFormat,
+  keyfileView,
   isJsonText,
   jsonView,
   textualView,
@@ -396,4 +397,25 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
   );
 
   expect(JSON.parse(cells)).toEqual(["Infinity", "-Infinity", "-0", 0, 1.5]);
+});
+
+it("keeps the same keyfile whitespace as the retained state view", async () => {
+  const inputs = [
+    "[ui]\nsuffix=hello \nunicode=\u00a0hello\u00a0\npadded=   hello\n",
+    "[ui]\r\nsuffix=hello  \r\nunicode=\u00a0hello\u00a0\u00a0\r\npadded=\thello\r\n",
+  ];
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}${PYTHON_HELPERS}
+print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["groups"] for text in json.load(sys.stdin)]))
+`;
+  const root = await createTestTempDirectory("rea-keyfile-python-");
+  const script = join(root, "fixture.py");
+  await writeFile(script, program, "utf8");
+  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
+    input: JSON.stringify(inputs),
+    encoding: "utf8",
+  });
+  expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });
