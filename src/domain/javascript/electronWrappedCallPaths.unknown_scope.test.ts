@@ -137,6 +137,22 @@ describe("later initializer loader proof", () => {
     expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
   });
 
+  it("keeps the unknown when a late loader reads a changed import.meta member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      import.meta.load = __non_webpack_require__;
+      const name = "electron";
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => import.meta.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
   it("keeps the unknown when a late loader alias resolves through two bindings", () => {
     const result = analyzeJavaScriptStaticSource(`
       function register() {

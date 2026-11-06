@@ -27,6 +27,7 @@ import {
   moduleFactory,
   modulePropertyName,
 } from "./javascriptStaticAnalysisHelpers.js";
+import { isUnmodifiedImportMetaUrl } from "./javascriptSemanticGlobalReference.js";
 import {
   completeSemanticSteps,
   traverseJavaScriptAst,
@@ -1180,7 +1181,8 @@ export class JavaScriptSymbolicBindings {
         }
         const literalMemberProof =
           t.isMemberExpression(child) || t.isOptionalMemberExpression(child)
-            ? this.#isLoaderFreeLiteralMember(child, 0)
+            ? (this.#isLoaderFreeLiteralMember(child, 0) ??
+              this.#isLoaderFreeImportMetaMember(child))
             : undefined;
         if (
           (t.isIdentifier(child) &&
@@ -1364,6 +1366,19 @@ export class JavaScriptSymbolicBindings {
           !this.#prototypeMutationOwners.has(owner) &&
           !this.#prototypeMutationOwners.has("Object")))
     );
+  }
+
+  #isLoaderFreeImportMetaMember(
+    node: t.MemberExpression | t.OptionalMemberExpression,
+  ): boolean | undefined {
+    const object = unwrapJavaScriptExpression(node.object).node;
+    if (
+      !t.isMetaProperty(object) ||
+      object.meta.name !== "import" ||
+      object.property.name !== "meta"
+    )
+      return undefined;
+    return isUnmodifiedImportMetaUrl(node, this.state);
   }
 
   #readBoundary(
