@@ -110,6 +110,23 @@ it.each(["elf", "pe"] as const)(
   },
 );
 
+it.each([
+  ["\\", [{ hash: RUSTC_HASH, file_offset: 2048 }]],
+  ["-", undefined],
+] as const)(
+  "reads a rustc hash followed by %s only when it is a path separator",
+  (separator, hashes) => {
+    // Windows builds store /rustc/<hash>\library\...; the fixture path is at 2048.
+    const bytes = createRustImage({ format: "pe" });
+    bytes.write(
+      separator,
+      2048 + "/rustc/".length + RUSTC_HASH.length,
+      "latin1",
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit?.hashes).toEqual(hashes);
+  },
+);
+
 it("reads a Mach-O __DATA,.dep-v0 section", () => {
   const image = readRustBinaryImage(createRustImage({ format: "macho" }));
   expect(image).toMatchObject({

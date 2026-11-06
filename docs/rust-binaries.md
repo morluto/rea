@@ -129,7 +129,9 @@ separately from its type and flags, and
 REA preserves known empty names separately from unavailable names; an unavailable
 name table still leaves `.dep-v0` presence unknown.
 The hash is not a claim that that compiler produced the binary. Several
-distinct hashes leave a single commit unknown.
+distinct hashes leave a single commit unknown. Windows builds join the rest of
+the path with a backslash, as in `/rustc/<40-hex>\library\core`, and that form
+counts too.
 
 ## Limits and failures
 
