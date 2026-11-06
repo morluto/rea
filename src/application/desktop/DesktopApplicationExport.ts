@@ -1,7 +1,5 @@
-import { createHash } from "node:crypto";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Readable } from "node:stream";
 
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
 import {
@@ -25,18 +23,23 @@ import {
   renderSmokeTask,
   type DesktopAppExportPlan,
   type HomePathCollision,
+  type SeedScrubReport,
 } from "../../domain/desktop/appExport.js";
 import {
   INSTALL_SCRIPT,
   electronLaunchArguments,
-  installLimitations,
 } from "../../domain/desktop/appExportInstall.js";
+import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   desktopApplicationStateSchema,
+  versionAt,
   type DesktopApplicationState,
 } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
+import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
+import { scrubDconf } from "../../domain/desktop/seedScrub.js";
+import { isTextualFormat } from "../../domain/desktop/stateFormats.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -52,18 +55,20 @@ import {
 import {
   admitApplication,
   exportEnvironmentName,
-  refuse,
 } from "./DesktopExportInstall.js";
 import {
-  withRetainedContent,
-  type RetainedContent,
-} from "./DesktopRetainedContent.js";
+  retainedCopies,
+  shippedSeedViews,
+  writeFiles,
+  type SeedVersion,
+} from "./DesktopExportFiles.js";
+import { withRetainedContent } from "./DesktopRetainedContent.js";
+import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
 const SEED_MAX_BYTES = 1024 * 1024 * 1024;
-const TEXT_FORMATS = new Set(["text", "json", "keyfile", "xml"]);
 
 /** What the caller asked to export, after CLI parsing. */
 export interface DesktopExportRequest {
@@ -74,6 +79,10 @@ export interface DesktopExportRequest {
   readonly tasks: readonly string[];
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
+  /** The checkpoint the seed is taken at; the baseline when omitted. */
+  readonly seedCheckpoint?: string | undefined;
+  /** The checkpoint a task's end state is read at; the last when omitted. */
+  readonly endCheckpoint?: string | undefined;
 }
 
 /** What the export wrote. */
@@ -81,9 +90,14 @@ export interface DesktopExportResult {
   readonly directory: string;
   readonly environment: string;
   readonly framework_version: string;
+  readonly checkpoints: { readonly seed: string; readonly end: string };
   readonly paths: readonly string[];
   readonly seed_files: readonly string[];
   readonly unseeded_files: readonly string[];
+  /** Seed files rewritten to remove the capture host's name and user. */
+  readonly scrubbed_files: readonly string[];
+  /** Seed files that still hold them, in bytes the export does not rewrite or in their name. */
+  readonly unscrubbed_files: readonly string[];
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
@@ -95,29 +109,22 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The application's dconf groups at the baseline, as a dconf key file. */
-const baselineDconf = (
+/** The application's dconf groups at the seed, as a dconf key file with the identity scrubbed from its strings. */
+const seedDconf = (
   state: DesktopApplicationState,
-): { text: string; groups: number } => {
+  seed: number,
+  identity: HostIdentity,
+): { text: string; groups: number; holdsIdentity: boolean } => {
   const database = state.paths.find(
     (path) => path.format === "dconf" && path.role === "application_state",
   );
-  const view = database?.versions.find((version) => version.present)?.view;
-  if (
-    database?.versions[0]?.present !== true ||
-    !isRecord(view) ||
-    !isRecord(view.groups)
-  )
-    return { text: "", groups: 0 };
-  const lines: string[] = [];
-  for (const [group, keys] of Object.entries(view.groups)) {
-    if (!isRecord(keys)) continue;
-    lines.push(`[${group}]`);
-    for (const [key, value] of Object.entries(keys))
-      if (typeof value === "string") lines.push(`${key}=${value}`);
-    lines.push("");
-  }
-  return { text: lines.join("\n"), groups: Object.keys(view.groups).length };
+  const version =
+    database === undefined ? undefined : versionAt(database, seed);
+  const view = version?.view;
+  if (version?.present !== true || !isRecord(view) || !isRecord(view.groups))
+    return { text: "", groups: 0, holdsIdentity: false };
+  const groups = Object.keys(view.groups).length;
+  return { ...scrubDconf(view.groups, identity), groups };
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
@@ -126,20 +133,22 @@ type FailedRelease = Extract<
   { readonly kind: "failed" }
 >;
 
-/** Files under the owned paths that existed before the capture without retained bytes, in the state view or omitted. */
+/** Files under the owned paths that existed at the seed without retained bytes, in the state view or omitted. */
 const unseededFiles = (
   capture: DesktopApplicationCapture,
   homePath: (path: string) => string | null,
   files: ReadonlyMap<string, StatePath>,
-  paths: readonly string[],
+  { paths, seed }: { readonly paths: readonly string[]; readonly seed: number },
 ): readonly string[] => {
   const listed = [...files]
-    .filter(
-      ([home, path]) =>
+    .filter(([home, path]) => {
+      const version = versionAt(path, seed);
+      return (
         isWithinAny(home, paths) &&
-        path.versions[0]?.present === true &&
-        path.versions[0].sha256 === null,
-    )
+        version?.present === true &&
+        version.sha256 === null
+      );
+    })
     .map(([home]) => home);
   const omitted = capture.state.omitted_content
     .map(({ path }) => homePath(path))
@@ -150,18 +159,23 @@ const unseededFiles = (
   return [...new Set([...listed, ...omitted])].sort();
 };
 
-/** Decide the bundle from the capture and its state view, with each seed's digest. */
+/** Decide the bundle from the capture and its state view at the seed, with each seed's digest. */
 const planExport = (
   request: DesktopExportRequest,
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
-  evidenceId: string,
+  context: {
+    readonly evidenceId: string;
+    readonly seed: number;
+    readonly identity: HostIdentity;
+  },
 ): {
   readonly plan: DesktopAppExportPlan;
-  readonly seeds: ReadonlyMap<string, string>;
+  readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly limitations: readonly string[];
   readonly collisions: readonly HomePathCollision[];
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly dconf: { readonly groups: number; readonly holdsIdentity: boolean };
 } => {
   const { application, host } = capture;
   const source = exportEnvironmentName(capture, request.name);
@@ -175,14 +189,19 @@ const planExport = (
     capture,
     state,
   );
-  const seeds = new Map<string, string>();
+  const { text: dconf, ...dconfScrub } = seedDconf(
+    state,
+    context.seed,
+    context.identity,
+  );
+  const seeds = new Map<string, SeedVersion>();
   const textSeeds: string[] = [];
   for (const [home, path] of files) {
-    const baseline = path.versions[0];
-    if (!isWithinAny(home, paths) || baseline?.present !== true) continue;
-    if (baseline.sha256 === null) continue;
-    seeds.set(home, baseline.sha256);
-    if (TEXT_FORMATS.has(baseline.format ?? "")) textSeeds.push(home);
+    const version = versionAt(path, context.seed);
+    if (!isWithinAny(home, paths) || version?.present !== true) continue;
+    if (version.sha256 === null) continue;
+    seeds.set(home, { sha256: version.sha256, format: version.format });
+    if (isTextualFormat(version.format)) textSeeds.push(home);
   }
   const plan: DesktopAppExportPlan = {
     name: source,
@@ -195,6 +214,9 @@ const planExport = (
     aptSources: install.sources,
     architectures: install.architectures,
     packageFile: install.packageFile,
+    ...(install.executablePackage === undefined
+      ? {}
+      : { executablePackage: install.executablePackage }),
     electron,
     command: launchCommand(
       electronLaunchArguments(application.argv, electron),
@@ -204,23 +226,27 @@ const planExport = (
     windowClass,
     paths,
     capturedHome: host.home,
+    seedCheckpoint: state.capture.checkpoints[context.seed] ?? "baseline",
     seedFiles: [...seeds.keys()].sort(),
     textSeeds: textSeeds.sort(),
-    unseededFiles: unseededFiles(capture, homePath, files, paths),
-    dconf: baselineDconf(state).text,
-    captureEvidenceId: evidenceId,
+    unseededFiles: unseededFiles(capture, homePath, files, {
+      paths,
+      seed: context.seed,
+    }),
+    dconf,
+    captureEvidenceId: context.evidenceId,
   };
   const limitations = installLimitations(
     install,
     application.package,
     electron,
   );
-  return { plan, seeds, limitations, collisions, files };
+  return { plan, seeds, limitations, collisions, files, dconf: dconfScrub };
 };
 
 const EXPORT_LIMITATIONS = [
-  "The seed is the user's real state before the capture; keep the bundle local.",
-  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the captured home path respelled.",
+  "The seed is the user's real state at the seed checkpoint; keep the bundle local.",
+  "Binary state files are seeded as captured; only text files, UTF-8 or UTF-16 with a byte-order mark, have the capture host's name, user@host and home path replaced.",
 ];
 
 /**
@@ -275,78 +301,76 @@ const writeBundle = async (
   return undefined;
 };
 
-/** A bundle file copied from retained content: a seed or an apt key. */
-interface RetainedCopy {
-  readonly path: string;
-  readonly digest: string;
-  readonly name: string;
-}
-
-/** The generated files and the retained files copied after them. */
-interface ExportBundle {
-  readonly generated: readonly {
-    readonly path: string;
-    readonly bytes: Buffer;
-  }[];
-  readonly copies: readonly RetainedCopy[];
-}
-
-const seedPath = (plan: DesktopAppExportPlan, seed: string) =>
-  `envs/${plan.name}/seed/${seed}`;
-
-/** Each seed by its home path, then each distinct apt key in the environment folder. */
-const retainedCopies = (
+/** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
+const bundleText = (
   plan: DesktopAppExportPlan,
-  seeds: ReadonlyMap<string, string>,
-): readonly RetainedCopy[] => [
-  ...[...seeds].map(([seed, digest]) => ({
-    path: seedPath(plan, seed),
-    digest,
-    name: `~/${seed}`,
-  })),
-  ...[
-    ...new Map(
-      plan.aptSources.map((source) => [source.keyFile, source.keySha256]),
-    ),
-  ].map(([keyFile, digest]) => ({
-    path: `envs/${plan.name}/${keyFile}`,
-    digest,
-    name: `the apt key ${keyFile}`,
-  })),
-];
+  admitted: AdmittedTask | undefined,
+  dconfHoldsIdentity: boolean,
+) => {
+  const environment = `envs/${plan.name}`;
+  const text = (path: string, content: string, holdsIdentity = false) => ({
+    path,
+    bytes: Buffer.from(content),
+    holdsIdentity,
+  });
+  return {
+    readme: (scrub: SeedScrubReport) =>
+      text("README.md", renderReadme(plan, admitted?.readme, scrub)),
+    generated: [
+      text(`${environment}/env.toml`, renderEnvToml(plan)),
+      text(
+        `${environment}/${appModuleFile(plan.name)}`,
+        renderAppClass(plan),
+        dconfHoldsIdentity,
+      ),
+      text(`${environment}/SKILL.md`, renderSkill(plan)),
+      ...(plan.packageFile === null
+        ? []
+        : [
+            text(
+              `${environment}/${INSTALL_SCRIPT}`,
+              renderInstallScript(plan.packageFile),
+            ),
+          ]),
+      text("tasks/smoke.json", renderSmokeTask(plan)),
+      ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
+    ],
+  };
+};
 
-/** Write the generated files, then each retained file as it is read, so one at a time is in memory. */
-const writeFiles = async (
-  tree: SafeOutputTree,
-  content: RetainedContent,
-  bundle: ExportBundle,
-  signal: AbortSignal | undefined,
-): Promise<void> => {
-  for (const file of bundle.generated) {
-    const sha256 = createHash("sha256").update(file.bytes).digest("hex");
-    await tree.write(
-      file.path,
-      Readable.from([file.bytes]),
-      { bytes: file.bytes.length, sha256 },
-      signal,
-    );
-  }
-  for (const copy of bundle.copies) {
-    signal?.throwIfAborted();
-    const bytes = await content.read(copy.digest, signal);
-    if (!bytes.ok)
-      throw refuse(
-        `The retained content of ${copy.name} ${bytes.error}.`,
-        "capture",
-        "Capture the application again, leaving a seed file out of its state paths if it cannot be retained.",
-      );
-    await tree.write(
-      copy.path,
-      Readable.from([bytes.value]),
-      { bytes: bytes.value.length, sha256: copy.digest },
-      signal,
-    );
-  }
+const exportLimitations = (
+  capture: DesktopApplicationCapture,
+  plan: DesktopAppExportPlan,
+  facts: {
+    readonly install: readonly string[];
+    readonly collisions: readonly HomePathCollision[];
+    readonly identity: HostIdentity;
+  },
+): string[] => {
+  const opened = capture.state.unretained_opened_directories;
+  return [
+    ...EXPORT_LIMITATIONS,
+    ...facts.install,
+    ...(plan.unseededFiles.length === 0
+      ? []
+      : [
+          `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
+        ]),
+    ...(facts.identity.hostname === null || facts.identity.user === null
+      ? [
+          "The capture does not record the host's name and user, so only the captured home is removed from the seed; capture again to remove them too.",
+        ]
+      : []),
+    ...(opened.length === 0
+      ? []
+      : [
+          `The application held files open in ${opened.join(", ")}, whose starting content the capture did not retain, so nothing there is seeded.`,
+        ]),
+    ...facts.collisions.map(
+      ({ home, kept, dropped }) =>
+        `${dropped} and ${kept} both map to ~/${home}; the export uses ${kept} and leaves out ${dropped}.`,
+    ),
+  ];
 };
 
 const runExport = async (
@@ -367,77 +391,71 @@ const runExport = async (
   const state = desktopApplicationStateSchema.parse(
     stateEvidence.normalized_result,
   );
-  const { plan, seeds, collisions, files, ...install } = planExport(
+  const { checkpoints } = state.capture;
+  const ends = selectStateEnds(
+    checkpoints,
+    { seed: request.seedCheckpoint, end: request.endCheckpoint },
+    OPERATION,
+  );
+  const { home, hostname, user } = capture.host;
+  const identity = { home, hostname: hostname ?? null, user: user ?? null };
+  const { plan, seeds, collisions, files, dconf, ...install } = planExport(
     request,
     capture,
     state,
-    evidence.evidence_id,
-  );
-  const admitted = await admitDesktopTask(
-    request.tasks,
-    { ...plan, files },
-    signal,
+    { evidenceId: evidence.evidence_id, seed: ends.seed, identity },
   );
   const copies = retainedCopies(plan, seeds);
-  const environment = `envs/${plan.name}`;
-  const text = (path: string, content: string) => ({
-    path,
-    bytes: Buffer.from(content),
-  });
-  const generated = [
-    text("README.md", renderReadme(plan, admitted?.readme)),
-    text(`${environment}/env.toml`, renderEnvToml(plan)),
-    text(`${environment}/${appModuleFile(plan.name)}`, renderAppClass(plan)),
-    text(`${environment}/SKILL.md`, renderSkill(plan)),
-    ...(plan.packageFile === null
-      ? []
-      : [
-          text(
-            `${environment}/${INSTALL_SCRIPT}`,
-            renderInstallScript(plan.packageFile),
-          ),
-        ]),
-    text("tasks/smoke.json", renderSmokeTask(plan)),
-    ...(admitted?.files ?? []).map((file) => text(file.path, file.content)),
-  ];
+  // A task's seed checks read the seeds as the bundle ships them, scrubbed.
+  const seedViews =
+    request.tasks.length === 0
+      ? new Map()
+      : await withRetainedContent(
+          request.capture,
+          (content) => shippedSeedViews(content, copies, identity, signal),
+          SEED_MAX_BYTES,
+        );
+  const admitted = await admitDesktopTask(
+    request.tasks,
+    { ...plan, files, identity, ends, seedViews },
+    signal,
+  );
+  const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
+  let scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] };
   const unclosed = await withRetainedContent(
     request.capture,
     (content) =>
       writeBundle(
         request.directory,
-        (tree) => writeFiles(tree, content, { generated, copies }, signal),
+        async (tree) => {
+          const bundle = { generated, copies, identity, readme };
+          scrub = await writeFiles(tree, content, bundle, signal);
+        },
         signal,
       ),
     SEED_MAX_BYTES,
   );
-  const opened = capture.state.unretained_opened_directories;
-  const limitations = [
-    ...EXPORT_LIMITATIONS,
-    ...install.limitations,
-    ...(plan.unseededFiles.length === 0
-      ? []
-      : [
-          `${String(plan.unseededFiles.length)} file(s) under the owned paths existed before the capture but were not retained, so they are not seeded.`,
-        ]),
-    ...(opened.length === 0
-      ? []
-      : [
-          `The application held files open in ${opened.join(", ")}, whose starting content the capture did not retain, so nothing there is seeded.`,
-        ]),
-    ...collisions.map(
-      ({ home, kept, dropped }) =>
-        `${dropped} and ${kept} both map to ~/${home}; the export uses ${kept} and leaves out ${dropped}.`,
-    ),
-  ];
+  const limitations = exportLimitations(capture, plan, {
+    install: install.limitations,
+    collisions,
+    identity,
+  });
   const result: DesktopExportResult = {
     directory: request.directory,
     environment: plan.name,
     framework_version: DESKTOP_EXPORT_FRAMEWORK_VERSION,
+    checkpoints: {
+      seed: checkpoints[ends.seed] ?? "baseline",
+      end: checkpoints[ends.end] ?? "baseline",
+    },
     paths: plan.paths,
     seed_files: plan.seedFiles,
     unseeded_files: plan.unseededFiles,
-    dconf_groups: baselineDconf(state).groups,
+    scrubbed_files: [...scrub.scrubbed].sort(),
+    unscrubbed_files: [...scrub.unscrubbed].sort(),
+    dconf_groups: dconf.groups,
     files: [
+      "README.md",
       ...generated.map((file) => file.path),
       ...copies.map((copy) => copy.path),
     ],
@@ -489,12 +507,17 @@ export const exportDesktopApplication = async (
         named: request.name !== undefined,
         tasks: request.tasks.length,
         package_url: request.packageUrl !== undefined,
+        seed_checkpoint: request.seedCheckpoint ?? null,
+        end_checkpoint: request.endCheckpoint ?? null,
       },
       result: {
         ...result,
+        checkpoints: { ...result.checkpoints },
         paths: [...result.paths],
         seed_files: [...result.seed_files],
         unseeded_files: [...result.unseeded_files],
+        scrubbed_files: [...result.scrubbed_files],
+        unscrubbed_files: [...result.unscrubbed_files],
         files: [...result.files],
         limitations: [...result.limitations],
       },

@@ -78,7 +78,8 @@ const retainedEvidenceContinuation = (
 
 /** The first page an owner offers when its complete retained result does not fit. */
 const ownerFirstPage = (evidence: Evidence): JsonValue | undefined =>
-  evidence.operation === "analyze_function"
+  evidence.operation === "analyze_function" ||
+  evidence.operation === "procedure_pseudo_code"
     ? { kind: "native", facet: "pseudocode", offset: 0 }
     : evidence.operation === "inspect_native_instruction"
       ? {

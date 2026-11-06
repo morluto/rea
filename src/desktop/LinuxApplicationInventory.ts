@@ -1,4 +1,4 @@
-import { lstat, readdir, realpath, stat } from "node:fs/promises";
+import { lstat, realpath, stat } from "node:fs/promises";
 import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 
 import type { DesktopApplicationInventory } from "../domain/desktop/desktopCapture.js";
@@ -21,6 +21,7 @@ import {
   readStableFileBytes,
   readStableFilePrefix,
 } from "../filesystem/readStableFileBytes.js";
+import { stateDirectories, stateNames } from "./ApplicationStateDirectories.js";
 import { APT_LOCATIONS } from "./AptRepositoryInventory.js";
 import { inspectPackageFile } from "./DebianPackageFile.js";
 import {
@@ -176,10 +177,12 @@ interface ProgramLocation {
   readonly program: string;
   readonly resolved: string | null;
   readonly flatpak: string | null;
+  /** The launched desktop entry and its resolved file; empty for an executable launch. */
+  readonly entry: readonly string[];
 }
 
 const identifyPackage = async (
-  { program, resolved, flatpak }: ProgramLocation,
+  { program, resolved, flatpak, entry }: ProgramLocation,
   context: InventoryContext,
 ): Promise<Package> => {
   const base = {
@@ -201,8 +204,11 @@ const identifyPackage = async (
   )
     return { kind: "appimage", name: basename(resolved ?? program), ...base };
   return debianPackage(
-    [program, ...(resolved === null ? [] : [resolved])],
-    resolved ?? program,
+    {
+      program: [program, ...(resolved === null ? [] : [resolved])],
+      executable: resolved ?? program,
+      entry,
+    },
     context,
   );
 };
@@ -229,61 +235,6 @@ const electronMarkers = async (
   if ((await lstat(asar).catch(() => undefined)) !== undefined)
     markers.push("app-asar");
   return markers;
-};
-
-/** Whether a home entry is a dotfile named after the application, such as `.varicad-cfg.ini` or `.notesrc`. */
-const appNamedDotfile = (entry: string, names: ReadonlySet<string>): boolean =>
-  [...names].some((name) => {
-    // Short names would match unrelated dotfiles.
-    if (name.length < 3 || !entry.startsWith(`.${name}`)) return false;
-    const rest = entry.slice(name.length + 1);
-    return rest === "rc" || /^[-._]./u.test(rest);
-  });
-
-/**
- * Folder names under XDG and dot-directories where the application may keep
- * state, and the dotfiles in the home named after it, which an application
- * may only read during a capture.
- */
-const stateDirectories = async (
-  names: readonly (string | null)[],
-  { environment, home }: Pick<LinuxApplicationRequest, "environment" | "home">,
-  extra: readonly string[],
-): Promise<DesktopApplicationInventory["state_directories"]> => {
-  const bases = [
-    environment.XDG_CONFIG_HOME || join(home, ".config"),
-    environment.XDG_DATA_HOME || join(home, ".local/share"),
-    environment.XDG_STATE_HOME || join(home, ".local/state"),
-    environment.XDG_CACHE_HOME || join(home, ".cache"),
-  ];
-  const variants = new Set(
-    names
-      .filter(
-        (name): name is string =>
-          name !== null &&
-          /^[^/\0]+$/u.test(name) &&
-          name !== "." &&
-          name !== "..",
-      )
-      .flatMap((name) => [name, name.toLowerCase()]),
-  );
-  const dotfiles = (await readdir(home).catch(() => [] as string[]))
-    .filter((entry) => appNamedDotfile(entry, variants))
-    .map((entry) => join(home, entry));
-  const paths = new Set([
-    ...[...variants].flatMap((name) => [
-      ...bases.map((base) => join(base, name)),
-      join(home, `.${name}`),
-    ]),
-    ...dotfiles,
-    ...extra,
-  ]);
-  return Promise.all(
-    [...paths].map(async (path) => ({
-      path,
-      exists_at_start: (await lstat(path).catch(() => undefined)) !== undefined,
-    })),
-  );
 };
 
 const launchCommand = async (
@@ -348,26 +299,6 @@ const launchCommand = async (
   });
 };
 
-/**
- * Names the application's state folders may carry, including the entry's
- * full reverse-DNS id and its last part. The executable is null for a
- * `flatpak run` launch, whose `flatpak` launcher names flatpak's own folders.
- */
-const stateNames = (
-  package_: Package,
-  executable: string | null,
-  entry: DesktopApplicationInventory["desktop_entry"],
-): readonly (string | null)[] => [
-  package_.kind === "deb"
-    ? (package_.name?.split(":")[0] ?? null)
-    : package_.name,
-  executable === null ? null : basename(executable),
-  entry?.id ?? null,
-  entry?.id?.split(".").at(-1) ?? null,
-  entry?.startup_wm_class ?? null,
-  entry?.name ?? null,
-];
-
 /** Resolve what the request launches, where it came from and where it may keep state. */
 export const inspectLinuxApplication = async (
   request: LinuxApplicationRequest,
@@ -404,8 +335,12 @@ export const inspectLinuxApplication = async (
   };
   const { limitations, signingKeys } = context;
   const flatpak = wrapper.kind === "flatpak" ? wrapper.application_id : null;
+  const entryFiles =
+    entry === null
+      ? []
+      : [entry.path, await realpath(entry.path).catch(() => entry.path)];
   const identified = await identifyPackage(
-    { program: path, resolved, flatpak },
+    { program: path, resolved, flatpak, entry: entryFiles },
     context,
   );
   const package_ =

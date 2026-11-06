@@ -118,6 +118,34 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     { checks: [{ kind: "row_present", file: "a", table: "t", where: {} }] },
     "name at least one column",
   ],
+  [
+    {
+      checks: [
+        {
+          kind: "value_equals",
+          file: "a",
+          pointer: "/x",
+          value: "5",
+          tolerance: 0.1,
+        },
+      ],
+    },
+    "tolerance compares numbers, so value must be a number",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "value_equals",
+          file: "a",
+          pointer: "/x",
+          value: 5,
+          tolerance: -1,
+        },
+      ],
+    },
+    "at checks.0.tolerance",
+  ],
 ];
 
 describe("evaluateTaskChecks", () => {
@@ -149,6 +177,136 @@ describe("evaluateTaskChecks", () => {
     expect(outcomes[15]?.description).toBe(
       '2 line(s) of Documents/todo.txt match "buy milk", expected at least 3',
     );
+  });
+});
+
+describe("evaluateTaskChecks selectors and tolerance", () => {
+  const plate = "Documents/plate.FCStd";
+  const objects = "/entries/[name=Document.xml]/view/root/children";
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", file: plate, ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+
+  it("leaves a selector undecided where the array it searches may be cut short, and a position decided", () => {
+    const cut =
+      "the view of Documents/listing.zip is truncated, so what it leaves out is unknown";
+
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/[name=a.json]/view/x",
+        value: 1,
+      }),
+    ).toEqual({ id: "c", passed: false, description: cut });
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/1/view/root/children/[name=p]/attributes/id",
+        value: "1",
+      }),
+    ).toEqual({ id: "c", passed: false, description: cut });
+    expect(
+      outcome({
+        kind: "value_equals",
+        file: "Documents/listing.zip",
+        pointer: "/entries/0/view/x",
+        value: 1,
+      })?.passed,
+    ).toBe(true);
+  });
+
+  it("fails a check into an entry's view that could not be read, where JSON null passes", () => {
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=huge.brp]/view",
+        value: null,
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        "Documents/plate.FCStd entry huge.brp has no view: larger than the 16 MiB an entry's view reads",
+    });
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=empty.json]/view",
+        value: null,
+      })?.passed,
+    ).toBe(true);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: "/entries/[name=thumbnails~1Thumbnail.png]/view",
+        value: null,
+      }),
+    ).toEqual({
+      id: "c",
+      passed: false,
+      description:
+        "Documents/plate.FCStd entry thumbnails/Thumbnail.png is binary and has no view",
+    });
+  });
+
+  it("fails a selector that matches several members or, on the way, none, and says which", () => {
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@type=Part::Box]/attributes/name`,
+        value: "Plate",
+      }),
+    ).toMatchObject({
+      passed: false,
+      description: `${plate} at ${objects}/[name=Object][@type=Part::Box]/attributes/name: [name=Object][@type=Part::Box] matches 2 members, not one`,
+    });
+    expect(
+      outcome({
+        kind: "value_absent",
+        pointer: `${objects}/[name=Object][@name=Gone]/attributes/type`,
+      })?.description,
+    ).toMatch(/: \[name=Object\]\[@name=Gone\] matches no member$/u);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@name=Gone]`,
+        value: 1,
+      })?.description,
+    ).toMatch(/matches no member$/u);
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[Object]`,
+        value: 1,
+      })?.description,
+    ).toMatch(/: \[Object\] is not a selector of the form \[KEY=VALUE\]$/u);
+  });
+
+  it("compares numbers and numeral strings within a tolerance, and nothing else", () => {
+    const radius = `${objects}/[name=Object][@name=Hole]/children/[name=Property][@name=Radius]/children/[name=Float]/attributes/value`;
+
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: radius,
+        value: 5.1,
+        tolerance: 0.01,
+      })?.description,
+    ).toBe(
+      `${plate} at ${radius} is "5.0000000000000000", not within 0.01 of 5.1`,
+    );
+    expect(
+      outcome({
+        kind: "value_equals",
+        pointer: `${objects}/[name=Object][@name=Hole]/attributes/type`,
+        value: 5,
+        tolerance: 1,
+      })?.description,
+    ).toMatch(/is "Part::Cylinder", not a number$/u);
   });
 });
 
