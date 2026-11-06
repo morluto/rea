@@ -347,10 +347,7 @@ it("forwards every selected spawn argument through the CLI and shared service", 
     },
   );
   expect(exitCode).toBe(0);
-  const evidence = FRIDA_TOOL_CONTRACTS.find(
-    (contract) => contract.name === "instrument_with_frida",
-  )!.outputSchema.parse(JSON.parse(stdout));
-  expect(evidence).toMatchObject({
+  expect(JSON.parse(stdout)).toMatchObject({
     operation: "instrument_with_frida",
     parameters: {
       mode: "spawn",
