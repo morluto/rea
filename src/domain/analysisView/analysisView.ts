@@ -1,3 +1,4 @@
+import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
 import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
@@ -159,7 +160,10 @@ import {
   sourceToBundlePageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
   apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
   apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
@@ -232,7 +236,10 @@ export {
   sourceToBundlePageViewResultSchema,
   endpointComparisonSummaryViewResultSchema,
   apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
   apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
@@ -362,6 +369,7 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
   retain("inspect_api_contract", projectApiContractView),
+  retain("inspect_playwright_trace", projectPlaywrightTraceView),
   retain(
     "compare_static_and_observed_endpoints",
     projectEndpointComparisonView,
