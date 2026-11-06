@@ -61,7 +61,10 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
 import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
 import {
   currentMcpToolRequest,
   McpToolRequest,
@@ -297,6 +300,10 @@ export interface StandardToolRegistration {
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
+  private readonly registrations = new Map<string, RegisteredTool>();
+  private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private catalogChangeDepth = 0;
+  private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
   /** Transport-owned Evidence uses the same lifetime as application writes. */
   withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
@@ -306,7 +313,42 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
     if (this.identity === undefined)
       throw new Error("MCP catalog identity has not been configured");
-    return this.identity;
+    return this.progressiveCatalog?.identity ?? this.identity;
+  }
+
+  /** Install discovery after canonical registrations, before connecting. */
+  enableProgressiveCatalog(): void {
+    if (this.progressiveCatalog !== undefined) return;
+    const catalog = new ProgressiveToolCatalog(
+      this.registrations,
+      this.catalogIdentity,
+      (change) => {
+        this.catalogChangeDepth++;
+        try {
+          change();
+        } finally {
+          this.catalogChangeDepth--;
+          if (this.catalogChangeDepth === 0 && this.catalogChanged) {
+            this.catalogChanged = false;
+            super.sendToolListChanged();
+          }
+        }
+      },
+      () => this.delivery,
+    );
+    this.progressiveCatalog = catalog;
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers.
+    super.registerTool(name, config, (input, context) => {
+      context.mcpReq.signal.throwIfAborted();
+      return catalog.discover(input);
+    });
+  }
+
+  override sendToolListChanged(): void {
+    if (this.catalogChangeDepth > 0) this.catalogChanged = true;
+    else super.sendToolListChanged();
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
@@ -344,6 +386,11 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     | CompactInputSchemaPresentation
     | undefined;
   private readonly maximumInputElements: number;
+  private readonly evidenceReferenceAlternatives = new Set<string>();
+
+  protected registerEvidenceReferenceAlternative(name: string): void {
+    this.evidenceReferenceAlternatives.add(name);
+  }
 
   constructor(
     info: Implementation,
@@ -392,6 +439,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     },
     callback: ToolCallback<InputArgs>,
   ): RegisteredTool {
+    if (canReferenceInlineEvidence(config.inputSchema))
+      this.registerEvidenceReferenceAlternative(name);
     const budget = this.compactPresentation?.budgetBytes;
     const inputSchema =
       budget !== undefined &&
@@ -454,11 +503,20 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     config: StandardToolRegistration,
     callback: ToolCallback<StandardSchemaWithJSON | undefined>,
   ): RegisteredTool {
-    return super.registerTool(name, config as never, callback as never);
+    const registered = super.registerTool(
+      name,
+      config as never,
+      callback as never,
+    );
+    this.registrations.set(name, registered);
+    return registered;
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
+    // HTTP reuses the analysis server after draining the previous transport.
+    // Reset visibility while disconnected, before the next initialize/list.
+    if (!this.isConnected()) this.progressiveCatalog?.reset();
     return super.connect(
       new ErrorEvidenceTransport(
         transport,
@@ -467,6 +525,7 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
         () => this.withAdmittedAnalysis,
         this.outputSchemaProfile,
         this.maximumInputElements,
+        this.evidenceReferenceAlternatives,
       ),
     );
   }
@@ -505,6 +564,7 @@ class ErrorEvidenceTransport implements Transport {
     private readonly currentAdmission: () => WithAdmittedAnalysis | undefined,
     private readonly outputSchemaProfile: McpOutputSchemaProfile,
     private readonly maximumInputElements: number,
+    private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -968,8 +1028,9 @@ class ErrorEvidenceTransport implements Transport {
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
         { max_input_elements: this.maximumInputElements },
         {
-          remediationAction:
-            "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+          remediationAction: this.evidenceReferenceAlternatives.has(tool)
+            ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+            : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
       const result = this.delivery.toErrorToolResult(error, targetContent);

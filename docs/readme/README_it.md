@@ -18,9 +18,9 @@
 
 <a href="https://trendshift.io/repositories/82054?utm_source=repository-badge&amp;utm_medium=badge&amp;utm_campaign=badge-repository-82054" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/82054" alt="morluto%2Frea | Trendshift" width="250" height="55"/></a>
 
-<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Unisciti alla community REA su Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
-
 **[Sito web](https://rea.tools/it/) · [Guide](https://rea.tools/it/guides/) · [Showcase](https://rea.tools/it/showcase/)**
+
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Unisciti alla community REA su Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
 
 [Avvio rapido](#avvio-rapido) · [Come funziona REA](#come-funziona-rea) · [Cosa puoi analizzare](#cosa-puoi-analizzare) · [Showcase](#showcase) · [Creare ambienti RL](#build-rl-environments) · [FAQ](#faq) · [Documentazione](#documentazione)
 
@@ -160,6 +160,7 @@ REA richiede Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), oltre
 | Bytecode EVM                 | Selettori di dispatch, offset dei byte, argomenti inferiti e mutabilità                                 | Carrier raw/hex locale su Linux x64; [guida EVM offline](../evm-bytecode.md)                                                             |
 | Rust binaries                | Embedded cargo-auditable dependency list                                                                | [Rust binaries](../rust-binaries.md)                                                                                                     |
 | ELF notes                    | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                         | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                             |
+| Binary hardening             | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                     | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                            |
 | Linux kernel modules         | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                             | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                   |
 | Erlang BEAM                  | IFF chunks, atoms, exports, and tables                                                                  | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                        |
 | Apple IPS crashes            | .ips metadata, threads, images, registers and crash classes                                             | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                            |
