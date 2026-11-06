@@ -574,3 +574,39 @@ test("keeps reading this terminal when no client is selected", async () => {
     await host.close?.();
   }
 });
+
+test("keeps a selected client without a registration on the setup's settings", async () => {
+  const home = await createTestTempDirectory(
+    "rea-opencode-doctor-unregistered-",
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
+      true,
+    );
+  } finally {
+    await host.close?.();
+  }
+});
+
+test("lets a selected client keep the terminal settings its registration omits", async () => {
+  const home = await createTestTempDirectory("rea-opencode-doctor-overlay-");
+  await opencodeRegistration(home, { REA_JADX_MCP_JAR: "/opt/jadx.jar" });
+  const host = createSystemDoctorHost({
+    HOME: home,
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
+      true,
+    );
+    expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
+  } finally {
+    await host.close?.();
+  }
+});

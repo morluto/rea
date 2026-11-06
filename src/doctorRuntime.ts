@@ -16,11 +16,13 @@ import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
 import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
 import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironment } from "./application/ClientRegistrationEnvironment.js";
 import { supportedClients } from "./application/SupportedClients.js";
 import type { ClientConfigurationDocument } from "./application/ClientConfigurationDocument.js";
 import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
+import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
 import {
   inspectLinuxHopperPythonRuntime,
   linuxHopperPythonUnavailable,
@@ -32,14 +34,14 @@ import {
  * client wants the values that client passes to the server it starts.
  */
 interface SelectedRegistrationEnvironment {
-  readonly environment: Readonly<Record<string, string>>;
-  /** The registration could not be read at all. */
-  readonly unreadable: boolean;
+  /** The terminal a selected client inherits, overlaid by its registration. */
+  readonly environment: Readonly<Record<string, string | undefined>>;
 }
 
 const selectedRegistrationEnvironment = async (
   clients: readonly string[],
   processEnvironment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
   signal: AbortSignal,
 ): Promise<SelectedRegistrationEnvironment | undefined> => {
   const [selected] = clients;
@@ -55,14 +57,31 @@ const selectedRegistrationEnvironment = async (
     process.platform,
     processEnvironment,
   ).find(({ name }) => name === selected);
-  if (client === undefined || client.format === "unsupported") return undefined;
-  // Reading the file is all this needs; provider checks own their own cleanup.
-  const configuration = await readEffectiveClientRegistrationConfiguration(
-    client,
-    undefined,
+  const terminalEnvironment = snapshotEnvironment(
+    processEnvironment,
     process.platform,
   );
-  if (!configuration.ok) return { environment: {}, unreadable: true };
+  if (client === undefined || client.format === "unsupported")
+    return { environment: terminalEnvironment };
+  // A failed close is a retained owner, not a read outcome: transfer it to the
+  // caller's scope so `close()` retries it instead of losing it.
+  const configuration = await resourceScope
+    .run(() =>
+      readEffectiveClientRegistrationConfiguration(
+        client,
+        undefined,
+        process.platform,
+      ),
+    )
+    .catch((cause: unknown) => {
+      if (cause instanceof RegularFileCleanupFailure) {
+        resourceScope.retain(cause.owner, cause.path);
+        return undefined;
+      }
+      throw cause;
+    });
+  if (configuration === undefined || !configuration.ok)
+    return { environment: terminalEnvironment };
   const document: ClientConfigurationDocument | undefined =
     configuration.value.document;
   const environment = clientRegistrationEnvironment(
@@ -72,23 +91,20 @@ const selectedRegistrationEnvironment = async (
     process.platform,
   );
   return environment.ok
-    ? { environment: environment.value, unreadable: false }
-    : { environment: {}, unreadable: false };
+    ? { environment: { ...terminalEnvironment, ...environment.value } }
+    : { environment: terminalEnvironment };
 };
 
-/** Terminal variables a browser or bridge provider resolves outside config. */
-const TERMINAL_SETTINGS = new Set(["PATH", "SYSTEMROOT", "SystemRoot"]);
-
+/**
+ * The terminal, overlaid by the selected registration's own values. A client
+ * whose registration carries only a setting or two still inherits what the
+ * ambient run exported; its recorded values win where they exist.
+ */
 const selectedProviderSettings = (
   selected: SelectedRegistrationEnvironment | undefined,
   terminal: Readonly<NodeJS.ProcessEnv>,
-): Readonly<NodeJS.ProcessEnv> => {
-  if (selected === undefined) return terminal;
-  const inherited = Object.fromEntries(
-    Object.entries(terminal).filter(([name]) => TERMINAL_SETTINGS.has(name)),
-  );
-  return { ...inherited, ...selected.environment };
-};
+): Readonly<NodeJS.ProcessEnv> =>
+  selected === undefined ? terminal : { ...terminal, ...selected.environment };
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
 export const createSystemDoctorHost = (
@@ -151,12 +167,9 @@ export const createSystemDoctorHost = (
       const selected = await selectedRegistrationEnvironment(
         clients,
         environment,
+        resourceScope,
         inspectionSignal,
       );
-      // A registration REA cannot read is reported by its own registration
-      // check; probing providers with values it does not carry would repeat
-      // the wrong answer.
-      if (selected?.unreadable === true) return [];
       const inspectionEnvironment = selectedProviderSettings(
         selected,
         environment,
