@@ -13,6 +13,7 @@ import type {
   ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
 import { drawnScreenshot } from "./DrawnScreenshot.js";
+import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -98,6 +99,7 @@ const cardSchema = z.looseObject({
 /** How long a route may take and how much of its answer REA reads. */
 interface RequestBounds {
   readonly limit?: { readonly bytes: number; readonly what: string };
+  /** The deadline of a route that answers only once its work ends, which REA waits out past fetch's 300 s for headers. */
   readonly timeoutMs?: number;
 }
 
@@ -110,7 +112,7 @@ export interface DriverResult {
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (
-  response: Response,
+  response: HttpReply,
   maxBytes: number,
   what: string,
 ): Promise<string> => {
@@ -540,7 +542,8 @@ export class AgentEnvComputer {
       what: `The computer's answer to ${path}`,
     };
     const timeout = AbortSignal.timeout(bounds.timeoutMs ?? REQUEST_TIMEOUT_MS);
-    const response = await fetch(`${this.#baseUrl}${path}`, {
+    const url = `${this.#baseUrl}${path}`;
+    const init = {
       method: body === undefined ? "GET" : "POST",
       headers: {
         ...(this.#token === null
@@ -549,12 +552,15 @@ export class AgentEnvComputer {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: "error",
-      signal:
-        signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-    });
+    };
+    const deadline =
+      signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    const response: HttpReply =
+      bounds.timeoutMs === undefined
+        ? await fetch(url, { ...init, redirect: "error", signal: deadline })
+        : await awaitHttpReply(new URL(url), init, deadline);
     const text = await readBounded(response, limit.bytes, limit.what);
-    if (!response.ok)
+    if (response.status < 200 || response.status > 299)
       throw new Error(
         `The computer answered ${path} with HTTP ${String(response.status)}: ${this.#redacted(text.slice(0, 512))}`,
       );
