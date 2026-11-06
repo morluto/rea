@@ -24,8 +24,10 @@ verifier's, agree.
   records it beside `root` as
   `doctype: {name, public_id, system_id}`, an identifier `null` when the
   DOCTYPE gives none, the public one normalized as XML matches it: each run
-  of spaces and line breaks one space, the ends trimmed. A document without a
-  DOCTYPE has no `doctype`.
+  of spaces and line breaks one space, the ends trimmed. The system one keeps
+  its spaces, each line ending a line feed as XML reads the document, which
+  the exported module does itself since `expat` passes the literal as
+  written. A document without a DOCTYPE has no `doctype`.
 - Exported module: `expat` with parameter entity parsing off, and handlers
   that refuse an internal subset, an external entity and a skipped entity. The
   pass with namespace processing also checks each start tag for a reference
@@ -91,7 +93,9 @@ verifier's, agree.
   as a new paragraph in a section too long to check. The text nodes and runs
   inside a checked element, added and removed ones included, get no other
   check, but a changed name or attribute of an element inside it that both
-  ends hold, such as a link's `href`, keeps its own.
+  ends hold, such as a link's `href`, keeps its own, and so does an element
+  added or removed there whose text is only whitespace, such as an image or a
+  line break, which the text check never reads.
 
 ## Non-goals
 

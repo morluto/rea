@@ -144,3 +144,24 @@ FreeCAD fixtures are the same as on the reviewed commit.
   first text node. A save splitting the headline across two `tspan`s passes
   it and the old headline fails it. When the edit also changed the `id`, no
   text check is drafted.
+
+## Third review fixes
+
+Run on 2026-11-06 with the same toolchain. Each new case fails on the
+reviewed commit and passes after it. The desktop set gives 873 passed, with
+only `desktopExportSqliteMetadata.test.ts` failing, as it does on `main` in
+this environment; the XML parity files give 16 passed under each of Python 3.9
+to 3.14. The drafts for the Inkscape, AbiWord, Writer and FreeCAD fixtures,
+as files and as archive entries, are the same as on the reviewed commit.
+
+- A paragraph's text check no longer stands in for an element holding no text
+  that an edit adds or removes in it. In an archive, `Hello` becoming
+  `Hello there` with a `draw:frame` holding an image drafts the paragraph's
+  text and the frame's presence, and the frame removed drafts its absence; in
+  an AbiWord paragraph, an `image` added or a `br` removed beside the text
+  edit does the same. A save with the new text alone fails the presence or
+  absence check, and a run holding text added in the same edit still gets no
+  check of its own.
+- The exported module reports a DOCTYPE's system identifier with each line
+  ending a line feed, as REA's parser does: `"x\r\ny\rz\n"` reads as
+  `x\ny\nz\n` in both, where `expat` had passed it as written.
