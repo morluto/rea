@@ -8,15 +8,19 @@ import type {
 } from "../../domain/desktop/appExport.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import {
+  compressionOf,
+  openStateDocument,
+} from "../../domain/desktop/gzipDocument.js";
+import {
   identityLeftIn,
   type HostIdentity,
 } from "../../domain/desktop/hostIdentity.js";
 import { scrubSeed } from "../../domain/desktop/seedScrub.js";
 import {
-  detectStateFormat,
   isTextualFormat,
   textualView,
 } from "../../domain/desktop/stateFormats.js";
+import { err } from "../../domain/result.js";
 import { refuse } from "./DesktopExportInstall.js";
 import type { RetainedContent } from "./DesktopRetainedContent.js";
 
@@ -106,16 +110,21 @@ export const shippedSeedViews = async (
     const bytes = await retainedBytes(content, copy, signal);
     const shipped = scrubSeed(bytes, seed, identity).bytes;
     if (shipped === undefined) continue;
-    const format = detectStateFormat(seed.home, shipped);
-    const view = isTextualFormat(format)
-      ? textualView(format, shipped)
-      : undefined;
-    views.set(
-      seed.home,
-      view === undefined || view.ok
-        ? { format, view: view?.value ?? null }
-        : { format, view: null, error: view.error },
-    );
+    const document = openStateDocument(seed.home, shipped);
+    const { format } = document;
+    const view =
+      "error" in document
+        ? err(document.error)
+        : isTextualFormat(format)
+          ? textualView(format, document.bytes)
+          : undefined;
+    views.set(seed.home, {
+      format,
+      ...compressionOf(document),
+      ...(view === undefined || view.ok
+        ? { view: view?.value ?? null }
+        : { view: null, error: view.error }),
+    });
   }
   return views;
 };

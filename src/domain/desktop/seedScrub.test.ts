@@ -1,3 +1,5 @@
+import { gunzipSync, gzipSync } from "node:zlib";
+
 import { describe, expect, it } from "vitest";
 
 import { SEED_HOME, type HostIdentity } from "./hostIdentity.js";
@@ -328,6 +330,64 @@ note='localhost\u000ait\'s \\ localhost'
 url='http://\u006581232be457d.local/'
 `,
       holdsIdentity: true,
+    });
+  });
+});
+
+describe("scrubSeed on gzip files", () => {
+  /** A Gnumeric workbook gzip-compressed with a file name and modification time in its header, as gzip(1) writes one. */
+  const workbook = (author: string) =>
+    Buffer.concat([
+      Buffer.from([0x1f, 0x8b, 8, 8, 0x10, 0x20, 0x30, 0x40, 0, 3]),
+      Buffer.from("Budget.gnumeric\0"),
+      gzipSync(
+        `<?xml version="1.0" encoding="UTF-8"?>\n<gnm:Workbook xmlns:gnm="http://www.gnumeric.org/v10.dtd"><gnm:Summary><gnm:Item><gnm:name>author</gnm:name><gnm:val-string>${author}</gnm:val-string></gnm:Item></gnm:Summary></gnm:Workbook>\n`,
+      ).subarray(10),
+    ]);
+
+  it("scrubs the document inside as its format and compresses it again with no name or time", () => {
+    const outcome = scrubSeed(
+      workbook("ada@e81232be457d in /home/ada/Documents"),
+      seed("xml"),
+      GEANY,
+    );
+
+    const bytes = outcome.bytes ?? Buffer.alloc(0);
+    expect(outcome.holdsIdentity).toBe(false);
+    // Magic and deflate, no flags (so no file name), mtime 0, any extra flags, and the operating system unknown.
+    expect([...bytes.subarray(0, 8), bytes[9]]).toEqual([
+      0x1f, 0x8b, 8, 0, 0, 0, 0, 0, 0xff,
+    ]);
+    expect(gunzipSync(bytes).toString("utf8")).toContain(
+      `<gnm:val-string>user@localhost in ${SEED_HOME}/Documents</gnm:val-string>`,
+    );
+  });
+
+  it("reports the identity in the document inside where the scrub leaves it, and ships a clean one as captured", () => {
+    // XML names are never rewritten.
+    const named = { ...GEANY, hostname: "Workbook" };
+
+    expect(scrubSeed(workbook("x"), seed("xml"), named)).toEqual({
+      bytes: undefined,
+      holdsIdentity: true,
+    });
+    expect(scrubSeed(workbook("x"), seed("xml"), GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: false,
+    });
+  });
+
+  it("searches the document inside one the state view did not read, and ships a damaged one as captured, searched as its bytes", () => {
+    const damaged = workbook("ada@e81232be457d").subarray(0, 40);
+    const unread = { home: "seed", format: null };
+
+    expect(scrubSeed(workbook("ada@e81232be457d"), unread, GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: true,
+    });
+    expect(scrubSeed(Buffer.from(damaged), seed("xml"), GEANY)).toEqual({
+      bytes: undefined,
+      holdsIdentity: false,
     });
   });
 });

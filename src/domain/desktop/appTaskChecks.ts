@@ -24,6 +24,8 @@ import {
 /** One file as the app's data/get reports it: its view, or why it has none. An absent file has no entry. */
 export interface TaskFileView {
   readonly format: string | null;
+  /** Present when the view is of the document inside a gzip file, which checks read as the document. */
+  readonly compression?: string;
   readonly view: JsonValue | null;
   readonly error?: string | null;
 }

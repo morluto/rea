@@ -253,6 +253,29 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
     view: null,
     error: "larger than 64 MiB, the most the view reads",
   },
+  "Documents/Budget.gnumeric": {
+    format: "xml",
+    compression: "gzip",
+    view: {
+      root: element("gnm:Workbook", {}, [
+        element("gnm:Name", {}, ["Budget"]),
+        element("gnm:Cell", { Row: "1", Col: "2" }, ["437.80000000000001"]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/bomb.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "expands more than 100 times, so it is not read",
+  },
+  "Documents/damaged.gnumeric": {
+    format: null,
+    compression: "gzip",
+    view: null,
+    error: "not a readable gzip stream",
+  },
 };
 
 /** An Osmo contact: fields as child elements, no attributes. */
@@ -950,6 +973,50 @@ const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   ],
 ];
 
+const budget = "Documents/Budget.gnumeric";
+
+/** A gzip file's document checked as the document, and one past the limits or damaged read by no check. */
+const GZIP_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
+  [
+    {
+      kind: "value_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Cell][@Row=1][@Col=2]/children/0",
+      value: 437.8,
+      tolerance: 0.001,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: budget,
+      pointer: "/root/children/[name=gnm:Name]",
+      value: "Budget",
+    },
+    true,
+  ],
+  [{ kind: "lines_present", file: budget, lines: ["Budget"] }, false],
+  [
+    {
+      kind: "value_absent",
+      file: "Documents/bomb.gnumeric",
+      pointer: "/root/attributes/x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/damaged.gnumeric",
+      pointer: "/root",
+      value: "x",
+    },
+    false,
+  ],
+  [{ kind: "file_present", file: "Documents/damaged.gnumeric" }, true],
+];
+
 const flyer = "Documents/flyer.sla";
 const headline =
   "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]";
@@ -1544,6 +1611,7 @@ export const CHECK_CASES: readonly (readonly [
   ...TOLERANCE_CASES,
   ...TEXT_CASES,
   ...CUT_VIEW_CASES,
+  ...GZIP_CASES,
   ...ATTRIBUTE_TEXT_CASES,
   ...CHILD_TEXT_CASES,
   ...MEMBER_COUNT_CASES,

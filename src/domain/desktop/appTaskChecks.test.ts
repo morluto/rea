@@ -376,6 +376,12 @@ describe("evaluateTaskChecks", () => {
           file: "Documents/photo.png",
           lines: ["x"],
         },
+        {
+          id: "gzip",
+          kind: "value_absent",
+          file: "Documents/bomb.gnumeric",
+          pointer: "/root/attributes/x",
+        },
       ] as never,
       new Map(Object.entries(CHECK_VIEWS)),
     );
@@ -387,6 +393,7 @@ describe("evaluateTaskChecks", () => {
       ["cut", false, true],
       ["shown", false, undefined],
       ["binary", false, undefined],
+      ["gzip", false, true],
     ]);
   });
 });

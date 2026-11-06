@@ -43,7 +43,7 @@ const viewNotes = (file: string, change: ChangeShape): FileNote[] => {
         file,
         message:
           change.format === "binary"
-            ? `REA reads ${home} as binary, so no check can look inside it: save it in an uncompressed format the app offers, such as its plain XML, and capture again.`
+            ? `REA reads ${home} as binary, so no check can look inside it: save it in a format the app offers that REA reads, such as XML, JSON or text, plain or gzip-compressed, or a zip document, and capture again.`
             : `REA could not read ${home} at one end the same way as at the other, so no check can look inside it; its versions' view_error says why.`,
       },
     ];
