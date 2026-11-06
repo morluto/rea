@@ -70,6 +70,8 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     changes: 1,
     retained_files: 1,
     retained_bytes: 5,
+    changed_files: ["Documents/today.txt"],
+    more_changed_files: 0,
   });
   expect(parseMcpToolError(await mark("seed")).error.message).toContain(
     "already taken",

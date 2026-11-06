@@ -190,6 +190,8 @@ def _request(capture: str, line: str) -> bool:
 
 
 def mark(arguments: dict) -> int:
+    """Request a checkpoint and answer with the capture's acknowledgement line as it wrote it: the checkpoint's
+    counts and up to ten of the files that changed, home-relative, with a count of the rest."""
     capture, name = os.path.abspath(arguments["capture"]), arguments["name"]
     code = _exit_code(capture)
     log = os.path.join(capture, "progress.log")

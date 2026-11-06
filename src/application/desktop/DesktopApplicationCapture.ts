@@ -6,7 +6,7 @@ import {
   projectAnalysisError,
   type AnalysisErrorProjection,
 } from "../../domain/analysisErrorProjection.js";
-import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
+import { unretainedOpenedLimitation } from "../../domain/desktop/appExportUnowned.js";
 import {
   checkpointTaken,
   type DesktopApplicationCapture,
@@ -111,6 +111,7 @@ const limitationsFor = (
   recorder: CheckpointRecorder,
   facts: {
     readonly unretained: readonly string[];
+    readonly home: string;
     readonly broadArguments: readonly string[];
     readonly unreadableWindowSamples: number;
   },
@@ -157,10 +158,8 @@ const limitationsFor = (
     session.processes.some((process) => !process.started_by_capture),
     "An application window belonged to a process the capture did not start; that process was left running.",
   );
-  add(
-    facts.unretained.length > 0,
-    `The application held files open in directories whose starting content was not retained; name them with ${STATE_PATH_INPUTS} to retain it.`,
-  );
+  const unretained = unretainedOpenedLimitation(facts.unretained, facts.home);
+  if (unretained !== undefined) limitations.push(unretained);
   return limitations;
 };
 
@@ -265,7 +264,7 @@ const recordCapture = async (
   const acknowledge = async () => {
     const taken = recorder.checkpoints.at(-1);
     if (taken === undefined) return;
-    const event = checkpointTaken(taken);
+    const event = checkpointTaken(taken, home);
     await host.report(
       `Recorded checkpoint ${taken.name}: ${String(event.changes)} change(s), ${String(event.retained_files)} file(s) retained.`,
       event,
@@ -325,6 +324,7 @@ const recordCapture = async (
       ...admitted.limitations,
       ...limitationsFor(session, recorder, {
         unretained,
+        home,
         broadArguments: context.scope.broadArguments,
         unreadableWindowSamples: outcome.unreadableWindowSamples,
       }),

@@ -179,8 +179,9 @@ the first source that has the app:
      Osmo's contacts in `~/.local/share/osmo/contacts_records.xml`, has no
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
-     checkpoint, such as `probe-1`, and read its `changes` and
-     `retained_files`.
+     checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
+     files that changed since the checkpoint before, those the app held
+     open first, with `more_changed_files` counting the rest.
    - When the app's own format is compressed, such as Gnumeric's
      `.gnumeric` (gzip XML), REA reads it as binary and no check can look
      inside. Save in an uncompressed format the app offers, such as
@@ -318,8 +319,11 @@ The limitations name the folders the app wrote that the bundle neither owns
 nor seeds, such as `~/.config/MuseScore`, so the app starts without them:
 expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
-those folders in `state_paths`, and dismiss the dialogs before `seed`. They
-also name seeded lock files, WebKit or Chromium storage and caches; when the
+those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
+files the app holds while it runs, such as LibreOffice's `.lock` and
+`.~lock.<name>#`, are left out of the seed and listed after "Left out of the
+seed", so you need not close the document or delete them before `seed`. The
+limitations also name seeded WebKit or Chromium storage and caches; when the
 witness's boot is clean, list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
@@ -338,7 +342,9 @@ checks. Give every `check_build_task` the task exactly as exported.
    seed holds exactly one and the app takes a file. When the export's
    `limitations` say it opens no document, open it from the prompt's path,
    as a solving agent would. Take a `wait` screenshot first, since the
-   desktop may not have drawn yet.
+   desktop may not have drawn yet. When the start fails because the
+   computer never got ready, and its error names lock files in the bundle's
+   seed, delete them from the bundle and start again.
 2. `check_build_task` with `stage: "seed"` and `directory`, the absolute
    path of a new or empty folder for the record. A check must fail.
    Recording starts. Later stages take no `directory`.

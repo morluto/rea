@@ -3,6 +3,7 @@ import { access, readFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { z } from "zod";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
@@ -313,7 +314,7 @@ describe("exportDesktopApplication and the desktop Trash", () => {
 });
 
 describe("exportDesktopApplication of state it does not own or keeps for itself", () => {
-  it("names the folders the app wrote that the bundle neither owns nor seeds, and the lock files, web storage and caches it seeds", async () => {
+  it("names the folders the app wrote that the bundle neither owns nor seeds, and the web storage and caches it seeds", async () => {
     const local = capture();
     const [baseline, edited] = local.state.checkpoints;
     if (baseline === undefined || edited === undefined)
@@ -321,7 +322,6 @@ describe("exportDesktopApplication of state it does not own or keeps for itself"
     const text = "x\n";
     // In the state directories from the start, so seeded.
     const kept = [
-      `${HOME}/.config/notes/lockfile`,
       `${HOME}/.local/share/notes/storage/salt`,
       `${HOME}/.local/share/notes/hsts-storage.sqlite`,
       `${HOME}/.config/notes/GPUCache/data_0`,
@@ -384,10 +384,9 @@ describe("exportDesktopApplication of state it does not own or keeps for itself"
     expect(unowned).toContain("~/.local/share/MuseScore");
     expect(unowned).toContain("state_paths");
     const runtime = result.limitations.find((limitation) =>
-      limitation.includes("~/.config/notes/lockfile"),
+      limitation.includes("~/.local/share/notes/storage"),
     );
     for (const path of [
-      "~/.local/share/notes/storage",
       "~/.local/share/notes/hsts-storage.sqlite",
       "~/.config/notes/GPUCache",
     ])
@@ -400,12 +399,123 @@ describe("exportDesktopApplication of state it does not own or keeps for itself"
     for (const path of [
       "~/.config/MuseScore",
       "~/.local/share/MuseScore",
-      "~/.config/notes/lockfile",
       "~/.local/share/notes/storage",
       "~/.config/notes/GPUCache",
     ])
       expect(readme).toContain(`\`${path}\``);
     expect(readme).toContain("`state_paths`");
+  });
+});
+
+describe("exportDesktopApplication of lock files and folders the app held files open in", () => {
+  /** The fixture with a profile lock and a document lock written by `edited`, and its notes folder held open. */
+  const lockedCapture = (): DesktopApplicationCapture => {
+    const local = capture();
+    const [baseline, edited] = local.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const locks = [
+      [PROFILE_LOCK, PROFILE_LOCK_TEXT],
+      [DOCUMENT_LOCK, DOCUMENT_LOCK_TEXT],
+    ] as const;
+    return {
+      ...local,
+      state: {
+        ...local.state,
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...locks.map(([path, text]) => change(path, { after: text })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...locks.map(([path, text]) => retained(path, text)),
+            ],
+          },
+        ],
+        unretained_opened_directories: [`${HOME}/Documents`],
+      },
+    };
+  };
+  const PROFILE_LOCK = `${HOME}/.config/notes/.lock`;
+  const PROFILE_LOCK_TEXT = "[Lockdata]\nUser=ada\nHost=localhost\n";
+  const DOCUMENT_LOCK = `${HOME}/Documents/.~lock.today.txt#`;
+  const DOCUMENT_LOCK_TEXT =
+    ",ada,localhost,04.11.2026 00:00,file:///home/ada/.config/notes;\n";
+
+  const exportLocked = async () => {
+    const folder = await writeCaptureFolder(lockedCapture(), undefined, [
+      PROFILE_LOCK_TEXT,
+      DOCUMENT_LOCK_TEXT,
+    ]);
+    const directory = join(
+      await createTestTempDirectory("desktop-export-"),
+      "bundle",
+    );
+    const result = await exportDesktopApplication(
+      {
+        capture: folder,
+        directory,
+        name: undefined,
+        tasks: [],
+        seedCheckpoint: "edited",
+      },
+      readers,
+    );
+    if (result instanceof Error) throw result;
+    return { result, directory };
+  };
+
+  it("leaves the profile lock and the document lock out of the seed and lists them as left out", async () => {
+    const { result, directory } = await exportLocked();
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain("Documents/today.txt");
+    expect(seedFiles).toContain(".config/notes/settings.ini");
+    expect(seedFiles).not.toContain(".config/notes/.lock");
+    expect(seedFiles).not.toContain("Documents/.~lock.today.txt#");
+    expect(
+      await exists(join(directory, "envs/notes/seed/.config/notes/.lock")),
+    ).toBe(false);
+    expect(
+      await exists(
+        join(directory, "envs/notes/seed/Documents/.~lock.today.txt#"),
+      ),
+    ).toBe(false);
+    const leftOut = result.limitations.filter((limitation) =>
+      limitation.startsWith("Left out of the seed:"),
+    );
+    expect(leftOut).toHaveLength(1);
+    expect(leftOut[0]).toContain(
+      "~/.config/notes/.lock, ~/Documents/.~lock.today.txt#.",
+    );
+    // Nothing else calls them seeded.
+    expect(
+      result.limitations.filter((limitation) => limitation.includes(".lock")),
+    ).toEqual(leftOut);
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("- Left out of the seed:");
+    expect(readme).toContain(
+      "`~/.config/notes/.lock`, `~/Documents/.~lock.today.txt#`",
+    );
+  });
+
+  it("names the seed files under a folder the app held files open in, rather than saying nothing there is seeded", async () => {
+    const { result } = await exportLocked();
+
+    const heldOpen = result.limitations.find((limitation) =>
+      limitation.startsWith("The application held files open in"),
+    );
+    expect(heldOpen).toContain("held files open in ~/Documents,");
+    expect(heldOpen).toContain(
+      "the seed holds ~/Documents/today.txt from there",
+    );
+    expect(heldOpen).not.toContain("nothing there is seeded");
   });
 });
 

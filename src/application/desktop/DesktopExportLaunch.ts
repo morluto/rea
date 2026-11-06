@@ -3,6 +3,7 @@ import {
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
 import { electronLaunchArguments } from "../../domain/desktop/appExportInstall.js";
+import { isLockFile } from "../../domain/desktop/appExportUnowned.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import {
   versionAt,
@@ -15,7 +16,11 @@ import type { SeedVersion } from "./DesktopExportFiles.js";
 
 type StatePath = DesktopApplicationState["paths"][number];
 
-/** The owned files present at the seed with their digests, and those read as text. */
+/**
+ * The owned files present at the seed with their digests, and those read as
+ * text, but for lock files the app holds while it runs: a copied one makes
+ * the app find its profile or document in use, so those are left out.
+ */
 export const seedVersions = (
   files: ReadonlyMap<string, StatePath>,
   paths: readonly string[],
@@ -23,17 +28,21 @@ export const seedVersions = (
 ): {
   readonly seeds: ReadonlyMap<string, SeedVersion>;
   readonly textSeeds: readonly string[];
+  readonly locks: readonly string[];
 } => {
   const seeds = new Map<string, SeedVersion>();
   const textSeeds: string[] = [];
+  const locks: string[] = [];
   for (const [home, path] of files) {
     const version = versionAt(path, seed);
     if (!isWithinAny(home, paths) || version?.present !== true) continue;
-    if (version.sha256 === null) continue;
-    seeds.set(home, { sha256: version.sha256, format: version.format });
-    if (isTextualFormat(version.format)) textSeeds.push(home);
+    if (isLockFile(home)) locks.push(home);
+    else if (version.sha256 !== null) {
+      seeds.set(home, { sha256: version.sha256, format: version.format });
+      if (isTextualFormat(version.format)) textSeeds.push(home);
+    }
   }
-  return { seeds, textSeeds: textSeeds.sort() };
+  return { seeds, textSeeds: textSeeds.sort(), locks: locks.sort() };
 };
 
 /** The launch command, opening the seed's one document when the app takes files. */

@@ -10,7 +10,7 @@ grades the witness with the same checks the exported verifier runs.
 | Tool                       | What it does                                                                                |
 | -------------------------- | ------------------------------------------------------------------------------------------- |
 | `start_build_capture`      | Downloads the package lists as the computer's user and launches the app under REA's capture |
-| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's acknowledgement with its counts          |
+| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's counts and the files that changed        |
 | `stop_build_capture`       | Stops the capture and returns its checkpoints and the task draft between `seed` and `end`   |
 | `export_build_environment` | Exports the bundle with the agent's task inside the computer and copies it to a folder here |
 | `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness  |
@@ -102,8 +102,14 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    owns nor seeds, such as settings that keep a first-run wizard away, up to
    eight collapsed to their top folder, such as `~/.config/MuseScore`, and a
    count of the rest; capture again with them in `state_paths` to own them.
-   They name seeded lock files, WebKit or Chromium storage and caches too,
-   which the app keeps for its own running. For a
+   Lock files the app holds while it runs, such as LibreOffice's profile
+   `.lock` and its document lock `.~lock.<name>#`, are left out of the seed,
+   since a copied one can keep the app from starting, and the limitations
+   and the README list them after "Left out of the seed". They name seeded
+   WebKit or Chromium storage and caches too, which the app keeps for its
+   own running. When the application held files open in a folder whose
+   starting content the capture did not retain, a limitation names the
+   folder and the seed files in it. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
    and SHA-256 in the computer, into a file beside the bundle that it reads
@@ -118,7 +124,11 @@ A checkpoint name is lowercase letters, digits, dot, dash and underscore; the
 capture's own `baseline`, `stop`, `time-limit` and `exit` are refused, and so
 is a name already taken. The acknowledgement comes from the capture after it
 has walked the home and retained what changed: `entries` walked, `changes`
-since the checkpoint before, `retained_files` and `retained_bytes`.
+since the checkpoint before, `retained_files` and `retained_bytes`, and up to
+ten `changed_files`, home-relative, with `more_changed_files` counting the
+rest. Folders are left out, and files the app held open come first, then
+those in its state directories, then the rest, each by path, so a save's
+document leads the list.
 
 Each step can be asked again after its answer was lost:
 
@@ -158,7 +168,9 @@ cancels the call in progress on it and refuses the calls still waiting.
 
 Start a fresh computer from the exported folder with `start_build_computer`
 and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed,
-on the seed's document when the export opens one.
+on the seed's document when the export opens one. When the computer never
+gets ready and the bundle's seed holds lock files, the start's error names
+them: delete them from the bundle, or export again, which leaves them out.
 Then, with the task exactly as exported:
 
 | `stage`       | Before it                                                         | Its checks must          |

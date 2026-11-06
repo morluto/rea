@@ -17,7 +17,10 @@ import {
   computerActionInputSchema,
   screenshotOptionsSchema,
 } from "../domain/desktop/computerActions.js";
-import { desktopCheckpointSchema } from "../domain/desktop/desktopCapture.js";
+import {
+  desktopCheckpointSchema,
+  MAX_ACKNOWLEDGED_FILES,
+} from "../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -244,7 +247,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts: entries walked, paths changed since the checkpoint before, and files retained. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those the app held open first, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -259,6 +262,16 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         changes: z.int().nonnegative(),
         retained_files: z.int().nonnegative(),
         retained_bytes: z.int().nonnegative(),
+        changed_files: z
+          .array(z.string())
+          .max(MAX_ACKNOWLEDGED_FILES)
+          .describe(
+            "Files, not folders, changed since the checkpoint before, relative to the home: those the app held open, then those in its state directories, then the rest, each by path.",
+          ),
+        more_changed_files: z
+          .int()
+          .nonnegative()
+          .describe("How many more files changed than changed_files names."),
       }),
     }),
     examples: [
