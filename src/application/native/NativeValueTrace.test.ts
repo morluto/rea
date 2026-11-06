@@ -603,7 +603,9 @@ describe("native value call-binding fan-out", () => {
       `Fixture (fixture 1) resolve_native_call_targets: ${caveat}`,
     );
   });
+});
 
+describe("native value call-binding repeated callees", () => {
   it("preserves binding order and edge-budget behavior for repeated callees", async () => {
     const callCount = 128;
     const callerAddress = "0x1000";
@@ -1058,7 +1060,8 @@ describe("native value validation failure provenance", () => {
     "retains the exact provider observation for invalid %s",
     async (failure) => {
       let expected:
-        ReturnType<typeof createAnalysisExecutionEvidence> | undefined;
+        | ReturnType<typeof createAnalysisExecutionEvidence>
+        | undefined;
       const result = await traceNativeValues(
         {
           execute: async (operation, parameters, options) => {
@@ -1397,56 +1400,56 @@ describe("native value traversal limits and policies", () => {
   });
 });
 
-describe("native value trace thunk targets", () => {
-  const thunkDossier = (
-    thunkTarget: string,
-    operations: ReturnType<typeof node>[],
-  ) => {
-    const dossier = functionDossierSchema.parse(
-      nativeFlowDossier(functionDossierSchema.parse(ghidraFunctionDossier()), {
-        address: "0xc000",
-        name: "thunk",
-        operations,
-        parameters: [],
-      }),
-    );
-    return jsonValueSchema.parse({
-      ...dossier,
-      procedure: {
-        ...dossier.procedure,
-        classification: {
-          external: false,
-          thunk: true,
-          thunk_target: thunkTarget,
-          provenance: "ghidra-function-manager",
-        },
+const thunkDossier = (
+  thunkTarget: string,
+  operations: ReturnType<typeof node>[],
+) => {
+  const dossier = functionDossierSchema.parse(
+    nativeFlowDossier(functionDossierSchema.parse(ghidraFunctionDossier()), {
+      address: "0xc000",
+      name: "thunk",
+      operations,
+      parameters: [],
+    }),
+  );
+  return jsonValueSchema.parse({
+    ...dossier,
+    procedure: {
+      ...dossier.procedure,
+      classification: {
+        external: false,
+        thunk: true,
+        thunk_target: thunkTarget,
+        provenance: "ghidra-function-manager",
       },
-    });
+    },
+  });
+};
+const thunkPort = (dossier: ReturnType<typeof jsonValueSchema.parse>) => {
+  const attempted: unknown[] = [];
+  const port: AnalysisOperationPort = {
+    execute: async (operation, parameters) => {
+      attempted.push([operation, parameters]);
+      if (operation !== "analyze_function")
+        throw new Error(`Unexpected native trace operation: ${operation}`);
+      return ok(createAnalysisExecution(dossier, provider, { subject }));
+    },
   };
-  const thunkPort = (dossier: ReturnType<typeof jsonValueSchema.parse>) => {
-    const attempted: unknown[] = [];
-    const port: AnalysisOperationPort = {
-      execute: async (operation, parameters) => {
-        attempted.push([operation, parameters]);
-        if (operation !== "analyze_function")
-          throw new Error(`Unexpected native trace operation: ${operation}`);
-        return ok(createAnalysisExecution(dossier, provider, { subject }));
-      },
-    };
-    return { port, attempted };
-  };
-  const externalTargetUnknown = {
-    procedure: "0xc000",
-    address: null,
-    related_procedure: "EXTERNAL:0x1",
-    reason:
-      "Thunk target EXTERNAL:0x1 is not represented in this thunk's value-flow model and was not traced",
-  };
-  const thunkTargetReasons = (unknowns: { reason: string }[]) =>
-    unknowns
-      .map(({ reason }) => reason)
-      .filter((reason) => reason.includes("Thunk target"));
+  return { port, attempted };
+};
+const externalTargetUnknown = {
+  procedure: "0xc000",
+  address: null,
+  related_procedure: "EXTERNAL:0x1",
+  reason:
+    "Thunk target EXTERNAL:0x1 is not represented in this thunk's value-flow model and was not traced",
+};
+const thunkTargetReasons = (unknowns: { reason: string }[]) =>
+  unknowns
+    .map(({ reason }) => reason)
+    .filter((reason) => reason.includes("Thunk target"));
 
+describe("native value trace thunk targets", () => {
   it("reports an external import target that the synthetic thunk model never reaches", async () => {
     const { port, attempted } = thunkPort(
       thunkDossier("EXTERNAL:0x1", [node("return", "0xc000", "RETURN")]),
@@ -1513,7 +1516,9 @@ describe("native value trace thunk targets", () => {
     expect(thunkTargetReasons(parsed.unknowns)).toEqual([]);
     expect(graph.analyzed).toEqual(["0x2000"]);
   });
+});
 
+describe("native value trace thunk target ordering and limits", () => {
   it("keeps a thunk whose target another path analyzes after the thunk", async () => {
     const graph = staticValueGraph(
       {
