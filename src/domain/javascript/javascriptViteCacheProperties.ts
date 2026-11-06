@@ -6,6 +6,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { traverseJavaScriptValueAstSteps } from "./javascriptSemanticTraversal.js";
+import { stableSemanticSortSteps } from "./javascriptSemanticSort.js";
 import {
   semanticEffectStatementPosition,
   semanticReadStatementPosition,
@@ -582,7 +583,8 @@ export class ViteCacheProperties {
         body.entries.push({ write, position, replaces });
       }
       for (const body of bodies.values()) {
-        body.entries.sort(
+        body.entries = yield* stableSemanticSortSteps(
+          body.entries,
           (left, right) => left.position.index - right.position.index,
         );
         let latest: ViteCacheWrite | undefined;

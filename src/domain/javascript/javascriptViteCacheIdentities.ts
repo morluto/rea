@@ -19,6 +19,7 @@ import {
   type StatementPosition,
 } from "./javascriptSemanticMutationInitializers.js";
 import { semanticLoopValueSource } from "./javascriptSemanticIterationSources.js";
+import { stableSemanticSortSteps } from "./javascriptSemanticSort.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import type { JavaScriptIntrinsicInvocation } from "./javascriptElectronMemberWrites.js";
 import {
@@ -1039,31 +1040,12 @@ export class ViteCacheIdentities {
     >();
     for (const [body, values] of grouped) {
       let ordered = values;
-      if (body !== null) {
-        let scratch = new Array<Entry>(values.length);
-        for (let width = 1; width < values.length; width *= 2) {
-          for (let start = 0; start < values.length; start += width * 2) {
-            const middle = Math.min(start + width, values.length);
-            const end = Math.min(start + width * 2, values.length);
-            let left = start;
-            let right = middle;
-            for (let index = start; index < end; index++) {
-              if (examined++ % 1024 === 0) yield;
-              const a = left < middle ? ordered[left] : undefined;
-              const b = right < end ? ordered[right] : undefined;
-              const precedes =
-                a !== undefined &&
-                (b === undefined ||
-                  a.position!.index < b.position!.index ||
-                  (a.position!.index === b.position!.index &&
-                    a.position!.declaratorIndex <=
-                      b.position!.declaratorIndex));
-              scratch[index] = precedes ? ordered[left++]! : ordered[right++]!;
-            }
-          }
-          [ordered, scratch] = [scratch, ordered];
-        }
-      }
+      if (body !== null)
+        ordered = yield* stableSemanticSortSteps(values, (left, right) =>
+          left.position!.index === right.position!.index
+            ? left.position!.declaratorIndex - right.position!.declaratorIndex
+            : left.position!.index - right.position!.index,
+        );
       const start = entries.length;
       const positions: StatementPosition[] = [];
       for (const value of ordered) {

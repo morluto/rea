@@ -276,6 +276,7 @@ export const resolveJavaScriptIntrinsicInvocation = (
       continue;
     }
     if (path.join(".") === "intrinsic.Reflect.construct") {
+      if (changed) return { kind: "opaque", path, arguments: undefined };
       const callable = arguments_?.[0];
       if (!t.isExpression(callable)) return undefined;
       callee = callable;

@@ -3135,6 +3135,42 @@ const allScenarios: readonly ViteScenario[] = [
     resolved: kept ? ["first.js"] : [],
     unknown: !kept,
   })),
+  ...[
+    [
+      "construct",
+      "Reflect.construct = mutate; Reflect.construct(Object.freeze, [__vite__mapDeps]);",
+      false,
+    ],
+    [
+      "construct-call",
+      "Reflect.construct = mutate; Reflect.construct.call(null, Object.freeze, [__vite__mapDeps]);",
+      false,
+    ],
+    [
+      "construct-alias-write",
+      "const reflection = Reflect; reflection.construct = mutate; Reflect.construct(Object.freeze, [__vite__mapDeps]);",
+      false,
+    ],
+    [
+      "apply",
+      "Reflect.apply = (_fn, _receiver, args) => mutate(_fn, args); Reflect.apply(Object.freeze, null, [__vite__mapDeps]);",
+      false,
+    ],
+    [
+      "unchanged-apply",
+      "Reflect.apply(Object.freeze, null, [__vite__mapDeps]);",
+      true,
+    ],
+  ].map(([name, effect, kept]) => ({
+    file: `reflect-invocation-authority-${String(name)}.js`,
+    source: mapDependenciesWithEffects(
+      initializeCache +
+        'const mutate = (_fn, args) => { args[0].f[0] = "./last.js"; return {}; }; ' +
+        `${String(effect)} __vite__mapDeps([0]);`,
+    ),
+    resolved: kept ? ["first.js"] : [],
+    unknown: !kept,
+  })),
 ];
 
 const batches = Array.from(

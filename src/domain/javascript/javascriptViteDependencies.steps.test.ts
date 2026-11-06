@@ -10,58 +10,67 @@ import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { semanticEffectStatementPosition } from "./javascriptSemanticMutationInitializers.js";
 import { classifyParsedJavaScriptViteDependencySpecifiersSteps } from "./javascriptViteDependencies.js";
 
-it("bounds ordering work for a wide prototype copy effect group", () => {
-  const count = 3073;
-  const source =
-    'const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./first.js"]))) => i.map(j => d[j]); const proto = Array.prototype;\n' +
-    Array.from(
-      { length: count },
-      (_, i) => `proto.slot${i} = ${i}; opaque(proto);`,
-    ).join("\n") +
-    "\nconst copy = {...proto}; opaque(copy); __vite__mapDeps([0]);";
-  const parsed = parseJavaScriptSource(source);
-  if (parsed === null)
-    throw new Error("expected parsed prototype copy fixture");
-  const bindings = completeSemanticSteps(
-    indexJavaScriptBindingsSteps(parsed.program),
-  );
-  const seen = new Set<object>();
-  let reads = 0;
-  traverseJavaScriptAst(parsed.program, {
-    enter(node) {
-      if (!t.isAssignmentExpression(node) && !t.isCallExpression(node)) return;
-      const position = semanticEffectStatementPosition(
-        node,
-        bindings.parentsByNode,
-      );
-      if (position === null || seen.has(position)) return;
-      seen.add(position);
-      const index = position.index;
-      Object.defineProperty(position, "index", {
-        get() {
-          reads++;
-          return index;
-        },
-      });
-    },
-  });
-  const steps = classifyParsedJavaScriptViteDependencySpecifiersSteps(
-    parsed,
-    bindings,
-  );
-  let previous = 0;
-  for (;;) {
-    const step = steps.next();
-    expect(reads - previous).toBeLessThanOrEqual(8192);
-    previous = reads;
-    if (step.done) {
-      expect(step.value.size).toBe(1);
-      expect([...step.value.values()]).toEqual([[undefined]]);
-      break;
+it.each(["prototype copy", "property snapshot"])(
+  "bounds ordering work for a wide %s group",
+  (kind) => {
+    const snapshot = kind === "property snapshot";
+    const count = snapshot ? 8193 : 3073;
+    const source = snapshot
+      ? 'const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./first.js"]))) => i.map(j => d[j]); const box = {cache: 0};\n' +
+        Array.from({ length: count }, () => "box.cache = 1;").join("\n") +
+        "\nopaque(box.cache); __vite__mapDeps([0]);"
+      : 'const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./first.js"]))) => i.map(j => d[j]); const proto = Array.prototype;\n' +
+        Array.from(
+          { length: count },
+          (_, i) => `proto.slot${i} = ${i}; opaque(proto);`,
+        ).join("\n") +
+        "\nconst copy = {...proto}; opaque(copy); __vite__mapDeps([0]);";
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("expected parsed ordering fixture");
+    const bindings = completeSemanticSteps(
+      indexJavaScriptBindingsSteps(parsed.program),
+    );
+    const seen = new Set<object>();
+    let reads = 0;
+    traverseJavaScriptAst(parsed.program, {
+      enter(node) {
+        if (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
+          return;
+        const position = semanticEffectStatementPosition(
+          node,
+          bindings.parentsByNode,
+        );
+        if (position === null || seen.has(position)) return;
+        seen.add(position);
+        const index = position.index;
+        Object.defineProperty(position, "index", {
+          get() {
+            reads++;
+            return index;
+          },
+        });
+      },
+    });
+    const steps = classifyParsedJavaScriptViteDependencySpecifiersSteps(
+      parsed,
+      bindings,
+    );
+    let previous = 0;
+    for (;;) {
+      const step = steps.next();
+      expect(reads - previous).toBeLessThanOrEqual(8192);
+      previous = reads;
+      if (step.done) {
+        expect(step.value.size).toBe(1);
+        expect([...step.value.values()]).toEqual(
+          snapshot ? [["./first.js"]] : [[undefined]],
+        );
+        break;
+      }
     }
-  }
-  expect(reads).toBeGreaterThan(count);
-});
+    expect(reads).toBeGreaterThan(count);
+  },
+);
 
 it.each([false, true])(
   "bounds Vite table, mapper and index work per step (supplied mapper: %s)",
