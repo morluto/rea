@@ -1,8 +1,8 @@
 import {
   mkdir,
+  open,
   readFile,
   rm,
-  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -2071,7 +2071,9 @@ describe("decompile_all resumed file cleanup", () => {
         const header = (await readFile(journal, "utf8")).split("\n")[0];
         await writeFile(journal, `${header}\n`);
       }
-      const identity = await stat(join(directory(), "functions/0x1000.c"));
+      const source = await open(join(directory(), "functions/0x1000.c"), "r");
+      const identity = await source.stat();
+      await source.close();
       const close = OwnedFileHandle.prototype.close;
       let failed = false;
       vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(

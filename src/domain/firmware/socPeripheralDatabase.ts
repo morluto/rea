@@ -285,6 +285,13 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "General purpose timer 2 (TIM3 equivalent)",
   },
   {
+    name: "TIMER3",
+    base: 0x40000800n,
+    size: 0x400,
+    bus: "APB1",
+    description: "General purpose timer 3 (TIM4 equivalent)",
+  },
+  {
     name: "RTC",
     base: 0x40002800n,
     size: 0x400,
@@ -320,11 +327,40 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Universal synchronous asynchronous receiver transmitter 1",
   },
   {
+    name: "USART2",
+    base: 0x40004800n,
+    size: 0x400,
+    bus: "APB1",
+    description:
+      "Universal synchronous asynchronous receiver transmitter 2 (USART3 equivalent)",
+  },
+  {
     name: "I2C0",
     base: 0x40005400n,
     size: 0x400,
     bus: "APB1",
     description: "Inter-integrated circuit 0 (I2C1 equivalent)",
+  },
+  {
+    name: "I2C1",
+    base: 0x40005800n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Inter-integrated circuit 1 (I2C2 equivalent)",
+  },
+  {
+    name: "CAN0",
+    base: 0x40006400n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Controller area network 0 (CAN1 equivalent)",
+  },
+  {
+    name: "PMU",
+    base: 0x40007000n,
+    size: 0x400,
+    bus: "APB1",
+    description: "Power management unit (PWR equivalent)",
   },
   // APB2
   {
@@ -361,6 +397,13 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x400,
     bus: "APB2",
     description: "General purpose I/O port C",
+  },
+  {
+    name: "GPIOD",
+    base: 0x40011400n,
+    size: 0x400,
+    bus: "APB2",
+    description: "General purpose I/O port D",
   },
   {
     name: "ADC0",
@@ -426,6 +469,13 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x400,
     bus: "AHB",
     description: "Flash memory controller",
+  },
+  {
+    name: "CRC",
+    base: 0x40023000n,
+    size: 0x400,
+    bus: "AHB",
+    description: "CRC calculation unit",
   },
 ];
 

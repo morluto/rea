@@ -17,7 +17,8 @@ export interface ReadinessGitHub {
     variables: {
       readonly owner: string;
       readonly name: string;
-      readonly after: string | null;
+      readonly after?: string | null;
+      readonly number?: number;
     },
   ): Promise<unknown>;
   readonly rest: {

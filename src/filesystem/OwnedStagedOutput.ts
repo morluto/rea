@@ -28,7 +28,8 @@ const sameIdentity = (stats: Identity, identity: Identity): boolean =>
 
 /**
  * Read identity from an open handle, then close it through the owner.
- * The owner stays in `retained` so a failed close can be retried.
+ * A failed close stays in `retained` so cleanup can retry it.
+ * A successful close is removed: cleanup must not close that handle again.
  * `accept` runs after the identity is known and before close, so a close
  * failure does not drop an identity that was already read.
  */
@@ -42,6 +43,8 @@ export const identityFromRetainedHandle = async (
   const identity = identityOf(await raw.stat());
   accept?.(identity);
   await owned.close();
+  const finished = retained.lastIndexOf(owned);
+  if (finished >= 0) retained.splice(finished, 1);
   return identity;
 };
 

@@ -178,6 +178,13 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
   it("does not treat a shared GD32 window as STM32-only", () => {
     expect(lookupSocPeripheral("0x40012800", "gd32f1")?.name).toBe("ADC1");
     expect(lookupSocPeripheral("0x40020400", "gd32f1")?.name).toBe("DMA1");
+    expect(lookupSocPeripheral("0x40000800", "gd32f1")?.name).toBe("TIMER3");
+    expect(lookupSocPeripheral("0x40004800", "gd32f1")?.name).toBe("USART2");
+    expect(lookupSocPeripheral("0x40005800", "gd32f1")?.name).toBe("I2C1");
+    expect(lookupSocPeripheral("0x40006400", "gd32f1")?.name).toBe("CAN0");
+    expect(lookupSocPeripheral("0x40007000", "gd32f1")?.name).toBe("PMU");
+    expect(lookupSocPeripheral("0x40011400", "gd32f1")?.name).toBe("GPIOD");
+    expect(lookupSocPeripheral("0x40023000", "gd32f1")?.name).toBe("CRC");
     const tied = detectSocPlatform(["0x40020000", "0x40012800"], "arm");
     const leaders = tied.filter(
       (candidate) => candidate.matchedCount === tied[0]?.matchedCount,
