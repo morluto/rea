@@ -39,6 +39,61 @@ const stageHapEntries = [
   { path: "META-INF/FIXTURE.p7b", content: "opaque signing" },
 ] as const;
 
+const PKG_CONTEXT_NOT_READ_LIMITATION =
+  "pkgContextInfo.json is inventoried but not read, so bridge_candidates are not narrowed by its isSO declarations; narrowing requires parsed file content that this projection does not receive.";
+
+describe("HarmonyOS N-API declaration disclosure", () => {
+  it("states that an inventoried pkgContextInfo.json was not consulted", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-pkg-context-",
+      "Fixture.hap",
+      [
+        ...stageHapEntries.map(({ path, content }) => ({ path, content })),
+        {
+          path: "pkgContextInfo.json",
+          content: '{"libentry.so":{"isSO":true}}',
+        },
+      ],
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(path),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.limitations).toContain(PKG_CONTEXT_NOT_READ_LIMITATION);
+    const withoutDeclaration = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(
+        await writeApplicationZip(
+          "rea-harmony-pkg-context-control-",
+          "Fixture.hap",
+          stageHapEntries.map(({ path, content }) => ({ path, content })),
+        ),
+      ),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.bridge_candidates).toEqual(
+      withoutDeclaration.bridge_candidates,
+    );
+  });
+
+  it("stays silent when the package declares nothing", async () => {
+    const path = await writeApplicationZip(
+      "rea-harmony-no-pkg-context-",
+      "Fixture.hap",
+      stageHapEntries.map(({ path, content }) => ({ path, content })),
+    );
+    const projection = requireDeterministicProjection(
+      projectHarmonyApplicationEvidence,
+      await inventoryApplicationPackage(path),
+      harmonyApplicationProjectionResultSchema,
+    );
+    expect(projection.limitations).not.toContain(
+      PKG_CONTEXT_NOT_READ_LIMITATION,
+    );
+  });
+});
+
 describe("HarmonyOS unclassified inventory", () => {
   it("retains distinct unclassified paths sharing content with a classified file", async () => {
     const path = await writeApplicationZip(
