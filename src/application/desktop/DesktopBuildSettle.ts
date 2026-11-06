@@ -5,6 +5,26 @@ import {
   type SettleTiming,
 } from "../../domain/desktop/appSettle.js";
 
+/** The time a settle keeps; tests substitute a virtual clock. */
+export interface SettleClock {
+  now(): number;
+  delay(ms: number, signal: AbortSignal): Promise<void>;
+  /** A signal that aborts once `ms` have passed. */
+  timeout(ms: number): AbortSignal;
+}
+
+const monotonicClock: SettleClock = {
+  now: () => performance.now(),
+  delay: (ms, signal) => delay(ms, undefined, { signal }),
+  // A timeout takes whole milliseconds.
+  timeout: (ms) => AbortSignal.timeout(Math.max(1, Math.floor(ms))),
+};
+
+/** How a build computer reads an app until its files settle, on real time unless a clock is given. */
+export interface BuildSettle extends SettleTiming {
+  readonly clock?: SettleClock;
+}
+
 /**
  * The last completed data/get answer of a settled read, whether the app's
  * files had held for the window by then, and whether the bound cut a read
@@ -26,12 +46,13 @@ const seconds = (ms: number) => `${(ms / 1000).toFixed(1)} s`;
  */
 export const settledAppData = async (
   read: (signal: AbortSignal) => Promise<readonly unknown[]>,
-  timing: SettleTiming,
+  timing: BuildSettle,
   signal: AbortSignal,
   waiting: (message: string) => Promise<void>,
 ): Promise<SettledRead> => {
-  const start = performance.now();
-  const elapsed = () => performance.now() - start;
+  const clock = timing.clock ?? monotonicClock;
+  const start = clock.now();
+  const elapsed = () => clock.now() - start;
   // The first read is the one a grade needs, so only its own timeout bounds it.
   let parts = await read(signal);
   let files = appFileDigests(parts);
@@ -48,13 +69,10 @@ export const settledAppData = async (
     );
     if (next >= timing.boundMs)
       return { parts, settled: false, readCut: false };
-    await delay(Math.max(0, next - elapsed()), undefined, { signal });
+    await clock.delay(Math.max(0, next - elapsed()), signal);
     const at = Math.max(next, elapsed());
     if (at >= timing.boundMs) return { parts, settled: false, readCut: false };
-    // A timeout takes whole milliseconds.
-    const bound = AbortSignal.timeout(
-      Math.max(1, Math.floor(timing.boundMs - at)),
-    );
+    const bound = clock.timeout(timing.boundMs - at);
     let latest: readonly unknown[];
     try {
       latest = await read(AbortSignal.any([signal, bound]));
