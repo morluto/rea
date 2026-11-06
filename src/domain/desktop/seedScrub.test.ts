@@ -210,6 +210,55 @@ describe("scrubSeed on JSON and XML", () => {
   });
 });
 
+describe("scrubSeed XML value preservation", () => {
+  it.each(["\n", "\t", "\r", "\r\n"])(
+    "keeps normalized attribute whitespace when replacing the home (%j)",
+    (space) => {
+      expect(
+        scrubbed(
+          `<m path="/home/ada/a${space} b" kept='a${space}b' referenced="/home/ada/a&#10;&#9;&#13;b"/>`,
+          "xml",
+        ),
+      ).toEqual({
+        text: `<m path="${SEED_HOME}/a  b" kept='a${space}b' referenced="${SEED_HOME}/a&#10;&#9;&#13;b"/>`,
+        holdsIdentity: false,
+      });
+    },
+  );
+
+  it.each(["\r\n", "\r"])(
+    "keeps normalized character data and explicit references (%j)",
+    (ending) => {
+      expect(scrubbed(`<m>/home/ada/a${ending} b&#13;c\t</m>`, "xml")).toEqual({
+        text: `<m>${SEED_HOME}/a\n b&#13;c\t</m>`,
+        holdsIdentity: false,
+      });
+    },
+  );
+
+  it("keeps all bytes when no XML value holds the identity", () => {
+    expect(scrubbed('<m path="a\r\n b\tc">a\r\n b&#13;c</m>', "xml")).toEqual({
+      text: undefined,
+      holdsIdentity: false,
+    });
+  });
+
+  it.each(["le", "be"] as const)(
+    "preserves the same XML values and source byte order in UTF-16 %s",
+    (order) => {
+      const input = `<?xml version="1.0" encoding="UTF-16"?><m path="/home/ada/a\r\n b">/home/ada/a\r\nb&#13;c</m>`;
+      const expected = `<?xml version="1.0" encoding="UTF-16"?><m path="${SEED_HOME}/a  b">${SEED_HOME}/a\nb&#13;c</m>`;
+      const result = scrubSeed(
+        utf16(input, order),
+        { home: "settings.xml", format: "binary" },
+        GEANY,
+      );
+      expect(result.bytes?.equals(utf16(expected, order))).toBe(true);
+      expect(result.holdsIdentity).toBe(false);
+    },
+  );
+});
+
 describe("scrubSeed on bytes it does not rewrite", () => {
   it("reports a seed whose shipped bytes still hold the host name or the captured home", () => {
     const database = Buffer.concat([

@@ -209,7 +209,11 @@ export removes them from what the bundle ships:
   the host is listed in `unscrubbed_files` instead. In XML only character
   data, attribute values, comments and CDATA change, character references
   decoded the same way; element and attribute names and processing
-  instructions stay. A UTF-16 file is scrubbed by the format its text would
+  instructions stay. Rewritten XML values keep their parsed whitespace:
+  literal line endings and attribute whitespace are normalized as XML reads
+  them, while explicit character references retain their control characters.
+  Spans without an identity replacement keep their original bytes.
+  A UTF-16 file is scrubbed by the format its text would
   have in UTF-8, so JSON or XML in UTF-16 follows these rules too.
 - In the dconf keys only GVariant strings change, each read as its decoded
   value and written back in its own quotes only when it changed. Group names,

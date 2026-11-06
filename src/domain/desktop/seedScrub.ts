@@ -127,7 +127,12 @@ const encodeXml = (text: string, quote: string | undefined): string =>
  */
 const scrubXml = (text: string, identity: HostIdentity): TextScrub => {
   const data = (raw: string, quote?: string) => {
-    const value = decodeXml(raw);
+    // XML normalizes literal line endings and attribute whitespace before
+    // references are decoded; referenced controls retain their own values.
+    const lines = raw.replace(/\r\n?/gu, "\n");
+    const value = decodeXml(
+      quote === undefined ? lines : lines.replace(/[\t\n]/gu, " "),
+    );
     const clean = scrubHostIdentity(value, identity);
     return clean === value ? raw : encodeXml(clean, quote);
   };
