@@ -19,6 +19,8 @@
 
 **[ওয়েবসাইট](https://rea.tools/bn/) · [গাইড](https://rea.tools/bn/guides/) · [শোকেস](https://rea.tools/bn/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord-এ REA কমিউনিটিতে যোগ দিন" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [দ্রুত শুরু](#দ্রুত-শুরু) · [REA কীভাবে কাজ করে](#rea-কীভাবে-কাজ-করে) · [কী কী বিশ্লেষণ করা যায়](#কী-কী-বিশ্লেষণ-করা-যায়) · [শোকেস](#শোকেস) · [RL এনভায়রনমেন্ট তৈরি করুন](#rl-এনভায়রনমেন্ট-তৈরি-করুন) · [সাধারণ প্রশ্নোত্তর](#সাধারণ-প্রশ্নোত্তর-faq) · [ডকুমেন্টেশন](#ডকুমেন্টেশন)
 
 <code>npx rea-agents setup</code>
@@ -201,6 +203,7 @@ REA-এর জন্য লাগবে Node.js 22.x (>=22.23.4), 24.x (>=24.22.
 | PE certificate          | Authenticode WIN_CERTIFICATE entry এবং PKCS#7 signer/X.509 পরিচয়ের field                  | বিল্ট-ইন static PE পরীক্ষা; [PE certificate](../pe-certificates.md)                                                           |
 | PE import               | Import ও delay-load DLL-এর নাম, ordinal, IAT RVA এবং pefile import hash                    | বিল্ট-ইন static PE পরীক্ষা; [PE import](../pe-imports.md)                                                                     |
 | ELF note                | PT_NOTE/SHT_NOTE owner, type, GNU build-id ও ABI-tag field                                | বিল্ট-ইন static ELF পরীক্ষা; [ELF note](../elf-notes.md)                                                                      |
+| বাইনারি হার্ডেনিং           | ELF, PE ও Mach-O-এর PIE, NX, RELRO, CFG এবং সংশ্লিষ্ট header flag                           | বিল্ট-ইন static header inspection; [বাইনারি হার্ডেনিং](../binary-hardening.md)                                                  |
 | Apple IPS crash         | .ips metadata, thread, image, register এবং নথিভুক্ত crash শ্রেণি                             | বিল্ট-ইন static JSON পরীক্ষা; [Apple IPS](../apple-ips.md)                                                                    |
 | Linux kernel module     | .modinfo key, __versions CRC, this_module উপস্থিতি এবং signature trailer                   | বিল্ট-ইন static ELF পরীক্ষা; [kernel module](../kernel-modules.md)                                                            |
 | Erlang BEAM             | IFF chunk, atom, export, import, lambda এবং Code header                                   | বিল্ট-ইন static BEAM পরীক্ষা; [Erlang BEAM](../erlang-beam.md)                                                                |

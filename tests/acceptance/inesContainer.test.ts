@@ -129,6 +129,7 @@ cliTest(
     const digest = createHash("sha256").update(bytes).digest("hex");
     expect(inventory.ines).toMatchObject({
       header: {
+        header_hex: bytes.subarray(0, 16).toString("hex"),
         mapper: 19,
         trainer_present: true,
         prg_rom_units_16k: 2,
@@ -162,7 +163,14 @@ cliTest(
           .update(bytes.subarray(offset, offset + length))
           .digest("hex"),
       );
+      expect(nodes.get(occurrence.artifact_id)?.size).toBe(length);
+      if (logical_path === "header.bin") {
+        expect(nodes.get(occurrence.artifact_id)?.format).toBe("file");
+      }
     }
+    expect(inventory.ines?.reconstruction.region_order).toEqual(
+      expected.map(([logicalPath]) => logicalPath),
+    );
 
     const { call } = await connectLocalToolsMcp();
     const opened = await call("open_binary", { path });

@@ -50,8 +50,9 @@ const expectHostCleanupReport = (report: {
     process.platform === "linux"
       ? "environment_errno_(?:EACCES|EPERM)"
       : "environment_unavailable";
+  // Native identity facts may follow; a JSON-quoted name can hold parentheses.
   const candidate =
-    "[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM))";
+    '[1-9][0-9]*=(?:environment_unavailable|environment_errno_(?:EACCES|EPERM))(?: \\((?:[^()"]|"(?:[^"\\\\]|\\\\.)*")*\\))?';
   expect(reason).toMatch(
     new RegExp(
       `^process ownership token could not be read for [1-9][0-9]* live process\\(es\\): ` +

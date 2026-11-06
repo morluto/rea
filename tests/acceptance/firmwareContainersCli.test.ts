@@ -202,6 +202,9 @@ cliTest(
       arguments: ["inspect-artifact", source, "--json"],
     });
     expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      details: { operation: "inspect_artifact", reason: "format" },
+    });
     expect(result.stdout + result.stderr).toContain(
       "UF2 is malformed: family 0xe48bff56 (RP2040) address 0x10000000 is written with different values by blocks 0-1 (0x01) and block 2 (0xff)",
     );

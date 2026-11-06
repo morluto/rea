@@ -1,11 +1,9 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
 import { Uf2ArtifactReader } from "./Uf2ArtifactReader.js";
-import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
-import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
   RP2040_FAMILY,
   RP2XXX_ABSOLUTE_FAMILY,
@@ -135,76 +133,11 @@ it("leaves coverage unknown when numbered blocks are absent", async () => {
   ]);
 });
 
-it("fails closed on a conflicting rewrite and leaves short files unrecognized", async () => {
-  const rewrite = uf2Block({
-    address: 0x1000_0010,
-    payload: [0xff],
-    blockNo: 0,
-    numBlocks: 1,
-    familyId: RP2040_FAMILY,
-  });
-  await expect(
-    scanCanonicalArtifactInventory(
-      await writeImage(
-        "conflict.uf2",
-        uf2File([...uf2Image(RP2040_FAMILY, 0x1000_0000, APP), rewrite]),
-      ),
-    ),
-  ).rejects.toMatchObject({
-    reason: "format",
-    message:
-      "UF2 is malformed: family 0xe48bff56 (RP2040) address 0x10000010 is written with different values by blocks 0-2 (0x75) and block 3 (0xff)",
-  });
+it("leaves short files unrecognized", async () => {
   const truncated = await scanCanonicalArtifactInventory(
     await writeImage("short.uf2", ABSOLUTE.subarray(0, 511)),
   );
   expect(truncated.manifest.root_format).toBe("file");
-});
-
-it("extracts byte-exact regions into family directories", async () => {
-  const directory = await createTestTempDirectory("rea-uf2-extract-");
-  const path = join(directory, "firmware.uf2");
-  await writeFile(
-    path,
-    uf2File([ABSOLUTE, ...uf2Image(RP2040_FAMILY, 0x1000_0000, APP)]),
-  );
-  const resourceScope = new ArtifactResourceScope();
-  try {
-    const extracted = await extractArtifact({
-      inputPath: path,
-      inputFormat: "uf2",
-      outputRoot: join(directory, "out"),
-      environment: process.env,
-      integrityPolicy: "fail",
-      resourceScope,
-    });
-    expect(extracted.containment_verified).toBe(true);
-    expect(extracted.coverage.status).toBe("unknown");
-    expect(
-      Buffer.compare(
-        await readFile(
-          join(
-            extracted.output_root,
-            "family-0xe48bff56/0x10000000-0x10000257.bin",
-          ),
-        ),
-        APP,
-      ),
-    ).toBe(0);
-    expect(
-      Buffer.compare(
-        await readFile(
-          join(
-            extracted.output_root,
-            "family-0xe48bff57/0x10ffff00-0x10ffffff.bin",
-          ),
-        ),
-        Buffer.alloc(256, 0xef),
-      ),
-    ).toBe(0);
-  } finally {
-    await resourceScope.close();
-  }
 });
 
 it("rejects a forged region entry and a changed carrier", async () => {

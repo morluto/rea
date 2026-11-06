@@ -152,8 +152,8 @@ it("preserves OpenStep dictionary and array autodetection", () => {
 });
 
 it("preserves OpenStep __proto__ keys and duplicate assignment semantics", () => {
-  // Unquoted, quoted, escape-spelled, and object-valued keys all decode to
-  // __proto__; values, other keys, and `\137` (decoded as "137") do not.
+  // Unquoted, quoted, escape-spelled, and octal-spelled keys all decode to
+  // __proto__; last assignment wins.
   const result = parseXmlPropertyList(
     '{ __proto__ = a; "__proto__" = b; "\\_\\_proto__" = c; ' +
       'nested = { "__proto__" = { polluted = yes; }; }; ' +
@@ -161,11 +161,10 @@ it("preserves OpenStep __proto__ keys and duplicate assignment semantics", () =>
   );
   expect(result).toEqual({
     value: {
-      ["__proto__"]: "c",
+      ["__proto__"]: "d",
       nested: { ["__proto__"]: { polluted: "yes" } },
       kept: "__proto__",
       list: ["__proto__"],
-      "137_proto__": "d",
     },
   });
   const nested = (result.value as { nested: object }).nested;

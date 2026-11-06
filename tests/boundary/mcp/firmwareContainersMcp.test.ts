@@ -23,6 +23,7 @@ import {
 
 const APP = patternBytes(300, 9);
 const REGION = "family-0xe48bff56/0x10000000-0x1000012b.bin";
+const ABSOLUTE_REGION = "family-0xe48bff57/0x10ffff00-0x10ffffff.bin";
 
 // The compiled stdio fixture checks advertised schemas against their dialect and
 // validates actual tool responses, avoiding a second source server module graph.
@@ -93,8 +94,16 @@ it.each(["full", "compact"] as const)(
         parseEvidence(extracted.structuredContent).normalized_result,
       );
       outputRoot = result.output_root;
+      expect(result.containment_verified).toBe(true);
+      expect(result.coverage.status).toBe("unknown");
       expect(
         Buffer.compare(await readFile(join(result.output_root, REGION)), APP),
+      ).toBe(0);
+      expect(
+        Buffer.compare(
+          await readFile(join(result.output_root, ABSOLUTE_REGION)),
+          Buffer.alloc(256, 0xef),
+        ),
       ).toBe(0);
       await call("close_binary", {});
     } finally {

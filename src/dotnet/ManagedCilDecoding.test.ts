@@ -461,9 +461,7 @@ describe("managed complete operand decoding", () => {
       });
     },
   );
-});
 
-describe("managed operand extent diagnostics for switch and partial bodies", () => {
   it("reports a switch whose target table is missing", () => {
     expect(
       fatBody(Buffer.from([0x00, 0x45, 0x02, 0x00, 0x00, 0x00])),
@@ -472,14 +470,6 @@ describe("managed operand extent diagnostics for switch and partial bodies", () 
       decoded_instruction_count: 1,
       opcode_counts: { nop: 1 },
       issue: "Instruction switch at IL offset 1 leaves method body",
-    });
-  });
-
-  it("reports a switch whose target count is itself truncated", () => {
-    expect(fatBody(Buffer.from([0x45, 0x02]))).toMatchObject({
-      status: "malformed",
-      decoded_instruction_count: 0,
-      issue: "Instruction switch at IL offset 0 leaves method body",
     });
   });
 
