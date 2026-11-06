@@ -180,8 +180,10 @@ For an ELF load-time dependency question, `inspect_elf_dependencies` accepts
 `inspect_analysis_view` with `view: {kind: "elf-dependencies", collection:
 "needed" | "versions" | "definitions" | "maxima" | "imports", names:
 ["selected_name"], fields: ["name"], offset: 0, limit: 32}` and the reported
-parent Evidence ID. Collection `"issues"` takes only `indices`, `offset`, and
-`limit`.
+parent Evidence ID. Collection `"maxima"` matches `names` against namespaces
+such as `GLIBC` and selects `fields` from `namespace`, `maximum`, and
+`evidence_kind`, for example `fields: ["namespace", "maximum"]`. Collection
+`"issues"` takes only `indices`, `offset`, and `limit`.
 Duplicate `DT_NEEDED` names survive; use `source_index` with the parent ID for
 stable identity. Page coverage describes selected retained rows;
 `summary.coverage` or `dependencies.coverage` still describes the source
