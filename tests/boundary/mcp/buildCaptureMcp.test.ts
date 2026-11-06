@@ -189,6 +189,30 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
+it("refuses a task too large for one command argument before the export runs in the computer", async () => {
+  const { rea, client } = await fakes();
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "export_build_environment",
+      arguments: {
+        computer_id: id,
+        task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) },
+        directory: join(await createTestTempDirectory("build-out-"), "b"),
+      },
+    }),
+  );
+  expect(error.code).toBe("invalid_request");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "export-desktop-application",
+  );
+});
+
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {
   const bundled = await fakes();
   const fromBundle = await startBuildComputer(bundled.client, {

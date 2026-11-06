@@ -4,7 +4,14 @@ import { join } from "node:path";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 
+import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
+import {
+  renderTaskSteps,
+  renderTaskVerifier,
+  taskVerifierArtifact,
+} from "../../../src/domain/desktop/appTaskPython.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   buildComputerFakes,
@@ -39,7 +46,31 @@ const lines = (...text: string[]) => ({
   },
 });
 
-const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
+/** A bundle folder holding `task` as the export writes it for the app. */
+const taskBundle = async (task: unknown, app: string) => {
+  const parsed = parseDesktopTask(task, isPortableBundleName);
+  if (!parsed.ok) throw new Error(parsed.error);
+  const bundle = await bundleFolder();
+  const verifier = join(
+    bundle,
+    "artifacts",
+    taskVerifierArtifact(parsed.value),
+    "verify.py",
+  );
+  await mkdir(join(verifier, ".."), { recursive: true });
+  await writeFile(verifier, renderTaskVerifier(parsed.value, app));
+  await writeFile(
+    join(bundle, "tasks", `${parsed.value.name}.json`),
+    renderTaskSteps(parsed.value, app),
+  );
+  return bundle;
+};
+
+const witnessed = async (
+  slowReset = 0,
+  options: FakeComputerOptions = {},
+  task: unknown = TASK,
+) => {
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
@@ -49,15 +80,13 @@ const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
   };
   const { computer, runner } = await buildComputerFakes({ ...options, app });
   const client = await connectBuildServer(runner.environment);
-  const id = await startBuildComputer(client, {
-    kind: "bundle",
-    path: await bundleFolder(),
-  });
+  const bundle = await taskBundle(task, app.name);
+  const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
   const directory = join(await createTestTempDirectory("witness-"), "add-eggs");
   const check = (fields: Record<string, unknown>) =>
     client.callTool({
       name: "check_build_task",
-      arguments: { computer_id: id, task: TASK, ...fields },
+      arguments: { computer_id: id, task, ...fields },
     });
   const act = (action: string, fields: Record<string, unknown> = {}) =>
     callOk(client, "act_on_build_computer", {
@@ -65,7 +94,7 @@ const witnessed = async (slowReset = 0, options: FakeComputerOptions = {}) => {
       action,
       ...fields,
     });
-  return { app, computer, client, id, directory, check, act };
+  return { app, bundle, computer, client, id, directory, check, act };
 };
 
 /** Act on the app and set its state as that act would leave it. */
@@ -228,6 +257,39 @@ it("witnesses a task: the seed fails, the edit passes, a near miss fails and so 
   ).toContain("already witnessed");
 });
 
+it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {
+  const task = {
+    ...TASK,
+    checks: [
+      { id: "eggs", ...TASK.checks[0] },
+      {
+        id: "no-egg",
+        kind: "lines_absent",
+        file: "Documents/today.txt",
+        lines: ["egg"],
+      },
+    ],
+  };
+  const { app, check, act, directory } = await witnessed(0, {}, task);
+  // The app's reset brings back the near miss rather than the seed.
+  Object.assign(app.seed, lines("milk", "egg"));
+  await check({ task, stage: "seed", directory });
+  await act("type", { text: "x" });
+  app.state = lines("milk", "eggs");
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "x" });
+  app.state = lines("milk", "egg");
+  await check({ task, stage: "near_miss" });
+  await act("reset");
+  const { witness } = parsed(await check({ task, stage: "after_reset" }));
+  expect(witness).toMatchObject({
+    held: false,
+    status: "failed",
+    record: { verdict: "failed", failed_stage: "after_reset" },
+  });
+  expect(witness?.record?.stages.at(-1)?.remediation).toContain("no-egg");
+});
+
 it("takes the after_reset stage after a reset whose screenshot the computer refused", async () => {
   const witness = await witnessed();
   const { app, check, client, computer, id } = witness;
@@ -252,13 +314,13 @@ it("takes the after_reset stage after a reset whose screenshot the computer refu
 });
 
 it("ends the witness when the seed already passes, and refuses its later stages", async () => {
-  const { check, act, directory } = await witnessed();
   const passing = {
     ...TASK,
     checks: [
       { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
     ],
   };
+  const { check, act, directory } = await witnessed(0, {}, passing);
   const seed = parsed(await check({ task: passing, stage: "seed", directory }));
   expect(seed.witness).toMatchObject({
     held: false,
@@ -280,6 +342,25 @@ it("ends the witness when the seed already passes, and refuses its later stages"
     parseMcpToolError(await check({ task: passing, stage: "after_edit" })).error
       .message,
   ).toContain("ended");
+});
+
+it("witnesses only the task the bundle holds, by its steps and its checks", async () => {
+  const passing = {
+    ...TASK,
+    checks: [
+      { kind: "lines_present", file: "Documents/today.txt", lines: ["milk"] },
+    ],
+  };
+  const { check, computer, directory } = await witnessed(0, {}, passing);
+  for (const task of [TASK, { ...passing, prompt: "Keep milk listed." }])
+    expect(
+      parseMcpToolError(await check({ task, stage: "seed", directory })).error
+        .code,
+    ).toBe("invalid_request");
+  expect(computer.recordingRequests).toEqual([]);
+  expect(
+    parsed(await check({ stage: "seed", directory })).witness,
+  ).toMatchObject({ stage: "seed", held: false, status: "failed" });
 });
 
 it("refuses a witness without a folder for its record, or one already holding files", async () => {

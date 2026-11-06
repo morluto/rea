@@ -61,8 +61,49 @@ describe("build witness rules", () => {
     expect(stageVerdict("after_edit", [])).toBe("not_held");
     expect(stageVerdict("near_miss", failing)).toBe("held");
     expect(stageVerdict("near_miss", passing)).toBe("not_held");
-    expect(stageVerdict("after_reset", failing)).toBe("held");
-    expect(stageVerdict("after_reset", passing)).toBe("not_held");
+    const seed = [{ ...staged("seed", 0), results: failing }];
+    expect(stageVerdict("after_reset", failing, seed)).toBe("held");
+    expect(stageVerdict("after_reset", passing, seed)).toBe("not_held");
+  });
+
+  it("holds after reset only when each check comes out as it did on the seed", () => {
+    const outcome = (id: string, passed: boolean) => ({
+      id,
+      passed,
+      description: "",
+    });
+    const seed = [
+      {
+        ...staged("seed", 0),
+        results: [outcome("eggs", false), outcome("no-egg", true)],
+      },
+    ];
+    expect(
+      stageVerdict(
+        "after_reset",
+        [outcome("eggs", false), outcome("no-egg", true)],
+        seed,
+      ),
+    ).toBe("held");
+    // A reset that left the near miss fails a check, but not as the seed did.
+    expect(
+      stageVerdict(
+        "after_reset",
+        [outcome("eggs", false), outcome("no-egg", false)],
+        seed,
+      ),
+    ).toBe("not_held");
+    // A view unread after the reset cannot show the difference.
+    expect(
+      stageVerdict(
+        "after_reset",
+        [
+          outcome("eggs", false),
+          { ...outcome("no-egg", false), undecided: true as const },
+        ],
+        seed,
+      ),
+    ).toBe("undecided");
   });
 
   it("takes no unreadable or partial view as a failure, leaving a stage it alone would settle undecided", () => {
@@ -74,9 +115,12 @@ describe("build witness rules", () => {
     };
     const passing = { id: "a", passed: true, description: "" };
     const failing = { id: "b", passed: false, description: "" };
+    const seed = [
+      { ...staged("seed", 0), results: [passing, unread, failing] },
+    ];
     for (const stage of ["seed", "near_miss", "after_reset"] as const) {
-      expect(stageVerdict(stage, [passing, unread])).toBe("undecided");
-      expect(stageVerdict(stage, [unread, failing])).toBe("held");
+      expect(stageVerdict(stage, [passing, unread], seed)).toBe("undecided");
+      expect(stageVerdict(stage, [unread, failing], seed)).toBe("held");
     }
     expect(stageVerdict("after_edit", [passing, unread])).toBe("undecided");
     expect(stageVerdict("after_edit", [unread, failing])).toBe("not_held");
