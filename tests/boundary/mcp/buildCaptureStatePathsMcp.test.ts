@@ -1,7 +1,9 @@
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import { WORK } from "../../../src/application/desktop/DesktopBuildCommands.js";
 import {
   NOTE,
   seedEndCapture,
@@ -173,5 +175,57 @@ it("refuses state_paths outside the home, through '..' or past the limit, and st
   ]);
   expect(calls[0]?.argv).toEqual(
     expect.arrayContaining(["--state-path", join(rea.home, DOCUMENT)]),
+  );
+});
+
+it("refuses a state path a link leads outside the home or into REA's work folder, existing yet or not, and starts nothing for it", async () => {
+  const { rea, client } = await fakes();
+  const id = await startBuildComputer(client, REQUEST);
+  const outside = await createTestTempDirectory("outside-home-");
+  await writeFile(join(outside, "state.json"), "{}\n");
+  await symlink(outside, join(rea.home, "linked"));
+  await symlink(join(outside, "gone.json"), join(rea.home, "dangling.json"));
+  await symlink(join(rea.home, WORK, "x"), join(rea.home, "into-work"));
+  const start = (statePath: string) =>
+    client
+      .callTool({
+        name: "start_build_capture",
+        arguments: { computer_id: id, state_paths: [DOCUMENT, statePath] },
+      })
+      .then(parseMcpToolError);
+
+  for (const statePath of [
+    "linked/state.json",
+    "linked/not-yet.json",
+    "linked/not/yet/deeper.json",
+    "~/dangling.json",
+    join(rea.home, "linked"),
+    "into-work",
+  ]) {
+    const { error } = await start(statePath);
+    expect(error.code, statePath).toBe("invalid_request");
+    expect(error.message, statePath).toContain(statePath);
+  }
+  expect(await rea.notes("calls.jsonl")).toEqual([]);
+
+  // A link that stays in the home is followed, and the path passed as named.
+  await mkdir(join(rea.home, "settings/MuseScore"), { recursive: true });
+  await mkdir(join(rea.home, ".config"));
+  await symlink(
+    join(rea.home, "settings/MuseScore"),
+    join(rea.home, ".config/MuseScore"),
+  );
+  await callOk(client, "start_build_capture", {
+    computer_id: id,
+    state_paths: [".config/MuseScore", ".config/MuseScore/not-yet.ini"],
+  });
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls[0]?.argv).toEqual(
+    expect.arrayContaining([
+      "--state-path",
+      join(rea.home, ".config/MuseScore"),
+      "--state-path",
+      join(rea.home, ".config/MuseScore/not-yet.ini"),
+    ]),
   );
 });

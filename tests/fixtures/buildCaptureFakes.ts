@@ -49,8 +49,8 @@ const realCliOutputs = async (
   recorded: DesktopApplicationCapture = seedEndCapture(),
   {
     exportRefused = false,
-    content = [],
-  }: { exportRefused?: boolean; content?: readonly string[] } = {},
+    extraContent = [],
+  }: { exportRefused?: boolean; extraContent?: readonly string[] } = {},
 ) => {
   const capture = await writeCaptureFolder(
     install === undefined
@@ -60,7 +60,7 @@ const realCliOutputs = async (
           application: { ...recorded.application, package: install.package },
         },
     undefined,
-    [EDITED_NOTE, ...content],
+    [EDITED_NOTE, ...extraContent],
   );
   const work = await createTestTempDirectory("build-cli-");
   const task = join(work, "task.json");
@@ -107,9 +107,9 @@ const realCliOutputs = async (
  * `env` adds to the stand-in's environment; `install` replaces the captured
  * package, the archive's `notes`; `screenshotDelaysMs` delays the computer's
  * screenshots in order. `recorded` replaces what the capture records, with
- * `exportRefused` when its export refuses BUILD_TASK and `content` the files
- * it retained beyond the note's; `selected` is what it records when given
- * exactly the `--state-path` of `path`, under the home.
+ * `exportRefused` when its export refuses BUILD_TASK, and `extraContent` the
+ * retained bytes it holds beyond the note's; `selected` is what it records
+ * when given exactly the `--state-path` of `path`, under the home.
  */
 export const buildCaptureFakes = async (
   options: {
@@ -119,7 +119,7 @@ export const buildCaptureFakes = async (
     readonly screenshotDelaysMs?: readonly number[];
     readonly recorded?: DesktopApplicationCapture;
     readonly exportRefused?: boolean;
-    readonly content?: readonly string[];
+    readonly extraContent?: readonly string[];
     readonly selected?: {
       readonly path: string;
       readonly recorded: DesktopApplicationCapture;
@@ -130,7 +130,9 @@ export const buildCaptureFakes = async (
     ...(options.exportRefused === undefined
       ? {}
       : { exportRefused: options.exportRefused }),
-    ...(options.content === undefined ? {} : { content: options.content }),
+    ...(options.extraContent === undefined
+      ? {}
+      : { extraContent: options.extraContent }),
   });
   const rea = await fakeBuildComputerRea(outputs);
   const chosen = options.selected;

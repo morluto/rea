@@ -117,7 +117,11 @@ export const writeRequestBundle = async (
   environment: Readonly<NodeJS.ProcessEnv>,
 ) => writeBuildBundle(request, await reaPayload(environment));
 
-/** The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home path>`; none when it has no seed. */
+/**
+ * The lock files in a bundle folder's seeds, as `envs/<name>/seed/<home
+ * path>`; none when it has no seed. A bundle records no state directories, so
+ * only a profile lock's name or LibreOffice's document lock counts here.
+ */
 export const seededLockFiles = async (
   bundle: string,
 ): Promise<readonly string[]> => {
@@ -134,7 +138,7 @@ export const seededLockFiles = async (
       const home = relative(seed, join(entry.parentPath, entry.name))
         .split(sep)
         .join("/");
-      if (entry.isFile() && isLockFile(home))
+      if (entry.isFile() && isLockFile(home, []))
         locks.push(`envs/${name}/seed/${home}`);
     }
   }

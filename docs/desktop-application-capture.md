@@ -94,8 +94,13 @@ Progress lines on stderr are JSON, `{"rea_progress": {"phase":
 once a checkpoint has been taken, the baseline, `stop` and `exit` included,
 with the paths walked, the paths changed since the checkpoint before, the
 files retained, and up to ten of the files (not folders) that changed,
-home-relative, those the application held open first, then those in its
-state directories, then the rest, each by path, with a count of the rest;
+home-relative: those under a `--state-path` or absolute `--argument` first,
+then those the application held open, then those in its state directories,
+then the rest, and last caches (a folder whose name ends in `cache`, such as
+`~/.cache`) and WebKit or Chromium storage, each by path, with a count of the
+rest. An application can rewrite dozens of cache files on a save, and KDE's
+holds its service cache open, so the saved document would otherwise fall past
+the ten;
 and `{"kind": "checkpoint_refused", "name", "reason"}` for a requested name it
 refused. A driver that sends `checkpoint <name>` waits for the event naming it
 rather than for a fixed time.
@@ -297,7 +302,9 @@ the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
-file during the capture. A `flatpak run` launch is named after its application
+file during the capture. So does KDE's settings file in the config folder,
+`<name>rc` such as Tellico's `~/.config/tellicorc`, for each such name of three
+or more characters, whether or not it exists yet. A `flatpak run` launch is named after its application
 id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
@@ -333,7 +340,9 @@ directory, which are named in the limitations instead; a selected path that is
 not a directory brings the `-wal` and `-journal` paths beside it, so a database
 selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
-is a symlink), the paths every walk left out (the output folder and
+is a symlink), the selected paths (each `--state-path` and content-root
+`--argument` as named, absolute, beside the physical path walked, so a
+symlinked settings folder keeps what its name means), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,

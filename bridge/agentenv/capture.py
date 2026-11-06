@@ -119,17 +119,30 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
         time.sleep(POLL_S)
 
 
+def _within(path: str, folder: str) -> bool:
+    return path == folder or path.startswith(folder + os.sep)
+
+
 def _state_paths(values: list, work: str):
-    """Each state path as an absolute path strictly under the home and outside REA's work folder, or the refusal of the first that is not."""
+    """Each state path as an absolute path strictly under the home and outside REA's work folder, both as named
+    and with its links resolved, or the refusal of the first that is not. The capture resolves the links again
+    and retains what they lead to, so a link out of the home is refused here. Each passes on as named, so the
+    capture keeps what its spelling means, such as a hidden settings folder."""
     home = os.path.normpath(os.path.expanduser("~"))
-    spellings = {home, os.path.realpath(home)}
+    real_home, real_work = os.path.realpath(home), os.path.realpath(work)
+    spellings = {home, real_home}
     paths = []
     for value in values:
         relative = value[2:] if value.startswith("~/") else value
         path = os.path.normpath(os.path.join(home, relative))
         if ".." in relative.split("/") or not any(path.startswith(spelling + os.sep) for spelling in spellings):
             return None, f"The state path {value} is not under the computer's home, {home}."
-        if path == work or path.startswith(work + os.sep):
+        # Every link on the way is followed, a dangling one too; a path that does not exist yet resolves
+        # through its nearest existing folder.
+        resolved = os.path.realpath(path)
+        if not resolved.startswith(real_home + os.sep):
+            return None, f"The state path {value} leads through a link to {resolved}, which is not under the computer's home, {home}."
+        if _within(path, work) or _within(resolved, real_work):
             return None, f"The state path {value} is in REA's work folder {work}, which every capture leaves out."
         paths.append(path)
     return paths, None
