@@ -111,6 +111,8 @@ export interface FakeComputer {
   readonly dataRequests: unknown[];
   /** Refuse the next call of a tool as the driver refuses one, with its message. */
   refuseNext(name: string, message: string): void;
+  /** Run the next call of a tool but lose its reply, as a dropped connection would. */
+  loseNext(name: string): void;
   close(): Promise<void>;
 }
 
@@ -250,6 +252,11 @@ const runExec = (
 
 /** A reply the fake loses after doing the work, as a dropped connection would. */
 const LOST = Symbol("lost reply");
+/** A JSON-RPC request calling one of the driver's tools. */
+const toolCall = z.object({
+  method: z.literal("tools/call"),
+  params: z.object({ name: z.string() }),
+});
 
 /** One of the app's data methods. */
 const appRoute = (app: FakeApp, request: { id?: number; method?: string }) => {
@@ -446,6 +453,7 @@ export const startFakeComputer = async (
     lostStarts: options.lostRecordingStarts ?? 0,
   };
   const refusals = new Map<string, string>();
+  const lostReplies = new Set<string>();
   const { mcp, transport } = await startFakeDriver(calls, refusals, options);
   const server = createServer((request, response) => {
     void (async () => {
@@ -467,6 +475,13 @@ export const startFakeComputer = async (
             ...(body.length === 0 ? {} : { body }),
           }),
         );
+        const called = toolCall.safeParse(
+          body.length === 0 ? null : JSON.parse(String(body)),
+        );
+        if (called.success && lostReplies.delete(called.data.params.name)) {
+          response.destroy();
+          return;
+        }
         response.writeHead(answer.status, Object.fromEntries(answer.headers));
         response.end(Buffer.from(await answer.arrayBuffer()));
         return;
@@ -496,6 +511,7 @@ export const startFakeComputer = async (
     recordingRequests: state.recordingRequests,
     dataRequests: state.dataRequests,
     refuseNext: (name, message) => refusals.set(name, message),
+    loseNext: (name) => lostReplies.add(name),
     close: async () => {
       await mcp.close();
       server.closeAllConnections();
