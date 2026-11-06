@@ -83,7 +83,7 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
-import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import { validateCliArguments } from "./cli/strictPositionals.js";
 import {
   encodeCliArgumentErrors,
   presentCliArgumentErrors,
@@ -253,7 +253,7 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = validateCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
