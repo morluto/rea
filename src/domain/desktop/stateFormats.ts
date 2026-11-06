@@ -216,7 +216,7 @@ export const isJsonText = (text: string): boolean => {
 
 /** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
 const namedJson = (path: string, trimmed: string): boolean =>
-  path.endsWith(".json") || /^[[{]/u.test(trimmed);
+  path.toLowerCase().endsWith(".json") || /^[[{]/u.test(trimmed);
 
 /** Whether a file's name or XML declaration marks it as XML, which it is if it parses. */
 const namedXml = (path: string, trimmed: string): boolean =>

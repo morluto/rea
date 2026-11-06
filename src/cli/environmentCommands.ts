@@ -38,6 +38,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -512,8 +513,10 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
