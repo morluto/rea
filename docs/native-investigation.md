@@ -932,7 +932,8 @@ complete observation.
   `protocol_list_unreadable`. Independently decoded metadata and any readable
   protocol-name prefix remain available; an empty partial list does not
   establish that its owner adopts no protocols. Existing list and record
-  limits remain in effect.
+  limits remain in effect. Reader v3 uses a new analysis profile; snapshots
+  bound to reader v2 are incompatible and must be regenerated for this recovery.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
