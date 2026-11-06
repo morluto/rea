@@ -43,6 +43,30 @@ describe("ELF exports declared by PT_DYNAMIC", () => {
     },
   );
 
+  it("uses PT_DYNAMIC when a section directory remains without SHT_DYNSYM", () => {
+    const bytes = elfDynamicExportsImage();
+    // Two ELF64 section headers: SHT_NULL followed by the symbols' SHT_PROGBITS section.
+    const table = 0x600;
+    const section = table + 64;
+    bytes.writeBigUInt64LE(BigInt(table), 40); // e_shoff
+    bytes.writeUInt16LE(2, 60); // e_shnum
+    bytes.writeUInt32LE(1, section + 4); // sh_type
+    bytes.writeBigUInt64LE(2n, section + 8); // SHF_ALLOC
+    bytes.writeBigUInt64LE(0x10700n, section + 16); // sh_addr
+    bytes.writeBigUInt64LE(0x700n, section + 24); // sh_offset
+    bytes.writeBigUInt64LE(0x14n, section + 32); // sh_size
+    bytes.writeBigUInt64LE(16n, section + 48); // sh_addralign
+
+    expect(parse(bytes)).toMatchObject({
+      exports: [
+        { name: "exported_answer", type: "function", value: "0x10700" },
+        { name: "exported_state", type: "object", value: "0x10710" },
+      ],
+      coverage: { status: "complete", examined_entries: 2, exports: 2 },
+      issues: [],
+    });
+  });
+
   it.each([{ hash: "none" }, { hash: "gnu", emptyGnuBuckets: true }] as const)(
     "keeps an indeterminate symbol count unsupported: %j",
     (options) => {
