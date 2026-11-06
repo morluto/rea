@@ -1,6 +1,7 @@
 import {
   createdFields,
   documentBodyProblem,
+  laterItemFields,
   optionalFields,
   renewUuids,
   updatedEntity,
@@ -12,14 +13,20 @@ import {
 } from "../../domain/analysisView/environmentStateWriteApply.js";
 import {
   insertIndex,
+  resortedMembers,
   nextInteger,
 } from "../../domain/analysisView/environmentStateWriteExplain.js";
 import { callRenewal } from "../../domain/analysisView/environmentStateWriteGenerated.js";
 import {
+  heldObjects,
+  madeObjectValue,
   nestedClockValue,
+  nextMadeCount,
   unenveloped,
+  readSpelledClocks,
 } from "../../domain/analysisView/environmentStateWriteStamps.js";
 import {
+  anyLinkedSource,
   linkedCollection,
   sameLinkedSource,
 } from "../../domain/analysisView/environmentStateWriteLinks.js";
@@ -35,13 +42,17 @@ import {
   generatedIntegerDigits,
   seededInteger,
   seededLike,
+  sequenceNumber,
   spelledLike,
+  startedSequence,
 } from "../../domain/analysisView/environmentStateWriteValues.js";
 import {
+  at,
   ownMember,
   collectionMatch,
   decodedSegment,
   isObject,
+  pointerTokens,
   scalarText,
   type JsonObject,
   type StateEntity,
@@ -63,6 +74,8 @@ import {
   namedEntity,
   recordedJson,
   refused,
+  deleteAnswerFields,
+  softDeleteFlag,
   stateAnswer,
   type StateAnswer,
   type StateProvenance,
@@ -219,6 +232,12 @@ export const generator = (
 ): {
   readonly forTarget: (target: GeneratedTarget) => GenerateValue;
   readonly taken: Map<string, number>;
+  /** Count a number the call sent for a sequence, as replay does, so later generated ones follow it. */
+  readonly sentSequence: (
+    target: string,
+    rule: Extract<GeneratedRule, { rule: "sequence" }>,
+    value: JsonValue | undefined,
+  ) => void;
 } => {
   const { store } = serving;
   const write = store.pendingWrite();
@@ -228,6 +247,11 @@ export const generator = (
     taken.set(key, value);
     return value;
   };
+  const sequenceKey = (
+    rule: Extract<GeneratedRule, { rule: "sequence" }>,
+    target: string,
+  ) =>
+    `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target : ""}`;
   const ofType = store.ofType(request.plan.target ?? "");
   // A sequence never reuses a value the state started with, even after its entity was deleted.
   const started = store.startedWith(request.plan.target ?? "");
@@ -280,17 +304,42 @@ export const generator = (
           spelledLike(
             exemplar,
             sequence(
-              `${request.tool.name} ${rule.field} ${rule.scope === "collection" ? target.name : ""}`,
-              nextHeld(
-                rule.scope === "collection"
-                  ? [...target.collection, ...startedIn(target.name)]
-                  : [...ofType, ...started],
-                rule.field,
-                exemplar,
+              sequenceKey(rule, target.name),
+              startedSequence(
+                nextHeld(
+                  rule.scope === "collection"
+                    ? [...target.collection, ...startedIn(target.name)]
+                    : [...ofType, ...started],
+                  rule.field,
+                  exemplar,
+                ),
+                rule.start,
               ),
             ),
           ),
         );
+      case "made-object": {
+        const clock = formatClock(write.clockMs, rule.format);
+        if (clock === undefined)
+          return err(
+            `The generated clock for ${rule.field} is outside its recorded four-digit year format.`,
+          );
+        const base = ownMember(target.observed, rule.field);
+        const held = heldObjects(
+          [...ofType, ...started].map((entity) => entity.fields),
+          rule.field,
+        );
+        return madeObjectValue(base, rule, clock, (count) =>
+          sequence(
+            `${request.tool.name} ${rule.field}/${count.member}`,
+            nextMadeCount(
+              held,
+              count,
+              isObject(base) ? ownMember(base, count.member) : undefined,
+            ),
+          ),
+        );
+      }
       case "unique":
         return unused(rule.field, (attempt) =>
           generatedIntegerDigits(exemplar) === undefined
@@ -325,7 +374,17 @@ export const generator = (
         );
     }
   };
-  return { forTarget: (target) => (rule) => generate(target, rule), taken };
+  return {
+    forTarget: (target) => (rule) => generate(target, rule),
+    taken,
+    sentSequence: (target, rule, value) => {
+      const number = sequenceNumber(value);
+      if (number === undefined) return;
+      const key = sequenceKey(rule, target);
+      // commitWrite keeps the larger of this and the values taken before.
+      taken.set(key, Math.max(taken.get(key) ?? number, number));
+    },
+  };
 };
 
 /** A write's answer on its recorded response's status and content type: a rendered body, none, or the recorded one. */
@@ -333,7 +392,11 @@ export const writeAnswer = (
   serving: StateServing,
   request: WriteRequest,
   rendered:
-    | { readonly fields: JsonObject | undefined; readonly id: string }
+    | {
+        readonly fields: JsonObject | undefined;
+        readonly id: string;
+        readonly sent?: readonly string[];
+      }
     | ((
         recorded: JsonValue | undefined,
       ) => Result<JsonValue | undefined, string>),
@@ -370,8 +433,25 @@ export const writeAnswer = (
                     rule.rule === "clock" ? [rule.field] : [],
                   )
                 : [],
+            // A member the call sent and the plan stores as sent is answered as sent; any other keeps the recorded answer.
+            unloaded: (plan.observation?.read?.unloaded ?? []).filter(
+              (path) => {
+                const [field] = pointerTokens(path);
+                return !(
+                  rendered.sent?.includes(field!) === true &&
+                  plan.rules.some(
+                    (rule) => rule.field === field && rule.rule === "echo",
+                  )
+                );
+              },
+            ),
           },
           optionalFields(plan),
+          laterItemFields(
+            serving.store.state.views.values(),
+            serving.store.state.entities,
+            plan.target,
+          ),
         );
   if (!body.ok) return err(refused(tool, body.error));
   return stateAnswer(serving, { exchange, exact }, body.value ?? null, state);
@@ -411,12 +491,13 @@ const writtenCollection = (
     return ok(
       createdCollection(serving, tool, request.args, plan.target ?? ""),
     );
-  // No read showed where other path arguments create.
-  return sameLinkedSource(
-    tool.path_template,
-    exemplarPath(serving, plan),
-    pathArguments(tool, request.args),
-  )
+  // No read showed where other path arguments create, unless they cannot change it.
+  return anyLinkedSource(plan, tool.path_template) ||
+    sameLinkedSource(
+      tool.path_template,
+      exemplarPath(serving, plan),
+      pathArguments(tool, request.args),
+    )
     ? ok(linked)
     : err(
         refused(
@@ -428,7 +509,7 @@ const writtenCollection = (
 
 /**
  * The path values a create's path fields take, decoded once as the gate learned them: a linked
- * create accepts its exemplar's source only, so it takes that; another the collection this call
+ * create that accepts its exemplar's source only takes that; another the collection this call
  * selects, else its own arguments.
  */
 const createdPathValues = (
@@ -439,7 +520,8 @@ const createdPathValues = (
 ): ReadonlyMap<string, string> => {
   const { tool, plan } = request;
   const exemplar =
-    linkedCollection(plan, tool.path_template) === undefined
+    linkedCollection(plan, tool.path_template) === undefined ||
+    anyLinkedSource(plan, tool.path_template)
       ? undefined
       : exemplarPath(serving, plan);
   return (
@@ -494,8 +576,20 @@ const answerCreate = (
     created,
     values.forTarget({ name: collection, collection: members, observed }),
     heldEntity(serving),
+    idField,
   );
   if (!fields.ok) return err(refused(tool, fields.error));
+  for (const rule of plan.rules)
+    if (
+      rule.rule === "sequence" &&
+      rule.sent === true &&
+      Object.hasOwn(call.body ?? {}, rule.field)
+    )
+      values.sentSequence(
+        collection,
+        rule,
+        ownMember(fields.value, rule.field),
+      );
   const field = unloadableMember(fields.value);
   if (field !== undefined) return err(unloadable(tool, `Field ${field}`));
   const id = scalarText(ownMember(fields.value, idField));
@@ -519,7 +613,7 @@ const answerCreate = (
   const answer = writeAnswer(
     serving,
     request,
-    { fields: fields.value, id },
+    { fields: fields.value, id, sent: Object.keys(call.body ?? {}) },
     state,
   );
   if (!answer.ok) return answer;
@@ -591,7 +685,11 @@ const answerUpdate = (
   const answer = writeAnswer(
     serving,
     request,
-    { fields: written.value, id: entity.id },
+    {
+      fields: written.value,
+      id: entity.id,
+      sent: Object.keys(call.body ?? {}),
+    },
     {
       source: "state",
       view: "update",
@@ -601,10 +699,49 @@ const answerUpdate = (
     },
   );
   if (!answer.ok) return answer;
-  const updated = serving.store.update(updatedEntity(entity, written.value));
+  const after = updatedEntity(
+    entity,
+    storedUpdate(serving, plan, written.value),
+  );
+  const updated = serving.store.updateAll(
+    [after],
+    sortedOrder(serving, plan, [{ before: entity, after }]),
+  );
   if (!updated.ok) return updated;
   serving.store.commitWrite(values.taken);
   return answer;
+};
+
+/** An update's fields as the state stores them: its clocks spelled as the plan's read-back spelled them. */
+export const storedUpdate = (
+  serving: StateServing,
+  plan: StateWritePlan,
+  written: JsonObject,
+): JsonObject =>
+  readSpelledClocks(
+    plan.rules,
+    written,
+    plan.observation?.read === undefined
+      ? undefined
+      : recordedObject(serving, plan.observation.read),
+  );
+
+/** The collection's members in the order a sorted collection holds them after these writes; empty when the plan keeps them in place. */
+export const sortedOrder = (
+  serving: StateServing,
+  plan: StateWritePlan,
+  writes: readonly {
+    readonly before: StateEntity;
+    readonly after: StateEntity;
+  }[],
+): StateEntity[] => {
+  const [first] = writes;
+  if (plan.insert?.rule !== "sorted" || first === undefined) return [];
+  return resortedMembers(
+    plan.insert,
+    serving.store.inCollection(first.before.type, first.before.collection),
+    writes,
+  );
 };
 
 const answerDelete = (
@@ -614,10 +751,27 @@ const answerDelete = (
   const target = targetEntity(serving, request);
   if (!target.ok) return target.error;
   const entity = target.value;
+  const { response } = request.plan;
+  const exchange =
+    response === null
+      ? undefined
+      : serving.source.exchanges.get(response.ordinal);
+  const recorded = exchange === undefined ? undefined : recordedJson(exchange);
+  // A soft-deleting application answers with the entity's deleted flag as its recorded answer showed it.
   const answer = writeAnswer(
     serving,
     request,
-    { fields: entity.fields, id: entity.id },
+    {
+      fields: deleteAnswerFields(
+        serving,
+        entity.type,
+        entity.fields,
+        recorded === undefined
+          ? undefined
+          : at(recorded, response!.pointer ?? ""),
+      ),
+      id: entity.id,
+    },
     {
       source: "state",
       view: "delete",
@@ -627,7 +781,11 @@ const answerDelete = (
     },
   );
   if (answer.ok) {
-    serving.store.remove(entity);
+    // An application that soft-deletes still answers the entity by id, so its last fields are kept for that read.
+    serving.store.remove(
+      entity,
+      softDeleteFlag(serving, entity.type) !== undefined,
+    );
     serving.store.commitWrite(new Map());
   }
   return answer;

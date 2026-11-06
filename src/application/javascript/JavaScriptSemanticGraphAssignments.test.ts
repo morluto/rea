@@ -3,6 +3,42 @@ import { expect, it } from "vitest";
 import { graphForJavaScript } from "../../../tests/fixtures/javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticQuery.js";
 
+it("retains nested initializer literals as uncertain candidates after a dynamic-scope write", () => {
+  const graph = graphForJavaScript(`
+    const config = { nested: { flag: "before", items: ["inside"] }, stable: "unchanged" };
+    with (env) { config.nested = replacement; }
+  `);
+  for (const [value, pointer] of [
+    ["before", "/nested/flag"],
+    ["inside", "/nested/items/0"],
+  ]) {
+    const trace = queryJavaScriptSemanticGraph(
+      graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "literal", value },
+        direction: "forward-influence",
+        include_ambiguous_dynamic_edges: true,
+      }),
+    );
+    const slot = trace.nodes.find(
+      (node) =>
+        node.kind === "property-slot" &&
+        node.properties.property_pointer === pointer,
+    );
+    expect(slot?.properties.presence).toBe("unknown-coverage");
+    expect(trace.relations).toContainEqual(
+      expect.objectContaining({
+        target_node_id: slot?.node_id,
+        relation: "defines",
+        resolution: "candidate",
+      }),
+    );
+    expect(
+      trace.unknowns.some((unknown) => unknown.reason === "unknown-value"),
+    ).toBe(true);
+  }
+});
+
 it.each([
   ["binding", "speed = accel; return speed;", "speed"],
   ["property", "state.speed = accel; return state.speed;", "read:/speed"],

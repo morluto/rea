@@ -4,6 +4,7 @@ import {
   webSourceLocationFixture,
   webSourceMapDecoderFixture as decoder,
 } from "../../tests/fixtures/webSourceLocation.js";
+import { webModuleArtifactsFixture } from "../../tests/fixtures/webModuleTrace.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
@@ -60,6 +61,23 @@ it("passes an explicit decode deadline and omits the default from Evidence", asy
   expect(seen).toEqual([250, undefined]);
 });
 
+it("reports shared decoder record costs in result and Evidence limitations", async () => {
+  const response = await service().trace(args);
+  if (!response.ok) throw response.error;
+  const result = webSourceLocationResultSchema.parse(
+    response.value.normalized_result,
+  );
+  for (const limitations of [response.value.limitations, result.limitations]) {
+    expect(limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "shared decoder budget for generated rows, mapping segments, leaf maps, source and name declarations, sourcesContent entries, and indexed sections",
+        ),
+      ]),
+    );
+  }
+});
+
 it.each([
   { ...args, manifest_path: "relative.json" },
   { ...args, script_index: -1 },
@@ -79,6 +97,52 @@ it.each([
     ).trace(input);
     if (response.ok) throw new Error("expected invalid input");
     expect(projectAnalysisError(response.error).code).toBe("invalid_request");
+  },
+);
+it.each([
+  {
+    position: { line: 3, column: 0 },
+    issue: {
+      path: ["generated_position", "line"],
+      minimum: 1,
+      maximum: 2,
+      message:
+        "No line 3; the retained script ends at line 2 (one-based lines).",
+    },
+  },
+  {
+    position: { line: 1, column: 4 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 3,
+      message:
+        "No column 4 on line 1; it ends at column 3 (zero-based UTF-16 columns).",
+    },
+  },
+  {
+    position: { line: 2, column: 3 },
+    issue: {
+      path: ["generated_position", "column"],
+      minimum: 0,
+      maximum: 2,
+    },
+  },
+])(
+  "reports a generated position past the retained script as out of range: %j",
+  async ({ position, issue }) => {
+    const { importMap: _importMap, ...script } =
+      webModuleArtifactsFixture("abc\r\nde");
+    const data = { ...webSourceLocationFixture(), ...script };
+    const response = await service(data).trace({
+      ...args,
+      generated_position: position,
+    });
+    if (response.ok) throw new Error("expected invalid input");
+    expect(projectAnalysisError(response.error)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ ...issue, reason: "out_of_range" }] },
+    });
   },
 );
 it.each([
@@ -203,7 +267,8 @@ it("honors cancellation both before acquisition and across decoder completion", 
   if (!response.ok) expect(response.error.cause).toBe(firstReason);
   const controller = new AbortController();
   const lateReason = { caller: "after source-map provider completion" };
-  const late = await service(undefined, {
+  const fixture = webSourceLocationFixture();
+  const late = await service(fixture, {
     trace: (input) => {
       controller.abort(lateReason);
       return decoder.trace(input);
@@ -215,6 +280,28 @@ it("honors cancellation both before acquisition and across decoder completion", 
   expect(parseEvidence(late.error.partialObservation)).toMatchObject({
     operation: "trace_web_source_location",
     confidence: "derived",
+    authority: "historical-reference",
+    subject: {
+      local_path: fixture.sourceFile.path,
+      digest: { sha256: fixture.sourceFile.sha256 },
+    },
+    parameters: args,
+    raw_result: { source_map_text: fixture.sourceMap.text },
+    normalized_result: {
+      source_map: {
+        ...fixture.sourceMap.file,
+        url: args.source_map.url,
+        association: "caller-selected",
+      },
+      lookup: { requested: args.generated_position },
+      source_authenticity: "unknown",
+      execution: "unknown",
+    },
+    locations: [
+      fixture.sourceFile.path,
+      fixture.manifestFile.path,
+      fixture.sourceMap.file.path,
+    ].map((path) => ({ kind: "artifact-path", path })),
   });
 
   const malformedDecoder: WebSourceMapPort = {

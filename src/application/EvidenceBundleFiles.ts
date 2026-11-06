@@ -1,17 +1,22 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { EvidenceBundleExportReceipt } from "../domain/investigationLifecycle.js";
+import { jsonValueValidationIssue } from "../domain/jsonValue.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { requireAuthenticationHeadroom } from "./JsonAuthenticationHeadroom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { resemblesAnalysisSnapshot } from "../domain/analysisSnapshot.js";
 
 import { describeValidationFailure } from "../domain/validationFailure.js";
 import {
   safeParseImmutableEvidenceBundle,
   safeParseEvidenceBundle,
+  isImmutableEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
 import {
   EvidenceFileError,
   EvidenceIntegrityError,
+  type PublishedEvidenceFile,
 } from "../domain/evidenceErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
 import {
@@ -34,7 +39,19 @@ type EvidenceReadFailure =
 type EvidenceWriteFailure =
   | EvidenceFileError
   | EvidenceIntegrityError
-  | AnalysisCancelledError;
+  | AnalysisCancelledError
+  | AnalysisResourceConstraintError;
+
+/** Project a published bundle with record and residual-unknown revision counts. */
+export const evidenceBundleExportReceipt = (
+  bundle: EvidenceBundle,
+  published: PublishedEvidenceFile,
+): EvidenceBundleExportReceipt => ({
+  path: published.path,
+  bytes: published.bytes,
+  records: bundle.records.length,
+  unknowns: bundle.unknowns.length,
+});
 
 /** Read and validate an evidence bundle at the caller-supplied path. */
 export const readEvidenceBundle = (
@@ -141,6 +158,21 @@ export const authenticateEvidenceBundleValue = (
           userMessage: failure.message,
         }),
       );
+    if (
+      operation === "import_evidence_bundle" &&
+      typeof value === "object" &&
+      value !== null &&
+      !Object.hasOwn(value, "records") &&
+      resemblesAnalysisSnapshot(value)
+    )
+      return err(
+        new EvidenceFileError("read", "wrong-kind", {
+          path: absoluteCallerPath(path),
+          cause: failure.cause,
+          userMessage:
+            "This JSON appears to be an analysis snapshot rather than an Evidence bundle. Its snapshot content has not been validated. To restore it, use a matching target, provider and analysis profile: call open_binary with snapshot_path set to this file, or pass --snapshot to a compatible CLI analysis command (which loads and updates the snapshot). Alternatively, supply a bundle from export_evidence_bundle.",
+        }),
+      );
     return err(
       new EvidenceIntegrityError("Evidence bundle validation failed", {
         cause: failure.cause,
@@ -148,15 +180,28 @@ export const authenticateEvidenceBundleValue = (
       }),
     );
   }
-  return validateBundlePayloads(parsed.value);
+  return validateBundlePayloads(parsed.value, path, operation);
 };
 
 /** Validate typed payloads without restricting historical workflow or provider identities. */
 const validateBundlePayloads = (
   bundle: EvidenceBundle,
-): Result<EvidenceBundle, EvidenceIntegrityError> => {
+  path: string,
+  operation: string,
+): Result<
+  EvidenceBundle,
+  EvidenceIntegrityError | AnalysisResourceConstraintError
+> => {
   for (const record of bundle.records) {
     if (record.predicate_type !== "rea.process-capture") continue;
+    // A sealed bundle borrows records, but this typed parser still allocates a
+    // capture copy. Admit its actual working set against current headroom.
+    const headroom = requireAuthenticationHeadroom(record.normalized_result, {
+      operation,
+      path: absoluteCallerPath(path),
+      description: `Insufficient heap headroom to validate process capture ${record.evidence_id} in the Evidence bundle`,
+    });
+    if (!headroom.ok) return headroom;
     const parsedCapture = safeParseProcessCapture(record.normalized_result);
     if (!parsedCapture.success) {
       return err(
@@ -190,6 +235,22 @@ export const writeEvidenceBundle = async (
         cause: signal.reason,
       }),
     );
+  if (!isImmutableEvidenceBundle(bundle)) {
+    const issue = jsonValueValidationIssue(bundle);
+    if (issue !== undefined)
+      return err(
+        new EvidenceIntegrityError("Evidence checkpoint is not ordinary JSON", {
+          userMessage: issue,
+        }),
+      );
+    const headroom = requireAuthenticationHeadroom(bundle, {
+      operation,
+      path: absoluteCallerPath(path),
+      description:
+        "Insufficient heap headroom to authenticate the Evidence checkpoint",
+    });
+    if (!headroom.ok) return headroom;
+  }
   const checked = safeParseEvidenceBundle(bundle);
   if (!checked.ok) {
     return err(
@@ -198,7 +259,7 @@ export const writeEvidenceBundle = async (
       }),
     );
   }
-  const validated = validateBundlePayloads(checked.value);
+  const validated = validateBundlePayloads(checked.value, path, operation);
   if (!validated.ok) return validated;
   return writeTextParts(
     bufferedJsonParts(canonicalJsonParts(validated.value)),

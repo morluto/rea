@@ -156,6 +156,19 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
     "inspect_android_method",
     { path: nul, class_name: "probe.Class", method_name: "run" },
   ],
+  [
+    "inspect_android_class",
+    { path: "/tmp/probe.apk", class_name: "probe.Class", mapping_path: nul },
+  ],
+  [
+    "inspect_android_method",
+    {
+      path: "/tmp/probe.apk",
+      class_name: "probe.Class",
+      method_name: "run",
+      mapping_path: nul,
+    },
+  ],
   ["trace_android_references", { path: nul, class_name: "probe.Class" }],
   ["inspect_firmware_regions", { path: nul }],
   ["extract_firmware", { path: nul, output_directory: "/tmp/out" }],
@@ -229,6 +242,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_devicetree", { path: nul }],
   ["inspect_kernel_module", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
+  ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],
   ["inspect_binary_layout", { path: nul }],
@@ -320,7 +334,7 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
   expect(JSON.stringify(relative.content)).toContain(
     "absolute local filesystem path",
   );
-});
+}, 60_000);
 
 const ignoredOptions = [
   { terminal: { columns: 80, row: 12 } },

@@ -153,6 +153,22 @@ it("keeps scenario identity without finalization while versioning corrected port
   ).toBe("b50005d26269bd1db4a49c79e05bca67c3a18d837b45cd1c8ff591c01eb7623a");
   const comparison = processComparisonContract(scenario);
   expect(comparison.port_normalization_version).toBe("contextual-endpoints-v3");
+  expect(comparison).not.toHaveProperty("path_normalization_version");
+  const withPaths = processComparisonContract(
+    processScenarioSchema.parse({
+      ...scenario,
+      normalization: { ...scenario.normalization, paths: true },
+    }),
+  );
+  expect(withPaths.path_normalization_version).toBe(
+    "path-component-boundaries-v4",
+  );
+  expect(digestProcessCommitment(withPaths)).not.toBe(
+    digestProcessCommitment({
+      ...withPaths,
+      path_normalization_version: "path-component-boundaries-v3",
+    }),
+  );
   const {
     pid_normalization_version: pidVersion,
     terminal_observation_version: terminalVersion,
@@ -189,9 +205,9 @@ it("admits the default and the exact combined terminal-cell budget", () => {
     processScenarioSchema.safeParse({
       executable: "/bin/true",
       terminal: {
-        columns: 1,
+        columns: 2,
         rows: 1,
-        scrollback: PROCESS_TERMINAL_CELL_BUDGET - 1,
+        scrollback: PROCESS_TERMINAL_CELL_BUDGET / 2 - 1,
       },
     }).success,
   ).toBe(true);
@@ -250,7 +266,7 @@ it("applies the selected scrollback budget to every scheduled resize", () => {
   expect(
     processScenarioSchema.safeParse({
       executable: "/bin/true",
-      terminal: { columns: 1, rows: 1, scrollback: 0 },
+      terminal: { columns: 2, rows: 1, scrollback: 0 },
       events: [{ type: "resize", at_ms: 10, columns: 1_000, rows: 1 }],
     }).success,
   ).toBe(true);

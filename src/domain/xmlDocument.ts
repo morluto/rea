@@ -20,6 +20,32 @@ export class XmlDocumentParseError extends Error {
   }
 }
 
+/** Read XML syntax as a stream, throwing at the first error; it holds only the open elements. */
+const checkXmlSyntax = (source: string, doctype: "allow" | "reject"): void => {
+  const syntax = new SaxesParser({
+    xmlns: true,
+    defaultXMLVersion: "1.0",
+    forceXMLVersion: true,
+  });
+  syntax.on("doctype", () => {
+    if (doctype === "reject") throw new XmlDocumentParseError("doctype");
+  });
+  syntax.write(source).close();
+};
+
+/** Whether XML passes the syntax check `parseXmlDocument` makes, without building a document. */
+export const isWellFormedXml = (
+  source: string,
+  policy: { readonly doctype: "allow" | "reject" },
+): boolean => {
+  try {
+    checkXmlSyntax(source, policy.doctype);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 /** One boundary owns strict XML syntax and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,
@@ -29,15 +55,7 @@ export const parseXmlDocument = (
   },
 ): Result<Document, XmlDocumentParseError> => {
   try {
-    const syntax = new SaxesParser({
-      defaultXMLVersion: "1.0",
-      forceXMLVersion: true,
-    });
-    syntax.on("doctype", () => {
-      if (policy.doctype === "reject")
-        throw new XmlDocumentParseError("doctype");
-    });
-    syntax.write(source).close();
+    checkXmlSyntax(source, policy.doctype);
     // Saxes owns well-formedness outside DTDs. The DOM parser additionally
     // checks DTD syntax and builds source-located nodes; its advisory warnings
     // (including literal U+FFFD) are not byte-decoding or syntax failures.

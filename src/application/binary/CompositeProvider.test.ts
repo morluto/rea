@@ -12,7 +12,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
 import { CompositeProvider } from "./CompositeProvider.js";
-import { closeAnalysisClient } from "../../providers/AnalysisClientCleanup.js";
+import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 
 const identity = (id: string): ProviderIdentity => ({

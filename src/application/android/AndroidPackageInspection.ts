@@ -2,7 +2,7 @@ import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { AndroidAnalysisService } from "./AndroidAnalysisService.js";
 import {
   requireAnalysisViewRetention,
-  summarizeRetainedAnalysis,
+  projectRetainedAnalysis,
   type AnalysisViewRetention,
 } from "../analysisView/AnalysisViewService.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -36,5 +36,9 @@ export const inspectAndroidPackage = async (
     options,
   );
   if (!executed.ok || parsed.value.detail !== "summary") return executed;
-  return summarizeRetainedAnalysis(executed.value, retention);
+  return projectRetainedAnalysis(
+    executed.value,
+    retention,
+    parsed.value.view ?? { kind: "summary" },
+  );
 };

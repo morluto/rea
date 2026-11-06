@@ -1,3 +1,4 @@
+import { EvmAdmissionError } from "./EvmAdmissionError.js";
 import { decode, Tokenizer, Type, type Token } from "cborg";
 import type {
   SolidityMetadata,
@@ -14,39 +15,52 @@ const decodeOptions = {
   allowUndefined: false,
   allowInfinity: false,
   allowNaN: false,
-  rejectDuplicateMapKeys: true,
+  rejectDuplicateMapKeys: false,
   retainStringBytes: true,
 } as const;
 
 /** Bound recursive decoder entry before collection interpretation/allocation. */
 class BoundedMetadataTokenizer extends Tokenizer {
   readonly remaining: number[] = [];
+  readonly #mapKeys: Array<Set<string> | undefined> = [];
   constructor(bytes: Uint8Array) {
     super(bytes, decodeOptions);
   }
 
   override next(): Token {
-    while (this.remaining.at(-1) === 0) this.remaining.pop();
+    while (this.remaining.at(-1) === 0) {
+      this.remaining.pop();
+      this.#mapKeys.pop();
+    }
     const token = super.next();
     if (
       Type.equals(token.type, Type.tag) ||
       Type.equals(token.type, Type.float)
     )
-      throw new Error(
-        "CBOR tags and floating-point values are outside this metadata profile.",
-      );
+      throw new EvmAdmissionError("tag_or_float");
     if (Type.equals(token.type, Type.string)) {
       if (token.byteValue !== undefined)
         token.value = utf8.decode(token.byteValue);
       // cborg answers the shortest-form empty text (0x60) with a shared token that has no
       // bytes; it can only mean "", which is already its value.
       else if (token.value !== "" || token.encodedLength !== 1)
-        throw new Error(
-          "CBOR text bytes were unavailable for strict UTF-8 validation.",
-        );
+        throw new EvmAdmissionError("text_bytes_unavailable");
     }
     const parent = this.remaining.length - 1;
+    const mapKeys = parent >= 0 ? this.#mapKeys[parent] : undefined;
+    const onKey =
+      mapKeys !== undefined && parent >= 0 && this.remaining[parent]! % 2 === 0;
     if (parent >= 0) this.remaining[parent]!--;
+    if (
+      onKey &&
+      mapKeys !== undefined &&
+      !Type.equals(token.type, Type.map) &&
+      !Type.equals(token.type, Type.array)
+    ) {
+      const identity = keyIdentity(token.value);
+      if (mapKeys.has(identity)) throw repeatedMapKey(identity);
+      mapKeys.add(identity);
+    }
     if (
       Type.equals(token.type, Type.map) ||
       Type.equals(token.type, Type.array)
@@ -61,11 +75,14 @@ class BoundedMetadataTokenizer extends Tokenizer {
         children < 0 ||
         children > this.data.length
       )
-        throw new Error(
-          "Declared CBOR collection exceeds the encoded item-byte bound.",
-        );
+        throw new EvmAdmissionError("collection_exceeds_bound");
       if (this.remaining.length >= MAX_DEPTH)
-        throw new Error("CBOR nesting exceeds the 64-level metadata profile.");
+        throw new EvmAdmissionError("nesting_exceeds_profile", {
+          max_depth: MAX_DEPTH,
+        });
+      this.#mapKeys.push(
+        Type.equals(token.type, Type.map) ? new Set() : undefined,
+      );
       this.remaining.push(children);
     }
     return token;
@@ -85,9 +102,7 @@ const scalar = (value: unknown): SolidityMetadataScalar => {
   if (value instanceof Map) return { kind: "uninterpreted", container: "map" };
   if (Array.isArray(value))
     return { kind: "uninterpreted", container: "array" };
-  throw new Error(
-    "CBOR decoder returned a value outside the admitted profile.",
-  );
+  throw new EvmAdmissionError("value_outside_profile");
 };
 
 /** Value identity for duplicate-key checks; map entry order is not significant. */
@@ -101,14 +116,21 @@ const keyIdentity = (value: unknown): string => {
   return JSON.stringify(scalar(value));
 };
 
+const repeatedMapKey = (identity: string): EvmAdmissionError =>
+  new EvmAdmissionError(
+    "repeated_map_key",
+    identity.length <= 128
+      ? { key: identity }
+      : { key_length: identity.length },
+  );
+
 /** Check every map boundary, even when nested values remain uninterpreted. */
 const validateMapKeys = (value: unknown): void => {
   if (value instanceof Map) {
     const seen = new Set<string>();
     for (const [key, item] of value) {
       const identity = keyIdentity(key);
-      if (seen.has(identity))
-        throw new Error(`CBOR decode error: found repeat map key ${identity}`);
+      if (seen.has(identity)) throw repeatedMapKey(identity);
       seen.add(identity);
       validateMapKeys(key);
       validateMapKeys(item);
@@ -116,6 +138,32 @@ const validateMapKeys = (value: unknown): void => {
   } else if (Array.isArray(value)) {
     for (const item of value) validateMapKeys(item);
   }
+};
+
+/** Keep the typed code and its detail; map only the decoder's duplicate-key throw. */
+const solidityFailure = (
+  cause: unknown,
+): {
+  readonly diagnostic: string;
+  readonly admission?: {
+    readonly code: string;
+    readonly detail?: Readonly<Record<string, string | number>>;
+  };
+} => {
+  if (cause instanceof EvmAdmissionError)
+    return {
+      diagnostic: cause.code,
+      admission: {
+        code: cause.code,
+        ...(cause.detail === undefined ? {} : { detail: cause.detail }),
+      },
+    };
+  return {
+    diagnostic: (cause instanceof Error ? cause.message : String(cause)).slice(
+      0,
+      512,
+    ),
+  };
 };
 
 /** Parse only a plausible terminal root-map candidate; never establish absence. */
@@ -148,8 +196,7 @@ export const inspectSolidityMetadata = (
       ...decodeOptions,
       tokenizer: new BoundedMetadataTokenizer(selected),
     });
-    if (!(raw instanceof Map))
-      throw new Error("Terminal CBOR candidate did not decode to a root map.");
+    if (!(raw instanceof Map)) throw new EvmAdmissionError("root_not_map");
     validateMapKeys(raw);
     // cborg compares Map keys by identity, so repeated byte-string or container
     // keys (each its own object) pass its duplicate check; compare by value at
@@ -185,10 +232,7 @@ export const inspectSolidityMetadata = (
       status: "not-decoded",
       entries: [],
       compiler_version: null,
-      diagnostic: (cause instanceof Error
-        ? cause.message
-        : String(cause)
-      ).slice(0, 512),
+      ...solidityFailure(cause),
     };
   }
 };

@@ -1,15 +1,12 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
-import { access, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 
 import { CdpBrowserProvider } from "../dist/browser/CdpBrowserProvider.js";
-import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+import { startRuntimeFixtureBrowser } from "./lib/browser-runtime-fixture-lifecycle.mjs";
 
 import { createBrowserScenarioProvider } from "../dist/composition/browserScenario.js";
 import {
@@ -55,12 +52,6 @@ import { verifyScenarioStorageFingerprints } from "./lib/browser-scenario-storag
 import { verifyScenarioServiceWorkers } from "./lib/browser-scenario-service-workers-e2e.mjs";
 import { verifyBrowserUrlUserInfo } from "./lib/browser-url-userinfo-e2e.mjs";
 
-const { BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS, waitForBrowserDevtoolsPort } =
-  await importVerifierSource(
-    new URL("./lib/browser-process-startup.mts", import.meta.url).href,
-    import.meta.url,
-  );
-
 const SCENARIO_SECRET_VALUE = "rea-browser-verifier-secret";
 const SCENARIO_URL_SECRET_VALUE = "rea-browser-url-verifier-secret";
 process.env.REA_BROWSER_VERIFIER_SECRET = SCENARIO_SECRET_VALUE;
@@ -69,48 +60,17 @@ const verifierRun = createVerifierRun();
 
 await requireOrdinaryWindowsVerifierCaller();
 const executable = await browserExecutable();
-let profile;
 let site;
 let browser;
 let pageProxy;
 let report;
 await withVerifierCleanup(async () => {
-  profile = await mkdtemp(join(tmpdir(), "rea-real-browser-"));
   site = await startBrowserVerifierSite();
-  browser = spawn(
+  browser = await startRuntimeFixtureBrowser(
     executable,
-    [
-      "--headless=new",
-      "--password-store=basic",
-      ...(process.env.REA_BROWSER_NO_SANDBOX === "true"
-        ? ["--no-sandbox"]
-        : []),
-      "--remote-debugging-address=127.0.0.1",
-      "--remote-debugging-port=0",
-      `--user-data-dir=${profile}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-networking",
-      "--disable-component-update",
-      "--disable-dev-shm-usage",
-      "--disable-sync",
-      "--metrics-recording-only",
-      `${site.origin}/app?startup=browser-secret-value`,
-    ],
-    { stdio: ["ignore", "ignore", "pipe"] },
+    `${site.origin}/app?startup=browser-secret-value`,
   );
-  let stderr = "";
-  browser.stderr.on("data", (chunk) => {
-    if (stderr.length < 64 * 1_024) stderr += chunk.toString("utf8");
-  });
-  const port = await waitForBrowserDevtoolsPort({
-    child: browser,
-    executable,
-    activePortPath: join(profile, "DevToolsActivePort"),
-    stderr: () => stderr,
-    timeoutMs: BROWSER_DEVTOOLS_STARTUP_TIMEOUT_MS,
-  });
-  const endpoint = `http://127.0.0.1:${String(port)}`;
+  const endpoint = `http://127.0.0.1:${String(browser.port)}`;
   const provider = new CdpBrowserProvider();
   const target = await pageTarget(provider, endpoint);
   const observed = await provider.inspectPage(
@@ -262,7 +222,7 @@ await withVerifierCleanup(async () => {
   await verifyPageScopedTransport(provider, pageProxy, site.origin);
   const browserSocketTransport = await verifyBrowserSocketTransport({
     provider,
-    profile,
+    profile: browser.profile,
     endpoint,
     target,
     origin: site.origin,
@@ -308,7 +268,7 @@ await withVerifierCleanup(async () => {
       "Scenario CLI did not report external disconnect ownership",
     );
   const versionResponse = await fetch(`${endpoint}/json/version`);
-  if (!versionResponse.ok || browser.exitCode !== null)
+  if (!versionResponse.ok || browser.process.exitCode !== null)
     throw new Error("Scenario attachment terminated its external browser");
 
   const profilesBefore = await scenarioProfiles();
@@ -457,7 +417,7 @@ await withVerifierCleanup(async () => {
   async () => {
     if (browser !== undefined) {
       process.stderr.write("Browser verifier cleanup: stopping owned Chrome\n");
-      await stopProcess(browser);
+      await browser.close();
     }
   },
   async () => {
@@ -465,15 +425,6 @@ await withVerifierCleanup(async () => {
       process.stderr.write("Browser verifier cleanup: closing fixture site\n");
       await site.close();
     }
-  },
-  async () => {
-    if (profile !== undefined)
-      await rm(profile, {
-        recursive: true,
-        force: true,
-        maxRetries: 10,
-        retryDelay: 100,
-      });
   },
 ]);
 process.stdout.write(
@@ -628,24 +579,4 @@ async function pageTarget(provider, endpoint) {
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
-}
-
-async function stopProcess(child) {
-  if (child.exitCode !== null || child.signalCode !== null) return;
-  const gracefulExit = waitForExit(child);
-  child.kill("SIGTERM");
-  const exited = await Promise.race([
-    gracefulExit.then(() => true),
-    delay(2_000).then(() => false),
-  ]);
-  if (!exited) {
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    const forcedExit = waitForExit(child);
-    child.kill("SIGKILL");
-    await forcedExit;
-  }
-}
-
-function waitForExit(child) {
-  return new Promise((resolve) => child.once("exit", resolve));
 }

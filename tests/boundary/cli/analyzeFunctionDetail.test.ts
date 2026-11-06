@@ -11,6 +11,7 @@ import { CLI_COMMANDS } from "../../../src/cliCommandNames.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
+import { ok } from "../../../src/domain/result.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 // A complete analyze_function Evidence as runDirectAnalysis would return it:
@@ -28,14 +29,14 @@ const cannedCompleteEvidence = () =>
   );
 
 const harness = () => {
-  const runDirectAnalysis = vi.fn(
-    async () => cannedCompleteEvidence() as unknown,
-  );
+  const runDirectAnalysis = vi.fn<
+    Parameters<typeof registerCoreBinaryCommands>[2]
+  >(async () => ok(cannedCompleteEvidence()));
   const cli = Cli.create("rea-fn-detail-test", { version: "1", sync: false });
   registerCoreBinaryCommands(
     cli as unknown as CliInstance,
     pino({ enabled: false }),
-    runDirectAnalysis as never,
+    runDirectAnalysis,
     {},
   );
   const command = Cli.toCommands.get(cli)?.get(CLI_COMMANDS.function);

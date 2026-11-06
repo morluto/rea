@@ -360,7 +360,13 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       ({ relation, target_node_id }) =>
         relation === "aliases" && target_node_id === returnNode.node_id,
     ),
-  ).toEqual([expect.objectContaining({ resolution: "candidate" })]);
+  ).toEqual([]);
+  expect(
+    graph.relations.filter(
+      ({ relation, target_node_id }) =>
+        relation === "influences" && target_node_id === returnNode.node_id,
+    ),
+  ).toEqual([expect.objectContaining({ resolution: "resolved" })]);
   const output = graph.nodes.find(
     ({ kind, label }) => kind === "binding" && label === "output",
   );
@@ -376,10 +382,8 @@ it("does not promote transformed return expressions to resolved aliases", () => 
       direction: "backward-provenance",
     }),
   );
-  expect(strict.nodes.map(({ node_id }) => node_id)).not.toContain(
-    input.node_id,
-  );
-  expect(strict.status).toBe("ambiguous");
+  expect(strict.nodes.map(({ node_id }) => node_id)).toContain(input.node_id);
+  expect(strict.status).toBe("partial");
 });
 
 it("uses unavailable evidence when no source produced semantic IR", () => {

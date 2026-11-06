@@ -15,6 +15,7 @@ import {
 } from "./analysisEvidenceDelivery.js";
 import { erlangBeamDeliverySchema } from "../domain/analysisView/erlangBeamView.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { cliDecimalField } from "./options.js";
 
 /** Inspect operator-selected BEAM files through the same shared workflow as MCP. */
 export const registerErlangCommands = (
@@ -28,9 +29,12 @@ export const registerErlangCommands = (
       path: localPathStringSchema.describe("Local BEAM file"),
     }),
     options: z.object({
-      maxFileBytes: inspectErlangBeamInputSchema.shape.max_file_bytes,
-      maxChunks: inspectErlangBeamInputSchema.shape.max_chunks,
-      maxAtoms: inspectErlangBeamInputSchema.shape.max_atoms,
+      // Decimal tokens only, as for inspect-python-pyc.
+      maxFileBytes: cliDecimalField(
+        inspectErlangBeamInputSchema.shape.max_file_bytes,
+      ),
+      maxChunks: cliDecimalField(inspectErlangBeamInputSchema.shape.max_chunks),
+      maxAtoms: cliDecimalField(inspectErlangBeamInputSchema.shape.max_atoms),
       ...analysisEvidenceDeliveryOptions,
       view: z
         .string()
@@ -50,6 +54,7 @@ export const registerErlangCommands = (
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const service = createBeamService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

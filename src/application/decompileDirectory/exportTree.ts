@@ -14,6 +14,7 @@ import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
 } from "../../artifacts/ArtifactFileOperation.js";
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 
 import {
@@ -28,9 +29,9 @@ import {
   type DecompileJournalHeader,
 } from "../../contracts/decompileDirectory.js";
 import {
+  AnalysisInputError,
   AnalysisOutputError,
   AnalysisResourceConstraintError,
-  type AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
@@ -204,6 +205,19 @@ export class DecompileExport {
   async writeIndex(input: {
     readonly layoutStatus: "address" | "debug_layout_unavailable";
     readonly limitations: readonly string[];
+    readonly latestRun: {
+      readonly resume: boolean;
+      readonly selected: number;
+      readonly excluded: number;
+      readonly selection: {
+        readonly name: string | null;
+        readonly namespace: string | null;
+        readonly address_start: string | null;
+        readonly address_end: string | null;
+        readonly limit: number | null;
+      };
+      readonly inventoryLimitations: readonly string[];
+    };
   }): Promise<Result<void, AnalysisError>> {
     // Appends update this owner only after journal sync; resume parses once.
     // Reuse those committed facts instead of re-reading and reinterpreting them.
@@ -214,6 +228,13 @@ export class DecompileExport {
       analysis_profile_digest: this.identity.analysisProfileDigest,
       layout: this.identity.layout,
       layout_status: input.layoutStatus,
+      latest_run: {
+        resume: input.latestRun.resume,
+        selected: input.latestRun.selected,
+        excluded: input.latestRun.excluded,
+        selection: input.latestRun.selection,
+        inventory_limitations: [...input.latestRun.inventoryLimitations],
+      },
       limitations: [...input.limitations],
       functions: [...this.records.values()].sort((left, right) =>
         compareProcedureAddresses(left.address, right.address),
@@ -370,7 +391,8 @@ export type FileCommit =
   | { readonly status: "written"; readonly sha256: string }
   | { readonly status: "matched"; readonly sha256: string }
   | { readonly status: "conflict" }
-  | { readonly status: "io" };
+  | { readonly status: "io" }
+  | { readonly status: "error"; readonly error: AnalysisError };
 
 /**
  * Publish bytes with `link`, which fails when the final name exists.
@@ -391,10 +413,29 @@ const commitFunctionFile = async (
     (cause: unknown) => cause,
   );
   if (linked === true) return { status: "written", sha256: digest };
+  if (linked instanceof ArtifactReaderFailure && linked.cleanup !== undefined)
+    return {
+      status: "error",
+      error: exportOutputFailure(
+        "decompile function publication cleanup failed",
+        linked,
+      ),
+    };
   if (nodeCode(linked) !== "EEXIST") return { status: "io" };
   const existing = await resources
     .hashFile(finalPath)
     .catch((cause: unknown) => cause);
+  if (
+    existing instanceof ArtifactReaderFailure &&
+    existing.cleanup !== undefined
+  )
+    return {
+      status: "error",
+      error: exportOutputFailure(
+        "decompile file verification cleanup failed",
+        existing,
+      ),
+    };
   if (typeof existing !== "string") return { status: "io" };
   return existing === digest
     ? { status: "matched", sha256: digest }
@@ -642,20 +683,18 @@ const readJournal = async (
   if (!parsed.ok) return parsed;
   const unknown = unknownIdentity(parsed.value.header, identity);
   if (unknown !== undefined) return err(unknown);
-  return sameIdentity(parsed.value.header, identity)
-    ? ok({
-        records: parsed.value.records,
-        written: parsed.value.written,
-        paths: parsed.value.paths,
-        committedBytes: parsed.value.committedBytes,
-        journalBytes: parsed.value.journalBytes,
-      })
-    : err(
-        decompileInputError(
-          "output_directory",
-          "The decompile journal does not match this target, provider, analysis profile, or layout.",
-        ),
-      );
+  const mismatches = identityMismatches(parsed.value.header, identity);
+  if (mismatches.length > 0)
+    return err(
+      journalIdentityMismatch(parsed.value.header, identity, mismatches),
+    );
+  return ok({
+    records: parsed.value.records,
+    written: parsed.value.written,
+    paths: parsed.value.paths,
+    committedBytes: parsed.value.committedBytes,
+    journalBytes: parsed.value.journalBytes,
+  });
 };
 
 const parseJournal = (
@@ -726,22 +765,76 @@ const unknownIdentity = (
   return undefined;
 };
 
-const sameIdentity = (
+/** Identity components in the order presented to the caller. */
+const identityMismatches = (
   header: DecompileJournalHeader,
   identity: ExportIdentity,
-): boolean =>
-  header.target_sha256 === identity.targetSha256 &&
-  header.analysis_profile_digest === identity.analysisProfileDigest &&
-  header.layout === identity.layout &&
-  header.provider.id === identity.provider.id &&
-  header.provider.name === identity.provider.name &&
-  header.provider.version === identity.provider.version;
+): readonly string[] => [
+  ...(header.target_sha256 === identity.targetSha256 ? [] : ["target SHA-256"]),
+  ...(header.analysis_profile_digest === identity.analysisProfileDigest
+    ? []
+    : ["analysis profile digest"]),
+  ...(header.layout === identity.layout ? [] : ["layout"]),
+  ...(header.provider.id === identity.provider.id ? [] : ["provider id"]),
+  ...(header.provider.name === identity.provider.name ? [] : ["provider name"]),
+  ...(header.provider.version === identity.provider.version
+    ? []
+    : ["provider version"]),
+];
 
-const incompatibleJournal = (): AnalysisInputError =>
-  decompileInputError(
-    "output_directory",
-    "The decompile journal is not a compatible export.",
+/**
+ * Report the concrete resume identity that differs. The request is valid, so
+ * generic input-schema recovery would send the caller to the wrong boundary.
+ */
+const journalIdentityMismatch = (
+  header: DecompileJournalHeader,
+  identity: ExportIdentity,
+  mismatches: readonly string[],
+): AnalysisInputError => {
+  const message = `The decompile journal does not match the current ${mismatches.join(", ")}.`;
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Resume with the target, provider, analysis profile, and layout that created this directory, or choose a new output directory. The journal and existing files were left unchanged.",
+    },
+    [
+      {
+        path: ["output_directory"],
+        reason: "invalid_value",
+        message,
+        expected: {
+          target_sha256: header.target_sha256,
+          analysis_profile_digest: header.analysis_profile_digest,
+          layout: header.layout,
+          provider: header.provider,
+        },
+        observed: {
+          target_sha256: identity.targetSha256,
+          analysis_profile_digest: identity.analysisProfileDigest,
+          layout: identity.layout,
+          provider: identity.provider,
+        },
+      },
+    ],
   );
+};
+
+const incompatibleJournal = (): AnalysisInputError => {
+  const message = "The decompile journal is not a compatible export.";
+  return new AnalysisInputError(
+    "decompile_all",
+    {
+      userMessage: message,
+      conformsToInputContract: true,
+      remediationAction:
+        "Inspect the journal and use the REA version that created it, or choose a new output directory. The journal may be damaged or from an unsupported version; existing files were left unchanged.",
+    },
+    [{ path: ["output_directory"], reason: "invalid_value", message }],
+  );
+};
 
 const parseJson = (line: string | undefined): unknown => {
   if (line === undefined) return undefined;
@@ -962,13 +1055,29 @@ const writeOwnedIndex = async (
     return ok(undefined);
   } catch (cause: unknown) {
     return err(
-      new AnalysisOutputError(
-        "decompile_all",
-        "decompile index could not be written",
-        { cause },
+      exportOutputFailure(
+        cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+          ? "decompile index publication cleanup failed"
+          : "decompile index could not be written",
+        cause,
       ),
     );
   }
+};
+
+/** Preserve the publisher's parsed failure and exact cleanup authority. */
+export const exportOutputFailure = (
+  message: string,
+  cause: unknown,
+): AnalysisOutputError => {
+  const error = new AnalysisOutputError("decompile_all", message, {
+    cause,
+    ...(cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined
+      ? { cleanup: cause.cleanup }
+      : {}),
+  });
+  bindArtifactFileCleanup(cause, error);
+  return error;
 };
 
 export const sha256 = (bytes: Buffer): string =>

@@ -173,6 +173,22 @@ const equalBytes = (a: Uint8Array, b: Uint8Array): boolean =>
   a.length === b.length && a.every((byte, i) => byte === b[i]);
 
 /**
+ * apksig compares serials as signed INTEGER values, tolerating redundant sign
+ * octets even though DER requires minimal encoding. Normalize each parsed
+ * identity once; retain the original certificate encoding independently.
+ */
+const integerIdentityContents = (bytes: Uint8Array): Uint8Array => {
+  let start = 0;
+  while (start < bytes.length - 1) {
+    const first = bytes[start];
+    const nextHigh = ((bytes[start + 1] ?? 0) & 0x80) !== 0;
+    if (!((first === 0x00 && !nextHigh) || (first === 0xff && nextHigh))) break;
+    start += 1;
+  }
+  return start === 0 ? bytes : bytes.subarray(start);
+};
+
+/**
  * RFC 5280 §7.1: RDN order matters; attributes in one SET do not. This
  * comparison profile admits ASCII PrintableString/UTF8String for common
  * caseIgnore DirectoryString attributes. Other name rules remain unknown;
@@ -231,7 +247,7 @@ const directoryNameKey = (name: Asn1BerNode): string | null => {
 interface CertificateIdentity {
   readonly issuer: Uint8Array;
   readonly issuerKey: string | null;
-  readonly serial: Uint8Array;
+  readonly serialIdentity: Uint8Array;
   readonly subjectKeyIdentifier: Uint8Array | null;
 }
 
@@ -278,7 +294,7 @@ const certificateIdentity = (
     return {
       issuer: reader.rawEncodedSpan(issuer),
       issuerKey: directoryNameKey(issuer),
-      serial: serial.content,
+      serialIdentity: integerIdentityContents(serial.content),
       subjectKeyIdentifier,
     };
   } catch (cause: unknown) {
@@ -305,18 +321,16 @@ const signerInfo = (
     const issuerNode = expectTag(parts[0], TAG.sequence, `${what} issuer`);
     const issuer = reader.rawEncodedSpan(issuerNode);
     const issuerKey = directoryNameKey(issuerNode);
-    const serial = expectTag(
-      parts[1],
-      TAG.integer,
-      `${what} serialNumber`,
-    ).content;
+    const serialIdentity = integerIdentityContents(
+      expectTag(parts[1], TAG.integer, `${what} serialNumber`).content,
+    );
     identifiedBy = "issuer-and-serial";
     certificateIndex = identities.findIndex(
       (identity) =>
         identity !== null &&
         (equalBytes(identity.issuer, issuer) ||
           (issuerKey !== null && identity.issuerKey === issuerKey)) &&
-        equalBytes(identity.serial, serial),
+        equalBytes(identity.serialIdentity, serialIdentity),
     );
   } else if (sid?.tag === TAG.context0Primitive) {
     const keyId = sid.content;

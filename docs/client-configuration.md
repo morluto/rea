@@ -14,13 +14,18 @@ interpreter: the npm launcher's `#!/usr/bin/env node` still searches `PATH` for
 Node. Running that command successfully in a terminal does not establish that
 the client can launch it.
 
-For direct JavaScript installations, setup registers the selected runtime
+For JavaScript installations, setup registers the selected runtime
 executable and REA script by absolute path. On POSIX, it prefers executable
 `node` or `bun` and REA aliases on setup's `PATH` only when they resolve to the
 same selected files. This preserves manager-owned aliases across version updates;
-otherwise setup uses the selected paths directly. Package-runner registrations keep
-their selected runner. Setup does not copy your ambient environment into client
-settings. To refresh an older registration, preview
+otherwise setup uses the selected paths directly. This also applies when setup
+runs through a package runner: retain the selected cache entry and runtime while
+the registration uses them. Clearing either makes startup fail without resolving
+another package from the client's project. Restore the same installation before
+repairing it; an unidentified registration remains untouched. See
+[installation and recovery](installation.md#package-runners-and-global-installation).
+Setup forwards supported, explicitly selected REA settings into client
+configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
@@ -39,6 +44,35 @@ executable and environment of the terminal running doctor. It does not launch
 the client's configured command or reproduce the client's environment. If doctor
 passes but the client disconnects, inspect the client's startup error and registered
 launcher; see [verification scope](client-verification.md#launch-environment-verification).
+
+`rea doctor` has the same limit for provider checks, and reports a provider setting
+the registration's file does not carry as a
+[non-blocking unknown](installation.md#check-readiness-for-your-task).
+
+## Setting launch variables in PowerShell
+
+Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+use POSIX shell syntax. In PowerShell, set the process environment before
+launching REA:
+
+```powershell
+$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+rea mcp doctor --json
+```
+
+The assignment applies to the current PowerShell process and commands it launches.
+Restore the previous value when finished, or use
+`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+not update an already running MCP server or desktop client.
+
+To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+client's existing REA registration `env` object (`environment` for OpenCode) and
+restart the client, preserving its other settings. A successful terminal doctor run does not verify the client's
+launch environment. See [launch-environment verification](client-verification.md#launch-environment-verification)
+and the client-specific instructions below. REA setup forwards supported selections,
+including `REA_MCP_INPUT_SCHEMA_PROFILE`, from its environment into the registration;
+it does not copy unrelated environment values. Restoring the shell's previous
+value does not undo a selection already saved by setup.
 
 ## Runtime settings and client deadlines
 
@@ -67,6 +101,68 @@ tool names and approval rules before selecting a permission scope. REA setup
 does not repair a client's naming behavior or infer permission drift from an
 unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
+
+## Hot/cold catalogs
+
+For a client that supports MCP catalog refresh, set
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
+the connection. REA then advertises a small initial catalog and loads other
+named tools through `discover_tools`. Setup preserves this explicit setting.
+See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
+pagination, identity and family-scope semantics.
+
+Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
+this workflow. Merge these entries into the existing `~/.codex/config.toml`
+without replacing other feature or REA settings:
+
+```toml
+[features]
+mcp_tool_list_changed = true
+
+[mcp_servers.rea.env]
+REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
+```
+
+The server setting alone does not enable client refresh. If a successful
+discovery call is followed by a missing tool, check the client's refresh feature
+and tool allow/deny lists. Clients without refresh should use the default
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. The
+[FastMCP HTTP trial](#fastmcp-and-unsloth-sse-catalog-limits) below covers
+explicit refreshes; other clients' automatic refresh remains unverified.
+
+## FastMCP and Unsloth SSE catalog limits
+
+If an HTTP client reports `Server-sent event exceeded the 1048576 byte limit`
+during `tools/list`, merge these settings into the **REA server process's**
+environment, then reconnect:
+
+```text
+REA_MCP_INPUT_SCHEMA_PROFILE=compact
+REA_MCP_OUTPUT_SCHEMA_PROFILE=compact
+REA_MCP_TOOL_CATALOG_PROFILE=full
+```
+
+This advertises all tools without requiring catalog refresh. Compact output
+schemas widen client-side validation; REA still validates complete results
+against the canonical contracts. See [output schemas](mcp-contracts.md#output-schemas).
+
+On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
+the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
+The settings above delivered all 240 tools in 611,305 bytes and a
+`binary_session` call succeeded. These are measured SSE response sizes for
+that catalog, not a size guarantee for future catalogs or other profiles.
+
+For a client that refreshes tools, combine `hot-cold` with the compact schema
+settings to reduce initial context further: the same trial delivered six
+initial tools in 33,903 bytes, then explicitly refreshed through 34 loaded
+tools. Hot/cold alone later exceeded the SSE limit during refresh. Follow
+the [refresh requirements](#hotcold-catalogs).
+
+The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) fails at
+catalog delivery; the Unsloth application itself was not exercised in this
+trial. Schema compaction does not bound analysis results. Continue to use
+summary/detail selection and tool-specific paging for larger results; client
+receive limits and full Evidence access still apply.
 
 ## Fiddler Everywhere alongside REA
 
@@ -121,7 +217,7 @@ in the file the installed app reads:
 
 - Without Claude Desktop's MSIX package storage, setup uses
   `%APPDATA%\Claude\claude_desktop_config.json`.
-- The MSIX build (package family `Claude_pzs8sxrjxfjjc`, installed under
+- The legacy MSIX storage layout (package family `Claude_pzs8sxrjxfjjc`, installed under
   `C:\Program Files\WindowsApps\Claude_<version>_x64__pzs8sxrjxfjjc`)
   virtualizes AppData writes. Once it has saved its configuration, it reads
   the package-private copy
@@ -130,6 +226,11 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
+- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
+  and uninstall report an unresolved location. Migrated MSIX installations
+  have been observed reading `claude_desktop_config.json` in this directory.
+  Quit Claude Desktop and verify its active configuration before registering
+  manually. See [#8968](https://github.com/morluto/rea/issues/8968).
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
   another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
   be read, REA cannot establish which file Claude
@@ -268,7 +369,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -278,8 +379,9 @@ patterns. A provider being unavailable does not discard its selected paths;
 doctor reports its readiness separately. Explicit selections override discovered
 defaults, including when setup runs again with a changed selection. Unrelated
 environment variables, process ownership tokens and one-shot target paths are not
-copied. Existing client environment overrides remain intact unless setup supplies
-the same key.
+copied. For an explicitly configured startup target, see the
+[initial-target settings](mcp-contracts.md#initial-target-at-startup). Existing
+client environment overrides remain intact unless setup supplies the same key.
 You can edit `startupTimeoutMs` and `toolTimeoutMs` there; doctor keeps positive
 caller-selected values aligned and reports a non-blocking advisory when a tool
 timeout is shorter than the known provider allowance.
@@ -299,6 +401,22 @@ Kimi Code also discovers personal skills in `~/.agents/skills` and project-local
 `.agents/skills`, so no separate skill root is required; setup still installs
 and verifies the matching skill files through the normal shared-skill flow.
 Start a new Kimi Code session to pick up MCP and skill changes.
+
+## LM Studio
+
+For [LM Studio](https://lmstudio.ai/docs/app/mcp), setup writes `mcpServers.rea`
+into `mcp.json` in the LM Studio home directory. Setup finds that directory as
+LM Studio does: the path stored in `~/.lmstudio-home-pointer`, otherwise
+`~/.cache/lm-studio` when it exists, otherwise `~/.lmstudio`. Setup only reads
+the pointer file. LM Studio parses `mcp.json` as strict JSON, so setup rejects
+a file with comments, trailing commas, or a byte order mark without a backup
+or a write. The entry carries `command`, `args`, and `env`, and setup keeps
+every other server. Local models often have small context windows, so setup
+selects `REA_MCP_INPUT_SCHEMA_PROFILE=compact` unless the stored entry or the
+setup environment selects a profile explicitly. Doctor reports an entry with no
+explicit profile as stale, as for Kimi Code. LM Studio 0.4.26 on macOS loaded
+this registration, and a local model called an REA tool through it. Linux and
+Windows remain unverified.
 
 ## Pi
 
@@ -497,17 +615,51 @@ comments and unrelated settings. It resolves that file from `HERMES_HOME`, else
 from the platform default Hermes itself uses — `%LOCALAPPDATA%\hermes` on
 Windows, `~/.hermes` elsewhere — including any `HERMES_DATA_DIR_SUFFIX`. Hermes
 connects an entry unless `enabled` is false, so setup states `enabled: true`.
+Aliases whose anchor is defined in the `rea` entry retain their original resolved
+values when setup refreshes or uninstall removes that entry. Setup does not
+redirect another server's alias to REA's new launcher or policy.
+This also covers an anchor on the removed registration key. References to
+definitions outside the entry keep sharing the original value, including when
+another definition later reuses the same anchor name.
 
 Hermes personal skills install under the active Hermes home's `skills` directory.
-Setup, doctor and uninstall follow the root's `active_profile` selection, as
-plain Hermes CLI commands do. An explicit `HERMES_HOME` pointing to
-`profiles/<name>` selects that named profile directly. An invalid, missing or
-deleted sticky profile is reported instead of writing into the default home;
-it also remains an unresolved skill selection, so setup cannot report a
-successful empty installation. Overrides nested beneath the native Hermes home
-use that native home's sticky selection and profile root together, matching
-[Hermes's root rules](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_constants.py#L83).
-Repair the profile or run `hermes profile use default` before retrying.
+Setup, doctor and uninstall share REA's sticky-profile resolver.
+A custom `HERMES_HOME` outside the platform default home
+reads its own `active_profile`. An override physically inside the default home
+uses that default home's sticky selection and profile root together, including
+when the final override directory does not yet exist.
+
+For example, with `HERMES_HOME=~/.hermes/sub` and `~/.hermes/active_profile` set
+to `coder`, setup selects `~/.hermes/profiles/coder/config.yaml` and that
+profile's skills directory. It does not read `~/.hermes/sub/active_profile`.
+Without an outer named selection, this override uses `~/.hermes/sub/config.yaml`.
+Use a home outside the platform default tree for an independent sticky selection.
+
+This describes REA's current routing, not full Hermes CLI equivalence.
+At Hermes commit `748c79a1`, the
+[sticky lookup](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/main.py#L612-L632)
+also reads the outer selection, but
+[`resolve_profile_env`](https://github.com/NousResearch/hermes-agent/blob/748c79a1c6873124d84071cdabb4062a75913e1f/hermes_cli/profiles.py#L2431-L2461)
+resolves it beneath the configured `HERMES_HOME`. For nested overrides, confirm
+the profile Hermes actually uses and point `HERMES_HOME` directly at that
+`profiles/<name>` directory before setup. Compatibility is tracked in
+[#3939](https://github.com/morluto/rea/issues/3939).
+
+REA resolves existing ancestor directories before checking physical containment,
+including symlinks and junctions, even when the override directory does not exist.
+An override beneath a symlinked default home therefore uses the default home's
+sticky selection. If `~/.hermes/link` points outside the default home,
+`HERMES_HOME=~/.hermes/link/new` instead uses that override root, whether or not
+`new` exists. Previewed destinations retain the configured path spelling.
+An unreadable path or dangling alias leaves the home unresolved; repair that path
+before configuring Hermes. Inspect setup's previewed destinations before applying
+changes.
+
+An explicit `HERMES_HOME` pointing to `profiles/<name>` selects that named
+profile directly, bypassing sticky selection. An invalid, missing or deleted
+sticky profile is reported instead of writing into the default home; repair the
+profile or run `hermes profile use default` before retrying. It also remains an
+unresolved skill selection, so setup cannot report a successful empty installation.
 REA follows `HERMES_HOME` whitespace trimming, environment-variable expansion,
 and home expansion before resolving that profile. Setup previews the resolved
 configuration and skill destinations; doctor and uninstall use those same paths.
@@ -524,10 +676,12 @@ installs its skill copy there.
 ## Factory Droid
 
 For [Factory Droid](https://docs.factory.com/harness/mcp), setup writes
-`mcpServers.rea` into the user-level `~/.factory/mcp.json`. Entries carry
-`command`, `args`, and `env`. Droid discovers personal skills from
-`~/.factory/skills` ([skills](https://docs.factory.com/harness/skills)), so
-setup installs its skill copy there.
+`mcpServers.rea` into the user-level `~/.factory/mcp.json` (the
+`FACTORY_HOME_OVERRIDE` override replaces the home that contains `.factory`).
+Entries carry `command`, `args`, and `env`. Droid discovers personal skills
+from `~/.factory/skills` ([skills](https://docs.factory.com/harness/skills),
+following `FACTORY_HOME_OVERRIDE` when set), so setup installs its skill copy
+there.
 
 ## Trae
 
@@ -543,6 +697,18 @@ installs its skill copy there.
 The user-level MCP paths follow the editor's VS Code layout. Trae's official
 documentation describes the raw JSON editor without specifying those paths;
 loading this registration in Trae remains unverified.
+
+## CodeBuddy
+
+For CodeBuddy, setup writes `mcpServers.rea` into the global
+`~/.codebuddy/mcp.json` (a standard `mcpServers` JSON file at the user home
+root on every platform). Entries carry `command`, `args`, and `env`; stdio is
+the default transport. CodeBuddy discovers personal skills from
+`~/.codebuddy/skills`, so setup installs its skill copy there.
+
+The global MCP path is a plain JSON file; setup preserves every other server
+and top-level key when it upserts `rea`. Loading this registration, the
+bundled skill, and real REA tool calls through CodeBuddy are verified.
 
 ## WorkBuddy
 
@@ -575,9 +741,10 @@ the fallback file untouched. Existing REA environment overrides are preserved
 when refreshing its command. A malformed or unreadable fallback file fails setup instead of
 being silently suppressed; repair or remove it and rerun. Uninstall removes an
 REA-owned `rea` entry from both the native table and the fallback, backing up
-each changed file, so an emptied native table cannot load a leftover fallback
-registration; other fallback servers, settings and a foreign `rea` entry are
-kept. ZCode disables a
+each changed file. If removing the last native server would activate a retained
+fallback server, uninstall refuses before changing either file; review the
+fallback configuration before retrying. Other fallback servers, settings and a
+foreign `rea` entry are kept. ZCode disables a
 server with `enable: false` on its entry; doctor reports such a registration
 as stale, and rerunning setup removes the flag to repair it. Native configuration
 uses strict JSON; setup refuses comments, trailing commas and a BOM rather than
@@ -585,24 +752,30 @@ writing a registration ZCode cannot load.
 
 ## FreeBuff
 
-For FreeBuff, the proposed integration writes `mcpServers.rea` into the user-scope
-`~/.agents/mcp.json` shared-agent file. Entries carry `command`, `args`, and
-`env`; stdio is the default transport. The proposed personal skill location is
-`~/.agents/skills`, so setup installs its skill copy there. Because the same
+For FreeBuff, `rea setup --client freebuff` writes `mcpServers.rea` into the
+user-scope `~/.agents/mcp.json` shared-agent file. Entries carry `command`,
+`args`, and `env`; stdio is the default transport. The personal skill location
+is `~/.agents/skills`, so setup installs its skill copy there. Because the same
 file doubles as ZCode's user-scope fallback (see above), a `freebuff`
-registration is also in the file ZCode uses until ZCode defines its own native server.
-Setup and doctor detect FreeBuff from its own profile directory
-(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that
-REA's skill installs create for every client.
+registration is also in the file ZCode uses until ZCode defines its own native
+server. Setup and doctor detect FreeBuff from its own profile directory
+(`~/.config/freebuff-desktop`), not from the shared `.agents` folder that REA's
+skill installs create for every client.
 
-The configuration write and personal skill locations are proposed integration
-boundaries. FreeBuff MCP loading and skill discovery have not been verified
-with an installed native FreeBuff client/version; filesystem tests cover REA's
-editing, discovery, and ownership behavior only. Automatic applicability
-requires the FreeBuff profile directory even when the shared MCP file exists.
+FreeBuff MCP loading and skill discovery have not been verified with an
+installed native FreeBuff client/version; filesystem tests cover REA's editing,
+discovery, and ownership behavior only. Automatic applicability requires the
+FreeBuff profile directory even when the shared MCP file exists.
+When uninstall cannot establish FreeBuff or another shared-storage reader from
+product discovery, a malformed or unreadable shared MCP file is retained
+unchanged and does not stop other REA removals, including `--purge-data`. When
+FreeBuff or ZCode product applicability is established or unresolved, the same
+malformed shared file stops uninstall before removals. See
+[Diagnose, update, and remove](installation.md#diagnose-update-and-remove).
 
-FreeBuff setup support requires `rea-agents@6.8.0` or later. Older versions
-reject `rea setup --client freebuff` as an unsupported client. See the
+FreeBuff setup support requires `rea-agents@6.8.0` or later (including the
+current npm `latest` release). Older versions reject
+`rea setup --client freebuff` as an unsupported client. See the
 [installation guide](installation.md#supported-agents) for client availability.
 
 ## DeepSeek Harness
@@ -702,10 +875,6 @@ Legacy activation is normalized before layer merging, so an explicit enable
 can override an inherited disable. Lower files and other server entries remain
 unchanged; a legacy server named `servers` that conflicts with the native table
 requires manual repair before setup can write.
-
-When Hermes aliases refer to an anchored REA entry, refreshing or removing REA
-retains the aliases' original resolved values. Setup does not redirect another
-server's alias to REA's new launcher or policy.
 
 With no client selected, the interactive skill choice targets the shared
 `~/.agents/skills` copy. Selecting a client targets its personal destination

@@ -37,7 +37,7 @@ export const absoluteLocalPathStringSchema = z
     process.platform === "win32"
       ? windowsAbsolutePathPattern
       : /^(?=[^\x00]*$)\//u,
-    "must be an absolute local filesystem path without NUL",
+    "must be an absolute local filesystem path",
   );
 
 /** Test lexical containment on the host platform; callers must resolve symlinks first. */

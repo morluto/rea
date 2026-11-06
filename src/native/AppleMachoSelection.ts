@@ -3,7 +3,10 @@ import {
   readMachoDylibCommandFacts,
 } from "../domain/apple/machoDylibCommand.js";
 import { readMachoSectionHeader } from "../domain/apple/machoSectionHeader.js";
-import { readMachoSegmentHeader } from "../domain/apple/machoSegmentHeader.js";
+import {
+  admitMachoSegmentMapping,
+  readMachoSegmentHeader,
+} from "../domain/apple/machoSegmentHeader.js";
 import {
   MachoLoadCommandCursor,
   readMachoLoadCommandDeclarations,
@@ -13,6 +16,7 @@ import {
   BinaryFormatFailure,
   createFileMappingIndex,
   type ZeroFillMapping,
+  type FileMapping,
 } from "./metadata/BinaryContainer.js";
 
 import type { FixupCommands } from "./AppleMachoFixups.js";
@@ -179,7 +183,10 @@ export const parseMachoLayout = (
   }
   if (table.wide && !table.littleEndian) {
     if (cpuType !== 0x01000012)
-      throw new TypeError("Unsupported big-endian Mach-O CPU type");
+      throw new BinaryFormatFailure(
+        "unsupported",
+        "Unsupported big-endian Mach-O CPU type",
+      );
     throw new UnsupportedMachoMetadataFormatError(
       "Unsupported big-endian 64-bit PowerPC Mach-O metadata",
     );
@@ -194,14 +201,14 @@ export const parseMachoLayout = (
     throw new UnsupportedMachoMetadataFormatError(
       `Unsupported 32-bit Mach-O metadata for requested CPU type ${architecture}`,
     );
-  const commands = table.commandCount;
   const commandEnd = slice + table.headerSize + table.commandBytes;
-  if (commands > 4096 || commandEnd > sliceEnd)
+  if (commandEnd > sliceEnd)
     throw new RangeError("Malformed Mach-O command bounds");
   const state: LayoutState = {
     slice,
     sliceEnd,
     segments: [],
+    mappings: [],
     zeroFills: [],
     sections: [],
     dylibs: [],
@@ -226,14 +233,7 @@ export const parseMachoLayout = (
   const complete = framing.finish();
   if (!complete.ok) throw new RangeError(complete.error);
   const { segments, sections, chained, binds, rebases, dylibs } = state;
-  const mappings = createFileMappingIndex(
-    segments.map((segment) => ({
-      address: segment.address,
-      offset: segment.offset,
-      size: Number(segment.size),
-    })),
-    state.zeroFills,
-  );
+  const mappings = createFileMappingIndex(state.mappings, state.zeroFills);
   const offset = (address: bigint, size = 1): number => {
     try {
       return mappings.offset(address, size);
@@ -275,6 +275,7 @@ interface LayoutState {
   readonly slice: number;
   readonly sliceEnd: number;
   readonly segments: Segment[];
+  readonly mappings: FileMapping[];
   readonly zeroFills: ZeroFillMapping[];
   readonly sections: Section[];
   readonly dylibs: FixupCommands["dylibs"][number][];
@@ -313,20 +314,35 @@ const collectSegment = (
     sectionCount: count,
     headerSize,
   } = parsed.value;
+  const admitted = admitMachoSegmentMapping(parsed.value, 64);
+  if (!admitted.ok) throw new RangeError(admitted.error.message);
   if (fileOffset + fileSize > BigInt(state.sliceEnd - state.slice))
     throw new RangeError("Segment file range exceeds target bytes");
+  const name = decodeMachoFixedName(nameBytes);
   state.segments.push({
     address,
     size: fileSize,
     offset: state.slice + Number(fileOffset),
     executable: (protection & 4) !== 0,
   });
-  if (memorySize > fileSize && decodeMachoFixedName(nameBytes) !== "__PAGEZERO")
+  if (!admitted.value.unmapped && name !== "__PAGEZERO")
+    state.mappings.push({
+      address,
+      size: Number(fileSize),
+      offset: state.slice + Number(fileOffset),
+    });
+  if (memorySize > fileSize && name !== "__PAGEZERO")
     state.zeroFills.push({
       address: address + fileSize,
       size: memorySize - fileSize,
     });
-  if (fileOffset === 0n && fileSize > 0n) state.baseAddress ??= address;
+  if (
+    !admitted.value.unmapped &&
+    name !== "__PAGEZERO" &&
+    fileOffset === 0n &&
+    fileSize > 0n
+  )
+    state.baseAddress ??= address;
   if (headerSize + count * 80 > size)
     throw new RangeError("Truncated section table");
   for (let section = 0; section < count; section++) {

@@ -1,7 +1,8 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
-import { expect, it, onTestFinished } from "vitest";
+import type { DeviceManager } from "frida";
+import { afterAll, expect, it, onTestFinished } from "vitest";
 
 import type { FridaInstrumentationPort } from "../../../src/application/frida/FridaInstrumentationPort.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
@@ -13,6 +14,48 @@ import { fridaSessionStatusSummaryViewResultSchema } from "../../../src/domain/a
 import { fridaSessionStatusSchema } from "../../../src/domain/fridaSessionStatus.js";
 import { evidenceBundleSummarySchema } from "../../../src/domain/evidenceRecordSummary.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpEvidenceBundle } from "../../fixtures/mcpEvidenceBundle.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
+
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
+it("retains the remote address, but not authentication, in discovery failures", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("unexpected binary provider");
+  });
+  const bindings = {
+    addRemoteDevice: async () => {
+      throw new Error("connection refused: synthetic-secret-token");
+    },
+  } as unknown as DeviceManager;
+  const provider = new FridaInstrumentationManager({ deviceManager: bindings });
+  const server = createServer(
+    { kind: "session", session },
+    { fridaInstrumentation: provider },
+  );
+  const client = await connectFridaTestClient(
+    server,
+    session,
+    "frida-discovery-failure",
+  );
+  const result = await client.callTool({
+    name: "list_frida_processes",
+    arguments: {
+      remote: { address: "127.0.0.1:27042", token: "synthetic-secret-token" },
+    },
+  });
+  expect(result.isError).toBe(true);
+  const first = result.content[0];
+  if (first?.type !== "text") throw new Error("Expected text failure");
+  expect(JSON.parse(first.text)).toMatchObject({
+    error: {
+      code: "capability_unavailable",
+      details: { diagnostics: { remote_address: "127.0.0.1:27042" } },
+    },
+  });
+  expect(JSON.stringify(result)).not.toContain("synthetic-secret-token");
+});
 
 const createFridaTestProvider = (
   overrides: Partial<FridaInstrumentationPort> = {},
@@ -99,7 +142,10 @@ const connectFridaTestClient = async (
   session: ReturnType<typeof createTestBinarySession>,
   name: string,
 ): Promise<Client> => {
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -241,9 +287,7 @@ it("delivers Frida status summaries with complete retained Evidence for both tru
       arguments: {},
     });
     expect(bundle.isError).not.toBe(true);
-    expect(JSON.stringify(bundle.structuredContent)).toContain(
-      "caller-selected-nonsecret",
-    );
+    expect(parseMcpEvidenceBundle(bundle).records).toContainEqual(parent);
     expect(session.evidenceById(parent.evidence_id)).toEqual(parent);
     // Inline/file projection validates the owning result and exact source selection.
     const malformed = createEvidence(undefined, parent.provider ?? undefined, {
@@ -518,7 +562,10 @@ it("reports Frida tools as unavailable after the optional binding fails to load"
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-optional-binding", version: "1" });
+  const client = new Client(
+    { name: "frida-optional-binding", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   onTestFinished(async () => {
     await client.close();
     await server.close();
@@ -613,7 +660,10 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     { kind: "session", session },
     { fridaInstrumentation: provider },
   );
-  const client = new Client({ name: "frida-cancellation", version: "1" });
+  const client = new Client(
+    { name: "frida-cancellation", version: "1" },
+    { jsonSchemaValidator: schemaValidation },
+  );
   const controller = new AbortController();
   onTestFinished(async () => {
     finishLoad?.();
@@ -651,8 +701,17 @@ it("retains cancellation Evidence after the MCP client stops waiting", async () 
     name: "get_evidence_bundle",
     arguments: {},
   });
-  expect(JSON.stringify(bundle.structuredContent)).toContain("cancel-observed");
-  expect(JSON.stringify(bundle.structuredContent)).toContain(
-    "instrument_with_frida",
+  expect(bundle.isError).not.toBe(true);
+  expect(parseMcpEvidenceBundle(bundle).records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        operation: "instrument_with_frida",
+        normalized_result: expect.objectContaining({
+          messages: expect.arrayContaining([
+            expect.objectContaining({ payload: "cancel-observed" }),
+          ]),
+        }),
+      }),
+    ]),
   );
 });

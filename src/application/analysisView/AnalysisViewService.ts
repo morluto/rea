@@ -101,7 +101,11 @@ const inspectFileView = async (
   // the signal notifications they enqueue before accepting either result.
   await dispatchQueuedInterrupts();
   // A request cancelled during authentication reports cancellation, even when authentication failed.
-  const admitted = cancelledFileViewResult(loaded, options.signal);
+  const admitted = cancelledFileViewResult(
+    loaded,
+    options.signal,
+    loaded.ok ? loaded.value : undefined,
+  );
   if (!admitted.ok) return admitted;
   const id = admitted.value.evidence_id;
   const projected = inspectAnalysisViewValidated(
@@ -140,7 +144,14 @@ const inspectBundleView = async (
   await dispatchQueuedInterrupts();
   // Preserve an already-produced bundle failure before considering a later abort.
   if (!loaded.ok) return loaded;
-  const admitted = cancelledFileViewResult(loaded, signal);
+  const parentId = input.source.evidence_id;
+  const admitted = cancelledFileViewResult(
+    loaded,
+    signal,
+    signal?.aborted
+      ? loaded.value.records.find((record) => record.evidence_id === parentId)
+      : undefined,
+  );
   if (!admitted.ok) return admitted;
   const projected = inspectAnalysisViewValidated(
     { source: input.source, view: input.view },
@@ -214,6 +225,7 @@ const projectResolvedAnalysisView = (
   const projected = projection.project({
     evidenceId: parent.evidence_id,
     operation: parent.operation,
+    predicateType: parent.predicate_type,
     provider: parent.provider,
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
@@ -390,6 +402,7 @@ const createAnalysisViewEvidence = (
   const nativeObservationView =
     result.kind === "native-observation" ||
     result.kind === "native-context" ||
+    result.kind === "native-instruction-references" ||
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
@@ -405,8 +418,10 @@ const createAnalysisViewEvidence = (
       result,
       rawResult: null,
       confidence:
+        // A projection never strengthens its parent: inferred facts stay inferred.
         // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
         // entity types and identity in an extracted state, and the coverage summarizing it, always are.
+        parent.confidence === "inferred" ||
         result.kind === "environment-state" ||
         result.kind === "environment-coverage" ||
         ((result.kind === "api-surface" ||
@@ -424,6 +439,15 @@ const createAnalysisViewEvidence = (
       locations: [
         ...(result.artifact != null && result.artifact.path.length > 0
           ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
+          : []),
+        // Scalar text has no structured function entry; retain the producer's
+        // authenticated positions without interpreting the caller's selector.
+        ...(parent.operation === "procedure_pseudo_code"
+          ? parent.locations.filter(
+              (location) =>
+                location.kind !== "artifact-path" ||
+                location.path !== result.artifact?.path,
+            )
           : []),
         ...(nativeFunctionView !== undefined &&
         nativeFunctionView.procedure_address !== null &&

@@ -1,3 +1,4 @@
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { permitsCapabilityFallback } from "../CapabilityFallback.js";
 import { nativeInventoryRowsSchemas } from "../../domain/native/nativeInventory.js";
 import {
@@ -54,12 +55,27 @@ export const inspectNativeDispatch = async (
     input,
     signal === undefined ? {} : { signal },
   );
-  if (binaryMetadata.ok)
-    return ok(
-      jsonValueSchema.parse(
-        nativeDispatchMetadataResultSchema.parse(binaryMetadata.value.result),
-      ),
+  if (binaryMetadata.ok) {
+    const parsed = nativeDispatchMetadataResultSchema.safeParse(
+      binaryMetadata.value.result,
     );
+    if (!parsed.success)
+      return err(
+        new AnalysisOutputError(
+          NATIVE_DISPATCH_METADATA_SOURCES.binary,
+          "Invalid native dispatch metadata",
+          { cause: parsed.error },
+        ).retainPartialObservation(
+          createAnalysisExecutionEvidence(
+            NATIVE_DISPATCH_METADATA_SOURCES.binary,
+            input,
+            binaryMetadata.value,
+            "observed",
+          ),
+        ),
+      );
+    return ok(jsonValueSchema.parse(parsed.data));
+  }
   if (!permitsCapabilityFallback(binaryMetadata.error))
     return err(binaryMetadata.error);
   const execution = await analysis.execute(
@@ -74,6 +90,14 @@ export const inspectNativeDispatch = async (
       new AnalysisOutputError(
         NATIVE_DISPATCH_METADATA_SOURCES.symbols,
         "provider returned an invalid inventory",
+        { cause: names.error },
+      ).retainPartialObservation(
+        createAnalysisExecutionEvidence(
+          NATIVE_DISPATCH_METADATA_SOURCES.symbols,
+          {},
+          execution.value,
+          "observed",
+        ),
       ),
     );
   const result = inspectNativeDispatchMetadata(

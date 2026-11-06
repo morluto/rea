@@ -1,6 +1,22 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { absoluteCallerPath } from "../../../src/filesystem/callerPath.js";
+
+it("resolves absolute POSIX paths independently of an unavailable cwd", () => {
+  const cwd = vi.spyOn(process, "cwd").mockImplementation(() => {
+    throw new Error("working directory was removed");
+  });
+  try {
+    expect(
+      absoluteCallerPath("/cache//rea/kuna/.", { platform: "linux" }),
+    ).toBe("/cache/rea/kuna/");
+    expect(
+      absoluteCallerPath("sample", { cwd: "/explicit", platform: "linux" }),
+    ).toBe("/explicit/sample");
+  } finally {
+    cwd.mockRestore();
+  }
+});
 
 it("keeps POSIX parent components for the filesystem to resolve", () => {
   const posix = { cwd: "/work", platform: "linux" } as const;
@@ -27,9 +43,14 @@ it("removes only POSIX spellings that cannot change the named file", () => {
 });
 
 it("makes a relative POSIX cwd absolute before appending the path", () => {
-  expect(
-    absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
-  ).toBe(`${process.cwd()}/fixtures/../x/sample`);
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("/work");
+  try {
+    expect(
+      absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
+    ).toBe("/work/fixtures/../x/sample");
+  } finally {
+    cwd.mockRestore();
+  }
 });
 
 it("uses lexical resolution on Windows, where it is exact", () => {

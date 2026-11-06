@@ -10,7 +10,9 @@ import {
   analysisViewJavaScriptAnalysisWithSource,
   analysisViewJavaScriptEvidence,
   analysisViewLayoutEvidence,
+  analysisViewLayoutFixture,
 } from "../../../tests/fixtures/analysisView.js";
+import { BINARY_LAYOUT_TEST_PROVIDER } from "../../../tests/fixtures/binaryDiagnostics/layout.js";
 import { describe, expect, it, vi } from "vitest";
 
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../../contracts/javascript/javascriptRuntimeReconciliationExample.js";
@@ -450,6 +452,54 @@ it("projects inline layout Evidence and retains a derived view record", async ()
   });
 });
 
+it("never seals a view as more certain than its parent Evidence", async () => {
+  const layout = analysisViewLayoutFixture();
+  for (const [confidence, expected] of [
+    ["observed", "derived"],
+    ["derived", "derived"],
+    ["inferred", "inferred"],
+  ] as const) {
+    const parent = createEvidence(
+      {
+        path: layout.artifact.path,
+        format: "elf",
+        architecture: "x86_64",
+        sha256: layout.artifact.sha256,
+      },
+      BINARY_LAYOUT_TEST_PROVIDER,
+      {
+        operation: "inspect_binary_layout",
+        parameters: { path: layout.artifact.path },
+        result: layout,
+        confidence,
+        limitations: layout.limitations,
+      },
+    );
+    // Inline CLI/MCP views and retained summary delivery share one sealing owner.
+    const views = [
+      await inspectAnalysisView({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "item", collection: "sections", selector: { index: 2 } },
+      }),
+      projectRetainedAnalysis(
+        parent,
+        {
+          recordEvidence: () => ok("added"),
+          evidenceById: (id) =>
+            id === parent.evidence_id ? parent : undefined,
+        },
+        { kind: "summary" },
+      ),
+    ];
+    for (const view of views) {
+      if (!view.ok) throw view.error;
+      expect(view.value.confidence).toBe(expected);
+      expect(view.value.authority).toBe(parent.authority);
+      expect(view.value.evidence_links).toEqual([parent.evidence_id]);
+    }
+  }
+});
+
 it("resolves same-session retained JavaScript Evidence without re-running analysis", async () => {
   const parent = analysisViewJavaScriptEvidence(
     analysisViewJavaScriptAnalysisWithSource(),
@@ -490,9 +540,19 @@ it("resolves same-session retained JavaScript Evidence without re-running analys
     lookup,
   );
   if (!item.ok) throw item.error;
-  expect(JSON.stringify(item.value.normalized_result)).toContain(
-    "export const secret = 1;",
-  );
+  expect(item.value.normalized_result).toMatchObject({
+    kind: "item",
+    item: {
+      path: "renderer.js",
+      observations: expect.arrayContaining([
+        expect.objectContaining({
+          properties: expect.objectContaining({
+            source: "export const secret = 1;\n",
+          }),
+        }),
+      ]),
+    },
+  });
 });
 
 it("rejects stale retained IDs and unsupported parent operations", async () => {
@@ -809,10 +869,14 @@ it("seals an inferred environment state whose values are the recorded ones", asy
     name: "grafana-example",
     parent_evidence_id: parent.evidence_id,
     timeline: "recorded-start-time",
+    entities: expect.arrayContaining([
+      expect.objectContaining({
+        type: "/api/folders",
+        id: "fg1jo91e57e2ob",
+        fields: expect.objectContaining({ title: "probe folder" }),
+      }),
+    ]),
   });
-  expect(JSON.stringify(sealed.value.normalized_result)).toContain(
-    "probe folder",
-  );
   expect(parseEvidence(sealed.value)).toEqual(sealed.value);
 });
 
@@ -1471,6 +1535,53 @@ it.each(["file", "bundle"] as const)(
           kind === "file"
             ? { _tag: "AnalysisCancelledError", cause: "after-authentication" }
             : { _tag: "EvidenceIntegrityError" },
+      });
+    } finally {
+      interrupt.mockRestore();
+    }
+  },
+);
+
+it.each(["file", "bundle"] as const)(
+  "preserves authenticated %s parent Evidence when cancellation arrives before projection",
+  async (kind) => {
+    const parent = analysisViewCaptureEvidence();
+    const path = join(
+      await createTestTempDirectory("rea-view-admission-"),
+      "source.json",
+    );
+    await writeFile(
+      path,
+      JSON.stringify(kind === "file" ? parent : createEvidenceBundle([parent])),
+    );
+    const controller = new AbortController();
+    const dispatch = queuedInterrupts.dispatchQueuedInterrupts;
+    const interrupt = vi
+      .spyOn(queuedInterrupts, "dispatchQueuedInterrupts")
+      .mockImplementation(async () => {
+        await dispatch();
+        controller.abort("after-source-admission");
+      });
+    try {
+      const result = await inspectAnalysisView(
+        {
+          source:
+            kind === "file"
+              ? { kind: "evidence-file", path }
+              : { kind: "retained-evidence", evidence_id: parent.evidence_id },
+          view: manifestView,
+        },
+        undefined,
+        {
+          signal: controller.signal,
+          ...(kind === "bundle" ? { evidenceBundlePath: path } : {}),
+        },
+      );
+      if (result.ok) throw new Error("Expected cancellation before projection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: "after-source-admission",
+        partialObservation: parent,
       });
     } finally {
       interrupt.mockRestore();

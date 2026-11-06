@@ -3,22 +3,24 @@ import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
-it("retains completed worker facts when cancellation arrives during final job cleanup", async () => {
-  const loaderUrl = new URL(
-    "../../../scripts/lib/verifier-source-loader.mjs",
-    import.meta.url,
-  ).href;
-  const workerUrl = new URL(
-    "../../../src/javascript/analysis/JavaScriptAnalysisWorker.ts",
-    import.meta.url,
-  ).href;
-  const processUrl = new URL(
-    "../../../src/process/ProviderProcess.ts",
-    import.meta.url,
-  ).href;
-  // Isolate the filesystem seam in a Node process. Both analyses use the real
-  // analyzer and remove their actual files before the cancellation is delivered.
-  const script = `
+it.each([false, true])(
+  "retains completed worker facts when cancellation arrives during final job cleanup (failure: %s)",
+  async (failCleanup) => {
+    const loaderUrl = new URL(
+      "../../../scripts/lib/verifier-source-loader.mjs",
+      import.meta.url,
+    ).href;
+    const workerUrl = new URL(
+      "../../../src/javascript/analysis/JavaScriptAnalysisWorker.ts",
+      import.meta.url,
+    ).href;
+    const processUrl = new URL(
+      "../../../src/process/ProviderProcess.ts",
+      import.meta.url,
+    ).href;
+    // Isolate the filesystem seam in a Node process. Both analyses use the real
+    // analyzer. Failed final removal retains the real file for owning close retry.
+    const script = `
     import fs from 'node:fs';
     import { createHash } from 'node:crypto';
     import { syncBuiltinESMExports } from 'node:module';
@@ -29,8 +31,13 @@ it("retains completed worker facts when cancellation arrives during final job cl
     let cancelOnCleanup = false;
     let completedRemovals = 0;
     fs.promises.rm = async (path, options) => {
+      const finalJobRemoval = String(path).includes('rea-javascript-analysis-') && String(path).endsWith('.records');
+      if (finalJobRemoval && cancelOnCleanup && ${JSON.stringify(failCleanup)}) {
+        controller.abort(reason);
+        throw new Error('fixture final removal denied');
+      }
       await nativeRm(path, options);
-      if (String(path).includes('rea-javascript-analysis-') && String(path).endsWith('.records')) {
+      if (finalJobRemoval) {
         completedRemovals += 1;
         if (cancelOnCleanup) controller.abort(reason);
       }
@@ -60,8 +67,9 @@ it("retains completed worker facts when cancellation arrives during final job cl
       const cancelled = await worker.analyze(source('cancelled.mjs'), { nodes: 100, unknowns: 100 }, controller.signal);
       const facts = cancelled.ok ? cancelled.value : cancelled.error;
       observed = { controlOk: control.ok, controlReusable, completedRemovals, launches,
-        cancelled: !cancelled.ok && cancelled.error.error._tag === 'AnalysisCancelledError',
-        exactReason: !cancelled.ok && cancelled.error.error.cause === reason,
+        cancelled: !cancelled.ok && (cancelled.error.error.cleanupPrimary ?? cancelled.error.error)._tag === 'AnalysisCancelledError',
+        exactReason: !cancelled.ok && (cancelled.error.error.cleanupPrimary ?? cancelled.error.error).cause === reason,
+        cleanupIncomplete: !cancelled.ok && cancelled.error.error.cleanupIncomplete,
         parseStatus: facts.javascript?.parse_status, hasModule: facts.module !== null,
         hasProjection: facts.projection !== null, reusable: worker.canReuse() };
     } finally {
@@ -76,24 +84,26 @@ it("retains completed worker facts when cancellation arrives during final job cl
     process.stdout.write(JSON.stringify({ ...observed, rootRemoved,
       childExited: child.exitCode !== null || child.signalCode !== null }));
   `;
-  const { stdout } = await promisify(execFile)(
-    process.execPath,
-    ["--input-type=module", "--eval", script],
-    { timeout: 20_000 },
-  );
-  const observed: unknown = JSON.parse(stdout);
-  expect(observed).toEqual({
-    controlOk: true,
-    controlReusable: true,
-    completedRemovals: 2,
-    launches: 1,
-    cancelled: true,
-    exactReason: true,
-    parseStatus: "complete",
-    hasModule: true,
-    hasProjection: true,
-    reusable: false,
-    rootRemoved: true,
-    childExited: true,
-  });
-});
+    const { stdout } = await promisify(execFile)(
+      process.execPath,
+      ["--input-type=module", "--eval", script],
+      { timeout: 20_000 },
+    );
+    const observed: unknown = JSON.parse(stdout);
+    expect(observed).toEqual({
+      controlOk: true,
+      controlReusable: true,
+      completedRemovals: failCleanup ? 1 : 2,
+      launches: 1,
+      cancelled: true,
+      exactReason: true,
+      cleanupIncomplete: failCleanup,
+      parseStatus: "complete",
+      hasModule: true,
+      hasProjection: true,
+      reusable: false,
+      rootRemoved: true,
+      childExited: true,
+    });
+  },
+);
