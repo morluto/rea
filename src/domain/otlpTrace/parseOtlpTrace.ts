@@ -216,7 +216,11 @@ const readAttribute = (
   }
 };
 
-type Problem = { code: OtlpDiagnostic["code"]; message: string };
+type Problem = {
+  code: OtlpDiagnostic["code"];
+  message: string;
+  pointer?: string;
+};
 
 type ParsedSpan =
   | { ok: false; problems: readonly Problem[] }
@@ -252,9 +256,18 @@ const parseSpan = (
   if (budget.spans > OTLP_TRACE_MAX_SPANS)
     problems.push({
       code: "span-limit-exceeded",
+      pointer,
       message: `Span at ${pointer} exceeds the ${OTLP_TRACE_MAX_SPANS}-span allowance and was not inventoried.`,
     });
   const parentSpanId = readHexId(record.parentSpanId, 8);
+  const parentRecorded =
+    record.parentSpanId !== undefined && record.parentSpanId !== null;
+  if (parentRecorded && parentSpanId === null)
+    problems.push({
+      code: "invalid-record",
+      pointer,
+      message: `Span ${spanId} at ${pointer} records a parentSpanId that is not an 8-byte span id; the damaged link is reported as unreadable rather than as an absent parent.`,
+    });
   const startTime = readUInt64(record.startTimeUnixNano);
   const endTime = readUInt64(record.endTimeUnixNano);
   let duration: string | null = null;
@@ -263,6 +276,7 @@ const parseSpan = (
     if (delta < 0n)
       problems.push({
         code: "invalid-time-interval",
+        pointer,
         message: `Span ${spanId} at ${pointer} ends before it starts; the recorded timestamps are preserved but no duration is derived.`,
       });
     else duration = delta.toString();
@@ -282,6 +296,7 @@ const parseSpan = (
   if (attributesDropped > 0)
     problems.push({
       code: "attribute-limit-exceeded",
+      pointer,
       message: `Span ${spanId} at ${pointer} dropped ${attributesDropped} attributes beyond the ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN}-attribute per-span allowance.`,
     });
   const status = isRecord(record.status) ? record.status : undefined;
@@ -344,7 +359,7 @@ const resourceServiceName = (resource: Json): string | null => {
 
 type Walked = {
   spans: OtlpSpan[];
-  problems: { code: OtlpDiagnostic["code"]; message: string }[];
+  problems: Problem[];
   redactedAttributes: number;
   droppedRecords: number;
   spansTruncated: boolean;
@@ -469,21 +484,29 @@ export const parseOtlpTrace = (
     };
   const byId = new Map<string, OtlpSpan>();
   const diagnostics: OtlpDiagnostic[] = walked.problems.map((problem) =>
-    diagnostic(problem.code, "", problem.message),
+    diagnostic(problem.code, problem.pointer ?? "", problem.message),
   );
+  // A parent link is only meaningful inside its own trace: the same span id may
+  // legitimately appear under different trace ids, and a parent recorded only
+  // in another trace is not this span's parent.
+  const spanKey = (traceId: string, spanId: string): string =>
+    `${traceId}:${spanId}`;
   for (const span of walked.spans) {
-    if (byId.has(span.span_id)) {
+    const key = spanKey(span.trace_id, span.span_id);
+    if (byId.has(key)) {
       diagnostics.push(
         diagnostic(
           "duplicate-span-id",
           span.source_pointer,
-          `Span id ${span.span_id} appears more than once; the later record at ${span.source_pointer} is retained and the earlier one remains recorded here only.`,
+          `Span id ${span.span_id} appears more than once within trace ${span.trace_id}; the later record at ${span.source_pointer} is retained and the earlier one remains recorded here only.`,
         ),
       );
     }
-    byId.set(span.span_id, span);
+    byId.set(key, span);
   }
-  const orphanParents = new Set<string>();
+  // Keys carry the trace id so two traces cannot suppress each other's
+  // missing-parent report; only the span id is part of the public result.
+  const orphanParents = new Map<string, string>();
   for (const span of walked.spans) {
     const parent = span.parent_span_id;
     if (parent === null || parent === "0000000000000000") continue;
@@ -495,16 +518,20 @@ export const parseOtlpTrace = (
           `Span ${span.span_id} names itself as its parent.`,
         ),
       );
-    else if (!byId.has(parent)) orphanParents.add(parent);
+    else if (!byId.has(spanKey(span.trace_id, parent)))
+      orphanParents.set(spanKey(span.trace_id, parent), parent);
   }
-  for (const parent of orphanParents)
+  for (const [key, parent] of orphanParents) {
     diagnostics.push(
       diagnostic(
         "missing-parent",
         "",
-        `Parent span id ${parent} is referenced but not present in this export; its children remain parented to an unrecorded span.`,
+        `Parent span id ${parent} is referenced but not present in trace ${key.slice(0, key.indexOf(":"))}; its children remain parented to an unrecorded span.`,
       ),
     );
+  }
+  // A span whose recorded parent link is unreadable is not a root: it may be a
+  // damaged child, so only a span that declares no parent counts as a root.
   const roots = walked.spans
     .filter(
       (span) =>
@@ -526,7 +553,7 @@ export const parseOtlpTrace = (
         break;
       }
       seen.add(parent);
-      cursor = byId.get(parent);
+      cursor = byId.get(spanKey(cursor.trace_id, parent));
     }
   }
   for (const id of cycles)
@@ -547,7 +574,7 @@ export const parseOtlpTrace = (
       format: "otlp-json",
       artifact,
       spans: walked.spans,
-      orphan_span_ids: [...orphanParents].sort(),
+      orphan_span_ids: [...orphanParents.values()].sort(),
       roots,
       diagnostics,
       summary: {

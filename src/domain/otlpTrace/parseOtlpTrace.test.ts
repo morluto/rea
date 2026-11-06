@@ -338,3 +338,71 @@ describe("parseOtlpTrace credential headers", () => {
     expect(report.summary.redacted_attributes).toBe(2);
   });
 });
+
+describe("parseOtlpTrace parent links", () => {
+  it("does not resolve a parent recorded only in another trace", () => {
+    const report = parse({
+      resourceSpans: [
+        {
+          resource: {},
+          scopeSpans: [
+            {
+              scope: { name: "lib" },
+              spans: [
+                span({ traceId: "b".repeat(32), spanId: "f".repeat(16) }),
+              ],
+            },
+          ],
+        },
+        {
+          resource: {},
+          scopeSpans: [
+            {
+              scope: { name: "lib" },
+              spans: [
+                span({
+                  traceId: "a".repeat(32),
+                  spanId: "0".repeat(15) + "2",
+                  parentSpanId: "f".repeat(16),
+                }),
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    // The same span id exists, but under a different trace, so the link is
+    // unrecorded here rather than satisfied by the other trace's span.
+    expect(report.orphan_span_ids).toEqual(["f".repeat(16)]);
+    expect(report.summary.orphans).toBe(1);
+    // Only the other trace's span is a root; the child here is not promoted.
+    expect(report.summary.roots).toBe(1);
+  });
+
+  it("reports an unreadable parent link instead of calling the span a root", () => {
+    const report = parse(envelope([span({ parentSpanId: "broken" })]));
+    expect(report.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-record",
+    );
+    expect(report.spans[0]?.parent_span_id).toBeNull();
+    expect(report.summary.roots).toBe(1);
+  });
+
+  it("keeps a span-local diagnostic pointed at its own record", () => {
+    const report = parse(
+      envelope([
+        span({
+          spanId: "0".repeat(15) + "3",
+          startTimeUnixNano: "2000",
+          endTimeUnixNano: "1000",
+        }),
+      ]),
+    );
+    const reversed = report.diagnostics.find(
+      (entry) => entry.code === "invalid-time-interval",
+    );
+    expect(reversed?.source_pointer).toBe(
+      "/resourceSpans/0/scopeSpans/0/spans/0",
+    );
+  });
+});
