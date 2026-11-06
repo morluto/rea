@@ -64,6 +64,8 @@ export interface DesktopAppExportPlan {
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
+  /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
+  readonly seedModes: Readonly<Record<string, number>>;
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
@@ -258,16 +260,17 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
-  const paths = ownedPaths(
-    withRole("application_state"),
-    withRole("document"),
-    stateDirectories,
-  );
   const usersOwn = new Set([
     ...withRole("document"),
     ...homePaths(roleFacts(capture).selectedRoots),
   ]);
   const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
+  // A lock or log never makes a path the app's, as Poedit's `~/poedit.lock` would.
+  const paths = ownedPaths(
+    withRole("application_state").filter((home) => !leftOut.isLeftOut(home)),
+    withRole("document"),
+    stateDirectories,
+  );
   return { homePath, files, dconf, collisions, paths, ...leftOut };
 };
 
@@ -441,6 +444,9 @@ SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+SEED_MODES = {${Object.entries(plan.seedModes)
+    .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
+    .join(", ")}}
 WINDOW_CLASS = ${py(plan.windowClass)}
 ${PYTHON_HELPERS}
 

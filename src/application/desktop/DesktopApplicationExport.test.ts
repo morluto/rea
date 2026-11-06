@@ -677,6 +677,106 @@ describe("exportDesktopApplication of a lock named for the file beside it", () =
   });
 });
 
+/** The locked capture with `written` files added at `edited`, each a state file, held open, or neither, with its mode. */
+const withWritten = (
+  written: readonly (readonly [
+    string,
+    string,
+    "state" | "opened" | "neither",
+    number,
+  ])[],
+): DesktopApplicationCapture => {
+  const locked = lockedCapture();
+  const [baseline, edited] = locked.state.checkpoints;
+  if (baseline === undefined || edited === undefined)
+    throw new Error("the fixture has two checkpoints");
+  return {
+    ...locked,
+    state: {
+      ...locked.state,
+      checkpoints: [
+        baseline,
+        {
+          ...edited,
+          changes: [
+            ...edited.changes,
+            ...written.map(([path, text, mark, mode]) => {
+              const made = change(
+                path,
+                { after: text },
+                { state: mark === "state" },
+              );
+              return {
+                ...made,
+                after: { ...made.after, mode },
+                opened_by_application: mark === "opened",
+              };
+            }),
+          ],
+          retained: [
+            ...edited.retained,
+            ...written.map(([path, text]) => retained(path, text)),
+          ],
+        },
+      ],
+    },
+  };
+};
+
+describe("exportDesktopApplication of Poedit's locks and a seed's mode", () => {
+  it("leaves out a lock in the home and Lucene's write.lock, and never owns the home's lock", async () => {
+    const index = `${HOME}/.local/share/notes/TranslationMemory`;
+    const { result } = await exportLocked(
+      withWritten([
+        // wxWidgets' single-instance lock, which holds a PID and must stay 0600.
+        [`${HOME}/poedit.lock`, "4242\n", "opened", 0o600],
+        [`${index}/write.lock`, "", "state", 0o644],
+        [`${index}/segments_2`, "seg\n", "state", 0o644],
+      ]),
+      ["4242\n", "", "seg\n"],
+    );
+
+    const exported = z
+      .object({ seed_files: z.array(z.string()), paths: z.array(z.string()) })
+      .parse(result.normalized_result);
+    expect(exported.seed_files).toContain(
+      ".local/share/notes/TranslationMemory/segments_2",
+    );
+    expect(exported.seed_files).not.toContain("poedit.lock");
+    expect(exported.seed_files).not.toContain(
+      ".local/share/notes/TranslationMemory/write.lock",
+    );
+    expect(exported.paths).not.toContain("poedit.lock");
+    expect(
+      result.limitations.find((limitation) =>
+        limitation.startsWith("Left out of the seed: lock files"),
+      ),
+    ).toContain("~/.local/share/notes/TranslationMemory/write.lock");
+    // Nothing tells the agent to own the home's lock.
+    expect(
+      result.limitations.filter((limitation) =>
+        limitation.includes("~/poedit.lock"),
+      ),
+    ).toEqual([]);
+  });
+
+  it("keeps a seed file's captured mode when it is not the bundle's 0644", async () => {
+    const { directory } = await exportLocked(
+      withWritten([
+        [`${HOME}/.config/notes/secret.ini`, "[s]\n", "state", 0o600],
+        [`${HOME}/.config/notes/run.sh`, "#!/bin/sh\n", "state", 0o755],
+      ]),
+      ["[s]\n", "#!/bin/sh\n"],
+    );
+
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain(
+      'SEED_MODES = {".config/notes/run.sh": 0o755, ".config/notes/secret.ini": 0o600}',
+    );
+  });
+});
+
 describe("exportDesktopApplication of the app's logs", () => {
   it("leaves Freeplane's and QElectroTech's logs out of the seed and lists them, but seeds a selected or document log", async () => {
     const locked = lockedCapture();

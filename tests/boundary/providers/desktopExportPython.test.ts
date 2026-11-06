@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { chmod, writeFile } from "node:fs/promises";
+import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -117,6 +117,41 @@ it("respells the captured home in UTF-16 seeds with a byte-order mark, keeping t
     utf16(expected, "be").toString("hex"),
     ...files.slice(2).map((file) => file.toString("hex")),
   ]);
+});
+
+it("seeds each file the bundle lists in SEED_MODES with that mode, as a lock whose app checks it stays 0600", async () => {
+  const root = await createTestTempDirectory("desktop-seed-modes-");
+  await mkdir(join(root, "seed", ".config", "notes"), { recursive: true });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "secret.ini"),
+    "[s]\n",
+  );
+  await writeFile(join(root, "seed", "run.sh"), "#!/bin/sh\n");
+  const imports = PYTHON_IMPORTS.split("\n")
+    .filter((line) => !line.includes("agentenv_protocol"))
+    .join("\n");
+  const program = `${imports}
+SEED_HOME = "/home/ada"
+TEXT_SEEDS = frozenset()
+SEED_MODES = {".config/notes/secret.ini": 0o600, "run.sh": 0o755}
+HERE = Path(sys.argv[1])
+${PYTHON_HELPERS}
+_seed_home(Path(sys.argv[2]))
+`;
+
+  execFileSync("python3", [
+    "-I",
+    "-B",
+    "-c",
+    program,
+    root,
+    join(root, "home"),
+  ]);
+
+  const mode = async (path: string) =>
+    (await stat(join(root, "home", path))).mode & 0o777;
+  expect(await mode(".config/notes/secret.ini")).toBe(0o600);
+  expect(await mode("run.sh")).toBe(0o755);
 });
 
 /** A stand-in xprop answering the root window list and each window's class and state from a table. */

@@ -56,6 +56,7 @@ const topFolder = (file: string): string => {
 export const unownedChangedFolders = (
   files: ReadonlyMap<string, DesktopStatePath>,
   owned: readonly string[],
+  leftOut: (home: string) => boolean = () => false,
 ): readonly string[] => {
   const ownedPaths = new Set(owned);
   // The owned paths and every folder holding one.
@@ -70,7 +71,8 @@ export const unownedChangedFolders = (
     if (
       path.changes.length === 0 ||
       path.role === "shared_desktop" ||
-      isOwned(home)
+      isOwned(home) ||
+      leftOut(home)
     )
       continue;
     folders.add(
@@ -103,6 +105,8 @@ const LOCK_NAMES = new Set([
   ".parentlock",
   "parent.lock",
   "singletonlock",
+  // Lucene's index lock, as Poedit's translation memory holds.
+  "write.lock",
 ]);
 /** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
 const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
@@ -143,13 +147,14 @@ export const isLockFile = (
     );
   });
   if (besideItsFile) return true;
-  // Each directory on its own, so one nested in another is still found.
+  // One directly in the home is an app's, as wxWidgets' single-instance `~/poedit.lock`;
+  // each state directory on its own, so one nested in another is still found.
   return (
     /\.(?:lock|lck)$/iu.test(name) &&
-    folder.length > 0 &&
-    stateDirectories.some(
-      (directory) => stateDirectoryOf(file, [directory]) === folder,
-    )
+    (folder.length === 0 ||
+      stateDirectories.some(
+        (directory) => stateDirectoryOf(file, [directory]) === folder,
+      ))
   );
 };
 
@@ -222,6 +227,43 @@ const fromHome = (path: string, home: string): string => {
     : relative === ""
       ? "~"
       : `~/${relative}`;
+};
+
+/**
+ * The folders the app held files open in outside the capture's content roots,
+ * once each: those whose starting content the capture did not retain. A lock
+ * file's folder is not one, since a lock holds nothing to retain, so
+ * Poedit's `~/poedit.lock` does not make the home such a folder.
+ */
+export const unretainedOpenedDirectories = (
+  opened: readonly string[],
+  {
+    home,
+    contentRoots,
+    stateDirectories,
+  }: {
+    readonly home: string;
+    readonly contentRoots: readonly string[];
+    readonly stateDirectories: readonly string[];
+  },
+): readonly string[] => {
+  const homeRelative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
+  const relativeStates = stateDirectories
+    .map(homeRelative)
+    .filter((path): path is string => path !== undefined);
+  const isLock = (path: string) => {
+    const relative = homeRelative(path);
+    return relative !== undefined && isLockFile(relative, relativeStates);
+  };
+  return [
+    ...new Set(
+      opened
+        .filter((path) => !isLock(path))
+        .map((path) => path.slice(0, path.lastIndexOf("/")) || "/")
+        .filter((folder) => !isWithinAny(folder, contentRoots)),
+    ),
+  ];
 };
 
 /** The capture's limitation on folders the app held files open in whose starting content it did not retain; none when there are none. */

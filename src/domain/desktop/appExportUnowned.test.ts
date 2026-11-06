@@ -5,6 +5,7 @@ import {
   isAppLog,
   isLockFile,
   leftOutFiles,
+  unretainedOpenedDirectories,
   runtimeSeeds,
   unownedChangedFolders,
   unownedFoldersLimitation,
@@ -132,6 +133,10 @@ describe("isLockFile", () => {
       ".mozilla/firefox/ab12.default/parent.lock",
       ".config/app/db.lock",
       ".local/share/app/prefs.lck",
+      // wxWidgets' single-instance lock in the home, and Lucene's index lock, as Poedit holds them.
+      "poedit.lock",
+      "app.LCK",
+      ".local/share/poedit/TranslationMemory/write.lock",
     ];
     const others = [
       "Projects/tool/Cargo.lock",
@@ -212,6 +217,28 @@ describe("isLockFile", () => {
 });
 
 describe("the limitations on folders the app held files open in", () => {
+  it("leaves out the folder of a lock the app held open, as Poedit's ~/poedit.lock, and folders under the content roots", () => {
+    const home = "/home/user";
+
+    expect(
+      unretainedOpenedDirectories(
+        [
+          `${home}/poedit.lock`,
+          `${home}/.local/share/poedit/TranslationMemory/write.lock`,
+          `${home}/.config/poedit/state.ini`,
+          `${home}/Documents/fr.po`,
+          `${home}/Documents/fr.po`,
+          "/usr/lib/python3.12/argparse.py",
+        ],
+        {
+          home,
+          contentRoots: [`${home}/.config/poedit`],
+          stateDirectories: [],
+        },
+      ),
+    ).toEqual([`${home}/Documents`, "/usr/lib/python3.12"]);
+  });
+
   it("names the folders, under the home from it, in the capture's", () => {
     expect(
       unretainedOpenedLimitation(

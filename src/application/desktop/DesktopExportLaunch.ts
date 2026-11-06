@@ -48,6 +48,34 @@ export const seedVersions = (
   return { seeds, textSeeds: textSeeds.sort(), locks: locks.sort() };
 };
 
+/**
+ * Each seed file's permission bits at the seed, from the last change the
+ * capture recorded at or before it, or else the state the first later change
+ * started from, but for the 0644 a written file gets anyway. A file the
+ * capture saw no change to has no recorded mode.
+ */
+export const seedModes = (
+  capture: DesktopApplicationCapture,
+  seeds: ReadonlyMap<string, SeedVersion>,
+  files: ReadonlyMap<string, StatePath>,
+  seed: number,
+): Readonly<Record<string, number>> => {
+  const modes = new Map<string, number | null>();
+  capture.state.checkpoints.forEach(({ changes }, index) => {
+    for (const { path, before, after } of changes)
+      if (index <= seed) modes.set(path, after?.mode ?? null);
+      else if (!modes.has(path)) modes.set(path, before?.mode ?? null);
+  });
+  return Object.fromEntries(
+    [...seeds.keys()].sort().flatMap((home) => {
+      const mode = modes.get(files.get(home)?.path ?? "");
+      return mode === undefined || mode === null || (mode & 0o777) === 0o644
+        ? []
+        : [[home, mode & 0o777] as const];
+    }),
+  );
+};
+
 /** The launch command, opening the seed's one document when the app takes files. */
 export const planLaunch = (
   { application, host }: DesktopApplicationCapture,
