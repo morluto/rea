@@ -1,0 +1,27 @@
+[workspace]
+members = ["crates/*"]
+resolver = "2"
+
+[workspace.dependencies]
+serde = { version = "1.0.200", features = ["derive"] }
+
+[package]
+name = "rea-fixture-app"
+version = "0.3.1"
+edition = "2021"
+rust-version = "1.74"
+
+[dependencies]
+serde = { workspace = true }
+anyhow = "1"
+local-helper = { path = "../local-helper" }
+pinned-tool = { git = "https://example.invalid/pinned-tool", rev = "abc123" }
+json = { version = "1", package = "serde_json", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.52", default-features = false }
+
+[features]
+default = ["std"]
+std = []
+full = ["std", "json"]
