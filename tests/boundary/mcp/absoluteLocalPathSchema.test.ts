@@ -109,6 +109,12 @@ const inputCases = (
   return [
     pathCase("open_binary", "path", { path: absolute }, { path: relative }),
     pathCase(
+      "extract_artifact",
+      "output_root",
+      { output_root: absolute },
+      { output_root: relative },
+    ),
+    pathCase(
       "analyze_javascript_application",
       "input_path",
       { input_path: absolute, detail: "complete" },
