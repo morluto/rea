@@ -95,6 +95,7 @@
 * **evidence:** aggregate exact retained comparison references ([#8267](https://github.com/morluto/rea/issues/8267)) ([d9e01e5](https://github.com/morluto/rea/commit/d9e01e5af2dda46f9c7adb6cfde82805845651e9))
 * **evidence:** discover missing Evidence links without transferring records ([#8633](https://github.com/morluto/rea/issues/8633)) ([710fad8](https://github.com/morluto/rea/commit/710fad8acfff7d6d34a72ba3ceb02db84ee01a1d))
 * **evidence:** read selected complete records without the whole bundle ([#8528](https://github.com/morluto/rea/issues/8528)) ([eb39a07](https://github.com/morluto/rea/commit/eb39a07966168ae61685cc8b5cf798c8fc6f9436))
+* **ghidra:** admit DOS MZ targets on Windows P0 ([#7144](https://github.com/morluto/rea/issues/7144)) ([1cc979c](https://github.com/morluto/rea/commit/1cc979c1046947f41be817803e73846ff5c244ab))
 * **ghidra:** admit RISC-V ilp32 ELF with a derived calling convention ([#8229](https://github.com/morluto/rea/issues/8229)) ([e669365](https://github.com/morluto/rea/commit/e669365c3b57cf49b4158334fa0a42efb117c320))
 * **ghidra:** reuse existing projects through verified copies ([#7236](https://github.com/morluto/rea/issues/7236)) ([1944751](https://github.com/morluto/rea/commit/19447516a4bdbc9437d112ebd3f12a5fd062db83))
 * **guidance:** distinguish focused matches from broad parent sections ([#8305](https://github.com/morluto/rea/issues/8305)) ([41e7333](https://github.com/morluto/rea/commit/41e7333cb5e0a755b7fd07d6dd6e7148a38a5658))
