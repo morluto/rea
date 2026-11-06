@@ -102,6 +102,33 @@ does not repair a client's naming behavior or infer permission drift from an
 unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
 
+## Hot/cold catalogs
+
+For a client that supports MCP catalog refresh, set
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
+the connection. REA then advertises a small initial catalog and loads other
+named tools through `discover_tools`. Setup preserves this explicit setting.
+See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
+pagination, identity and family-scope semantics.
+
+Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
+this workflow. Merge these entries into the existing `~/.codex/config.toml`
+without replacing other feature or REA settings:
+
+```toml
+[features]
+mcp_tool_list_changed = true
+
+[mcp_servers.rea.env]
+REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
+```
+
+The server setting alone does not enable client refresh. If a successful
+discovery call is followed by a missing tool, check the client's refresh feature
+and tool allow/deny lists. Clients without refresh should use the default
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. Other clients'
+hot/cold behavior has not been verified.
+
 ## Fiddler Everywhere alongside REA
 
 Connect Fiddler Everywhere's MCP server separately for HTTP traffic debugging,
@@ -307,7 +334,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their

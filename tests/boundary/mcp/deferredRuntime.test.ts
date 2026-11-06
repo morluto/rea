@@ -20,6 +20,10 @@ import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js"
 import { evidenceSchema } from "../../../src/domain/evidence.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { SERVER_START_FAILED } from "../../../src/main/messages.js";
+import { HOT_TOOL_NAMES } from "../../../src/catalogDiscovery.js";
+import { DatabaseSync } from "node:sqlite";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchemaObject } from "ajv";
 
 const connect = async (
   mode: "legacy" | "auto",
@@ -57,7 +61,116 @@ const connect = async (
 };
 
 it.each([
+  { mode: "legacy", environment: {} },
+  { mode: "auto", environment: {} },
+  { mode: "legacy", environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: "off" } },
+  {
+    mode: "auto",
+    environment: {
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
+      REA_MCP_TOOL_FAMILIES: "session,application,artifact",
+    },
+  },
+] as const)(
+  "discovers and executes cold tools with $mode and $environment",
+  async ({ mode, environment }) => {
+    const directory = await createTestTempDirectory("rea-cold-sqlite-");
+    const path = join(directory, "app.db");
+    const database = new DatabaseSync(path);
+    try {
+      database.exec(
+        "CREATE TABLE catalog_probe (id INTEGER PRIMARY KEY, name TEXT); INSERT INTO catalog_probe VALUES (7, 'pelican');",
+      );
+    } finally {
+      database.close();
+    }
+    const { client, stderr } = await connect(mode, {
+      ...environment,
+      REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+    });
+    const initial = await client.listTools();
+    expect(new Set(initial.tools.map(({ name }) => name))).toEqual(
+      new Set([...HOT_TOOL_NAMES, "discover_tools"]),
+    );
+    for (const tool of initial.tools) {
+      const ajv = new Ajv2020({ strict: false });
+      expect(ajv.validateSchema(tool.inputSchema)).toBe(true);
+      if (tool.outputSchema !== undefined)
+        expect(ajv.validateSchema(tool.outputSchema as AnySchemaObject)).toBe(
+          true,
+        );
+    }
+    const call = async (name: string, args: Record<string, unknown>) => {
+      if (environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "off") {
+        const definition = (await client.listTools()).tools.find(
+          (tool) => tool.name === name,
+        );
+        if (definition === undefined)
+          throw new Error(`Not advertised: ${name}`);
+        return client.callTool(
+          { name, arguments: args },
+          { toolDefinition: definition },
+        );
+      }
+      return artifactMcpCall(client, { name, arguments: args });
+    };
+    const invalid = await call("discover_tools", {
+      names: ["inspect_sqlite_database", "missing_tool"],
+    });
+    expect(invalid.isError).toBe(true);
+    expect(await client.listTools()).toEqual(initial);
+    const loaded = await call("discover_tools", {
+      names: ["list_unknowns", "list_unknowns"],
+    });
+    expect(loaded.structuredContent).toMatchObject({
+      loaded_count: 7,
+      total_matches: 1,
+      tools: [{ name: "list_unknowns" }],
+    });
+    expect((await call("list_unknowns", {})).isError).not.toBe(true);
+    const materialized = await client.listTools();
+    expect(materialized.tools).toHaveLength(7);
+    expect(
+      materialized.tools.find(({ name }) => name === "inspect_sqlite_database"),
+    ).toBeUndefined();
+    const found = await call("discover_tools", { query: "sqlite", limit: 1 });
+    expect(found.structuredContent).toMatchObject({
+      total_matches: 1,
+      tools: [{ name: "inspect_sqlite_database" }],
+    });
+    const advertisedSqlite = (await client.listTools()).tools.find(
+      ({ name }) => name === "inspect_sqlite_database",
+    );
+    expect(found.structuredContent).toMatchObject({
+      tools: [{ input_schema: advertisedSqlite?.inputSchema }],
+    });
+    const result = await call("inspect_sqlite_database", {
+      path,
+      table: "catalog_probe",
+      columns: ["id", "name"],
+      row_limit: 1,
+    });
+    expect(result.isError).not.toBe(true);
+    expect(JSON.stringify(result.structuredContent)).toContain("pelican");
+    expect(JSON.stringify(result.structuredContent)).toContain("evidence_id");
+    expect((await client.listTools()).tools).toHaveLength(8);
+    if ("REA_MCP_TOOL_FAMILIES" in environment) {
+      expect(
+        (await call("discover_tools", { names: ["current_address"] })).isError,
+      ).toBe(true);
+      expect((await client.listTools()).tools).toHaveLength(8);
+    }
+    expect(stderr()).toBe("");
+  },
+);
+
+it.each([
   { name: "deferred", environment: {}, eager: false },
+  {
+    name: "hot/cold deferred",
+    environment: { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+    eager: false,
+  },
   {
     name: "compact deferred",
     environment: { REA_MCP_INPUT_SCHEMA_PROFILE: "compact" },
@@ -113,8 +226,15 @@ registerHooks({
     const { client, stderr } = await connect("legacy", environment, [
       `--import=${hook}`,
     ]);
-    const discovery = await client.listTools();
+    let discovery = await client.listTools();
     await client.listPrompts();
+    if (environment.REA_MCP_TOOL_CATALOG_PROFILE === "hot-cold") {
+      await client.callTool({
+        name: "discover_tools",
+        arguments: { names: ["list_unknowns"] },
+      });
+      discovery = await client.listTools();
+    }
     expect(await loadedModules()).toEqual(
       new Set(eager ? ["entrypoint", ...modules] : ["entrypoint"]),
     );
