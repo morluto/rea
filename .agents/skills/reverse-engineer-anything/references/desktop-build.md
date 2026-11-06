@@ -343,8 +343,11 @@ expect its first-run wizard, a tour or a "restore session?" question at every
 boot. If the witness shows one, capture again on a new build computer with
 those folders in `state_paths`, and dismiss the dialogs before `seed`. Lock
 files the app holds while it runs, such as LibreOffice's `.lock` and
-`.~lock.<name>#`, are left out of the seed and listed after "Left out of the
-seed", so you need not close the document or delete them before `seed`. The
+`.~lock.<name>#` or GnuCash's `<book>.LCK`, are left out of the seed and
+listed after "Left out of the seed", so you need not close the document or
+delete them before `seed`. A limitation naming `~/.config/dconf/user` as
+unread means the app's dconf settings, such as a first-run tip you turned
+off, are not seeded: capture again on a new build computer. The
 limitations also name seeded WebKit or Chromium storage and caches; when the
 witness's boot is clean, list them in the report.
 

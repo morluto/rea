@@ -83,8 +83,11 @@ export installs them beside the app too, as it does a `.deb`'s
 The bundle adds REA in a build-only layer: Node.js
 24.22.1, downloaded per architecture and checked against its release checksum,
 and REA from `REA_BUILD_COMPUTER_REA_ARCHIVE`, both unpacked into `/opt/rea` by
-a root build step, with `node` and `rea` on `PATH`. An exported bundle carries
-none of it.
+a root build step, with `node` and `rea` on `PATH`. It also installs
+`libgtk-3-bin`, for `gtk-launch`, and `dconf-cli`, so the capture reads the
+app's settings in dconf, such as GnuCash's "Show tips at startup", and the
+seed keeps them. An exported bundle carries none of it but `dconf-cli`, which
+it installs when it loads the app's dconf keys.
 
 From a bundle folder, such as one `export-desktop-application` wrote, REA
 starts that bundle's `tasks/smoke.json` as it is:

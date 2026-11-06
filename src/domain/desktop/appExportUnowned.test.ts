@@ -150,6 +150,30 @@ describe("isLockFile", () => {
     expect(others.filter(isLock)).toEqual([]);
   });
 
+  it("knows a <file>.lck beside a file the capture recorded, as GnuCash's book lock, but not a lone one", () => {
+    const recorded = new Set([
+      "Documents/household.gnucash",
+      "Documents/household.gnucash.LCK",
+      "Documents/notes.lck",
+    ]);
+
+    expect(isLockFile("Documents/household.gnucash.LCK", [], recorded)).toBe(
+      true,
+    );
+    expect(isLockFile("Documents/household.gnucash.lck", [], recorded)).toBe(
+      true,
+    );
+    expect(isLockFile("Documents/notes.lck", [], recorded)).toBe(false);
+    // The file it locks lies in its own folder.
+    expect(
+      isLockFile(
+        "Backups/household.gnucash.LCK",
+        [],
+        new Set(["Documents/household.gnucash"]),
+      ),
+    ).toBe(false);
+  });
+
   it("knows a *.lock file directly in a state directory nested in another", () => {
     // A custom XDG_STATE_HOME can put one app's state folder inside another's.
     const stateDirectories = [".config/app", ".config/app/state/app"];

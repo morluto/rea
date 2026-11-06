@@ -23,6 +23,7 @@ import {
   runtimeSeedsLimitation,
   unownedChangedFolders,
   unownedFoldersLimitation,
+  unreadDconfLimitation,
 } from "../../domain/desktop/appExportUnowned.js";
 import { installLimitations } from "../../domain/desktop/appExportInstallLimitations.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
@@ -198,8 +199,8 @@ const planExport = (
     request.extraPackages,
   );
   const electron = application.executable.electron_markers.length > 0;
-  const { homePath, files, collisions, paths, isLeftOutLock } =
-    exportedStateFiles(capture, state);
+  const stateFiles = exportedStateFiles(capture, state);
+  const { homePath, files, collisions, paths, isLeftOutLock } = stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -252,11 +253,11 @@ const planExport = (
     dconf,
     captureEvidenceId: context.evidenceId,
   };
-  const limitations = installLimitations(
-    install,
-    application.package,
-    electron,
-  );
+  const unreadDconf = unreadDconfLimitation(stateFiles.dconf, context.seed);
+  const limitations = [
+    ...installLimitations(install, application.package, electron),
+    ...(unreadDconf === undefined ? [] : [unreadDconf]),
+  ];
   return {
     plan,
     seeds,

@@ -68,7 +68,8 @@ and the recording and writes the record as Evidence.
   leaves lock files the app holds while it runs out of the seed, but never a
   document or selected path, listing them in its limitations and README; a
   start from a bundle whose computer never gets ready names the files its
-  seed holds by a profile lock's name or as a document lock.
+  seed holds by a profile lock's name, as a document lock or as a
+  `<file>.lck` beside a seeded file.
 - `check_build_task` reads the one app's `data/get` through the card's
   child URL, takes the state views beside its files and evaluates the task's
   checks with `evaluateTaskChecks`, one result per check. With `stage`, the
@@ -144,6 +145,14 @@ and the recording and writes the record as Evidence.
   from its `.deb`, the dependencies the `Packages` line names. A package the
   captured `.deb` lists only as one alternative stays, since apt may pick
   another, such as `openjdk-17-jre | java-runtime`.
+- Gaps of the third batch's GnuCash build: the build bundle installs
+  `dconf-cli`, so the capture reads the app's dconf settings, such as
+  GnuCash's "Show tips at startup" unticked before `seed`, and the seed
+  keeps them; an export whose dconf database changed by the seed but could
+  not be read names it, with the read error, in its limitations. A
+  `<file>.lck` or `<file>.LCK` beside a file the capture recorded in the
+  same folder, as GnuCash's `household.gnucash.LCK`, is a lock left out of
+  the seed; a lone `notes.lck` is seeded.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

@@ -599,6 +599,67 @@ describe("exportDesktopApplication of lock files and folders the app held files 
   });
 });
 
+describe("exportDesktopApplication of a lock named for the file beside it", () => {
+  it("leaves out a lock named for the file beside it, as GnuCash's <book>.LCK, and seeds a lone *.lck", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const book = `${HOME}/Documents/household.gnucash`;
+    const written = [
+      [book, "<gnc-v2/>\n"],
+      [`${book}.LCK`, "x\n"],
+      [`${HOME}/Documents/notes.lck`, "x\n"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      state: {
+        ...locked.state,
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map(([path, text]) => change(path, { after: text })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map(([path, text]) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [
+      "<gnc-v2/>\n",
+      "x\n",
+    ]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        "Documents/household.gnucash",
+        "Documents/notes.lck",
+      ]),
+    );
+    expect(seedFiles).not.toContain("Documents/household.gnucash.LCK");
+    expect(
+      await exists(
+        join(directory, "envs/notes/seed/Documents/household.gnucash.LCK"),
+      ),
+    ).toBe(false);
+    expect(
+      result.limitations.find((limitation) =>
+        limitation.startsWith("Left out of the seed:"),
+      ),
+    ).toContain("~/Documents/household.gnucash.LCK");
+  });
+});
+
 const TYPORA_SOURCE = "https://downloads.typora.io/linux ./ Packages";
 const TYPORA_KEY = "typora public keyring\n";
 const VERIFIED_KEY: AptRepository["signing_key"] = {

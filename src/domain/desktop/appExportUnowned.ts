@@ -2,7 +2,7 @@ import {
   STATE_PATH_INPUTS,
   STATE_PATH_INPUTS_MARKDOWN,
 } from "./buildCapture.js";
-import type { DesktopStatePath } from "./desktopState.js";
+import { versionAt, type DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { runtimeFile, type RuntimeFileKind } from "./runtimeFiles.js";
 import { stateDirectoryOf } from "./stateRoles.js";
@@ -109,18 +109,22 @@ const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
 
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
- * name anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file
- * directly in one of the app's state directories, home-relative. Elsewhere
- * such a file may be a project's own, such as `Cargo.lock`, which pins
- * dependencies rather than marking a profile in use.
+ * name anywhere, LibreOffice's document lock, a `<file>.lck` beside a file
+ * of the `recorded` home paths, as GnuCash's `<book>.LCK`, or a `*.lock` or
+ * `*.lck` file directly in one of the app's state directories, home-relative.
+ * Elsewhere such a file may be a project's own, such as `Cargo.lock`, which
+ * pins dependencies rather than marking a profile in use.
  */
 export const isLockFile = (
   file: string,
   stateDirectories: readonly string[],
+  recorded: ReadonlySet<string> = new Set(),
 ): boolean => {
   const name = file.split("/").at(-1) ?? "";
   if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
     return true;
+  const locked = /^(.+)\.lck$/iu.exec(file)?.[1];
+  if (locked !== undefined && recorded.has(locked)) return true;
   const folder = folderOf(file);
   // Each directory on its own, so one nested in another is still found.
   return (
@@ -222,6 +226,33 @@ export const leftOutLocksLimitation = (
   locks.length === 0
     ? undefined
     : `Left out of the seed: lock files the app holds while it runs, since a copied one makes the app find its profile or document in use and can keep it from starting: ${listed(locks, false)}. data/reset restores the seed without them.`;
+
+/**
+ * The limitation naming dconf databases that changed by the seed checkpoint,
+ * whose version there REA could not read, so the app's settings in them are
+ * not seeded; none when there are none.
+ */
+export const unreadDconfLimitation = (
+  databases: ReadonlyMap<string, DesktopStatePath>,
+  seed: number,
+): string | undefined => {
+  const unread = [...databases].flatMap(([home, path]) => {
+    const version = versionAt(path, seed);
+    // A version after the baseline means the database changed by the seed.
+    return version?.present === true &&
+      version.checkpoint_index > 0 &&
+      version.view_error !== null
+      ? [{ home, error: version.view_error }]
+      : [];
+  });
+  if (unread.length === 0) return undefined;
+  const names = listed(
+    unread.map(({ home }) => home),
+    false,
+  );
+  const errors = [...new Set(unread.map(({ error }) => error))].join("; ");
+  return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. Export where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf; a build computer installs it, so capture again on a new one.`;
+};
 
 /** The limitation naming unowned folders the capture saw change; none when there are none. */
 export const unownedFoldersLimitation = (

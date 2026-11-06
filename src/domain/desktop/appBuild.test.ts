@@ -42,7 +42,7 @@ describe("build bundle renderer", () => {
     ).toEqual({ copyFrom: "/builds/rea-prod.tar.xz" });
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
+      'packages=Packages(apt=["mousepad", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
@@ -119,7 +119,7 @@ describe("build bundle install sources", () => {
       localPayload,
     );
     expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
-      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin"])',
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin", "dconf-cli"])',
     );
   });
 
@@ -141,7 +141,7 @@ describe("build bundle install sources", () => {
     );
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["libgl1", "libgtk-3-bin"])',
+      'packages=Packages(apt=["libgl1", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `Download(url="https://downloads.example.com/varicad.deb", sha256="${sha256}", to="vendor/package.deb", arch="amd64")`,

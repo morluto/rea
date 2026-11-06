@@ -37,6 +37,8 @@ const NODE_TARBALLS = [
 const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 /** The package of `gtk-launch`, which opens the app from its desktop entry. */
 const LAUNCHER_PACKAGE = "libgtk-3-bin";
+/** The package of `dconf`, which the capture reads the app's dconf settings with. */
+const DCONF_PACKAGE = "dconf-cli";
 const REA_INSTALL_SCRIPT = "install-rea.sh";
 /** Where the build layer keeps a `.deb` the app came from, for the capture's `--package-file`. */
 export const BUILD_PACKAGE_FILE = "/opt/rea/package.deb";
@@ -264,6 +266,7 @@ const buildInstall = (
         ...(install.kind === "package_file" ? [] : [install.package]),
         ...extraPackagesOf(request),
         LAUNCHER_PACKAGE,
+        DCONF_PACKAGE,
       ]),
     ],
     key,

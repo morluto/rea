@@ -169,7 +169,7 @@ it("renders a build bundle from a request with REA's payload and starts it", asy
   const module = await readFile(join(env, "mousepad_app.py"), "utf8");
   expect(module).toContain('Launch(at="demand"');
   expect(module).toContain(
-    'packages=Packages(apt=["mousepad", "librsvg2-common", "libgtk-3-bin"])',
+    'packages=Packages(apt=["mousepad", "librsvg2-common", "libgtk-3-bin", "dconf-cli"])',
   );
   const { computer_id: computerId } = toolContract(
     "start_build_computer",
@@ -283,6 +283,9 @@ it("points a bundle's start that never got ready at the lock files its seed hold
   await writeFile(join(seed, ".config/libreoffice/4/.lock"), "[Lockdata]\n");
   await writeFile(join(seed, "Documents/.~lock.q1.ods#"), ",user,localhost;\n");
   await writeFile(join(seed, "Documents/q1.ods"), "PK");
+  // A lock named for the file beside it, as GnuCash's <book>.LCK; a lone one is no lock.
+  await writeFile(join(seed, "Documents/q1.ods.LCK"), "");
+  await writeFile(join(seed, "Documents/notes.lck"), "");
   const notReady =
     "envs/calc: container/amd64: failed at probe: it didn't boot: the computer wasn't ready within 180 s (not ready: app calc: no window with class 'libreoffice-calc')";
 
@@ -295,7 +298,7 @@ it("points a bundle's start that never got ready at the lock files its seed hold
 
   expect(pointed).toContain(notReady);
   expect(pointed).toContain(
-    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#.",
+    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#, envs/calc/seed/Documents/q1.ods.LCK.",
   );
   for (const message of [unlocked, otherFailure])
     expect(message).not.toContain("lock files");

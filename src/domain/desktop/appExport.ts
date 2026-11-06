@@ -258,8 +258,9 @@ export const exportedStateFiles = (
     ...withRole("document"),
     ...homePaths(roleFacts(capture).selectedRoots),
   ]);
+  const recorded = new Set(files.keys());
   const isLeftOutLock = (home: string) =>
-    !usersOwn.has(home) && isLockFile(home, stateDirectories);
+    !usersOwn.has(home) && isLockFile(home, stateDirectories, recorded);
   return { homePath, files, dconf, collisions, paths, isLeftOutLock };
 };
 

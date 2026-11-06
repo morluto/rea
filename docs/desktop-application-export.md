@@ -200,8 +200,11 @@ Lock files the app holds while it runs are left out of the seed: a copied one
 makes the app find its profile or document in use, and a LibreOffice Calc
 bundle whose seed held its profile's `.lock` showed no window at boot. They
 are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
-`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
-`*.lock` or `*.lck` directly in one of the application's state directories.
+`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, a
+`<file>.lck` or `<file>.LCK` beside a file the capture recorded in the same
+folder, such as GnuCash's `household.gnucash.LCK` beside its book, and
+`*.lock` or `*.lck` directly in one of the application's state directories;
+a lone `notes.lck` elsewhere is seeded.
 Elsewhere such a file may be a project's own, such as `Cargo.lock` or
 `yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
 name starts with a dot. A file the state view makes a document, or one named
@@ -228,7 +231,10 @@ not restore them. No file of the bundle holds them, so `data/get` does not
 return them and no task check reads them; a draft whose only change between
 its checkpoints is to the application's dconf keys says so with
 `uncheckable_changes`, and one whose dconf database changed but could not be
-read says so with `unreadable_changes`.
+read says so with `unreadable_changes`. When a dconf database changed by the
+seed checkpoint but its version there could not be read, as without
+`dconf-cli`, the export seeds no keys from it and a limitation names it with
+the read error.
 
 ## The seed checkpoint
 

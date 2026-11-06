@@ -397,6 +397,28 @@ and their fixtures added, and passes now.
 The capture's recording of selected paths runs only on Linux; its scope is
 tested on macOS, and the capture itself was not run.
 
+## GnuCash's dconf settings and book lock
+
+Run on macOS with source tests and gates; no build computer was started, so
+dconf-cli reading a real build computer's database is not verified here.
+Each test below failed before the change and passes now.
+
+- `appBuild.test.ts`, `buildComputerMcp.test.ts`: the build bundle installs
+  `dconf-cli` beside `libgtk-3-bin`, read from the module the fake runner
+  received.
+- `desktopCaptureCli.test.ts`: a dconf database created before `seed` that
+  the export cannot read (`REA_DCONF_COMMAND` names no program) leaves
+  `DCONF = ""` and one limitation naming `~/.config/dconf/user` with the read
+  error; exported with the seed at `baseline`, when it did not exist yet, no
+  limitation names it.
+- `appExportUnowned.test.ts`, `DesktopApplicationExport.test.ts`:
+  `Documents/household.gnucash.LCK` beside `Documents/household.gnucash` is
+  left out of the seed and listed after "Left out of the seed", in either
+  letter case, while a lone `Documents/notes.lck` is seeded and a `.LCK` whose
+  file lies in another folder is no lock.
+- `buildComputerMcp.test.ts`: a bundle start that never got ready names a
+  seeded `q1.ods.LCK` beside `q1.ods`, and not a lone `notes.lck`.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

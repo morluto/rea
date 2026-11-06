@@ -111,7 +111,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    eight collapsed to their top folder, such as `~/.config/MuseScore`, and a
    count of the rest; capture again with them in `state_paths` to own them.
    Lock files the app holds while it runs, such as LibreOffice's profile
-   `.lock` and its document lock `.~lock.<name>#`, are left out of the seed,
+   `.lock` and its document lock `.~lock.<name>#`, or GnuCash's
+   `<book>.LCK` beside its book, are left out of the seed,
    since a copied one can keep the app from starting, and the limitations
    and the README list them after "Left out of the seed"; a project's
    `Cargo.lock` or `yarn.lock`, a document or a path in `state_paths` is

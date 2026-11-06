@@ -5,6 +5,9 @@ import { expect, it } from "vitest";
 
 import {
   EDITED_NOTE,
+  HOME,
+  change,
+  retained,
   seedEndCapture,
   writeCaptureFolder,
 } from "../../../src/application/desktop/desktopCapture.fixture.js";
@@ -97,6 +100,67 @@ it("installs the packages each --extra-package names beside the app, and refuses
     code: "invalid_request",
     details: { issues: [{ path: ["extra_package"] }] },
   });
+});
+
+it("names a dconf database that changed by the seed but could not be read, so the seed holds none of its settings", async () => {
+  // As GnuCash's "Show tips at startup", unticked before seed in a computer without dconf-cli.
+  const database = `${HOME}/.config/dconf/user`;
+  const tips = "GVariant show-tips=false";
+  const recorded = seedEndCapture();
+  const [baseline, seed, ...later] = recorded.state.checkpoints;
+  if (baseline === undefined || seed === undefined)
+    throw new Error("the fixture has a seed checkpoint");
+  const capture = await writeCaptureFolder(
+    {
+      ...recorded,
+      state: {
+        ...recorded.state,
+        checkpoints: [
+          baseline,
+          {
+            ...seed,
+            changes: [...seed.changes, change(database, { after: tips })],
+            retained: [...seed.retained, retained(database, tips)],
+          },
+          ...later,
+        ],
+      },
+    },
+    undefined,
+    [EDITED_NOTE, tips],
+  );
+  const root = await createTestTempDirectory("desktop-cli-");
+  const exportAt = async (bundle: string, seedCheckpoint: string) =>
+    parseEvidence(
+      JSON.parse(
+        (
+          await serve(
+            [
+              "export-desktop-application",
+              capture,
+              join(root, bundle),
+              "--seed-checkpoint",
+              seedCheckpoint,
+              "--end-checkpoint",
+              "end",
+              "--json",
+            ],
+            { REA_DCONF_COMMAND: join(root, "no-dconf") },
+          )
+        ).stdout,
+      ),
+    ).limitations.filter((line) => line.includes("~/.config/dconf/user"));
+
+  const unread = await exportAt("bundle", "seed");
+  // At baseline the database did not exist yet, so nothing was lost.
+  const before = await exportAt("baseline", "baseline");
+
+  expect(unread).toHaveLength(1);
+  expect(unread[0]).toContain("dconf is not installed (dconf-cli)");
+  expect(
+    await readFile(join(root, "bundle/envs/notes/notes_app.py"), "utf8"),
+  ).toContain('DCONF = ""');
+  expect(before).toEqual([]);
 });
 
 it.each([
