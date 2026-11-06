@@ -145,7 +145,7 @@ export const registerAdbCommands = (
     description: "Pull one device file to a local copy with a SHA-256 digest",
     args: z.object({
       serial,
-      "device-path": z.string().min(1).describe("Absolute device path to pull"),
+      "device-path": adbInputSchemas.pull_adb_file.shape.device_path,
     }),
     options: z.object({
       "output-directory": z
@@ -166,7 +166,7 @@ export const registerAdbCommands = (
     args: z.object({
       serial,
       "local-path": z.string().min(1).describe("Existing local file"),
-      "device-path": z.string().min(1).describe("Absolute device destination"),
+      "device-path": adbInputSchemas.push_adb_file.shape.device_path,
     }),
     options: z.object({
       overwrite: z
