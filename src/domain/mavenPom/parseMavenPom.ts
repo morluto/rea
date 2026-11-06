@@ -95,7 +95,8 @@ const MAX_PROPERTY_SUBSTITUTIONS = 64;
 type PropertyResolution =
   | { readonly kind: "resolved"; readonly value: string }
   | { readonly kind: "unresolved" }
-  | { readonly kind: "cycle" };
+  | { readonly kind: "cycle" }
+  | { readonly kind: "work-limit" };
 
 /**
  * Resolve one `${...}` reference against this POM's own properties only.
@@ -116,7 +117,8 @@ const resolveReference = (
     const replacement =
       match[1] === undefined ? undefined : properties.get(match[1]);
     if (replacement === undefined) return { kind: "unresolved" };
-    if (substitutions >= MAX_PROPERTY_SUBSTITUTIONS) return { kind: "cycle" };
+    if (substitutions >= MAX_PROPERTY_SUBSTITUTIONS)
+      return { kind: "work-limit" };
     const next = current.replace(match[0], () => replacement);
     if (visited.has(next)) return { kind: "cycle" };
     visited.add(next);
@@ -447,19 +449,18 @@ export const parseMavenPom = (
         collector,
       ),
     );
-    profileManagement.push(
-      ...sectionDependencies(
-        child(
-          child(profile, "dependencyManagement") ?? profile,
-          "dependencies",
+    const profileManagementElement = child(profile, "dependencyManagement");
+    if (profileManagementElement !== undefined)
+      profileManagement.push(
+        ...sectionDependencies(
+          child(profileManagementElement, "dependencies"),
+          root,
+          "dependency_management",
+          id,
+          managed,
+          collector,
         ),
-        root,
-        "dependency_management",
-        id,
-        managed,
-        collector,
-      ),
-    );
+      );
   }
 
   const repositories = [

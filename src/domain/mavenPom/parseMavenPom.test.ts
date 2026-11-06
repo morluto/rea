@@ -399,6 +399,28 @@ describe("declaration fidelity", () => {
     ).toEqual(["ci"]);
   });
 
+  it("does not report profile dependencies as profile management", () => {
+    const result = parse(
+      pom(`
+  <profiles>
+    <profile>
+      <id>ci</id>
+      <dependencies>
+        <dependency>
+          <groupId>org.example</groupId>
+          <artifactId>actual</artifactId>
+          <version>1.0</version>
+        </dependency>
+      </dependencies>
+    </profile>
+  </profiles>`),
+    );
+    expect(
+      result.dependencies.map((dependency) => dependency.artifact_id),
+    ).toEqual(["actual"]);
+    expect(result.dependency_management).toEqual([]);
+  });
+
   it("substitutes property values literally and resolves past eight references", () => {
     const result = parse(
       pom(`
@@ -500,49 +522,6 @@ describe("dependency identity and management keys", () => {
   });
 });
 
-describe("property substitution", () => {
-  it("substitutes property values literally and resolves past eight references", () => {
-    const result = parse(
-      pom(`
-  <properties>
-    <leaf>$$</leaf>
-    <a>\${leaf}</a>
-    <v0>x</v0>
-    <v1>\${v0}</v1>
-    <v2>\${v1}</v2>
-    <v3>\${v2}</v3>
-    <v4>\${v3}</v4>
-    <v5>\${v4}</v5>
-    <v6>\${v5}</v6>
-    <v7>\${v6}</v7>
-    <v8>\${v7}</v8>
-    <v9>\${v8}</v9>
-  </properties>
-  <dependencies>
-    <dependency>
-      <groupId>org.example</groupId>
-      <artifactId>uses-\${a}</artifactId>
-      <version>\${v9}</version>
-    </dependency>
-  </dependencies>`),
-    );
-    const references = Object.fromEntries(
-      result.property_references.map((reference) => [
-        reference.name,
-        reference,
-      ]),
-    );
-    expect(references["a"]).toMatchObject({
-      resolution: "resolved",
-      resolved: "$$",
-    });
-    expect(references["v9"]).toMatchObject({
-      resolution: "resolved",
-      resolved: "x",
-    });
-  });
-});
-
 describe("property reference coverage", () => {
   it("reports a property cycle separately from an undeclared property", () => {
     const result = parse(
@@ -571,6 +550,32 @@ describe("property reference coverage", () => {
     );
     expect(references["loop"]?.resolution).toBe("cycle");
     expect(references["absent"]?.resolution).toBe("unresolved");
+  });
+
+  it("reports work-limit separately from a cycle when the allowance runs out", () => {
+    const wide = Array.from({ length: 65 }, () => "${leaf}").join("");
+    const result = parse(
+      pom(`
+  <properties>
+    <leaf>x</leaf>
+    <wide>${wide}</wide>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>wide</artifactId>
+      <version>\${wide}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    const references = Object.fromEntries(
+      result.property_references.map((reference) => [
+        reference.name,
+        reference,
+      ]),
+    );
+    expect(references["wide"]?.resolution).toBe("work-limit");
+    expect(references["wide"]?.resolved).toBeNull();
   });
 
   it("collects references from parent coordinates, exclusions and property values", () => {

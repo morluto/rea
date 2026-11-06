@@ -121,6 +121,17 @@ it("reads a byte-order-marked UTF-16 POM", async () => {
   expect(value.dependencies.map((d) => d.artifact_id)).toEqual(["slf4j-api"]);
 });
 
+it("reads a big-endian byte-order-marked UTF-16 POM", async () => {
+  const path = await writePom(Buffer.from(`﻿${pomBytes}`, "utf16le").swap16());
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  if (!result.ok) throw result.error;
+  const value = mavenPomSchema.parse(result.value.evidence.normalized_result);
+  expect(value.dependencies.map((d) => d.artifact_id)).toEqual(["slf4j-api"]);
+});
+
 it("refuses other project XML that declares no Maven model version", async () => {
   const path = await writePom(
     `<project name="build"><target name="compile"/></project>`,

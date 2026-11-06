@@ -94,11 +94,14 @@ export const mavenPropertyReferenceSchema = z.strictObject({
   declared: z.string().nullable(),
   /**
    * `unresolved` means a referenced property is not declared in this POM;
-   * `cycle` means the declarations depend on each other within the bounded
-   * substitution allowance. Only `resolved` carries a substituted value, so a
-   * value this POM cannot finish resolving is never reported as absent.
+   * `cycle` means a substitution repeated a value already produced, so the
+   * declarations depend on each other; `work-limit` means the bounded
+   * substitution allowance ran out first, on a value whose references all
+   * declared, so no cycle was established. Only `resolved` carries a
+   * substituted value, so a value this POM cannot finish resolving is never
+   * reported as absent.
    */
-  resolution: z.enum(["resolved", "unresolved", "cycle"]),
+  resolution: z.enum(["resolved", "unresolved", "cycle", "work-limit"]),
   resolved: z.string().nullable(),
   source_pointer: z.string(),
 });

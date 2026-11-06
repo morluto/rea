@@ -54,17 +54,24 @@ const inputFailure = (message: string, cause?: unknown) =>
   );
 
 const UTF8 = new TextDecoder("utf-8", { fatal: true });
-const UTF16 = new TextDecoder("utf-16le", { fatal: true });
+const UTF16LE = new TextDecoder("utf-16le", { fatal: true });
+const UTF16BE = new TextDecoder("utf-16be", { fatal: true });
 const SUPPORTED_MODEL_VERSION = "4.0.0";
 
 /**
- * XML 1.0 permits several encodings. A UTF-16 byte order mark selects the
- * UTF-16 decoder; everything else is read as UTF-8 and a failure is reported as
- * an unsupported encoding rather than as malformed XML, because the bytes may
- * be well-formed in an encoding this reader does not implement.
+ * XML 1.0 permits several encodings. A UTF-16 byte order mark, in either order,
+ * selects the matching UTF-16 decoder; everything else is read as UTF-8 and a
+ * failure is reported as an unsupported encoding rather than as malformed XML,
+ * because the bytes may be well-formed in an encoding this reader does not
+ * implement.
  */
 const decodeXmlText = (bytes: Buffer): Result<string, string> => {
-  const decoder = bytes[0] === 0xff && bytes[1] === 0xfe ? UTF16 : UTF8;
+  const decoder =
+    bytes[0] === 0xff && bytes[1] === 0xfe
+      ? UTF16LE
+      : bytes[0] === 0xfe && bytes[1] === 0xff
+        ? UTF16BE
+        : UTF8;
   try {
     return ok(decoder.decode(bytes));
   } catch {

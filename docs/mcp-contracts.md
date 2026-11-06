@@ -583,7 +583,9 @@ without an active target, Maven, or network access. It reports coordinates,
 dependencies, `dependencyManagement`, properties, profiles and declared
 repositories, and never fetches a parent POM, imported BOM, plugin or
 transitive dependency. `modelVersion` must be `4.0.0`; other project XML and
-other models are refused as unsupported input rather than read as a POM.
+other models are refused as unsupported input rather than read as a POM. Text
+is read as UTF-8 or as byte-order-marked UTF-16; a POM declared in any other
+encoding is reported as unsupported rather than parsed.
 
 Each declaration keeps its `source_pointer` and `line`. A dependency without a
 declared version reports `version_origin`: `declared` for a literal version,
