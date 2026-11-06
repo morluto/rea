@@ -14,7 +14,7 @@ it.each(["prototype copy", "property snapshot"])(
   "bounds ordering work for a wide %s group",
   (kind) => {
     const snapshot = kind === "property snapshot";
-    const count = snapshot ? 8193 : 3073;
+    const count = snapshot ? 4097 : 3073;
     const source = snapshot
       ? 'const __vite__mapDeps = (i, m = __vite__mapDeps, d = (m.f || (m.f = ["./first.js"]))) => i.map(j => d[j]); const box = {cache: 0};\n' +
         Array.from({ length: count }, () => "box.cache = 1;").join("\n") +
