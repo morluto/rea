@@ -795,8 +795,7 @@ describe("captured script path validation", () => {
         {
           path: ["capture_path"],
           reason: "invalid_format",
-          message:
-            "capture_path must be an absolute filesystem path on this host.",
+          message: "must be an absolute local filesystem path",
         },
       ],
     });
@@ -815,8 +814,7 @@ describe("captured script path validation", () => {
         {
           path: ["output_directory"],
           reason: "invalid_format",
-          message:
-            "output_directory must be an absolute filesystem path on this host.",
+          message: "must be an absolute local filesystem path",
         },
       ],
     });
