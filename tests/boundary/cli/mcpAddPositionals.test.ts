@@ -130,6 +130,23 @@ cliTest(
       await expectMissing(settingsPath(invalidHome));
     }
 
+    const missingCommandValue = await run(invalidHome, [
+      "mcp",
+      "add",
+      "--command",
+      "--agent",
+      "amp",
+      "--agent",
+      "claude-code",
+      "--json",
+    ]);
+    expect(missingCommandValue.exitCode, missingCommandValue.stdout).toBe(1);
+    expect(missingCommandValue.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+    });
+    expect(JSON.stringify(missingCommandValue.json)).toContain("--command");
+    await expectMissing(settingsPath(invalidHome));
+
     const valid = await run(validHome, [
       "mcp",
       "add",

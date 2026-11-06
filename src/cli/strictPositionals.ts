@@ -63,10 +63,30 @@ const mcpAddSurplusError = (
   if (command[commandOffset] !== "mcp" || command[commandOffset + 1] !== "add")
     return undefined;
 
+  const optionArguments = command.slice(commandOffset + 2);
+  const valuedOptions = new Set(["--agent", "--command", "-c"]);
+  for (let index = 0; index < optionArguments.length; index += 1) {
+    const token = optionArguments[index]!;
+    if (
+      (valuedOptions.has(token) &&
+        (optionArguments[index + 1] === undefined ||
+          optionArguments[index + 1]!.startsWith("-"))) ||
+      ((token.startsWith("--agent=") ||
+        token.startsWith("--command=") ||
+        token.startsWith("-c=")) &&
+        token.length === token.indexOf("=") + 1)
+    ) {
+      // Keep the built-in command's established missing-value diagnostic in
+      // charge; parsing these malformed values as unbound positionals can
+      // otherwise report the swallowed option value as a surplus argument.
+      return undefined;
+    }
+  }
+
   const tail = "__rea_unbound_positionals";
   let parsed: ReturnType<typeof Parser.parse>;
   try {
-    parsed = Parser.parse(command.slice(commandOffset + 2), {
+    parsed = Parser.parse(optionArguments, {
       args: z.object({ [tail]: z.array(z.string()).optional() }),
       options: z.object({
         agent: z.unknown().optional(),
