@@ -7,8 +7,16 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const primaryFailures: Readonly<Record<string, string>> = {
+  compiler: "controlled compiler failure",
+  "open-reply": "controlled open-reply failure",
+  "missing-schema": "MCP tool omitted its output schema: procedure_address",
+};
+
 it.each([
   "analysis",
+  "missing-schema",
+  "open-reply",
   "compiler",
   "command",
   "close_binary",
@@ -53,9 +61,16 @@ it.each([
           await fs.rm(path, options);
         },
         Client: class {
+          serverVersion = { name: "controlled", version: "1" };
+          getServerVersion() { return this.serverVersion; }
+          async listTools() {
+            return { tools: ["open_binary", "binary_session", "procedure_address", "close_binary"]
+              .map(name => name === "procedure_address" && stage === "missing-schema"
+                ? { name } : { name, outputSchema: { type: "object" } }) };
+          }
           async connect() {}
           async callTool({ name }) {
-            if (name === "open_binary") return {};
+            if (name === "open_binary") { fail("open-reply"); return {}; }
             if (name === "binary_session") return { open: !closed || stage === "session-check" };
             if (name === "close_binary") {
               record("close_binary"); closed = true; fail("close_binary"); return {};
@@ -125,9 +140,7 @@ it.each([
   );
   expect(result.status, `${result.stdout}\n${result.stderr}`).toBe(1);
   expect(result.stderr).toContain(
-    stage === "compiler"
-      ? "controlled compiler failure"
-      : "controlled analysis failure",
+    primaryFailures[stage] ?? "controlled analysis failure",
   );
   const attempted = (await readFile(events, "utf8"))
     .trim()
@@ -150,7 +163,11 @@ it.each([
   expect(retained).toHaveLength(stage === "remove" ? 1 : 0);
   if (stage === "remove")
     expect(result.stdout).not.toContain('"fixture_removed"');
-  if (!["analysis", "session-check", "compiler"].includes(stage))
+  if (
+    !(stage in primaryFailures) &&
+    stage !== "analysis" &&
+    stage !== "session-check"
+  )
     expect(result.stderr).toContain(`controlled ${stage} failure`);
   if (stage === "session-check")
     expect(result.stderr).toContain("AssertionError");

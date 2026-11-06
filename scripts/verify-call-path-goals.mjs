@@ -6,6 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { artifactMcpCall } from "./lib/artifact-e2e.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
@@ -49,10 +50,11 @@ const transport = new StdioClientTransport({
 transport.stderr?.on("data", (chunk) => process.stderr.write(chunk));
 const client = new Client({ name: "call-path-goals-verifier", version: "1" });
 const ownedProcessIds = new Set();
-let opened = false;
+let openAttempted = false;
 const call = async (name, args = {}) => {
   const started = performance.now();
-  const result = await client.callTool(
+  const result = await artifactMcpCall(
+    client,
     { name, arguments: args },
     { timeout: 180_000 },
   );
@@ -104,8 +106,9 @@ await withVerifierCleanup(
     assert.equal(typeof transport.pid, "number");
     ownedProcessIds.add(transport.pid);
     console.log(JSON.stringify({ mcp_pid: transport.pid }));
+    // The server can open the binary before the SDK rejects its reply.
+    openAttempted = true;
     await call("open_binary", { path: binary });
-    opened = true;
     await call("binary_session");
     // Canonical addresses are obtained through the public provider identity read.
     const symbol = (name) =>
@@ -211,7 +214,7 @@ await withVerifierCleanup(
   // Collect evidence before removing the owned fixture.
   [
     async () => {
-      if (opened) {
+      if (openAttempted) {
         await call("close_binary");
         const session = await call("binary_session");
         assert.equal(session.open, false);
