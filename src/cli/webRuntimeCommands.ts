@@ -1,6 +1,9 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
+import { cliDomainInput } from "./domainInput.js";
+import { observeWebExecutionInputSchema } from "../domain/webExecution.js";
+import { inspectWebEventListenersInputSchema } from "../domain/webEventListeners.js";
 import { browserCliError } from "./browserCliError.js";
 import {
   browserScopeOptions,
@@ -30,10 +33,12 @@ export const registerWebRuntimeCommands = (
     description:
       "Observe precise page execution; resets counters and temporarily disables optimization",
     args: z.object({
-      endpoint: z.string().describe("Existing loopback browser CDP endpoint"),
-      targetId: z
-        .string()
-        .describe("Selected page target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        observeWebExecutionInputSchema.shape.cdp_endpoint,
+      ).describe("Existing loopback browser CDP endpoint"),
+      targetId: observeWebExecutionInputSchema.shape.target_id.describe(
+        "Selected page target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
@@ -79,13 +84,15 @@ export const registerWebRuntimeCommands = (
     description:
       "Inspect native listener source locations on the first main-document CSS match",
     args: z.object({
-      endpoint: z.string().describe("Existing loopback browser CDP endpoint"),
-      targetId: z
-        .string()
-        .describe("Selected page target ID from list-browser-targets"),
-      selector: z
-        .string()
-        .describe("Native CSS selector; inspect the first main-document match"),
+      endpoint: cliDomainInput(
+        inspectWebEventListenersInputSchema.shape.cdp_endpoint,
+      ).describe("Existing loopback browser CDP endpoint"),
+      targetId: inspectWebEventListenersInputSchema.shape.target_id.describe(
+        "Selected page target ID from list-browser-targets",
+      ),
+      selector: inspectWebEventListenersInputSchema.shape.selector.describe(
+        "Native CSS selector; inspect the first main-document match",
+      ),
     }),
     options: z.object({ ...browserScopeOptions }),
     run: ({ args, options }) =>

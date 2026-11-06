@@ -34,6 +34,7 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -56,10 +57,12 @@ const registerWebMcp = (
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        discoverWebMcpToolsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: discoverWebMcpToolsInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
@@ -174,10 +177,12 @@ const registerScreenshot = (
     description:
       "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        captureWebScreenshotInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: captureWebScreenshotInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,

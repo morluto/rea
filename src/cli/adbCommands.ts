@@ -243,10 +243,8 @@ export const registerAdbCommands = (
     description: "Read one settings value from system, secure, or global",
     args: z.object({
       serial,
-      namespace: z
-        .enum(["system", "secure", "global"])
-        .describe("Settings namespace to read"),
-      key: z.string().min(1).describe("Setting key to read"),
+      namespace: adbInputSchemas.read_adb_setting.shape.namespace,
+      key: adbInputSchemas.read_adb_setting.shape.key,
     }),
     run: ({ args }) =>
       execute(CLI_COMMANDS.readAdbSetting, "read_adb_setting", {
