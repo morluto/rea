@@ -57,6 +57,7 @@
 * **android:** expose selected manifest component declarations ([#7379](https://github.com/morluto/rea/issues/7379)) ([7e8f7f6](https://github.com/morluto/rea/commit/7e8f7f6101593cc88cfc63795b47f21c742bee87))
 * **android:** link native declarations to static JNI candidates ([#7472](https://github.com/morluto/rea/issues/7472)) ([570abe9](https://github.com/morluto/rea/commit/570abe95f2a35b5c580a5ec2fca90c33d4114bdc))
 * **android:** trace callers of external DEX methods ([#8154](https://github.com/morluto/rea/issues/8154)) ([0ffed7a](https://github.com/morluto/rea/commit/0ffed7a48c43bcf1aef760d307be89f0a055ee4a))
+* **api-contract:** inspect local GraphQL SDL and field references ([#9140](https://github.com/morluto/rea/issues/9140)) ([5303199](https://github.com/morluto/rea/commit/5303199163049131aa2d9b59b23b57e179984fc4))
 * **artifacts:** add U-Boot legacy uImage reader (part of [#7129](https://github.com/morluto/rea/issues/7129)) ([#7234](https://github.com/morluto/rea/issues/7234)) ([18a8e71](https://github.com/morluto/rea/commit/18a8e71c9f3749be2b950c48dc507bbf3860a222))
 * **artifacts:** compare inventories from Evidence sources ([#7869](https://github.com/morluto/rea/issues/7869)) ([37827af](https://github.com/morluto/rea/commit/37827af5918a20b87698329a13d3705becdd6868))
 * **artifacts:** inspect and extract .NET single-file bundles ([#3787](https://github.com/morluto/rea/issues/3787)) ([22cab82](https://github.com/morluto/rea/commit/22cab8215ab81730c078e63368721ad26e57b8ca))
