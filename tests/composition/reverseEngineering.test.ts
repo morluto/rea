@@ -7,7 +7,10 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { digestFile } from "../../src/application/reverse/ReverseEngineeringService.js";
+import {
+  digestFile,
+  REVERSE_COMMAND_OUTPUT_LIMITATION,
+} from "../../src/application/reverse/ReverseEngineeringService.js";
 import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
@@ -166,13 +169,17 @@ describe("reverse engineering command services", () => {
         command: "wx 00 @ 0",
       });
       expect(result.ok).toBe(true);
-      if (result.ok)
+      if (result.ok) {
         expect(result.value.raw_result).toMatchObject({
           stdout: "captured partial output",
           exit_code: null,
           output_truncated: true,
           completion_status: "unknown",
         });
+        expect(result.value.limitations).toContain(
+          REVERSE_COMMAND_OUTPUT_LIMITATION,
+        );
+      }
     } finally {
       await rm(directory, { recursive: true, force: true });
     }
