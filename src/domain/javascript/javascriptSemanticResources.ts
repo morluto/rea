@@ -68,17 +68,9 @@ export const collectJavaScriptSemanticResources = (
     ancestors: [],
   };
   const acquisitions = collectAcquisitions(program, context).filter(
-    (candidate) => {
-      if (!socketPortInFirstArgument(candidate)) return true;
-      if (rejectsSocketPortLiteral(candidate.node, context)) return false;
-      // `net.connect({ port })` and `tls.connect({ port })` validate the same
-      // values inside an options object, so a provably bad one throws before a
-      // socket exists. `tls` merges a later options object over the first, so the
-      // effective port is read across every options argument.
-      const objects = socketOptionsObjects(candidate.node, candidate.specifier);
-      if (objects === undefined) return true;
-      return !rejectsOptionsPortLiteral(objects, candidate.specifier, context);
-    },
+    (candidate) =>
+      !socketPortInFirstArgument(candidate) ||
+      !rejectsSocketPort(candidate.node, candidate.specifier, context),
   );
   return [
     ...acquisitions.map(immutableAcquisition),
@@ -326,31 +318,22 @@ const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
 /**
- * `net` and `tls` validate a numeric port before creating a socket, so a
- * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
- * or `null` first argument throws synchronously and no socket exists. A string
- * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
+ * Whether a `port` value Node provably rejects before a socket exists.
  *
- * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
- * missing option rather than a bad port, so they stay undecided here.
+ * `net` and `tls` validate the port before touching the network, so a value Node
+ * refuses throws synchronously and no handle exists. Only an exactly readable
+ * literal is decided; a computed value may still be valid.
+ *
+ * `void anything` is `undefined`, which Node reads as an absent option rather than
+ * a bad port, so it stays undecided here.
  */
-const rejectsSocketPortLiteral = (
-  node: t.CallExpression | t.OptionalCallExpression,
+const rejectsPortValue = (
+  value: t.Node,
   context: DataEffectTraversalContext,
 ): boolean => {
-  const port = node.arguments[0];
-  if (port === undefined || t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
-  if (
-    t.isNullLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
-  )
-    return true;
-  if (t.isNumericLiteral(value)) return !isUsablePortNumber(value.value);
+  if (t.isNullLiteral(value) || t.isBooleanLiteral(value)) return true;
+  if (t.isBigIntLiteral(value)) return true;
+  if (isNullishJavaScriptSyntax(value)) return false;
   // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
   if (
     t.isIdentifier(value) &&
@@ -358,19 +341,129 @@ const rejectsSocketPortLiteral = (
     isUnmodifiedGlobalReference(value, context.state, value.name)
   )
     return true;
-  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
-  // range because a port is never negative.
-  if (t.isUnaryExpression(value)) {
+  if (t.isNumericLiteral(value)) return !isUsablePortNumber(value.value);
+  if (t.isStringLiteral(value))
+    return value.value.length === 0 || !isUsablePortString(value.value);
+  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked === null || cooked === undefined
+      ? false
+      : cooked.length === 0 || !isUsablePortString(cooked);
+  }
+  // A sign over one is the same non-finite number, but `void` is `undefined`: it
+  // is not a sign, so only `+` and `-` are decided here.
+  if (
+    t.isUnaryExpression(value) &&
+    (value.operator === "+" || value.operator === "-")
+  ) {
     const operand = unwrapJavaScriptExpression(value.argument).node;
-    return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
-    );
+    if (
+      t.isIdentifier(operand) &&
+      (operand.name === "NaN" || operand.name === "Infinity")
+    )
+      return isUnmodifiedGlobalReference(operand, context.state, operand.name);
+    if (!t.isNumericLiteral(operand)) return false;
+    // Compute the signed value and apply the whole check. The sign alone does not
+    // decide: `-0` is port zero, which connects, while `+65536` is out of range
+    // and throws. Both are signed spellings Node judges by value.
+    const signed = value.operator === "-" ? -operand.value : operand.value;
+    return !isUsablePortNumber(signed);
   }
   return false;
 };
 
-/** Only `net`/`tls` sockets take a port in argument 0. */
+/** Whether a string port reads as one Node accepts; Node coerces with `Number`. */
+const isUsablePortString = (text: string): boolean => {
+  if (text.trim().length === 0) return false;
+  const number = Number(text);
+  return isUsablePortNumber(number);
+};
+
+/**
+ * Whether a `net`/`tls` acquisition provably throws before a socket exists.
+ *
+ * The port can arrive positionally or inside an options object, and which one Node
+ * validates depends on the receiver and on the argument shapes. Measured on
+ * Node 24.22.1:
+ *
+ * - `net` reads the first argument only. A numeric port is validated there and a
+ *   later options object never overrides it.
+ * - `tls` accepts a port positionally *or* in an options object, and validates
+ *   whichever is effective after its option merge.
+ *
+ * A `path` in the options object selects a Unix socket, so the port is not read.
+ * For `tls`, a supplied `socket` is wrapped instead of connecting.
+ */
+const rejectsSocketPort = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  specifier: string,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const first = node.arguments[0];
+  if (first === undefined || t.isSpreadElement(first)) return false;
+  const head = unwrapJavaScriptExpression(first).node;
+  if (t.isObjectExpression(head)) {
+    // `tls` merges exactly one later argument, chosen by position, and later
+    // arguments are never merged. `net` ignores later options entirely.
+    const objects = socketOptionsObjects(node, specifier);
+    if (objects === undefined) return false;
+    return rejectsOptionsPortLiteral(objects, specifier, context);
+  }
+  // An empty path is a Unix socket with no length, which Node also rejects.
+  if (socketEmptyPath(head)) return true;
+  // A positional port or Unix socket path. `net` validates it and ignores later
+  // options; `tls` still merges the options object, which can replace the port.
+  if (!socketPortPositional(head)) return false;
+  const objects = socketOptionsObjects(node, specifier);
+  if (objects === undefined) return false;
+  if (specifier === "net") return rejectsPortValue(head, context);
+  // `tls` merges the options over the positional port, so a member that rescues the
+  // port check applies here too: `tls.connect(-1, {path:"/tmp/x"})` connects.
+  if (optionsRescuePort(objects, specifier)) return false;
+  // The merged options win when they carry an effective `port`; otherwise the
+  // positional value is the one validated. `tls.connect(-1, {})` still throws.
+  const merged = mergedOptionsProperty(objects, "port");
+  if (merged.status === "explicit")
+    return rejectsOptionsPortValue(
+      unwrapJavaScriptExpression(merged.value as t.Node).node,
+      context,
+    );
+  if (merged.status === "dynamic") return false;
+  return rejectsPortValue(head, context);
+};
+
+/** Whether a first argument is an empty Unix socket path, which Node rejects. */
+const socketEmptyPath = (value: t.Node): boolean => {
+  if (t.isStringLiteral(value)) return value.value.length === 0;
+  if (t.isTemplateLiteral(value) && value.expressions.length === 0) {
+    const cooked = value.quasis[0]?.value.cooked;
+    return cooked !== null && cooked !== undefined && cooked.length === 0;
+  }
+  return false;
+};
+
+/** Whether a first argument is a positional port rather than a path. */
+const socketPortPositional = (value: t.Node): boolean => {
+  if (t.isNumericLiteral(value)) return true;
+  if (
+    t.isUnaryExpression(value) &&
+    (value.operator === "+" || value.operator === "-")
+  )
+    return true;
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity")
+  )
+    return true;
+  if (
+    t.isNullLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value)
+  )
+    return true;
+  // A string is a Unix socket path, and Node does not validate it as a port.
+  return false;
+};
 const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
@@ -447,22 +540,43 @@ const socketOptionsObjects = (
   const first = node.arguments[0];
   if (first === undefined || t.isSpreadElement(first)) return undefined;
   const value = unwrapJavaScriptExpression(first).node;
-  if (!t.isObjectExpression(value)) return undefined;
-  if (specifier !== "tls") return [value];
-  // `tls` merges one later argument. A non-null object in slot 1 is that argument;
-  // any other slot-1 value defers the merge to slot 2, and slot 3 onward is ignored.
+  const base = t.isObjectExpression(value)
+    ? [value]
+    : socketPortPositional(value)
+      ? []
+      : undefined;
+  if (base === undefined) return undefined;
+  if (specifier !== "tls") return base;
+  // `tls` merges one later argument over the base, and the merge slot does not
+  // depend on what the base is: a non-null object in slot 1 is the override,
+  // anything else in slot 1 defers it to slot 2, and slot 3 onward is ignored.
+  const merged = tlsMergedOptionsObject(node);
+  if (merged === undefined) return undefined;
+  return merged === null ? base : [...base, merged];
+};
+
+/**
+ * The single later options object `tls` merges, `null` for none, or undefined when
+ * the slot that decides it could hold an unreadable object.
+ *
+ * Slot 1 is the override when it is an object literal. When slot 1 is provably not
+ * an object (a callback, a primitive, `null`, `undefined`), slot 2 decides instead.
+ */
+const tlsMergedOptionsObject = (
+  node: t.CallExpression | t.OptionalCallExpression,
+): t.ObjectExpression | null | undefined => {
   const slot = node.arguments[1];
-  if (slot === undefined || t.isSpreadElement(slot)) return [value];
+  if (slot === undefined) return null;
+  if (t.isSpreadElement(slot)) return undefined;
   const candidate = unwrapJavaScriptExpression(slot).node;
-  if (t.isObjectExpression(candidate)) return [value, candidate];
+  if (t.isObjectExpression(candidate)) return candidate;
   if (!isExactlyNonObjectExpression(candidate)) return undefined;
-  // Slot 1 cannot be an override, so slot 2 becomes the deciding argument.
   const next = node.arguments[2];
-  if (next === undefined) return [value];
+  if (next === undefined) return null;
   if (t.isSpreadElement(next)) return undefined;
   const second = unwrapJavaScriptExpression(next).node;
-  if (t.isObjectExpression(second)) return [value, second];
-  return isExactlyNonObjectExpression(second) ? [value] : undefined;
+  if (t.isObjectExpression(second)) return second;
+  return isExactlyNonObjectExpression(second) ? null : undefined;
 };
 
 /** The effective member across merged options objects; later ones win. */
@@ -517,6 +631,25 @@ const rejectsOptionsPortLiteral = (
     unwrapJavaScriptExpression(read.value as t.Node).node,
     context,
   );
+};
+
+/**
+ * Whether the merged options make Node skip the port check: a non-empty `path`
+ * becomes the Unix socket, and for `tls` a supplied `socket` is wrapped instead of
+ * connecting.
+ */
+const optionsRescuePort = (
+  objects: readonly t.ObjectExpression[],
+  specifier: string,
+): boolean => {
+  const path = mergedOptionsProperty(objects, "path");
+  if (path.status === "dynamic") return false;
+  if (path.status === "explicit") {
+    if (!t.isStringLiteral(path.value)) return false;
+    if (path.value.value.length > 0) return true;
+  }
+  if (specifier !== "tls") return false;
+  return mergedOptionsProperty(objects, "socket").status !== "missing";
 };
 
 /** Whether a number is a TCP port Node accepts. */
