@@ -1397,7 +1397,11 @@ status with the analysis failure status, so it exits `1`. Setup has its own cont
 structured result and process status as separate signals when scripting
 cancellation.
 
-`setup --dry-run` returns `planned` and exits `0`; a cancelled setup also exits
+`setup --dry-run` returns `planned` and exits `0`. For `setup` and
+`environment-build`, explicit `--dry-run=true` and `--dry-run=false` are
+accepted; empty or other values fail with `PARSE_ERROR` before any changes.
+Every supplied value is checked even when a later occurrence overrides it.
+A cancelled setup also exits
 `0`. Setup returns `1` for `needs_confirmation` or `needs_human`.
 `doctor` returns `1` when required checks in its selected readiness scope fail;
 unavailable optional providers remain informational for unrelated tasks.
