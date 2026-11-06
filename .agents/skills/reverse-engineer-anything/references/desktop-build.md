@@ -137,6 +137,16 @@ the first source that has the app:
   canvas.
 - In Grisbi's transaction form Return moves to the next field; only Return
   in the last field, Notes, records the transaction.
+- ghostwriter autosaves a new document as `~/Documents/untitled-1.md`: name
+  it with File → Rename, not Save As; Ctrl+Shift+S does nothing, and Enter
+  after a checklist item starts another `- [ ]` item.
+- KMyMoney's first launch opens the New File Setup wizard; Finish asks for a
+  storage type (XML), then a Save As where typing `Documents/<name>.kmy`
+  works. Its date field is a sectioned Qt editor: double-click the month and
+  type each part, since Ctrl+A garbles it. A new transaction's payee comes
+  prefilled and selected. Amounts are saved as reduced fractions, such as
+  `-1749/20`, so compare them exactly. Untick Help → Tip of the Day → "Show
+  tips on startup" before `seed`, or the tip appears at every boot.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -198,9 +208,9 @@ the first source that has the app:
      document: that state is the seed. Build it in the app and mark `seed`
      once the app has written. To see whether it has, mark a throwaway
      checkpoint, such as `probe-1`, and read its `changed_files`: up to ten
-     files that changed since the checkpoint before, those under
-     `state_paths` first, then those the app held open, caches last, with
-     `more_changed_files` counting the rest.
+     files that changed since the checkpoint before, those a window title
+     named first, then those under `state_paths` and those the app held
+     open, caches last, with `more_changed_files` counting the rest.
    - When the app's own format is compressed, such as Gnumeric's
      `.gnumeric` (gzip XML), REA reads it as binary and no check can look
      inside. Save in an uncompressed format the app offers, such as
@@ -249,9 +259,11 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 
 - `name`: lowercase letters, digits and hyphens, not `smoke`.
 - `prompt`: what the requester wants, in their words and the app's terms,
-  naming the document as a user would and ending with saving it: "Change the
-  poster's headline in Documents/poster.svg to Summer Bake Sale and save
-  it." Leave saving out for an app that saves on its own, after every change
+  starting with the app's name, naming the document as a user would and
+  ending with saving it: "In Inkscape, change the poster's headline in
+  Documents/poster.svg to Summer Bake Sale and save it." Name the app: the
+  solving agent's own shell cannot see the computer's files, and the app's
+  name sends it to the screen. Leave saving out for an app that saves on its own, after every change
   or a few seconds after the last one, such as Osmo or Gnote: grading waits
   until the app's files have held for 3 s, so the solving agent need not
   wait for the save. A save more than 3 s after the agent stops is still
@@ -356,14 +368,16 @@ left out of the seed and listed after "Left out of the seed". An app can
 still start fine yet refuse every save when a lock was seeded, so close the
 document before `seed` where the app lets you, and treat "file is locked"
 on a save in the witness as a seeded lock: delete it from the bundle's seed
-and witness again in a new computer. In LibreOffice, close the document
-before `seed`, then reopen it from Recent Documents to make the change: the
-export also leaves out the recovery list LibreOffice writes while a document
-is open, which would start the bundle into document recovery. A limitation naming `~/.config/dconf/user` as
-unread means the app's dconf settings, such as a first-run tip you turned
-off, are not seeded: capture again on a new build computer. The
-limitations also name seeded WebKit or Chromium storage and caches; when the
-witness's boot is clean, list them in the report.
+and witness again in a new computer. In LibreOffice, own the profile
+(`state_paths: [".config/libreoffice"]`) for a clean boot, and close the
+document before `seed`, then reopen it from Recent Documents to make the
+change: the export also leaves out the recovery list LibreOffice writes while
+a document is open, which would start the bundle into document recovery. A
+limitation naming `~/.config/dconf/user` as unread means the app's dconf
+settings, such as a first-run tip you turned off, are not seeded: capture
+again on a new build computer. The limitations also name seeded WebKit,
+Chromium or QtWebEngine storage and caches; when the witness's boot is clean,
+list them in the report.
 
 Keep the build computer open until the witness holds: a task fix exports
 again from it.

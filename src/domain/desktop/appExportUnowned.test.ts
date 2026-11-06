@@ -81,12 +81,13 @@ describe("unownedChangedFolders", () => {
     ]);
   });
 
-  it("names eight folders in its limitation and counts the rest", () => {
+  it("names eight files or folders in its limitation and counts the rest", () => {
+    // A file directly in a shared folder, such as ~/.config/QtProject.conf, is named as itself.
     const folders = Array.from({ length: 10 }, (_, n) => `.config/app${n}`);
 
     const limitation = unownedFoldersLimitation(folders) ?? "";
 
-    expect(limitation).toContain("10 folder(s)");
+    expect(limitation).toContain("10 file(s) or folder(s)");
     expect(limitation).toContain("~/.config/app7,");
     expect(limitation).not.toContain("~/.config/app8");
     expect(limitation).toContain("2 more");
@@ -231,6 +232,32 @@ describe("the limitations on folders the app held files open in", () => {
 });
 
 describe("runtimeSeeds", () => {
+  it("counts a whole QtWebEngine profile, and Chromium's visited links, notifications and preferences, as browser storage", () => {
+    const qt = ".local/share/ghostwriter/QtWebEngine";
+
+    expect(
+      runtimeSeeds([
+        `${qt}/Default/Platform Notifications/000003.log`,
+        `${qt}/Default/Visited Links`,
+        `${qt}/Default/user_prefs.json`,
+        `${qt}/Default/GPUCache/data_0`,
+        ".config/Notes/Visited Links",
+        ".config/Notes/Platform Notifications/LOG",
+        ".config/Notes/user_prefs.json",
+        ".config/ghostwriter/ghostwriter.conf",
+      ]),
+    ).toEqual([
+      {
+        kind: "web_storage",
+        paths: [
+          ".config/Notes/Platform Notifications",
+          ".config/Notes/Visited Links",
+          qt,
+        ],
+      },
+    ]);
+  });
+
   it("finds WebKit and Chromium storage and caches, each by the folder that holds it, and nothing else", () => {
     expect(
       runtimeSeeds([

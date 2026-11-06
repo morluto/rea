@@ -450,6 +450,26 @@ Each test below failed before the change and passes now.
   there and a document the app held open precede twelve icons under its
   `cache` folder, while a cache file selected itself still comes first.
 
+## Checkpoint order by window titles, and prompts that name the app
+
+Run on macOS with source tests and gates; no build computer was started.
+Each test below failed before the change and passes now.
+
+- `desktopCapture.test.ts`: eight changed files come back in the wanted
+  order: a document only a window title names, a file selected itself, one
+  the app held open, one under the selected `.config/libreoffice`, one in a
+  state directory, the rest, a LibreOffice icon cache, and ghostwriter's
+  `QtWebEngine/Default/Visited Links` though it lies in a state directory.
+- `DesktopApplicationSession.test.ts`: a checkpoint receives the titles the
+  app's own window has shown, not another app's; this runs on macOS too.
+  With the session's titles left out, it failed.
+- `appExportUnowned.test.ts`: a whole `QtWebEngine` profile collapses to
+  that folder as browser storage, as do Chromium's `Visited Links`,
+  `Platform Notifications` and `user_prefs.json` elsewhere; the unowned
+  limitation counts "file(s) or folder(s)".
+- `DesktopTaskExport.test.ts`: a task whose prompt does not name the app
+  gets one limitation naming the app; "In Notes, ..." gets none.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

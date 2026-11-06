@@ -218,8 +218,9 @@ paths, so `data/get` returns the lock the running app holds, and `data/reset`
 restores the seed without them. Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
 them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
-`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
-app's own data, and caches (a folder whose name ends in `cache`); a stale one
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`, `Visited Links`,
+`Platform Notifications/`, and a whole `QtWebEngine/`
+profile), which may hold the app's own data, and caches (a folder whose name ends in `cache`); a stale one
 can change how the app starts. A seeded LibreOffice profile's
 `registrymodifications.xcu` ships without its `RecoveryList` items, which
 LibreOffice writes for the documents it has open and which would start the

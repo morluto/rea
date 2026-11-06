@@ -40,7 +40,8 @@ const driverResult = jsonObjectSchema
 const EXAMPLE_ID = "00000000-0000-4000-8000-000000000001";
 const EXAMPLE_TASK: Readonly<Record<string, JsonValue>> = {
   name: "add-eggs",
-  prompt: "Add eggs to the shopping list in Documents/todo.txt and save it.",
+  prompt:
+    "In Mousepad, add eggs to the shopping list in Documents/todo.txt and save it.",
   checks: [
     { kind: "lines_present", file: "Documents/todo.txt", lines: ["eggs"] },
   ],
@@ -265,7 +266,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those under state_paths first, then those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those a window title named first, then those under state_paths and those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -285,7 +286,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           .max(MAX_ACKNOWLEDGED_FILES)
           .nullable()
           .describe(
-            "Files, not folders, changed since the checkpoint before, relative to the home: those under state_paths, those the app held open, those in its state directories, the rest, then caches and browser-engine storage, under state_paths too unless named themselves, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
+            "Files, not folders, changed since the checkpoint before, relative to the home: those an app window's title has named, those named themselves in state_paths, those the app held open, under a selected folder or in its state directories, the rest, then caches and browser-engine storage, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
           ),
         more_changed_files: z
           .int()

@@ -269,7 +269,7 @@ export const unownedFoldersLimitation = (
 ): string | undefined =>
   folders.length === 0
     ? undefined
-    : `Files changed during the capture in ${String(folders.length)} folder(s) under the home that the bundle neither owns nor seeds, so the app starts without what it saved there, such as settings a first-run dialog writes: ${listed(folders, false)}. To own them, capture again naming them with ${STATE_PATH_INPUTS}.`;
+    : `${String(folders.length)} file(s) or folder(s) under the home changed during the capture, which the bundle neither owns nor seeds, so the app starts without what it saved there, such as settings a first-run dialog writes: ${listed(folders, false)}. To own them, capture again naming them with ${STATE_PATH_INPUTS}.`;
 
 /** The limitation naming seeded web engine storage and caches; none when the seed holds none. */
 export const runtimeSeedsLimitation = (
@@ -289,8 +289,8 @@ export const unownedReadmeNotes = (
     ...(folders.length === 0
       ? []
       : [
-          `- Neither owned nor seeded, so the app starts without what it saved there: files changed during the capture in
-  ${listed(folders, true)}.
+          `- Neither owned nor seeded, so the app starts without what it saved there: these files or folders, which changed
+  during the capture, ${listed(folders, true)}.
   To own them, capture again naming them with ${STATE_PATH_INPUTS_MARKDOWN}.`,
         ]),
     ...(seeds.length === 0

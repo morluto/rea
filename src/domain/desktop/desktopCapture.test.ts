@@ -205,31 +205,36 @@ describe("checkpointTaken", () => {
     expect(taken.more_changed_files).toBe(6);
   });
 
-  it("names caches under a selected folder last, as LibreOffice's icon cache, but a file selected itself first", () => {
+  it("names a document a window title shows first, then a file selected itself, then files held open, under a selected folder or in state, then the rest, then caches and browser storage", () => {
+    // A saved document the app no longer holds open, as Gnumeric's, LyX's and Tiled's, is named by the title alone.
     const profile = `${HOME}/.config/libreoffice`;
-    const icons = Array.from(
-      { length: 12 },
-      (_, index) =>
-        `${profile}/4/cache/icons/${String(index).padStart(2, "0")}.png`,
-    );
-    const pinned = `${profile}/4/cache/pinned.dat`;
+    const ordered = [
+      `${HOME}/Documents/drawing.odg`,
+      `${HOME}/Documents/pinned.txt`,
+      `${HOME}/Documents/held.txt`,
+      `${profile}/4/user/registrymodifications.xcu`,
+      `${HOME}/.config/app/app.conf`,
+      `${HOME}/.config/QtProject.conf`,
+      `${profile}/4/cache/icons/00.png`,
+      `${HOME}/.local/share/ghostwriter/QtWebEngine/Default/Visited Links`,
+    ];
+    const marks: Readonly<Record<string, Partial<DesktopStateChange>>> = {
+      [`${HOME}/Documents/held.txt`]: { opened_by_application: true },
+      [`${HOME}/.config/app/app.conf`]: { in_state_directory: true },
+      // ghostwriter's QtWebEngine profile lies in its state directory.
+      [ordered[7] ?? ""]: { in_state_directory: true },
+    };
+
     const taken = checkpointTaken(
-      checkpoint([
-        ...icons.map((path) => change(path)),
-        change(pinned),
-        change(`${profile}/4/user/registrymodifications.xcu`),
-        change(`${HOME}/Documents/talk.odp`, { opened_by_application: true }),
-      ]),
+      checkpoint(ordered.toReversed().map((path) => change(path, marks[path]))),
       HOME,
-      [profile, pinned],
+      [profile, `${HOME}/Documents/pinned.txt`],
+      ["Untitled 1 - LibreOffice Draw", "drawing.odg - LibreOffice Draw"],
     );
 
-    expect(taken.changed_files?.slice(0, 3)).toEqual([
-      ".config/libreoffice/4/cache/pinned.dat",
-      ".config/libreoffice/4/user/registrymodifications.xcu",
-      "Documents/talk.odp",
-    ]);
-    expect(taken.more_changed_files).toBe(5);
+    expect(taken.changed_files).toEqual(
+      ordered.map((path) => path.slice(HOME.length + 1)),
+    );
   });
 
   it("names ten changed files and counts the rest", () => {

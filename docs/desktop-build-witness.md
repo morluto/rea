@@ -93,7 +93,10 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `unowned_changes` and `no_document` point at `state_paths`. They also say,
    for a drafted `file`, why its suggestions are thin: `by_position`,
    `view_state_only`, `long_text`, `cut_view` or `unreadable_view`.
-6. Write the task: its name, the prompt in the user's own words, and checks
+6. Write the task: its name, the prompt in the user's own words naming the
+   app (a solving agent's own shell cannot see the computer's files, and the
+   export's limitations say when a prompt names neither the app's title,
+   environment nor package), and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.
 7. `export_build_environment` with the task and a new or empty `directory`.
@@ -144,11 +147,14 @@ is a name already taken. The acknowledgement comes from the capture after it
 has walked the home and retained what changed: `entries` walked, `changes`
 since the checkpoint before, `retained_files` and `retained_bytes`, and up to
 ten `changed_files`, home-relative, with `more_changed_files` counting the
-rest. Folders are left out; files under `state_paths` come first, then
-those the app held open, then those in its state directories, then the rest,
-and caches and WebKit or Chromium storage last, even under a selected
-folder such as `.config/libreoffice` with its icon cache, unless named
-themselves, each by path, so a save's document leads the list. When the computer's REA is older than these lists,
+rest. Folders are left out. Files an app window's title has named so far
+come first, as a document saved and no longer held open is in Gnumeric, LyX
+or Tiled; then files named themselves in `state_paths`; then those the app
+holds open, those under a selected folder and those in its state
+directories; then the rest; and caches and WebKit, Chromium or QtWebEngine
+storage last, even under a selected folder such as `.config/libreoffice`
+with its icon cache, each by path. So a save's document leads the list.
+When the computer's REA is older than these lists,
 as when `REA_BUILD_COMPUTER_REA_ARCHIVE` still names an earlier build, the
 checkpoint is still taken and both are `null`: which files changed is
 unknown. Pack the current REA into the archive to get them back.

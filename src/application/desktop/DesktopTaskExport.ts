@@ -50,7 +50,7 @@ const DRAFT =
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
@@ -66,6 +66,8 @@ export interface AdmittedTask {
     readonly content: string;
   }[];
   readonly readme: string;
+  /** What the export says about the task, such as a prompt that does not name the app. */
+  readonly limitations: readonly string[];
   readonly summary: {
     readonly name: string;
     readonly checks: number;
@@ -212,6 +214,21 @@ whose summary line says \`passed\`; a run that says \`failed\` did not finish an
 `;
 
 /** Read, validate and render the task a caller passed with the export, if any. */
+/** Whether a prompt names the app by its title, environment or package, in any letter case. */
+const namesApp = (
+  prompt: string,
+  {
+    title,
+    name,
+    aptPackage,
+  }: Pick<TaskTarget, "title" | "name" | "aptPackage">,
+): boolean => {
+  const said = prompt.toLowerCase();
+  return [title, name, aptPackage].some((app) =>
+    said.includes(app.toLowerCase()),
+  );
+};
+
 export const admitDesktopTask = async (
   paths: readonly string[],
   target: TaskTarget,
@@ -284,6 +301,11 @@ export const admitDesktopTask = async (
       checks: task.checks.length,
       failing_on_seed: failingOnSeed,
     },
+    limitations: namesApp(task.prompt, target)
+      ? []
+      : [
+          `The task's prompt does not name the app (${target.title}): a solving agent's own shell cannot see the computer's files, and the app's name sends it to the screen, so start the prompt with "In ${target.title}, ".`,
+        ],
     readme: taskReadme(task, target.name, failingOnSeed),
     files: [
       {

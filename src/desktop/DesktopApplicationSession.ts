@@ -77,11 +77,15 @@ export interface DesktopSessionPlan {
   readonly maxDurationMs: number;
   readonly pollIntervalMs: number;
   readonly nextRequest: () => SessionRequest | undefined;
+  /** Record a checkpoint, given the files the app holds open and the titles its windows have shown so far. */
   readonly checkpoint: (
     name: string,
     trigger: CheckpointTrigger,
     atMs: number,
-    openedFiles: ReadonlySet<string>,
+    seen: {
+      readonly openedFiles: ReadonlySet<string>;
+      readonly titles: readonly string[];
+    },
   ) => Promise<void>;
   /** Progress text, with the event a driver waits on when there is one. */
   readonly report: (
@@ -152,12 +156,12 @@ const checkpointNow = (
   name: string,
   trigger: CheckpointTrigger,
 ): Promise<void> =>
-  plan.checkpoint(
-    name,
-    trigger,
-    observations.now(),
-    new Set(observations.openedFiles.keys()),
-  );
+  plan.checkpoint(name, trigger, observations.now(), {
+    openedFiles: new Set(observations.openedFiles.keys()),
+    titles: [...observations.windows.values()]
+      .filter((window) => window.application)
+      .flatMap((window) => window.titles),
+  });
 
 /** Record a requested checkpoint, or report why its name was refused and carry on. */
 const requestCheckpoint = async (

@@ -432,13 +432,16 @@ const runExport = async (
       ),
     SEED_MAX_BYTES,
   );
-  const limitations = exportLimitations(capture, plan, {
-    install: install.limitations,
-    collisions,
-    identity,
-    trashed,
-    recovered: scrub.recovered ?? [],
-  });
+  const limitations = [
+    ...exportLimitations(capture, plan, {
+      install: install.limitations,
+      collisions,
+      identity,
+      trashed,
+      recovered: scrub.recovered ?? [],
+    }),
+    ...(admitted?.limitations ?? []),
+  ];
   const result: DesktopExportResult = {
     directory: request.directory,
     environment: plan.name,

@@ -165,6 +165,17 @@ and the recording and writes the record as Evidence.
   limitation and the README name the file. A checkpoint ranks caches and
   browser-engine storage last under a selected folder too, unless named
   themselves, so LibreOffice's icon cache no longer fills `changed_files`.
+- Gaps of the fifth batch: a checkpoint names first the files the app's
+  window titles have named so far, which the session now hands each
+  checkpoint, so a document saved and no longer held open (Gnumeric, LyX,
+  Tiled) leads; then files selected themselves; then those held open, under
+  a selected folder or in state directories; then the rest; then caches and
+  browser storage, which now include a whole `QtWebEngine` profile and
+  Chromium's `Visited Links`, `Platform Notifications` and `user_prefs.json`.
+  Example prompts name the app, and the export's limitations say when a
+  task's prompt names neither the app's title, environment nor package: a
+  solving agent's shell cannot see the computer's files. The unowned paths
+  limitation counts files or folders.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a
