@@ -1,4 +1,5 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   OtlpDiagnostic,
   OtlpSpan,
@@ -621,7 +622,7 @@ export const parseOtlpTrace = (
     );
   const diagnosticsTruncated = diagnostics.length > OTLP_TRACE_MAX_DIAGNOSTICS;
   diagnostics.sort((left, right) =>
-    left.diagnostic_id.localeCompare(right.diagnostic_id),
+    compareUnicodeCodePoints(left.diagnostic_id, right.diagnostic_id),
   );
   const boundedDiagnostics = diagnosticsTruncated
     ? diagnostics.slice(0, OTLP_TRACE_MAX_DIAGNOSTICS)
