@@ -688,7 +688,7 @@ export class ReverseEngineeringService {
             operation === "inspect_with_objdump"
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
-          const cleanup =
+          const darwinCleanup =
             darwinFailure.cleanupFailure !== undefined
               ? {
                   reason: darwinFailure.cleanupFailure.message,
@@ -717,7 +717,9 @@ export class ReverseEngineeringService {
               ...(darwinFailure.capturedOutput === undefined
                 ? {}
                 : { capturedOutput: darwinFailure.capturedOutput }),
-              ...(cleanup === undefined ? {} : { cleanup }),
+              ...(darwinCleanup === undefined
+                ? {}
+                : { cleanup: darwinCleanup }),
               ...(darwinFailure.cleanupOwner === undefined
                 ? {}
                 : { cleanupOwner: darwinFailure.cleanupOwner }),
