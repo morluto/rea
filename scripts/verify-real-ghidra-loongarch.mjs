@@ -23,6 +23,8 @@ import {
   assertLoongArchProbeInstructions,
   assertLoongArchProbePseudocode,
   inspectLoongArchReadelf,
+  loongArchPointer,
+  requireLoongArchRelocation,
 } from "../tests/conformance/ghidra/loongarch-checks.mjs";
 import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
@@ -81,11 +83,10 @@ try {
     type: 2,
     flags: 0x43,
   });
-  assert.ok(
-    (shared.relocations.R_LARCH_64 ?? 0) > 0 &&
-      (shared.relocations.R_LARCH_JUMP_SLOT ?? 0) > 0,
-    "Fixture does not declare the dynamic relocations this lane verifies",
-  );
+  const relocation64 = requireLoongArchRelocation(shared, "R_LARCH_64");
+  const jumpSlot = requireLoongArchRelocation(shared, "R_LARCH_JUMP_SLOT");
+  assert.equal(relocation64.symbol, "rea_loongarch_global");
+  assert.equal(jumpSlot.symbol, "rea_loongarch_add");
   for (const [path, independent] of [
     [fixture.shared.path, shared],
     [fixture.old_world.path, oldWorld],
@@ -131,20 +132,24 @@ try {
     const image = await call("inspect_native_load_image");
     assertLoongArchLoadedImage(image.observations, fixture.shared.sha256);
     assert.equal(image.observations.compiler_spec_id, "default");
-    assert.ok(
-      image.observations.relocations.some(
+    // A shared image's coordinates are its analysis image base plus the ELF
+    // virtual address readelf reports, not the runtime load address.
+    const imageBase = analysisAddressOffset(image.observations.image_base);
+    const relocationAddress = (entry) =>
+      `0x${(imageBase + BigInt(entry.offset)).toString(16)}`;
+    for (const entry of [relocation64, jumpSlot]) {
+      const applied = image.observations.relocations.find(
         (relocation) =>
-          relocation.type === 2 && relocation.status === "APPLIED",
-      ),
-      "Ghidra did not apply the fixture's R_LARCH_64 relocation",
-    );
-    assert.ok(
-      image.observations.relocations.some(
-        (relocation) =>
-          relocation.type === 5 && relocation.status === "APPLIED",
-      ),
-      "Ghidra did not apply the fixture's R_LARCH_JUMP_SLOT relocation",
-    );
+          analysisAddressOffset(relocation.address) ===
+            imageBase + BigInt(entry.offset) &&
+          relocation.type === entry.typeId,
+      );
+      assert.equal(
+        applied?.status,
+        "APPLIED",
+        `Ghidra did not apply the fixture's ${entry.type} relocation`,
+      );
+    }
 
     const names = await call("list_names");
     const probeName = names.find(
@@ -155,9 +160,6 @@ try {
     );
     assert.ok(probeName, "Probe symbol is missing from the real inventory");
     assert.ok(globalName, "Global symbol is missing from the real inventory");
-    // A shared image's coordinates are its analysis image base plus the ELF
-    // virtual address readelf reports, not the runtime load address.
-    const imageBase = analysisAddressOffset(image.observations.image_base);
     assert.equal(
       analysisAddressOffset(probeName.address),
       imageBase + BigInt(shared.symbols.rea_loongarch_probe),
@@ -178,6 +180,43 @@ try {
     });
     assert.equal(globalBytes.returned_bytes, 4);
     assertLoongArchGlobalBytes(globalBytes.bytes_hex);
+
+    // Ghidra's APPLIED label is not proof of the value it wrote. Each dynamic
+    // relocation is checked at its readelf-reported site against the symbol
+    // address plus addend, and against the unrelocated source bytes.
+    const sharedSource = await readFile(fixture.shared.path);
+    for (const entry of [relocation64, jumpSlot]) {
+      const address = relocationAddress(entry);
+      const loaded = await call("read_bytes", { address, length: 8 });
+      assert.equal(
+        loaded.returned_bytes,
+        8,
+        `${entry.type} relocation site is not a complete pointer`,
+      );
+      assert.equal(
+        loongArchPointer(loaded.bytes_hex),
+        imageBase + BigInt(entry.symbolValue) + entry.addend,
+        `${entry.type} loaded pointer is not the readelf symbol address plus its addend`,
+      );
+      const mapping = await call("address_to_file_offset", { address });
+      const sourcePointer = sharedSource.readBigUInt64LE(mapping.file_offset);
+      if (entry.type === "R_LARCH_64") {
+        // The fixture emits `.quad rea_loongarch_global`, so this data slot
+        // holds the unrelocated absolute value Ghidra must rebase.
+        assert.equal(
+          sourcePointer,
+          BigInt(entry.symbolValue) + entry.addend,
+          "R_LARCH_64 source bytes do not hold the unrelocated absolute value",
+        );
+      }
+      // A JUMP_SLOT slot starts as its PLT stub address; both the dynamic
+      // linker and Ghidra replace it with the resolved symbol address.
+      assert.notEqual(
+        sourcePointer,
+        loongArchPointer(loaded.bytes_hex),
+        `${entry.type} loaded pointer still holds the unrelocated source value`,
+      );
+    }
 
     const instructions = await call("read_function_instructions", {
       procedure: "rea_loongarch_probe",
@@ -296,6 +335,11 @@ try {
         old_world: oldWorld.loongarch,
         executable: executable.loongarch,
         relocations: shared.relocations,
+        // JSON has no BigInt; report the arithmetic addend as decimal text.
+        relocation_entries: shared.relocationEntries.map((entry) => ({
+          ...entry,
+          addend: entry.addend.toString(),
+        })),
       },
       effective_language: image.observations.language_id,
       effective_compiler_spec: image.observations.compiler_spec_id,
@@ -303,7 +347,11 @@ try {
         "independent ELF headers, symbols and relocations",
         "new-world, old-world and fixed-address lane identity",
         "loaded Ghidra identity and pinned LP64D language",
-        "applied R_LARCH_64 and R_LARCH_JUMP_SLOT fixups",
+        "relocation sites and type ids retained from readelf",
+        "applied R_LARCH_64 and R_LARCH_JUMP_SLOT fixups at their reported sites",
+        "loaded relocation pointers equal image base plus symbol value and addend",
+        "R_LARCH_64 source slot holds the unrelocated absolute value",
+        "both loaded pointers differ from their unrelocated source slots",
         "fixed probe instruction bytes and listing text",
         "relocated global bytes",
         "constant-folded probe pseudocode",
@@ -340,4 +388,16 @@ if (primaryFailure !== undefined)
     { cause: primaryFailure },
   );
 await rm(workspace, { recursive: true, force: true });
-console.log(JSON.stringify({ ...completed, fixtures: reports }, null, 2));
+console.log(
+  JSON.stringify(
+    {
+      ...completed,
+      lane: "ghidra-loongarch",
+      host: { platform: process.platform, architecture: process.arch },
+      provider: { id: "ghidra", version: installation.providerVersion },
+      fixtures: reports,
+    },
+    null,
+    2,
+  ),
+);

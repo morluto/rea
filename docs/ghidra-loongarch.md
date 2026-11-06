@@ -124,11 +124,22 @@ changes only the ELF declaration; instruction bytes remain the new-world
 toolchain's output, which the lane states in its report. Fixture code is never
 executed.
 
-GNU readelf independently supplies header facts and symbol addresses, compared
-with the production REA target resolver before provider startup. Existing
-public MCP operations check Ghidra's observed language and compiler
-specification, fixed probe instruction bytes, a global's bytes at its
-independently reported symbol address, decompilation liveness, profile and
-snapshot identity, and final process cleanup. Pseudocode presence is a
-liveness check, not proof of semantic equivalence. Neither the fixture nor
-reader agreement establishes runtime or complete floating-point semantics.
+GNU readelf independently supplies header facts, symbol addresses and each
+dynamic relocation's site, type and addend, compared with the production REA
+target resolver before provider startup. Existing public MCP operations check
+Ghidra's observed language and compiler specification, fixed probe instruction
+bytes, a global's bytes at its independently reported symbol address,
+decompilation liveness, profile and snapshot identity, and final process
+cleanup.
+
+Ghidra's `APPLIED` relocation label is not treated as proof of the value it
+wrote. For `R_LARCH_64` and `R_LARCH_JUMP_SLOT`, the lane reads the 8-byte
+pointer at the readelf-reported site and requires it to equal the analysis
+image base plus the readelf symbol value and addend. It also checks the source
+bytes at that site still hold the unrelocated value, so a stale or wrongly
+based pointer fails. The JSON report records the lane, host, Ghidra provider
+version and independent reader version alongside the fixture facts.
+
+Pseudocode presence is a liveness check, not proof of semantic equivalence.
+Neither the fixture nor reader agreement establishes runtime or complete
+floating-point semantics.
