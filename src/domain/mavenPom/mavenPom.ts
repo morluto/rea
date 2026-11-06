@@ -4,6 +4,8 @@ import { localPathStringSchema } from "../localPath.js";
 
 /** Resource allowances, not Maven or XML format limits. */
 export const MAVEN_POM_MAX_FILE_BYTES = 32 * 1024 * 1024;
+/** Accounted size of the declarations a reply retains, separate from file bytes. */
+export const MAVEN_POM_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
 export const MAVEN_POM_OPERATION = "inspect_maven_pom" as const;
 export const MAVEN_POM_PROVIDER = {
   id: "rea-maven-pom",
@@ -90,6 +92,13 @@ export type MavenPomDiagnostic = z.output<typeof mavenPomDiagnosticSchema>;
 export const mavenPropertyReferenceSchema = z.strictObject({
   name: z.string(),
   declared: z.string().nullable(),
+  /**
+   * `unresolved` means a referenced property is not declared in this POM;
+   * `cycle` means the declarations depend on each other within the bounded
+   * substitution allowance. Only `resolved` carries a substituted value, so a
+   * value this POM cannot finish resolving is never reported as absent.
+   */
+  resolution: z.enum(["resolved", "unresolved", "cycle"]),
   resolved: z.string().nullable(),
   source_pointer: z.string(),
 });
@@ -98,6 +107,8 @@ export const mavenRepositorySchema = z.strictObject({
   id: z.string().nullable(),
   url: z.string().nullable(),
   layout: z.string().nullable(),
+  source_pointer: z.string(),
+  line: z.int().positive().nullable(),
 });
 
 export const mavenPomSchema = z.strictObject({

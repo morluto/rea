@@ -1,5 +1,6 @@
 import { constants } from "node:buffer";
 import { isAbsolute } from "node:path";
+import type { Element } from "@xmldom/xmldom";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
   artifactFileCancellationCause,
@@ -31,18 +32,47 @@ import {
   inspectMavenPomInputSchema,
   type InspectMavenPomInput,
 } from "../../domain/mavenPom/mavenPomQuery.js";
-import { parseMavenPom } from "../../domain/mavenPom/parseMavenPom.js";
+import {
+  MavenPomRetainedFactsLimitError,
+  parseMavenPom,
+} from "../../domain/mavenPom/parseMavenPom.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { parseXmlDocument } from "../../domain/xmlDocument.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
-  new AnalysisInputError(operation, { cause }, [
-    { path: ["path"], reason: "invalid_format", message },
-  ]);
+  new AnalysisInputError(
+    operation,
+    {
+      cause,
+      ...(cause instanceof ArtifactReaderFailure
+        ? stableArtifactInputRecovery(cause)
+        : {}),
+    },
+    [{ path: ["path"], reason: "invalid_format", message }],
+  );
 
-const UTF8 = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
+const UTF8 = new TextDecoder("utf-8", { fatal: true });
+const UTF16 = new TextDecoder("utf-16le", { fatal: true });
+const SUPPORTED_MODEL_VERSION = "4.0.0";
+
+/**
+ * XML 1.0 permits several encodings. A UTF-16 byte order mark selects the
+ * UTF-16 decoder; everything else is read as UTF-8 and a failure is reported as
+ * an unsupported encoding rather than as malformed XML, because the bytes may
+ * be well-formed in an encoding this reader does not implement.
+ */
+const decodeXmlText = (bytes: Buffer): Result<string, string> => {
+  const decoder = bytes[0] === 0xff && bytes[1] === 0xfe ? UTF16 : UTF8;
+  try {
+    return ok(decoder.decode(bytes));
+  } catch {
+    return err(
+      "not valid UTF-8 XML text (only UTF-8 and byte-order-marked UTF-16 are supported)",
+    );
+  }
+};
 
 /**
  * Decode and parse one POM. Document type declarations are rejected before the
@@ -53,20 +83,10 @@ const decodePom = (
   artifact: MavenPomArtifact,
 ): Result<MavenPom, AnalysisError> => {
   const { path } = artifact;
-  if (bytes.includes(0))
-    return err(
-      inputFailure(
-        `POM bytes at ${path} contain a NUL byte, so they are not XML text.`,
-      ),
-    );
-  let source: string;
-  try {
-    source = UTF8.decode(bytes);
-  } catch (cause: unknown) {
-    return err(
-      inputFailure(`POM at ${path} is not valid UTF-8 XML text.`, cause),
-    );
-  }
+  const decoded = decodeXmlText(bytes);
+  if (!decoded.ok)
+    return err(inputFailure(`POM at ${path}: ${decoded.error}.`));
+  const source = decoded.value;
   if (source.length > constants.MAX_STRING_LENGTH)
     return err(
       inputFailure(
@@ -86,7 +106,49 @@ const decodePom = (
         `POM at ${path} has no <project> document element, so it is not a Maven POM.`,
       ),
     );
-  return ok(parseMavenPom(document.value, artifact));
+  // An Ant build file shares the <project> root name; a direct child
+  // <modelVersion> is what separates a Maven POM from other project XML.
+  const modelVersionElement = Array.from(
+    { length: root.childNodes.length },
+    (_, index) => root.childNodes.item(index),
+  ).find(
+    (node): node is Element =>
+      node !== null &&
+      node.nodeType === 1 &&
+      (node as unknown as Element).localName === "modelVersion",
+  );
+  const declaredModel =
+    modelVersionElement === undefined
+      ? null
+      : (modelVersionElement.textContent ?? "").trim();
+  if (declaredModel !== SUPPORTED_MODEL_VERSION)
+    return err(
+      inputFailure(
+        `POM at ${path} declares modelVersion ${declaredModel ?? "(none)"}; Maven model ${SUPPORTED_MODEL_VERSION} is the only one this reader supports.`,
+      ),
+    );
+  try {
+    return ok(parseMavenPom(document.value, artifact));
+  } catch (cause: unknown) {
+    if (!(cause instanceof MavenPomRetainedFactsLimitError)) throw cause;
+    return err(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        cause.message,
+        {
+          retained_facts_bytes: cause.retainedBytes,
+          max_retained_facts_bytes: cause.maxRetainedBytes,
+        },
+        {
+          cause,
+          retryable: false,
+          remediationAction:
+            "Select a POM whose declarations fit max_file_bytes; the retained-facts allowance is not adjustable and paging does not change it.",
+        },
+      ),
+    );
+  }
 };
 
 const readFailure = (

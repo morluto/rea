@@ -2,6 +2,7 @@ import type { Document, Element, Node } from "@xmldom/xmldom";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import {
   MAVEN_POM_LIMITATIONS,
+  MAVEN_POM_MAX_RETAINED_BYTES,
   type MavenCoordinate,
   type MavenDependency,
   type MavenPom,
@@ -63,10 +64,18 @@ const pointer = (root: Element, node: Element): string => {
     const parent = current.parentNode;
     if (parent === null || parent.nodeType !== 1) break;
     const element = parent as Element;
-    const position = childElements(element)
-      .filter((candidate) => candidate.localName === current.localName)
-      .indexOf(current);
-    segments.unshift(`${current.localName}[${position < 0 ? 0 : position}]`);
+    let position = 0;
+    for (let index = 0; index < element.childNodes.length; index += 1) {
+      const sibling = element.childNodes.item(index);
+      if (sibling === current) break;
+      if (
+        sibling !== null &&
+        sibling.nodeType === 1 &&
+        (sibling as Element).localName === current.localName
+      )
+        position += 1;
+    }
+    segments.unshift(`${current.localName}[${position}]`);
     if (element === root) break;
     current = element;
   }
@@ -80,25 +89,39 @@ const referenceNames = (value: string | null): readonly string[] =>
     ? []
     : [...value.matchAll(/\$\{([^{}]+)\}/gu)].map((match) => match[1] ?? "");
 
+/** Bounded substitutions per resolved value; a POM cannot spend unbounded work here. */
+const MAX_PROPERTY_SUBSTITUTIONS = 64;
+
+type PropertyResolution =
+  | { readonly kind: "resolved"; readonly value: string }
+  | { readonly kind: "unresolved" }
+  | { readonly kind: "cycle" };
+
 /**
  * Resolve one `${...}` reference against this POM's own properties only.
  * Maven also resolves project and parent fields, but those come from unread
- * documents, so they stay unresolved rather than being inferred.
+ * documents, so they stay unresolved rather than being inferred. A real cycle
+ * and the substitution allowance are reported separately so a valid value that
+ * merely needs many substitutions is never called undeclared.
  */
 const resolveReference = (
   value: string,
   properties: ReadonlyMap<string, string>,
-): string | null => {
+): PropertyResolution => {
   let current = value;
-  for (let depth = 0; depth < 8; depth += 1) {
+  const visited = new Set<string>([value]);
+  for (let substitutions = 0; ; substitutions += 1) {
     const match = PROPERTY_REFERENCE.exec(current);
-    if (match === null) return current;
+    if (match === null) return { kind: "resolved", value: current };
     const replacement =
       match[1] === undefined ? undefined : properties.get(match[1]);
-    if (replacement === undefined) return null;
-    current = current.replace(match[0], replacement);
+    if (replacement === undefined) return { kind: "unresolved" };
+    if (substitutions >= MAX_PROPERTY_SUBSTITUTIONS) return { kind: "cycle" };
+    const next = current.replace(match[0], () => replacement);
+    if (visited.has(next)) return { kind: "cycle" };
+    visited.add(next);
+    current = next;
   }
-  return PROPERTY_REFERENCE.test(current) ? null : current;
 };
 
 const coordinate = (element: Element | undefined): MavenCoordinate => ({
@@ -112,7 +135,38 @@ interface Collector {
   readonly diagnostics: MavenPomDiagnostic[];
   readonly properties: Map<string, string>;
   readonly propertyPointers: Map<string, string>;
+  /** Accounted UTF-8 size of every retained fact; bounds representation growth. */
+  retainedBytes: number;
 }
+
+/** Raised when declarations expand past the advertised retained-facts allowance. */
+export class MavenPomRetainedFactsLimitError extends Error {
+  constructor(
+    readonly retainedBytes: number,
+    readonly maxRetainedBytes: number,
+  ) {
+    super(
+      `Retained POM declarations need at least ${retainedBytes} bytes, above the ${maxRetainedBytes}-byte allowance.`,
+    );
+    this.name = "MavenPomRetainedFactsLimitError";
+  }
+}
+
+/** Account one retained fact's serialized size before it is kept. */
+const account = (collector: Collector, facts: unknown): void => {
+  let bytes: number;
+  try {
+    bytes = Buffer.byteLength(JSON.stringify(facts) ?? "", "utf8");
+  } catch {
+    bytes = MAVEN_POM_MAX_RETAINED_BYTES + 1;
+  }
+  collector.retainedBytes += bytes;
+  if (collector.retainedBytes > MAVEN_POM_MAX_RETAINED_BYTES)
+    throw new MavenPomRetainedFactsLimitError(
+      collector.retainedBytes,
+      MAVEN_POM_MAX_RETAINED_BYTES,
+    );
+};
 
 const report = (
   collector: Collector,
@@ -134,13 +188,45 @@ const report = (
   });
 };
 
+/**
+ * Maven matches a managed dependency on groupId, artifactId, type and
+ * classifier; omitting the last two means the defaults, not "any value".
+ */
+const DEFAULT_DEPENDENCY_TYPE = "jar";
+
+const managementKey = (
+  groupId: string | null,
+  artifactId: string | null,
+  type: string | null,
+  classifier: string | null,
+): string | null => {
+  if (groupId === null || artifactId === null) return null;
+  return [
+    groupId,
+    artifactId,
+    type ?? DEFAULT_DEPENDENCY_TYPE,
+    classifier ?? "",
+  ]
+    .map((part) => part.replaceAll("\\", "\\\\").replaceAll(":", "\\:"))
+    .join(":");
+};
+
+/** Declared boolean text; unresolvable and non-Maven values stay unknown. */
+const declaredBoolean = (element: Element | undefined): boolean | null => {
+  if (element === undefined) return null;
+  const value = textOf(element);
+  if (value === "true") return true;
+  if (value === "false") return false;
+  return null;
+};
+
 const versionOrigin = (
   version: string | null,
   managed: ReadonlyMap<string, string>,
-  key: string,
+  key: string | null,
 ): MavenVersionOrigin => {
   if (version === null)
-    return managed.has(key)
+    return key !== null && managed.has(key)
       ? { kind: "managed", managed_by: "dependencyManagement" }
       : { kind: "unresolved" };
   return PROPERTY_REFERENCE.test(version)
@@ -173,6 +259,7 @@ const parseDependency = (
   const version = text(element, "version");
   const scope = text(element, "scope");
   const classifier = text(element, "classifier");
+  const type = text(element, "type");
   const exclusions = children(element, "exclusions").flatMap((container) =>
     children(container, "exclusion").flatMap((exclusion) => {
       const exclusionGroup = text(exclusion, "groupId");
@@ -190,7 +277,7 @@ const parseDependency = (
       return [{ group_id: exclusionGroup, artifact_id: exclusionArtifact }];
     }),
   );
-  return {
+  const dependency: MavenDependency = {
     dependency_id: identity("maven_dependency", {
       group_id: groupId,
       artifact_id: artifactId,
@@ -198,23 +285,27 @@ const parseDependency = (
       section,
       profile,
       scope,
+      type,
       classifier,
     }),
     dependency_key: identity("maven_dependency_key", {
       group_id: groupId,
       artifact_id: artifactId,
+      type,
+      classifier,
     }),
     group_id: groupId,
     artifact_id: artifactId,
     version,
-    version_origin: versionOrigin(version, managed, `${groupId}:${artifactId}`),
+    version_origin: versionOrigin(
+      version,
+      managed,
+      managementKey(groupId, artifactId, type, classifier),
+    ),
     declared_by: section,
     scope,
-    optional:
-      text(element, "optional") === null
-        ? null
-        : text(element, "optional") === "true",
-    type: text(element, "type"),
+    optional: declaredBoolean(child(element, "optional")),
+    type,
     classifier,
     system_path: text(element, "systemPath"),
     exclusions,
@@ -222,6 +313,8 @@ const parseDependency = (
     source_pointer: sourcePointer,
     line,
   };
+  account(collector, dependency);
+  return dependency;
 };
 
 const sectionDependencies = (
@@ -255,23 +348,21 @@ const collectProperties = (
   return childElements(container).flatMap((property) => {
     const name = property.localName;
     if (name === null) return [];
+    const sourcePointer = pointer(project, property);
     if (collector.properties.has(name))
       report(
         collector,
         "duplicate-declaration",
         `Property ${name} is declared more than once; the last declaration is retained.`,
-        pointer(project, property),
+        sourcePointer,
         lineOf(property),
       );
-    collector.properties.set(name, textOf(property));
-    collector.propertyPointers.set(name, pointer(project, property));
-    return [
-      {
-        name,
-        value: textOf(property),
-        source_pointer: pointer(project, property),
-      },
-    ];
+    const value = textOf(property);
+    collector.properties.set(name, value);
+    collector.propertyPointers.set(name, sourcePointer);
+    const fact = { name, value, source_pointer: sourcePointer };
+    account(collector, fact);
+    return [fact];
   });
 };
 
@@ -287,6 +378,7 @@ export const parseMavenPom = (
     diagnostics: [],
     properties: new Map(),
     propertyPointers: new Map(),
+    retainedBytes: 0,
   };
 
   const properties = collectProperties(root, collector);
@@ -299,11 +391,14 @@ export const parseMavenPom = (
       child(management, "dependencies") ?? management,
       "dependency",
     )) {
-      const groupId = text(dependency, "groupId");
-      const artifactId = text(dependency, "artifactId");
       const version = text(dependency, "version");
-      if (groupId !== null && artifactId !== null && version !== null)
-        managed.set(`${groupId}:${artifactId}`, version);
+      const key = managementKey(
+        text(dependency, "groupId"),
+        text(dependency, "artifactId"),
+        text(dependency, "type"),
+        text(dependency, "classifier"),
+      );
+      if (key !== null && version !== null) managed.set(key, version);
     }
 
   const dependencyManagement = sectionDependencies(
@@ -325,6 +420,7 @@ export const parseMavenPom = (
 
   const profiles: MavenPom["profiles"] = [];
   const profileDependencies: MavenDependency[] = [];
+  const profileManagement: MavenDependency[] = [];
   for (const profile of children(root, "profiles").flatMap((container) =>
     children(container, "profile"),
   )) {
@@ -332,12 +428,15 @@ export const parseMavenPom = (
     const activation = child(profile, "activation");
     profiles.push({
       id,
-      active_by_default:
+      active_by_default: declaredBoolean(
         activation === undefined
-          ? null
-          : text(activation, "activeByDefault") === "true",
+          ? undefined
+          : child(activation, "activeByDefault"),
+      ),
       source_pointer: pointer(root, profile),
     });
+    // Declarations that live inside the profile stay attributed to it rather
+    // than being reported as top-level facts.
     profileDependencies.push(
       ...sectionDependencies(
         child(profile, "dependencies"),
@@ -348,20 +447,42 @@ export const parseMavenPom = (
         collector,
       ),
     );
+    profileManagement.push(
+      ...sectionDependencies(
+        child(
+          child(profile, "dependencyManagement") ?? profile,
+          "dependencies",
+        ),
+        root,
+        "dependency_management",
+        id,
+        managed,
+        collector,
+      ),
+    );
   }
 
   const repositories = [
     ...children(child(root, "repositories") ?? root, "repository"),
-    ...children(child(root, "pluginRepositories") ?? root, "repository"),
-  ].map((repository) => ({
-    id: text(repository, "id"),
-    url: text(repository, "url"),
-    layout: text(repository, "layout"),
-  }));
+    ...children(child(root, "pluginRepositories") ?? root, "pluginRepository"),
+  ].map((repository) => {
+    const fact = {
+      id: text(repository, "id"),
+      url: text(repository, "url"),
+      layout: text(repository, "layout"),
+      source_pointer: pointer(root, repository),
+      line: lineOf(repository),
+    };
+    account(collector, fact);
+    return fact;
+  });
 
   const dependencies = [...declaredDependencies, ...profileDependencies];
-  const allDependencies = [...dependencies, ...dependencyManagement];
-
+  const allDependencies = [
+    ...dependencies,
+    ...dependencyManagement,
+    ...profileManagement,
+  ];
   const seen = new Set<string>();
   for (const dependency of allDependencies) {
     if (seen.has(dependency.dependency_id))
@@ -376,19 +497,44 @@ export const parseMavenPom = (
   }
 
   const referenceNamesSeen = new Set<string>();
-  for (const value of [
-    ...allDependencies.flatMap((dependency) => [
+  const collectReferences = (values: readonly (string | null)[]): void => {
+    for (const value of values)
+      for (const name of referenceNames(value)) referenceNamesSeen.add(name);
+  };
+  for (const dependency of allDependencies)
+    collectReferences([
       dependency.group_id,
       dependency.artifact_id,
       dependency.version,
       dependency.scope,
+      dependency.type,
       dependency.classifier,
-    ]),
+      dependency.system_path,
+      ...dependency.exclusions.flatMap((exclusion) => [
+        exclusion.group_id,
+        exclusion.artifact_id,
+      ]),
+    ]);
+  const parentElement = child(root, "parent");
+  collectReferences([
     text(root, "groupId"),
     text(root, "artifactId"),
     text(root, "version"),
-  ])
-    for (const name of referenceNames(value)) referenceNamesSeen.add(name);
+    ...(parentElement === undefined
+      ? []
+      : [
+          text(parentElement, "groupId"),
+          text(parentElement, "artifactId"),
+          text(parentElement, "version"),
+          text(parentElement, "relativePath"),
+        ]),
+    ...properties.map((property) => property.value),
+    ...repositories.flatMap((repository) => [
+      repository.id,
+      repository.url,
+      repository.layout,
+    ]),
+  ]);
 
   for (const name of referenceNamesSeen)
     if (!collector.properties.has(name))
@@ -401,7 +547,6 @@ export const parseMavenPom = (
       );
 
   const project = coordinate(root);
-  const parentElement = child(root, "parent");
   const parent =
     parentElement === undefined
       ? null
@@ -424,30 +569,40 @@ export const parseMavenPom = (
     parent,
     properties,
     dependencies,
-    dependency_management: dependencyManagement,
+    dependency_management: [...dependencyManagement, ...profileManagement],
     repositories,
     profiles,
     property_references: [...referenceNamesSeen].map((name) => {
       const declared = collector.properties.get(name) ?? null;
+      const resolution =
+        declared === null
+          ? ({ kind: "unresolved" } as const)
+          : resolveReference(declared, collector.properties);
       return {
         name,
         declared,
-        resolved:
-          declared === null
-            ? null
-            : resolveReference(declared, collector.properties),
+        resolution: resolution.kind,
+        resolved: resolution.kind === "resolved" ? resolution.value : null,
         source_pointer: collector.propertyPointers.get(name) ?? "/project",
       };
     }),
     diagnostics: collector.diagnostics,
     summary: {
       dependencies: dependencies.length,
-      dependency_management: dependencyManagement.length,
+      dependency_management:
+        dependencyManagement.length + profileManagement.length,
       managed_dependencies: allDependencies.filter(
         (dependency) =>
           dependency.version_origin.kind === "managed" ||
           (dependency.version !== null &&
-            managed.has(`${dependency.group_id}:${dependency.artifact_id}`)),
+            managed.has(
+              managementKey(
+                dependency.group_id,
+                dependency.artifact_id,
+                dependency.type,
+                dependency.classifier,
+              ) ?? "",
+            )),
       ).length,
       optional_dependencies: allDependencies.filter(
         (dependency) => dependency.optional === true,

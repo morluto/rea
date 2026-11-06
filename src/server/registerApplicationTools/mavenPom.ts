@@ -4,7 +4,7 @@ import { inspectMavenPomEvidence } from "../../application/mavenPom/MavenPomServ
 import { toolContract } from "../../contracts/toolContracts.js";
 import { toolRegistrationOptions } from "../toolRegistrationOptions.js";
 import { logToolExecution } from "../toolLogging.js";
-import { deliverApplicationEvidence } from "./helpers.js";
+import { deliverApplicationEvidence, recordResult } from "./helpers.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 const contract = toolContract("inspect_maven_pom");
@@ -38,15 +38,13 @@ export const registerMavenPomTool = (
               contract.returnsTargetContent,
               options.recordEvidence,
             );
-          // A cancellation after the read and inventory completes must not discard
-          // the observed POM; deliver it instead of a bare cancellation.
-          return deliverApplicationEvidence(
-            server,
-            options,
+          // A cancellation that arrives after the read and inventory completes
+          // must not discard the observed POM, so the completed result is
+          // recorded and returned without another cancellation wait.
+          return recordResult(
+            { ...options, delivery: server.delivery },
             contract,
-            { evidence: result.value.evidence, sources: [] },
-            undefined,
-            context.mcpReq.signal,
+            result.value.evidence,
           );
         },
       ),

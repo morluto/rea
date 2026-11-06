@@ -185,6 +185,7 @@ describe("properties and profiles", () => {
     expect(references["project.version"]).toEqual({
       name: "project.version",
       declared: null,
+      resolution: "unresolved",
       resolved: null,
       source_pointer: "/project",
     });
@@ -243,6 +244,8 @@ describe("repositories and diagnostics", () => {
         id: "internal",
         url: "https://repo.example.invalid/maven",
         layout: null,
+        source_pointer: "/repositories[0]/repository[0]",
+        line: expect.any(Number),
       },
     ]);
     expect(result.source_coverage.repositories).toBe("not-contacted");
@@ -312,5 +315,292 @@ describe("hostile documents", () => {
     });
     expect(document.ok).toBe(false);
     expect(document.ok ? null : document.error.reason).toBe("malformed");
+  });
+});
+
+describe("declaration fidelity", () => {
+  it("matches dependency management on type and classifier, not coordinates alone", () => {
+    const result = parse(
+      pom(`
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.example</groupId>
+        <artifactId>core</artifactId>
+        <version>9.9.9</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>core</artifactId>
+      <classifier>sources</classifier>
+    </dependency>
+  </dependencies>`),
+    );
+    const dependency = result.dependencies[0];
+    expect(dependency?.version_origin).toEqual({ kind: "unresolved" });
+    expect(dependency?.dependency_key).not.toBe(
+      result.dependency_management[0]?.dependency_key,
+    );
+  });
+
+  it("keeps an unresolved boolean unknown instead of declaring it false", () => {
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>optional-flag</artifactId>
+      <version>1.0</version>
+      <optional>\${flag}</optional>
+    </dependency>
+  </dependencies>`),
+    );
+    expect(result.dependencies[0]?.optional).toBeNull();
+  });
+
+  it("reads plugin repositories by their own element name", () => {
+    const result = parse(
+      pom(`
+  <pluginRepositories>
+    <pluginRepository>
+      <id>plugins</id>
+      <url>https://plugins.example.invalid/maven</url>
+    </pluginRepository>
+  </pluginRepositories>`),
+    );
+    expect(result.repositories.map((repository) => repository.id)).toEqual([
+      "plugins",
+    ]);
+  });
+
+  it("keeps profile dependency management with its profile", () => {
+    const result = parse(
+      pom(`
+  <profiles>
+    <profile>
+      <id>ci</id>
+      <dependencyManagement>
+        <dependencies>
+          <dependency>
+            <groupId>org.example</groupId>
+            <artifactId>managed</artifactId>
+            <version>2.0</version>
+          </dependency>
+        </dependencies>
+      </dependencyManagement>
+    </profile>
+  </profiles>`),
+    );
+    expect(
+      result.dependency_management.map((dependency) => dependency.profile),
+    ).toEqual(["ci"]);
+  });
+
+  it("substitutes property values literally and resolves past eight references", () => {
+    const result = parse(
+      pom(`
+  <properties>
+    <leaf>$$</leaf>
+    <a>\${leaf}</a>
+    <v0>x</v0>
+    <v1>\${v0}</v1>
+    <v2>\${v1}</v2>
+    <v3>\${v2}</v3>
+    <v4>\${v3}</v4>
+    <v5>\${v4}</v5>
+    <v6>\${v5}</v6>
+    <v7>\${v6}</v7>
+    <v8>\${v7}</v8>
+    <v9>\${v8}</v9>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>uses-\${a}</artifactId>
+      <version>\${v9}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    const references = Object.fromEntries(
+      result.property_references.map((reference) => [
+        reference.name,
+        reference,
+      ]),
+    );
+    expect(references["a"]).toMatchObject({
+      resolution: "resolved",
+      resolved: "$$",
+    });
+    expect(references["v9"]).toMatchObject({
+      resolution: "resolved",
+      resolved: "x",
+    });
+  });
+});
+
+describe("dependency identity and management keys", () => {
+  it("matches dependency management on type and classifier, not coordinates alone", () => {
+    const result = parse(
+      pom(`
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.example</groupId>
+        <artifactId>core</artifactId>
+        <version>9.9.9</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>core</artifactId>
+      <classifier>sources</classifier>
+    </dependency>
+  </dependencies>`),
+    );
+    const dependency = result.dependencies[0];
+    expect(dependency?.version_origin).toEqual({ kind: "unresolved" });
+    expect(dependency?.dependency_key).not.toBe(
+      result.dependency_management[0]?.dependency_key,
+    );
+  });
+
+  it("keeps an unresolved boolean unknown instead of declaring it false", () => {
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>optional-flag</artifactId>
+      <version>1.0</version>
+      <optional>\${flag}</optional>
+    </dependency>
+  </dependencies>`),
+    );
+    expect(result.dependencies[0]?.optional).toBeNull();
+  });
+
+  it("reads plugin repositories by their own element name", () => {
+    const result = parse(
+      pom(`
+  <pluginRepositories>
+    <pluginRepository>
+      <id>plugins</id>
+      <url>https://plugins.example.invalid/maven</url>
+    </pluginRepository>
+  </pluginRepositories>`),
+    );
+    expect(result.repositories.map((repository) => repository.id)).toEqual([
+      "plugins",
+    ]);
+  });
+});
+
+describe("property substitution", () => {
+  it("substitutes property values literally and resolves past eight references", () => {
+    const result = parse(
+      pom(`
+  <properties>
+    <leaf>$$</leaf>
+    <a>\${leaf}</a>
+    <v0>x</v0>
+    <v1>\${v0}</v1>
+    <v2>\${v1}</v2>
+    <v3>\${v2}</v3>
+    <v4>\${v3}</v4>
+    <v5>\${v4}</v5>
+    <v6>\${v5}</v6>
+    <v7>\${v6}</v7>
+    <v8>\${v7}</v8>
+    <v9>\${v8}</v9>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>uses-\${a}</artifactId>
+      <version>\${v9}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    const references = Object.fromEntries(
+      result.property_references.map((reference) => [
+        reference.name,
+        reference,
+      ]),
+    );
+    expect(references["a"]).toMatchObject({
+      resolution: "resolved",
+      resolved: "$$",
+    });
+    expect(references["v9"]).toMatchObject({
+      resolution: "resolved",
+      resolved: "x",
+    });
+  });
+});
+
+describe("property reference coverage", () => {
+  it("reports a property cycle separately from an undeclared property", () => {
+    const result = parse(
+      pom(`
+  <properties>
+    <loop>\${loop}</loop>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>c</artifactId>
+      <version>\${loop}</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>d</artifactId>
+      <version>\${absent}</version>
+    </dependency>
+  </dependencies>`),
+    );
+    const references = Object.fromEntries(
+      result.property_references.map((reference) => [
+        reference.name,
+        reference,
+      ]),
+    );
+    expect(references["loop"]?.resolution).toBe("cycle");
+    expect(references["absent"]?.resolution).toBe("unresolved");
+  });
+
+  it("collects references from parent coordinates, exclusions and property values", () => {
+    const result = parse(
+      pom(`
+  <parent>
+    <groupId>com.example</groupId>
+    <artifactId>platform</artifactId>
+    <version>\${revision}</version>
+  </parent>
+  <properties>
+    <a>\${b}</a>
+    <b>1.0</b>
+  </properties>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>with-exclusion</artifactId>
+      <version>1.0</version>
+      <exclusions>
+        <exclusion>
+          <groupId>\${excluded.group}</groupId>
+          <artifactId>removed</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+  </dependencies>`),
+    );
+    expect(
+      result.property_references.map((reference) => reference.name).sort(),
+    ).toEqual(["b", "excluded.group", "revision"]);
   });
 });

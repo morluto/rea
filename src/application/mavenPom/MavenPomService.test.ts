@@ -35,7 +35,6 @@ it("binds the selected bytes to retained declarations", async () => {
   const path = await writePom(pomBytes);
   const resources = new ArtifactResourceScope();
   const result = await inspectMavenPomEvidence({ path }, resources);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
 
   const value = mavenPomSchema.parse(result.value.evidence.normalized_result);
@@ -109,4 +108,31 @@ it("retains the verified file identity when parsing fails", async () => {
     path,
     sha256: createHash("sha256").update(bytes).digest("hex"),
   });
+});
+
+it("reads a byte-order-marked UTF-16 POM", async () => {
+  const path = await writePom(Buffer.from(`﻿${pomBytes}`, "utf16le"));
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  if (!result.ok) throw result.error;
+  const value = mavenPomSchema.parse(result.value.evidence.normalized_result);
+  expect(value.dependencies.map((d) => d.artifact_id)).toEqual(["slf4j-api"]);
+});
+
+it("refuses other project XML that declares no Maven model version", async () => {
+  const path = await writePom(
+    `<project name="build"><target name="compile"/></project>`,
+  );
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a refused POM");
+  expect(result.error).toBeInstanceOf(AnalysisInputError);
+  expect((result.error as AnalysisInputError).issues[0]?.message).toContain(
+    "modelVersion",
+  );
 });
