@@ -1,3 +1,4 @@
+import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { CARGO_MANIFEST_TOOL_CONTRACTS } from "./cargoManifestToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
@@ -96,6 +97,7 @@ const retained = (evidence_id: string) => ({
 export const APPLICATION_TOOL_CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...CARGO_MANIFEST_TOOL_CONTRACTS,
+  ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance"),
