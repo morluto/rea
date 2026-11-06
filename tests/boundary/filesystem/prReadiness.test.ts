@@ -236,6 +236,43 @@ describe("initial author declaration", () => {
   });
 });
 
+describe("pull records without a diff", () => {
+  it("reads the PR record when GitHub refuses the diff", async () => {
+    const input = fixture({ user: { id: 76467478 }, body: null });
+    const refused = Object.assign(
+      new Error(
+        "The request could not be processed because too many files changed",
+      ),
+      {
+        status: 422,
+        response: {
+          data: {
+            message:
+              "The request could not be processed because too many files changed",
+          },
+        },
+      },
+    );
+    input.get.mockRejectedValue(refused);
+    input.graphql.mockResolvedValue({
+      repository: {
+        pullRequest: {
+          state: "OPEN",
+          isDraft: false,
+          body: null,
+          baseRefName: "main",
+          headRefOid: input.pull.head.sha,
+          author: { __typename: "User", databaseId: 76467478 },
+        },
+      },
+    });
+    expect(await runReadinessCheck(input)).toMatchObject({
+      state: "success",
+      description: expect.stringContaining("exempt"),
+    });
+  });
+});
+
 describe("GitHub status boundary", () => {
   it.each([76467478, 208281322, 161784452, 342580529])(
     "publishes a labeled exemption for author ID %s after checking the head",

@@ -29,14 +29,19 @@ rea inspect-native-load-image /absolute/path/to/kernel.img --target-format raw-b
 ```
 
 The example maps a 32-bit ARM-state image at `0x8000`. For `arm`, decoding
-starts at the entry in ARM (A32) state, so Thumb-only images, including Cortex-M
-firmware, are not supported. See [Limitations](#limitations).
+starts at the entry in ARM (A32) state. Thumb-only Cortex-M firmware uses
+`cortex-m` instead. See [Limitations](#limitations).
 
-`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `6502`, or `m68k`. `entry_point` is a
-hexadecimal address of the form `0x…`. The complete file is mapped starting at
-that address, and Ghidra seeds an `entry` function there before auto-analysis.
-ARM and AArch64 entries must be 4-byte aligned; m68k entries must be 2-byte
-aligned; x86 and 6502 entries may be byte-aligned.
+`architecture` is one of `x86`, `x86_64`, `arm`, `arm64`, `cortex-m`, `6502`, or `m68k`.
+`entry_point` is a hexadecimal address of the form `0x…`. The complete file is
+mapped starting at that address. For `x86`, `x86_64`, `arm`, `arm64`, `6502`, and `m68k`,
+Ghidra seeds an `entry` function there before auto-analysis. For `cortex-m`,
+that address is the vector-table base: the first word is the initial stack
+pointer and the second is the reset vector. REA clears the reset vector's
+Thumb bit, decodes that address as Thumb, and names the function
+`reset_handler`. ARM, AArch64, and Cortex-M bases must be 4-byte aligned; m68k
+entries must be 2-byte aligned; x86 and 6502 entries may be byte-aligned. A
+Cortex-M image must contain at least eight bytes.
 For 6502, the entry and complete mapped file must fit within `0x0000..0xffff`;
 images that cross the 16-bit boundary are rejected before provider startup.
 For m68k, the mapping must fit within `0x0..0xffffffff`.
@@ -55,6 +60,7 @@ m68k is big-endian and the others are little-endian.
 | x86_64       | `x86:LE:64:default`   | `gcc`            |
 | arm          | `ARM:LE:32:v7`        | `default`        |
 | arm64        | `AARCH64:LE:64:v8A`   | `default`        |
+| cortex-m     | `ARM:LE:32:Cortex`    | `default`        |
 | 6502         | `6502:LE:16:default`  | `default`        |
 | m68k         | `68000:BE:32:default` | `default`        |
 
@@ -82,9 +88,33 @@ non-overlay in the bound language's default address space. Contradictory mapping
 observations are retained with `mismatch`, even when the source hashes agree.
 
 Hopper and IDA refuse raw-binary targets. Windows Ghidra P0 admits native PE
-applications/DLLs and explicitly selected raw 6502 images. Other raw CPU families
-remain outside the Windows boundary. Native path admission, private DACLs, Job
-Object ownership, immutable snapshots, and the no-mutation policy still apply.
+applications and DLLs, plus explicitly selected raw 6502 and Cortex-M images.
+Other raw CPU families remain outside the Windows boundary. Raw-binary sessions
+stay read-only. Native path admission, private DACLs, Job Object ownership,
+immutable snapshots, and the no-mutation policy still apply.
+
+## Hardware claims
+
+A hardware statement uses one rule and one basis. The same rules cover
+controller names, architectural registers, board windows, values computed by
+the image, installed parts, and driver strings.
+
+| Rule                    | Settled basis         | Stays unsettled when                                                                                              |
+| ----------------------- | --------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| `observed-address`      | `observed_address`    | the address comes from rounding a page the instruction did not access                                             |
+| `chip-manual-name`      | `chip_manual`         | no observed address falls inside a controller window of the active chip map                                       |
+| `architecture-register` | `architecture_manual` | the register address is chosen by the board, such as a GIC, CLINT, or PLIC base                                   |
+| `explicit-profile`      | `explicit_profile`    | the CPU family alone would assign a board memory window or register placement                                     |
+| `instruction-decode`    | `instruction`         | the image's own bit operations do not compute the split                                                           |
+| `installed-part`        | `observed_address`    | the table only lists supported chips, even a single name, until a separate observation identifies the fitted chip |
+| `driver-linkage`        | `observed_address`    | a string's presence is treated as proof that the driver runs during boot                                          |
+| `board-record`          | none                  | the board record itself leaves the statement open, such as a color disagreement                                   |
+
+Only a settled basis may be stated as fact. A claim keeps the subject, source,
+rule, and reason of the fact it came from. An open color note stays a board
+record. It is not rewritten as an installed-part question. A driver claim keeps
+that driver's id and the evidence that names the captured image.
+`decideHardwareClaim` applies these rules.
 
 ## NMOS 6502
 
@@ -147,12 +177,14 @@ exercised.
 
 ## Limitations
 
-- Headers are not discovered from file bytes. This increment does not guess
-  load addresses, vector tables, or memory maps.
-- Big-endian ARM, Thumb-only, Cortex-M, and other Ghidra processor variants are
-  unsupported. m68k is the only big-endian family.
-- Reset vectors, memory-mapped I/O, and firmware boot sequences are not
-  emulated.
+- Headers are not discovered from file bytes. The caller still supplies the
+  load address. `cortex-m` reads the vector table at that address; it does not
+  guess a different base. `6502` and `m68k` do not guess a reset vector.
+- Big-endian ARM and Thumb-only variants other than `cortex-m` are unsupported.
+  m68k is the only big-endian family.
+- `cortex-m` seeds in-image vectors whose low bit is set. Memory-mapped I/O
+  and firmware boot sequences are not emulated. `reset_handler` is an assigned
+  analysis name, not a symbol recovered from the image.
 - Independent load-image verification covers source identity, mapped file
   bytes, the bound language, and the caller-supplied entry. Original bytes
   stay unchanged.

@@ -1,8 +1,17 @@
+import { constants } from "node:fs";
 import { StagedOutputError } from "./StagedOutputError.js";
-import { lstat, readdir, rmdir, unlink } from "node:fs/promises";
 import type { Stats } from "node:fs";
+import {
+  lstat,
+  open,
+  readdir,
+  rmdir,
+  unlink,
+  type FileHandle,
+} from "node:fs/promises";
 
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
+import { sameDeviceIdentity } from "./RegularFile.js";
 
 interface Identity {
   readonly dev: number;
@@ -14,13 +23,37 @@ const identityOf = (stats: Stats): Identity => ({
   ino: stats.ino,
 });
 
-const sameIdentity = (stats: Stats, identity: Identity): boolean =>
-  stats.dev === identity.dev && stats.ino === identity.ino;
+const sameIdentity = (stats: Identity, identity: Identity): boolean =>
+  sameDeviceIdentity(stats.dev, identity.dev) && stats.ino === identity.ino;
+
+/**
+ * Read identity from an open handle, then close it through the owner.
+ * A failed close stays in `retained` so cleanup can retry it.
+ * A successful close is removed: cleanup must not close that handle again.
+ * `accept` runs after the identity is known and before close, so a close
+ * failure does not drop an identity that was already read.
+ */
+export const identityFromRetainedHandle = async (
+  retained: OwnedFileHandle[],
+  raw: FileHandle,
+  accept?: (identity: Identity) => void,
+): Promise<Identity> => {
+  const owned = new OwnedFileHandle(raw);
+  retained.push(owned);
+  const identity = identityOf(await raw.stat());
+  accept?.(identity);
+  await owned.close();
+  const finished = retained.lastIndexOf(owned);
+  if (finished >= 0) retained.splice(finished, 1);
+  return identity;
+};
 
 /** One atomically staged file and directory retained through verified cleanup. */
 export class OwnedStagedOutput {
   #file: OwnedFileHandle | undefined;
   #fileIdentity: Identity | undefined;
+  #directoryIdentity: Identity | undefined;
+  #retainedHandles: OwnedFileHandle[] = [];
   #fileClosed = false;
   #fileRemovedByOwner = false;
   #publishedRename = false;
@@ -28,23 +61,38 @@ export class OwnedStagedOutput {
   #closed = false;
   #identityFailure: unknown;
 
-  private constructor(
-    readonly directory: string,
-    private readonly directoryIdentity: Identity | undefined,
-  ) {}
+  private constructor(readonly directory: string) {}
 
   static async create(directory: string): Promise<OwnedStagedOutput> {
+    const owner = new OwnedStagedOutput(directory);
     try {
       const stats = await lstat(directory);
-      if (!stats.isDirectory() || stats.isSymbolicLink())
-        return new OwnedStagedOutput(directory, undefined);
-      return new OwnedStagedOutput(directory, identityOf(stats));
+      if (!stats.isDirectory() || stats.isSymbolicLink()) return owner;
+      // Path stat on Windows reports device 0. The open handle reports the volume.
+      await owner.#readIdentity(directory, (identity) => {
+        owner.#directoryIdentity = identity;
+      });
+      return owner;
     } catch (cause: unknown) {
-      // Keep an owner that refuses deletion when creation identity is unknown.
-      const owner = new OwnedStagedOutput(directory, undefined);
+      // Keep this owner. A close failure must not drop an identity already read.
       owner.#identityFailure = cause;
       return owner;
     }
+  }
+
+  async #readIdentity(
+    path: string,
+    accept?: (identity: Identity) => void,
+  ): Promise<Identity> {
+    return identityFromRetainedHandle(
+      this.#retainedHandles,
+      await open(path, constants.O_RDONLY),
+      accept,
+    );
+  }
+
+  async #closeRetainedHandles(): Promise<void> {
+    for (const handle of this.#retainedHandles) await handle.close();
   }
 
   setFile(file: OwnedFileHandle): void {
@@ -63,11 +111,10 @@ export class OwnedStagedOutput {
         cause: this.#identityFailure,
       });
     const stagedFile = await lstat(content);
-    if (
-      !stagedFile.isFile() ||
-      stagedFile.isSymbolicLink() ||
-      !sameIdentity(stagedFile, this.#fileIdentity)
-    )
+    if (!stagedFile.isFile() || stagedFile.isSymbolicLink())
+      throw new StagedOutputError("identity_changed", { path: content });
+    const stagedIdentity = await this.#readIdentity(content);
+    if (!sameIdentity(stagedIdentity, this.#fileIdentity))
       throw new StagedOutputError("identity_changed", { path: content });
   }
 
@@ -118,6 +165,7 @@ export class OwnedStagedOutput {
   }
 
   async #cleanup(): Promise<void> {
+    await this.#closeRetainedHandles();
     await this.closeFile();
     await this.#verifiedDirectory();
 
@@ -148,9 +196,11 @@ export class OwnedStagedOutput {
         if (
           !stagedFile.isFile() ||
           stagedFile.isSymbolicLink() ||
-          this.#fileIdentity === undefined ||
-          !sameIdentity(stagedFile, this.#fileIdentity)
+          this.#fileIdentity === undefined
         )
+          throw new StagedOutputError("identity_changed", { path: content });
+        const stagedIdentity = await this.#readIdentity(content);
+        if (!sameIdentity(stagedIdentity, this.#fileIdentity))
           throw new StagedOutputError("identity_changed", { path: content });
         await unlink(content);
         this.#fileRemovedByOwner = true;
@@ -168,18 +218,19 @@ export class OwnedStagedOutput {
   }
 
   async #verifiedDirectory(): Promise<void> {
-    if (this.directoryIdentity === undefined)
+    if (this.#directoryIdentity === undefined)
       throw new StagedOutputError(
         "directory_unverified",
         { directory: this.directory },
         { cause: this.#identityFailure },
       );
     const directory = await lstat(this.directory);
-    if (
-      !directory.isDirectory() ||
-      directory.isSymbolicLink() ||
-      !sameIdentity(directory, this.directoryIdentity)
-    )
+    if (!directory.isDirectory() || directory.isSymbolicLink())
+      throw new StagedOutputError("directory_identity_changed", {
+        directory: this.directory,
+      });
+    const directoryIdentity = await this.#readIdentity(this.directory);
+    if (!sameIdentity(directoryIdentity, this.#directoryIdentity))
       throw new StagedOutputError("directory_identity_changed", {
         directory: this.directory,
       });

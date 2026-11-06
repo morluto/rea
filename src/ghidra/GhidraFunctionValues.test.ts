@@ -1,5 +1,5 @@
-import { readFile } from "node:fs/promises";
 import { describe, expect, it } from "vitest";
+import { ghidraDecoderContext } from "./GhidraProcessorContext.js";
 
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
@@ -1115,21 +1115,17 @@ describe("Ghidra native instruction decoder context for ARM TMode and MIPS ISA_M
 });
 
 describe("Ghidra bridge script processor context contract", () => {
-  it("binds TMode to ARM and ISA_MODE to MIPS in ReaGhidraBridge.java", async () => {
-    const bridgePath = new URL(
-      "../../bridge/ghidra/ReaGhidraBridge.java",
-      import.meta.url,
-    );
-    const content = await readFile(bridgePath, "utf8");
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("ARM:")',
-    );
-    expect(content).toContain(
-      'currentProgram.getLanguageID().getIdAsString().startsWith("MIPS:")',
-    );
-    expect(content).toContain('"TMode"');
-    expect(content).toContain('"ISA_MODE"');
-    expect(content).toContain('"ghidra-program-context"');
+  it("returns TMode for ARM and ISA_MODE for MIPS", () => {
+    expect(ghidraDecoderContext("ARM:LE:32:v7", "1")).toEqual([
+      { register: "TMode", value: "1", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("ARM:LE:32:Cortex", "1")).toEqual([
+      { register: "TMode", value: "1", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("MIPS:LE:32:default", "0")).toEqual([
+      { register: "ISA_MODE", value: "0", source: "ghidra-program-context" },
+    ]);
+    expect(ghidraDecoderContext("x86:LE:64:default", null)).toEqual([]);
   });
 });
 

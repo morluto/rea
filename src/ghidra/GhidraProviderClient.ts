@@ -519,8 +519,8 @@ export const createGhidraProviderClient = (input: {
     ...(target.format === "raw-binary"
       ? [
           "Headerless raw-binary analysis uses the caller-supplied architecture and entry address; file offset 0 is mapped at that address. Headers are not discovered from file bytes.",
-          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502; m68k uses the big-endian 68000 default language, which decodes the 68040 superset. Big-endian ARM, Thumb-only, Cortex-M, 65C02, 65816, separate 68020/68030/CPU32/ColdFire variants, and other processor variants are unsupported in this increment.",
-          "Static analysis does not emulate reset vectors, memory-mapped I/O, or firmware boot sequences.",
+          "Little-endian generic Ghidra languages are used for x86, x86_64, arm, arm64, and NMOS 6502. cortex-m selects ARM:LE:32:Cortex and reads the little-endian vector table at the image base. m68k uses the big-endian 68000 default language, which decodes the 68040 superset. Big-endian ARM, Thumb-only variants other than cortex-m, 65C02, 65816, separate 68020/68030/CPU32/ColdFire variants, and other processor variants are unsupported.",
+          "Static analysis does not emulate memory-mapped I/O or firmware boot sequences. For cortex-m, reset_handler is the name REA assigns to the reset vector after clearing its Thumb bit.",
         ]
       : []),
     ...(target.architecture === "mips" ? (target.mips.limitations ?? []) : []),

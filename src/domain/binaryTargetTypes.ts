@@ -7,6 +7,7 @@ export const BINARY_ARCHITECTURES = [
   "x86_64",
   "arm",
   "arm64",
+  "cortex-m",
   "arm64_32",
   "mips",
   "6502",
@@ -24,6 +25,7 @@ export type BinaryArchitecture = (typeof BINARY_ARCHITECTURES)[number];
 export const RAW_ONLY_ARCHITECTURES = [
   "6502",
   "m68k",
+  "cortex-m",
 ] as const satisfies readonly BinaryArchitecture[];
 export type RawOnlyArchitecture = (typeof RAW_ONLY_ARCHITECTURES)[number];
 

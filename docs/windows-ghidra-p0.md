@@ -18,8 +18,8 @@ additional permission flag or degraded mode is required.
 - an operator-installed Ghidra 12.x (>=12.1) distribution (verified with 12.1.4);
 - a 64-bit full JDK inside that installation's declared Java range (JDK 21 or newer, with no maximum, for current 12.1 releases);
 - an explicit native, non-managed x86, x86-64, ARMNT (Thumb-2) or ARM64 PE application/DLL, or a
-  [raw NMOS 6502 image](raw-binary.md#nmos-6502) with a caller-supplied entry; and
-- the 27 read-only Ghidra inventory, memory, and function-analysis operations.
+  [raw NMOS 6502 image](raw-binary.md#nmos-6502) or Cortex-M flash image with a caller-supplied entry; and
+- the 27 read-only Ghidra inventory, memory, and function-analysis operations. Raw-binary sessions stay read-only.
 
 Loaded memory reads and file offsets preserve Ghidra's observed source mappings.
 PE load-image inspection returns an explicit unsupported attestation status.
@@ -35,7 +35,8 @@ database mutation: MethodTable relationships, virtual slots and frozen strings.
 bytes (`read_bytes`, `search_strings`) return nothing on this host. See
 [NativeAOT](ghidra-nativeaot.md).
 
-This boundary does not establish general Windows feature parity. Ghidra GUI
+This boundary does not establish general Windows feature parity. Headerless
+raw-binary images, including Cortex-M, are admitted read-only. Ghidra GUI
 state, annotations, other target architectures and formats, and Hopper-only
 operations remain unavailable through this provider. Managed PE/CLI inspection
 uses its separate execution-free provider.
@@ -140,7 +141,7 @@ and artifact SHA-256 before loading the package-owned addon. Native failure
 reasons remain distinct from a valid installation and an unsupported target.
 
 PE header classification and SHA-256 come from the same open file. The Windows
-provider admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs and rejects unsupported roles,
+provider admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus raw 6502 and Cortex-M images, and rejects unsupported roles,
 architectures, managed images, and malformed headers. The original selected
 source coordinate is preserved for native admission. The original COFF machine is
 retained separately from the normalized CPU family. ARM admission requires the

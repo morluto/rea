@@ -33,11 +33,7 @@ import {
   analysisBookmarkSchema,
   nativeInventoryRowsSchemas,
 } from "../domain/native/nativeInventory.js";
-import {
-  referenceEdgeSchema,
-  unresolvedCallSchema,
-} from "../domain/native/nativeReference.js";
-import { procedureIdentitySchema } from "../domain/native/procedureInfo.js";
+import { procedureReferencesResultSchema } from "../domain/native/nativeReference.js";
 import { z } from "zod";
 import {
   evidenceBundleExportReceiptSchema,
@@ -107,7 +103,6 @@ import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMe
 import { nativeInvestigationTraceSchema } from "../domain/native/nativeInvestigationGraph.js";
 import {
   addressedEntry,
-  functionDossierOutput,
   lifecycleResultOf,
   nullableText,
   procedureInfoOutput,
@@ -228,15 +223,7 @@ export const officialOutputSchemas = {
         ),
     }),
   ),
-  procedure_references: evidenceResultOf(
-    z.object({
-      procedure: procedureIdentitySchema,
-      direction: z.enum(["incoming", "outgoing"]),
-      reference_kinds_available: z.boolean(),
-      unresolved_calls: z.array(unresolvedCallSchema),
-      references: z.array(referenceEdgeSchema),
-    }),
-  ),
+  procedure_references: evidenceResultOf(procedureReferencesResultSchema),
   procedure_pseudo_code: analysisDetailOutputSchemaOf(
     nullableText,
     procedurePseudocodeSummaryViewResultSchema,

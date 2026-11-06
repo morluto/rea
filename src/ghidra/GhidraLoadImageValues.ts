@@ -484,7 +484,9 @@ export const attestGhidraRawBinaryLoadImage = (
         "Verification covers complete original/modified source identity, initialized and loaded non-overlay file bytes in the default address space, the caller-supplied entry, and the bound Ghidra language with its fixed byte order. File offset 0 is mapped at the entry address.",
         "Ghidra may report additional language-defined external entries outside the mapped image. They are preserved as observations; verification requires the caller-supplied entry and does not attest other entries.",
         "Language-defined uninitialized memory, such as 6502 zero page and stack, is preserved as observations but is not attested as file-backed bytes.",
-        "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
+        target.architecture === "cortex-m"
+          ? "cortex-m treats the image base as a little-endian vector table. The reset vector's low bit is the Thumb marker. REA names the decoded reset function reset_handler; that name is not recovered from the image. Other in-image Thumb vectors are seeded. Memory-mapped I/O and boot-time register state are not emulated. No original executable bytes are changed."
+          : "Reset vectors, memory-mapped I/O, alternate-endian and Thumb-only variants, and runtime boot behavior are not modeled or verified. No original executable bytes are changed.",
         "Mapping ends are inclusive; a mismatching digest identifies its source range, not the first differing byte.",
       ],
     }),

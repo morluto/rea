@@ -528,8 +528,32 @@ describe("Ghidra raw-binary profile", () => {
     expect(shifted.value.profile?.digest).not.toBe(
       resolved.value.profile.digest,
     );
+    const cortexTarget: BinaryTarget = {
+      ...target,
+      architecture: "cortex-m",
+      availableArchitectures: ["cortex-m"],
+    };
+    expect(ghidra.inspectTargetSupport(cortexTarget).status).toBe("supported");
+    const darwin = provider(installationHost("darwin"));
+    expect(darwin.inspectTargetSupport(cortexTarget).status).toBe("supported");
+    const cortex = await ghidra.resolveAnalysisProfile(cortexTarget);
+    expect(cortex.ok && cortex.value).toMatchObject({
+      profile: {
+        parameters: {
+          architecture: "cortex-m",
+          language_id: "ARM:LE:32:Cortex",
+          compiler_spec_id: "default",
+          loader: "BinaryLoader",
+          entry_point: "0x8000000",
+        },
+      },
+    });
     const windows = provider(installationHost("win32"));
     expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
+    expect(windows.inspectTargetSupport(cortexTarget).status).toBe("supported");
+    expect(
+      windows.inspectTargetSupport(executableTarget("elf", "x86_64")).status,
+    ).toBe("unsupported");
   });
   it("binds raw m68k to the big-endian 68000 language outside Windows P0", async () => {
     const target: BinaryTarget = {
