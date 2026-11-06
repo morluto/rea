@@ -81,6 +81,21 @@ def _zip_entry(archive, info, refusal):
             "view": view.get("view"), "view_error": view.get("error")}
 
 
+def _zip64_end(file, record: int, locator: int):
+    """Read the fixed fields only, checking the complete frame including its opaque extensible sector."""
+    if record < 0 or record + 56 > locator:
+        return None
+    file.seek(record)
+    header = file.read(56)
+    if len(header) != 56 or header[:4] != ZIP64_END:
+        return None
+    length = int.from_bytes(header[4:12], "little")
+    if length < 44 or record + 12 + length != locator:
+        return None
+    size, offset = struct.unpack_from("<QQ", header, 40)
+    return record, size, offset
+
+
 def _zip_end(file, size: int):
     """Where an archive's central directory ends, how long it is and the offset it declares, from the last end
     record whose comment reaches the end of the file and, when a Zip64 locator precedes it whatever that record
@@ -96,17 +111,19 @@ def _zip_end(file, size: int):
         return None
     total, length, offset = struct.unpack_from("<HII", tail, at + 10)
     end = size - window + at
-    record = end - 20 - 56
-    if record < 0:
+    locator_at = end - 20
+    if locator_at < 0:
         return end, length, offset
-    file.seek(end - 20)
-    if file.read(4) != ZIP64_LOCATOR:
+    file.seek(locator_at)
+    locator = file.read(20)
+    if len(locator) != 20 or locator[:4] != ZIP64_LOCATOR:
         return end, length, offset
-    file.seek(record)
-    zip64 = file.read(56)
-    if len(zip64) == 56 and zip64[:4] == ZIP64_END:
-        length, offset = struct.unpack_from("<QQ", zip64, 40)
-        return record, length, offset
+    # Prefer the locator's record over signatures inside an extensible sector;
+    # retain the fixed-record fallback for prepended archives with relative offsets.
+    for record in (int.from_bytes(locator[8:16], "little"), locator_at - 56):
+        located = _zip64_end(file, record, locator_at)
+        if located is not None:
+            return located
     if total == 0xFFFF or 0xFFFFFFFF in (length, offset):
         return None
     return end, length, offset

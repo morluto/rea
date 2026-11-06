@@ -36,11 +36,29 @@ const PYTHON = `${PYTHON_IMPORTS.split("\n")
 
 /** Run a driver after the exported module's helpers and evaluator, with JSON on its stdin; its stdout. */
 export const exportedPython = (driver: string, input: unknown): string =>
-  execFileSync("python3", ["-I", "-B", "-c", `${PYTHON}\n${driver}`], {
-    input: JSON.stringify(input),
-    encoding: "utf8",
-    maxBuffer: 64 * 1024 * 1024,
-  });
+  // Send the generated program over UTF-8 stdin rather than a Windows-limited
+  // command line, while preserving the driver's separate JSON input stream.
+  execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    [
+      "-I",
+      "-B",
+      "-X",
+      "utf8",
+      "-c",
+      [
+        "import io, json, sys",
+        "source, payload = json.load(sys.stdin)",
+        "sys.stdin = io.StringIO(payload)",
+        'exec(compile(source, "<string>", "exec"))',
+      ].join("\n"),
+    ],
+    {
+      input: JSON.stringify([`${PYTHON}\n${driver}`, JSON.stringify(input)]),
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+    },
+  );
 
 /** One JSON value per line the driver printed. */
 const printed = <Value>(output: string): Value[] =>
