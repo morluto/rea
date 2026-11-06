@@ -20,6 +20,8 @@ export interface FakeCdpBrowser {
   /** Deliver actual malformed wire data without bypassing the production transport parser. */
   emitRawMessage(message: string): void;
   emitEvent(event: CdpEvent): void;
+  /** Drop currently open WebSockets from the server side to exercise reconnect paths. */
+  closeActiveConnections(): void;
   readonly httpRequests: readonly {
     readonly url: string;
     readonly authorization: string | undefined;

@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from "node:http";
 import { createServer, type Socket } from "node:net";
 
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
@@ -17,6 +18,7 @@ import { projectAnalysisError } from "../../../src/domain/analysisErrorProjectio
 import {
   browserObservationEndpointSchema,
   inspectWebPageInputSchema,
+  listBrowserTargetsInputSchema,
 } from "../../../src/domain/browserObservation.js";
 import { observeWebExecutionInputSchema } from "../../../src/domain/webExecution.js";
 import { WEB_RUNTIME_LIMITS } from "../../../src/domain/webRuntime.js";
@@ -708,5 +710,95 @@ it("names the fixed cleanup grace when runtime restoration stalls", async () => 
   } finally {
     await provider.close();
     await browser.close();
+  }
+});
+
+it("applies caller-selected discovery_timeout_ms to browser-socket discovery", async () => {
+  const discoveryTimeoutMs = 45_000;
+  const browser = await startFakeCdpBrowser({
+    hangOnMethod: "Target.getTargets",
+  });
+  const provider = new CdpBrowserProvider();
+  try {
+    const pending = provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        discovery_timeout_ms: discoveryTimeoutMs,
+      }),
+    );
+    await vi.waitFor(
+      () =>
+        expect(browser.commands.map(({ method }) => method)).toContain(
+          "Target.getTargets",
+        ),
+      { timeout: 5_000 },
+    );
+    expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
+    expect(activeTimers(discoveryTimeoutMs)).not.toHaveLength(0);
+    expireEveryTimer(discoveryTimeoutMs);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected browser-socket discovery timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain(
+      `${String(discoveryTimeoutMs)} ms discovery_timeout_ms`,
+    );
+    expect(projected.remediation?.action).toContain(
+      `Increase discovery_timeout_ms above ${String(discoveryTimeoutMs)}`,
+    );
+    expect(projected.remediation?.action).toContain("--discovery-timeout-ms");
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  } finally {
+    await provider.close();
+    await browser.close();
+  }
+});
+
+it("applies caller-selected discovery_timeout_ms to HTTP discovery independently of command_timeout_ms", async () => {
+  const discoveryTimeoutMs = 35_000;
+  const commandTimeoutMs = 25_000;
+  let versionRequested = false;
+  const server = createHttpServer((request) => {
+    if (request.url === "/json/version") versionRequested = true;
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected an HTTP listener address");
+  const provider = new CdpBrowserProvider();
+  try {
+    const pending = provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: `http://127.0.0.1:${String(address.port)}`,
+        target_id: "allowed-page",
+        observation_ms: 0,
+        discovery_timeout_ms: discoveryTimeoutMs,
+        command_timeout_ms: commandTimeoutMs,
+      }),
+    );
+    await vi.waitFor(() => expect(versionRequested).toBe(true), {
+      timeout: 5_000,
+    });
+    expect(activeTimers(CDP_DISCOVERY_RESPONSE_TIMEOUT_MS)).toHaveLength(0);
+    expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
+    expect(activeTimers(discoveryTimeoutMs)).toHaveLength(1);
+    expireTimer(discoveryTimeoutMs);
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected HTTP discovery timeout");
+    const projected = projectAnalysisError(result.error);
+    expect(projected.code).toBe("provider_timeout");
+    expect(projected.message).toContain(
+      `${String(discoveryTimeoutMs)} ms discovery_timeout_ms`,
+    );
+    expect(projected.remediation?.action).toContain("--discovery-timeout-ms");
+    expect(projected.remediation?.action).toContain(
+      "command_timeout_ms does not raise it",
+    );
+  } finally {
+    await provider.close();
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

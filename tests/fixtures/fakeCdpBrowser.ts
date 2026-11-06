@@ -121,6 +121,9 @@ export const startFakeCdpBrowser = async (
     emitEvent(event) {
       for (const socket of sockets) socket.send(JSON.stringify(event));
     },
+    closeActiveConnections() {
+      for (const socket of sockets) socket.close();
+    },
     httpRequests,
     async close() {
       for (const socket of sockets) socket.terminate();
