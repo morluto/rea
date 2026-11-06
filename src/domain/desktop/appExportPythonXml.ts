@@ -15,6 +15,9 @@ class _XmlReader:
     """REA's XML view built as expat reads: names as spelled, declarations as attributes, text split where REA's DOM
     splits it (an empty CDATA section joins the text around it), and each node counted against REA's limits."""
 
+    #: Match REA String.trim(); default strip also drops U+0085 and keeps U+FEFF.
+    FORMATTING_SPACE = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
     def __init__(self) -> None:
         self.remaining, self.truncated, self.root = MAX_XML_NODES, False, None
         #: Per open element: its view or None when left out, whether xml:space="preserve" applies inside it, and
@@ -83,7 +86,7 @@ class _XmlReader:
         self._flush()
         view, preserve, holds_element = self.open.pop()
         if view is not None and holds_element and not preserve:
-            view["children"] = [child for child in view["children"] if not isinstance(child, str) or child.strip()]
+            view["children"] = [child for child in view["children"] if not isinstance(child, str) or child.strip(self.FORMATTING_SPACE)]
         if not self.open:
             self.root = view
 
