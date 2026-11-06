@@ -1358,39 +1358,25 @@ describe("legacy pointer fixup streams", () => {
 });
 
 describe("lazy bind streams", () => {
-  it("decodes repeated binds in a lazy-bind entry", () => {
+  it("rejects repeated bind opcodes in lazy streams", () => {
     const lazy = Buffer.from([
       0x71, // SET_SEGMENT_AND_OFFSET segment 1 + 8
       0x08,
       0x40,
       ...Buffer.from("_shared\0"),
-      0xc0, // DO_BIND_ULEB_TIMES_SKIPPING_ULEB twice, without a skip
+      0xc0, // DO_bind_uleb_times_skipping_uleb - should be rejected in lazy
       0x02,
       0x00,
-      0x00, // DONE
+      0x00,
     ]);
-    const fixups = parsePointerFixups(
-      lazy,
-      {
-        chained: null,
-        binds: [{ offset: 0, size: lazy.length, stream: "lazy" }],
-        rebases: [],
-        dylibs: [],
-      },
-      SEGMENTS,
-      BASE,
-    );
-
-    expect(fixups.decode(BASE + 0x4008n, 0n)).toMatchObject({
-      kind: "bind",
-      symbol: "_shared",
-      binding_source: "lazy",
-    });
-    expect(fixups.decode(BASE + 0x4010n, 0n)).toMatchObject({
-      kind: "bind",
-      symbol: "_shared",
-      binding_source: "lazy",
-    });
+    const commands: FixupCommands = {
+      chained: null,
+      binds: [{ offset: 0, size: lazy.length, stream: "lazy" }],
+      rebases: [],
+      dylibs: [],
+    };
+    const fixups = parsePointerFixups(lazy, commands, SEGMENTS, BASE);
+    expect(fixups.failures[0]).toMatch(/lazy bind streams do not support/i);
   });
 });
 
