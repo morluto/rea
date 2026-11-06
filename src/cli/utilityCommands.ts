@@ -43,13 +43,22 @@ export const registerUtilityCommands = (
   registerReferenceSourceCommand(cli, logger, environment);
 };
 
+/**
+ * A native deadline option keeps the shared field's bounds but admits only
+ * decimal argv text; Incur's Number() coercion would accept "0x10" or "1e3".
+ */
+const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
+  cliIntegerArgument(1)
+    .pipe(field.unwrap())
+    .optional()
+    .describe(field.description ?? "");
+
+// Decimal tokens only, for the same reason as cliNativeDeadline.
 const nativeUiScopeOptions = {
-  pid: z.number().int().positive().describe("Existing application PID"),
-  windowId: z
-    .number()
-    .int()
-    .positive()
-    .describe("Exact selected application window ID"),
+  pid: cliIntegerArgument(1).describe("Existing application PID"),
+  windowId: cliIntegerArgument(1).describe(
+    "Exact selected application window ID",
+  ),
   screenshot: z
     .boolean()
     .default(true)
@@ -58,14 +67,10 @@ const nativeUiScopeOptions = {
     .boolean()
     .default(true)
     .describe("Read the selected window accessibility tree"),
-  maxNodes: z
-    .number()
-    .int()
-    .positive()
-    .safe()
+  maxNodes: cliIntegerArgument(1)
     .default(500)
     .describe("Maximum accessibility nodes per capture"),
-  nativeUiDeadlineMs: nativeUiDeadlineField,
+  nativeUiDeadlineMs: cliNativeDeadline(nativeUiDeadlineField),
 };
 
 const nativeUiScope = (options: {
@@ -203,7 +208,7 @@ const registerNativeCommands = (
         path: localPathStringSchema.describe("Mach-O or app path"),
       }),
       options: z.object({
-        nativeCommandTimeoutMs: nativeCommandTimeoutField,
+        nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
       }),
       run: ({ args, options }) =>
         logCliCommand(logger, command, () =>
@@ -230,7 +235,7 @@ const registerNativeCommands = (
         .describe(
           "Plist path relative to the app root, or an absolute path (default: the bundle's Info.plist)",
         ),
-      nativeCommandTimeoutMs: nativeCommandTimeoutField,
+      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "inspect-plist", () =>
@@ -258,7 +263,7 @@ const registerNativeCommands = (
       symbols: swiftSymbolsSchema.describe("Swift mangled symbols to demangle"),
     }),
     options: z.object({
-      nativeCommandTimeoutMs: nativeCommandTimeoutField,
+      nativeCommandTimeoutMs: cliNativeDeadline(nativeCommandTimeoutField),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "demangle-swift", () =>

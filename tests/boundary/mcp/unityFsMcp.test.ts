@@ -1,4 +1,4 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { lstat, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { parseEvidence } from "../../../src/domain/evidence.js";
@@ -6,6 +6,7 @@ import { artifactInspectionResultSchema } from "../../../src/domain/artifactInsp
 import { artifactExtractionResultSchema } from "../../../src/domain/artifactGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { buildUnityFs } from "../../fixtures/unityfs.js";
 
 it.each(["full", "compact"] as const)(
@@ -68,6 +69,17 @@ it.each(["full", "compact"] as const)(
           },
         },
       ]);
+      const refusedOutput = join(root, "unsupported-output");
+      const refused = await call("extract_artifact", {
+        output_root: refusedOutput,
+      });
+      expect(parseMcpToolError(refused).error).toMatchObject({
+        code: "unsupported_target",
+        details: { operation: "extract_artifact", path },
+      });
+      await expect(lstat(refusedOutput)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
       await call("close_binary", {});
       await writeFile(
         path,
