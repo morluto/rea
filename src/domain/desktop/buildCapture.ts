@@ -9,7 +9,7 @@ export const END_CHECKPOINT = "end";
 /** A checkpoint name REA sends on one request line: not one the capture keeps for its own checkpoints. */
 export const buildCheckpointNameSchema = z
   .string()
-  .regex(/^[a-z0-9][a-z0-9._-]{0,62}$/u)
+  .regex(/^[a-z0-9][a-z0-9._\-]{0,62}$/u)
   .refine((name) => !RESERVED_CHECKPOINT_NAMES.has(name), {
     message:
       "baseline, stop, time-limit and exit are the capture's own checkpoints",

@@ -400,7 +400,7 @@ def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
-    if name.endswith(".json") or trimmed[:1] in ("[", "{"):
+    if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:
             return view

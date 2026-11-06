@@ -91,13 +91,14 @@ it("keeps JSON Lines holding a number it cannot read exactly as text, as REA doe
   const files = [
     ["events.jsonl", lines],
     ["events.json", lines],
+    ["events.JSON", "42"],
     ["big.json", '{"id":9007199254740993}'],
     ["long.json", `{"id":${"9".repeat(5000)}}`],
   ] as const;
 
   const formats = pythonFormats(files);
 
-  expect(formats).toEqual(["text", "text", "json", "json"]);
+  expect(formats).toEqual(["text", "text", "json", "json", "json"]);
   expect(formats).toEqual(
     files.map(([name, text]) =>
       detectStateFormat(name, new TextEncoder().encode(text)),
