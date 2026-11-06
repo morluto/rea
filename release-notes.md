@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **mcp:** The opt-in hot-cold catalog no longer preloads inspect_analysis_view. Discover it before calling it, batch with its producer when needed, or use the unchanged default full profile.
 * **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785))
 * **ghidra:** Ghidra analysis snapshots from earlier byte-search policies are refused; reopen the target and create a new snapshot. Historical Evidence remains importable.
 * **mcp:** distinguish unavailable batch pseudocode ([#8737](https://github.com/morluto/rea/issues/8737))
@@ -974,6 +975,7 @@
 * **javascript:** index member-effect paths for projected reads ([#8108](https://github.com/morluto/rea/issues/8108)) ([767f6af](https://github.com/morluto/rea/commit/767f6afc18f19687eef663a10e9a3983f6f9979e))
 * **javascript:** keep one member-effect record per stored fact ([#8103](https://github.com/morluto/rea/issues/8103)) ([a47dcca](https://github.com/morluto/rea/commit/a47dcca010c24ff5020361ba7148f9862151394a)), closes [#7774](https://github.com/morluto/rea/issues/7774)
 * **mcp:** add opt-in hot/cold tool discovery ([#9046](https://github.com/morluto/rea/issues/9046)) ([0beedcd](https://github.com/morluto/rea/commit/0beedcd712e39a7d93e4558ee56fd596eaa22838))
+* **mcp:** defer retained views in progressive catalogs ([#9151](https://github.com/morluto/rea/issues/9151)) ([bacc1e3](https://github.com/morluto/rea/commit/bacc1e38464ce7eb87ce1fb6fb552c6b1854ac15))
 * **native:** charge function matching for the copies it makes ([#7108](https://github.com/morluto/rea/issues/7108)) ([cc2656b](https://github.com/morluto/rea/commit/cc2656be8d8ff335283cc3d43910ca85ce519d29))
 * **process:** reuse a verified Darwin ownership helper across processes ([#8318](https://github.com/morluto/rea/issues/8318)) ([c534e24](https://github.com/morluto/rea/commit/c534e249d1838fdb6328e133fa109cc6684cc6da))
 * **setup:** wait directly for prewarm completion ([855eb70](https://github.com/morluto/rea/commit/855eb703af2a7cf8935b6be38b234cc58e7ea73a))
