@@ -10,7 +10,10 @@ import type {
   AnalysisOperationPort,
 } from "../AnalysisProvider.js";
 import { err, ok } from "../../domain/result.js";
-import { AnalysisOutputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisOutputError,
+} from "../../domain/analysisErrorCore.js";
 import {
   ghidraFunctionIdentity,
   ghidraReferenceEdge,
@@ -581,8 +584,8 @@ describe("Hardware peripheral reconstruction input failures", () => {
     );
     expect(invalidInput.ok).toBe(false);
     if (invalidInput.ok) return;
-    expect(invalidInput.error._tag).toBe("AnalysisInputError");
-    if (invalidInput.error._tag === "AnalysisInputError") {
+    expect(invalidInput.error).toBeInstanceOf(AnalysisInputError);
+    if (invalidInput.error instanceof AnalysisInputError) {
       expect(invalidInput.error.issues).toEqual(
         expect.arrayContaining([
           expect.objectContaining({ path: ["procedure"] }),
@@ -601,8 +604,8 @@ describe("Hardware peripheral reconstruction input failures", () => {
     );
     expect(mismatchedBoard.ok).toBe(false);
     if (mismatchedBoard.ok) return;
-    expect(mismatchedBoard.error._tag).toBe("AnalysisInputError");
-    if (mismatchedBoard.error._tag === "AnalysisInputError") {
+    expect(mismatchedBoard.error).toBeInstanceOf(AnalysisInputError);
+    if (mismatchedBoard.error instanceof AnalysisInputError) {
       expect(mismatchedBoard.error.issues[0]?.path).toEqual(["board"]);
     }
   });
