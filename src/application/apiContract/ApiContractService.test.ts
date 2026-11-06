@@ -8,6 +8,7 @@ import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectApiContractEvidence } from "./ApiContractService.js";
 import * as readOwner from "./ApiContractRead.js";
+import * as parser from "../../domain/apiContract/parseApiContract.js";
 
 const fixture = new URL(
   "../../../tests/fixtures/openapi/petstore.json.txt",
@@ -78,6 +79,12 @@ it.each([
       if (!result.ok) {
         expect(result.error._tag).toBe("AnalysisInputError");
         expect(JSON.stringify(result.error)).toContain(reason);
+        expect(result.error.partialObservation).toEqual({
+          kind: "file-snapshot-hash",
+          path,
+          bytes: bytes.length,
+          sha256: createHash("sha256").update(bytes).digest("hex"),
+        });
       }
       expect((await readFile(path)).equals(bytes)).toBe(true);
     } finally {
@@ -123,6 +130,10 @@ it("bounds nesting even in schema regions omitted from the inventory", async () 
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisInputError");
       expect(JSON.stringify(result.error)).toContain("maximum nesting depth");
+      expect(result.error.partialObservation).toMatchObject({
+        kind: "file-snapshot-hash",
+        path,
+      });
     }
   } finally {
     await resources.close();
@@ -187,11 +198,80 @@ it("honors pre-cancellation with an opaque caller reason", async () => {
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toBeUndefined();
     }
   } finally {
     await resources.close();
   }
 });
+
+it("keeps native JSON source excerpts internal while preserving the failure cause", async () => {
+  const bytes = '{"$ref":"https://u:p@h","":NaN}';
+  const { path } = await inputFile(bytes);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectApiContractEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected a syntax refusal");
+    expect(result.error.cause).toBeInstanceOf(SyntaxError);
+    expect(JSON.stringify(result.error)).not.toContain("u:p@h");
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path,
+      bytes: Buffer.byteLength(bytes),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    });
+  } finally {
+    await resources.close();
+  }
+});
+
+it.each([
+  [{ openapi: "2.0" }, "AnalysisUnsupportedTargetError"],
+  [
+    {
+      openapi: "3.1.2",
+      info: { title: "a".repeat(3 * 1024 * 1024), version: "1" },
+    },
+    "AnalysisResourceConstraintError",
+  ],
+])(
+  "keeps a completed parser failure ahead of queued cancellation %#",
+  async (document, tag) => {
+    const bytes = JSON.stringify(document);
+    const { path } = await inputFile(bytes);
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const realParse = parser.parseApiContractSteps;
+    const scheduled = vi
+      .spyOn(parser, "parseApiContractSteps")
+      .mockImplementationOnce(function* (...args) {
+        const result = yield* realParse(...args);
+        expect(result.ok).toBe(false);
+        setImmediate(() => controller.abort("after-parser-failure"));
+        return result;
+      });
+    try {
+      const result = await inspectApiContractEvidence({ path }, resources, {
+        signal: controller.signal,
+      });
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(controller.signal.aborted).toBe(true);
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected the parser failure");
+      expect(result.error._tag).toBe(tag);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        bytes: Buffer.byteLength(bytes),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
+    } finally {
+      scheduled.mockRestore();
+      await resources.close();
+    }
+  },
+);
 
 it("cancels a cooperative document traversal after the actual verified file read", async () => {
   const paths = Object.fromEntries(
@@ -226,6 +306,12 @@ it("cancels a cooperative document traversal after the actual verified file read
     if (!result.ok) {
       expect(result.error._tag).toBe("AnalysisCancelledError");
       expect(result.error.cause).toBe(reason);
+      expect(result.error.partialObservation).toEqual({
+        kind: "file-snapshot-hash",
+        path,
+        bytes: Buffer.byteLength(bytes),
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      });
     }
     expect(await readFile(path, "utf8")).toBe(bytes);
   } finally {

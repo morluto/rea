@@ -14,8 +14,12 @@ import { err, ok, type Result } from "../../domain/result.js";
 import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
+  type ApiContractArtifact,
 } from "../../domain/apiContract/apiContract.js";
-import { inspectApiContractInputSchema } from "../../domain/apiContract/apiContractQuery.js";
+import {
+  inspectApiContractInputSchema,
+  type InspectApiContractInput,
+} from "../../domain/apiContract/apiContractQuery.js";
 import { parseApiContractSteps } from "../../domain/apiContract/parseApiContract.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { nativeJsonParseRequiredBytes } from "../JsonInputFile.js";
@@ -30,7 +34,7 @@ const inputFailure = (message: string, cause?: unknown) =>
 
 /** Cooperative traversals release their provisional state on cancellation. */
 const completeSteps = async <Value>(
-  steps: Generator<void, Value>,
+  steps: Generator<void, Result<Value, AnalysisError>>,
   signal?: AbortSignal,
 ): Promise<Result<Value, AnalysisError>> => {
   let completed = false;
@@ -43,11 +47,12 @@ const completeSteps = async <Value>(
       const next = steps.next();
       if (next.done) {
         completed = true;
+        if (!next.value.ok) return next.value;
         // Include cancellation queued during the final synchronous projection.
         await setImmediate();
         return signal?.aborted
           ? err(new AnalysisCancelledError(operation, { cause: signal.reason }))
-          : ok(next.value);
+          : next.value;
       }
       await setImmediate();
     }
@@ -90,6 +95,52 @@ const decodeDocument = (
   }
 };
 
+function* documentSteps(document: unknown, artifact: ApiContractArtifact) {
+  const issue = yield* jsonValueValidationSteps(document);
+  if (issue !== undefined) return err(inputFailure(issue));
+  return yield* parseApiContractSteps(document, artifact);
+}
+
+const importDocument = async (
+  input: InspectApiContractInput,
+  bytes: Buffer,
+  sha256: string,
+  signal?: AbortSignal,
+): Promise<Result<Evidence, AnalysisError>> => {
+  const document = decodeDocument(bytes, input.path);
+  if (!document.ok) return document;
+  const parsed = await completeSteps(
+    documentSteps(document.value, {
+      path: input.path,
+      sha256,
+      bytes: bytes.length,
+    }),
+    signal,
+  );
+  if (!parsed.ok) return parsed;
+  const result = parsed.value;
+  return completeProviderEvidence(
+    createEvidence(
+      { path: input.path, format: "file", sha256 },
+      API_CONTRACT_PROVIDER,
+      {
+        operation,
+        predicateType: "rea.api-contract-inventory",
+        parameters: {
+          path: input.path,
+          format: input.format,
+          max_file_bytes: input.max_file_bytes,
+        },
+        result,
+        confidence: "observed",
+        limitations: result.limitations,
+        locations: [{ kind: "artifact-path", path: input.path }],
+      },
+    ),
+    signal,
+  );
+};
+
 /** Shared CLI/MCP import: one verified file read, no references, network or target execution. */
 export const inspectApiContractEvidence = async (
   rawInput: unknown,
@@ -110,44 +161,18 @@ export const inspectApiContractEvidence = async (
     );
   const source = await readApiContract(input, resources, options.signal);
   if (!source.ok) return source;
-  const document = decodeDocument(source.value.bytes, input.path);
-  if (!document.ok) return document;
-  const validation = await completeSteps(
-    jsonValueValidationSteps(document.value),
+  const result = await importDocument(
+    input,
+    source.value.bytes,
+    source.value.sha256,
     options.signal,
   );
-  if (!validation.ok) return validation;
-  if (validation.value !== undefined)
-    return err(inputFailure(validation.value));
-  const parsed = await completeSteps(
-    parseApiContractSteps(document.value, {
+  if (!result.ok)
+    result.error.retainPartialObservation({
+      kind: "file-snapshot-hash",
       path: input.path,
       sha256: source.value.sha256,
       bytes: source.value.bytes.length,
-    }),
-    options.signal,
-  );
-  if (!parsed.ok) return parsed;
-  if (!parsed.value.ok) return parsed.value;
-  const result = parsed.value.value;
-  return completeProviderEvidence(
-    createEvidence(
-      { path: input.path, format: "file", sha256: source.value.sha256 },
-      API_CONTRACT_PROVIDER,
-      {
-        operation,
-        predicateType: "rea.api-contract-inventory",
-        parameters: {
-          path: input.path,
-          format: input.format,
-          max_file_bytes: input.max_file_bytes,
-        },
-        result,
-        confidence: "observed",
-        limitations: result.limitations,
-        locations: [{ kind: "artifact-path", path: input.path }],
-      },
-    ),
-    options.signal,
-  );
+    });
+  return result;
 };

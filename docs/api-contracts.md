@@ -80,6 +80,11 @@ names are retained. Original bytes remain in the caller's artifact; complete
 inventory Evidence does not embed the entire source JSON. Duplicate JSON members
 use the shared parser's last-value-wins behavior, recorded in source coverage.
 
+If decoding or later validation fails after a verified read, the typed error
+retains a compact `file-snapshot-hash` observation with the exact path, digest
+and byte length. Syntax diagnostics do not quote source JSON. Cancellation
+does not replace a parser failure that has already completed.
+
 ## Resource bounds and verification
 
 The file-byte allowance and conservative expanded-facts allowance are each

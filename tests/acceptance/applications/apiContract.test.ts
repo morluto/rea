@@ -410,7 +410,48 @@ cliTest(
       await call("inspect_api_contract", { path: unsupported }),
     );
     expect(refused.error.code).toBe("unsupported_target");
+    expect(refused.error.details?.partial_observation).toMatchObject({
+      kind: "file-snapshot-hash",
+      path: unsupported,
+    });
     expect(requests).toBe(0);
+    expect(await readFile(path, "utf8")).toBe(bytes);
+  },
+);
+
+cliTest(
+  "preserves verified failure identity without exposing malformed JSON source through CLI/MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-invalid-api-contract-");
+    const path = join(root, "malformed.json");
+    const bytes = '{"$ref":"https://u:p@h","":NaN}';
+    await writeFile(path, bytes);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application",
+    });
+    const response = await call("inspect_api_contract", { path });
+    const error = parseMcpToolError(response);
+    const snapshot = {
+      kind: "file-snapshot-hash",
+      path,
+      bytes: Buffer.byteLength(bytes),
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+    expect(error.error).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: snapshot },
+    });
+    expect(JSON.stringify(response)).not.toContain("u:p@h");
+    const run = cli.sharedCliRun?.bind(cli) ?? cli.run.bind(cli);
+    const result = await run({
+      arguments: ["inspect-api-contract", path, "--json"],
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: snapshot },
+    });
+    expect(result.stdout + result.stderr).not.toContain("u:p@h");
     expect(await readFile(path, "utf8")).toBe(bytes);
   },
 );
