@@ -61,16 +61,17 @@ import {
   TARGET_CONTENT_RESULT_META,
 } from "./toolResultEncoding.js";
 import { RequestTrackingMcpServer } from "./RequestTrackingMcpServer.js";
+import { DISCOVER_TOOLS } from "../catalogDiscovery.js";
+import { ProgressiveToolCatalog } from "./ProgressiveToolCatalog.js";
+import type { WithAdmittedAnalysis } from "./analysisAdmission.js";
+import { canReferenceInlineEvidence } from "./evidenceInputRegistration.js";
+import {
+  currentMcpToolRequest,
+  McpToolRequest,
+  runMcpToolRequest,
+} from "./McpToolRequest.js";
 
 const currentRequestSignal = new AsyncLocalStorage<AbortSignal>();
-interface ToolValidationContext {
-  readonly tool: string;
-  validation?: {
-    readonly issues: readonly z.core.$ZodIssue[];
-    readonly input: unknown;
-  };
-}
-const currentToolValidation = new AsyncLocalStorage<ToolValidationContext>();
 
 /** Capture structured issues from the canonical validation the SDK already performs. */
 const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
@@ -84,7 +85,7 @@ const captureInputValidation = <Schema extends StandardSchemaWithJSON>(
     "~standard": {
       ...standard,
       validate: (value: unknown) => {
-        const context = currentToolValidation.getStore();
+        const context = currentMcpToolRequest();
         const capture = (
           result: Awaited<ReturnType<typeof standard.validate>>,
         ) => {
@@ -138,7 +139,7 @@ const sdkInputValidationDiagnostic = (
 
 /** Place an SDK diagnostic at a field only when that same issue produced it. */
 const partitionSdkDiagnostic = (
-  validation: ToolValidationContext["validation"],
+  validation: McpToolRequest["validation"],
   groups: readonly (readonly AnalysisInputIssue[])[] | undefined,
   diagnostic: string,
 ):
@@ -333,14 +334,55 @@ export interface StandardToolRegistration {
 
 /** Bind oversized MCP error recovery to this server's Evidence ledger. */
 export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
+  private readonly registrations = new Map<string, RegisteredTool>();
+  private progressiveCatalog: ProgressiveToolCatalog | undefined;
+  private catalogChangeDepth = 0;
+  private catalogChanged = false;
   analysisSettings: AnalysisSettings | undefined;
+  /** Transport-owned Evidence uses the same lifetime as application writes. */
+  withAdmittedAnalysis: WithAdmittedAnalysis | undefined;
   private identity: ReturnType<typeof createCatalogIdentity> | undefined;
 
   /** Composition supplies identity without importing the canonical schema graph. */
   get catalogIdentity(): ReturnType<typeof createCatalogIdentity> {
     if (this.identity === undefined)
       throw new Error("MCP catalog identity has not been configured");
-    return this.identity;
+    return this.progressiveCatalog?.identity ?? this.identity;
+  }
+
+  /** Install discovery after canonical registrations, before connecting. */
+  enableProgressiveCatalog(): void {
+    if (this.progressiveCatalog !== undefined) return;
+    const catalog = new ProgressiveToolCatalog(
+      this.registrations,
+      this.catalogIdentity,
+      (change) => {
+        this.catalogChangeDepth++;
+        try {
+          change();
+        } finally {
+          this.catalogChangeDepth--;
+          if (this.catalogChangeDepth === 0 && this.catalogChanged) {
+            this.catalogChanged = false;
+            super.sendToolListChanged();
+          }
+        }
+      },
+      () => this.delivery,
+    );
+    this.progressiveCatalog = catalog;
+    const { name, ...config } = DISCOVER_TOOLS;
+    // Transport discovery has no target or analysis lifecycle. Domain tools
+    // continue through registerTool and their original named handlers.
+    super.registerTool(name, config, (input, context) => {
+      context.mcpReq.signal.throwIfAborted();
+      return catalog.discover(input);
+    });
+  }
+
+  override sendToolListChanged(): void {
+    if (this.catalogChangeDepth > 0) this.catalogChanged = true;
+    else super.sendToolListChanged();
   }
 
   /** Attach the process-owned session only after lazy runtime construction. */
@@ -378,6 +420,11 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     | CompactInputSchemaPresentation
     | undefined;
   private readonly maximumInputElements: number;
+  private readonly evidenceReferenceAlternatives = new Set<string>();
+
+  protected registerEvidenceReferenceAlternative(name: string): void {
+    this.evidenceReferenceAlternatives.add(name);
+  }
 
   constructor(
     info: Implementation,
@@ -426,6 +473,8 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     },
     callback: ToolCallback<InputArgs>,
   ): RegisteredTool {
+    if (canReferenceInlineEvidence(config.inputSchema))
+      this.registerEvidenceReferenceAlternative(name);
     const budget = this.compactPresentation?.budgetBytes;
     const inputSchema =
       budget !== undefined &&
@@ -450,10 +499,17 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
               presentedSchema as StandardSchemaWithJSON,
             ),
           };
-    const scoped = (input: never, context: never) =>
-      this.analysisSettings === undefined
-        ? callback(input, context)
-        : this.analysisSettings.run(() => callback(input, context));
+    const scoped = async (input: never, context: never) => {
+      const request = currentMcpToolRequest();
+      request?.beginHandler();
+      try {
+        return await (this.analysisSettings === undefined
+          ? callback(input, context)
+          : this.analysisSettings.run(() => callback(input, context)));
+      } finally {
+        request?.finishHandler();
+      }
+    };
     const registered = this.bindTool(
       name,
       registeredConfig as never,
@@ -481,18 +537,29 @@ export class EvidenceMcpServerCore extends RequestTrackingMcpServer {
     config: StandardToolRegistration,
     callback: ToolCallback<StandardSchemaWithJSON | undefined>,
   ): RegisteredTool {
-    return super.registerTool(name, config as never, callback as never);
+    const registered = super.registerTool(
+      name,
+      config as never,
+      callback as never,
+    );
+    this.registrations.set(name, registered);
+    return registered;
   }
 
   /** Preserve the SDK transport lifecycle while retaining oversized errors. */
   override connect(transport: Transport): Promise<void> {
+    // HTTP reuses the analysis server after draining the previous transport.
+    // Reset visibility while disconnected, before the next initialize/list.
+    if (!this.isConnected()) this.progressiveCatalog?.reset();
     return super.connect(
       new ErrorEvidenceTransport(
         transport,
         () => this.recordEvidence,
         () => this.delivery,
+        () => this.withAdmittedAnalysis,
         this.outputSchemaProfile,
         this.maximumInputElements,
+        this.evidenceReferenceAlternatives,
       ),
     );
   }
@@ -504,10 +571,7 @@ class ErrorEvidenceTransport implements Transport {
   onmessage: Transport["onmessage"];
   readonly hasPerRequestStream?: boolean;
   private readonly pendingTools = new Map<RequestId, string>();
-  private readonly pendingValidation = new Map<
-    RequestId,
-    ToolValidationContext
-  >();
+  private readonly pendingValidation = new Map<RequestId, McpToolRequest>();
   private readonly pendingToolLists = new Set<RequestId>();
   private readonly pendingCompletions = new Map<RequestId, AbortController>();
 
@@ -531,8 +595,10 @@ class ErrorEvidenceTransport implements Transport {
       | EvidenceWriter["recordEvidence"]
       | undefined,
     private readonly currentDelivery: () => ToolResultDelivery,
+    private readonly currentAdmission: () => WithAdmittedAnalysis | undefined,
     private readonly outputSchemaProfile: McpOutputSchemaProfile,
     private readonly maximumInputElements: number,
+    private readonly evidenceReferenceAlternatives: ReadonlySet<string>,
   ) {
     if (transport.hasPerRequestStream !== undefined)
       this.hasPerRequestStream = transport.hasPerRequestStream;
@@ -559,14 +625,14 @@ class ErrorEvidenceTransport implements Transport {
           return;
         }
       }
-      let validation: ToolValidationContext | undefined;
+      let validation: McpToolRequest | undefined;
       if (
         isJSONRPCRequest(message) &&
         message.method === "tools/call" &&
         typeof message.params?.["name"] === "string"
       ) {
         this.pendingTools.set(message.id, message.params["name"]);
-        validation = { tool: message.params["name"] };
+        validation = new McpToolRequest(message.id, message.params["name"]);
         this.pendingValidation.set(message.id, validation);
       }
       if (isJSONRPCRequest(message) && message.method === "tools/list")
@@ -581,6 +647,7 @@ class ErrorEvidenceTransport implements Transport {
       ) {
         const id = message.params?.["requestId"];
         if (typeof id === "string" || typeof id === "number") {
+          this.pendingValidation.get(id)?.cancel(message.params?.["reason"]);
           this.pendingValidation.delete(id);
           forgetPendingMcpRequest(
             this.pendingTools,
@@ -595,9 +662,7 @@ class ErrorEvidenceTransport implements Transport {
           ? this.pendingCompletions.get(message.id)
           : undefined;
       if (validation !== undefined)
-        currentToolValidation.run(validation, () =>
-          this.onmessage?.(message, extra),
-        );
+        runMcpToolRequest(validation, () => this.onmessage?.(message, extra));
       else if (completion === undefined) this.onmessage?.(message, extra);
       else
         currentRequestSignal.run(completion.signal, () =>
@@ -607,6 +672,8 @@ class ErrorEvidenceTransport implements Transport {
     transport.onerror = (error) => this.onerror?.(error);
     transport.onclose = () => {
       this.pendingTools.clear();
+      for (const validation of this.pendingValidation.values())
+        validation.cancel();
       this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
@@ -632,6 +699,8 @@ class ErrorEvidenceTransport implements Transport {
       await this.transport.close();
     } finally {
       this.pendingTools.clear();
+      for (const validation of this.pendingValidation.values())
+        validation.cancel();
       this.pendingValidation.clear();
       this.pendingToolLists.clear();
       for (const completion of this.pendingCompletions.values())
@@ -658,44 +727,65 @@ class ErrorEvidenceTransport implements Transport {
         ? message.id
         : undefined;
     const tool = id === undefined ? undefined : this.pendingTools.get(id);
+    const scopedRequest = currentMcpToolRequest();
+    const request =
+      id === undefined ||
+      (!isJSONRPCResultResponse(message) && !isJSONRPCErrorResponse(message))
+        ? undefined
+        : (this.pendingValidation.get(id) ??
+          (scopedRequest?.id === id ? scopedRequest : undefined));
     const rewritesOutputSchemas =
       this.outputSchemaProfile !== "full" &&
       id !== undefined &&
       this.pendingToolLists.has(id);
     try {
-      const recovered = this.recoverProtocolError(message, tool);
-      const advertised = rewritesOutputSchemas
-        ? presentOutputSchemasForToolsList(
-            recovered,
-            id,
-            this.outputSchemaProfile,
-            this.compactedOutputSchemas,
-          )
-        : recovered;
-      const wire = ensureToolResultType(advertised);
+      const publish = async (): Promise<void> => {
+        const recovered = this.recoverProtocolError(message, tool);
+        const advertised = rewritesOutputSchemas
+          ? presentOutputSchemasForToolsList(
+              recovered,
+              id,
+              this.outputSchemaProfile,
+              this.compactedOutputSchemas,
+            )
+          : recovered;
+        await this.publish(advertised, tool, options, request);
+      };
+      const admission = this.currentAdmission();
       if (
-        isJSONRPCResultResponse(wire) &&
-        isCallToolResult(wire.result) &&
-        wire.result.isError === true
+        admission !== undefined &&
+        request?.holdsAdmission !== true &&
+        isJSONRPCResultResponse(message) &&
+        isCallToolResult(message.result) &&
+        message.result.isError === true
       ) {
-        // Keep the complete typed JSON in content. Error projections are not
-        // success outputSchema data; oversized recovery must consume their
-        // private structured carrier before it is removed from the wire.
-        const { structuredContent: _diagnostic, ...result } = wire.result;
-        // Errors the SDK builds itself (input validation, a thrown handler)
-        // bypass ToolResultDelivery; mark them for target-content tools too.
-        const marked =
-          tool !== undefined &&
-          toolReturnsTargetContent(tool) &&
-          !carriesTargetContentMarker(result)
-            ? {
-                ...result,
-                _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
-              }
-            : result;
-        await this.transport.send({ ...wire, result: marked }, options);
-      } else await this.transport.send(wire, options);
+        // SDK failures bypass application handlers. Admit both retention and
+        // publication so reset cannot clear a newly offered reference between
+        // those two steps, and shutdown/cancellation cannot create a late write.
+        const admitted = await admission(
+          tool ?? "mcp_tool_error",
+          request?.cancellation.signal,
+          publish,
+        );
+        if (!admitted.ok)
+          await this.publish(
+            {
+              ...message,
+              result: replaceToolResultPayload(
+                message.result,
+                this.delivery.toErrorToolResult(
+                  admitted.error,
+                  tool !== undefined && toolReturnsTargetContent(tool),
+                ),
+              ),
+            },
+            tool,
+            options,
+            request,
+          );
+      } else await publish();
     } finally {
+      request?.finishPublication();
       if (!isJSONRPCRequest(message) && id !== undefined) {
         this.pendingValidation.delete(id);
         forgetPendingMcpRequest(
@@ -706,6 +796,43 @@ class ErrorEvidenceTransport implements Transport {
         );
       }
     }
+  }
+
+  /** Keep the SDK wire envelope while removing private diagnostic carriers. */
+  private async publish(
+    message: JSONRPCMessage,
+    tool: string | undefined,
+    options: TransportSendOptions | undefined,
+    request: McpToolRequest | undefined,
+  ): Promise<void> {
+    request?.beginPublication();
+    // Fill a missing resultType on tools/call results at the wire, never
+    // overwriting a handler/SDK-provided value: under protocol 2025 the SDK
+    // legitimately omits it, and a strict 2026 re-validator rejects a
+    // replayed call without it. Stamping here covers both publication paths
+    // (admitted and admission-refused) since both funnel through publish.
+    const wire = ensureToolResultType(message);
+    if (
+      !isJSONRPCResultResponse(wire) ||
+      !isCallToolResult(wire.result) ||
+      wire.result.isError !== true
+    ) {
+      await this.transport.send(wire, options);
+      return;
+    }
+    // Oversized recovery has already consumed this private structured carrier.
+    const { structuredContent: _diagnostic, ...result } = wire.result;
+    // SDK-built errors bypass ToolResultDelivery's target-content marker.
+    const marked =
+      tool !== undefined &&
+      toolReturnsTargetContent(tool) &&
+      !carriesTargetContentMarker(result)
+        ? {
+            ...result,
+            _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
+          }
+        : result;
+    await this.transport.send({ ...wire, result: marked }, options);
   }
 
   private recoverError(
@@ -919,7 +1046,7 @@ class ErrorEvidenceTransport implements Transport {
     tool: string | undefined,
     targetContent: boolean,
     text: string | undefined,
-    validation: ToolValidationContext["validation"],
+    validation: McpToolRequest["validation"],
   ): JSONRPCMessage | undefined {
     if (
       tool === undefined ||
@@ -941,8 +1068,9 @@ class ErrorEvidenceTransport implements Transport {
         "The MCP tool arguments exceed the configured input element allowance; schema validation and tool execution did not start.",
         { max_input_elements: this.maximumInputElements },
         {
-          remediationAction:
-            "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
+          remediationAction: this.evidenceReferenceAlternatives.has(tool)
+            ? 'If the source Evidence is retained, use {"kind":"retained-evidence","evidence_id":"ev_..."} for declared Evidence fields; use a summary\'s parent_evidence_id for its complete source. Otherwise import the originating Evidence bundle when available. Reduce the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance.'
+            : "Reduce the combined array elements and object members in the arguments, or restart REA with a larger REA_MCP_MAX_INPUT_ELEMENTS allowance for this workload.",
         },
       );
       const result = this.delivery.toErrorToolResult(error, targetContent);
