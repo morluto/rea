@@ -294,3 +294,112 @@ it.each([
     { kind: "acquire", method: "connect" },
   ]);
 });
+/**
+ * A positional port combined with an options object, where `net` and `tls` differ.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   net.connect(-1, {port:80})          -> THREW  (the positional port wins)
+ *   net.connect(80, {port:-1})          -> socket (options port never read)
+ *   tls.connect(80, {port:-1})          -> THREW  (the options port wins)
+ *   tls.connect(-1, {port:80})          -> socket
+ *   tls.connect(65536, {port:80})       -> socket
+ *   tls.connect(-1, {})                 -> THREW  (no options port, positional read)
+ *   tls.connect(-1, () => {}, {port:80})-> socket
+ *   tls.connect(80, () => {}, {port:-1})-> THREW
+ */
+it.each([
+  [
+    "a net positional port overridden by options",
+    `net.connect(-1, {port: 80})`,
+  ],
+  [
+    "a createConnection positional port overridden by options",
+    `net.createConnection(-1, {port: 80})`,
+  ],
+  [
+    "a tls positional port replaced by a bad options port",
+    `tls.connect(80, {port: -1})`,
+  ],
+  [
+    "a tls positional port beside an empty options object",
+    `tls.connect(-1, {})`,
+  ],
+  [
+    "a tls positional port beside a host-only object",
+    `tls.connect(65536, {host: "h"})`,
+  ],
+  [
+    "a tls positional port beside a fractional options port",
+    `tls.connect(80, {port: 1.5})`,
+  ],
+  [
+    "a tls positional port beside a null options port",
+    `tls.connect(80, {port: null})`,
+  ],
+  [
+    "a tls positional port beside an empty string options port",
+    `tls.connect(80, {port: ""})`,
+  ],
+  [
+    "a tls callback then a bad options port",
+    `tls.connect(80, () => {}, {port: -1})`,
+  ],
+  [
+    "a tls positional port beside a bad second argument",
+    `tls.connect(-1, undefined, {})`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a net positional port with ignored bad options",
+    `net.connect(80, {port: -1})`,
+  ],
+  [
+    "a createConnection positional port with ignored bad options",
+    `net.createConnection(80, {port: -1})`,
+    "createConnection",
+  ],
+  [
+    "a tls positional port replaced by a good options port",
+    `tls.connect(-1, {port: 80})`,
+  ],
+  [
+    "a tls out-of-range positional port replaced by options",
+    `tls.connect(65536, {port: 80})`,
+  ],
+  [
+    "a tls positional port with a good options port",
+    `tls.connect(80, {port: 80})`,
+  ],
+  [
+    "a tls positional port with a portless options object",
+    `tls.connect(80, {})`,
+  ],
+  [
+    "a tls positional port rescued by an options path",
+    `tls.connect(-1, {path: "/tmp/x"})`,
+  ],
+  [
+    "a tls callback then a good options port",
+    `tls.connect(-1, () => {}, {port: 80})`,
+  ],
+  [
+    "a tls positional port with only callbacks",
+    `tls.connect(80, () => {}, () => {})`,
+  ],
+  [
+    "a tls positional port with a null second argument",
+    `tls.connect(80, null)`,
+  ],
+] as const)(
+  "keeps the socket acquisition for %s",
+  (_name, call, method?: "connect" | "createConnection") => {
+    expect(socketAcquisitionsFor(call)).toEqual([
+      { kind: "acquire", method: method ?? "connect" },
+    ]);
+  },
+);
