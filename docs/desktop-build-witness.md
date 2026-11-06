@@ -31,7 +31,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the
-   download failed). It then starts `rea capture-desktop-application
+   download failed; a later start runs the update again until one succeeds). It then starts `rea capture-desktop-application
    --desktop-entry <entry>`
    in the computer, leaving `~/.rea-build` out of every checkpoint, and returns
    once the app's window is open, with a screenshot. For an app installed
@@ -95,7 +95,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. It also passes `--synthetic-seed`, since the agent
+   all pass on the seed. A task larger than 96 KiB as REA passes it to the
+   computer is refused before anything runs. It also passes `--synthetic-seed`, since the agent
    made the seed for the task, so the README does not call it the user's real
    data. When the seed holds exactly one document and the app's desktop entry
    takes files, the bundle's app opens that document at launch. A file moved
@@ -184,12 +185,12 @@ A bundle records no state directories, so the error names only files by a
 profile lock's name and LibreOffice's document locks.
 Then, with the task exactly as exported:
 
-| `stage`       | Before it                                                         | Its checks must          |
-| ------------- | ----------------------------------------------------------------- | ------------------------ |
-| `seed`        | nothing; give `directory`, a new or empty folder for the record   | fail at least once       |
-| `after_edit`  | the task done through the app from its prompt alone               | all pass                 |
-| `near_miss`   | a change that is almost right, such as a misspelled line          | fail at least once       |
-| `after_reset` | `act_on_build_computer` with `action: "reset"` as the last change | fail at least once again |
+| `stage`       | Before it                                                         | Its checks must              |
+| ------------- | ----------------------------------------------------------------- | ---------------------------- |
+| `seed`        | nothing; give `directory`, a new or empty folder for the record   | fail at least once           |
+| `after_edit`  | the task done through the app from its prompt alone               | all pass                     |
+| `near_miss`   | a change that is almost right, such as a misspelled line          | fail at least once           |
+| `after_reset` | `act_on_build_computer` with `action: "reset"` as the last change | each come out as on the seed |
 
 `check_build_task` reads the app's `data/get`, takes the views it returns
 beside the files and evaluates each check with REA's evaluator, the one the
@@ -202,7 +203,11 @@ recording under the same id, which the computer answers with the recording
 it already began. The stages come in order. The edit and the near miss each
 need an applied click, drag, scroll, type or key since the stage before, with
 no reset after the last of them, since a reset puts the seed back rather than
-changing the app; `after_reset` needs the reset as the last change. A reset
+changing the app; `after_reset` needs the reset as the last change, and a
+reset that leaves any check unlike on the seed fails the witness, its
+stage's `remediation` naming those checks. On a computer started from a
+bundle folder, the seed refuses a task whose `tasks/<name>.json` or verifier
+in the bundle differs from what the export writes for it. A reset
 relaunches the app, and REA waits until the computer is ready again before
 answering, sending progress notifications while it waits.
 
