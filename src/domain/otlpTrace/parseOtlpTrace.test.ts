@@ -38,50 +38,6 @@ const parse = (document: unknown) => {
 };
 
 describe("parseOtlpTrace", () => {
-  it("retains span identity, service and scope across the parent link", () => {
-    const report = parse(
-      envelope([
-        span({ spanId: "0".repeat(15) + "1" }),
-        span({
-          spanId: "0".repeat(15) + "2",
-          parentSpanId: "0".repeat(15) + "1",
-          name: "charge",
-          kind: 3,
-          startTimeUnixNano: "1100000000",
-          endTimeUnixNano: "1500000000",
-          status: { code: 2, message: "declined" },
-          events: [{ name: "retry" }],
-          links: [{ traceId: "b".repeat(32), spanId: "c".repeat(16) }],
-        }),
-      ]),
-    );
-    expect(report.summary).toMatchObject({
-      spans: 2,
-      roots: 1,
-      orphans: 0,
-      error_status: 1,
-      with_parent: 1,
-      distinct_traces: 1,
-      distinct_services: 1,
-    });
-    expect(report.roots).toEqual(["0".repeat(15) + "1"]);
-    const child = report.spans[1];
-    expect(child).toMatchObject({
-      span_id: "0".repeat(15) + "2",
-      parent_span_id: "0".repeat(15) + "1",
-      name: "charge",
-      kind: "client",
-      status_code: "error",
-      status_message: "declined",
-      service_name: "checkout",
-      scope_name: "lib",
-      scope_version: "1.2",
-      duration_nano: "400000000",
-      event_count: 1,
-      link_count: 1,
-    });
-  });
-
   it("reports a parent the export does not contain as an orphan", () => {
     const report = parse(
       envelope([
@@ -199,6 +155,69 @@ describe("parseOtlpTrace", () => {
   });
 });
 
+describe("parseOtlpTrace identifiers", () => {
+  it("retains span identity, service and scope across the parent link", () => {
+    const report = parse(
+      envelope([
+        span({ spanId: "0".repeat(15) + "1" }),
+        span({
+          spanId: "0".repeat(15) + "2",
+          parentSpanId: "0".repeat(15) + "1",
+          name: "charge",
+          kind: 3,
+          startTimeUnixNano: "1100000000",
+          endTimeUnixNano: "1500000000",
+          status: { code: 2, message: "declined" },
+          events: [{ name: "retry" }],
+          links: [{ traceId: "b".repeat(32), spanId: "c".repeat(16) }],
+        }),
+      ]),
+    );
+    expect(report.summary).toMatchObject({
+      spans: 2,
+      roots: 1,
+      orphans: 0,
+      error_status: 1,
+      with_parent: 1,
+      distinct_traces: 1,
+      distinct_services: 1,
+    });
+    expect(report.roots).toEqual(["0".repeat(15) + "1"]);
+    const child = report.spans[1];
+    expect(child).toMatchObject({
+      span_id: "0".repeat(15) + "2",
+      parent_span_id: "0".repeat(15) + "1",
+      name: "charge",
+      kind: "client",
+      status_code: "error",
+      status_message: "declined",
+      service_name: "checkout",
+      scope_name: "lib",
+      scope_version: "1.2",
+      duration_nano: "400000000",
+      event_count: 1,
+      link_count: 1,
+    });
+  });
+
+  it("keeps base64 identifiers usable by normalizing them to hex", () => {
+    const traceBytes = Buffer.alloc(16, 0xab);
+    const spanBytes = Buffer.alloc(8, 0xcd);
+    const report = parse(
+      envelope([
+        span({
+          traceId: traceBytes.toString("base64"),
+          spanId: spanBytes.toString("base64"),
+        }),
+      ]),
+    );
+    expect(report.spans[0]).toMatchObject({
+      trace_id: traceBytes.toString("hex"),
+      span_id: spanBytes.toString("hex"),
+    });
+  });
+});
+
 describe("parseOtlpTrace attributes", () => {
   it("redacts credential-carrying attribute values and counts only element kinds", () => {
     const report = parse(
@@ -255,23 +274,6 @@ describe("parseOtlpTrace attributes", () => {
     expect(attributes.get("blob")).toMatchObject({
       value_kind: "bytes",
       bytes_length: 3,
-    });
-  });
-
-  it("keeps base64 identifiers usable by normalizing them to hex", () => {
-    const traceBytes = Buffer.alloc(16, 0xab);
-    const spanBytes = Buffer.alloc(8, 0xcd);
-    const report = parse(
-      envelope([
-        span({
-          traceId: traceBytes.toString("base64"),
-          spanId: spanBytes.toString("base64"),
-        }),
-      ]),
-    );
-    expect(report.spans[0]).toMatchObject({
-      trace_id: traceBytes.toString("hex"),
-      span_id: spanBytes.toString("hex"),
     });
   });
 });
