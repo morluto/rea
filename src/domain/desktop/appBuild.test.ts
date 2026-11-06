@@ -277,7 +277,7 @@ describe("installed launch paths", () => {
     );
     const module = text(bundle.files, "envs/typora/typora_app.py");
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "typora"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
     );
     expect(module).toContain(
       'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',
