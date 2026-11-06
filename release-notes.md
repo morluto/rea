@@ -353,6 +353,7 @@
 * **debugger:** let REA exit when a debugger could not be stopped ([#8652](https://github.com/morluto/rea/issues/8652)) ([144843c](https://github.com/morluto/rea/commit/144843ccc26bd372d61b8c6a27b37a01a5b0fb61))
 * **debugger:** retain verified detach across cleanup retries ([d14f199](https://github.com/morluto/rea/commit/d14f199736dbdc2b7cbb7dcb1318acddfd3e5b3d))
 * **decompile:** keep provider no-pseudocode facts on batch items ([#8323](https://github.com/morluto/rea/issues/8323)) ([da0e966](https://github.com/morluto/rea/commit/da0e9669a8c27a0298bccbe1914af96c83849ead))
+* **decompile:** keep the output failure streak across external functions ([#7924](https://github.com/morluto/rea/issues/7924)) ([6571be6](https://github.com/morluto/rea/commit/6571be631adccb6399d727acf23dc6d049ce8f1f))
 * **decompile:** name the differing resume identity ([#8465](https://github.com/morluto/rea/issues/8465)) ([1aa6beb](https://github.com/morluto/rea/commit/1aa6beb5dc937a19e87df70b56df48f0d4e09541)), closes [#8349](https://github.com/morluto/rea/issues/8349)
 * **decompile:** preserve provider cleanup through export finalization ([381004b](https://github.com/morluto/rea/commit/381004b6648c1a6532b3d0ae42d7ea3d52d17306))
 * **decompile:** retain inventory limitations and selection ([#8466](https://github.com/morluto/rea/issues/8466)) ([fc20aeb](https://github.com/morluto/rea/commit/fc20aebb94e16cc9976b5733731eca9e11ed7830))
