@@ -723,6 +723,7 @@
 * **native:** preserve import names across dyld text formats ([d27e3f8](https://github.com/morluto/rea/commit/d27e3f8e89c2a5b37bacb784e2275256441e6292))
 * **native:** preserve Mach-O target selection in macOS tools ([#7831](https://github.com/morluto/rea/issues/7831)) ([c0c3902](https://github.com/morluto/rea/commit/c0c3902207d6b1a33709e42b80c7e570da7db964))
 * **native:** preserve mapping and literal coverage ([b0c48e8](https://github.com/morluto/rea/commit/b0c48e8b6524a809e51acdca155e253b9fe73f14))
+* **native:** preserve Objective-C records with unreadable protocol lists ([81ada02](https://github.com/morluto/rea/commit/81ada025c02be1afb98661817c5784179f54280c))
 * **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785)) ([1ff5a65](https://github.com/morluto/rea/commit/1ff5a655bc8d97738c4e5a1ff7a6786126e6e3fe))
 * **native:** reject mixed dyld refusal diagnostics ([#5778](https://github.com/morluto/rea/issues/5778)) ([d47efe1](https://github.com/morluto/rea/commit/d47efe1a54ada1fab1386d25ce0081edac5fe5f3))
 * **native:** reject nonzero reserved ELF dynamic symbols ([#7528](https://github.com/morluto/rea/issues/7528)) ([7504f2d](https://github.com/morluto/rea/commit/7504f2ddfccc8c518bdda365f23043a07691f6cf))
