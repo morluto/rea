@@ -1217,6 +1217,7 @@
 * **cli:** cover Frida argument admission and spawn ordering ([#3356](https://github.com/morluto/rea/issues/3356)) ([c7fce66](https://github.com/morluto/rea/commit/c7fce66035a4eba490157b4ec3f43b1a7515aa99))
 * **cli:** cover literal Markdown heading output ([#7866](https://github.com/morluto/rea/issues/7866)) ([c2cc7e6](https://github.com/morluto/rea/commit/c2cc7e6eb0979303ae78c7146b2705b7181e8dd6))
 * **cli:** cover production doctor output option ordering ([#6683](https://github.com/morluto/rea/issues/6683)) ([1d4e9f3](https://github.com/morluto/rea/commit/1d4e9f31c344d9dde1fdbfed0fbae61a3d48a3ca))
+* **cli:** select shutdown budgets for worker lifecycle scenarios ([#9170](https://github.com/morluto/rea/issues/9170)) ([39bd0cc](https://github.com/morluto/rea/commit/39bd0cc625be27da810d4ec4444770236aa30647))
 * **cutter:** synchronize peer descriptor close before cancellation ([#9082](https://github.com/morluto/rea/issues/9082)) ([34b954e](https://github.com/morluto/rea/commit/34b954ec8a97d5e250c5f1291edd64688f40baca))
 * **desktop:** cover ENOTDIR intermediate path refusal ([#8692](https://github.com/morluto/rea/issues/8692)) ([a56cc93](https://github.com/morluto/rea/commit/a56cc93cabe81242dcadaee85a129a14fc05bd2a))
 * **desktop:** make Python output fixtures portable ([#9066](https://github.com/morluto/rea/issues/9066)) ([f624c3b](https://github.com/morluto/rea/commit/f624c3b8e3bb2afbcd176244707bdf0d2fde1f97))
