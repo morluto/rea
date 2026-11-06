@@ -28,7 +28,7 @@ export interface TextPlacement {
   readonly noise: (pointer: string) => boolean;
 }
 
-/** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs in them, or an element added whole checked itself, not an attribute or name of an element both ends hold. */
+/** Text checks for the elements whose text changed, and the pointers those checks make redundant: text and whole runs holding text in them, or an element added whole checked itself, not an attribute or name of an element both ends hold, nor an element holding no text, as an image or a break. */
 export interface WholeTextSuggestions {
   readonly suggestions: readonly DesktopTaskCheckInput[];
   /** Checks that text an addition kept is still there, for an author to add by choice. */
@@ -92,6 +92,13 @@ const namedByIdentifier = (pointer: string) => {
     ?.groups?.key;
   return key !== undefined && isIdentifier(key);
 };
+
+/** Whether an end holds an element at a pointer whose text a check reads as nothing, as an image or a break. */
+const textlessAt = (pointer: string, ends: Ends) =>
+  [ends.baseline, ends.final].some((view) => {
+    const value = resolvePointer(view, pointer);
+    return isXmlElement(value) && isWhitespace(elementText(value));
+  });
 
 /** Whether both ends hold an element at a pointer. */
 const keptAt = (element: string, ends: Ends) =>
@@ -556,6 +563,7 @@ export const wholeTextSuggestions = (
         )
       )
         return false;
+      if (textlessAt(pointer, ends)) return false;
       const owner = ownerOf(pointer);
       return owner === undefined || !keptAt(owner, ends);
     },

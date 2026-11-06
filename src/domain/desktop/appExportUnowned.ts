@@ -4,7 +4,11 @@ import {
 } from "./buildCapture.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import { runtimeFile, type RuntimeFileKind } from "./runtimeFiles.js";
+import {
+  isLockName,
+  runtimeFile,
+  type RuntimeFileKind,
+} from "./runtimeFiles.js";
 import { stateDirectoryOf } from "./stateRoles.js";
 
 /** The most paths a limitation or README line names before counting the rest. */
@@ -95,18 +99,6 @@ export interface RuntimeSeeds {
   readonly paths: readonly string[];
 }
 
-/** Names of lock files an app holds while it runs, lowercase, wherever they lie. */
-const LOCK_NAMES = new Set([
-  "lockfile",
-  "lock",
-  ".lock",
-  ".parentlock",
-  "parent.lock",
-  "singletonlock",
-]);
-/** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
-const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
-
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
  * name anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file
@@ -118,9 +110,8 @@ export const isLockFile = (
   file: string,
   stateDirectories: readonly string[],
 ): boolean => {
+  if (isLockName(file)) return true;
   const name = file.split("/").at(-1) ?? "";
-  if (LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name))
-    return true;
   const folder = folderOf(file);
   // Each directory on its own, so one nested in another is still found.
   return (
