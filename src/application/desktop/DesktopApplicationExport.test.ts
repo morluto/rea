@@ -874,6 +874,32 @@ describe("exportDesktopApplication of the app's logs", () => {
       expect(readme).toContain(`\`~/${log}\``);
     }
   });
+
+  it("seeds a log under a folder named as a state path, but not a lock there", async () => {
+    const history = `${HOME}/.config/notes/history`;
+    const written = withWritten([
+      [`${history}/2026-11-06.log`, "saved\n", "state", 0o644],
+      [`${history}/notes.txt`, "saved\n", "state", 0o644],
+      [`${history}/.~lock.notes.txt#`, "saved\n", "state", 0o644],
+    ]);
+
+    const { result } = await exportLocked(
+      {
+        ...written,
+        state: {
+          ...written.state,
+          content_roots: [...written.state.content_roots, history],
+        },
+      },
+      ["saved\n"],
+    );
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toContain(".config/notes/history/2026-11-06.log");
+    expect(seedFiles).not.toContain(".config/notes/history/.~lock.notes.txt#");
+  });
 });
 
 describe("exportDesktopApplication of LibreOffice's recovery list", () => {

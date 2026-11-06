@@ -162,18 +162,14 @@ export const isLockFile = (
 const LOG_NAME = /(?:\.log|^log\.\d+)$/iu;
 
 /**
- * Whether a home file is a log by its name: `*.log` or `log.<n>`, a file
- * under a `logs` folder, or the `.lck` or `.lock` beside such a log. An app
- * writes facts about the host into its log, such as the kernel, CPU and
- * memory, and none needs its old log to start.
+ * Whether a home file is a log by its name, `*.log` or `log.<n>`, or the
+ * `.lck` or `.lock` beside such a log. An app writes facts about the host
+ * into its log, such as the kernel, CPU and memory, and none needs its old
+ * log to start.
  */
 export const isAppLog = (file: string): boolean => {
-  const segments = file.split("/");
-  const name = (segments.at(-1) ?? "").replace(/\.(?:lck|lock)$/iu, "");
-  return (
-    LOG_NAME.test(name) ||
-    segments.slice(0, -1).some((folder) => folder.toLowerCase() === "logs")
-  );
+  const name = (file.split("/").at(-1) ?? "").replace(/\.(?:lck|lock)$/iu, "");
+  return LOG_NAME.test(name);
 };
 
 const KINDS: readonly RuntimeSeedKind[] = ["web_storage", "cache"];
@@ -353,15 +349,15 @@ const LEVELDB_MARKER = /^(?:CURRENT|MANIFEST-\d+)$/u;
 /**
  * Which home files the seed leaves out: the app's logs in its own state
  * (application state, or under one of its state directories), and lock
- * files; never one of `kept`, such as a document or a selected path. A
- * `*.log` in browser storage, under a `leveldb` folder, or numbered beside a
- * LevelDB database's `CURRENT` or `MANIFEST-*` is the database's own journal
- * of saved writes, so it is seeded.
+ * files; never one of `kept`, such as a document or a selected path, nor a
+ * log under one. A `*.log` in browser storage, under a `leveldb` folder, or
+ * numbered beside a LevelDB database's `CURRENT` or `MANIFEST-*` is the
+ * database's own journal of saved writes, so it is seeded.
  */
 export const leftOutFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   stateDirectories: readonly string[],
-  kept: ReadonlySet<string>,
+  kept: readonly string[],
 ) => {
   const recorded = new Set(files.keys());
   const nameOf = (home: string) => home.split("/").at(-1) ?? "";
@@ -375,14 +371,14 @@ export const leftOutFiles = (
     ancestorsOf(home).some((folder) => /(?:^|\/)leveldb$/iu.test(folder)) ||
     (LEVELDB_LOG.test(nameOf(home)) && levelDbFolders.has(folderOf(home)));
   const isLeftOutLog = (home: string) =>
-    !kept.has(home) &&
+    !isWithinAny(home, kept) &&
     isAppLog(home) &&
     !isJournal(home) &&
     (files.get(home)?.role === "application_state" ||
       stateDirectoryOf(home, stateDirectories) !== undefined);
   const isLeftOut = (home: string) =>
     isLeftOutLog(home) ||
-    (!kept.has(home) && isLockFile(home, stateDirectories, recorded));
+    (!kept.includes(home) && isLockFile(home, stateDirectories, recorded));
   return { isLeftOut, isLeftOutLog };
 };
 
@@ -407,7 +403,7 @@ export const leftOutLogsLimitation = (
 ): string | undefined =>
   logs.length === 0
     ? undefined
-    : `Left out of the seed: the app's logs in its own state (*.log, log.<n>, files under a logs folder, and their locks), which record facts about the capture host, such as its kernel, CPU and memory, and which no app needs to start: ${listed(logs, false)}. A log that is a document or a path named in ${STATE_PATH_INPUTS} is seeded.`;
+    : `Left out of the seed: the app's logs in its own state (*.log, log.<n>, and their locks), which record facts about the capture host, such as its kernel, CPU and memory, and which no app needs to start: ${listed(logs, false)}. A log that is a document, or a path named in ${STATE_PATH_INPUTS} or a file under one, is seeded.`;
 
 /** The limitation naming unowned folders the capture saw change; none when there are none. */
 export const unownedFoldersLimitation = (

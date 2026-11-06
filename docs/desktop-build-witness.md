@@ -117,11 +117,11 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `.lock` and its document lock `.~lock.<name>#`, GnuCash's
    `<book>.LCK` or Grisbi's `.<file>.lock` beside its file, are left out of
    the seed, since a copied one can keep the app from starting or saving, and
-   so are the app's logs in its own state (`*.log`, `log.<n>`, files under a
-   `logs` folder), which record facts about the capture host; the
-   limitations and the README list them after "Left out of the seed". A
-   project's `Cargo.lock` or `yarn.lock`, and a document or a path in
-   `state_paths`, is seeded. They name seeded
+   so are the app's logs in its own state (`*.log`, `log.<n>`), which record
+   facts about the capture host; the limitations and the README list them
+   after "Left out of the seed". A project's `Cargo.lock` or `yarn.lock`, a
+   document or a path in `state_paths`, and a log under such a folder, is
+   seeded. They name seeded
    WebKit or Chromium storage and caches too, which the app keeps for its
    own running. When the application held files open in a folder whose
    starting content the capture did not retain, a limitation names the
