@@ -17,8 +17,9 @@ import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
+import { cliIntegerArgument } from "./options.js";
 
-const positive = (fallback: number) => z.int().positive().default(fallback);
+const positive = (fallback: number) => cliIntegerArgument(1).default(fallback);
 
 /** Options of `capture-desktop-application`. */
 const captureOptions = z.object({
