@@ -342,14 +342,15 @@ describe("web source-location CLI advertised input schema", () => {
 
     expect(args(selection)).toBe(true);
     expect(args({ ...selection, manifestPath: "" })).toBe(false);
-    expect(args({ ...selection, manifestPath: "manifest\u0000.json" })).toBe(
-      false,
-    );
+    // Absolute samples with a trailing NUL exercise the NUL rule on its own.
+    expect(
+      args({ ...selection, manifestPath: `${selection.manifestPath}\u0000` }),
+    ).toBe(false);
     expect(args({ ...selection, manifestPath: "./manifest.json" })).toBe(false);
     expect(args({ ...selection, sourceMapPath: "" })).toBe(false);
-    expect(args({ ...selection, sourceMapPath: "app\u0000.js.map" })).toBe(
-      false,
-    );
+    expect(
+      args({ ...selection, sourceMapPath: `${selection.sourceMapPath}\u0000` }),
+    ).toBe(false);
     expect(args({ ...selection, sourceMapPath: "./app.js.map" })).toBe(false);
     expect(args({ ...selection, sourceMapUrl: "" })).toBe(false);
   });
