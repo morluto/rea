@@ -6,7 +6,6 @@ import {
   keyfileView,
   textSyntaxFormat,
   textView,
-  textSyntaxFormat,
   xmlView,
 } from "./stateFormats.js";
 
