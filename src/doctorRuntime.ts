@@ -19,6 +19,10 @@ import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 import { readEffectiveClientRegistrationConfiguration } from "./application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "./application/ClientRegistrationEnvironment.js";
+import {
+  mergeEnvironmentOverrides,
+  snapshotEnvironment,
+} from "./process/snapshotEnvironment.js";
 import { supportedClients } from "./application/SupportedClients.js";
 import { homeDirectoryFromEnvironment } from "./config/homeDirectory.js";
 import {
@@ -72,6 +76,42 @@ const selectedRegistrationEnvironment = async (
   };
 };
 
+/**
+ * Fold a selected registration and the terminal it inherits into the canonical
+ * names a provider check reads: the registration's recorded values win, names
+ * it records as unreadable expressions are dropped, and everything else
+ * survives from the terminal.
+ *
+ * Windows treats setting names case-insensitively, so a registration recording
+ * `ghidra_install_dir` must override the terminal's `GHIDRA_INSTALL_DIR`
+ * rather than sit beside it, and a dropped expression must be found under
+ * either spelling. `snapshotEnvironment` performs that fold;
+ * `mergeEnvironmentOverrides` alone keeps the winning layer's spelling.
+ */
+export const selectedProviderSettings = (
+  selected: SelectedRegistrationEnvironment | undefined,
+  terminal: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform = process.platform,
+): Readonly<Record<string, string | undefined>> => {
+  if (selected === undefined) return terminal;
+  const settings: Record<string, string | undefined> = {
+    ...snapshotEnvironment(
+      mergeEnvironmentOverrides(terminal, selected.environment, platform),
+      platform,
+    ),
+  };
+  for (const name of Object.keys(
+    snapshotEnvironment(
+      Object.fromEntries(
+        [...selected.unresolved].map((entry): [string, string] => [entry, ""]),
+      ),
+      platform,
+    ),
+  ))
+    delete settings[name];
+  return settings;
+};
+
 type SelectedRegistration = {
   readonly values: Readonly<Record<string, string>>;
   readonly unresolvedSettings: ReadonlySet<string>;
@@ -111,29 +151,6 @@ const readSelectedRegistration = async (
         unresolvedSettings: details.value.unresolvedSettings,
       }
     : undefined;
-};
-
-/**
- * The terminal, overlaid by the selected registration's own values. A client
- * whose registration carries only a setting or two still inherits what the
- * ambient run exported; its recorded values win where they exist.
- *
- * A name the registration records as an expression stays unknown: probing with
- * the terminal's value would certify a setting the client owns and this
- * process cannot read. The provider then reports it as unconfigured, which is
- * the honest answer for a chain that resolves outside REA.
- */
-const selectedProviderSettings = (
-  selected: SelectedRegistrationEnvironment | undefined,
-  terminal: Readonly<NodeJS.ProcessEnv>,
-): Readonly<NodeJS.ProcessEnv> => {
-  if (selected === undefined) return terminal;
-  const settings: NodeJS.ProcessEnv = {
-    ...terminal,
-    ...selected.environment,
-  };
-  for (const name of selected.unresolved) delete settings[name];
-  return settings;
 };
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */

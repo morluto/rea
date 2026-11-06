@@ -5,7 +5,7 @@ import { expect, it as test, vi } from "vitest";
 import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement.js";
 
-import { createSystemDoctorHost } from "./doctorRuntime.js";
+import { createSystemDoctorHost, selectedProviderSettings } from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
 import { createTestTempDirectory } from "../tests/fixtures/temporaryDirectory.js";
@@ -646,3 +646,44 @@ test("does not fill a registration's unresolvable expression from the terminal",
     await host.close?.();
   }
 });
+
+test.each([["win32"], ["linux"]] as const)(
+  "folds a registration's spelling into the names a provider check reads: platform=%s",
+  (platform) => {
+    const settings = selectedProviderSettings(
+      {
+        environment: {
+          ghidra_install_dir: "/opt/ghidra",
+          rea_jadx_mcp_jar: "/opt/jadx.jar",
+        },
+        unresolved: new Set(["rea_ghidra_startup_timeout_ms"]),
+      },
+      {
+        GHIDRA_INSTALL_DIR: "/terminal/ghidra",
+        REA_JADX_MCP_JAR: "/terminal/jadx.jar",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "60000",
+        OTHER: "kept",
+      },
+      platform,
+    );
+    if (platform === "win32") {
+      expect(settings).toEqual({
+        GHIDRA_INSTALL_DIR: "/opt/ghidra",
+        REA_JADX_MCP_JAR: "/opt/jadx.jar",
+        OTHER: "kept",
+      });
+    } else {
+      // POSIX names are case-sensitive: the lowercase registration keys are
+      // separate settings and the terminal's uppercase ones survive.
+      expect(settings).toEqual({
+        GHIDRA_INSTALL_DIR: "/terminal/ghidra",
+        REA_JADX_MCP_JAR: "/terminal/jadx.jar",
+        ghidra_install_dir: "/opt/ghidra",
+        rea_ghidra_startup_timeout_ms: undefined,
+        rea_jadx_mcp_jar: "/opt/jadx.jar",
+        REA_GHIDRA_STARTUP_TIMEOUT_MS: "60000",
+        OTHER: "kept",
+      });
+    }
+  },
+);
