@@ -23,6 +23,8 @@ import {
 import { safeParseJson } from "../../../src/domain/safeJson.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
+const PYTHON_COMMAND = process.platform === "win32" ? "python" : "python3";
+
 /** Keep the exported Python helpers out of the host command-line size limit. */
 const execPython = (
   args: string[],
@@ -34,7 +36,7 @@ const execPython = (
   try {
     writeFileSync(script, args[codeIndex + 1]!, "utf8");
     return execFileSync(
-      "python3",
+      PYTHON_COMMAND,
       [
         "-X",
         "utf8",
@@ -332,6 +334,65 @@ it("reads text nested past Python's recursion limit as JSON only when all of it 
   ]);
 });
 
+it.each(["\u001c", "\u001d", "\u001e", "\u001f", "\u0085"])(
+  "keeps distinct keyfile keys ending in %j in the exported view",
+  (suffix) => {
+    const text = `[ui]\nkey=first\nkey${suffix}=second\n`;
+    const { python, rea } = textViews([["settings.ini", text]]);
+    const expected = [
+      {
+        format: "keyfile",
+        view: { groups: { ui: { key: "first", [`key${suffix}`]: "second" } } },
+        error: null,
+      },
+    ];
+    expect(rea).toEqual(expected);
+    expect(python).toEqual(expected);
+  },
+);
+
+it.each([
+  ["[ui]\ufeff\nkey=on\n", "keyfile"],
+  ["[ui]\n\ufeff# padding\nkey=on\n", "keyfile"],
+  ["[ui]\n\u0085# data\nkey=on\n", "text"],
+  ["[ui]\n\u0085[group]\nkey=on\n", "text"],
+])(
+  "matches exported keyfile header and comment framing for %j",
+  (text, format) => {
+    const { python, rea } = textViews([["settings.ini", text]]);
+    expect(rea[0]).toMatchObject({ format });
+    expect(python).toEqual(rea);
+  },
+);
+
+it("uses the state reader's BOM key padding without trimming value content", () => {
+  const { python, rea } = textViews([
+    ["settings.ini", "[ui]\n\ufeffkey= value \u0085\n"],
+  ]);
+  const expected = [
+    {
+      format: "keyfile",
+      view: { groups: { ui: { key: "value \u0085" } } },
+      error: null,
+    },
+  ];
+  expect(rea).toEqual(expected);
+  expect(python).toEqual(expected);
+});
+
+it.each(["\u001c", "\u001d", "\u001e", "\u001f", "\u0085"])(
+  "does not drop a non-keyfile line containing %j during exported detection",
+  (text) => {
+    const input = `[ui]\n${text}\nkey=value\n`;
+    const { python, rea } = textViews([["settings.ini", input]]);
+    expect(rea[0]).toMatchObject({
+      format: "text",
+      view: { lines: ["[ui]", text, "key=value"] },
+    });
+    expect(python).toEqual(rea);
+  },
+);
+
 it("refuses JSON and key files over 4 MiB as REA does, telling JSON apart from text without parsing it", () => {
   const objects = `[{}${",{}".repeat(1_400_000)}]`;
   const files = [
@@ -445,9 +506,13 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   const root = await createTestTempDirectory("rea-keyfile-python-");
   const script = join(root, "fixture.py");
   await writeFile(script, program, "utf8");
-  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-  });
+  const output = execFileSync(
+    PYTHON_COMMAND,
+    ["-I", "-B", "-X", "utf8", script],
+    {
+      input: JSON.stringify(inputs),
+      encoding: "utf8",
+    },
+  );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });

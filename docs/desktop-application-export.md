@@ -297,7 +297,8 @@ shapes: SQLite tables (at most 64 ordinary tables, `tables_truncated` past
 that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
 REA tags them), JSON, XML as `{root, truncated}` with DOCTYPEs refused and REA's
-node, depth and whitespace rules, key file groups, text as
+node, depth and whitespace rules, key file groups with the same
+[line and key whitespace rules](desktop-application-state.md#versions-and-views), text as
 `{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
 as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an

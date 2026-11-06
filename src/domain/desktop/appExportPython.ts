@@ -206,16 +206,22 @@ def _text(text: str) -> dict:
     return {"format": "text", "view": view, "truncated": view["truncated"]}
 
 
+def _js_trim(text: str, *, start_only: bool = False) -> str:
+    """REA uses ECMAScript String.trim for key parsing and XML formatting; Python strip has a different set."""
+    chars = "\t\n\v\f\r \u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+    return text.lstrip(chars) if start_only else text.strip(chars)
+
+
 def _keyfile_line(raw: str) -> tuple:
     """A key file line as REA reads it: skip (blank or comment), group, entry or other."""
-    line = raw.strip()
+    line = _js_trim(raw)
     if not line or line[0] in "#;":
         return ("skip",)
     header = GROUP_HEADER.match(line)
     if header:
         return ("group", header.group(1))
     key, equals, value = raw.partition("=")
-    key = key.strip()
+    key = _js_trim(key)
     # Only ASCII space and tab immediately after '=' are padding.
     return ("entry", key, value.lstrip(" \t")) if equals and key else ("other",)
 
@@ -395,7 +401,7 @@ def _json_view(text: str, size: int):
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
-    trimmed = re.sub(r"^[\s﻿]+", "", text)
+    trimmed = _js_trim(text, start_only=True)
     if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:
