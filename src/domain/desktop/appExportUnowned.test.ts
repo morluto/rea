@@ -149,6 +149,18 @@ describe("isLockFile", () => {
     expect(locks.filter(isLock)).toEqual(locks);
     expect(others.filter(isLock)).toEqual([]);
   });
+
+  it("knows a *.lock file directly in a state directory nested in another", () => {
+    // A custom XDG_STATE_HOME can put one app's state folder inside another's.
+    const stateDirectories = [".config/app", ".config/app/state/app"];
+
+    expect(isLockFile(".config/app/state/app/db.lock", stateDirectories)).toBe(
+      true,
+    );
+    expect(isLockFile(".config/app/state/db.lock", stateDirectories)).toBe(
+      false,
+    );
+  });
 });
 
 describe("the limitations on folders the app held files open in", () => {
