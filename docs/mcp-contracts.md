@@ -666,10 +666,12 @@ A representative result, shortened to two dependencies:
 }
 ```
 
-`property_references[].resolution` separates the three ways a `${...}` value
-can fail here: `unresolved` means the property is not declared in this POM,
-`cycle` means the declarations depend on each other, and only `resolved` carries
-a substituted value. Profile declarations carry the profile's `id` in `profile`
+`property_references[].resolution` separates the ways a `${...}` value can fail
+here: `unresolved` means the property is not declared in this POM, `cycle` means
+the declarations depend on each other, and `work-limit` means the bounded
+substitution allowance ran out before either could be established, so a
+declared property can be wide rather than circular. Only `resolved` carries a
+substituted value. Profile declarations carry the profile's `id` in `profile`
 and are counted separately; activation conditions are reported but never
 evaluated. `source_coverage` states what was not read, so an incomplete
 inventory is visible instead of appearing complete.
