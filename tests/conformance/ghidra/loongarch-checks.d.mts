@@ -5,6 +5,15 @@ export interface LoongArchReadelfExpected {
   readonly flags?: number;
 }
 
+export interface LoongArchRelocationEntry {
+  readonly offset: string;
+  readonly type: string;
+  readonly typeId: number;
+  readonly symbol: string;
+  readonly symbolValue: string;
+  readonly addend: bigint;
+}
+
 export interface LoongArchReadelfFacts {
   readonly loongarch: LoongArchElfMetadata;
   readonly symbols: Record<
@@ -15,6 +24,7 @@ export interface LoongArchReadelfFacts {
     string
   >;
   readonly relocations: Record<string, number>;
+  readonly relocationEntries: readonly LoongArchRelocationEntry[];
 }
 
 export function parseLoongArchReadelf(
@@ -27,6 +37,11 @@ export function inspectLoongArchReadelf(
 ): Promise<
   LoongArchReadelfFacts & { command: string; version: string; raw: string }
 >;
+export function requireLoongArchRelocation(
+  facts: LoongArchReadelfFacts,
+  type: string,
+): LoongArchRelocationEntry;
+export function loongArchPointer(bytesHex: unknown): bigint;
 export function analysisAddressOffset(address: unknown): bigint;
 export function assertLoongArchLoadedImage(
   observations: {

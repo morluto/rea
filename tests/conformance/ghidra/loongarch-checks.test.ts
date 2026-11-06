@@ -6,7 +6,9 @@ import {
   assertLoongArchProbeBytes,
   assertLoongArchProbeInstructions,
   assertLoongArchProbePseudocode,
+  loongArchPointer,
   parseLoongArchReadelf,
+  requireLoongArchRelocation,
 } from "./loongarch-checks.mjs";
 
 // GNU readelf 2.43 output for the source-owned GNU 12.3 fixture. This tests the
@@ -92,6 +94,40 @@ describe("LoongArch real-verifier independent expectations", () => {
       R_LARCH_64: 1,
       R_LARCH_JUMP_SLOT: 1,
     });
+    // The lane needs the site, type id and addend, not just type counts.
+    expect(parsed.relocationEntries).toEqual([
+      {
+        offset: "0x1ffe8",
+        type: "R_LARCH_64",
+        typeId: 2,
+        symbol: "rea_loongarch_global",
+        symbolValue: "0x20008",
+        addend: 0n,
+      },
+      {
+        offset: "0x20000",
+        type: "R_LARCH_JUMP_SLOT",
+        typeId: 5,
+        symbol: "rea_loongarch_add",
+        symbolValue: "0x340",
+        addend: 0n,
+      },
+    ]);
+  });
+
+  it("requires exactly one relocation of the requested type", () => {
+    const parsed = parseLoongArchReadelf(readelf);
+    expect(requireLoongArchRelocation(parsed, "R_LARCH_64")).toBe(
+      parsed.relocationEntries[0],
+    );
+    expect(() => requireLoongArchRelocation(parsed, "R_LARCH_32")).toThrow(
+      /exactly one R_LARCH_32 relocation/u,
+    );
+  });
+
+  it("decodes an 8-byte little-endian pointer observation", () => {
+    expect(loongArchPointer("0800120000000000")).toBe(0x120008n);
+    expect(() => loongArchPointer("1208")).toThrow(/8-byte/u);
   });
 
   it("keeps a v0 declaration distinct from a v1 declaration", () => {
