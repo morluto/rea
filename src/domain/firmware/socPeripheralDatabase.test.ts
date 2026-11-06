@@ -174,4 +174,27 @@ describe("ESP32 peripheral lookup and automated platform detection", () => {
     ]);
     expect(leaders.every((candidate) => candidate.confidence === 1)).toBe(true);
   });
+
+  it("does not treat a shared GD32 window as STM32-only", () => {
+    expect(lookupSocPeripheral("0x40012800", "gd32f1")?.name).toBe("ADC1");
+    expect(lookupSocPeripheral("0x40020400", "gd32f1")?.name).toBe("DMA1");
+    const tied = detectSocPlatform(["0x40020000", "0x40012800"], "arm");
+    const leaders = tied.filter(
+      (candidate) => candidate.matchedCount === tied[0]?.matchedCount,
+    );
+    expect(leaders.map((candidate) => candidate.platform)).toEqual([
+      "stm32f1",
+      "gd32f1",
+    ]);
+    expect(leaders.every((candidate) => candidate.matchedCount === 2)).toBe(
+      true,
+    );
+  });
+
+  it("names the separate controllers inside the ESP32 RTC page", () => {
+    expect(lookupSocPeripheral("0x3ff48000", "esp32")?.name).toBe("RTC_CNTL");
+    expect(lookupSocPeripheral("0x3ff48400", "esp32")?.name).toBe("RTCIO");
+    expect(lookupSocPeripheral("0x3ff48800", "esp32")?.name).toBe("SENS");
+    expect(lookupSocPeripheral("0x3ff48c00", "esp32")?.name).toBe("RTC_I2C");
+  });
 });

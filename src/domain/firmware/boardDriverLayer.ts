@@ -91,16 +91,16 @@ export const RT_SPARK_DRIVERS: readonly BoardDriver[] = [
   linked(
     "serial-uart2",
     "UART2 device",
-    ["USART2"],
+    [],
     ["com2"],
-    "contains the device name uart2. The BSP maps COM2 to UART2; the string does not spell the USART2 registers.",
+    "contains the device name uart2. The used image has no aligned USART2 address.",
   ),
   linked(
     "pwm",
     "PWM",
-    ["TIM3", "TIM14"],
+    ["TIM3", "TIM4"],
     ["led-matrix", "lcd-backlight"],
-    "contains stm32_hw_pwm_init, [E/drv.pwm], and board\\ports\\drv_matrix_led.c.",
+    "contains stm32_hw_pwm_init. Device records store TIM3 under the name timer3 and TIM4 under the name pwm4.",
   ),
   linked(
     "spi-flash",
@@ -112,9 +112,9 @@ export const RT_SPARK_DRIVERS: readonly BoardDriver[] = [
   linked(
     "rw007",
     "RW007",
-    ["SPI2"],
+    ["GPIOF"],
     ["rw007"],
-    "contains [E/[RW007]] and rw007 transfer failed. This driver and the SPI flash port both name SPI2.",
+    "function 0x0807ac3c loads GPIOF and passes the bus name spi2 to the SPI attach helper. The SPI2 address is not in that function.",
   ),
   linked(
     "fal",
@@ -154,9 +154,9 @@ export const RT_SPARK_DRIVERS: readonly BoardDriver[] = [
   linked(
     "rs485",
     "RS485",
-    ["USART6"],
+    [],
     ["rs485"],
-    "contains rs485_test. The BSP maps this option to UART6 and PG8.",
+    "contains rs485_test. That string was not tied to the USART6 constant beside USART1.",
   ),
   linked(
     "can",

@@ -1,5 +1,7 @@
 import { z } from "zod";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import type {
+  AnalysisExecution,
   AnalysisOperationPort,
   ExecutionOptions,
 } from "../AnalysisProvider.js";
@@ -50,6 +52,7 @@ import {
   socPlatformSchema,
   type SocPlatformMatchCandidate,
 } from "../../domain/firmware/socPeripheralDatabase.js";
+import type { HardwareReconstructionPartialObservation } from "../../domain/firmware/hardwareReconstructionPartial.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -103,12 +106,22 @@ export interface BoardMemoryAccess {
   readonly evidence: string;
 }
 
+/** Provider observation this reconstruction was derived from. Absent for a direct reference list. */
+export interface HardwareProducingSource {
+  readonly subjectSha256: string | null;
+  readonly subjectPath: string | null;
+  readonly providerId: string | null;
+  readonly evidenceId: string | null;
+  readonly evidenceLinks: readonly string[];
+}
+
 /** Output result detailing reconstructed hardware peripheral interactions for a procedure. */
 export interface HardwarePeripheralReconstruction {
   readonly procedure: string;
   readonly architecture: HardwareArchitecture;
   readonly platform: SocPlatform | null;
   readonly board: BoardId | null;
+  readonly producingSource: HardwareProducingSource | null;
   readonly boardMcu: string | null;
   readonly boardMemory: readonly BoardMemoryAccess[];
   readonly boardUnboundDevices: readonly BoardDeviceAttachment[];
@@ -129,6 +142,15 @@ export const hardwarePeripheralReconstructionSchema = z.strictObject({
   architecture: hardwareArchitectureSchema,
   platform: socPlatformSchema.nullable().optional(),
   board: boardIdSchema.nullable(),
+  producingSource: z
+    .strictObject({
+      subjectSha256: z.string().nullable(),
+      subjectPath: z.string().nullable(),
+      providerId: z.string().nullable(),
+      evidenceId: z.string().nullable(),
+      evidenceLinks: z.array(z.string()),
+    })
+    .nullable(),
   boardMcu: z.string().nullable(),
   boardMemory: z.array(
     z.strictObject({
@@ -423,6 +445,7 @@ export const reconstructHardwareFromReferences = (
     procedure,
     architecture,
     platform,
+    producingSource: null,
     board: boardProfile?.id ?? null,
     boardMcu: boardApplies && boardProfile !== null ? boardProfile.mcu : null,
     boardMemory,
@@ -460,6 +483,89 @@ export const reconstructHardwareFromReferences = (
   };
 };
 
+const HARDWARE_RECONSTRUCTION = "reconstruct_procedure_hardware_interactions";
+
+const producingSourceFrom = (
+  execution: AnalysisExecution,
+): HardwareProducingSource => ({
+  subjectSha256: execution.subject?.sha256 ?? null,
+  subjectPath: execution.subject?.path ?? null,
+  providerId: execution.provider.id,
+  evidenceId: execution.evidenceId ?? null,
+  evidenceLinks:
+    execution.sourceEvidence?.map((item) => item.evidence_id) ?? [],
+});
+
+const retainedReconstruction = (
+  result: HardwarePeripheralReconstruction,
+  source: HardwareProducingSource,
+): HardwareReconstructionPartialObservation => ({
+  kind: "hardware-peripheral-reconstruction",
+  procedure: result.procedure,
+  subjectSha256: source.subjectSha256,
+  providerId: source.providerId,
+  evidenceId: source.evidenceId,
+  evidenceLinks: source.evidenceLinks,
+  blocks: result.peripheralBlocks.map((block) => ({
+    blockBase: block.blockBase,
+    controller: block.socPeripheralName ?? null,
+    addresses: [...block.uniqueAddresses],
+  })),
+});
+
+const boardPlatformMismatch = (
+  board: ReconstructProcedureHardwareInput["board"],
+  platform: ReconstructProcedureHardwareInput["platform"],
+): AnalysisInputError | null => {
+  if (board === undefined || platform === undefined) return null;
+  const selectedBoard = lookupBoardProfile(board);
+  if (selectedBoard === null || selectedBoard.soc === platform) return null;
+  return new AnalysisInputError(HARDWARE_RECONSTRUCTION, undefined, [
+    {
+      path: ["board"],
+      reason: "invalid_value",
+      message: `Board ${board} targets ${selectedBoard.soc}, which does not match platform ${platform}.`,
+    },
+  ]);
+};
+
+const analyzedReferences = (
+  references: z.infer<typeof procedureReferencesResultSchema>["references"],
+): AnalyzedInstructionReference[] =>
+  references.flatMap((edge) => {
+    const kind = edge.kind;
+    if (kind.available && (kind.call || kind.jump) && !kind.data) return [];
+    return [
+      {
+        target_address: edge.target_address,
+        source_address: edge.source_address,
+        read: kind.available ? kind.read : null,
+        write: kind.available ? kind.write : null,
+        data: kind.available ? kind.data : null,
+        call: kind.available ? kind.call : false,
+        jump: kind.available ? kind.jump : false,
+        ...(kind.available && typeof kind.operand_index === "number"
+          ? { operand_index: kind.operand_index }
+          : {}),
+        provenance: kind.available ? kind.provenance : null,
+      },
+    ];
+  });
+
+const keepFailure = (
+  failure: AnalysisError,
+  signal: AbortSignal | undefined,
+): Result<HardwarePeripheralReconstruction, AnalysisError> => {
+  if (signal?.aborted) {
+    failure.retainSecondaryFailure(
+      new AnalysisCancelledError(HARDWARE_RECONSTRUCTION, {
+        cause: signal.reason,
+      }),
+    );
+  }
+  return err(failure);
+};
+
 /**
  * High-level application workflow: Reconstruct hardware peripheral interactions for a given procedure.
  * Queries provider procedure references, classifies physical memory regions, resolves standard architectural
@@ -471,103 +577,58 @@ export const reconstructProcedureHardwareInteractions = async (
   options?: ExecutionOptions,
 ): Promise<Result<HardwarePeripheralReconstruction, AnalysisError>> => {
   const signal = options?.signal;
-  if (signal?.aborted) {
-    return err(
-      new AnalysisCancelledError(
-        "reconstruct_procedure_hardware_interactions",
-        { cause: signal.reason },
-      ),
-    );
-  }
+  const parsed = parseAnalysisInput(
+    HARDWARE_RECONSTRUCTION,
+    parameters,
+    reconstructProcedureHardwareInputSchema,
+    signal,
+  );
+  if (!parsed.ok) return parsed;
 
-  const parsed = reconstructProcedureHardwareInputSchema.safeParse(parameters);
-  if (!parsed.success) {
-    return err(
-      new AnalysisInputError("reconstruct_procedure_hardware_interactions", {
-        cause: parsed.error,
-      }),
-    );
-  }
-
-  const { procedure, architecture, platform, board } = parsed.data;
-  if (board !== undefined && platform !== undefined) {
-    const selectedBoard = lookupBoardProfile(board);
-    if (selectedBoard !== null && selectedBoard.soc !== platform) {
-      return err(
-        new AnalysisInputError(
-          "reconstruct_procedure_hardware_interactions",
-          undefined,
-          [
-            {
-              path: ["board"],
-              reason: "invalid_value",
-              message: `Board ${board} targets ${selectedBoard.soc}, which does not match platform ${platform}.`,
-            },
-          ],
-        ),
-      );
-    }
-  }
+  const { procedure, architecture, platform, board } = parsed.value;
+  const mismatch = boardPlatformMismatch(board, platform);
+  if (mismatch !== null) return err(mismatch);
 
   const execution = await analysis.execute(
     "procedure_references",
     { procedure, direction: "outgoing" },
     options,
   );
-
-  if (!execution.ok) {
-    return execution;
-  }
+  if (!execution.ok) return keepFailure(execution.error, signal);
 
   const parsedReferences = procedureReferencesResultSchema.safeParse(
     execution.value.result,
   );
-
   if (!parsedReferences.success) {
-    return err(
+    return keepFailure(
       new AnalysisOutputError(
         "procedure_references",
         "Procedure references output did not match expected reference edge schema",
       ),
+      signal,
     );
   }
 
-  const candidateReferences = parsedReferences.data.references;
-  const analyzedReferences: AnalyzedInstructionReference[] = [];
-
-  for (const edge of candidateReferences) {
-    const kind = edge.kind;
-    const isCallOrJump = kind.available && (kind.call || kind.jump);
-    // Ignore direct calls and jumps to other code procedures when analyzing data/MMIO accesses
-    if (isCallOrJump && !kind.data) {
-      continue;
-    }
-
-    analyzedReferences.push({
-      target_address: edge.target_address,
-      source_address: edge.source_address,
-      read: kind.available ? kind.read : null,
-      write: kind.available ? kind.write : null,
-      data: kind.available ? kind.data : null,
-      call: kind.available ? kind.call : false,
-      jump: kind.available ? kind.jump : false,
-      ...(kind.available && typeof kind.operand_index === "number"
-        ? { operand_index: kind.operand_index }
-        : {}),
-      provenance: kind.available ? kind.provenance : null,
-    });
-  }
-
-  const result = reconstructHardwareFromReferences(
-    analyzedReferences,
+  const source = producingSourceFrom(execution.value);
+  const reconstructed = reconstructHardwareFromReferences(
+    analyzedReferences(parsedReferences.data.references),
     architecture,
     procedure,
     platform ?? null,
     board ?? null,
   );
-
-  return ok({
-    ...result,
-    limitations: [...execution.value.limitations, ...result.limitations],
-  });
+  const result = {
+    ...reconstructed,
+    producingSource: source,
+    limitations: [...execution.value.limitations, ...reconstructed.limitations],
+  };
+  if (signal?.aborted) {
+    return err(
+      new AnalysisCancelledError(HARDWARE_RECONSTRUCTION, {
+        cause: signal.reason,
+        partialObservation: retainedReconstruction(result, source),
+      }),
+    );
+  }
+  return ok(result);
 };

@@ -304,7 +304,7 @@ describe("RT-Spark board annotation", () => {
     ]);
     expect(
       report.boardDrivers.find((driver) => driver.id === "rw007"),
-    ).toMatchObject({ linkage: "linked_in_image", controllers: ["SPI2"] });
+    ).toMatchObject({ linkage: "linked_in_image", controllers: ["GPIOF"] });
     expect(
       report.boardDrivers.find((driver) => driver.id === "esp8266")?.linkage,
     ).toBe("not_observed");
@@ -515,6 +515,13 @@ describe("Hardware peripheral reconstruction through analysis operation port", (
     if (!result.ok) throw result.error;
 
     expect(result.value.procedure).toBe("gpio_setup");
+    expect(result.value.producingSource).toMatchObject({
+      subjectSha256: "a".repeat(64),
+      subjectPath: "/tmp/firmware.bin",
+      providerId: "ghidra",
+      evidenceId: null,
+      evidenceLinks: [],
+    });
     expect(result.value.totalReferencesExamined).toBe(2);
     expect(result.value.mmioAccessCount).toBe(2);
     expect(result.value.peripheralBlocks).toHaveLength(2);
@@ -575,6 +582,13 @@ describe("Hardware peripheral reconstruction input failures", () => {
     expect(invalidInput.ok).toBe(false);
     if (invalidInput.ok) return;
     expect(invalidInput.error._tag).toBe("AnalysisInputError");
+    if (invalidInput.error._tag === "AnalysisInputError") {
+      expect(invalidInput.error.issues).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({ path: ["procedure"] }),
+        ]),
+      );
+    }
 
     const mismatchedBoard = await reconstructProcedureHardwareInteractions(
       mockPort,
@@ -588,6 +602,75 @@ describe("Hardware peripheral reconstruction input failures", () => {
     expect(mismatchedBoard.ok).toBe(false);
     if (mismatchedBoard.ok) return;
     expect(mismatchedBoard.error._tag).toBe("AnalysisInputError");
+    if (mismatchedBoard.error._tag === "AnalysisInputError") {
+      expect(mismatchedBoard.error.issues[0]?.path).toEqual(["board"]);
+    }
+  });
+
+  it("keeps a provider failure when cancellation arrives during the query", async () => {
+    const controller = new AbortController();
+    const result = await reconstructProcedureHardwareInteractions(
+      {
+        execute: () => {
+          controller.abort("stopped");
+          return Promise.resolve(err(new AnalysisOutputError("test", "fail")));
+        },
+      },
+      { procedure: "test_fn", architecture: "arm" },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisOutputError");
+    expect(result.error.secondaryFailures[0]).toMatchObject({
+      _tag: "AnalysisCancelledError",
+      cause: "stopped",
+    });
+  });
+
+  it("returns cancellation with the built report when the query finishes after abort", async () => {
+    const controller = new AbortController();
+    const execution: AnalysisExecution = {
+      result: {
+        procedure: ghidraFunctionIdentity(),
+        direction: "outgoing",
+        reference_kinds_available: true,
+        references: [ghidraReferenceEdge()],
+        unresolved_calls: [],
+      },
+      rawResult: null,
+      provider: { id: "ghidra", name: "Ghidra", version: "12.1.4" },
+      locations: [],
+      subject: {
+        sha256: "d".repeat(64),
+        path: "/tmp/other.bin",
+        format: "raw-binary",
+        architecture: "arm",
+      },
+      evidenceId: "ev_" + "d".repeat(64),
+      limitations: [],
+    };
+    const result = await reconstructProcedureHardwareInteractions(
+      {
+        execute: () => {
+          controller.abort("stopped");
+          return Promise.resolve(ok(execution));
+        },
+      },
+      { procedure: "fixture_main", architecture: "arm" },
+      { signal: controller.signal },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error._tag).toBe("AnalysisCancelledError");
+    expect(result.error.cause).toBe("stopped");
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "hardware-peripheral-reconstruction",
+      procedure: "fixture_main",
+      subjectSha256: "d".repeat(64),
+      providerId: "ghidra",
+      evidenceId: "ev_" + "d".repeat(64),
+    });
   });
 });
 

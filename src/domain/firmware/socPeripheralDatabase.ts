@@ -370,6 +370,13 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     description: "Analog-to-digital converter 0 (ADC1 equivalent)",
   },
   {
+    name: "ADC1",
+    base: 0x40012800n,
+    size: 0x400,
+    bus: "APB2",
+    description: "Analog-to-digital converter 1 (ADC2 equivalent)",
+  },
+  {
     name: "TIMER0",
     base: 0x40012c00n,
     size: 0x400,
@@ -398,6 +405,13 @@ const GD32F1_PERIPHERALS: readonly InternalPeripheralEntry[] = [
     size: 0x400,
     bus: "AHB",
     description: "Direct memory access controller 0 (DMA1 equivalent)",
+  },
+  {
+    name: "DMA1",
+    base: 0x40020400n,
+    size: 0x400,
+    bus: "AHB",
+    description: "Direct memory access controller 1 (DMA2 equivalent)",
   },
   {
     name: "RCU",
@@ -876,9 +890,30 @@ const ESP32_PERIPHERALS: readonly InternalPeripheralEntry[] = [
   {
     name: "RTC_CNTL",
     base: 0x3ff48000n,
-    size: 0x1000,
+    size: 0x400,
     bus: "RTC",
-    description: "Real-time clock and ultra-low power controller",
+    description: "Real-time clock and power control",
+  },
+  {
+    name: "RTCIO",
+    base: 0x3ff48400n,
+    size: 0x400,
+    bus: "RTC",
+    description: "Low-power I/O controller",
+  },
+  {
+    name: "SENS",
+    base: 0x3ff48800n,
+    size: 0x400,
+    bus: "RTC",
+    description: "SAR ADC and sensor control",
+  },
+  {
+    name: "RTC_I2C",
+    base: 0x3ff48c00n,
+    size: 0x400,
+    bus: "RTC",
+    description: "Low-power I2C controller",
   },
   {
     name: "IO_MUX",
