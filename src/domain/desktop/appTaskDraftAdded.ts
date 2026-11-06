@@ -10,6 +10,7 @@ import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { holdsFields, isRecordAt, wholeTextCheck } from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
+  isPlaceholder,
   isViewStateName,
   rankAttributes,
 } from "./attributeRank.js";
@@ -147,20 +148,27 @@ export const attributeChecks = (
       item !== element && isXmlElement(item) && item.name === element.name,
   );
   const everywhere = (key: string, value: string) =>
-    fields &&
     likes.every(
       (item) => isXmlElement(item) && attributesOf(item)[key] === value,
     );
+  // A value two or more like siblings all hold, as Grisbi's `Cu="1"`, is a default: it comes after what varies.
+  const usual = (key: string, value: string) =>
+    likes.length > 1 && everywhere(key, value) ? 1 : 0;
   return rankAttributes(
     own.filter(
       ({ key, value }) =>
-        !everywhere(key, value) &&
+        !(fields && everywhere(key, value)) &&
+        !isPlaceholder(value) &&
         !isStamp(value) &&
         !isVolatileValue(value) &&
         !isViewStateName(key) &&
         !isRenumberedKey(key),
     ),
   )
+    .toSorted(
+      (left, right) =>
+        usual(left.key, left.value) - usual(right.key, right.value),
+    )
     .slice(0, MAX_ATTRIBUTE_CHECKS)
     .map(({ key, value }) =>
       valueEqualsCheck(

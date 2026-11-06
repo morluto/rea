@@ -2,6 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -485,6 +486,8 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
   const holders = new Set<string>();
   /** Elements added whole holding text, each with the ancestor checked for it, if any. */
   const added = new Map<string, string | undefined>();
+  /** Items placed by their own position, added whole. */
+  const items: string[] = [];
   const note = (
     pointer: string,
     view: JsonValue | null,
@@ -507,6 +510,11 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
       !isWhitespace(elementText(value)) &&
       place.inTree(pointer)
     ) {
+      // An item placed by its own position is no run of its list's text.
+      if (isPlacedItem(view, pointer)) {
+        if (how === "added") items.push(pointer);
+        return;
+      }
       const { holder, listed } = textHolder(
         pointer,
         value,
@@ -525,7 +533,7 @@ const textHolders = (change: Listed, ends: Ends, place: TextPlacement) => {
   }
   for (const pointer of change.added) note(pointer, ends.final, "added");
   for (const pointer of change.removed) note(pointer, ends.baseline, "removed");
-  return { holders, added };
+  return { holders, added, items };
 };
 
 /**
@@ -546,7 +554,7 @@ export const wholeTextSuggestions = (
   ends: Ends,
   place: TextPlacement,
 ): WholeTextSuggestions => {
-  const { holders, added } = textHolders(change, ends, place);
+  const { holders, added, items } = textHolders(change, ends, place);
   const context = { file, ends, place };
   const checks = new Map<string, Placed | undefined>();
   const check = (candidate: Candidate) => {
@@ -580,6 +588,13 @@ export const wholeTextSuggestions = (
     if (found !== undefined && !placed.includes(found)) placed.push(found);
   };
   for (const holder of holders) keep(climb(holder));
+  for (const item of items)
+    keep(
+      placedItemCheck(
+        { file, ends, name: place.name, chars: place.limit.chars },
+        item,
+      ),
+    );
   for (const [element, holder] of added)
     if (holder === undefined || climb(holder) === undefined)
       keep(

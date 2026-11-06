@@ -105,6 +105,10 @@ const textSuggestions = (
   const added = [...after].filter((line) => !before.has(line));
   const gone = [...before].filter((line) => !after.has(line));
   const suggestions: Suggestion[] = [];
+  const truncated = [baseline, final].some(
+    (version) => isRecord(version.view) && version.view.truncated === true,
+  );
+  // A count is decided only on views that hold the whole file.
   const gained =
     added.length > 0 && added.length <= MAX_SUGGESTIONS
       ? addedLineChecks(
@@ -113,14 +117,11 @@ const textSuggestions = (
             before: baseline.present ? linesOf(baseline) : [],
             after: linesOf(final),
           },
-          added,
+          { added, counted: !truncated },
         )
       : { checks: [], notes: [] };
   suggestions.push(...gained.checks);
   const result = { suggestions, notes: gained.notes };
-  const truncated = [baseline, final].some(
-    (version) => isRecord(version.view) && version.view.truncated === true,
-  );
   if (truncated) return result;
   if (gone.length > 0 && gone.length <= MAX_SUGGESTIONS)
     suggestions.push({ kind: "lines_absent", file, lines: gone });

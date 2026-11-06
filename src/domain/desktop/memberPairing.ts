@@ -3,6 +3,7 @@ import { isTimestamp } from "./appTask.js";
 import {
   isGeneratedId,
   isIdentifyingAttribute,
+  isPlaceholder,
   rankAttributes,
 } from "./attributeRank.js";
 import {
@@ -33,7 +34,7 @@ const own = (record: Record<string, JsonValue>, key: string) =>
 
 /** A value a selector can carry and that stays the same between saves. */
 const selectable = (value: string) =>
-  !value.includes("][") && !isTimestamp(value);
+  !value.includes("][") && !isTimestamp(value) && !isPlaceholder(value);
 
 /** An attribute name a selector can carry. */
 const attributeName = (key: string) => key !== "" && !/[=[\]]/u.test(key);
@@ -122,8 +123,31 @@ const candidatesOf = (
     ids,
     choosable,
     byChild: suffixes.length - children.length - generated.length,
+    identified: identities.length + 1,
+    generated: generated.length,
     pairable: pairable.map(({ key }) => key),
   };
+};
+
+/**
+ * The candidates a member present in both versions pairs by, in order: its
+ * tag and stable identifiers, then an id the app generated, which a kept
+ * member keeps, as a record's UUID however its title changes, then the rest
+ * it may be keyed by. A new member is keyed with that id last (`unmatched`).
+ */
+const pairingOrder = ({
+  ids,
+  choosable,
+  identified,
+  generated,
+}: Candidates): number[] => {
+  const last = ids.length - generated;
+  const ranks = Array.from({ length: ids.length }, (_, at) => at);
+  return [
+    ...ranks.slice(0, Math.min(identified, choosable)),
+    ...ranks.slice(last),
+    ...ranks.slice(Math.min(identified, choosable), Math.min(choosable, last)),
+  ];
 };
 
 /** The selector a member's candidate at `index` spells: its name, then its id past the name's number. */
@@ -285,22 +309,54 @@ const pairRenamed = (newer: Pairing, older: Pairing) => {
 };
 
 /** Whether pairing a list holds its members' tag-only keys: the children of a document's root element, where an app may add a container of the tag, as Dia a layer. */
-export const holdsTagOnly = (list: string): boolean =>
-  /(?:^|\/)root\/children$/u.test(list);
+/** Where a list sits, for its members' `holdingCondition`: whether it is the document root's children, and the tag the step to its element names, when one does. */
+export interface ListPlace {
+  readonly root: boolean;
+  readonly owner?: string;
+}
 
-/** Give each member of a pair its tag alone names a `holdingCondition`, so it stays named if a sibling of its tag appears. */
-const holdTagOnly = (newer: Pairing, older: Pairing) => {
+/** A list's place, read from its pointer, as `/root/children/[name=gnm:Sheets]/children` sits in `gnm:Sheets`. */
+export const holdsTagOnly = (list: string): ListPlace => {
+  const owner = selectorOf(
+    (list.split("/").at(-2) ?? "").replaceAll("~1", "/").replaceAll("~0", "~"),
+  )?.find(({ prefix, key }) => prefix === "" && key === "name")?.value;
+  return {
+    root: /(?:^|\/)root\/children$/u.test(list),
+    ...(owner === undefined ? {} : { owner }),
+  };
+};
+
+/** Whether a tag is the singular of a list's, as `gnm:Sheet` of `gnm:Sheets`, so the list holds or could hold several. */
+const pluralOf = (owner: string | undefined, tag: string) => {
+  const [list, one] = [owner?.toLowerCase() ?? "", tag.toLowerCase()];
+  return (
+    list === `${one}s` ||
+    list === `${one}es` ||
+    (one.endsWith("y") && list === `${one.slice(0, -1)}ies`)
+  );
+};
+
+/**
+ * Give each member of a pair its tag alone names a `holdingCondition`, so it
+ * stays named if a sibling of its tag appears: in the root's children, and
+ * in a list named for its tag, as `gnm:Sheets` holds a `gnm:Sheet`.
+ */
+const holdTagOnly = (newer: Pairing, older: Pairing, place: ListPlace) => {
   newer.partners.forEach((match, index) => {
     const candidates = newer.candidates[index];
+    const deep =
+      candidates !== undefined && pluralOf(place.owner, candidates.name);
     if (
       match === undefined ||
       candidates === undefined ||
-      newer.keys[index] !== `[name=${candidates.name}]`
+      newer.keys[index] !== `[name=${candidates.name}]` ||
+      (!place.root && !deep)
     )
       return;
     const held = holdingCondition(
       newer.members[index] ?? null,
       older.members[match] ?? null,
+      !place.root,
     );
     if (held !== undefined)
       newer.keys[index] = older.keys[match] =
@@ -321,13 +377,14 @@ interface PairedSide {
  * element renamed by another selector (`pairRenamed`). One with no partner
  * keeps its first selector naming it alone and nothing in the other version.
  * Members left without a selector are keyed and paired by position; so is an
- * identifier the app numbers by position, as `positionalKeys` finds. With
- * `hold`, a pair its tag alone names also gets a `holdingCondition`.
+ * identifier the app numbers by position, as `positionalKeys` finds. Given
+ * the list's `place`, a pair its tag alone names also gets a
+ * `holdingCondition` (`holdTagOnly`).
  */
 export const pairMembers = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
-  hold = false,
+  place?: ListPlace,
 ): { readonly newer: PairedSide; readonly older: PairedSide } => {
   const names = new Map<string, number>();
   const positional = positionalKeys(newer, older);
@@ -347,8 +404,10 @@ export const pairMembers = (
     counts.get(id) ?? 0;
   const oldById = new Map<string, number>();
   oldCandidates.forEach((candidates, index) => {
-    for (const id of candidates?.ids.slice(0, candidates.choosable) ?? [])
+    for (const at of candidates === undefined ? [] : pairingOrder(candidates)) {
+      const id = candidates?.ids[at] ?? "";
       if (count(oldCounts, id) === 1) oldById.set(id, index);
+    }
   });
   const newKeys: (string | undefined)[] = newer.map(() => undefined);
   const oldKeys: (string | undefined)[] = older.map(() => undefined);
@@ -356,9 +415,8 @@ export const pairMembers = (
   const oldPartners: (number | undefined)[] = older.map(() => undefined);
   newCandidates.forEach((candidates, index) => {
     if (candidates === undefined) return;
-    for (const [at, id] of candidates.ids
-      .slice(0, candidates.choosable)
-      .entries()) {
+    for (const at of pairingOrder(candidates)) {
+      const id: string = candidates.ids[at] ?? "";
       const match = count(newCounts, id) === 1 ? oldById.get(id) : undefined;
       if (match === undefined || oldPartners[match] !== undefined) continue;
       newKeys[index] = oldKeys[match] = selectorAt(candidates, at);
@@ -384,7 +442,7 @@ export const pairMembers = (
     },
   ] as const;
   pairRenamed(...sides);
-  if (hold) holdTagOnly(...sides);
+  if (place !== undefined) holdTagOnly(...sides, place);
   /**
    * The first selector naming a member alone in its version and nothing in
    * the other; by a child's text only where the list's length changed, since

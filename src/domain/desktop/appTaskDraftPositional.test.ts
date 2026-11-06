@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import { passing, pointerOf, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 import { pairMembers } from "./memberPairing.js";
 import { resolvePointer } from "./viewPointer.js";
 
@@ -338,7 +338,7 @@ describe("members named by a child's text or a generated id", () => {
     ).toBe(true);
   });
 
-  it("names a new node by its text rather than the id the app generated, wherever the id sits among its attributes", () => {
+  it("names a new node by its text rather than the id the app generated, wherever the id sits among its attributes, and pairs a kept one by that id", () => {
     const map = (...nodes: string[]) =>
       `<map><node TEXT="Packing" ID="ID_1965352635">${nodes.join("")}</node></map>`;
     const node = (id: string, text: string) =>
@@ -359,8 +359,69 @@ describe("members named by a child's text or a generated id", () => {
     );
 
     expect(pairing.newer.keys).toEqual([
-      "[name=node][@TEXT=Tent]",
+      "[name=node][@ID=ID_1749680464]",
       "[name=node][@TEXT=Water filter]",
     ]);
+  });
+});
+
+describe("a container in a list named for its tag", () => {
+  /** A workbook as Gnumeric saves one: sheets in `Sheets`, each named by its `Name` child. */
+  const book = (march: string, more = "") =>
+    `<Workbook><Sheets><Sheet><Name>Budget</Name><Cells><Cell Row="2" Col="2">402.15</Cell><Cell Row="2" Col="3">${march}</Cell></Cells></Sheet>${more}</Sheets></Workbook>`;
+
+  it("names a sheet its tag alone names by its name child, so a sheet added later leaves the check its own", () => {
+    const file = xmlDraft(book("376.9"), book("418.65"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=Sheets]/children/[name=Sheet][>Name=Budget]/children/[name=Cells]/children/[name=Cell][@Col=3]/children/0",
+    ]);
+    const another = book("418.65", "<Sheet><Name>Notes</Name><Cells/></Sheet>");
+    expect(passing(FILE, xml(another), file.suggested)).toEqual([true]);
+  });
+
+  it("holds no step of a list not named for its member's tag, nor a member with no name", () => {
+    const plain = (text: string) =>
+      `<doc><body><section><title>Plan</title><p>${text}</p></section></body></doc>`;
+
+    const file = xmlDraft(plain("Monday"), plain("Tuesday"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=body]/children/[name=section]/children/[name=p]",
+    ]);
+  });
+});
+
+describe("records an app gave generated ids", () => {
+  const records = (first: string, second: string) =>
+    `<records><record id="0b5c1f0e-3c1d-4f7a-9a3e-2d7f5b8c9e10"><title>${first}</title></record><record id="7d1e2a90-5b4c-4e8f-8a21-6c3b9f0d4e57"><title>${second}</title></record></records>`;
+
+  it("pairs kept records by their ids, so titles they swapped read as two title edits, not two id changes", () => {
+    const file = xmlDraft(records("Alpha", "Beta"), records("Beta", "Alpha"));
+
+    expect(
+      file.values.map(({ pointer, kind, note }) => [
+        pointer,
+        kind,
+        note ?? null,
+      ]),
+    ).toEqual(
+      [
+        "0b5c1f0e-3c1d-4f7a-9a3e-2d7f5b8c9e10",
+        "7d1e2a90-5b4c-4e8f-8a21-6c3b9f0d4e57",
+      ].map((id) => [
+        `/root/children/[name=record][@id=${id}]/children/[name=title]/children/0`,
+        "changed",
+        null,
+      ]),
+    );
+    expect(
+      passing(FILE, xml(records("Alpha", "Beta")), file.suggested),
+    ).not.toContain(true);
+    expect(
+      passing(FILE, xml(records("Beta", "Alpha")), file.suggested).every(
+        Boolean,
+      ),
+    ).toBe(true);
   });
 });

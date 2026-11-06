@@ -374,6 +374,77 @@ describe("draftTaskFiles for an element added to a list", () => {
   });
 });
 
+describe("draftTaskFiles for a transaction appended to a Grisbi file", () => {
+  /** Transactions as Grisbi writes them: attributes only, numbered by `Nb`, every `Id` the placeholder `(null)`. */
+  const accounts = (
+    ...rows: (readonly [string, string, string, string, string])[]
+  ) =>
+    `<Grisbi>${rows
+      .map(
+        ([nb, date, amount, party, category]) =>
+          `<Transaction Ac="1" Nb="${nb}" Id="(null)" Dt="${date}" Cu="1" Am="${amount}" Exb="0" Pa="${party}" Ca="${category}" Sca="8" No="(null)" Ma="0" />`,
+      )
+      .join("")}<Party Nb="4" Na="Clearwater Utilities" /></Grisbi>`;
+  const KEPT = [
+    ["1", "10/02/2026", "-1150.00", "1", "18"],
+    ["2", "10/05/2026", "-86.40", "2", "6"],
+    ["3", "09/21/2026", "-41.30", "4", "18"],
+  ] as const;
+
+  it("names the new transaction by its number, not the placeholder id every one holds, and checks what was entered before the defaults", () => {
+    const before = accounts(...KEPT);
+    const after = accounts(...KEPT, ["4", "10/21/2026", "-58.75", "4", "18"]);
+
+    const file = xmlDraft(before, after);
+
+    const at = (key: string) =>
+      `/root/children/[name=Transaction][@Nb=4]/attributes/${key}`;
+    expect(file.suggested.slice(0, 4)).toEqual([
+      { kind: "value_equals", file: FILE, pointer: at("Pa"), value: "4" },
+      { kind: "value_equals", file: FILE, pointer: at("Ca"), value: "18" },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: at("Dt"),
+        value: "10/21/2026",
+      },
+      {
+        kind: "value_equals",
+        file: FILE,
+        pointer: at("Am"),
+        value: -58.75,
+        tolerance: 0.001,
+      },
+    ]);
+    expect(file.suggested.at(-1)).toMatchObject({
+      kind: "member_count",
+      equals: 4,
+    });
+    expect(file.notes).toEqual([]);
+    expect(passing(FILE, xml(before), file.suggested)).not.toContain(true);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
+});
+
+describe("draftTaskFiles for decimals near a seed the evaluator reads as a number", () => {
+  it("suggests no check by number that the seed's value, as `10` or `1e1`, already passes", () => {
+    for (const seed of ["10", "1e1"]) {
+      const value = (text: string) =>
+        `<doc><total>${text}</total><note>x</note></doc>`;
+
+      const file = xmlDraft(value(seed), value("10.0005"));
+
+      expect(file.suggested).not.toEqual([]);
+      expect(passing(FILE, xml(value(seed)), file.suggested)).not.toContain(
+        true,
+      );
+      expect(
+        passing(FILE, xml(value("10.0005")), file.suggested).every(Boolean),
+      ).toBe(true);
+    }
+  });
+});
+
 describe("draftTaskFiles for decimals", () => {
   it("checks a decimal the app writes as text by its number within 0.001, unless the seed's is that close too", () => {
     const shape = (x: string, y: string, size: string) =>

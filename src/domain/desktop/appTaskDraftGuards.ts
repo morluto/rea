@@ -15,6 +15,7 @@ import {
   isXmlElement,
   resolvePointer,
 } from "./viewPointer.js";
+import { selectorOf } from "./viewSelector.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -102,7 +103,40 @@ interface Sibling {
   readonly element: Record<string, JsonValue>;
 }
 
-/** The like siblings of the member a step goes through, nearest first, each paired by a selector, not by position or a renumbered id, and every like member at the seed. */
+/**
+ * How many of the attributes placing a member a sibling holds alike: those
+ * its selector names it by and those naming its type, among those whose
+ * values vary across the like members, as a spreadsheet cell shares its
+ * `Row` or `Col` and its `ValueType` with the cells beside it in its row or
+ * column, and nothing with a label in another row.
+ */
+const sharing = (
+  member: Record<string, JsonValue>,
+  likes: readonly JsonValue[],
+  key: string,
+) => {
+  const own = attributesOf(member);
+  const selected = new Set(
+    (selectorOf(key.replaceAll("~1", "/").replaceAll("~0", "~")) ?? []).map(
+      ({ key: name }) => name,
+    ),
+  );
+  const varying = Object.keys(own).filter(
+    (key) =>
+      (selected.has(key) || /type$/iu.test(key)) &&
+      new Set(
+        [member, ...likes].map((item) =>
+          isXmlElement(item) ? item.attributes[key] : undefined,
+        ),
+      ).size > 1,
+  );
+  return (item: JsonValue) =>
+    isXmlElement(item)
+      ? varying.filter((key) => item.attributes[key] === own[key]).length
+      : 0;
+};
+
+/** The like siblings of the member a step goes through, those sharing most of its attributes (`sharing`) and then the nearest first, each paired by a selector, not by position or a renumbered id, and every like member at the seed. */
 const siblingsOf = (
   context: GuardContext,
   step: ReturnType<typeof listSteps>[number],
@@ -121,12 +155,18 @@ const siblingsOf = (
     .filter(
       ({ item, index }) =>
         index !== at && isXmlElement(item) && item.name === member.name,
-    )
-    .toSorted(
-      (left, right) =>
-        Math.abs(left.index - at) - Math.abs(right.index - at) ||
-        left.index - right.index,
     );
+  const shares = sharing(
+    member,
+    likes.map(({ item }) => item),
+    step.member,
+  );
+  likes.sort(
+    (left, right) =>
+      shares(right.item) - shares(left.item) ||
+      Math.abs(left.index - at) - Math.abs(right.index - at) ||
+      left.index - right.index,
+  );
   const all = older.filter(
     (item) => isXmlElement(item) && item.name === member.name,
   );

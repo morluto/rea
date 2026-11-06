@@ -26,12 +26,13 @@ describe("draftTaskFiles values", () => {
     const file = xmlDraft(before, after);
 
     expect(file.values_cut).toBe(false);
+    // Text first, so no cut ever drops it.
     expect(file.values.map(({ pointer, kind }) => [kind, pointer])).toEqual([
-      ["added", "/root/children/[name=ope][@wording=Weekly groceries]"],
       ["changed", "/root/children/[name=note]/children/0"],
+      ["added", "/root/children/[name=ope][@wording=Weekly groceries]"],
       ["removed", "/root/children/[name=tag]"],
     ]);
-    const [added, changed, removed] = file.values;
+    const [changed, added, removed] = file.values;
     expect(added).toMatchObject({ before: null, after: GROCERIES });
     expect(removed).toMatchObject({ before: '<tag name="old"/>', after: null });
     // A scalar's before and after are what its pointer reads at each end.

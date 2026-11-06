@@ -48,9 +48,13 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 /** Seconds since 1970 of 2000-01-01 and 2100-01-01: an epoch time a save stamps falls between. */
 const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 
-/** A value a program makes anew, a UUID or an epoch time in seconds or milliseconds, which no user types. */
+/** Base64 of binary data an app encodes as it saves, as Xournal++'s page preview, a PNG (`iVBORw0KGgo`), or any run of 256 or more base64 characters mixing cases and digits, line breaks aside: no prose runs that long without a space. */
+const ENCODED =
+  /^(?:iVBORw0KGgo[A-Za-z0-9+/=\r\n]*|(?=[^]*[a-z])(?=[^]*[A-Z])(?=[^]*\d)[A-Za-z0-9+/\r\n]{256,}={0,2})$/u;
+
+/** A value a program makes anew, a UUID, an epoch time in seconds or milliseconds, or binary data it encodes, which no user types. */
 export const isVolatileValue = (value: string): boolean => {
-  if (UUID.test(value)) return true;
+  if (UUID.test(value) || ENCODED.test(value.trim())) return true;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
   return seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1];
@@ -288,9 +292,13 @@ const positionalRenumbering = (ends: Ends) => {
 const ENTRY_VIEW = /^\/entries\/[^/]+\/view\//u;
 
 /**
- * Attributes an archive entry's elements only gained, as LibreOffice fills in
- * `loext:tab-stop-distance` across `styles.xml` on save, while another entry
- * holds the edit: whether each pointer is one.
+ * What an app keeps up as it saves, while the edit is elsewhere: attributes an
+ * archive entry's elements only gained, as LibreOffice fills in
+ * `loext:tab-stop-distance` across `styles.xml`, while another entry holds
+ * the edit; and, while a change outside them is the edit, any change to a
+ * document's styles, `styles.xml` or its style containers and master,
+ * handout and notes pages, or to an attribute naming a style, as Impress
+ * wraps its master pages' fields in a new `MT1` style after a reload.
  */
 const upkeepOf = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
@@ -315,17 +323,46 @@ const upkeepOf = (
     if (entry !== undefined && noise(pointer) === undefined)
       (gained(pointer) ? filled : edited).add(entry);
   }
+  const styled = (pointer: string) => {
+    const key = attributeKeyOf(pointer);
+    const view =
+      resolvePointer(ends.final, pointer) === undefined
+        ? ends.baseline
+        : ends.final;
+    return (
+      ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
+      (key !== undefined && /style-name$/iu.test(key)) ||
+      elementsAlong(view, pointer).some(({ name }) => STYLE_AREA.test(name))
+    );
+  };
+  // The user's edit is elsewhere when a change no other rule calls noise lies outside the styles.
+  const elsewhere = [
+    ...change.added,
+    ...change.changed,
+    ...change.removed,
+  ].some(
+    (pointer) =>
+      noise(pointer) === undefined &&
+      !styled(pointer) &&
+      // An archive entry's own size and digest change with any edit to it.
+      !/^\/entries\/[^/]+\/(?!view(?:\/|$))/u.test(pointer),
+  );
   return (pointer: string) => {
     const [entry] = ENTRY_VIEW.exec(pointer) ?? [];
     return (
-      edited.size > 0 &&
-      entry !== undefined &&
-      filled.has(entry) &&
-      !edited.has(entry) &&
-      gained(pointer)
+      (elsewhere && styled(pointer)) ||
+      (edited.size > 0 &&
+        entry !== undefined &&
+        filled.has(entry) &&
+        !edited.has(entry) &&
+        gained(pointer))
     );
   };
 };
+
+/** An element holding an ODF document's styles, or its master, handout and notes pages, which an app rewrites as it saves after a reload. */
+const STYLE_AREA =
+  /^(?:office:(?:styles|automatic-styles|master-styles|font-face-decls)|style:(?:master-page|handout-master))$/u;
 
 /** A number, or a list of numbers split by commas or semicolons, as Dia's `6.3225,6.15;12.5775,8.15`. */
 const COORDINATES =
@@ -342,7 +379,8 @@ const MAX_LAYOUT_CLIMB = 3;
  * Attributes holding coordinates that changed inside an element whose text
  * changed while their own element's did not, as Dia moves and resizes a box
  * (`obj_pos`, `obj_bb`, `elem_width`) around its new text: layout the app
- * derives from the edit. The element whose text changed is at most three
+ * derives from the edit. A list of numbers is layout; a lone number only
+ * where a name on its way says it is (`namesLayout`). The element whose text changed is at most three
  * levels up and below the root's own children; an attribute of an element
  * whose own text changed, as a spreadsheet cell's `office:value` beside its
  * text, is none.
@@ -375,18 +413,64 @@ const derivedLayout = (
       )
         return false;
       const segments = owner.split("/");
-      return Array.from({ length: MAX_LAYOUT_CLIMB }, (_, index) =>
+      const above = Array.from({ length: MAX_LAYOUT_CLIMB }, (_, index) =>
         segments.slice(0, -2 * (index + 1)).join("/"),
-      ).some(
-        (above) =>
-          /\/children\/[^/]+$/u.test(above) &&
-          above.split("/").at(-3) !== "root" &&
-          retexted(above),
+      );
+      const at = above.findIndex(
+        (element) =>
+          /\/children\/[^/]+$/u.test(element) &&
+          element.split("/").at(-3) !== "root" &&
+          retexted(element),
+      );
+      // A lone number is layout only where a name on its way says so; a list of them always is.
+      return (
+        at >= 0 &&
+        (/[,;]/u.test(String(value)) ||
+          namesLayout(ends.final, pointer, [owner, ...above.slice(0, at)]))
       );
     }),
   );
   return (pointer: string) => layout.has(pointer);
 };
+
+/** A word in a name for where or how large something is drawn: a position, a point, a box, a corner, a width or height, an offset or a side. */
+const LAYOUT_WORD =
+  /^(?:pos|position|x|y|z|point|bb|bbox|bounds|rect|rectangle|corner|width|height|w|h|left|top|right|bottom|offset|origin|coords?)$/u;
+
+/** Whether a name holds a layout word, its parts split at punctuation and case, as Dia's `obj_pos`, `elem_width` or `dia:point`. */
+const isLayoutName = (name: string) =>
+  name
+    .replaceAll(/(?<lower>\p{Ll})(?<upper>\p{Lu})/gu, "$<lower> $<upper>")
+    .toLowerCase()
+    .split(/[^\p{L}\d]+/u)
+    .some((word) => LAYOUT_WORD.test(word));
+
+/**
+ * Whether the attribute at a pointer, its element's tag, or the tag or a
+ * name-like attribute's value of an element between it and the element
+ * whose text changed, names layout, as Dia keeps `elem_width` in
+ * `<dia:attribute name="elem_width"><dia:real val="6.155"/>`; an order's
+ * `<amount value="12"/>` is no layout.
+ */
+const namesLayout = (
+  view: JsonValue | null,
+  pointer: string,
+  elements: readonly string[],
+) =>
+  [
+    attributeKeyOf(pointer) ?? "",
+    ...elements.flatMap((at) => {
+      const element = resolvePointer(view, at);
+      return isXmlElement(element)
+        ? [
+            element.name,
+            ...Object.entries(element.attributes).flatMap(([key, value]) =>
+              isNameLikeKey(key) && typeof value === "string" ? [value] : [],
+            ),
+          ]
+        : [];
+    }),
+  ].some(isLayoutName);
 
 /**
  * Why each pointer into a file is noise, or undefined when it is not: a tag,

@@ -70,7 +70,7 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     ]);
   });
 
-  it("checks a mind map's node by the TEXT it holds itself, not the TEXT of the nodes in it, and names a new node by its text rather than the id the app made", () => {
+  it("checks a mind map's node by the TEXT it holds itself, not the TEXT of the nodes in it, and names a new node by its text rather than the id the app made, a kept one by that id", () => {
     const map = (packing: readonly (readonly string[])[]) =>
       `<map version="freeplane 1.7.0"><node TEXT="Weekend Trip" ID="ID_1360674148"><node TEXT="Packing" ID="ID_1965352635">${packing
         .map(
@@ -93,9 +93,9 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
     );
 
     expect(renamed.suggested.map(pointerOf)).toEqual([
-      `${TRIP}/children/[name=node][@TEXT=Packing]/children/[name=node][@ID=ID_1749680464]/attributes/TEXT`,
+      `${TRIP}/children/[name=node][@ID=ID_1965352635]/children/[name=node][@ID=ID_1749680464]/attributes/TEXT`,
     ]);
-    const packing = `${TRIP}/children/[name=node][@TEXT=Packing]/children`;
+    const packing = `${TRIP}/children/[name=node][@ID=ID_1965352635]/children`;
     expect(added.suggested).toEqual([
       {
         kind: "value_equals",

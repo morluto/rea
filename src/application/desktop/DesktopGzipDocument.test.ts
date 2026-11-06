@@ -24,7 +24,7 @@ const BUDGET = "Documents/Budget.gnumeric";
 const HOSTNAME = "e81232be457d";
 const SEED = "envs/notes/seed/Documents/Budget.gnumeric";
 const CELLS =
-  "/root/children/[name=gnm:Sheets]/children/[name=gnm:Sheet]/children/[name=gnm:Cells]/children";
+  "/root/children/[name=gnm:Sheets]/children/[name=gnm:Sheet][>gnm:Name=Budget]/children/[name=gnm:Cells]/children";
 
 /** A Gnumeric workbook's XML with its rent, author and any comment as given. */
 const workbook = (

@@ -99,6 +99,21 @@ describe("draftTaskFiles guards", () => {
   });
 });
 
+describe("draftTaskFiles guards of a spreadsheet's cells", () => {
+  it("guards the cells sharing the changed cell's row or column and value type, not a label in the next row", () => {
+    const sheet = (march: string) =>
+      `<Cells><Cell Row="1" Col="0" ValueType="60">Rent</Cell><Cell Row="1" Col="3" ValueType="40">1250</Cell><Cell Row="2" Col="0" ValueType="60">Groceries</Cell><Cell Row="2" Col="2" ValueType="40">402.15</Cell><Cell Row="2" Col="3" ValueType="40">${march}</Cell><Cell Row="3" Col="0" ValueType="60">Utilities</Cell><Cell Row="3" Col="1" ValueType="40">142.3</Cell></Cells>`;
+
+    const file = xmlDraft(sheet("376.9"), sheet("418.65"));
+
+    expect(file.guards.map(pointerOf)).toEqual([
+      "/root/children/[name=Cell][@Col=2]/children/0",
+      "/root/children/[name=Cell][@Col=3][@Row=1]/children/0",
+      "/root/children",
+    ]);
+  });
+});
+
 describe("draftTaskFiles guards beyond a sibling's same field", () => {
   it("guards a field a user sets on the siblings, not a default they all share", () => {
     const plan = (designType: string) =>

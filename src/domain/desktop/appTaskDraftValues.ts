@@ -457,9 +457,17 @@ const fieldsOf = (view: JsonValue | null, pointer: string): string[] => {
   });
 };
 
-/** How an entry sorts: what a check can name first, then what only position reaches, then noise. */
+/** How an entry sorts: what a check can name first, text before attributes and whole elements, so a cut never drops the edit; then what only position reaches; then noise. */
 const rank = (entry: DraftValue) =>
-  entry.note === undefined ? 0 : entry.note === "by_position" ? 1 : 2;
+  entry.note === undefined
+    ? typeof entry.after === "string" &&
+      !entry.after.startsWith("<") &&
+      /\/children\/\d+$/u.test(entry.pointer)
+      ? 0
+      : 1
+    : entry.note === "by_position"
+      ? 2
+      : 3;
 
 /**
  * The values a file's net change added, changed and removed, at the pointers

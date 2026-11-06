@@ -308,3 +308,98 @@ describe("draftTaskFiles upkeep in an archive", () => {
     expect(file.values.map(({ note }) => note)).toEqual([undefined]);
   });
 });
+
+describe("draftTaskFiles layout beside a text edit", () => {
+  it("keeps a number an edit changed beside text as content, unless a name on its way says it is layout", () => {
+    const shop = (description: string, amount: string, width: string) =>
+      `<shop><orders><order id="1"><description>${description}</description><amount value="${amount}"/><box width="${width}"/></order><order id="2"><description>Tape</description><amount value="1"/><box width="2"/></order></orders></shop>`;
+    const order = "/root/children/[name=orders]/children/[name=order][@id=1]";
+
+    const file = xmlDraft(
+      shop("Two boxes", "10", "4"),
+      shop("Twelve boxes", "12", "6"),
+    );
+
+    expect(
+      file.values.map(({ pointer, note }) => [
+        pointer.replace(order, "~"),
+        note ?? null,
+      ]),
+    ).toEqual([
+      ["~/children/[name=description]/children/0", null],
+      ["~/children/[name=amount]/attributes/value", null],
+      ["~/children/[name=box]/attributes/width", "layout"],
+    ]);
+    expect(file.suggested.map(pointerOf)).toContain(
+      `${order}/children/[name=amount]/attributes/value`,
+    );
+  });
+});
+
+describe("draftTaskFiles for a presentation whose save after a reload rewrote its styles", () => {
+  const entry = (name: string, view: string) => ({
+    name,
+    size: view.length,
+    sha256: view,
+    format: "xml",
+    view: xml(view),
+    view_error: null,
+  });
+  const NS =
+    'xmlns:office="o" xmlns:draw="d" xmlns:presentation="p" xmlns:text="t" xmlns:style="s"';
+  /** Slides as Impress keeps them: frames by class, each with an automatic style it shares and renumbers. */
+  const slides = (title: string) =>
+    `<office:document-content ${NS}><office:automatic-styles><text:list-style style:name="L2"><style:list-level-properties text:space-before="0.6cm"/></text:list-style></office:automatic-styles><office:body><office:presentation>${[
+      "Welcome",
+      "Schedule",
+    ]
+      .map(
+        (page) =>
+          `<draw:page draw:name="${page}"><draw:frame presentation:style-name="pr1" presentation:class="title"><draw:text-box><text:p>${page === "Schedule" ? title : "Welcome"}</text:p></draw:text-box></draw:frame><draw:frame presentation:style-name="pr4" presentation:class="outline"><draw:text-box><text:p>Tomatoes</text:p></draw:text-box></draw:frame></draw:page>`,
+      )
+      .join("")}</office:presentation></office:body></office:document-content>`;
+  /** Master pages' fields, wrapped or not in an automatic text style, beside many such pages. */
+  const masters = (wrapped: boolean, spacing: string) =>
+    `<office:document-styles ${NS}><office:automatic-styles><text:list-style style:name="L2"><style:list-level-properties text:space-before="${spacing}"/></text:list-style></office:automatic-styles><office:master-styles>${Array.from(
+      { length: 12 },
+      (_, index) =>
+        `<style:master-page style:name="M${String(index)}"><draw:frame presentation:class="footer"><draw:text-box><text:p>${wrapped ? '<text:span text:style-name="MT1"><presentation:footer/></text:span>' : "<presentation:footer/>"}</text:p></draw:text-box></draw:frame></style:master-page>`,
+    ).join("")}</office:master-styles></office:document-styles>`;
+  const deck = (title: string, wrapped: boolean) => ({
+    entries: [
+      entry("content.xml", slides(title)),
+      entry("styles.xml", masters(wrapped, wrapped ? "0.9cm" : "0.6cm")),
+    ],
+    entry_count: 2,
+    truncated: false,
+  });
+  const SCHEDULE =
+    "/entries/[name=content.xml]/view/root/children/[name=office:body]/children/[name=office:presentation]/children/[name=draw:page][@draw:name=Schedule]/children/[name=draw:frame]";
+
+  it("names a slide's frames by their class, not the automatic style the app renumbers, suggests the title alone, and lists it before the rewrite", () => {
+    const [file] = draftOf({
+      "Documents/garden.odp": statePath(
+        "document",
+        "zip",
+        deck("Planting Schedule", false),
+        deck("Spring Planting Calendar", true),
+      ),
+    });
+
+    expect(file?.suggested).toEqual([
+      {
+        kind: "text_equals",
+        file: "Documents/garden.odp",
+        pointer: `${SCHEDULE}[@presentation:class=title]`,
+        value: "Spring Planting Calendar",
+      },
+    ]);
+    const [first, ...rest] = file?.values ?? [];
+    expect(first).toMatchObject({
+      pointer: `${SCHEDULE}[@presentation:class=title]/children/[name=draw:text-box]/children/[name=text:p]/children/0`,
+      after: "Spring Planting Calendar",
+    });
+    expect(rest.length).toBeGreaterThan(10);
+    expect(rest.every(({ note }) => note === "upkeep")).toBe(true);
+  });
+});

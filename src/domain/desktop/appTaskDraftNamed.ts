@@ -20,7 +20,7 @@ import {
   isStamp,
   type NoiseReason,
 } from "./appTaskDraftNoise.js";
-import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { passesOn, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isIdentifyingAttribute } from "./attributeRank.js";
 import {
   wholeTextSuggestions,
@@ -226,16 +226,12 @@ const equals = (
     isLayoutText(tree, ends.final, pointer, value)
   )
     return;
-  if (named(collected, ends.final, pointer))
-    take(collected, "values", [
-      valueEqualsCheck(
-        file,
-        pointer,
-        value,
-        resolvePointer(ends.baseline, pointer),
-      ),
-    ]);
-  else unnamed(collected, ends.final, pointer);
+  const before = resolvePointer(ends.baseline, pointer);
+  const check = valueEqualsCheck(file, pointer, value, before);
+  // A check that already passes at the seed tells nothing.
+  if (!named(collected, ends.final, pointer))
+    unnamed(collected, ends.final, pointer);
+  else if (!passesOn(check, before)) take(collected, "values", [check]);
 };
 
 /**

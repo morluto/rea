@@ -70,7 +70,8 @@ operation `describe_desktop_application_task` and predicate type
   is, shown with its name, `<gnc:account …><act:name>Groceries</act:name>…`;
   where several elements share that key,
   the one whose tag shares the attribute's stem, as `payee` and `<pay>`. What a check can
-  name comes first, then what only position reaches, then noise. A file lists
+  name comes first, text an edit changed before the rest, so no cut drops
+  the edit, then what only position reaches, then noise. A file lists
   at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
   limit left some out. Values cover XML, archives, JSON and key files; a text
   or SQLite file's change and suggestions already carry its lines and rows.
@@ -82,9 +83,9 @@ operation `describe_desktop_application_task` and predicate type
   holding a letter whose count changed; a new line holding a value the app
   generates, a UUID, an epoch time or an id such as `ID_329023692`, gets a
   `line_count` of the lines `contains` its text up to that value, as
-  `<node TEXT="Water filter" ID="`, at the end's number, instead of a
-  `lines_present` another save would fail, or a `volatile_lines` note when
-  no text comes before it; JSON and key files gain
+  `<node TEXT="Water filter" ID="`, at the end's number, where both views
+  hold the whole file, instead of a `lines_present` another save would
+  fail, or a `volatile_lines` note when no text comes before it; JSON and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
   changed and removed, by primary key, and their new row count. An XML file,
   and the JSON, key file and XML views of a zip archive's entries, gain checks
@@ -98,7 +99,12 @@ operation `describe_desktop_application_task` and predicate type
     as Scribus's `ANNAME` or `inkscape:label`, a worded value or an integer of
     up to five digits first, then by two such attributes together, as
     Gnumeric's cells by `[@Col=3][@Row=2]`, then by a coordinate, a long
-    number or a token, such as `XPOS` or `ItemID`, or an attribute naming
+    number, a length with its unit, as `svg:height="2.629cm"`, or a token,
+    such as `XPOS` or `ItemID`, an automatic style name an app numbers as it
+    saves and renumbers on reload, as LibreOffice's
+    `presentation:style-name="pr1"` (`P1`, `T1`, `MT1`, `L2` on a
+    `*:style-name`), so a slide's frames are named by `presentation:class`,
+    or an attribute naming
     view state, such as which layer is `selected`, and last by a child
     element's text, `[>CHILD=VALUE]`, a name-like tag first, as Osmo's
     record by `[>first_name=Delphine]`, MuseScore's `<Text>` by
@@ -108,7 +114,11 @@ operation `describe_desktop_application_task` and predicate type
     counts every member holding both its values, whichever attributes that
     member ranks first. An element with identifiers is named by those alone;
     an id the app generates, as Freeplane's `ID_329023692`, ranks last, after
-    a child's text, so a new node is named by its `TEXT`. A child's text is
+    a child's text, so a new node is named by its `TEXT`, while a member
+    both versions hold pairs by such an id first, so records that keep their
+    UUIDs and swap titles read as two title edits. A value that stands for
+    none, as Grisbi's `Id="(null)"` on every transaction, names nothing, so a
+    new transaction is named by its `Nb`. A child's text is
     counted on every sibling, one an identifier names included, so a title
     two records share names neither. The selector must name the
     member alone at both ends, with the same values; a child's text names a
@@ -134,8 +144,11 @@ operation `describe_desktop_application_task` and predicate type
     as Inkscape's `[name=g][@id=layer1]`, which a new sibling would not
     share; else the text of a child both ends hold, as Dia's
     `[name=dia:layer][>dia:object=#Receive order#]`, which an empty sibling
-    lacks; else its `name`, which a new one may repeat. Deeper steps, and
-    elements with no identifier, stay as they are.
+    lacks; else its `name`, which a new one may repeat. Deeper, a member of
+    a list named for its tag, as Gnumeric's `gnm:Sheet` in `gnm:Sheets`,
+    holding elements and its tag alone naming it, gets an id, else a
+    name-like child's text, `[name=gnm:Sheet][>gnm:Name=Budget]`, else its
+    `name`. Other steps, and elements with neither, stay as they are.
     An identifier the app numbers by position names nothing: where the
     members of a tag hold it as 1..N (or 0..N-1) in document order at both
     ends, members were inserted or removed, and every member another
@@ -188,8 +201,10 @@ operation `describe_desktop_application_task` and predicate type
   - An element added to a list, where another element of its tag is at either
     end, gets a `value_equals` for each of its attributes, best ranked first,
     at most six, leaving out its selector's attributes, identifiers, times,
-    volatile values and view state, as HomeBank's new `<ope>` gets its
-    `amount`, `category` and `payee`. An element whose other attributes, two
+    volatile values, view state and values standing for none, as HomeBank's
+    new `<ope>` gets its `amount`, `category` and `payee`; a value two or
+    more like siblings all hold, as Grisbi's `Cu="1"`, comes after those
+    that vary, as its `Pa`, `Ca`, `Dt` and `Am`. An element whose other attributes, two
     or more, a like sibling holds every one of, as a new Planner task copies
     its neighbour's defaults, and any other element added whole, get a check
     that it exists. A record added to a list that a selector names, as
@@ -215,22 +230,31 @@ operation `describe_desktop_application_task` and predicate type
     members of an element a text check reads, which are runs of its text,
     for an element in mixed content, or for noise.
   - A decimal written as text, such as `146.83`, is suggested as a number
-    with `tolerance: 0.001`, unless the seed's value is that close too.
+    with `tolerance: 0.001`, unless the seed's value, read as the evaluator
+    reads a number (`10` and `1e1` included), is that close too. A
+    `value_equals` that would pass on the seed's value is not suggested.
+  - An element placed by its own position, holding numeric `x` and `y` as a
+    like sibling does, as Xournal++ places each `<text>` note on a layer, is
+    an item of its own, never a run of the others' text: one added whole
+    gets a `text_contains` of its text on the element holding the items,
+    which passes wherever it is placed, and that list's `member_count`.
   - Noise leaves the suggestions when the file's change holds anything
     else, a change only position reaches included: view state, which a tag
     or attribute on the way names (the cursor, a selection, scrolling, zoom,
     the viewport, windows, splitters, Inkscape's `namedview`, view and
     configuration settings, the printer, a save's history, edit time,
     editing duration and cycles, last-saved time, the generator and
-    document statistics), or the value of a name-like attribute or `key` on
+    document statistics, and a preview or thumbnail the app renders, as
+    Xournal++'s `<preview>`), or the value of a name-like attribute or `key` on
     the way, when it is one token of several words, as LibreOffice's
     `config:config-item[@config:name=CursorPositionX]` inside
     `[@config:name=ooo:view-settings]`; an attribute ending in `ID` or `Id`,
     or an `rsid`, that the app renumbered, with everything else in its
     element, as Gnumeric empties a formula cell whose shared expression it
     renumbers, and an identifier the app numbers by position; volatile
-    values, UUIDs and epoch times, and durations and counts under a
-    document's metadata; times the app stamps, also as a date written in
+    values, UUIDs and epoch times, binary data encoded as base64 (a PNG's
+    `iVBORw0KGgo`, or 256 or more base64 characters mixing cases and
+    digits), and durations and counts under a document's metadata; times the app stamps, also as a date written in
     parts whose tag, or one it sits in, names when the app made, changed or
     saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
     `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`,
@@ -243,11 +267,18 @@ operation `describe_desktop_application_task` and predicate type
     app's `slots`, as GnuCash's `book:slots`, which it adds to and fills on
     reopening a book, and attributes the elements of one archive entry only
     gained while another entry holds the edit, as LibreOffice fills in
-    `styles.xml` on save; and `layout`, attributes holding a number or a
-    list of them, as Dia's `obj_bb` `6.3225,6.15;12.5775,8.15`, that changed
-    in an element up to three levels below one whose text changed, below the
-    root's own children, while their own element's text did not, as Dia
-    moves and resizes a box around its new text. Geometry that changed with
+    `styles.xml` on save, and, while a change outside them is the edit, any
+    change in `styles.xml`, in a document's style containers or its master,
+    handout and notes pages, or to an attribute naming a style, as Impress
+    after a reload wraps its master pages' fields in a new `MT1` style and
+    rewrites list style `L2`; and `layout`, attributes holding a list of
+    numbers, as Dia's `obj_bb` `6.3225,6.15;12.5775,8.15`, or a number a
+    name on its way calls layout (a position, point, box, corner, width,
+    height, side or offset, as `elem_width`), that changed in an element up
+    to three levels below one whose text changed, below the root's own
+    children, while their own element's text did not, as Dia moves and
+    resizes a box around its new text; an order's `<amount value="12"/>`
+    beside its new description is content. Geometry that changed with
     no text beside it, as a CAD sketch's, is content. However much noise
     comes first, it never takes a check's place. When the change holds
     nothing else, the checks stay and a note flags them: up to three in a
@@ -261,7 +292,9 @@ operation `describe_desktop_application_task` and predicate type
 - `guards`: checks an author may add to show the edit left the rest alone,
   kept out of `task.checks`, with ids `guard-1` and on: for each suggested
   `value_equals` or `text_equals` on a member of a list, a field on up to
-  two like siblings, nearest first, at its seed value, which the end holds
+  two like siblings, those sharing most of the attributes its selector
+  names it by and its type, as a cell's `Row` or `Col` and `ValueType`,
+  then the nearest first, at its seed value, which the end holds
   too: the check's own field where like siblings hold different values in
   it, and otherwise one that varies among them, as Planner's `work` rather
   than the `type="normal"` every task shares; never through a sibling only
@@ -272,7 +305,9 @@ operation `describe_desktop_application_task` and predicate type
   among them passes; a text file a `lines_present` of the unchanged list
   items beside its first new line with the same marker, as Zim's other
   `[ ]` action items, or else its nearest lines with words in them, never a
-  lone closing tag such as `</node>`. Where members were only edited, a
+  lone closing tag such as `</node>`; an item placed by its own position
+  that an edit added, a `text_contains` of each of up to four kept items'
+  text, nearest first. Where members were only edited, a
   `member_count` of the outermost list an edit goes through by a member
   with like siblings, of the edited member's tag and kind, at the seed's
   number, as Dia's boxes in their layer or MyPaint's layers in their stack:

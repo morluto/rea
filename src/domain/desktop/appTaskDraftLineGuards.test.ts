@@ -66,3 +66,24 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
     ]);
   });
 });
+
+describe("draftTaskFiles for lines added to a text file longer than its view", () => {
+  it("counts no lines a view cut short, since a count there is undecided", () => {
+    // Both views keep the first 5,000 lines of 5,001 or more, the new line among them.
+    const long = (...added: string[]) =>
+      [
+        ...added,
+        ...Array.from({ length: 5001 }, (_, index) => `line ${String(index)}`),
+      ].join("\n");
+
+    const file = drafted(
+      long(),
+      long(
+        'topic TEXT="Water filter" ID="ID_329023692" CREATED="1793955250671"',
+      ),
+    );
+
+    expect(file.change).toMatchObject({ complete: false });
+    expect(file.suggested.map(({ kind }) => kind)).not.toContain("line_count");
+  });
+});

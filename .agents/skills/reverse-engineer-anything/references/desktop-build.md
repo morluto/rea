@@ -311,6 +311,9 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
 - For a line added to free text, such as an item on a note's list, the
   draft suggests `text_contains` of the new line, which passes however the
   app spaces or orders it, and a guard per line it kept.
+- For a note placed by its own `x` and `y`, such as Xournal++'s `<text>`
+  on a layer, the draft checks its text on the layer with `text_contains`,
+  which passes wherever the user puts it, and guards each note it kept.
 - Some apps keep text in an attribute, one element per run, such as
   Scribus's `<ITEXT CH=...>`: add `"text_attribute": "CH"` to `text_equals`
   or `text_contains` on the frame,
