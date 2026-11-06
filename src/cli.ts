@@ -27,6 +27,9 @@ import type { FridaInstrumentationPort } from "./application/frida/FridaInstrume
 import { Cli, z } from "incur";
 import {
   adaptCliOutputArgumentsForIncur,
+  classifyMcpAddDiscovery,
+  expandMcpAddEqualsArguments,
+  mcpAddAgents,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
@@ -84,6 +87,7 @@ import {
   presentCliArgumentErrors,
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
 import {
   closeCliGuidanceResources,
   registerGuidanceCommands,
@@ -261,21 +265,19 @@ export const createCli = (
     let normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+    const discovery = classifyMcpAddDiscovery(flags);
     if (
       command[builtin] === "mcp" &&
       command[builtin + 1] === "add" &&
-      !flags.has("--help") &&
-      !flags.has("-h") &&
-      !flags.has("--llms") &&
-      !flags.has("--llms-full")
+      discovery !== "bypass"
     ) {
       const write =
         options?.stdout ?? ((text: string) => process.stdout.write(text));
-      if (flags.has("--version")) {
+      if (discovery === "version") {
         write(`${PRODUCT_IDENTITY.packageVersion}\n`);
         return Promise.resolve();
       }
-      if (flags.has("--schema")) {
+      if (discovery === "schema") {
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
@@ -374,14 +376,9 @@ export const createCli = (
       // equals form like `--agent=amp` is silently ignored, which would drop
       // the requested agent and register against the default target. Normalize
       // equals forms back to spaced forms before handing over to Incur.
-      const serveArguments = normalized.flatMap((token) => {
-        if (token.startsWith("--agent=") || token.startsWith("--command=")) {
-          const separator = token.indexOf("=");
-          const value = token.slice(separator + 1);
-          return value === "" ? [token] : [token.slice(0, separator), value];
-        }
-        return [token];
-      });
+      // Shared with the project-scope guard through
+      // `expandMcpAddEqualsArguments`, so both read the same agent selection.
+      const serveArguments = expandMcpAddEqualsArguments(normalized);
       // Incur's Amp registration overwrites an existing rea entry (dropping its
       // environment map) and reports success even when the settings file
       // prevents a save. Guard that path: reject a settings file REA cannot
@@ -394,16 +391,7 @@ export const createCli = (
       normalized = serveArguments;
       const registration = splitIncurBuiltinArguments(serveArguments);
       const rest = registration.command.slice(builtin + 2);
-      const agents: string[] = [];
-      for (let index = 0; index < rest.length; index += 1) {
-        if (
-          (rest[index] === "--command" || rest[index] === "-c") &&
-          rest[index + 1]
-        )
-          index += 1;
-        else if (rest[index] === "--agent" && rest[index + 1])
-          agents.push(rest[++index]!);
-      }
+      const agents = mcpAddAgents(rest);
       const ampRequested =
         ![
           "--help",
@@ -614,7 +602,9 @@ export const createCli = (
     }
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
-        serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+        reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
+          ? Promise.resolve()
+          : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
       ),
     );
     const note = completionHelpNote(normalized);

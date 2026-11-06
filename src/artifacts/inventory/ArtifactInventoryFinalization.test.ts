@@ -17,6 +17,28 @@ import {
 
 afterEach(() => vi.restoreAllMocks());
 
+it("reports a cancelled ChangeTime settle as inventory cancellation", async () => {
+  const root = await createTestTempDirectory("rea-inventory-settle-cancel-");
+  await writeFile(join(root, "main.js"), "export const observed = 1;\n");
+  const scope = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new DOMException("This operation was aborted", "AbortError");
+  controller.abort(reason);
+  const failure: unknown = await scope
+    .run(() =>
+      scanCanonicalArtifactInventoryInScope(root, {
+        resourceScope: scope,
+        signal: controller.signal,
+      }),
+    )
+    .catch((cause: unknown) => cause);
+  expect(failure).toBeInstanceOf(ArtifactReaderFailure);
+  expect(failure).toMatchObject({
+    reason: "cancelled",
+    cancellation: { reason },
+  });
+});
+
 const zipFixture = async () => {
   const directory = await createTestTempDirectory(
     "rea-inventory-finalization-",

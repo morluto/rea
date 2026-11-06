@@ -43,6 +43,17 @@ focused tools such as `list_procedures` and `analyze_function` on the same sessi
 | What did the declared runtime scenario observe?              | [Desktop](#native-desktop-observation) or [call observation](#native-call-observation) |
 | What can this provider and host establish?                   | [Provider boundaries](#provider-and-verification-boundaries)                           |
 
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
+
 ## Exact CLI selectors
 
 `function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
@@ -1200,7 +1211,8 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
+x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
+executables](ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
 on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and

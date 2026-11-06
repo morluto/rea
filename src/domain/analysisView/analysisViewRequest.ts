@@ -1,3 +1,5 @@
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import {
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
@@ -11,6 +13,7 @@ import { nativeExportsViewRequestSchema } from "./nativeExportsView.js";
 import { javaScriptRoutesViewRequestSchema } from "./javascriptRoutesView.js";
 import { webBundleViewRequestSchema } from "./webBundleView.js";
 import { sourceToBundleViewRequestSchema } from "./sourceToBundleView.js";
+import { endpointComparisonViewRequestSchema } from "./endpointComparisonView.js";
 import { featureTraceViewRequestSchema } from "./featureTraceView.js";
 import { nativeFeatureTraceViewRequestSchema } from "./nativeFeatureTraceView.js";
 import { batchDecompileViewRequestSchema } from "./batchDecompileView.js";
@@ -72,6 +75,9 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   webBundleViewRequestSchema,
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
+  endpointComparisonViewRequestSchema,
+  apiContractViewRequestSchema,
+  playwrightTraceViewRequestSchema,
   featureTraceViewRequestSchema,
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,

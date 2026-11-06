@@ -82,6 +82,12 @@ boundaries are out of scope for this increment and stay in the projection's
 `limitations` array until a dedicated HarmonyOS provider exists. REA fails
 closed on packages whose inventory cannot be authenticated.
 
+`pkgContextInfo.json` is inventoried and listed as an unclassified component but
+never read, so its `isSO` declarations do not narrow `bridge_candidates`. When
+that entry is present the projection adds a limitation naming the unread
+declaration, so a path-convention hypothesis is not mistaken for a package
+declaration.
+
 ## Verification lane
 
 `npm run fixtures:harmony` downloads the SHA-256-pinned 1.0.1 HAP release

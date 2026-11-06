@@ -1,8 +1,11 @@
+import { ManagedDecodeBudget } from "./ManagedDecodeBudget.js";
+import { prepareManagedMemberRecovery } from "./ManagedMemberRecovery.js";
 import { expect, it } from "vitest";
 
 import { inspectManagedMembersBytes } from "./ManagedMemberInspector.js";
 import {
   buildManagedPeFixture,
+  buildManagedNestedTypeFixture,
   managedPeFixtureTarget,
 } from "./ManagedPe.fixture.js";
 import { buildManagedMemberCapacityFixture } from "../../tests/fixtures/managedMemberCapacity.js";
@@ -95,6 +98,25 @@ it("preserves explicit type selection when its selected body exhausts capacity",
     type_names: ["Fixture.Program", "Missing.Type"],
     unmatched_type_names: ["Missing.Type"],
   });
+});
+
+it("explains capacity exhaustion after a single-type selection", () => {
+  const bytes = buildManagedMemberCapacityFixture();
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Fixture.Program"],
+    },
+  );
+  expect(result.coverage.state).toBe("partial");
+  expect(result.coverage.issues).toContainEqual(
+    expect.objectContaining({ code: "resource-limit" }),
+  );
+  const guidance = result.limitations.join(" ");
+  expect(guidance).toMatch(/single.type selection/i);
+  expect(guidance).toMatch(/assembly.wide/i);
+  expect(guidance).not.toContain("inspect a smaller selection");
 });
 
 it("retains types when a field signature exceeds the decoding bound", () => {
@@ -374,5 +396,28 @@ it("reads inventory names on demand without admitting TypeDef member lists or Ex
       expect.objectContaining({ code: "invalid-row", offset: selected + 10 }),
       expect.objectContaining({ code: "invalid-row", offset: selected + 12 }),
     ]),
+  );
+});
+
+it("keeps narrowing advice when one bare name selects multiple nested types", () => {
+  const bytes = buildManagedNestedTypeFixture();
+  const inventory = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["Inner"],
+    },
+  );
+  expect(inventory.types).toHaveLength(2);
+  const recovery = prepareManagedMemberRecovery(
+    inventory,
+    [],
+    new ManagedDecodeBudget(),
+  )(0);
+  expect(recovery.limitations.join(" ")).toContain(
+    "inspect a smaller selection",
+  );
+  expect(recovery.limitations.join(" ")).not.toContain(
+    "This single-type selection",
   );
 });

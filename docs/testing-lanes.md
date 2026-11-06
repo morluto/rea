@@ -467,13 +467,14 @@ references, timeout recovery, and cleanup. Linux, other hosts, and the larger
 ## DOS Ghidra analysis
 
 `npm run verify:ghidra:dos` requires the supported Ghidra and JDK installation
-on Linux x64 or macOS x64/arm64. It generates a source-owned MZ fixture without
+on Linux x64, macOS x64/arm64, or Windows x64 P0. It generates a source-owned MZ fixture without
 a DOS emulator or compiler, then checks real 16-bit decoding, segment
 relocation, near/far calls, decompilation, disjoint function body ranges,
 stable CLI/MCP observations, unchanged source bytes, and owned process/project
 cleanup. Raw p-code address-space selector tokens are reported separately from
-the stable observation comparison. Linux x64 and macOS arm64 are verified;
-macOS x64 remains unverified. This lane is separate from host-native and optional cross-format
+the stable observation comparison. Linux x64, macOS arm64 and Windows x64 are
+verified; macOS x64 remains unverified. On Windows P0 the lane checks that
+annotation edits are refused instead of exercising them. This lane is separate from host-native and optional cross-format
 verification. See [DOS analysis](ghidra-dos.md).
 
 `npm run verify:ghidra:com` uses a generated headerless fixture with no compiler,
@@ -1172,9 +1173,10 @@ installed package entrypoint as the script's first argument for package coverage
 
 `npm run verify:agentenv:environment` is the `real-agentenv` lane. It requires
 the host's Docker CLI named by absolute `REA_DOCKER_COMMAND`, Python 3.12 with
-`agentenv-framework==0.9.1334` installed in a virtual environment whose
+`agentenv-framework==0.9.1431` installed in a virtual environment whose
 `agent-env` binary is named by absolute `REA_AGENT_ENV_COMMAND`, and outbound
-network for `pip` on the runner and for `npm` inside the image build. Both
+network for `pip` on the runner, for the framework's image pulls from `ghcr.io`
+and for `npm` inside the image build. Both
 variables are required; neither upstream executable is resolved from `PATH`,
 and the verifier installs nothing. Packing uses the shared npm helper, honoring
 `npm_execpath` from the caller's selected npm. Direct Node invocations without
@@ -1186,11 +1188,12 @@ storage, exports both paths and uses the runner's own Docker; no developer host
 configuration changes. `agent-env run` attempts share one 22-minute budget
 inside the 30-minute job (the first attempt at most 15 minutes), so a hung or
 retried run ends with the verifier's failed receipt rather than the runner's
-kill. The framework builds its gateway and service-db
-images from `public.ecr.aws` on every fresh runner, and hosted runners share
-that registry's anonymous pull quota, so the lane first pulls the base images
-the pinned framework's Dockerfiles name from `mirror.gcr.io`, which serves the
-same Docker official images under the same digests, and names them as those
+kill. The pinned framework pulls its gateway and service-db images from
+`ghcr.io/scaleapi` by the digests its release records and builds one only when
+its pull fails. Those builds start from `public.ecr.aws` base images, and hosted
+runners share that registry's anonymous pull quota, so the lane first pulls the
+base images the gateway and service-db Dockerfiles name from `mirror.gcr.io`,
+which serves the same Docker official images under the same digests, and names them as those
 Dockerfiles do (on Docker's containerd image store, so digest-pinned names
 resolve), as the framework's own CI does. The quota handling below covers
 anything still pulled from that registry. The receipt's `agent_env_run` records the
@@ -1218,13 +1221,19 @@ that served tool count, and that no container exists
 after the run that did not exist before; the container inventory runs even when
 the run fails or times out, so a failed receipt still lists what it left. The one exception is the framework's
 own image-store helper, `agentenv-registry` (or `agentenv-registry-<port>`),
-a `registry:2` container the local provider starts on first use and keeps
-running across runs; a first run on a fresh host creates it, so the receipt
-lists it under `image_store_helpers` instead of counting it as a leak. Images
+a `registry:2` container the local provider starts when it first stores an image
+it built and keeps running across runs. The pinned framework registers its
+published infra images, and a deploy that cannot pull one builds it into the
+host's Docker, so a fresh run does not normally create the helper; if one does,
+the receipt lists it under `image_store_helpers` instead of counting it as a leak. Images
 built by the run remain and are counted in the receipt. Pass an installed
 package entrypoint as the script's first argument for package coverage.
 
 ## Agent evaluation and conformance records
+
+For catalog-loading measurements, use the real Codex
+[MCP catalog evaluation](mcp-catalog-evaluation.md). It separates observed usage
+from advertisement bytes and from completed-task correctness.
 
 `npm run verify:agent` evaluates investigation scenarios through a real local
 Codex CLI. The lane runs sequentially; select scenarios with
