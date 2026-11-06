@@ -77,10 +77,14 @@ it("evaluates every kind of check in the exported verifier as REA does", async (
   );
 
   const output = JSON.parse(
-    execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify(CHECK_VIEWS),
-      encoding: "utf8",
-    }),
+    execFileSync(
+      process.platform === "win32" ? "python" : "python3",
+      ["-I", "-B", "-X", "utf8", "-c", DRIVER, folder, verifier],
+      {
+        input: JSON.stringify(CHECK_VIEWS),
+        encoding: "utf8",
+      },
+    ),
   ) as {
     called: string[];
     results: { id: string; result: boolean; description: string }[];
