@@ -29,6 +29,7 @@ const computer = (files: ReadonlyMap<string, Buffer>, steps: string[]) => {
         truncated: false,
         timed_out: false,
       }),
+    redacted: (text: string) => text,
     homeFiles: (paths: readonly string[], bytes: number) => {
       if (paths[0]?.endsWith(".listing.json") === true)
         return Promise.resolve(new Map([[paths[0], listing]]));

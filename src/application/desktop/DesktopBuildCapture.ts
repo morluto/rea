@@ -13,7 +13,11 @@ import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
-import { notAnswered, startFailure } from "./DesktopBuildCaptureFailure.js";
+import {
+  endedCapture,
+  notAnswered,
+  type CaptureStep,
+} from "./DesktopBuildCaptureFailure.js";
 import {
   adapterError,
   controller,
@@ -36,6 +40,20 @@ const START = "start_build_capture";
 const MARK = "mark_build_checkpoint";
 const STOP = "stop_build_capture";
 const EXPORT = "export_build_environment";
+/** The start's step, for a capture that ended before the app's window opened. */
+const STARTING: CaptureStep = {
+  operation: START,
+  when: "before the app's window opened",
+  afterAppExit:
+    "The app does not run as installed: check what it needs, such as a runtime its stderr names, or install it from another source on a new build computer, and close this one.",
+};
+/** A checkpoint's step, for a capture that ended before acknowledging it. */
+const marking = (name: string): CaptureStep => ({
+  operation: MARK,
+  when: `before checkpoint ${name}`,
+  afterAppExit:
+    "The capture ended with the app: stop_build_capture reads what it recorded, then start_build_capture captures again.",
+});
 const NOT_RUNNING = [
   "No capture is running on this computer.",
   "Start one with start_build_capture.",
@@ -204,7 +222,12 @@ export class DesktopBuildCapture {
     const event = answer.line === undefined ? undefined : eventOf(answer.line);
     if (event?.kind !== "window_open")
       return err({
-        failure: await startFailure(this.computer, run.folder, answer, signal),
+        failure: await endedCapture(
+          this.computer,
+          { ...STARTING, folder: run.folder },
+          answer,
+          signal,
+        ),
         answer,
       });
     return ok({
@@ -259,7 +282,15 @@ export class DesktopBuildCapture {
         answer.line === undefined ? undefined : eventOf(answer.line);
       if (event?.kind === "checkpoint_refused")
         return err(refused(MARK, event.reason, "Use another checkpoint name."));
-      if (event?.kind !== "checkpoint") return err(notAnswered(MARK, answer));
+      if (event?.kind !== "checkpoint")
+        return err(
+          await endedCapture(
+            this.computer,
+            { ...marking(name), folder: run.folder },
+            answer,
+            signal,
+          ),
+        );
       run.checkpoints.add(name);
       const { kind: _kind, ...taken } = event;
       return ok(taken);

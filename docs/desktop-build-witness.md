@@ -41,9 +41,13 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    When the capture ends before the window opens, REA reads its output. An app
    that exits at launch, such as one missing a runtime, is reported with its
    program, exit code, run time and the last lines of its stderr, at most 8
-   lines and 800 characters, and `details.diagnostics` keeps the capture's
-   record of the session. A capture that refused to start gives its own
-   message and remediation.
+   lines and 800 characters of the last 8 KiB the capture keeps, and
+   `details.diagnostics` keeps the capture's record of the session. A capture
+   that failed, such as one refusing to start, gives its own message and
+   remediation, with the whole failure in `details.diagnostics.command_failure`
+   and, when its cleanup is incomplete, the run tokens and paths it left in
+   `details.resources`. A checkpoint or stop that finds the capture ended
+   reads its output the same way.
 3. Make the seed through the app with `act_on_build_computer`, saving it
    where the user keeps such files, such as `~/Documents`, then
    `mark_build_checkpoint` `seed`.
@@ -104,7 +108,9 @@ computer's control token. REA sends each command through agentenv's
 `computer-exec/v1` route with that token, which stays in REA, and reads larger
 outputs, such as the draft, the export's Evidence and the bundle's file
 list, from files under `~/.rea-build` through `data/get`, since a command's
-output is capped at 1 MiB.
+output is capped at 1 MiB. In a command's Evidence or failure read this way,
+as in its own output, REA replaces the token in every string, after checking
+the Evidence's digest; the bundle's files arrive as they are.
 
 Calls on one computer run one at a time, in the order REA receives them:
 an action, a capture step, a check or a close waits until the call before

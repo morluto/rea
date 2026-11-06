@@ -302,8 +302,9 @@ process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
 belongs to the application; when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
-later; files the application's processes held open under the walked roots; the first
-8 KiB of the launched process's stderr; and whether cleanup was verified. Each
+later; files the application's processes held open under the walked roots; the last
+8 KiB of the launched process's stderr, where a failing app's last words are,
+with `stderr_truncated` when earlier output was dropped; and whether cleanup was verified. Each
 process records whether the capture started it: the launched process, a
 process carrying the capture's run token, or a descendant of one, even when
 its environment cannot be read, as for a zombie or a sandboxed renderer.

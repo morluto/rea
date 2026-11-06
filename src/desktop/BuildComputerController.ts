@@ -15,8 +15,11 @@ const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
 
 let source: Promise<string> | undefined;
 
-/** The computer routes REA's build controller uses. */
-export type ControlledComputer = Pick<AgentEnvComputer, "exec" | "homeFiles">;
+/** The computer routes REA's build controller uses, and the control token's redaction for what it reads. */
+export type ControlledComputer = Pick<
+  AgentEnvComputer,
+  "exec" | "homeFiles" | "redacted"
+>;
 
 /**
  * Run one command of REA's build controller in the computer, as its user and

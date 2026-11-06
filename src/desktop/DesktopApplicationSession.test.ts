@@ -139,3 +139,27 @@ describe.skipIf(process.platform !== "linux")(
     }, 30_000);
   },
 );
+
+describe.skipIf(process.platform === "win32")(
+  "runDesktopSession stderr",
+  () => {
+    it("keeps the end of an app's stderr when it writes more than the session keeps", async () => {
+      const root = await createTestTempDirectory("desktop-session-stderr-");
+      const cause =
+        "[error] notes: Unable to find an appropriate java runtime.";
+      // About 16 KiB of warnings, then the cause, as an app that fails at launch writes.
+      const outcome = await runDesktopSession(
+        shellPlan(
+          root,
+          `i=0; while [ $i -lt 400 ]; do echo "[warning] notes: probing runtime $i of 400" >&2; i=$((i+1)); done; echo '${cause}' >&2; exit 1`,
+        ),
+      );
+
+      const { stderr, stderr_truncated } = outcome.session;
+      expect(stderr.trimEnd().endsWith(cause)).toBe(true);
+      expect(stderr).not.toContain("runtime 0 of 400");
+      expect(Buffer.byteLength(stderr)).toBeLessThanOrEqual(8 * 1024);
+      expect(stderr_truncated).toBe(true);
+    }, 30_000);
+  },
+);

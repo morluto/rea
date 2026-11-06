@@ -407,7 +407,7 @@ export class AgentEnvComputer {
     );
     if ("error" in answer)
       throw new Error(
-        `data/get failed: ${this.#redacted(answer.error.message)}`,
+        `data/get failed: ${this.redacted(answer.error.message)}`,
       );
     return new Map(
       answer.result.parts.flatMap((part) => {
@@ -442,8 +442,8 @@ export class AgentEnvComputer {
     );
     return {
       ...result,
-      stdout: this.#redacted(result.stdout),
-      stderr: this.#redacted(result.stderr),
+      stdout: this.redacted(result.stdout),
+      stderr: this.redacted(result.stderr),
     };
   }
 
@@ -481,7 +481,7 @@ export class AgentEnvComputer {
     );
     if ("error" in answer)
       throw new Error(
-        `${method} failed: ${this.#redacted(answer.error.message)}`,
+        `${method} failed: ${this.redacted(answer.error.message)}`,
       );
     return method === "data/get"
       ? z.object({ parts: z.array(z.unknown()) }).parse(answer.result).parts
@@ -522,7 +522,8 @@ export class AgentEnvComputer {
     }
   }
 
-  #redacted(text: string): string {
+  /** `text` with the control token replaced, as every answer REA reads from the computer's routes and commands. */
+  redacted(text: string): string {
     return this.#token === null
       ? text
       : text.replaceAll(this.#token, "[control token]");
@@ -556,7 +557,7 @@ export class AgentEnvComputer {
     const text = await readBounded(response, limit.bytes, limit.what);
     if (!response.ok)
       throw new Error(
-        `The computer answered ${path} with HTTP ${String(response.status)}: ${this.#redacted(text.slice(0, 512))}`,
+        `The computer answered ${path} with HTTP ${String(response.status)}: ${this.redacted(text.slice(0, 512))}`,
       );
     return JSON.parse(text) as unknown;
   }

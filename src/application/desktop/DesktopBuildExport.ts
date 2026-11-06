@@ -17,6 +17,7 @@ import {
   errorText,
   readOutput,
   refused,
+  reportedFailure,
   runRea,
 } from "./DesktopBuildCommands.js";
 import {
@@ -158,7 +159,7 @@ export const exportBuild = async (
               output.failure.remediation?.action ??
                 "Rewrite the task and export again.",
             )
-          : adapterError(EXPORT, output.failure.message),
+          : reportedFailure(EXPORT, output),
       );
     const result = exportResultSchema.parse(output.result);
     const written = await writeBundle(

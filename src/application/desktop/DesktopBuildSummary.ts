@@ -15,9 +15,9 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
 import {
-  adapterError,
   ENDS,
   readOutput,
+  reportedFailure,
   runRea,
 } from "./DesktopBuildCommands.js";
 
@@ -147,9 +147,7 @@ export const summarizeCapture = async (
     signal,
   );
   if (output.kind === "failure")
-    return err(
-      adapterError(STOP, `The capture failed: ${output.failure.message}`),
-    );
+    return err(reportedFailure(STOP, output, "The capture failed: "));
   const recorded = desktopApplicationCaptureSchema.parse(output.result);
   const checkpoints = new Set(
     recorded.state.checkpoints.map((checkpoint) => checkpoint.name),
