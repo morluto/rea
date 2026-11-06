@@ -924,12 +924,14 @@ are currently unavailable. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
 
-Each listed tool carries its owning family in `_meta` under REA's
+Each listed domain tool carries its owning family in `_meta` under REA's
 vendor-prefixed key, for example
 `{ "io.github.morluto/rea": { "family": "native" } }`. The value is the
 tool-family id from the product catalog's `tools.families`, the same
 vocabulary [`REA_MCP_TOOL_FAMILIES`](#tool-family-advertising-scope) accepts,
-so a client can map any advertised tool back to the scope that enables it.
+so a client can map each advertised domain tool back to the scope that enables it.
+The adapter's `discover_tools` has no selectable family or family `_meta`;
+it remains available independently of the selected families.
 Clients and gateways that index a large catalog lazily can group tools by this
 value instead of guessing from tool names. It
 carries no availability fact; read `binary_session` for the current target,

@@ -18,7 +18,12 @@ it.each(["full", "compact"] as const)(
       }),
       serverOptions: {
         logger: silentLogger,
-        environment: { ...process.env, REA_MCP_INPUT_SCHEMA_PROFILE: profile },
+        environment: {
+          ...process.env,
+          REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+          REA_MCP_TOOL_FAMILIES: undefined,
+          REA_MCP_TOOL_CATALOG_PROFILE: "full",
+        },
       },
       clientIdentity: { name: "tool-family-meta", version: "1" },
     });
