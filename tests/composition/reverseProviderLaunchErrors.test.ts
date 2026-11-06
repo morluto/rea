@@ -534,6 +534,90 @@ it("preserves command deadline timeout when macOS helper preparation aborts with
   }
 });
 
+it("uses platform-aware recovery without /proc when Darwin baseline capture rejects identity_snapshot_unavailable", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const platformSpy = vi
+    .spyOn(systemProcessOwnershipHost, "platform", "get")
+    .mockReturnValue("darwin");
+  const captureSpy = vi
+    .spyOn(systemProcessOwnershipHost, "captureBaseline")
+    .mockRejectedValue(
+      new ProcessAdmissionError("identity_snapshot_unavailable", {
+        live_processes: 2,
+      }),
+    );
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(projected.remediation.action).toContain(
+        "ensure REA has permission to inspect process identities",
+      );
+      expect(projected.remediation.action).not.toContain("/proc");
+      expect(projected.remediation.action).toContain(
+        "REA_OBJDUMP_COMMAND does not need to change",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    captureSpy.mockRestore();
+    platformSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("preserves pre-spawn ps missing error during baseline capture without blaming configured command", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const psMissing = Object.assign(new Error("spawn ps ENOENT"), {
+    code: "ENOENT",
+    path: "ps",
+    syscall: "spawn ps",
+  });
+  const captureSpy = vi
+    .spyOn(systemProcessOwnershipHost, "captureBaseline")
+    .mockRejectedValue(psMissing);
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("capability_unavailable");
+      expect(projected.details).toMatchObject({
+        provider_id: "process-ownership",
+      });
+      expect(projected.remediation.action).toContain(
+        "standard ps executable is available on PATH",
+      );
+      expect(projected.remediation.action).toContain(
+        "REA_OBJDUMP_COMMAND does not need to change",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
+    captureSpy.mockRestore();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
   "preserves Linux process ownership admission failure in baseline capture (%s) without blaming objdump command",
   async (code) => {

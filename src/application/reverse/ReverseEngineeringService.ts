@@ -51,6 +51,7 @@ import {
   DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
   processOwnershipAdmissionRecovery,
+  systemProcessOwnershipHost,
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
@@ -652,6 +653,7 @@ export class ReverseEngineeringService {
             : "REA_RIZIN_COMMAND";
         const recovery = processOwnershipAdmissionRecovery(
           admissionFailure.code,
+          systemProcessOwnershipHost.platform ?? process.platform,
         );
         earlyFailure = new AnalysisCapabilityUnavailableError(
           "process-ownership",
@@ -769,22 +771,51 @@ export class ReverseEngineeringService {
             provider === "objdump"
               ? "REA_OBJDUMP_COMMAND"
               : "REA_RIZIN_COMMAND";
-          earlyFailure = new AnalysisCapabilityUnavailableError(
-            profile.identity.id,
-            operation,
-            `Unable to run configured command (${String(code ?? "unknown error")})`,
-            {
-              cause,
-              userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
-              remediationAction: `Set ${setting} to an installed executable ${provider === "objdump" ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
-              diagnostics: {
-                boundary: "provider-launch",
-                command,
-                system_code: code ?? null,
+          const isPsPrerequisiteFailure =
+            (typeof cause === "object" &&
+              cause !== null &&
+              (Reflect.get(cause, "path") === "ps" ||
+                (typeof Reflect.get(cause, "syscall") === "string" &&
+                  (Reflect.get(cause, "syscall") as string).includes("ps")) ||
+                (cause instanceof Error &&
+                  cause.message.startsWith("spawn ps")))) ||
+            false;
+          if (isPsPrerequisiteFailure) {
+            const reason =
+              cause instanceof Error ? cause.message : String(cause);
+            earlyFailure = new AnalysisCapabilityUnavailableError(
+              "process-ownership",
+              "prepare_owned_process",
+              `Process ownership inspection requires a standard ps on REA's PATH before starting ${provider}: ${reason}`,
+              {
+                cause,
+                userMessage: `Process ownership inspection requires a standard ps on REA's PATH before starting ${provider}.`,
+                remediationAction: `Install ps or ensure a standard ps executable is available on PATH before retrying; ${setting} does not need to change.`,
+                diagnostics: {
+                  boundary: "process-ownership",
+                  system_code: code ?? null,
+                },
+                ...ownedCleanupOptions(cause),
               },
-              ...ownedCleanupOptions(cause),
-            },
-          );
+            );
+          } else {
+            earlyFailure = new AnalysisCapabilityUnavailableError(
+              profile.identity.id,
+              operation,
+              `Unable to run configured command (${String(code ?? "unknown error")})`,
+              {
+                cause,
+                userMessage: `Could not launch the selected ${provider} executable ${JSON.stringify(command)} (${String(code ?? "unknown error")}).`,
+                remediationAction: `Set ${setting} to an installed executable ${provider === "objdump" ? "GNU objdump" : "Rizin"} command, or make that command available on PATH. Check execute permission on the command and search permission on its parent directories before retrying.`,
+                diagnostics: {
+                  boundary: "provider-launch",
+                  command,
+                  system_code: code ?? null,
+                },
+                ...ownedCleanupOptions(cause),
+              },
+            );
+          }
         }
       }
       if (earlyFailure === undefined && capture !== undefined) {
