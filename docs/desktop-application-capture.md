@@ -211,21 +211,27 @@ found by verification, not by name: the candidates are the
 entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in apt's trusted
 parts folder and its trusted keyring, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
-beside its index in apt's lists folder. A key counts when gpgv reports a
-valid signature by it and no bad, expired, revoked or unverifiable signature
-by it, whatever gpgv's exit status: a release also signed by a key the host
-lacks makes gpgv fail. Each candidate is copied, an armored key decoded to a
-binary keyring, into a private temporary folder that is removed afterwards; a
-folder REA cannot remove fails the capture with the folder as its cleanup
-resource. The key that verifies is recorded in `signing_key` with its path,
+beside its index in apt's lists folder. A deb822 entry whose `Signed-By` field
+holds the armored key itself, as `add-apt-repository ppa:<owner>/<name>`
+writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
+no other for it: REA reads the field's continuation lines as deb822 writes
+them, a `.` line standing for an empty one, from the key block's `BEGIN` line
+to its last `END` line, and records the key's path as the entry's sources
+file. A key counts when gpgv reports a valid signature by it and no bad,
+expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
+a release also signed by a key the host lacks makes gpgv fail. Each candidate
+is copied, an armored key decoded to a binary keyring, into a private
+temporary folder that is removed afterwards; a folder REA cannot remove
+fails the capture with the folder as its cleanup resource. The key that
+verifies is recorded in `signing_key` with its path,
 SHA-256, format (`binary` or `armored`) and primary fingerprint, and its bytes
 are retained under `content/`. A key file holding one key is retained as it
 is; from one holding several, such as a legacy `/etc/apt/trusted.gpg`, only
 the transferable key with the verifying fingerprint is retained, in binary, so
 the bundle trusts no other key. When no candidate verifies, `gpgv` is
-missing, apt holds no signed release, no sources entry matches, the entry's
-`Signed-By` holds the key itself, or the key is larger than
-`--max-file-bytes` or the content budget, `signing_key` is null and
+missing, apt holds no signed release, no sources entry matches, the key the
+entry's `Signed-By` holds does not verify the release, or the key is larger
+than `--max-file-bytes` or the content budget, `signing_key` is null and
 `signing_key_reason` says why. Ubuntu Pro's ESM repositories (origins such as
 `UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
 with the host's Ubuntu Pro credentials, which a computer does not have.
