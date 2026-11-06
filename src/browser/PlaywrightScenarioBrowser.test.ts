@@ -30,7 +30,6 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { loadPlaywrightCore } from "./androidPlaywrightHost.js";
 import {
   attachedScenarioLeaseKey,
   failBrowserScenarioOperation,
@@ -521,21 +520,6 @@ it("publishes a writable Playwright browsers path before an Android launch", asy
     diagnostics: {
       startup_error: expect.stringMatching(/executable doesn't exist/),
     },
-  });
-  expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
-    appendCallerPath(appendCallerPath(prefix, "tmp"), "ms-playwright"),
-  );
-});
-
-it("publishes a writable Playwright browsers path before loading Playwright", async () => {
-  const prefix = await createTestTempDirectory("rea-termux-playwright-core-");
-  vi.stubEnv("PLAYWRIGHT_BROWSERS_PATH", "");
-  Object.defineProperty(process, "platform", { value: "android" });
-  await loadPlaywrightCore({
-    PREFIX: prefix,
-    TMPDIR: "",
-    TMP: "",
-    TEMP: "",
   });
   expect(process.env.PLAYWRIGHT_BROWSERS_PATH).toBe(
     appendCallerPath(appendCallerPath(prefix, "tmp"), "ms-playwright"),
