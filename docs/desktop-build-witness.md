@@ -25,7 +25,7 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the
-   download failed). It then starts `rea capture-desktop-application
+   download failed; a later start runs the update again until one succeeds). It then starts `rea capture-desktop-application
    --desktop-entry <entry>`
    in the computer, leaving `~/.rea-build` out of every checkpoint, and returns
    once the app's window is open, with a screenshot. For an app installed
@@ -48,7 +48,8 @@ Like the computer tools, these are MCP-only and act on a `computer_id` from
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. A file moved to the desktop Trash is not seeded,
+   all pass on the seed. A task larger than 96 KiB as REA passes it to the
+   computer is refused before anything runs. A file moved to the desktop Trash is not seeded,
    and the export's limitations name what the Trash held at `seed`. For a
    `.deb` app that no apt source the capture found offers, the export takes
    the request's URL with `--package-url`; one apt offers installs from apt. REA lists the bundle's files with their sizes
@@ -104,12 +105,12 @@ Start a fresh computer from the exported folder with `start_build_computer`
 and `{"kind": "bundle", "path": ...}`; agentenv boots the app with the seed.
 Then, with the task exactly as exported:
 
-| `stage`       | Before it                                                         | Its checks must          |
-| ------------- | ----------------------------------------------------------------- | ------------------------ |
-| `seed`        | nothing; give `directory`, a new or empty folder for the record   | fail at least once       |
-| `after_edit`  | the task done through the app from its prompt alone               | all pass                 |
-| `near_miss`   | a change that is almost right, such as a misspelled line          | fail at least once       |
-| `after_reset` | `act_on_build_computer` with `action: "reset"` as the last change | fail at least once again |
+| `stage`       | Before it                                                         | Its checks must              |
+| ------------- | ----------------------------------------------------------------- | ---------------------------- |
+| `seed`        | nothing; give `directory`, a new or empty folder for the record   | fail at least once           |
+| `after_edit`  | the task done through the app from its prompt alone               | all pass                     |
+| `near_miss`   | a change that is almost right, such as a misspelled line          | fail at least once           |
+| `after_reset` | `act_on_build_computer` with `action: "reset"` as the last change | each come out as on the seed |
 
 `check_build_task` reads the app's `data/get`, takes the views it returns
 beside the files and evaluates each check with REA's evaluator, the one the
@@ -122,7 +123,11 @@ recording under the same id, which the computer answers with the recording
 it already began. The stages come in order. The edit and the near miss each
 need an applied click, drag, scroll, type or key since the stage before, with
 no reset after the last of them, since a reset puts the seed back rather than
-changing the app; `after_reset` needs the reset as the last change. A reset
+changing the app; `after_reset` needs the reset as the last change, and a
+reset that leaves any check unlike on the seed fails the witness, its
+stage's `remediation` naming those checks. On a computer started from a
+bundle folder, the seed refuses a task whose `tasks/<name>.json` or verifier
+in the bundle differs from what the export writes for it. A reset
 relaunches the app, and REA waits until the computer is ready again before
 answering, sending progress notifications while it waits.
 
