@@ -14,6 +14,8 @@ const closeState = vi.hoisted(() => ({
   path: "",
   failures: 0,
   onClosed: undefined as (() => void) | undefined,
+  onClosing: undefined as (() => void) | undefined,
+  readFailure: undefined as Error | undefined,
   onLimits: undefined as (() => void) | undefined,
 }));
 
@@ -25,7 +27,12 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const handle = await fs.open(...args);
       if (args[0] !== closeState.path) return handle;
       const close = handle.close.bind(handle);
+      if (closeState.readFailure !== undefined)
+        handle.read = async () => {
+          throw closeState.readFailure;
+        };
       handle.close = async () => {
+        closeState.onClosing?.();
         if (closeState.failures > 0) {
           closeState.failures--;
           throw new Error("injected EVM artifact descriptor close failure");
@@ -282,6 +289,12 @@ it("keeps descriptor cleanup in close aggregates until the exact file lease rele
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an artifact descriptor failure");
     expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toEqual({
+      kind: "file-snapshot-hash",
+      path: input,
+      sha256: createHash("sha256").update("0x60006000f3\n").digest("hex"),
+      bytes: 13,
+    });
     const aggregate = await provider.close().then(
       () => undefined,
       (cause: unknown) => cause,
@@ -640,6 +653,415 @@ it("preserves an active cancellation through denied owned-group cleanup and late
     } catch {
       // Preserve the assertion's original failure while releasing test files.
     }
+    await rm(workspace, { recursive: true, force: true });
+    if (platform !== undefined)
+      Object.defineProperty(process, "platform", platform);
+    if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+  }
+});
+
+it.each([
+  "valid-close-failure",
+  "valid-cancel",
+  "valid-cancel-close-failure",
+  "malformed-cancel",
+  "wrong-version",
+  "wrong-identity",
+  "refusal",
+  "physical-cancel",
+] as const)(
+  "retains validated reply ownership through finalization: %s",
+  async (scenario) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const arch = Object.getOwnPropertyDescriptor(process, "arch");
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+    const workspace = await mkdtemp(
+      join(tmpdir(), "rea-evm-reply-finalization-"),
+    );
+    const input = join(workspace, "selected.hex");
+    await writeFile(input, "0x60006000f3\n");
+    const controller = new AbortController();
+    const reason = { requested: "stop during reply close" };
+    let replyPath = "";
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      async (spawn) => {
+        const request = JSON.parse(
+          await readFile(spawn.arguments.at(-1)!, "utf8"),
+        ) as { reply_path: string };
+        replyPath = request.reply_path;
+        closeState.path = replyPath;
+        closeState.failures = scenario.endsWith("cancel") ? 0 : 1;
+        closeState.onClosed = scenario.endsWith("cancel")
+          ? () => controller.abort(reason)
+          : undefined;
+        if (
+          scenario === "valid-cancel-close-failure" ||
+          scenario === "physical-cancel"
+        ) {
+          closeState.failures = 1;
+          closeState.onClosing = () => controller.abort(reason);
+        }
+        if (scenario === "physical-cancel")
+          closeState.readFailure = Object.assign(
+            new Error("physical EIO reply read"),
+            { code: "EIO" },
+          );
+        const bytes = Buffer.from("60006000f3", "hex");
+        const reply =
+          scenario === "refusal"
+            ? { ok: false, reason: "format", message: "invalid carrier" }
+            : {
+                ok: true,
+                version: scenario === "wrong-version" ? "0.0.0" : "0.9.3",
+                bytecode: {
+                  sha256: createHash("sha256").update(bytes).digest("hex"),
+                  bytes: bytes.length,
+                  hex:
+                    scenario === "wrong-identity"
+                      ? "00"
+                      : bytes.toString("hex"),
+                },
+                raw: { functions: [] },
+              };
+        await writeFile(
+          replyPath,
+          scenario === "malformed-cancel" ? "malformed" : JSON.stringify(reply),
+        );
+        if (platform !== undefined)
+          Object.defineProperty(process, "platform", platform);
+        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+        // Controlled worker output, with a real owned process and actual reply FD.
+        return spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: ["-e", ""],
+        });
+      },
+    );
+    try {
+      const result = await provider.inspect(
+        { path: input, encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (result.ok)
+        throw new Error("Expected descriptor finalization failure");
+      const original = result.error;
+      if (scenario.startsWith("valid")) {
+        expect(original.partialObservation).toMatchObject({
+          normalized_result: {
+            artifact: { path: input, bytes: 13 },
+            bytecode: { hex: "60006000f3" },
+          },
+        });
+        if (scenario === "valid-cancel") {
+          expect(original).toBeInstanceOf(AnalysisCancelledError);
+          expect(original.cause).toBe(reason);
+        }
+        if (scenario === "valid-cancel-close-failure") {
+          expect(original.cause).toBeInstanceOf(AggregateError);
+          const cancellation = (original.cause as AggregateError)
+            .errors[0] as AnalysisCancelledError;
+          expect(cancellation).toBeInstanceOf(AnalysisCancelledError);
+          expect(cancellation.cause).toBe(reason);
+        }
+      } else {
+        expect(original.partialObservation).toBeUndefined();
+        const projection = projectAnalysisError(original);
+        if (scenario === "malformed-cancel") {
+          expect(projection).toMatchObject({
+            code: "unreadable_output",
+            details: {
+              diagnostics: { reply_finalization_error: { code: "cancelled" } },
+            },
+          });
+          const finalization = projection.details?.diagnostics as {
+            reply_finalization_error: { details?: Record<string, unknown> };
+          };
+          expect(
+            finalization.reply_finalization_error.details,
+          ).not.toHaveProperty("captured_output");
+        }
+        const projected = JSON.stringify(projection);
+        expect(projected).toContain(
+          scenario === "refusal"
+            ? "invalid carrier"
+            : scenario === "wrong-identity"
+              ? "does not match"
+              : scenario === "physical-cancel"
+                ? "physical EIO reply read"
+                : "Owned interface worker reply failed",
+        );
+        if (scenario === "malformed-cancel" || scenario === "physical-cancel")
+          expect(projected).toContain("unreadable_output");
+      }
+      expect(original.cleanupIncomplete).toBe(
+        !scenario.endsWith("cancel") || scenario === "physical-cancel",
+      );
+      if (original.cleanupIncomplete)
+        expect(original.cleanupResources).toContain(replyPath);
+      await provider.close();
+      expect(original.cleanupIncomplete).toBe(false);
+      expect(original.cleanupResources).toEqual([]);
+    } finally {
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosed = undefined;
+      closeState.onClosing = undefined;
+      closeState.readFailure = undefined;
+      await provider.close();
+      await rm(workspace, { recursive: true, force: true });
+      if (platform !== undefined)
+        Object.defineProperty(process, "platform", platform);
+      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+    }
+  },
+);
+
+it.each(["physical-read", "completed-late-cancel"] as const)(
+  "retains only completed caller carrier identity: %s",
+  async (scenario) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const arch = Object.getOwnPropertyDescriptor(process, "arch");
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+    const workspace = await mkdtemp(
+      join(tmpdir(), "rea-evm-carrier-finalization-"),
+    );
+    const input = join(workspace, "selected.hex");
+    await writeFile(input, "0x60006000f3\n");
+    const controller = new AbortController();
+    const reason = { requested: "stop during carrier close" };
+    closeState.path = input;
+    closeState.failures = 2;
+    closeState.onClosing = () => controller.abort(reason);
+    if (scenario === "physical-read")
+      closeState.readFailure = Object.assign(
+        new Error("physical carrier EIO"),
+        { code: "EIO" },
+      );
+    const createRuntime = vi.fn(async () => {
+      throw new Error("Worker must not start");
+    });
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      undefined,
+      createRuntime,
+    );
+    try {
+      const result = await provider.inspect(
+        { path: input, encoding: "hex" },
+        { signal: controller.signal },
+      );
+      if (result.ok) throw new Error("Expected carrier finalization failure");
+      const original = result.error;
+      expect(createRuntime).not.toHaveBeenCalled();
+      if (scenario === "physical-read") {
+        expect(original.partialObservation).toBeUndefined();
+        expect(original).not.toBeInstanceOf(AnalysisCancelledError);
+        expect(JSON.stringify(projectAnalysisError(original))).toContain(
+          "physical carrier EIO",
+        );
+      } else {
+        expect(original).toBeInstanceOf(AnalysisCancelledError);
+        expect(original.cause).toBe(reason);
+        expect(original.partialObservation).toMatchObject({
+          kind: "file-snapshot-hash",
+          path: input,
+          bytes: 13,
+        });
+      }
+      await expect(provider.close()).rejects.toMatchObject({
+        cleanupIncomplete: true,
+        cleanupResources: [input],
+      });
+      expect(original.cleanupIncomplete).toBe(true);
+      await provider.close();
+      expect(original.cleanupIncomplete).toBe(false);
+      expect(original.cleanupResources).toEqual([]);
+    } finally {
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosing = undefined;
+      closeState.readFailure = undefined;
+      await provider.close();
+      await rm(workspace, { recursive: true, force: true });
+      if (platform !== undefined)
+        Object.defineProperty(process, "platform", platform);
+      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+    }
+  },
+);
+
+it.each([
+  "valid-denied",
+  "malformed-denied",
+  "physical-read",
+  "valid-clean",
+  "wrong-exit",
+  "signal-exit",
+  "unresolved-process",
+] as const)(
+  "preserves exact reserved-exit marker receipt and cleanup: %s",
+  async (scenario) => {
+    const platform = Object.getOwnPropertyDescriptor(process, "platform");
+    const arch = Object.getOwnPropertyDescriptor(process, "arch");
+    Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+    Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+    const workspace = await mkdtemp(join(tmpdir(), "rea-evm-marker-receipt-"));
+    const input = join(workspace, "selected.hex");
+    await writeFile(input, "0x60006000f3\n");
+    let markerPath = "";
+    let markerCloseAttempts = 0;
+    let allowProcessCleanup = scenario !== "unresolved-process";
+    const deniedDescriptor =
+      scenario.endsWith("denied") || scenario === "physical-read";
+    const provider = new EvmoleInterfaceProvider(
+      { REA_EVM_PRLIMIT_COMMAND: process.execPath },
+      async (spawn) => {
+        const request = JSON.parse(
+          await readFile(spawn.arguments.at(-1)!, "utf8"),
+        ) as { failure_marker_path: string };
+        markerPath = request.failure_marker_path;
+        closeState.path = markerPath;
+        closeState.failures = deniedDescriptor ? 2 : 0;
+        closeState.onClosing = () => {
+          markerCloseAttempts++;
+        };
+        if (scenario === "physical-read")
+          closeState.readFailure = Object.assign(
+            new Error("physical marker EIO"),
+            { code: "EIO" },
+          );
+        if (platform !== undefined)
+          Object.defineProperty(process, "platform", platform);
+        if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+        // The inert owned child authors a controlled marker; this does not run EVMole or target bytecode.
+        const launched = await spawnOwnedProviderProcess({
+          ...spawn,
+          command: process.execPath,
+          arguments: [
+            "-e",
+            "require('node:fs').writeFileSync(process.argv[1],process.argv[2]); process.stderr.write('controlled marker worker diagnostic'); if(process.argv[3]==='signal') process.kill(process.pid,'SIGTERM'); else process.exit(Number(process.argv[3]));",
+            markerPath,
+            scenario === "malformed-denied" ? "X" : "F",
+            scenario === "wrong-exit"
+              ? "75"
+              : scenario === "signal-exit"
+                ? "signal"
+                : "76",
+          ],
+        });
+        const cleanup =
+          launched.cleanup ??
+          (() => cleanupOwnedProcessGroup(launched.ownership));
+        return {
+          ...launched,
+          cleanup: async () => {
+            if (!allowProcessCleanup)
+              throw new Error("controlled unresolved worker cleanup");
+            return cleanup();
+          },
+        };
+      },
+    );
+    try {
+      const result = await provider.inspect({ path: input, encoding: "hex" });
+      if (result.ok) throw new Error("Expected reserved worker failure");
+      const original = result.error;
+      expect(original.partialObservation).toBeUndefined();
+      expect(JSON.stringify(projectAnalysisError(original))).toContain(
+        "controlled marker worker diagnostic",
+      );
+      if (deniedDescriptor) {
+        expect(original.cleanupIncomplete).toBe(true);
+        expect(original.cleanupResources).toContain(markerPath);
+        await expect(provider.close()).rejects.toMatchObject({
+          cleanupIncomplete: true,
+        });
+        expect(original.cleanupIncomplete).toBe(true);
+        await provider.close();
+        expect(original.cleanupIncomplete).toBe(false);
+        expect(original.cleanupResources).toEqual([]);
+        expect(markerCloseAttempts).toBe(3);
+      } else if (scenario === "unresolved-process") {
+        expect(markerCloseAttempts).toBe(0);
+        expect(original.cleanupIncomplete).toBe(true);
+        allowProcessCleanup = true;
+        await provider.close();
+      }
+      expect(projectAnalysisError(original).code).toBe(
+        scenario.startsWith("valid")
+          ? "resource_constraint"
+          : "execution_failure",
+      );
+      if (scenario === "malformed-denied" || scenario === "physical-read")
+        expect(JSON.stringify(projectAnalysisError(original))).toContain(
+          '"verified":false',
+        );
+      if (scenario === "wrong-exit" || scenario === "signal-exit")
+        expect(markerCloseAttempts).toBe(0);
+    } finally {
+      allowProcessCleanup = true;
+      closeState.path = "";
+      closeState.failures = 0;
+      closeState.onClosing = undefined;
+      closeState.readFailure = undefined;
+      await provider.close();
+      await rm(workspace, { recursive: true, force: true });
+      if (platform !== undefined)
+        Object.defineProperty(process, "platform", platform);
+      if (arch !== undefined) Object.defineProperty(process, "arch", arch);
+    }
+  },
+);
+
+it("keeps the selected limiter and child environment together while later inspections reconfigure", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform");
+  const arch = Object.getOwnPropertyDescriptor(process, "arch");
+  Object.defineProperty(process, "platform", { ...platform, value: "linux" });
+  Object.defineProperty(process, "arch", { ...arch, value: "x64" });
+  const workspace = await mkdtemp(join(tmpdir(), "rea-evm-environment-"));
+  const input = join(workspace, "selected.hex");
+  const limiter = join(workspace, "selected-limiter");
+  const { symlink } = await import("node:fs/promises");
+  await symlink(process.execPath, limiter);
+  await writeFile(input, "0x60006000f3\n");
+  const environment = {
+    REA_EVM_PRLIMIT_COMMAND: limiter,
+    REA_ENV_MARKER: "first",
+  };
+  let expectedLimiter = limiter;
+  closeState.onLimits = () => {
+    environment.REA_EVM_PRLIMIT_COMMAND = "/missing-limiter";
+    environment.REA_ENV_MARKER = "changed-during-inspection";
+  };
+  const provider = new EvmoleInterfaceProvider(environment, async (spawn) => {
+    expect(spawn.command).toBe(expectedLimiter);
+    return spawnOwnedProviderProcess({
+      ...spawn,
+      command: process.execPath,
+      arguments: [
+        "-e",
+        "process.stdout.write(process.env.REA_ENV_MARKER, () => { process.exitCode = 9; })",
+      ],
+    });
+  });
+  try {
+    for (const marker of ["first", "second"]) {
+      if (marker === "second") {
+        expectedLimiter = process.execPath;
+        environment.REA_EVM_PRLIMIT_COMMAND = process.execPath;
+        environment.REA_ENV_MARKER = marker;
+      }
+      const result = await provider.inspect({ path: input, encoding: "hex" });
+      if (result.ok) throw new Error("Expected inert worker failure");
+      expect(result.error.capturedOutput?.stdout).toBe(marker);
+    }
+  } finally {
+    closeState.onLimits = undefined;
+    await provider.close();
     await rm(workspace, { recursive: true, force: true });
     if (platform !== undefined)
       Object.defineProperty(process, "platform", platform);

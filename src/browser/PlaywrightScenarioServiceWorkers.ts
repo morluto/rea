@@ -3,12 +3,23 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import type { Frame, Page } from "playwright-core";
 
+import {
+  CDP_CLEANUP_GRACE_MS,
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+  selectedCdpCommandTimeoutMs,
+} from "../domain/browserDeadline.js";
+import { AnalysisTimeoutError } from "../domain/analysisErrorCore.js";
 import { browserObservationEndpointSchema } from "../domain/browserObservation.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
-import { CdpConnection } from "./CdpConnection.js";
-import { withCdpDiscoveryDeadline } from "./CdpEndpoint.js";
+import { CdpTargetSessionOwner } from "./CdpTargetSessionOwner.js";
+import {
+  withCdpDiscoveryDeadline,
+  type CdpEndpointTarget,
+} from "./CdpEndpoint.js";
+import { selectCdpDiscoveryTarget } from "./CdpDiscoveryTargets.js";
 import {
   attachCdpTargetSession,
+  failCdpOpenAfterCleanup,
   openCdpEndpoint,
   type CdpTargetSession,
 } from "./CdpTargetSession.js";
@@ -18,7 +29,23 @@ const OPERATION = "capture_browser_scenario" as const;
 // Restoration performs several sequential CDP mutations before the transport's
 // own bounded close. A single round-trip deadline is too short for the complete
 // chain on a loaded Windows browser, while retries must still stay bounded.
-const POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS = 5_000;
+const POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS = CDP_CLEANUP_GRACE_MS;
+/**
+ * First blocked-service-worker registration check, before discovery starts.
+ * It keeps the previous fixed 10-second bound. command_timeout_ms does not
+ * apply yet, and this timer is not the discovery or attach deadline.
+ */
+export const SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS =
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS;
+
+const serviceWorkerPolicyCheckTimeout = (): AnalysisTimeoutError => {
+  const timeoutMs = SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS;
+  return new AnalysisTimeoutError(OPERATION, timeoutMs, {
+    userMessage: `Blocked service-worker policy check exceeded its ${String(timeoutMs)} ms deadline before CDP discovery. command_timeout_ms does not apply to this check.`,
+    remediationAction: `The ${String(timeoutMs)} ms blocked service-worker policy check stays fixed. This release has no runtime override. command_timeout_ms does not raise it.`,
+  });
+};
+
 const scriptResponse = z.object({ identifier: z.string() });
 const restorationResponse = z.object({
   result: z.object({ value: z.literal("policy_owned").nullable() }),
@@ -38,6 +65,7 @@ type PolicyTarget = {
 
 /** Owns only its frame scripts and registration wrappers, never caller-owned workers. */
 export class PlaywrightScenarioServiceWorkers {
+  readonly #transportOwner = new CdpTargetSessionOwner();
   private readonly marker = JSON.stringify(
     `rea-service-workers-${randomUUID()}`,
   );
@@ -57,9 +85,12 @@ export class PlaywrightScenarioServiceWorkers {
   #setup = new AbortController();
 
   constructor(
-    private readonly page: Page,
+    private readonly page: Pick<Page, "frames" | "isClosed" | "mainFrame">,
     private readonly endpoint: string,
     private readonly targetId: string,
+    private readonly commandTimeoutMs: number = selectedCdpCommandTimeoutMs(
+      undefined,
+    ),
   ) {}
 
   initialize(): Promise<void> {
@@ -67,42 +98,75 @@ export class PlaywrightScenarioServiceWorkers {
   }
 
   private async install(): Promise<void> {
-    this.#session = await withCdpDiscoveryDeadline(
+    await withPlaywrightExecutionBoundary(
+      () => this.assertBlocked(),
+      SERVICE_WORKER_POLICY_CHECK_TIMEOUT_MS,
+      this.#setup.signal,
+      serviceWorkerPolicyCheckTimeout,
+    );
+    // Discovery stays on its fixed deadline. The following handshake and
+    // Target.attachToTarget each use command_timeout_ms.
+    const opened = await withCdpDiscoveryDeadline(
       OPERATION,
       this.#setup.signal,
-      async (signal) => {
-        await withPlaywrightExecutionBoundary(
-          () => this.assertBlocked(),
-          undefined,
-          signal,
-        );
-        const opened = await openCdpEndpoint(
+      (signal) =>
+        openCdpEndpoint(
           browserObservationEndpointSchema.parse(this.endpoint),
           OPERATION,
           signal,
-        );
-        const target = opened.discovery.targets.find(
-          ({ id }) => id === this.targetId,
-        );
-        if (target === undefined) {
-          await opened.connection?.close();
-          throw new BrowserObservationError(OPERATION, "target_not_found");
-        }
-        const connection =
-          opened.connection ??
-          (await CdpConnection.connect(
-            opened.discovery.webSocket.url,
-            OPERATION,
-            signal,
-          ));
-        return await attachCdpTargetSession(
-          connection,
-          target,
-          OPERATION,
-          signal,
-        );
-      },
+          undefined,
+          this.#transportOwner,
+          this.commandTimeoutMs,
+        ),
     );
+    let target: CdpEndpointTarget;
+    try {
+      const selected = selectCdpDiscoveryTarget(
+        opened.discovery.targets,
+        this.targetId,
+        OPERATION,
+        opened.discovery.ambiguousTargetIds,
+      );
+      if (selected === undefined)
+        throw new BrowserObservationError(OPERATION, "target_not_found");
+      target = selected;
+    } catch (cause: unknown) {
+      if (opened.connection !== undefined)
+        return await failCdpOpenAfterCleanup(
+          opened.connection,
+          cause,
+          OPERATION,
+          this.#transportOwner,
+        );
+      throw cause;
+    }
+    const transport =
+      opened.connection ??
+      (await this.#transportOwner.connect(
+        opened.discovery.webSocket.url,
+        OPERATION,
+        { signal: this.#setup.signal },
+        target.id,
+        { commandTimeoutMs: this.commandTimeoutMs },
+      ));
+    if (this.#closed)
+      transport.beginCleanupGrace(POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS);
+    try {
+      this.#session = await attachCdpTargetSession(
+        transport,
+        target,
+        OPERATION,
+        this.#setup.signal,
+        this.#transportOwner,
+      );
+    } catch (cause: unknown) {
+      return await failCdpOpenAfterCleanup(
+        transport,
+        cause,
+        OPERATION,
+        this.#transportOwner,
+      );
+    }
     const connection = this.#session.connection;
     this.#removeListener = connection.onEvent((event) => {
       if (
@@ -318,6 +382,10 @@ export class PlaywrightScenarioServiceWorkers {
   close(stopLoading = false): Promise<void> {
     this.#closed = true;
     this.#stopRequested ||= stopLoading;
+    // Restoration commands keep the fixed grace even when command_timeout_ms was raised.
+    this.#session?.connection.beginCleanupGrace(
+      POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
+    );
     // Abort discovery/handshakes and reads, never an already-sent page mutation.
     this.#setup.abort();
     const restoration = (this.#restoration ??= this.restore());
@@ -372,9 +440,17 @@ export class PlaywrightScenarioServiceWorkers {
 
   private async restore(): Promise<void> {
     await this.#initialization?.catch(() => undefined);
+    await this.#transportOwner.retryPending();
+    this.#session?.connection.beginCleanupGrace(
+      POLICY_CLEANUP_CONFIRMATION_TIMEOUT_MS,
+    );
     if (this.#released) return;
     const session = this.#session;
-    if (session === undefined) return;
+    if (session === undefined) {
+      await this.#transportOwner.close();
+      this.#released = true;
+      return;
+    }
     if (!this.page.isClosed()) {
       const mainFrame = this.page.mainFrame();
       // This owner exists even with empty storage seeds. Stopped navigation is
@@ -429,7 +505,8 @@ export class PlaywrightScenarioServiceWorkers {
       this.#detached = true;
     }
     this.#removeListener?.();
-    await session.connection.close();
+    await this.#transportOwner.finish(session.connection);
+    await this.#transportOwner.close();
     this.#released = true;
   }
 }

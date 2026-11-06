@@ -26,8 +26,6 @@ const MAX_MAIN_RUN_LOOKUPS = 100;
 const MAX_PATHS_PER_COMPARISON = 50;
 const MAX_API_REQUESTS = 250;
 
-export { classifyFailure } from "./artifacts.mjs";
-
 /** Uses only failed CI candidates present in the supplied bounded timing manifest. */
 export async function reportCiFailures({
   repository,

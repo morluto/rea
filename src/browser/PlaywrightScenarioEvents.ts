@@ -14,17 +14,18 @@ import type { SanitizedBrowserUrl } from "../domain/browserObservation.js";
 import {
   browserScenarioEventSchema,
   type BrowserScenarioEvent,
+  type BrowserScenarioEventAdmission,
+  type BrowserScenarioEventBudgetReason,
+  type BrowserScenarioEventOmissions,
 } from "../domain/browserScenarioCaptureValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
-import type { BrowserNetworkContentSelection } from "../domain/browserNetworkEvidence.js";
-import type { BrowserNetworkHeaders } from "../domain/browserNetworkEvidence.js";
-import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import type {
-  BrowserScenarioEventAdmission,
-  BrowserScenarioEventBudgetReason,
-  BrowserScenarioEventOmissions,
-} from "../domain/browserScenarioCaptureValues.js";
+  BrowserNetworkContentSelection,
+  BrowserNetworkHeaders,
+} from "../domain/browserNetworkEvidence.js";
+import type { BrowserScenarioCaptureLimits } from "../domain/browserScenarioCaptureLimits.js";
 import { DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS } from "../domain/browserScenarioCaptureLimits.js";
+import { captureNetworkBody } from "./network/PlaywrightNetworkContent.js";
 import { PlaywrightScenarioNetwork } from "./network/PlaywrightScenarioNetwork.js";
 
 type EventName =
@@ -71,6 +72,30 @@ const allocationCost = (value: unknown, remaining: number): number => {
   return cost;
 };
 
+const retainedEventCost = (
+  event: BrowserScenarioEvent,
+  limit: number,
+): number => {
+  const { sequence: _sequence, step_index: _stepIndex, ...unindexed } = event;
+  return allocationCost(unindexed, limit) + 128;
+};
+
+type TextEvent = Exclude<
+  BrowserScenarioEvent,
+  { readonly transaction_id: string }
+>;
+
+/** Count parsed text without allocating another serialization or copying bodies. */
+const eventTextUnits = (value: unknown): number => {
+  if (typeof value === "string") return value.length;
+  if (value === null || typeof value !== "object") return 0;
+  let units = 0;
+  for (const key in value)
+    if (Object.hasOwn(value, key))
+      units += eventTextUnits((value as Record<string, unknown>)[key]);
+  return units;
+};
+
 type EventKind = BrowserScenarioEvent["kind"];
 /** Arrival-ordered Playwright event capture with current-step attribution. */
 export class PlaywrightScenarioEvents {
@@ -100,6 +125,9 @@ export class PlaywrightScenarioEvents {
   private stopNetwork: (() => void) | undefined;
   private readonly stopListeners = new Map<object, Set<() => void>>();
   private sealed = false;
+  private sourcePrivacyIncomplete = false;
+  private opaqueRedirectObserved = false;
+  private eventPrivacyFinalized = false;
 
   constructor(options: EventCaptureOptions) {
     const network = options.network ?? {
@@ -175,6 +203,12 @@ export class PlaywrightScenarioEvents {
     this.stepIndex = index;
   }
 
+  /** Manual page fetch can conceal a redirect response from Playwright. */
+  opaqueRequestRedirect(): void {
+    if (!this.sealed && this.enabled.has("network"))
+      this.opaqueRedirectObserved = true;
+  }
+
   nextSequence(): number {
     return this.sequence + 1;
   }
@@ -192,7 +226,11 @@ export class PlaywrightScenarioEvents {
     try {
       await this.network?.finish();
     } finally {
-      this.sealed = true;
+      try {
+        await this.finalizeEventPrivacy();
+      } finally {
+        this.sealed = true;
+      }
     }
   }
 
@@ -203,6 +241,14 @@ export class PlaywrightScenarioEvents {
         `Popup ${family} events before Page discovery are unavailable; later events are retained.`,
     );
     const gaps = [...popupGaps, ...(this.network?.limitations() ?? [])];
+    if (this.opaqueRedirectObserved)
+      gaps.push(
+        "A request step received an opaque redirect; its response status and Location may be unavailable in network events.",
+      );
+    if (this.sourcePrivacyIncomplete)
+      gaps.push(
+        "Source transaction URLs or content were withheld because marked response values were unavailable.",
+      );
     if (this.dropped > 0)
       gaps.push(
         "Browser event collection reached a selected resource budget; per-kind omissions and affected network transaction IDs are listed in events.omissions, and event coverage is incomplete.",
@@ -253,6 +299,279 @@ export class PlaywrightScenarioEvents {
           this.network?.omittedTransactionRange() ?? null,
       },
     };
+  }
+
+  /** Apply final known secrets to retained event text independently of source readiness. */
+  private async finalizeEventPrivacy(): Promise<void> {
+    if (this.eventPrivacyFinalized) return;
+    const sources = this.network?.sourcePrivacy() ?? new Map<string, boolean>();
+    const learnedSecrets = this.secrets.hasLearnedResponseSecrets();
+    if (sources.size === 0 && !learnedSecrets) return;
+    let retained = 0;
+    for (const original of this.items) {
+      const sourceReady =
+        "transaction_id" in original
+          ? sources.get(original.transaction_id)
+          : undefined;
+      if (sourceReady === undefined && !learnedSecrets) {
+        this.items[retained++] = original;
+        continue;
+      }
+      const ready = sourceReady ?? true;
+      if (!ready) this.sourcePrivacyIncomplete = true;
+      const oldCost = retainedEventCost(
+        original,
+        this.limits.max_event_allocation_bytes,
+      );
+      this.retainedCost -= oldCost;
+      const available = Math.min(
+        this.limits.max_event_allocation_bytes,
+        this.limits.max_total_event_allocation_bytes - this.retainedCost,
+      );
+      const extra = eventTextUnits(
+        original.kind === "network-content"
+          ? {
+              headers: original.headers,
+              message:
+                original.body.state === "unavailable"
+                  ? original.body.message
+                  : "",
+            }
+          : original,
+      );
+      let reason: BrowserScenarioEventBudgetReason | undefined =
+        "transaction_id" in original &&
+        this.secrets.redactionAllocationCost(extra, "response") + 4096 >
+          this.limits.max_network_metadata_allocation_bytes
+          ? "max-network-metadata-allocation-bytes"
+          : undefined;
+      const bodyCopy =
+        original.kind === "network-content" &&
+        original.body.state === "captured"
+          ? Math.max(
+              this.secrets.redactionAllocationCost(
+                original.body.bytes,
+                "response",
+              ),
+              Math.ceil(original.body.bytes / 3) * 4 * 8 + 2,
+            )
+          : 0;
+      const workingCost =
+        oldCost +
+        this.secrets.redactionAllocationCost(extra, "response") +
+        bodyCopy +
+        4096;
+      reason ??=
+        workingCost > this.limits.max_event_allocation_bytes
+          ? "max-event-allocation-bytes"
+          : workingCost > available
+            ? "max-total-event-allocation-bytes"
+            : undefined;
+      let event: BrowserScenarioEvent = original;
+      if (reason === undefined) {
+        event =
+          "transaction_id" in original
+            ? await this.protectNetworkEvent(
+                original,
+                ready,
+                Math.max(1, available),
+              )
+            : this.protectTextEvent(original);
+        const cost = retainedEventCost(
+          event,
+          this.limits.max_event_allocation_bytes,
+        );
+        reason =
+          cost > this.limits.max_event_allocation_bytes
+            ? "max-event-allocation-bytes"
+            : cost > available
+              ? "max-total-event-allocation-bytes"
+              : undefined;
+        if (reason === undefined) {
+          this.retainedCost += cost;
+          this.items[retained++] = event;
+          continue;
+        }
+      }
+      this.omitEvent(original.kind, reason);
+      if ("transaction_id" in original)
+        this.omitNetwork(original.transaction_id, original.kind, reason);
+    }
+    this.items.length = retained;
+    this.eventPrivacyFinalized = true;
+  }
+
+  private protectUrl(value: SanitizedBrowserUrl): SanitizedBrowserUrl {
+    const url = this.secrets.sanitizeUrl(value.url, "response");
+    return { ...url, redacted: url.redacted || value.redacted };
+  }
+
+  private protectTextEvent(event: TextEvent): TextEvent {
+    switch (event.kind) {
+      case "console":
+        return {
+          ...event,
+          url: event.url === null ? null : this.protectUrl(event.url),
+          level: this.secrets.redact(event.level, "response"),
+          text: this.secrets.redact(event.text, "response"),
+        };
+      case "page-error":
+        return {
+          ...event,
+          message: this.secrets.redact(event.message, "response"),
+          stack:
+            event.stack === null
+              ? null
+              : this.secrets.redact(event.stack, "response"),
+        };
+      case "websocket-frame-sent":
+      case "websocket-frame-received":
+        return event.payload_type === "text"
+          ? {
+              ...event,
+              url: this.protectUrl(event.url),
+              payload_text: this.secrets.redact(event.payload_text, "response"),
+            }
+          : { ...event, url: this.protectUrl(event.url) };
+      case "websocket-opened":
+      case "websocket-closed":
+        return { ...event, url: this.protectUrl(event.url) };
+      case "download-cancelled":
+        return {
+          ...event,
+          url: this.protectUrl(event.url),
+          suggested_filename: this.secrets.redact(
+            event.suggested_filename,
+            "response",
+          ),
+        };
+      default:
+        return {
+          ...event,
+          url: event.url === null ? null : this.protectUrl(event.url),
+          name:
+            event.name === null
+              ? null
+              : this.secrets.redact(event.name, "response"),
+        };
+    }
+  }
+
+  private async protectNetworkEvent(
+    event: BrowserScenarioEvent,
+    ready: boolean,
+    available: number,
+  ): Promise<BrowserScenarioEvent> {
+    const message =
+      "Source transaction data was withheld because its marked response fields could not be read safely.";
+    if (event.kind === "network-content") {
+      if (!ready) {
+        return {
+          ...event,
+          headers:
+            event.headers.state === "not_requested"
+              ? event.headers
+              : { state: "unavailable", message },
+          body:
+            event.body.state === "not_requested" ||
+            event.body.state === "not_exposed"
+              ? event.body
+              : { state: "unavailable", reason: "body-read-failed", message },
+        };
+      }
+      const headers: BrowserNetworkHeaders =
+        event.headers.state === "unavailable"
+          ? {
+              ...event.headers,
+              message: this.secrets.redact(event.headers.message, "response"),
+            }
+          : event.headers.state !== "captured"
+            ? event.headers
+            : {
+                state: "captured",
+                items: event.headers.items.map((item) => {
+                  const name = this.secrets.redact(item.name, "response"),
+                    value =
+                      item.value === null
+                        ? null
+                        : this.secrets.redact(item.value, "response");
+                  return {
+                    ...item,
+                    name,
+                    value,
+                    redacted:
+                      item.redacted ||
+                      name !== item.name ||
+                      value !== item.value,
+                  };
+                }),
+              };
+      let body = event.body;
+      if (body.state === "unavailable")
+        body = {
+          ...body,
+          message: this.secrets.redact(body.message, "response"),
+        };
+      if (body.state === "captured") {
+        const prior = body;
+        const source = {
+          headers: (): Record<string, string> =>
+            prior.media_type === null
+              ? {}
+              : { "content-type": prior.media_type },
+          headersArray: async () => [],
+        };
+        const protectedBody = await captureNetworkBody(
+          async () => Buffer.from(prior.content, "base64"),
+          event.phase,
+          source,
+          this.secrets,
+          {
+            redactionScope: "response",
+            timeoutMs: 5000,
+            maxBodyBytes: this.limits.max_network_body_bytes,
+            maxBodyAllocationBytes: Math.min(
+              this.limits.max_network_body_allocation_bytes,
+              available,
+            ),
+            maxHeaderAllocationBytes:
+              this.limits.max_network_header_allocation_bytes,
+            maxMetadataAllocationBytes:
+              this.limits.max_network_metadata_allocation_bytes,
+          },
+        );
+        body =
+          protectedBody.state === "omitted"
+            ? { state: "unavailable", reason: "body-read-failed", message }
+            : protectedBody;
+        if (body.state === "captured")
+          body = { ...body, redacted: body.redacted || prior.redacted };
+      }
+      return { ...event, headers, body };
+    }
+    if (!("transaction_id" in event) || !("url" in event)) return event;
+    const url = ready
+      ? this.protectUrl(event.url)
+      : { url: "", origin: null, query_parameter_names: [], redacted: true };
+    const metadata = {
+      url: { ...url, redacted: url.redacted || event.url.redacted },
+      method: this.secrets.redact(event.method, "response"),
+      resource_type: this.secrets.redact(event.resource_type, "response"),
+      header_names: event.header_names.map((name) =>
+        ready
+          ? this.secrets.redact(name, "response")
+          : "[REDACTED:source-unavailable]",
+      ),
+    };
+    return event.kind === "request-failed"
+      ? {
+          ...event,
+          ...metadata,
+          failure: ready
+            ? this.secrets.redact(event.failure, "response")
+            : message,
+        }
+      : { ...event, ...metadata };
   }
 
   private push(event: UnindexedEvent): BrowserScenarioEventAdmission {

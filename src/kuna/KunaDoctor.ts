@@ -9,12 +9,10 @@ import type {
 import { readKunaConfiguration } from "./KunaConfiguration.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { kunaRetainedResourceCleanupError } from "./KunaCommand.js";
 import {
   createKunaResourceScope,
   inspectKunaInstallation,
-  kunaInstallationCancellation,
   kunaInstallationFailureDiagnostics,
   type KunaReadinessFailure,
 } from "./KunaInstallation.js";
@@ -78,23 +76,11 @@ export const inspectKunaProvider = async (
         ],
       };
     if (!(cause instanceof RegularFileCleanupFailure)) {
-      const cancellation = kunaInstallationCancellation(cause);
-      if (cancellation !== undefined) {
-        const error = new AnalysisCancelledError("doctor", {
-          cause: cancellation.reason,
-          diagnostics: cancellation.diagnostics,
-          ...(!kunaResources.hasPending
-            ? {}
-            : {
-                cleanup: {
-                  reason: "Kuna version-probe process cleanup is unconfirmed.",
-                  resources: kunaResources.cleanupResources ?? [],
-                },
-              }),
-        });
-        kunaResources.bindRetainedFailure(error);
-        throw error;
-      }
+      const cancellation = kunaResources.installationCancellationError(
+        cause,
+        "doctor",
+      );
+      if (cancellation !== undefined) throw cancellation;
       throw cause;
     }
     return {
@@ -152,6 +138,9 @@ export const inspectKunaProvider = async (
   }
   const { value } = installation;
   const cache = await cacheCheck(environment, platform);
+  const versionGuidance = value.verified
+    ? null
+    : `To use the verified release, select Kuna ${KUNA_VERIFIED_VERSION} by setting REA_KUNA_COMMAND to its absolute executable path in the environment that starts REA, then restart REA. You may continue with the selected unverified release.`;
   return {
     id: KUNA_PROVIDER_ID,
     configured,
@@ -171,9 +160,9 @@ export const inspectKunaProvider = async (
         detail: `${value.executable} reports Kuna ${value.version} (sha256 ${value.sha256})${
           value.verified
             ? "."
-            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified.`
+            : `; REA verified ${KUNA_VERIFIED_VERSION}, so this release's project layout is unverified. ${versionGuidance}`
         }`,
-        remediation: null,
+        remediation: versionGuidance,
         classification: "config_drift",
         details: {
           executable: value.executable,
@@ -196,11 +185,12 @@ const installationFailure = (
   code: failure.code,
   detail: failure.reason,
   remediation:
-    failure.code === "unsupported_host"
+    failure.remediation ??
+    (failure.code === "unsupported_host"
       ? KUNA_UNSUPPORTED_HOST_REMEDIATION
       : failure.code === "version_unresolved"
         ? KUNA_VERSION_PROBE_REMEDIATION
-        : KUNA_COMMAND_REMEDIATION,
+        : KUNA_COMMAND_REMEDIATION),
   classification:
     failure.code === "unsupported_host"
       ? "unsupported_host"

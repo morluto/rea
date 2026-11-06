@@ -1,5 +1,6 @@
 import { readFile, readdir } from "node:fs/promises";
 import { parseLinuxProcessStat } from "../LinuxProcessStat.js";
+import type { ProcessLifecycle } from "../ProcessLifecycle.js";
 import {
   mergeSamplingDiagnostics,
   readProcSamplingSource,
@@ -18,33 +19,13 @@ export interface SampledProcessRow {
   readonly session_id: number | null;
   readonly command: string;
   readonly startTime: string | undefined;
+  /** Native lifecycle from the stat record; undefined when ps supplied the row. */
+  readonly lifecycle: ProcessLifecycle | undefined;
 }
 
 export interface SampledProcessNode extends SampledProcessRow {
   readonly children: readonly number[] | undefined;
 }
-
-const parseProcStat = (
-  pid: number,
-  stat: string,
-): SampledProcessRow | undefined => {
-  const parsed = parseLinuxProcessStat(stat);
-  if (
-    parsed === undefined ||
-    parsed.pid !== pid ||
-    parsed.processGroupId <= 0 ||
-    parsed.sessionId <= 0
-  )
-    return undefined;
-  return {
-    pid: parsed.pid,
-    parent_pid: parsed.parentPid,
-    process_group_id: parsed.processGroupId,
-    session_id: parsed.sessionId,
-    command: "",
-    startTime: parsed.startTime,
-  };
-};
 
 export const readLinuxProcessStat = async (
   pid: number,
@@ -56,13 +37,28 @@ export const readLinuxProcessStat = async (
   );
   if (read.value === undefined)
     return samplingObservation(undefined, read.diagnostics);
-  const row = parseProcStat(pid, read.value);
+  const parsed = parseLinuxProcessStat(read.value);
+  if (parsed === undefined || parsed.pid !== pid)
+    return samplingObservation(
+      undefined,
+      read.diagnostics,
+      samplingFailure(`${path}: malformed process identity`),
+    );
+  // A valid stat record can outlive its group/session relation during teardown.
+  // It cannot supply an attributable sample, but is not a parser failure.
+  if (parsed.processGroupId <= 0 || parsed.sessionId <= 0)
+    return samplingObservation(undefined, read.diagnostics);
   return samplingObservation(
-    row,
+    {
+      pid: parsed.pid,
+      parent_pid: parsed.parentPid,
+      process_group_id: parsed.processGroupId,
+      session_id: parsed.sessionId,
+      command: "",
+      startTime: parsed.startTime,
+      lifecycle: parsed.lifecycle,
+    },
     read.diagnostics,
-    ...(row === undefined
-      ? [samplingFailure(`${path}: malformed process identity`)]
-      : []),
   );
 };
 

@@ -1,4 +1,4 @@
-import { mkdir, symlink, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { resolveWakaruCommand } from "../../../src/javascript/recovery/WakaruCommand.js";
@@ -43,5 +43,7 @@ linuxX64("allows a symlink to a regular Wakaru resource limiter", async () => {
       REA_WAKARU_COMMAND: command,
       REA_JAVASCRIPT_PRLIMIT_COMMAND: limiter,
     }),
-  ).resolves.toMatchObject({ limiter });
+  ).resolves.toMatchObject({
+    limiter: { invocationPath: limiter, resolvedPath: await realpath(target) },
+  });
 });

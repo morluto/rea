@@ -14,6 +14,8 @@ const section = (document: unknown) =>
     0,
     deflateSync(Buffer.from(JSON.stringify(document))),
   );
+const sectionJson = (document: string) =>
+  readAuditableSection(".dep-v0", 0, deflateSync(Buffer.from(document)));
 
 it("preserves package order, omitted kind, and the root index", () => {
   const parsed = section({
@@ -56,6 +58,58 @@ it("preserves package order, omitted kind, and the root index", () => {
     cyclic_dependency_indices: [],
   });
   expect(parsed.uncompressed_bytes).toBeGreaterThan(parsed.compressed_bytes);
+});
+
+it("preserves historical cargo-auditable feature lists and rejects bad values", () => {
+  const parsed = section({
+    format: 0,
+    packages: [
+      {
+        name: "feature_dep",
+        version: "1.2.3",
+        source: "crates.io",
+        features: ["default", "serde"],
+      },
+    ],
+  });
+  expect(parsed.packages).toEqual([
+    {
+      name: "feature_dep",
+      version: "1.2.3",
+      source: "crates.io",
+      kind: null,
+      dependencies: [],
+      features: ["default", "serde"],
+      root: false,
+    },
+  ]);
+  const omitted = section({
+    packages: [{ name: "no_features", version: "1", source: "crates.io" }],
+  });
+  const explicitEmpty = section({
+    packages: [
+      {
+        name: "no_features",
+        version: "1",
+        source: "crates.io",
+        features: [],
+      },
+    ],
+  });
+  expect(omitted.packages[0]?.features).toBeNull();
+  expect(explicitEmpty.packages[0]?.features).toEqual([]);
+  expect(() =>
+    section({
+      packages: [
+        {
+          name: "feature_dep",
+          version: "1.2.3",
+          source: "crates.io",
+          features: ["default", 7],
+        },
+      ],
+    }),
+  ).toThrow(RustAuditableFormatFailure);
 });
 
 it("reports dependency cycles and keeps an omitted format version unknown", () => {
@@ -142,6 +196,23 @@ it("rejects invalid JSON, trailing zlib bytes, and an empty section", () => {
   ).toThrow(RustAuditableFormatFailure);
 });
 
+it("rejects duplicate decoded JSON fields before object conversion", () => {
+  for (const document of [
+    '{"packages":[],"packages":[]}',
+    '{"packages":[{"name":"alpha","name":"beta","version":"1","source":"local"}]}',
+    '{"packages":[{"name":"alpha","version":"1","source":"local","dependencies":[0],"dependencies":[]}]}',
+    '{"packages":[],"meta":{"name":"alpha","na\\u006de":"beta"}}',
+  ])
+    expect(() => sectionJson(document)).toThrow(
+      /duplicate field "(?:packages|name|dependencies)"/u,
+    );
+  expect(
+    sectionJson(
+      '{"packages":[{"name":"alpha","version":"1","source":"local"}]}',
+    ).packages,
+  ).toHaveLength(1);
+});
+
 it("stops an inflate that exceeds the section ratio", () => {
   const raw = Buffer.alloc(8000);
   const compressed = deflateSync(raw);
@@ -152,6 +223,30 @@ it("stops an inflate that exceeds the section ratio", () => {
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
   ).toThrow(/1 MiB/);
+});
+
+it("retains the compressed-stream limit for a PE section with padding", () => {
+  const compressed = deflateSync(Buffer.alloc(RUST_SECTION_BYTES), {
+    level: 0,
+  });
+  expect(compressed.length).toBeGreaterThan(RUST_SECTION_BYTES);
+  const fileAlignment = 512;
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / fileAlignment) * fileAlignment,
+  );
+  compressed.copy(stored);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: RUST_SECTION_BYTES },
+      },
+    }),
+  );
 });
 
 it.each([0, 8])("reads documented cargo-auditable revision %i", (format) => {

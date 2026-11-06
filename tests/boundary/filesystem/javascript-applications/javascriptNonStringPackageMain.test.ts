@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeArtifactFiles } from "../../../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
 import { resolveArtifactPathByContext } from "../../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
 import { scanCanonicalArtifactInventory } from "../../../fixtures/artifactInventory.js";
@@ -42,11 +42,11 @@ it.each(
     const reader = createJavaScriptArtifactReader(root, "directory");
     try {
       const files = await readJavaScriptArtifactFiles(reader, snapshot);
-      const analysis = analyzeJavaScriptArtifactFiles(files);
+      const { analysis } = await analyzeArtifactFiles(files);
       expect(
         analysis.packages.find(({ path }) => path === "b/package.json"),
       ).toMatchObject({ main_status: "invalid", main_entrypoint: "" });
-      const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+      const graph = await immutableArtifactGraph(snapshot, files, analysis);
       const roles = graph.nodes.filter(
         ({ kind }) => kind === "electron-renderer",
       );
@@ -103,7 +103,7 @@ it.each(
     const reader = createJavaScriptArtifactReader(root, "directory");
     try {
       const files = await readJavaScriptArtifactFiles(reader, snapshot);
-      const analysis = analyzeJavaScriptArtifactFiles(files);
+      const { analysis } = await analyzeArtifactFiles(files);
       expect(
         analysis.packages.find(({ path }) => path === "b/package.json"),
       ).toMatchObject({
@@ -117,12 +117,13 @@ it.each(
           context: "module-specifier",
           moduleKind: "require",
           files: new Map(files.files.map((file) => [file.path, file])),
+          jsonDocuments: analysis.jsonDocuments,
         }),
       ).toMatchObject({
         resolution_status: valid ? "resolved" : "unavailable",
         resolved_path: valid ? "b/index.js" : null,
       });
-      const graph = buildJavaScriptArtifactGraph(snapshot, files, analysis);
+      const graph = await immutableArtifactGraph(snapshot, files, analysis);
       const role = graph.nodes.find(({ kind }) => kind === "electron-renderer");
       expect(role?.observations).toEqual(
         expect.arrayContaining([

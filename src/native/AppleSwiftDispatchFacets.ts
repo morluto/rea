@@ -1,12 +1,29 @@
+import {
+  createSwiftContextReader,
+  type SwiftContextReader,
+} from "./AppleSwiftNominalTypes.js";
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import {
+  decodeSwiftConformanceTypeReference,
+  requiredSwiftRelativeTarget,
+  swiftImportBinding as importBinding,
+} from "./AppleSwiftConformanceTypeReference.js";
+import { expectedSwiftMetadataReadFailure } from "./AppleSwiftMetadataReadFailure.js";
 
 /** Resolved file-backed metadata location from the Mach-O layout. */
 export interface ResolvedMetadataLocation {
   address: string;
   file_offset: number;
+}
+
+/** Address fact for a relative target that may not map to file-backed bytes. */
+export interface SwiftRelativeTargetLocation {
+  address: string;
+  file_offset: number | null;
 }
 
 /** Binary-metadata evidence produced by the Apple dispatch readers. */
@@ -35,7 +52,9 @@ export type SwiftRelativeField =
   | "typeName"
   | "witnessTablePattern"
   | "typeMetadataRecord"
-  | "classDescriptorName"
+  | "contextParent"
+  | "moduleName"
+  | "typeAccessFunction"
   | "methodImplementation";
 
 type SwiftRelativeFieldContract = {
@@ -55,7 +74,9 @@ const relativeFieldContracts = {
   typeName: { encoding: "direct", nullability: "nonnull" },
   witnessTablePattern: { encoding: "direct", nullability: "nullable" },
   typeMetadataRecord: { encoding: "taggedDirect", nullability: "nonnull" },
-  classDescriptorName: { encoding: "direct", nullability: "nonnull" },
+  contextParent: { encoding: "indirectable", nullability: "nullable" },
+  moduleName: { encoding: "direct", nullability: "nonnull" },
+  typeAccessFunction: { encoding: "direct", nullability: "nullable" },
   methodImplementation: {
     encoding: "compactFunction",
     nullability: "nullable",
@@ -84,6 +105,74 @@ export const unresolvedSwiftRelativeReason = (
   return `Swift relative pointer for ${field} has an unresolved external binding at ${hex(value.requestedAddress)}`;
 };
 
+interface SwiftProtocolFacts {
+  readonly name: string | null;
+  readonly readable: boolean;
+  readonly reason: string | null;
+}
+
+const readSwiftProtocolFacts = (input: {
+  readonly target: bigint | null;
+  readonly contextReader: SwiftContextReader;
+  readonly read: SwiftDispatchReaders;
+}): SwiftProtocolFacts => {
+  const { target, read } = input;
+  if (target === null)
+    return {
+      name: null,
+      readable: false,
+      reason: "Protocol descriptor target is unresolved",
+    };
+  let descriptorKind: number;
+  try {
+    descriptorKind = read.u32(target) & 31;
+  } catch (cause) {
+    const reason = expectedSwiftMetadataReadFailure(cause);
+    if (reason === null) throw cause;
+    return { name: null, readable: false, reason };
+  }
+  if (descriptorKind !== 3)
+    return {
+      name: null,
+      readable: false,
+      reason: "Unsupported Swift protocol descriptor kind",
+    };
+  try {
+    const name = input.contextReader.protocolName(target);
+    const context = input.contextReader.contextOf(target);
+    return {
+      name: context.path ?? name,
+      readable: true,
+      reason: context.reason,
+    };
+  } catch (cause) {
+    const reason = expectedSwiftMetadataReadFailure(cause);
+    if (reason === null) throw cause;
+    return { name: null, readable: false, reason };
+  }
+};
+
+const readWitnessConformanceHeader = (
+  read: SwiftDispatchReaders,
+  witness: bigint,
+  descriptor: bigint,
+): string | null => {
+  try {
+    const header = read.resolvePointer(witness);
+    if (header.kind !== "raw" && header.kind !== "rebase")
+      return header.kind === "unknown" || header.kind === "unsupported"
+        ? header.reason
+        : "Witness-table conformance header is an external binding";
+    return header.target === descriptor
+      ? null
+      : "Witness-table conformance header is unresolved or encoded";
+  } catch (cause) {
+    const reason = expectedSwiftMetadataReadFailure(cause);
+    if (reason === null) throw cause;
+    return reason;
+  }
+};
+
 /** Byte readers for Swift relative-pointer and conformance decode facets. */
 export interface SwiftDispatchReaders {
   u32(address: bigint): number;
@@ -91,25 +180,13 @@ export interface SwiftDispatchReaders {
   resolvePointer(address: bigint): PointerResolution;
   string(address: bigint): string;
   location(address: bigint): ResolvedMetadataLocation;
+  targetLocation(address: bigint): SwiftRelativeTargetLocation;
   evidence(address: bigint, description: string): BinaryMetadataEvidence;
   offset(address: bigint, size?: number): number;
 }
 
 const hex = (value: bigint) => `0x${value.toString(16)}`;
 const decoded = { status: "decoded" as const, reason: null };
-const importBinding = (
-  requestedAddress: bigint,
-  binding: Extract<PointerResolution, { readonly kind: "bind" }>,
-) => ({
-  requested_address: hex(requestedAddress),
-  symbol: binding.symbol,
-  binding_source: binding.binding_source,
-  library_ordinal: binding.library_ordinal,
-  library: binding.library,
-  weak: binding.weak,
-  addend: binding.addend.toString(),
-});
-
 /** Create a Swift ABI signed-relative pointer decoder that records relative_pointers. */
 export const createSwiftRelativeReader = (input: {
   bytes: Buffer;
@@ -231,6 +308,7 @@ export const createSwiftRelativeReader = (input: {
 
 /** Decode `__swift5_proto` conformances and static witness slots into `result`. */
 export const decodeSwiftDispatchFacets = (input: {
+  contextReader?: SwiftContextReader;
   sections: readonly Section[];
   segments: readonly Segment[];
   readers: SwiftDispatchReaders;
@@ -239,30 +317,30 @@ export const decodeSwiftDispatchFacets = (input: {
   result: ObjcSwiftMetadata;
 }): FacetDecodeFacts => {
   const { sections, segments, readers: read, relative, budget, result } = input;
-  const swiftFailures: string[] = [];
+  const contextReader =
+    input.contextReader ?? createSwiftContextReader({ ...read, relative });
   const issues = [] as ReturnType<typeof issue>[];
-  const requiredRelative = (
-    field: bigint,
-    kind: SwiftRelativeField,
-  ): bigint => {
-    const value = relative(field, kind);
-    if (value.kind !== "target")
-      throw new RangeError(unresolvedSwiftRelativeReason(value, kind));
-    return value.target;
-  };
   let swiftExamined = 0;
   let decodedRecords = 0;
   for (const section of sections.filter(
     ({ name }) => name === "__swift5_proto",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift conformance section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift conformance section",
+      );
     for (let index = 0; index < section.size / 4; index++) {
       if (!budget.admit()) break;
       swiftExamined++;
       const field = section.address + BigInt(index * 4);
       try {
-        const descriptor = requiredRelative(field, "conformanceRecord");
+        const descriptor = requiredSwiftRelativeTarget(
+          relative,
+          field,
+          "conformanceRecord",
+          unresolvedSwiftRelativeReason,
+        );
         const flags = read.u32(descriptor + 12n);
         const protocolValue = relative(descriptor, "conformanceProtocol");
         const protocol =
@@ -274,12 +352,12 @@ export const decodeSwiftDispatchFacets = (input: {
                 "conformanceProtocol",
               )
             : null;
-        if (protocol !== null && (read.u32(protocol) & 31) !== 3)
-          throw new TypeError("Unsupported Swift protocol descriptor kind");
-        const protocolName =
-          protocol === null
-            ? null
-            : read.string(requiredRelative(protocol + 8n, "protocolName"));
+        const protocolFacts = readSwiftProtocolFacts({
+          target: protocol,
+          contextReader,
+          read,
+        });
+        const protocolName = protocolFacts.name;
         const protocolBinding =
           protocolValue.kind === "binding"
             ? importBinding(
@@ -287,107 +365,97 @@ export const decodeSwiftDispatchFacets = (input: {
                 protocolValue.binding,
               )
             : null;
-        const typeKind = (flags >>> 3) & 7;
-        if (typeKind !== 0 && typeKind !== 1)
-          throw new TypeError(
-            "Unsupported Swift conformance type-reference kind",
-          );
-        const typeValue = relative(descriptor + 4n, "conformanceType");
-        let type = typeValue.kind === "target" ? typeValue.target : null;
-        let typeBinding =
-          typeValue.kind === "binding"
-            ? importBinding(typeValue.requestedAddress, typeValue.binding)
-            : null;
-        let unresolvedTypeReason =
-          typeValue.kind === "unknown" ? typeValue.reason : null;
-        if (typeKind === 1 && type !== null) {
-          const pointer = read.resolvePointer(type);
-          if (pointer.kind === "bind") {
-            typeBinding = importBinding(type, pointer);
-            type = null;
-          } else if (pointer.kind === "raw" && pointer.target === 0n) {
-            type = null;
-            unresolvedTypeReason =
-              "Null indirect Swift conformance type reference";
-          } else if (pointer.kind === "rebase" || pointer.kind === "raw") {
-            type = pointer.target;
-          } else {
-            type = null;
-            unresolvedTypeReason = pointer.reason;
-          }
-        }
-        if (type !== null && ![16, 17, 18].includes(read.u32(type) & 31))
-          throw new TypeError("Unsupported Swift type descriptor kind");
-        const typeName =
-          type === null
-            ? null
-            : read.string(requiredRelative(type + 8n, "typeName"));
-        const witnessValue =
-          protocol !== null && type !== null
-            ? relative(descriptor + 8n, "witnessTablePattern")
-            : { kind: "null" as const };
+        const typeReference = decodeSwiftConformanceTypeReference({
+          descriptor,
+          flags,
+          read,
+          contextReader,
+          relative,
+          unresolvedReason: unresolvedSwiftRelativeReason,
+        });
+        const witnessValue = relative(descriptor + 8n, "witnessTablePattern");
         const witness =
           witnessValue.kind === "target" ? witnessValue.target : null;
         const unresolvedWitnessReason =
           witnessValue.kind === "unknown" || witnessValue.kind === "binding"
             ? unresolvedSwiftRelativeReason(witnessValue, "witnessTablePattern")
             : null;
-        const staticWitness =
+        let staticWitness =
           witness !== null &&
           protocol !== null &&
-          type !== null &&
-          (flags & ~0x38) === 0 &&
-          (read.u32(type) & 0x80) === 0;
+          protocolFacts.readable &&
+          typeReference.staticWitnessIdentity &&
+          (flags & ~0x38) === 0;
+        staticWitness &&=
+          typeReference.kind === 2 || typeReference.generic === false;
         let witnessReason: string | null = staticWitness
           ? null
           : (unresolvedProtocolReason ??
-            unresolvedTypeReason ??
+            protocolFacts.reason ??
+            typeReference.reason ??
             unresolvedWitnessReason ??
-            (protocolBinding !== null || typeBinding !== null
+            (protocolBinding !== null || typeReference.binding !== null
               ? "Conformance references an external Mach-O binding"
               : "Conditional, generic, resilient or missing static witness table is not decoded"));
-        if (staticWitness) {
-          const header = read.resolvePointer(witness);
-          if (header.kind !== "raw" && header.kind !== "rebase")
-            witnessReason =
-              header.kind === "unknown" || header.kind === "unsupported"
-                ? header.reason
-                : "Witness-table conformance header is an external binding";
-          else if (header.target !== descriptor)
-            witnessReason =
-              "Witness-table conformance header is unresolved or encoded";
+        if (staticWitness && witness !== null) {
+          witnessReason = readWitnessConformanceHeader(
+            read,
+            witness,
+            descriptor,
+          );
         }
+        const conformanceReason =
+          witnessReason ?? typeReference.reason ?? protocolFacts.reason;
         const conformanceDecode =
-          witnessReason === null
+          conformanceReason === null
             ? { status: "decoded" as const, reason: null }
-            : { status: "partial" as const, reason: witnessReason };
+            : { status: "partial" as const, reason: conformanceReason };
+        if (witnessReason === null && conformanceReason !== null)
+          issues.push(
+            issue(
+              "swift_conformances_static_witness_slots",
+              "conformance_identity_partial",
+              conformanceReason,
+              hex(descriptor),
+            ),
+          );
         result.swift_conformances.push({
-          type_name: typeName,
-          type_binding: typeBinding,
+          type_name: typeReference.name,
+          type_reference_kind: typeReference.kind,
+          type_reference_target:
+            typeReference.target === null
+              ? { address: null, file_offset: null }
+              : read.targetLocation(typeReference.target),
+          type_binding: typeReference.binding,
           protocol_name: protocolName,
+          ...(protocol === null
+            ? {}
+            : { protocol_target: read.targetLocation(protocol) }),
           protocol_binding: protocolBinding,
-          module: null,
+          module: typeReference.module,
           witness_table:
             witness === null
               ? { address: null, file_offset: null }
-              : read.location(witness),
+              : read.targetLocation(witness),
           location: read.location(descriptor),
           decode: conformanceDecode,
           evidence: read.evidence(
             descriptor,
-            "Swift protocol conformance descriptor and directly encoded type/protocol names",
+            "Swift protocol conformance descriptor, type reference and protocol name",
           ),
         });
         if (conformanceDecode.status === "decoded") decodedRecords++;
         if (
           witnessReason !== null ||
           witness === null ||
-          typeName === null ||
-          protocolName === null
+          typeReference.name === null ||
+          protocolName === null ||
+          !protocolFacts.readable
         ) {
           const reason =
-            witnessReason ?? "Missing static witness table is not decoded";
-          swiftFailures.push(`${typeName ?? "<unknown type>"}: ${reason}`);
+            witnessReason ??
+            typeReference.reason ??
+            "Missing static witness table is not decoded";
           issues.push(
             issue(
               "swift_conformances_static_witness_slots",
@@ -405,75 +473,87 @@ export const decodeSwiftDispatchFacets = (input: {
         for (let slot = 0; slot < count; slot++) {
           if (!budget.admit()) break;
           const entry = witness + BigInt((slot + 1) * 8);
-          const implementationResolution = read.resolvePointer(entry);
-          const implementation =
-            implementationResolution.kind === "raw" ||
-            implementationResolution.kind === "rebase"
-              ? implementationResolution.target
-              : null;
-          const requirementFlags = read.u32(
-            protocol! + 24n + BigInt(signatureCount * 12 + slot * 8),
-          );
-          const kind = requirementFlags & 15;
-          const synchronousFunction =
-            kind >= 1 && kind <= 4 && (requirementFlags & 0x20) === 0;
-          const executable =
-            implementation !== null &&
-            synchronousFunction &&
-            segments.some(
-              (segment) =>
-                segment.executable &&
-                implementation >= segment.address &&
-                implementation < segment.address + segment.size,
+          try {
+            const implementationResolution = read.resolvePointer(entry);
+            const implementation =
+              implementationResolution.kind === "raw" ||
+              implementationResolution.kind === "rebase"
+                ? implementationResolution.target
+                : null;
+            const requirementFlags = read.u32(
+              protocol! + 24n + BigInt(signatureCount * 12 + slot * 8),
             );
-          const slotDecode = executable
-            ? { status: "decoded" as const, reason: null }
-            : {
-                status: "partial" as const,
-                reason:
-                  implementationResolution.kind === "bind"
-                    ? "Witness implementation is an external Mach-O binding"
-                    : implementationResolution.kind === "unknown" ||
-                        implementationResolution.kind === "unsupported"
-                      ? implementationResolution.reason
-                      : "Witness slot is non-function, async, nil, external, authenticated or encoded; implementation target is unresolved",
-              };
-          result.swift_dispatch_slots.push({
-            owner: `${typeName}: ${protocolName}`,
-            table_kind: "witness_table",
-            slot_index: slot + 1,
-            requirement: null,
-            implementation: null,
-            implementation_address: executable ? hex(implementation) : null,
-            ...(implementationResolution.kind === "bind"
-              ? {
-                  implementation_binding: importBinding(
-                    entry,
-                    implementationResolution,
-                  ),
-                }
-              : {}),
-            thunk_address: null,
-            location: read.location(entry),
-            decode: slotDecode,
-            evidence: read.evidence(
-              entry,
-              "Static Swift witness slot, indexed after the conformance-descriptor header",
-            ),
-          });
-          if (slotDecode.status !== "decoded")
+            const kind = requirementFlags & 15;
+            const synchronousFunction =
+              kind >= 1 && kind <= 4 && (requirementFlags & 0x20) === 0;
+            const executable =
+              implementation !== null &&
+              synchronousFunction &&
+              segments.some(
+                (segment) =>
+                  segment.executable &&
+                  implementation >= segment.address &&
+                  implementation < segment.address + segment.size,
+              );
+            const slotDecode = executable
+              ? { status: "decoded" as const, reason: null }
+              : {
+                  status: "partial" as const,
+                  reason:
+                    implementationResolution.kind === "bind"
+                      ? "Witness implementation is an external Mach-O binding"
+                      : implementationResolution.kind === "unknown" ||
+                          implementationResolution.kind === "unsupported"
+                        ? implementationResolution.reason
+                        : "Witness slot is non-function, async, nil, external, authenticated or encoded; implementation target is unresolved",
+                };
+            result.swift_dispatch_slots.push({
+              owner: `${typeReference.name}: ${protocolName}`,
+              table_kind: "witness_table",
+              slot_index: slot + 1,
+              requirement: null,
+              implementation: null,
+              implementation_address: executable ? hex(implementation) : null,
+              ...(implementationResolution.kind === "bind"
+                ? {
+                    implementation_binding: importBinding(
+                      entry,
+                      implementationResolution,
+                    ),
+                  }
+                : {}),
+              thunk_address: null,
+              location: read.location(entry),
+              decode: slotDecode,
+              evidence: read.evidence(
+                entry,
+                "Static Swift witness slot, indexed after the conformance-descriptor header",
+              ),
+            });
+            if (slotDecode.status !== "decoded")
+              issues.push(
+                issue(
+                  "swift_conformances_static_witness_slots",
+                  "witness_slot_unresolved",
+                  slotDecode.reason,
+                  hex(entry),
+                ),
+              );
+          } catch (cause) {
+            if (!(cause instanceof RangeError)) throw cause;
             issues.push(
               issue(
                 "swift_conformances_static_witness_slots",
                 "witness_slot_unresolved",
-                slotDecode.reason,
+                cause.message,
                 hex(entry),
               ),
             );
+            break;
+          }
         }
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
-        swiftFailures.push(`${hex(field)}: ${message}`);
         issues.push(
           issue(
             "swift_conformances_static_witness_slots",

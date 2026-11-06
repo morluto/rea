@@ -3,9 +3,31 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
+
+/** Structured native token availability, distinct from failed reads and caller cancellation. */
+export class ProcessRunTokenReadError extends Error {
+  readonly _tag = "ProcessRunTokenReadError";
+  constructor(
+    readonly pid: number,
+    readonly availability: "absent" | "unavailable",
+    readonly reason: string,
+  ) {
+    super(`Run token for PID ${String(pid)}: ${reason}`);
+    this.name = "ProcessRunTokenReadError";
+  }
+}
 
 const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
+
+/** Only a variable observed on this process supplies its run token. */
+export const processRunIdFromEnvironment = (
+  environment: Readonly<Record<string, string>>,
+): string | undefined =>
+  Object.hasOwn(environment, "REA_PROCESS_RUN_ID")
+    ? environment.REA_PROCESS_RUN_ID
+    : undefined;
 
 /** Read only ownership tokens, using per-process fallback for missing batch rows. */
 export async function* readProcessRunTokens(
@@ -42,13 +64,20 @@ export async function* readProcessRunTokens(
             : await host.environment(process.pid, signal);
         observation = {
           state: "readable",
-          runId: environment.REA_PROCESS_RUN_ID,
+          runId: processRunIdFromEnvironment(environment),
         };
       } catch (cause: unknown) {
         signal?.throwIfAborted();
         const reason = errorMessage(cause);
+        const code =
+          cause instanceof Error &&
+          "code" in cause &&
+          typeof cause.code === "string"
+            ? cause.code
+            : undefined;
         observation = {
           state: "unavailable",
+          ...(code === undefined ? {} : { code }),
           reason:
             batchFailure === undefined
               ? reason
@@ -60,3 +89,29 @@ export async function* readProcessRunTokens(
     yield { process, observation };
   }
 }
+
+/**
+ * Live processes in the current process table that expose this run token.
+ * A process whose token cannot be read is left out, so the list proves
+ * presence only; it does not prove that no other carrier exists.
+ */
+export const readRunTokenCarriers = async (
+  host: ProcessOwnershipHost,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<readonly ProcessTableEntry[]> => {
+  const carriers: ProcessTableEntry[] = [];
+  const processes = liveProcesses(
+    signal === undefined
+      ? await host.listProcesses()
+      : await host.listProcesses(signal),
+  );
+  for await (const { process, observation } of readProcessRunTokens(
+    host,
+    processes,
+    signal,
+  ))
+    if (observation.state === "readable" && observation.runId === runId)
+      carriers.push(process);
+  return carriers;
+};

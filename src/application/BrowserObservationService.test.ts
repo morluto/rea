@@ -1,12 +1,17 @@
 import { expect, it } from "vitest";
 import type { BrowserObservationPort } from "./BrowserObservationPort.js";
-import { listBrowserTargets } from "./BrowserObservationService.js";
+import {
+  listBrowserTargets,
+  inspectWebPage,
+  analyzeWebBundle,
+} from "./BrowserObservationService.js";
 import type { BrowserTargetList } from "../domain/browserObservationSchemas.js";
 import { parseEvidence } from "../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisOutputError,
 } from "../domain/analysisErrorCore.js";
+import { resolvedAnalysisError } from "../domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   expectDroppedPartial,
@@ -17,10 +22,9 @@ import {
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import { err, ok } from "../domain/result.js";
 import { passiveNetworkCapture } from "../../tests/fixtures/passiveNetworkCapture.js";
-import { inspectWebPage } from "./BrowserObservationService.js";
+import { analyzeWebBundleFixture } from "../../tests/support/browser/analyzeWebBundleFixture.js";
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
-import { analyzeWebBundle } from "./BrowserObservationService.js";
 
 const input = {
   cdp_endpoint: {
@@ -51,6 +55,21 @@ const provider = (
     identity: () => ({ id: "browser-fixture", name: "Fixture", version: "1" }),
     listTargets,
   }) as unknown as BrowserObservationPort;
+
+it("keeps live browser inventory Evidence observed with external-service authority", async () => {
+  const result = await listBrowserTargets(
+    provider(async () => ok(report)),
+    input,
+  );
+  expect(result).toMatchObject({
+    ok: true,
+    value: { confidence: "observed", authority: "external-service" },
+  });
+  if (result.ok)
+    expect(result.value.parameters).not.toHaveProperty(
+      "comparison_input_sha256",
+    );
+});
 
 it("retains completed browser inventory Evidence when the provider completes after abort", async () => {
   const controller = new AbortController();
@@ -132,6 +151,49 @@ it("converts a raw page inspection retained after browser cleanup failure", asyn
   }
 });
 
+it.each([true, false])(
+  "promotes cleanup primary facts once when wrapper retains them: %s",
+  async (wrapperRetainsFacts) => {
+    const inspection = passiveNetworkCapture();
+    const primary = new AnalysisCancelledError("inspect_web_page", {
+      partialObservation: inspection,
+    });
+    const failure = new BrowserObservationError(
+      "inspect_web_page",
+      "cleanup_failed",
+      {
+        cleanupPrimary: primary,
+        cleanup: {
+          reason: "target detach failed",
+          resources: ["browser target"],
+        },
+        ...(wrapperRetainsFacts ? { partialObservation: inspection } : {}),
+      },
+    );
+    const browser = {
+      ...provider(async () => ok(report)),
+      inspectPage: async () => err(failure),
+    } as unknown as BrowserObservationPort;
+    const result = await inspectWebPage(browser, pageInput());
+    expect(result.ok).toBe(false);
+    expect(parseEvidence(primary.partialObservation)).toMatchObject({
+      operation: "inspect_web_page",
+      normalized_result: inspection,
+    });
+    if (wrapperRetainsFacts)
+      expect(failure.partialObservation).toBe(primary.partialObservation);
+    failure.resolveCleanup();
+    expect(resolvedAnalysisError(failure)).toBe(primary);
+    expect(
+      parseEvidence(
+        projectAnalysisError(resolvedAnalysisError(failure)).details?.[
+          "partial_observation"
+        ],
+      ),
+    ).toEqual(primary.partialObservation);
+  },
+);
+
 it("retains captured page Evidence when bundle analysis fails after capture", async () => {
   const inspection = passiveNetworkCapture();
   const failure = new BrowserObservationError(
@@ -162,12 +224,51 @@ it("retains captured page Evidence when bundle analysis fails after capture", as
   }
 });
 
+it("projects completed source-map acquisition without claiming bundle analysis", async () => {
+  const inspection = passiveNetworkCapture();
+  const partial = {
+    kind: "web-bundle-acquisition" as const,
+    inspection,
+    source_maps: {
+      status: "unavailable" as const,
+      requested: 1,
+      processed: 0,
+      items: [],
+      limitation: "One requested source map was not processed.",
+    },
+    analysis_status: "not_performed" as const,
+  };
+  const reason = { requested: "stop after capture" };
+  const failure = new AnalysisCancelledError("analyze_web_bundle", {
+    cause: reason,
+    partialObservation: partial,
+  });
+  const browser: BrowserObservationPort = {
+    ...provider(async () => ok(report)),
+    analyzeBundle: async () => err(failure),
+  };
+  const selected = analyzeWebBundleInputSchema.parse({
+    ...input,
+    cdp_endpoint: input.cdp_endpoint.recorded,
+    target_id: "page",
+    fetch_source_maps: true,
+  });
+  const result = await analyzeWebBundle(browser, selected);
+  expect(result.ok).toBe(false);
+  if (result.ok) return;
+  expect(result.error).toBe(failure);
+  expect(result.error.cause).toBe(reason);
+  expect(parseEvidence(result.error.partialObservation)).toMatchObject({
+    operation: "analyze_web_bundle",
+    parameters: expect.objectContaining({ fetch_source_maps: true }),
+    normalized_result: partial,
+  });
+});
+
 it("retains completed bundle facts as bundle Evidence after cancellation", async () => {
-  const { analyzeCapturedWebBundle } =
-    await import("../domain/webBundleAnalyzer.js");
   const { AnalysisCancelledError } =
     await import("../domain/analysisErrorCore.js");
-  const bundle = analyzeCapturedWebBundle(passiveNetworkCapture());
+  const bundle = analyzeWebBundleFixture(passiveNetworkCapture());
   const reason = { requested: "stop after completed script" };
   const failure = new AnalysisCancelledError("analyze_web_bundle", {
     cause: reason,

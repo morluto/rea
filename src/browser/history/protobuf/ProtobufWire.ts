@@ -1,3 +1,4 @@
+import { err, ok, type Result } from "../../../domain/result.js";
 import { setImmediate } from "node:timers/promises";
 import type { ProtobufField } from "../../../domain/protobufWire.js";
 import { CaptureFormatError } from "../CaptureFormatError.js";
@@ -50,38 +51,76 @@ const textOf = (bytes: Uint8Array): string | undefined => {
   }
 };
 
-/** An allocation-free syntactic candidate check, not a claim about the payload's type. */
+interface WireField {
+  readonly number: number;
+  readonly type: number;
+  readonly payloadOffset: number;
+  readonly next: number;
+  readonly value?: bigint;
+}
+
+/** One wire-field grammar shared by occurrence decoding and candidate discovery. */
+const readWireField = (
+  bytes: Uint8Array,
+  at: number,
+  until: number,
+): Result<WireField, string> => {
+  const tag = readProtobufVarint(bytes, at, until);
+  if (tag === undefined) return err("Truncated or overflowing field tag");
+  const number = Number(tag.value >> 3n);
+  const type = Number(tag.value & 7n);
+  if (number === 0 || tag.value >> 3n > 0x1fffffffn)
+    return err("Invalid field number");
+  let payloadOffset = tag.end;
+  let next = tag.end;
+  let value: bigint | undefined;
+  if (type === 0) {
+    const parsed = readProtobufVarint(bytes, tag.end, until);
+    if (parsed === undefined)
+      return err("Truncated or overflowing uint64 varint");
+    next = parsed.end;
+    value = parsed.value;
+  } else if (type === 1 || type === 5) {
+    next += type === 1 ? 8 : 4;
+    if (next > until) return err("Truncated fixed-width field");
+  } else if (type === 2) {
+    const length = readProtobufVarint(bytes, tag.end, until);
+    if (length === undefined)
+      return err("Truncated or overflowing length prefix");
+    if (length.value > BigInt(until - length.end))
+      return err("Length-delimited field exceeds its message");
+    payloadOffset = length.end;
+    next = payloadOffset + Number(length.value);
+  } else if (type !== 3 && type !== 4) return err(`Invalid wire type ${type}`);
+  return ok({
+    number,
+    type,
+    payloadOffset,
+    next,
+    ...(value === undefined ? {} : { value }),
+  });
+};
+
+/** Bounded syntax walk, without allocating occurrence facts or guessing payload types. */
 const messageCandidate = async (
   bytes: Uint8Array,
   start: number,
   end: number,
   budget: ProtobufBudget,
 ): Promise<boolean> => {
-  if (start === end) return true;
+  const groups: number[] = [];
   while (start < end) {
     await budget.checkpoint();
-    const tag = readProtobufVarint(bytes, start, end);
-    if (
-      tag === undefined ||
-      tag.value >> 3n === 0n ||
-      tag.value >> 3n > 0x1fffffffn
-    )
-      return false;
-    const type = Number(tag.value & 7n);
-    start = tag.end;
-    if (type === 0) {
-      const value = readProtobufVarint(bytes, start, end);
-      if (value === undefined) return false;
-      start = value.end;
-    } else if (type === 1 || type === 5) start += type === 1 ? 8 : 4;
-    else if (type === 2) {
-      const size = readProtobufVarint(bytes, start, end);
-      if (size === undefined || size.value > BigInt(end - size.end))
-        return false;
-      start = size.end + Number(size.value);
-    } else return false;
+    const parsed = readWireField(bytes, start, end);
+    if (!parsed.ok) return false;
+    const field = parsed.value;
+    if (field.type === 3) {
+      if (groups.length >= WEB_NETWORK_CAPTURE_LIMITS.depth) return false;
+      groups.push(field.number);
+    } else if (field.type === 4 && groups.pop() !== field.number) return false;
+    start = field.next;
   }
-  return start === end;
+  return groups.length === 0;
 };
 
 const packedVarintCandidate = async (
@@ -142,45 +181,23 @@ export const decodeProtobufWire = async (
     });
     while (at < until) {
       await budget.checkpoint();
-      const tag = readProtobufVarint(bytes, at, until);
-      if (tag === undefined) return fail("Truncated or overflowing field tag");
-      const number = Number(tag.value >> 3n);
-      const type = Number(tag.value & 7n);
-      if (number === 0 || tag.value >> 3n > 0x1fffffffn)
-        return fail("Invalid field number");
+      const parsed = readWireField(bytes, at, until);
+      if (!parsed.ok) return fail(parsed.error);
+      const { number, type, payloadOffset } = parsed.value;
+      let next = parsed.value.next;
       if (type === 4)
         return group === number
-          ? { end: tag.end, payloadEnd: at }
+          ? { end: next, payloadEnd: at }
           : fail("Unexpected or mismatched end-group tag");
-      let payloadOffset = tag.end;
-      let next: number;
-      let value: string | undefined;
-      if (type === 0) {
-        const parsed = readProtobufVarint(bytes, tag.end, until);
-        if (parsed === undefined)
-          return fail("Truncated or overflowing uint64 varint");
-        next = parsed.end;
-        value = parsed.value.toString();
-      } else if (type === 1 || type === 5) {
-        next = tag.end + (type === 1 ? 8 : 4);
-        if (next > until) return fail("Truncated fixed-width field");
+      if (type === 3 && depth >= WEB_NETWORK_CAPTURE_LIMITS.depth)
+        return fail("Group nesting exceeds the 64-level decoder budget");
+      let value = parsed.value.value?.toString();
+      if (type === 1 || type === 5) {
         let integer = 0n;
-        for (let p = next - 1; p >= tag.end; p--)
+        for (let p = next - 1; p >= payloadOffset; p--)
           integer = (integer << 8n) | BigInt(bytes[p]!);
         value = integer.toString();
-      } else if (type === 2) {
-        const length = readProtobufVarint(bytes, tag.end, until);
-        if (length === undefined)
-          return fail("Truncated or overflowing length prefix");
-        if (length.value > BigInt(until - length.end))
-          return fail("Length-delimited field exceeds its message");
-        payloadOffset = length.end;
-        next = payloadOffset + Number(length.value);
-      } else if (type === 3) {
-        if (depth >= WEB_NETWORK_CAPTURE_LIMITS.depth)
-          return fail("Group nesting exceeds the 64-level decoder budget");
-        next = tag.end;
-      } else return fail(`Invalid wire type ${type}`);
+      }
       budget.charge(1024);
       const field: ProtobufField = {
         index: baseIndex + fields.length,
@@ -235,7 +252,13 @@ export const decodeProtobufWire = async (
       }
       if (schema !== undefined) await schema.annotate(field, bytes, parent);
       if (type === 3) {
-        const nested = await walk(tag.end, until, field, depth + 1, number);
+        const nested = await walk(
+          payloadOffset,
+          until,
+          field,
+          depth + 1,
+          number,
+        );
         field.bytes = nested.end - at;
         field.payload_bytes = (nested.payloadEnd ?? nested.end) - payloadOffset;
         if (nested.error !== undefined) return nested;

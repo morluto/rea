@@ -16,8 +16,55 @@ import {
   type RegularFileOperationOutcome,
 } from "../filesystem/OwnedRegularFile.js";
 import { readBoundedFileBytes } from "../process/BoundedFileBytes.js";
-import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
-import type { AnalysisCleanupObservation } from "../domain/analysisErrorBase.js";
+import {
+  AnalysisCleanupLeaseGroup,
+  AnalysisCleanupLease,
+} from "../artifacts/AnalysisCleanupLease.js";
+import type {
+  ArtifactResourceOwner,
+  ArtifactResourceScope,
+} from "../artifacts/ArtifactResourceScope.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import type {
+  AnalysisCleanupObservation,
+  AnalysisError,
+} from "../domain/analysisErrorBase.js";
+
+/** A scope handoff preserves the same descriptor outcome and exact retry capability. */
+export class RetainedRegularFileCleanupFailure<
+  Value = unknown,
+> extends RegularFileCleanupFailure<Value> {
+  readonly cleanupOwner: Extract<
+    ArtifactResourceOwner,
+    { readonly kind: "lease" }
+  >;
+  readonly cleanupLease: AnalysisCleanupLease;
+  constructor(failure: RegularFileCleanupFailure<Value>) {
+    super(failure);
+    this.cleanupLease =
+      failure instanceof RetainedRegularFileCleanupFailure
+        ? failure.cleanupLease
+        : new AnalysisCleanupLease(() => failure.owner.close(), [failure.path]);
+    this.cleanupOwner =
+      failure instanceof RetainedRegularFileCleanupFailure
+        ? failure.cleanupOwner
+        : { kind: "lease", resource: failure.path, lease: this.cleanupLease };
+  }
+}
+
+/** Bind only explicit cleanup capabilities, never resource labels or opaque causes. */
+export const bindRegularFileCleanup = (
+  cause: unknown,
+  error: AnalysisError,
+): void => {
+  const leases =
+    cause instanceof RetainedRegularFileCleanupFailure
+      ? [cause.cleanupLease]
+      : cause instanceof ArtifactReaderFailure
+        ? cause.cleanupLeases
+        : undefined;
+  if (leases !== undefined) new AnalysisCleanupLeaseGroup(error, leases);
+};
 
 /** Filesystem admission policy for one selected regular input. */
 export interface RegularFileReadOptions {
@@ -51,34 +98,34 @@ export class InvalidUtf8FileError extends TypeError {
   }
 }
 
-export { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
-
-export type RegularFileReadOutcome<Value> = RegularFileOperationOutcome<Value>;
-
 /** Retry a failed close through its retained owner and report any remaining cleanup. */
 export const retryRegularFileCleanup = async <Value>(
   failure: RegularFileCleanupFailure<Value>,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ): Promise<{
-  readonly outcome: RegularFileReadOutcome<Value>;
+  readonly outcome: RegularFileOperationOutcome<Value>;
+  readonly cleanupLease?: AnalysisCleanupLease;
   readonly cleanup?: AnalysisCleanupObservation;
+  readonly failure?: RetainedRegularFileCleanupFailure<Value>;
 }> => {
-  const outcome: RegularFileReadOutcome<Value> =
+  const outcome: RegularFileOperationOutcome<Value> =
     failure.outcome.kind === "failed" &&
     failure.operationFailure === undefined &&
     failure.outcome.cause instanceof RegularFileOperationCancelled &&
     !(signal?.aborted === true && failure.outcome.cause === signal.reason)
       ? { kind: "failed", cause: failure.outcome.cause.reason }
       : failure.outcome;
-  const released = await resources.release({
-    kind: "file-handle",
-    handle: failure.owner,
-    resource: failure.path,
-  });
+  const retained =
+    failure instanceof RetainedRegularFileCleanupFailure
+      ? failure
+      : new RetainedRegularFileCleanupFailure(failure);
+  const released = await resources.release(retained.cleanupOwner);
   if (released.kind === "released") return { outcome };
   return {
     outcome,
+    cleanupLease: released.lease,
+    failure: retained,
     cleanup: {
       reason: `${failureMessage(failure.cleanupCause)}; retry: ${failureMessage(released.cause)}`,
       resources: [failure.path],
@@ -93,15 +140,19 @@ export const retryRegularFileCleanupFailures = async (
 ): Promise<{
   readonly primary: unknown;
   readonly failures: readonly RegularFileCleanupFailure[];
+  readonly cleanupLeases: readonly AnalysisCleanupLease[];
   readonly cleanup?: AnalysisCleanupObservation;
 }> => {
   const failures: RegularFileCleanupFailure[] = [];
+  const cleanupLeases = new Set<AnalysisCleanupLease>();
   const observations: AnalysisCleanupObservation[] = [];
   let current = failure;
   let primary: unknown;
   for (;;) {
-    failures.push(current);
     const retried = await retryRegularFileCleanup(current, resources);
+    if (retried.cleanupLease !== undefined)
+      cleanupLeases.add(retried.cleanupLease);
+    failures.push(retried.failure ?? current);
     if (retried.cleanup !== undefined) observations.push(retried.cleanup);
     primary =
       retried.outcome.kind === "failed"
@@ -118,6 +169,7 @@ export const retryRegularFileCleanupFailures = async (
   return {
     primary,
     failures,
+    cleanupLeases: [...cleanupLeases],
     ...(observations.length === 0
       ? {}
       : {
@@ -132,25 +184,30 @@ export const retryRegularFileCleanupFailures = async (
 const failureMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
-/** Admit one regular-file handle, retain it through the consumer, and always close it. */
-export const withRegularFile = async <Value>(
+/** Completed stable read facts survive cancellation during descriptor finalization. */
+export interface RegularFileCompletion<Value> {
+  readonly value: Value;
+  readonly cancellation?: { readonly reason: unknown } | undefined;
+}
+
+/** Admit one regular-file handle, retaining completion through close and cleanup retry. */
+export const withRegularFileCompletion = async <Value>(
   path: string,
   read: (handle: FileHandle, stats: Stats) => Promise<Value>,
   options: RegularFileReadOptions = {},
-): Promise<Value> => {
+): Promise<RegularFileCompletion<Value>> => {
   const { signal, resources } = options;
   let admitted: FileHandle | undefined;
-  const operation = async () => {
+  const operation = async (): Promise<RegularFileCompletion<Value>> => {
     try {
-      return await withOwnedRegularFile(
+      const value = await withOwnedRegularFile(
         path,
         {
           ...(signal === undefined ? {} : { signal }),
           symlinks: options.symlinks ?? "follow",
         },
-        async (handle) => {
+        async ({ handle, initial: stats }) => {
           admitted = handle;
-          const stats = await handle.stat();
           assertRegularFileActive(signal);
           const value = await read(handle, stats);
           assertRegularFileActive(signal);
@@ -167,6 +224,7 @@ export const withRegularFile = async <Value>(
           return value;
         },
       );
+      return { value };
     } catch (cause: unknown) {
       // Caller reasons are opaque, including objects shaped like file failures.
       // They do not transfer ownership of any descriptor to this operation.
@@ -178,9 +236,10 @@ export const withRegularFile = async <Value>(
       )
         throw cause;
       if (cause instanceof RegularFileCleanupFailure) {
-        if (resources === undefined) throw cause;
+        if (resources === undefined)
+          throw new RetainedRegularFileCleanupFailure(cause);
         const retry = await retryRegularFileCleanup(cause, resources, signal);
-        if (retry.cleanup !== undefined) throw cause;
+        if (retry.failure !== undefined) throw retry.failure;
         if (retry.outcome.kind === "failed") {
           if (
             cause.operationFailure === undefined &&
@@ -205,8 +264,16 @@ export const withRegularFile = async <Value>(
             throw cause.operationFailure;
           throw retry.outcome.cause;
         }
-        return retry.outcome.value;
+        return {
+          value: retry.outcome.value as Value,
+          cancellation: regularFileCancellation(cause),
+        };
       }
+      if (cause instanceof RegularFileCancelled)
+        return {
+          value: cause.outcome.value as Value,
+          cancellation: { reason: cause.reason },
+        };
       const cancellation = regularFileCancellation(cause);
       if (cancellation !== undefined) {
         if (options.cancellationFailure !== undefined)
@@ -218,15 +285,34 @@ export const withRegularFile = async <Value>(
       throw cause;
     }
   };
-  const value = await (resources === undefined
+  const completion = await (resources === undefined
     ? operation()
     : resources.run(operation));
-  // A retained close may have recovered after the descriptor owner's outcome
-  // was captured. Include that retry and the scope's finalization in cancellation.
-  if (signal?.aborted === true && options.cancellationFailure !== undefined)
-    throw options.cancellationFailure(signal.reason);
-  signal?.throwIfAborted();
-  return value;
+  // Include successful cleanup retries and scope finalization in cancellation.
+  return completion.cancellation !== undefined || signal?.aborted !== true
+    ? completion
+    : { ...completion, cancellation: { reason: signal.reason } };
+};
+
+/** Read consumers without completion facts retain their existing cancellation contract. */
+export const withRegularFile = async <Value>(
+  path: string,
+  read: (handle: FileHandle, stats: Stats) => Promise<Value>,
+  options: RegularFileReadOptions = {},
+): Promise<Value> => {
+  const completion = await withRegularFileCompletion(path, read, options);
+  const cancellation =
+    completion.cancellation ??
+    (options.signal?.aborted === true
+      ? { reason: options.signal.reason }
+      : undefined);
+  if (cancellation !== undefined) {
+    const { reason } = cancellation;
+    if (options.cancellationFailure !== undefined)
+      throw options.cancellationFailure(reason);
+    throw reason;
+  }
+  return completion.value;
 };
 
 /** Admit a regular file without waiting for a pipe, then read its verified handle. */

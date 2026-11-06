@@ -23,7 +23,9 @@ it.each(["before release", "after release"])(
     if (binding === "before release") lease.bindCleanupError(error);
     await lease.release();
     if (binding === "after release") lease.bindCleanupError(error);
+    expect(error.hasCleanupOwner).toBe(true);
     expect(error.cleanupIncomplete).toBe(false);
+    expect(error.cleanupResources).toEqual(["owned resource"]);
     expect(error.cause).toBe(cause);
     await lease.release();
     expect(releases).toBe(1);
@@ -177,4 +179,25 @@ it("shares an in-flight release and permits one new attempt after failure", asyn
   } finally {
     for (const settle of pending) settle();
   }
+});
+
+it("preserves a producer's live attribution when binding direct completion", async () => {
+  const error = new ProviderCleanupError("fixture", ["initial resource"], {});
+  let resources = ["first resource", "second resource"];
+  error.bindCleanupResourceOwner({
+    get cleanupResources() {
+      return resources;
+    },
+  });
+  const lease = new AnalysisCleanupLease(async () => {
+    resources = [];
+  });
+  lease.bindCleanupError(error);
+  expect(error.hasCleanupOwner).toBe(true);
+  expect(error.cleanupResources).toEqual(["first resource", "second resource"]);
+  resources = ["second resource"];
+  expect(error.cleanupResources).toEqual(["second resource"]);
+  await lease.release();
+  expect(error.cleanupIncomplete).toBe(false);
+  expect(error.cleanupResources).toEqual([]);
 });

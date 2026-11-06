@@ -1,6 +1,6 @@
 import { expect } from "vitest";
 
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { captureProcessScenario } from "../../../src/process/capture/ProcessHarness.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { itWithCaptureCapability } from "./processCaptureCapability.js";
@@ -13,7 +13,7 @@ itWithCaptureCapability(
     const reason = { request: "cancel after cleanup completed" };
     let cleanupReported = false;
     const result = await captureProcessScenario(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: process.execPath,
         arguments: ["--eval", "console.log('completed capture')"],
         working_directory: root,

@@ -101,8 +101,8 @@ limitation reports how many inventoried entries were left out. IPA projection
 still lists every archive component, including `SwiftSupport/`.
 
 `platforms` lists `macos` for application roots with `Contents/`. It lists `ios`
-for shallow application roots that have an `Info.plist`. An application root
-with neither, such as an empty inventory, has no platform.
+for shallow application roots that have an `Info.plist` at their root. An
+application root with neither, such as an empty inventory, has no platform.
 
 ## macOS bundle anatomy
 
@@ -149,6 +149,11 @@ directories rather than `Versions/Current`. A framework's `info_plist_path` is
 because `Versions/Current` decides which one applies) or when its single
 version directory has no `Resources/Info.plist`.
 
+A `shallow` bundle's `info_plist_path` is its root `Info.plist`. Without one,
+it is `Resources/Info.plist`: a flattened macOS framework keeps its binary,
+`_CodeSignature/`, and `Resources/` directly in the `.framework`, like a single
+`Versions/<version>/` directory without the `Versions/` wrapper.
+
 AppleDouble sidecar files (`._*` and `__MACOSX/`) are inventory facts, but they
 describe neighbouring files. They are excluded from roots, bundle roles, and the
 anatomy components.
@@ -156,6 +161,10 @@ anatomy components.
 The projection does not read plists. Use `inspect_plist` on a bundle's
 `info_plist_path` or a launchd plist to read `CFBundleExecutable`, identifiers,
 `SMPrivilegedExecutables`, `BundleProgram`, URL schemes, and usage descriptions.
+MCP calls require an existing `open_binary` or `open_bundle_resources` session,
+including when `inspect_plist.path` is explicit. For a bundle without a resolved
+executable, open its resource session first. The CLI `rea inspect-plist <path>`
+opens the selected artifact for its one invocation.
 Use `inspect_signature` on an executable candidate for code-signing claims.
 
 ## Dylib load resolution
@@ -209,24 +218,51 @@ Resolution follows dyld:
   already loaded image reuses it.
 - Symlinks such as `Versions/Current` are followed inside the analyzed root.
   An escape through `..` or an absolute link is `escapes-target`.
+- Dyld path components are POSIX names. On Windows hosts, link text uses `\`
+  as its separator, and a dyld component that contains `\` or `:` cannot name
+  a file in the analyzed root, so its candidate is `absent`.
 
 Each edge lists every candidate path tried, with its outcome: `resolved`,
 `absent`, `not-mach-o`, `malformed`, `unsupported` (recognized Mach-O outside
 parser coverage, such as big-endian images), `architecture-missing`,
-`outside-target`, `escapes-target`, or `undetermined`. Slices follow dyld's
-graded architectures, so an `x86_64h` process also loads `x86_64`. The edge's `resolution` is one of:
+`not-loadable`, `platform-mismatch`, `outside-target`, `escapes-target`, or
+`undetermined`. `not-loadable` means a
+matching-architecture Mach-O image was found but it is not a dylib and cannot
+satisfy a dylib dependency. `platform-mismatch` means a matching-architecture
+dylib was found but its observed platform is incompatible with the process.
+These outcomes reject that candidate; dyld search may continue and resolve a
+later candidate. Candidate outcomes describe individual search paths, while
+`resolution.status` describes the final edge. For each selected process-root
+slice, candidate slices are matched by CPU type and dyld's subtype preference
+order, independently of FAT table order. An ARMv7s root slice prefers ARMv7s,
+then ARMv7; other known ARM32 subtypes use their compatibility rows from
+[Apple's dyld source](https://github.com/apple-oss-distributions/dyld/blob/dyld-852.2/src/dyld2.cpp#L2811-L3105).
+An `x86_64h` process also loads generic `x86_64`. Unknown ARM32 subtype policy
+remains undetermined when ARM32 candidate slices exist. This is a static model
+keyed to the selected root slice; it does not observe the target device's host
+CPU or prove which slice the device will execute. The edge's `resolution` is
+one of:
 
-| Status         | Meaning                                                                                                                                                   |
-| -------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `resolved`     | An image inside the analyzed root loads, and no earlier candidate was undeterminable.                                                                     |
-| `conditional`  | An image inside the root resolves, but an earlier candidate outside the root (for example `/usr/lib/swift`) would win if it exists on the running system. |
-| `unresolved`   | Every candidate is definitively absent or unusable inside the root.                                                                                       |
-| `undetermined` | No candidate resolves inside the root, and some candidate lies outside it or depends on the environment.                                                  |
+| Status         | Meaning                                                                                                                                                        |
+| -------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `resolved`     | An image inside the analyzed root loads, and no earlier candidate was undeterminable.                                                                          |
+| `conditional`  | An in-root image may load, but an earlier outside candidate, unmodeled environment input, or unknown platform compatibility can change which image dyld loads. |
+| `unresolved`   | Every candidate is definitively absent or unusable inside the root.                                                                                            |
+| `undetermined` | No candidate resolves inside the root, and some candidate lies outside it or depends on the environment.                                                       |
 
-A `conditional` image is still traced, because it is the image the analyzed
-root supplies. Every edge below it has `loader_conditional: true`, and a
-request that reuses it by install name is `conditional` too. Findings on those
-edges say that they apply only if the conditional image loads.
+A `conditional` image is still traced, because it is an in-root candidate
+that may load. Every edge below it has `loader_conditional: true`, and a
+request that reuses it by install name is `conditional` too. An in-root dylib
+with no platform load command remains unknown unless the root is an executable
+with observed macOS platform and the candidate's CPU type is x86_64, i386, or arm64. In that macOS context,
+[Apple's dyld](https://github.com/apple-oss-distributions/dyld/blob/fd8d0c4d52320ebf64db34f3cb280310d905c5ae/mach_o/UnsafeHeader.cpp#L1137-L1145) supplies an implicit macOS platform to legacy dylibs on those CPU
+types. The candidate records `platform_basis: "macos-dyld-implicit"`; the
+reported slice fields `platform: null` and `platforms: []` remain the parsed
+facts. For other process contexts the platform remains unknown, coverage is
+partial, and the candidate is not treated as incompatible. If a later known
+candidate resolves, it remains the traced image with conditional resolution;
+the trace does not claim the unknown candidate's dependency graph. Findings on
+conditional edges say that they apply only if the conditional image loads.
 
 Absolute install names that name a path beneath the analyzed root are checked
 within that root, with symlinks and `..` resolved by the same bounded tree

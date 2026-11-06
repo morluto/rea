@@ -1,7 +1,10 @@
 const base = 0x100000000n;
 
 /** Minimal inert Mach-O with one class instance method and protocol method. */
-export const objcRecordBudgetMacho = (owner: "class" | "protocol"): Buffer => {
+export const objcRecordBudgetMacho = (
+  owner: "class" | "protocol",
+  classMethodOffsets: readonly number[] = [0x700],
+): Buffer => {
   const bytes = Buffer.alloc(4096);
   const u32 = (offset: number, value: number) =>
     bytes.writeUInt32LE(value, offset);
@@ -51,10 +54,13 @@ export const objcRecordBudgetMacho = (owner: "class" | "protocol"): Buffer => {
   nullPointer(0x340);
   bytes.write("FixtureClass\0", 0x900);
   u32(0x500, 24);
-  u32(0x504, 1);
-  pointer(0x508, 0x920);
-  pointer(0x510, 0x940);
-  pointer(0x518, 0x700);
+  u32(0x504, classMethodOffsets.length);
+  for (const [index, implementation] of classMethodOffsets.entries()) {
+    const entry = 0x508 + index * 24;
+    pointer(entry, 0x920);
+    pointer(entry + 8, 0x940);
+    pointer(entry + 16, implementation);
+  }
   bytes.write("classMethod\0", 0x920);
   bytes.write("v@:\0", 0x940);
 

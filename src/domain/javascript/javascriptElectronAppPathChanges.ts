@@ -13,6 +13,7 @@ import {
   semanticObjectPropertyReferences,
 } from "./javascriptSemanticObjectReferences.js";
 import {
+  semanticCapturedSelectionsAfterPropertyRead,
   semanticNormalizeCapturedSelections,
   semanticProjectedSourceFactsAtRead,
   semanticShiftCapturedSelections,
@@ -30,6 +31,7 @@ import { assignmentValueSources } from "./javascriptSemanticRequireOrigin.js";
 import { semanticRuntimeExportValueSources } from "./javascriptModuleDeclaration.js";
 import {
   commonJsRuntimeExportValues,
+  commonJsExportApplicability,
   indexCommonJsExportReceiversSteps,
   type CommonJsExportReceiverEffect,
   type CommonJsExportSite,
@@ -329,23 +331,10 @@ export const createSemanticElectronAppPathChangeQuery = (
                 awaitDepths: current.awaitDepths.filter(
                   (depth) => depth !== path?.length,
                 ),
-                capturedSelections: [
-                  ...(semanticShiftCapturedSelections(
-                    current.capturedSelections,
-                    source.path.length - 1,
-                  ) ?? []),
-                  ...(source.capturedSelectionAt === undefined
-                    ? []
-                    : [
-                        {
-                          at: source.capturedSelectionAt,
-                          depth: source.path.length,
-                          ...(source.ownEnumerable
-                            ? { ownEnumerable: true as const }
-                            : {}),
-                        },
-                      ]),
-                ],
+                capturedSelections: semanticCapturedSelectionsAfterPropertyRead(
+                  current.capturedSelections,
+                  source,
+                ),
               });
         }
       }
@@ -371,20 +360,26 @@ export const createSemanticElectronAppPathChangeQuery = (
       return true;
     const exported = commonJsRuntimeExportValues(node, state);
     if (
-      !exported.some(({ value }) => value !== null) ||
+      !exported.some(
+        ({ value, iterationSource }) =>
+          value !== null || iterationSource !== undefined,
+      ) ||
       (!t.isAssignmentExpression(node) && !t.isCallExpression(node))
     )
       return false;
-    commonJsReceivers ??= completeSemanticSteps(
+    const receivers = (commonJsReceivers ??= completeSemanticSteps(
       indexCommonJsExportReceiversSteps(state),
-    );
-    return (
-      commonJsReceivers.get(node) !== "detached" &&
-      exported.some(
-        ({ value, projection, ownEnumerable }) =>
-          value !== null &&
-          possiblePath(value, true, projection, ownEnumerable),
-      )
+    ));
+    return exported.some(
+      ({ exportedName, value, projection, ownEnumerable, iterationSource }) =>
+        commonJsExportApplicability(receivers.get(node), exportedName) !==
+          "detached" &&
+        (value !== null
+          ? possiblePath(value, true, projection, ownEnumerable)
+          : iterationSource !== undefined &&
+            // Unknown iteration does not identify any yielded slot. Retain
+            // only source reachability through the existing escape query.
+            possiblePath(iterationSource, true)),
     );
   };
 };

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
@@ -68,6 +69,36 @@ describe("RPC object property ownership", () => {
 });
 
 describe("tRPC procedure recognition", () => {
+  it("preserves lexical clients and router members with browser-global spellings", () => {
+    expect(
+      rpcEndpoints(`function scope() {
+      const history=createTRPCClient({links:[httpBatchLink({url:'/api/trpc'})]});
+      history.archive.query();
+      history.history.list.query();
+      history.endpoints.list.query();
+      navigator.permissions.query({name:'geolocation'});
+      api.endpoints.list.useQuery();
+    }`),
+    ).toEqual([
+      {
+        kind: "network",
+        value: "/api/trpc",
+        mechanism: "trpc:link:httpBatchLink",
+      },
+      { kind: "network", value: "archive", mechanism: "trpc:procedure:query" },
+      {
+        kind: "network",
+        value: "history.list",
+        mechanism: "trpc:procedure:query",
+      },
+      {
+        kind: "network",
+        value: "endpoints.list",
+        mechanism: "trpc:procedure:query",
+      },
+    ]);
+  });
+
   it("recognizes React hook procedures on a renamed proxy root", () => {
     expect(
       rpcEndpoints(`
@@ -126,7 +157,9 @@ describe("tRPC procedure recognition", () => {
       },
     ]);
   });
+});
 
+describe("tRPC procedure recognition", () => {
   it("recognizes vanilla client calls and link URLs only in sources carrying a tRPC marker", () => {
     expect(
       rpcEndpoints(`
@@ -755,14 +788,32 @@ it("keeps named spreads unknown without proving nullish aliases", () => {
   ).toEqual([]);
 });
 
-it("skips propertyless literal spreads while retaining string and unknown spreads", () => {
-  expect(
-    rpcEndpoints(`
+it("preserves named fields across primitive and string spreads while retaining unknown overrides", () => {
+  const source = `
       httpLink({url:"/primitives",...false,...42,...1n,[void effect()]:0});
       httpLink({url:"/string",..."ab"});
+      httpLink({url:"/array",...[1]});
       httpLink({url:"/unknown",...options});
-    `),
-  ).toEqual([
+    `;
+  const observed: string[] = [];
+  runInNewContext(
+    source,
+    {
+      httpLink: (options: { url: string }) => observed.push(options.url),
+      effect: () => {},
+      options: { url: "/overwritten" },
+    },
+    { timeout: 1_000 },
+  );
+  expect(observed).toEqual([
+    "/primitives",
+    "/string",
+    "/array",
+    "/overwritten",
+  ]);
+  expect(rpcEndpoints(source)).toEqual([
     { kind: "network", value: "/primitives", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/string", mechanism: "trpc:link:httpLink" },
+    { kind: "network", value: "/array", mechanism: "trpc:link:httpLink" },
   ]);
 });

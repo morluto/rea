@@ -1,5 +1,6 @@
 import { resolve } from "node:path";
 import { tmpdir } from "node:os";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 
 import {
   createTestWorkspace,
@@ -10,6 +11,10 @@ import {
   type ProcessResult,
   type TestProcesses,
 } from "../process/processFixture.js";
+import {
+  createCliCommandSession,
+  type CliCommandSession,
+} from "./cliCommandSession.js";
 
 /** Caller-controlled values for one compiled REA CLI invocation. */
 export interface CliInvocation {
@@ -40,6 +45,12 @@ export interface TestCli {
    * drivers created with `createTestCli` alone.
    */
   sharedMcpCall?(): Promise<SharedMcpCall>;
+  /**
+   * File-scoped compiled CLI process for commands with no stdin. Present on
+   * `cliTest` drivers. A different environment restarts the process. Stdin and
+   * explicit deadlines stay on `run`, which starts a fresh process.
+   */
+  sharedCliRun?(invocation: CliInvocation): Promise<CliResult>;
 }
 
 /** One file-scoped stdio MCP session. */
@@ -186,7 +197,10 @@ const createFileMcpSession = (
       await import("../../fixtures/localToolsMcp.js");
     if (isClosed()) throw sharedMcpSessionClosed();
     const mcp = await connectLocalToolsMcp(
-      { NODE_COMPILE_CACHE: compileCache },
+      {
+        ...INLINE_EVIDENCE_MCP_ENVIRONMENT,
+        NODE_COMPILE_CACHE: compileCache,
+      },
       registerCleanup,
     );
     return mcp.call;
@@ -202,6 +216,34 @@ const parseJson = (stdout: string): unknown | undefined => {
   }
 };
 
+/** Child environment for one compiled CLI process, without the parent environment. */
+export const cliProcessEnvironment = (
+  environment: NodeJS.ProcessEnv | undefined,
+  compileCache?: string,
+): NodeJS.ProcessEnv => ({
+  PATH: process.env.PATH ?? "",
+  // Native Windows APIs need the system root and a writable temporary
+  // directory even when the command's application environment is empty.
+  ...(process.platform === "win32"
+    ? {
+        SystemRoot: process.env.SystemRoot,
+        TEMP: tmpdir(),
+        TMP: tmpdir(),
+      }
+    : {}),
+  ...cliCompileCacheEnvironment(environment, compileCache),
+});
+
+/** Keep string entries. A shared process cannot round-trip an absent variable as JSON. */
+export const definedCliEnvironment = (
+  environment: NodeJS.ProcessEnv,
+): Record<string, string> =>
+  Object.fromEntries(
+    Object.entries(environment).flatMap(([key, value]) =>
+      typeof value === "string" ? [[key, value] as const] : [],
+    ),
+  );
+
 /** Reuse CLI compilation without overriding caller-selected cache or coverage. */
 export const cliCompileCacheEnvironment = (
   environment: NodeJS.ProcessEnv | undefined,
@@ -212,6 +254,20 @@ export const cliCompileCacheEnvironment = (
     : { NODE_COMPILE_CACHE: compileCache }),
   ...environment,
 });
+
+/**
+ * Run one command on the file-scoped compiled CLI. Stdin and explicit
+ * deadlines stay on `TestCli.run`, which starts a fresh process.
+ */
+export const runFileCli = (
+  cli: TestCli,
+  invocation: CliInvocation,
+): Promise<CliResult> => {
+  const run = cli.sharedCliRun;
+  if (run === undefined)
+    throw new Error("cliTest did not provide a shared CLI session");
+  return run(invocation);
+};
 
 /** Create a compiled CLI driver backed by the supplied process registry. */
 export const createTestCli = (
@@ -230,19 +286,7 @@ export const createTestCli = (
       [resolve("scripts/rea.mjs"), ...arguments_],
       {
         cwd: cwd ?? process.cwd(),
-        env: {
-          PATH: process.env.PATH ?? "",
-          // Native Windows APIs need the system root and a writable temporary
-          // directory even when the command's application environment is empty.
-          ...(process.platform === "win32"
-            ? {
-                SystemRoot: process.env.SystemRoot,
-                TEMP: tmpdir(),
-                TMP: tmpdir(),
-              }
-            : {}),
-          ...cliCompileCacheEnvironment(environment, compileCache),
-        },
+        env: cliProcessEnvironment(environment, compileCache),
         ...(input === undefined ? {} : { input }),
         ...(timeoutMs === undefined ? {} : { timeoutMs }),
       },
@@ -254,7 +298,7 @@ export const createTestCli = (
 /** Vitest API extended with an owned process registry and compiled CLI driver. */
 export const cliTest = processTest.extend<{
   $test: { cli: TestCli };
-  $file: { mcpSession: SharedMcpSession };
+  $file: { mcpSession: SharedMcpSession; cliCommandSession: CliCommandSession };
   $worker: { cliCompileCache: string };
 }>({
   cliCompileCache: [
@@ -280,11 +324,40 @@ export const cliTest = processTest.extend<{
     },
     { scope: "file" },
   ],
-  cli: async ({ processes, cliCompileCache, mcpSession }, use) => {
+  cliCommandSession: [
+    // oxlint-disable-next-line no-empty-pattern -- Vitest parses fixture dependencies from object destructuring.
+    async ({}, use) => {
+      const session = createCliCommandSession();
+      try {
+        await use(session);
+      } finally {
+        await session.close();
+      }
+    },
+    { scope: "file" },
+  ],
+  cli: async (
+    { processes, cliCompileCache, mcpSession, cliCommandSession },
+    use,
+  ) => {
     const cli = createTestCli(processes, cliCompileCache);
     await use({
       ...cli,
       sharedMcpCall: () => mcpSession.call(),
+      sharedCliRun: (invocation) => {
+        if (
+          invocation.input !== undefined ||
+          invocation.timeoutMs !== undefined
+        )
+          return cli.run(invocation);
+        return cliCommandSession.run({
+          arguments: invocation.arguments,
+          cwd: invocation.cwd ?? process.cwd(),
+          environment: definedCliEnvironment(
+            cliProcessEnvironment(invocation.environment, cliCompileCache),
+          ),
+        });
+      },
     });
   },
 });

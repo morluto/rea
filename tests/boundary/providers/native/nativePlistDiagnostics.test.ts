@@ -25,7 +25,7 @@ const fixture = async (streams: (path: string) => Streams) => {
   const path = join(root, "Contents/Info.plist");
   await writeFile(path, "not a plist");
   const output = streams(path);
-  const replay = new NativeFixtureRunner();
+  const replay = new NativeFixtureRunner({ file: "ASCII text\n" });
   const runner: NativeCommandRunner = {
     async run(tool, args) {
       const capture = await replay.run(tool, args);

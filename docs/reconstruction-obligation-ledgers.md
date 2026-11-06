@@ -17,6 +17,15 @@ input Evidence bundle. Contradictions, duplicate definitions or owners,
 residual unknowns, missing dependencies, and unavailable authority keep closure
 open or failed.
 
+Original process authority requires observed `controlled-replay` Evidence with
+a supported process-capture provider and a valid capture payload. A matching
+operation or predicate alone does not establish that authority, including for
+reviewed obligations and manifest original cases.
+
+Every fixture and verifier proof must bind its outcome to the exact owner
+implementation digest and obligation revision being evaluated. See
+[proof applicability](#proof-applicability) for the caller-produced contract.
+
 ## Complete CLI request
 
 This empty request is useful for checking client integration. It is valid and
@@ -225,10 +234,17 @@ sample Evidence ID with an authenticated review record already present in
 
 ## Manifest and closure
 
-A manifest binding names one owner and its exact implementation digest. Both
+A manifest binding names one owner and a caller-supplied `owner_sha256`. Both
 `original_cases` and the reconstruction fixture list must cover every
 `required_case_kinds` value with authenticated, comparable Evidence.
 `parser_type` is mandatory when `requires_parser_type` is true.
+
+The ledger does not read `module_path`, execute `verifier.command`, or compute
+the implementation digest. The owner fields do not specify whether the digest
+covers module bytes, a symbol representation, or a multi-file implementation.
+The proof producer must document the exact hashed inputs and any canonicalization
+so another verifier can reproduce that commitment; a path or symbol name alone
+does not define it.
 
 ```json
 {
@@ -315,14 +331,92 @@ A manifest binding names one owner and its exact implementation digest. Both
 }
 ```
 
-All referenced Evidence IDs must exist in the bundle. A green unit test cannot
-close a `packaged-process` obligation. A static-only source cannot close a
-runtime or process claim. Marking a claim `blocked` or `out-of-scope` records the
-disposition but does not silently count it as verified.
+A ready ledger requires every retained Evidence reference to resolve in the
+bundle, including references on optional case kinds. Unresolved references stay
+visible in the ledger and produce diagnostics; they cannot close the obligation.
+A green unit test cannot close a `packaged-process` obligation. A static-only
+source cannot close a runtime or process claim. Marking a claim `blocked` or
+`out-of-scope` records the disposition but does not silently count it as verified.
+
+### Proof applicability
+
+Keep three checks separate:
+
+- **Authenticity:** the retained Evidence passes its integrity checks.
+- **Authority:** the observation has the kind and strength required by the claim.
+- **Applicability:** the proof describes the implementation and obligation
+  revision currently being evaluated.
+
+Proof producers supply observed Evidence with predicate type
+`rea.reconstruction-proof`, operation `verify_reconstruction_obligations`, and
+the following `normalized_result` shape, defined by
+`reconstructionObligationProofSchema`. REA evaluates retained results; this
+operation label does not expose a proof executor or run the manifest command.
+
+```json
+{
+  "bindings": [
+    {
+      "obligation_id": "protocol.rpc.cancel",
+      "obligation_version": 1,
+      "owner_sha256": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+      "fixtures": [
+        {
+          "fixture_id": "fixture.cancel.positive",
+          "case_kind": "positive",
+          "passed": true
+        }
+      ],
+      "verifiers": [
+        {
+          "verifier_id": "verifier.cancel",
+          "claim_id": "claim.cancel",
+          "passed": true
+        }
+      ]
+    }
+  ]
+}
+```
+
+`owner_sha256` is the same lowercase 64-hex SHA-256 commitment supplied by the
+implementation owner in the manifest. The proof producer computes it from the
+same documented inputs and canonicalization described above; REA compares the
+commitments and does not recompute them. The proof's `obligation_version` must
+exactly equal the evaluated obligation version, including for generated
+obligations. Increase that version when revising a reviewed requirement.
+
+Within one matching obligation/owner/revision binding, fixture proof must name
+the exact `(fixture_id, case_kind)` pair, and verifier proof the exact
+`(verifier_id, claim_id)` pair. Every selected claim must report `passed: true`;
+a matching failed claim cannot be hidden by a duplicate passing claim.
+Claims may share a record, but identities or outcomes from different bindings
+are never joined. Fixture and verifier Evidence authority must also satisfy the
+existing authority requirements.
+
+Changing the owner digest or obligation version makes retained proof
+inapplicable. Missing identity, including legacy ID-array proof records, keeps
+the ledger open with `inapplicable-fixture-proof` or
+`inapplicable-verifier-proof`; details distinguish malformed or missing metadata
+(`invalid-proof`), `owner-mismatch`, `revision-mismatch`, and `claim-mismatch`.
+An applicable false outcome produces `fixture-failed` or `verifier-failed` and
+a failed required ledger. An unknown, unsupported, or skipped verifier declaration
+produces `verifier-unavailable` and keeps closure open. Replace fixture and
+verifier Evidence after implementation or requirement changes. Old Evidence
+remains valid provenance and cannot establish current applicability.
+
+The `summary` counts obligations. `by_status`, `by_application_layer`, and
+`by_source_state` place each obligation in exactly one bucket.
+`by_evidence_authority` groups obligations by the Evidence `authority` of their
+`authority_references`: an obligation counts once under each distinct authority
+it cites, so those counts can exceed `total`. A reference's own `state` and the
+obligation's `source_state` do not affect its authority bucket.
 
 The tool returns every obligation inline. Its `ledger_id` and `closure_digest`
 identify the complete result, including summaries, reports, ownership and
-dependency graphs, Evidence links, and limitations.
+dependency graphs, Evidence links, and limitations. A new `closure_digest`
+identifies a changed ledger; it does not establish that a verifier ran again.
+Applicability is checked against the retained proof's explicit bindings.
 
 For named boundaries with explicit verifier contracts and package-proof kinds,
 see [reconstruction coverage](reconstruction-coverage.md).

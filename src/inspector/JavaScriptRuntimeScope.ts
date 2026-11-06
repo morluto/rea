@@ -1,3 +1,7 @@
+import {
+  DEFAULT_ASAR_HEADER_ADMISSION,
+  type AsarHeaderAdmission,
+} from "../config/asarHeaderAdmission.js";
 import { pathToFileURL } from "node:url";
 
 import {
@@ -10,7 +14,10 @@ import type {
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =
   | { readonly allowed: true; readonly location: JavaScriptRuntimeLocation }
@@ -51,10 +58,18 @@ export const authorizeRuntimeLocation = async (
   operation:
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<RuntimeLocationDecision> => {
   throwIfRuntimeObservationCancelled(signal, operation);
-  if (value.startsWith("file:")) {
-    const filePath = await authorizedElectronFile(value, signal, operation);
+  if (URL.parse(value)?.protocol === "file:") {
+    const filePath = await authorizedElectronFile(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+      files,
+    );
     throwIfRuntimeObservationCancelled(signal, operation);
     return filePath === undefined
       ? { allowed: false, reason: "not_approved" }
@@ -103,6 +118,8 @@ export const authorizeRuntimeTargetLocation = async (
   operation:
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "list_javascript_runtime_targets",
+  asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<
   | {
       readonly allowed: true;
@@ -116,10 +133,22 @@ export const authorizeRuntimeTargetLocation = async (
     !/^node\.js\/v/iu.test(context.product) ||
     !value.startsWith("file://")
   )
-    return authorizeRuntimeLocation(value, signal, operation);
+    return authorizeRuntimeLocation(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+      files,
+    );
   const reportedPath = value.slice("file://".length);
   if (!reportedPath.startsWith("/") && !/^[a-z]:[/\\_]/iu.test(reportedPath))
-    return authorizeRuntimeLocation(value, signal, operation);
+    return authorizeRuntimeLocation(
+      value,
+      signal,
+      operation,
+      asarHeaderAdmission,
+      files,
+    );
 
   // Node concatenates the pathname, then replaces quotes and backslashes with
   // underscores. A remaining underscore cannot prove which pathname was used.
@@ -129,6 +158,8 @@ export const authorizeRuntimeTargetLocation = async (
         pathToFileURL(reportedPath).href,
         signal,
         operation,
+        asarHeaderAdmission,
+        files,
       );
       if (decision.allowed) return decision;
     }

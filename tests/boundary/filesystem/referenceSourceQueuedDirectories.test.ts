@@ -1,4 +1,3 @@
-import type { Dir, Dirent } from "node:fs";
 import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -7,30 +6,42 @@ import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { importReferenceSource } from "../../support/referenceSourceResourceScope.js";
 
-const { opendirMock } = vi.hoisted(() => ({ opendirMock: vi.fn() }));
-
-vi.mock("node:fs/promises", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("node:fs/promises")>()),
-  opendir: opendirMock,
+const injectedReadFailure = vi.hoisted(() => ({
+  path: undefined as string | undefined,
+  error: undefined as Error | undefined,
 }));
 
-const directoryHandle = (items: readonly (string | Error | null)[]): Dir => {
-  let index = 0;
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
   return {
-    async read() {
-      const item = items[index++];
-      if (item instanceof Error) throw item;
-      return item === null || item === undefined
-        ? null
-        : ({ name: item } as Dirent);
+    ...actual,
+    opendir: async (...args: Parameters<typeof actual.opendir>) => {
+      const handle = await actual.opendir(...args);
+      const [path] = args;
+      const { path: failingPath, error } = injectedReadFailure;
+      if (path !== failingPath || error === undefined) return handle;
+
+      const read = handle.read.bind(handle);
+      let failureInjected = false;
+      Object.defineProperty(handle, "read", {
+        configurable: true,
+        value: async () => {
+          const entry = await read();
+          if (entry === null && !failureInjected) {
+            failureInjected = true;
+            throw error;
+          }
+          return entry;
+        },
+      });
+      return handle;
     },
-    async close() {},
-  } as unknown as Dir;
-};
+  };
+});
 
 it.skipIf(process.platform === "win32")(
   "traverses directories lstat-observed before their parent enumeration failed",
-  async () => {
+  async ({ onTestFinished }) => {
     const root = await createTestTempDirectory(
       "rea-queued-source-directories-",
     );
@@ -46,18 +57,11 @@ it.skipIf(process.platform === "win32")(
       new Error("injected directory read failure"),
       { code: "EIO" },
     );
-    opendirMock.mockImplementation(async (path: string) => {
-      if (path === root) return directoryHandle(["container", null]);
-      if (path === container)
-        return directoryHandle([
-          "visible.txt",
-          "hidden",
-          "alias-file.txt",
-          "alias-directory",
-          readFailure,
-        ]);
-      if (path === hidden) return directoryHandle(["target.txt", null]);
-      throw new Error(`Unexpected directory traversal: ${path}`);
+    injectedReadFailure.path = container;
+    injectedReadFailure.error = readFailure;
+    onTestFinished(() => {
+      injectedReadFailure.path = undefined;
+      injectedReadFailure.error = undefined;
     });
 
     const imported = await importReferenceSource({
@@ -73,6 +77,10 @@ it.skipIf(process.platform === "win32")(
           path: "container",
           kind: "directory",
           tree_state: "unreadable",
+          limitations: [
+            expect.stringContaining("This directory could not be read"),
+          ],
+          local_diagnostics: [expect.stringContaining(readFailure.message)],
         }),
         expect.objectContaining({
           path: "container/hidden",

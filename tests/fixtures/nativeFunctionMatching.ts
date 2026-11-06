@@ -1,7 +1,8 @@
 import { createEvidence, type Evidence } from "../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../src/domain/jsonValue.js";
+
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../src/contracts/functionComparisonExample.js";
-import { functionDossierSchema } from "../../src/domain/hopperValues.js";
+import type { NativeSymbolMetadata } from "../../src/domain/native/nativeSymbol.js";
+import { functionDossierSchema } from "../../src/domain/native/functionDossier.js";
 
 /** Explicit synthetic producer facts; they do not qualify any real provider. */
 export const nativeMatchingProvider = {
@@ -23,7 +24,28 @@ export const nativeMatchingInventory = (
   createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
     operation: "list_procedures",
     parameters: {},
-    result: jsonValueSchema.parse(entries),
+    result: entries,
+    evidenceLinks: [...evidenceLinks],
+  });
+/** Explicit imported-origin fixture for tests that select exact-symbol correspondence. */
+export const nativeMatchingNamedInventory = (
+  side: "1" | "2",
+  entries: readonly { address: string; value: string }[],
+  evidenceLinks: readonly string[] = [],
+) =>
+  createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+    operation: "list_procedures",
+    parameters: {},
+    result: entries.map((entry) => ({
+      ...entry,
+      symbol: {
+        primary: true,
+        dynamic: false,
+        external: false,
+        type: "function",
+        source: "imported",
+      } satisfies NativeSymbolMetadata,
+    })),
     evidenceLinks: [...evidenceLinks],
   });
 export const nativeMatchingBody = (address: string, bytes: number) => ({
@@ -75,7 +97,7 @@ export const nativeMatchingDetails = (
     observation = createEvidence(target, nativeMatchingProvider, {
       operation: "analyze_function",
       parameters: { procedure: address },
-      result: jsonValueSchema.parse(value),
+      result: value,
       relationshipCoverage: { status: "complete" },
     });
   } else

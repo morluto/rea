@@ -5,7 +5,7 @@ import {
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -34,7 +34,7 @@ const emptyExportEvidence = () => {
     {
       operation: "inspect_macho",
       parameters: original.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...result,
         exports: {
           items: [],
@@ -42,7 +42,7 @@ const emptyExportEvidence = () => {
           exhaustive: true,
           limitations: [],
         },
-      }),
+      },
       rawResult: null,
       limitations: [],
     },
@@ -63,7 +63,7 @@ const secondDeclaration = () => {
   return createEvidence(undefined, original.provider, {
     operation: "inspect_managed_native_boundaries",
     parameters: original.parameters,
-    result: jsonValueSchema.parse({
+    result: {
       ...result,
       pinvoke_imports: [
         {
@@ -74,7 +74,7 @@ const secondDeclaration = () => {
           import_name: "open_native_again",
         },
       ],
-    }),
+    },
     rawResult: null,
     limitations: original.limitations,
   });
@@ -128,12 +128,53 @@ const memberEvidence = (
     {
       operation: "inspect_managed_members",
       parameters: original.parameters,
-      result: jsonValueSchema.parse(normalized),
+      result: normalized,
       rawResult: null,
       limitations: normalized.limitations,
     },
   );
 };
+
+it("records a residual question for partial verification with zero item counts", async () => {
+  const harness = await createApplicationMcpHarness({
+    session: createTestBinarySession(() => {
+      throw new Error("No provider needed");
+    }),
+  });
+  onTestFinished(harness.close);
+  const original = MANAGED_NATIVE_VERIFICATION_EXAMPLE.managed_boundaries;
+  const report = managedNativeBoundaryInspectionSchema.parse(
+    original.normalized_result,
+  );
+  const managed = createEvidence(undefined, original.provider, {
+    operation: "inspect_managed_native_boundaries",
+    parameters: {},
+    result: {
+      ...report,
+      pinvoke_imports: [],
+      native_implementations: [],
+      coverage: { state: "partial", issues: [] },
+    },
+  });
+  const response = await harness.client.callTool({
+    name: "verify_managed_native_boundaries",
+    arguments: {
+      managed_boundaries: managed,
+      native_observations: [emptyExportEvidence()],
+    },
+  });
+  expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+  const result = managedNativeVerificationResultSchema.parse(
+    parseEvidence(response.structuredContent).normalized_result,
+  );
+  expect(result.summary).toMatchObject({
+    unresolved: 0,
+    contradicted: 0,
+    native_body_unresolved: 0,
+  });
+  expect(result.coverage.status).toBe("partial");
+  expect(harness.session.listUnknowns()).toHaveLength(1);
+});
 
 it("records distinct unresolved managed boundary checks and makes exact replay idempotent", async () => {
   const harness = await createApplicationMcpHarness({

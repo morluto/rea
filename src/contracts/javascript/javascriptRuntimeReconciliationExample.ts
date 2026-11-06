@@ -159,6 +159,7 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
         resolved_utility_entrypoints: 0,
         native_addon_bindings: 0,
         resolved_native_addon_bindings: 0,
+        protocol_registrations: 0,
       },
       statistics: {
         relevant_files: 1,
@@ -167,8 +168,8 @@ export const JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE = createEvidence(
         invalid_utf8_files: 0,
         parsed_javascript_files: 1,
         skipped_javascript_files: 0,
-        visited_ast_nodes: 1,
-        findings: 0,
+        visited_ast_nodes: 7,
+        findings: 1,
         modules: 0,
         parse_failures: 0,
       },

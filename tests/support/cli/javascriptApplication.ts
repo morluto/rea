@@ -6,6 +6,7 @@ import { z } from "zod";
 
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import type { SharedMcpCall, TestCli } from "./cliFixture.js";
 
 const execute = promisify(execFile);
@@ -32,10 +33,14 @@ export const resolveJavaScriptApplicationMcpCall = async (
 ): Promise<SharedMcpCall> => {
   if (mcpCall !== undefined) return mcpCall;
   if (cli.sharedMcpCall !== undefined) return cli.sharedMcpCall();
-  return (await connectLocalToolsMcp()).call;
+  return (await connectLocalToolsMcp(INLINE_EVIDENCE_MCP_ENVIRONMENT)).call;
 };
 
-/** Analyze a directory; a supplied MCP caller reuses its test-owned connection. */
+/**
+ * Analyze a directory. A supplied MCP caller reuses its test-owned connection.
+ * CLI uses the driver's file-scoped process when present, and a fresh process
+ * otherwise.
+ */
 export const analyzeJavaScriptDirectory = async (
   surface: "CLI" | "stdio MCP",
   cli: TestCli,
@@ -50,7 +55,8 @@ export const analyzeJavaScriptDirectory = async (
 ) => {
   let document: unknown;
   if (surface === "CLI") {
-    const response = await cli.run({
+    const run = cli.sharedCliRun ?? ((invocation) => cli.run(invocation));
+    const response = await run({
       arguments: [
         "analyze-javascript-application",
         root,

@@ -50,6 +50,7 @@ export const artifactEvidence = (
   authority:
     | "artifact-bytes"
     | "ast-static-analysis"
+    | "managed-static-analysis"
     | "native-analysis-provider" = "artifact-bytes",
 ): ApplicationGraphEvidence => ({
   authority,

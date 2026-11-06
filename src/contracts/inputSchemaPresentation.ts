@@ -1,3 +1,7 @@
+import {
+  JsonSchemaReferences,
+  type JsonSchemaScope,
+} from "./jsonSchemaReferences.js";
 import { isDeepStrictEqual } from "node:util";
 
 import {
@@ -9,61 +13,76 @@ import {
 const isObject = (value: unknown): value is Readonly<Record<string, unknown>> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-const resolveReference = (
-  root: Readonly<Record<string, unknown>>,
-  reference: string,
-): unknown => {
-  if (reference === "#") return root;
-  if (!reference.startsWith("#/")) return undefined;
-  let value: unknown = root;
-  for (const token of reference.slice(2).split("/")) {
-    const key = token.replaceAll("~1", "/").replaceAll("~0", "~");
-    if (!isObject(value) || !Object.hasOwn(value, key)) return undefined;
-    value = value[key];
-  }
-  return value;
-};
-
 const referencedDescription = (
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
   schema: Readonly<Record<string, unknown>>,
+  inherited: JsonSchemaScope | undefined,
 ): string | undefined => {
   let value: unknown = schema;
-  const active = new Set<string>();
+  let scope = inherited;
+  const active = new Set<object>();
   while (isObject(value)) {
-    if (typeof value.description === "string") return value.description;
-    if (typeof value.$ref !== "string" || active.has(value.$ref))
-      return undefined;
-    active.add(value.$ref);
-    value = resolveReference(root, value.$ref);
+    scope = references.enter(value, scope);
+    if (
+      typeof value.description === "string" &&
+      (typeof value.$ref !== "string" || scope?.dialect !== "draft-07")
+    )
+      return value.description;
+    if (typeof value.$ref !== "string" || active.has(value)) return undefined;
+    active.add(value);
+    const target = references.resolve(scope, value.$ref);
+    if (target.kind !== "target") return undefined;
+    value = target.value;
   }
   return undefined;
 };
 
 const describeSchema = (
   schema: unknown,
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
+  inherited: JsonSchemaScope | undefined,
   describeProperty: (property: string) => string | undefined,
+  propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
-  return Object.fromEntries(
+  // These operands are complete producer results, not fields an agent builds.
+  // Their owner keeps full canonical validation; only their wire declaration
+  // omits the repeated result schema. Analyst-authored controls stay explicit.
+  if (schema.type === "object" && schema["x-rea-complete-observation"] === true)
+    return {
+      type: "object",
+      description: [
+        propertyDescription ??
+          (typeof schema.description === "string"
+            ? schema.description
+            : undefined),
+        "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
+      ]
+        .filter((text) => text !== undefined)
+        .join(" "),
+    };
+  const scope = references.enter(schema, inherited);
+  const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
       if (schemaMaps.has(key) && isObject(value))
         return [
           key,
           Object.fromEntries(
             Object.entries(value).map(([name, child]) => {
-              const described = describeSchema(child, root, describeProperty);
-              if (key !== "properties" || !isObject(described))
-                return [name, described];
               const description =
-                referencedDescription(root, described) ??
-                describeProperty(name);
+                key === "properties" && isObject(child)
+                  ? (referencedDescription(references, child, scope) ??
+                    describeProperty(name))
+                  : undefined;
               return [
                 name,
-                description === undefined
-                  ? described
-                  : { ...described, description },
+                describeSchema(
+                  child,
+                  references,
+                  scope,
+                  describeProperty,
+                  description,
+                ),
               ];
             }),
           ),
@@ -71,36 +90,52 @@ const describeSchema = (
       if (schemaArrays.has(key) && Array.isArray(value))
         return [
           key,
-          value.map((child) => describeSchema(child, root, describeProperty)),
+          value.map((child) =>
+            describeSchema(child, references, scope, describeProperty),
+          ),
         ];
       if (schemaChildren.has(key))
         return [
           key,
           Array.isArray(value)
             ? value.map((child) =>
-                describeSchema(child, root, describeProperty),
+                describeSchema(child, references, scope, describeProperty),
               )
-            : describeSchema(value, root, describeProperty),
+            : describeSchema(value, references, scope, describeProperty),
         ];
       // Annotation values and literal const/enum data are not schemas.
       return [key, value];
     }),
   );
+  return propertyDescription === undefined
+    ? described
+    : { ...described, description: propertyDescription };
 };
 
 const objectBranch = (
-  root: Readonly<Record<string, unknown>>,
+  references: JsonSchemaReferences,
   branch: unknown,
 ): Readonly<Record<string, unknown>> | undefined => {
   // Reference siblings evaluate separately from the target in 2020-12, so a
   // merged object could accept inputs the branch rejects.
-  const resolved =
-    isObject(branch) && typeof branch.$ref === "string"
-      ? Object.keys(branch).length === 1
-        ? resolveReference(root, branch.$ref)
-        : undefined
-      : branch;
+  let resolved = branch;
+  if (isObject(branch) && typeof branch.$ref === "string") {
+    if (Object.keys(branch).length !== 1) return undefined;
+    const target = references.resolve(references.rootScope, branch.$ref);
+    if (target.kind !== "target") return undefined;
+    resolved = target.value;
+  }
   return isObject(resolved) &&
+    references.enter(resolved, references.rootScope) === references.rootScope &&
+    ![
+      "$id",
+      "$schema",
+      "$anchor",
+      "$dynamicAnchor",
+      "$recursiveAnchor",
+      "$dynamicRef",
+      "$recursiveRef",
+    ].some((key) => Object.hasOwn(resolved, key)) &&
     resolved.type === "object" &&
     isObject(resolved.properties)
     ? resolved
@@ -225,6 +260,11 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
     if (node.type === undefined) node.type = "boolean";
     changed = true;
   }
+  if (node.const === "") {
+    delete node.const;
+    if (node.type === undefined) node.type = "string";
+    changed = true;
+  }
   if (
     Array.isArray(node.enum) &&
     node.enum.length > 0 &&
@@ -232,6 +272,18 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
   ) {
     delete node.enum;
     if (node.type === undefined) node.type = "boolean";
+    changed = true;
+  }
+  if (Array.isArray(node.enum) && node.enum.includes("")) {
+    // Removing only the empty member would reject a canonical-valid input.
+    // Gemini transports turn const into enum and refuse empty enum members.
+    const values = node.enum;
+    delete node.enum;
+    if (
+      node.type === undefined &&
+      values.every((item) => typeof item === "string")
+    )
+      node.type = "string";
     changed = true;
   }
 
@@ -324,6 +376,7 @@ const normalizeAdvertisedSchema = (value: unknown): SchemaNormalization => {
 // union of the groups. The canonical Zod schema still enforces the exact group.
 const flattenRootObjectUnion = (
   root: Record<string, unknown>,
+  references: JsonSchemaReferences,
 ): Record<string, unknown> => {
   const { anyOf, oneOf, ...rest } = root;
   const alternatives = Array.isArray(anyOf) ? anyOf : oneOf;
@@ -333,7 +386,21 @@ const flattenRootObjectUnion = (
     root.properties !== undefined
   )
     return root;
-  const branches = alternatives.map((branch) => objectBranch(root, branch));
+  // Lifting removes union locations and branch identities. References into those
+  // locations, named anchors or unresolved bases cannot survive that rewrite.
+  for (const { scope, target } of references.references())
+    if (
+      (target.kind === "unresolved" && target.reason === "dynamic") ||
+      (scope === references.rootScope &&
+        (target.kind !== "target" ||
+          target.path.length === 0 ||
+          target.path[0] === "anyOf" ||
+          target.path[0] === "oneOf"))
+    )
+      return root;
+  const branches = alternatives.map((branch) =>
+    objectBranch(references, branch),
+  );
   if (!branches.every((branch) => branch !== undefined)) return root;
   const variants = new Map<string, unknown[]>();
   for (const branch of branches)
@@ -344,6 +411,38 @@ const flattenRootObjectUnion = (
       variants.set(name, known);
     }
   const required = sharedRequiredProperties(branches);
+  // A default lifted out of an input group can make a client send a field
+  // rejected by another strict group. Keep it only when every group owns the
+  // property and supplies the same default.
+  for (const [name, schemas] of variants) {
+    const defaults = branches.map((branch) => {
+      const property = isObject(branch.properties)
+        ? branch.properties[name]
+        : undefined;
+      return isObject(property) ? property.default : undefined;
+    });
+    if (
+      defaults.every(
+        (value) => value !== undefined && isDeepStrictEqual(value, defaults[0]),
+      )
+    )
+      continue;
+    const withoutDefaults: unknown[] = [];
+    for (const schema of schemas) {
+      let withoutDefault = schema;
+      if (isObject(schema) && Object.hasOwn(schema, "default")) {
+        const { default: _default, ...rest } = schema;
+        withoutDefault = rest;
+      }
+      if (
+        !withoutDefaults.some((known) =>
+          isDeepStrictEqual(known, withoutDefault),
+        )
+      )
+        withoutDefaults.push(withoutDefault);
+    }
+    variants.set(name, withoutDefaults);
+  }
   // A coarse property minimum rejects underspecified objects. Partner fields
   // and exact group membership remain enforced by the canonical runtime parser.
   const fewestRequired = Math.min(
@@ -380,13 +479,122 @@ const flattenRootObjectUnion = (
   };
 };
 
+/** Preserve opt-in discriminator relationships without a root union. */
+const presentDiscriminatedRoot = (
+  root: Record<string, unknown>,
+): Record<string, unknown> => {
+  const { "x-rea-root-discriminator": discriminator, ...canonical } = root;
+  const references = new JsonSchemaReferences(canonical);
+  const flattened = flattenRootObjectUnion(canonical, references);
+  if (typeof discriminator !== "string" || flattened === canonical)
+    return flattened;
+  const alternatives = canonical.anyOf ?? canonical.oneOf;
+  if (!Array.isArray(alternatives) || alternatives.length !== 2)
+    throw new TypeError(
+      "A presented root discriminator requires two object alternatives",
+    );
+  const branches = alternatives.map((alternative) => {
+    const branch = objectBranch(references, alternative);
+    if (branch === undefined || branch.additionalProperties !== false)
+      throw new TypeError(
+        "A presented root discriminator requires strict objects",
+      );
+    return branch;
+  });
+  const requiredBranch = branches.find((branch) =>
+    requiredProperties(branch).includes(discriminator),
+  );
+  const fallback = branches.find(
+    (branch) => !requiredProperties(branch).includes(discriminator),
+  );
+  const literal = (
+    branch: Readonly<Record<string, unknown>> | undefined,
+  ): unknown => {
+    const properties = branch?.properties;
+    const schema = isObject(properties) ? properties[discriminator] : undefined;
+    return isObject(schema) ? schema.const : undefined;
+  };
+  const selected = literal(requiredBranch),
+    otherwise = literal(fallback);
+  if (
+    requiredBranch === undefined ||
+    fallback === undefined ||
+    typeof selected !== "string" ||
+    typeof otherwise !== "string" ||
+    selected === otherwise
+  )
+    throw new TypeError(
+      "A presented root discriminator requires distinct literals and one default alternative",
+    );
+  const properties = Object.fromEntries(
+    Object.entries(
+      isObject(flattened.properties) ? flattened.properties : {},
+    ).map(([key, schema]) => {
+      if (!isObject(schema) || !Array.isArray(schema.anyOf))
+        return [key, schema];
+      const possible = schema.anyOf.filter(
+        (alternative) =>
+          alternative !== false &&
+          !(
+            isObject(alternative) &&
+            isObject(alternative.not) &&
+            Object.keys(alternative.not).length === 0
+          ),
+      );
+      return [key, possible.length === 1 ? possible[0] : schema];
+    }),
+  );
+  const commonRequired = new Set(requiredProperties(flattened));
+  const constraints = (branch: Readonly<Record<string, unknown>>) => {
+    const own = isObject(branch.properties) ? branch.properties : {};
+    const differences = Object.fromEntries(
+      Object.entries(properties).flatMap(([key, schema]) => {
+        if (key === discriminator || isDeepStrictEqual(schema, own[key]))
+          return [];
+        return [[key, Object.hasOwn(own, key) ? own[key] : false]];
+      }),
+    );
+    const required = requiredProperties(branch).filter(
+      (key) => !commonRequired.has(key),
+    );
+    return {
+      ...(Object.keys(differences).length === 0
+        ? {}
+        : { properties: differences }),
+      ...(required.length === 0 ? {} : { required }),
+    };
+  };
+  // The canonical branch predicates supply validation; omit generic group
+  // guidance that would describe the forbidden never-valued property as optional.
+  const { description: _description, ...presentation } = flattened;
+  return {
+    ...presentation,
+    properties,
+    ...(canonical.description === undefined
+      ? {}
+      : { description: canonical.description }),
+    if: {
+      properties: { [discriminator]: { const: selected } },
+      required: [discriminator],
+    },
+    then: constraints(requiredBranch),
+    else: constraints(fallback),
+  };
+};
+
 /** Describe canonical input fields and present the root as one object. */
 export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
-  const flattened = flattenRootObjectUnion(root);
-  const described = describeSchema(flattened, flattened, describeProperty);
+  const flattened = presentDiscriminatedRoot(root);
+  const references = new JsonSchemaReferences(flattened);
+  const described = describeSchema(
+    flattened,
+    references,
+    references.rootScope,
+    describeProperty,
+  );
   if (!isObject(described))
     return normalizeAdvertisedSchema(flattened).schema as Record<
       string,

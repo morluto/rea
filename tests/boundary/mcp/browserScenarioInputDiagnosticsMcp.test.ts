@@ -175,13 +175,7 @@ cliTest.for(["full", "compact"] as const)(
             recovery: { kind: "inspect_input_contract", operation: tool.name },
             details: {
               operation: tool.name,
-              issues: [
-                {
-                  message: expect.stringContaining(
-                    `${scenario.issue.path.join(".")}: Too big: expected number to be <=2147483647`,
-                  ),
-                },
-              ],
+              issues: [scenario.issue],
             },
           });
         }

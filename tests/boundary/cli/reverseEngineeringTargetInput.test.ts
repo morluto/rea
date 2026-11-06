@@ -50,3 +50,34 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "reports the rejected Rizin command before inspecting the target",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rizin-invalid-command-");
+    const result = await cli.run({
+      arguments: [
+        "execute-rizin-command",
+        join(root, "unopened.bin"),
+        "iI\nq",
+        "--format",
+        "json",
+      ],
+      cwd: root,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(analysisErrorProjectionSchema.parse(result.json)).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "execute_rizin_command",
+        issues: [
+          {
+            path: ["command"],
+            reason: "invalid_value",
+            message: "A single command line is required",
+          },
+        ],
+      },
+    });
+  },
+);

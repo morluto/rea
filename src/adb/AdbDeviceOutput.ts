@@ -2,14 +2,18 @@
  * Parsers for the exact adb and Package Manager output formats REA consumes.
  *
  * Each parser preserves what the tool actually printed: unparseable lines are
- * retained rather than silently dropped, and derived classifications carry
- * their evidence basis.
+ * sampled and counted rather than silently dropped, and derived
+ * classifications carry their evidence basis.
  */
 
 import {
   adbHostFileName,
   type AdbHostFileNameReason,
 } from "./AdbHostFileName.js";
+import {
+  collectUnparsedLines,
+  type AdbUnparsedLines,
+} from "./AdbUnparsedLines.js";
 import {
   ADB_DEVICE_STATES,
   type AdbDeviceState,
@@ -36,6 +40,28 @@ export const isSuccessfulDaemonStartNotice = (line: string): boolean =>
   line === "* daemon started successfully" ||
   line === "* daemon started successfully *";
 
+/** Host-side startup line, shared by failure and successful probe parsing. */
+export const isDaemonStartingNotice = (line: string): boolean =>
+  /^\* daemon not running(?:; starting now at [^\r\n]*|\. starting it now on port \d+ \*)$/u.test(
+    line,
+  );
+
+/** No diagnostics beyond a completed, recognized startup sequence. */
+export const hasOnlySuccessfulAdbStartupNotices = (output: string): boolean => {
+  let started = false;
+  for (let offset = 0; offset < output.length;) {
+    const newline = output.indexOf("\n", offset);
+    const line = normalizeAdbOutputLine(
+      output.slice(offset, newline === -1 ? output.length : newline),
+    );
+    if (isSuccessfulDaemonStartNotice(line)) started = true;
+    else if (isDaemonStartingNotice(line)) started = false;
+    else return false;
+    offset = newline === -1 ? output.length : newline + 1;
+  }
+  return started;
+};
+
 const metadataValue = (remainder: string, key: string): string | null => {
   const match = new RegExp(`(?:^|\\s)${key}:(\\S+)`, "u").exec(remainder);
   return match === null ? null : match[1]!;
@@ -44,18 +70,18 @@ const metadataValue = (remainder: string, key: string): string | null => {
 /**
  * Parse `adb devices -l` device lines. The banner, blank lines, and the
  * daemon startup notices adb prints on first use are recognized separately;
- * every other unrecognized line is returned for honest reporting.
+ * every other unrecognized line is sampled and counted for honest reporting.
  */
 export const parseAdbDevicesOutput = (
   stdout: string,
   stderr = "",
 ): {
   devices: readonly AdbDeviceEntry[];
-  unparsedLines: readonly string[];
+  unparsedLines: AdbUnparsedLines;
   daemonStarted: boolean;
 } => {
   const devices: AdbDeviceEntry[] = [];
-  const unparsedLines: string[] = [];
+  const unparsed = collectUnparsedLines();
   let daemonStarted = false;
   for (const rawLine of stdout.split(/\r?\n/u)) {
     const line = normalizeAdbOutputLine(rawLine);
@@ -71,10 +97,17 @@ export const parseAdbDevicesOutput = (
       if (remainder === undefined || !remainder.startsWith(candidate))
         return false;
       const next = remainder[candidate.length];
-      return next === undefined || /\s/u.test(next);
+      // adb prints no-permissions as `no permissions[ (reason)]; see [URL]` and
+      // omits the reason on a host where it finds no udev problem to name,
+      // such as one without a plugdev group, so `;` can follow it directly.
+      return (
+        next === undefined ||
+        /\s/u.test(next) ||
+        (candidate === "no permissions" && next === ";")
+      );
     });
     if (match === null || state === undefined) {
-      if (rawLine.trim() !== "") unparsedLines.push(rawLine);
+      if (rawLine.trim() !== "") unparsed.add(rawLine);
       continue;
     }
     const serial = match[1]!;
@@ -122,7 +155,7 @@ export const parseAdbDevicesOutput = (
       }
     }
   }
-  return { devices, unparsedLines, daemonStarted };
+  return { devices, unparsedLines: unparsed.facts(), daemonStarted };
 };
 
 /**
@@ -165,7 +198,7 @@ export const parseGetpropOutput = (
   }
   const properties = DEVICE_PROPERTY_WHITELIST.flatMap((name) => {
     const value = values.get(name);
-    return value === undefined || value === ""
+    return value === undefined
       ? []
       : [{ name, value } satisfies AdbDeviceProperty];
   });
@@ -184,21 +217,21 @@ export interface AdbPackageEntry {
 
 const PACKAGE_LINE = /^package:(.+)=([^\s=]+)$/u;
 
-/** Parse `pm list packages -f` lines, retaining unrecognized lines. */
+/** Parse `pm list packages -f` lines, sampling and counting unrecognized lines. */
 export const parsePackageListOutput = (
   stdout: string,
 ): {
   packages: readonly AdbPackageEntry[];
-  unparsedLines: readonly string[];
+  unparsedLines: AdbUnparsedLines;
 } => {
   const packages: AdbPackageEntry[] = [];
-  const unparsedLines: string[] = [];
+  const unparsed = collectUnparsedLines();
   for (const rawLine of stdout.split(/\r?\n/u)) {
     const line = rawLine.trim();
     if (line === "") continue;
     const match = PACKAGE_LINE.exec(line);
     if (match === null) {
-      unparsedLines.push(rawLine);
+      unparsed.add(rawLine);
       continue;
     }
     packages.push({
@@ -206,7 +239,7 @@ export const parsePackageListOutput = (
       base_apk_device_path: match[1]!,
     });
   }
-  return { packages, unparsedLines };
+  return { packages, unparsedLines: unparsed.facts() };
 };
 
 /** Quote raw device paths for prose without allowing bidi or invisible text. */
@@ -242,29 +275,30 @@ export interface AdbPackagePathEntry {
  */
 export const parsePmPathOutput = (
   stdout: string,
+  platform: NodeJS.Platform = process.platform,
 ): {
   paths: readonly AdbPackagePathEntry[];
   rejectedPaths: readonly {
     device_path: string;
     reason: AdbHostFileNameReason;
   }[];
-  unparsedLines: readonly string[];
+  unparsedLines: AdbUnparsedLines;
 } => {
   const paths: AdbPackagePathEntry[] = [];
   const rejectedPaths: {
     device_path: string;
     reason: AdbHostFileNameReason;
   }[] = [];
-  const unparsedLines: string[] = [];
+  const unparsed = collectUnparsedLines();
   for (const rawLine of stdout.split(/\r?\n/u)) {
     if (rawLine === "") continue;
     const match = /^package:(.*)$/u.exec(rawLine);
     if (match === null) {
-      unparsedLines.push(rawLine);
+      unparsed.add(rawLine);
       continue;
     }
     const devicePath = match[1]!;
-    const validated = adbHostFileName(devicePath);
+    const validated = adbHostFileName(devicePath, platform);
     if (!validated.ok) {
       rejectedPaths.push({
         device_path: devicePath,
@@ -284,5 +318,5 @@ export const parsePmPathOutput = (
             : "unknown",
     });
   }
-  return { paths, rejectedPaths, unparsedLines };
+  return { paths, rejectedPaths, unparsedLines: unparsed.facts() };
 };

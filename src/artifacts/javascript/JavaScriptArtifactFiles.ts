@@ -1,3 +1,4 @@
+import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import type { Readable } from "node:stream";
@@ -15,7 +16,7 @@ import {
   type ArtifactReader,
 } from "../ArtifactReader.js";
 import { streamChunkToBuffer } from "../StreamBytes.js";
-import { hashReadable } from "../ArtifactHash.js";
+import { hashReadableToCompletion } from "../ArtifactHash.js";
 import type { ArtifactOccurrence } from "../../domain/artifactGraph.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
@@ -52,6 +53,7 @@ interface ReadContext {
   readonly files: JavaScriptArtifactFile[];
   readonly containers: JavaScriptArtifactContainer[];
   readonly signal: AbortSignal | undefined;
+  readonly asarHeaderAdmission: AsarHeaderAdmission | undefined;
   readonly selectedPaths: ReadonlyMap<string, number> | undefined;
   textBytes: number;
   invalidUtf8: number;
@@ -70,6 +72,7 @@ export const readJavaScriptArtifactFiles = async (
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
   sourcePaths?: readonly string[],
+  asarHeaderAdmission?: AsarHeaderAdmission,
 ): Promise<JavaScriptArtifactFileSet> => {
   const inventory = expectedInventory(snapshot);
   const expected = inventory.files;
@@ -77,6 +80,23 @@ export const readJavaScriptArtifactFiles = async (
     sourcePaths === undefined
       ? undefined
       : new Map([...new Set(sourcePaths)].map((path, index) => [path, index]));
+  const undiscoveredPath = sourcePaths?.find(
+    (path) =>
+      relevantKind(path) !== undefined &&
+      !expected.has(path) &&
+      !inventory.unavailableFiles.has(path) &&
+      snapshot.occurrences[
+        lowerBound(snapshot.occurrences, path, (entry) => entry.logical_path)
+      ]?.logical_path !== path,
+  );
+  if (undiscoveredPath !== undefined && snapshot.coverage.status === "unknown")
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected source discovery is unavailable under incomplete artifact traversal: ${undiscoveredPath}`,
+      {
+        partialObservation: { kind: "artifact-inventory", inventory: snapshot },
+      },
+    );
   const issues = (sourcePaths ?? []).flatMap((path, index) =>
     expected.has(path) || inventory.unavailableFiles.has(path)
       ? []
@@ -95,17 +115,6 @@ export const readJavaScriptArtifactFiles = async (
       undefined,
       issues,
     );
-  const unavailablePath = sourcePaths?.find((path) =>
-    inventory.unavailableFiles.has(path),
-  );
-  if (unavailablePath !== undefined)
-    throw new ArtifactReaderFailure(
-      "unavailable",
-      `Selected inventoried source bytes are unavailable: ${unavailablePath}`,
-      {
-        partialObservation: { kind: "artifact-inventory", inventory: snapshot },
-      },
-    );
   if (reader instanceof AsarArtifactReader) {
     const root = snapshot.nodes.find(
       ({ artifact_id }) => artifact_id === snapshot.manifest.root_artifact_id,
@@ -121,6 +130,25 @@ export const readJavaScriptArtifactFiles = async (
       signal,
     );
   }
+  if (inventory.ambiguousPath !== undefined)
+    throw new ArtifactReaderFailure(
+      "path",
+      `JavaScript artifact path collision: ${JSON.stringify(inventory.ambiguousPath)}. Multiple occurrences share this normalized logical path; inventory retains each occurrence.`,
+      {
+        partialObservation: { kind: "artifact-inventory", inventory: snapshot },
+      },
+    );
+  const unavailablePath = sourcePaths?.find((path) =>
+    inventory.unavailableFiles.has(path),
+  );
+  if (unavailablePath !== undefined)
+    throw new ArtifactReaderFailure(
+      "unavailable",
+      `Selected inventoried source bytes are unavailable: ${unavailablePath}`,
+      {
+        partialObservation: { kind: "artifact-inventory", inventory: snapshot },
+      },
+    );
   const context: ReadContext = {
     resources,
     expected,
@@ -129,6 +157,7 @@ export const readJavaScriptArtifactFiles = async (
     files: [],
     containers: [],
     signal,
+    asarHeaderAdmission,
     selectedPaths,
     textBytes: 0,
     invalidUtf8: 0,
@@ -225,11 +254,7 @@ const visitReader = async (
             `Nested ASAR was not present in inventory: ${path}`,
           );
         if (container.hash_status === "mismatched") continue;
-        if (container.hash_status === "unavailable")
-          throw new ArtifactReaderFailure(
-            "unavailable",
-            `Nested ASAR bytes were unavailable during inventory: ${path}`,
-          );
+        if (container.hash_status === "unavailable") continue;
         if (container.hash_status !== "verified")
           throw new ArtifactReaderFailure(
             "integrity",
@@ -250,7 +275,12 @@ const visitReader = async (
           context.signal,
         );
         context.containers.push(inventory);
-        const nested = new AsarArtifactReader(entry.adapterKey);
+        const nested = new AsarArtifactReader(
+          entry.adapterKey,
+          context.asarHeaderAdmission === undefined
+            ? {}
+            : { headerAdmission: context.asarHeaderAdmission },
+        );
         ownedReaders.push({ reader: nested, path });
         stack.push({
           reader: nested,
@@ -378,17 +408,13 @@ const verifyEntryBytes = async (
   expected: Pick<ExpectedFile, "path" | "sha256" | "bytes">,
   signal?: AbortSignal,
 ): Promise<void> => {
-  try {
-    const digest = await hashReadable(stream, signal);
-    if (digest.sha256 !== expected.sha256 || digest.bytes !== expected.bytes)
-      throw new ArtifactReaderFailure(
-        "integrity",
-        `Artifact entry changed after inventory: ${expected.path}`,
-      );
-  } catch (cause: unknown) {
-    abortIfNeeded(signal);
-    throw cause;
-  }
+  const digest = await hashReadableToCompletion(stream, signal);
+  if (digest.sha256 !== expected.sha256 || digest.bytes !== expected.bytes)
+    throw new ArtifactReaderFailure(
+      "integrity",
+      `Artifact entry changed after inventory: ${expected.path}`,
+    );
+  abortIfNeeded(signal);
 };
 
 const expectedInventory = (
@@ -397,21 +423,38 @@ const expectedInventory = (
   readonly files: ReadonlyMap<string, ExpectedFile>;
   readonly containers: ReadonlyMap<string, ExpectedContainer>;
   readonly unavailableFiles: ReadonlySet<string>;
+  readonly ambiguousPath: string | undefined;
 } => {
   const nodes = new Map(snapshot.nodes.map((node) => [node.artifact_id, node]));
   const files = new Map<string, ExpectedFile>();
   const containers = new Map<string, ExpectedContainer>();
   const unavailableFiles = new Set<string>();
+  const seenPaths = new Map<string, boolean>();
+  let ambiguousPath: string | undefined;
   for (const occurrence of snapshot.occurrences) {
     if (occurrence.logical_path === ".") continue;
     const isNestedAsar =
       occurrence.entry_kind === "file" &&
       occurrence.logical_path.toLowerCase().endsWith(".asar");
+    const kind = relevantKind(occurrence.logical_path);
+    if (
+      occurrence.entry_kind === "file" &&
+      (isNestedAsar || kind !== undefined)
+    ) {
+      const available = occurrence.artifact_id !== null;
+      const priorAvailable = seenPaths.get(occurrence.logical_path);
+      if (priorAvailable !== undefined) {
+        // Unavailable siblings cannot bind content to the wrong occurrence.
+        // Keep them as unknown; any available sibling makes the shared path
+        // ambiguous for acquisition, regardless of encounter order.
+        if (priorAvailable || available)
+          ambiguousPath ??= occurrence.logical_path;
+        continue;
+      }
+      seenPaths.set(occurrence.logical_path, available);
+    }
     if (occurrence.artifact_id === null) {
-      if (
-        occurrence.entry_kind === "file" &&
-        relevantKind(occurrence.logical_path) !== undefined
-      )
+      if (occurrence.entry_kind === "file" && kind !== undefined)
         unavailableFiles.add(occurrence.logical_path);
       if (isNestedAsar)
         containers.set(occurrence.logical_path, {
@@ -442,7 +485,6 @@ const expectedInventory = (
           inventory_artifact_id: node.artifact_id,
         },
       });
-    const kind = relevantKind(occurrence.logical_path);
     if (kind === undefined) continue;
     files.set(occurrence.logical_path, {
       path: occurrence.logical_path,
@@ -452,7 +494,7 @@ const expectedInventory = (
       kind,
     });
   }
-  return { files, containers, unavailableFiles };
+  return { files, containers, unavailableFiles, ambiguousPath };
 };
 
 /** Canonical snapshot arrays are already ordered by code-point identity. */
@@ -503,13 +545,36 @@ const createUnanalyzedArtifactLookup = (
     occurrence.artifact_id === null &&
     relevantKind(occurrence.logical_path) !== undefined;
   return {
+    coverage: snapshot.coverage,
     get(path) {
       if (requested.has(path)) return requested.get(path);
-      const occurrence =
-        snapshot.occurrences[
-          lowerBound(snapshot.occurrences, path, (entry) => entry.logical_path)
-        ];
+      const index = lowerBound(
+        snapshot.occurrences,
+        path,
+        (entry) => entry.logical_path,
+      );
+      const occurrence = snapshot.occurrences[index];
+      const next = snapshot.occurrences[index + 1];
       const kind = relevantKind(path);
+      if (
+        occurrence?.logical_path === path &&
+        next?.logical_path === path &&
+        (isOpaque(occurrence) || isUnavailableRelevant(occurrence))
+      ) {
+        const ambiguous: JavaScriptUnanalyzedArtifactFile = {
+          path,
+          container_sha256: containerFor(path),
+          sha256: null,
+          bytes: null,
+          inventory_artifact_id: null,
+          ...(kind === undefined ? {} : { kind }),
+          limitations: [
+            "Multiple inventory occurrences share this normalized path; content identity is unknown.",
+          ],
+        };
+        requested.set(path, ambiguous);
+        return ambiguous;
+      }
       const id =
         occurrence?.logical_path === path &&
         (isOpaque(occurrence) || isUnavailableRelevant(occurrence))
@@ -628,5 +693,6 @@ const abortIfNeeded = (signal?: AbortSignal): void => {
     throw new ArtifactReaderFailure(
       "cancelled",
       "JavaScript artifact reconstruction cancelled",
+      { cause: signal.reason },
     );
 };

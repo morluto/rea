@@ -4,6 +4,7 @@ import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { inspectWebPageInputSchema } from "../domain/browserObservation.js";
 import { CdpCaptureEvents } from "./CdpCaptureEvents.js";
 import type { CdpConnection } from "./CdpConnection.js";
+import { CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON } from "./CdpScriptSourceBudget.js";
 import { captureScripts } from "./CdpPageCaptureScripts.js";
 import type { CaptureContext } from "./CdpPageCapture.js";
 import type { CapturedScript } from "./CdpCaptureEventTypes.js";
@@ -74,8 +75,7 @@ it("admits a prefix and fitting suffix around an oversized script source", async
   expect(byId.get("prefix")).toMatchObject({ included: true });
   expect(byId.get("oversized")).toEqual({
     included: false,
-    reason:
-      "script source was omitted because the aggregate 32 MiB source budget was exhausted",
+    reason: CDP_SCRIPT_SOURCE_BYTES_OMISSION_REASON,
   });
   expect(byId.get("suffix")).toMatchObject({ included: true });
   expect(events.completeness.snapshot().excluded).toContainEqual({
@@ -123,75 +123,98 @@ it("preserves the caller cancellation reason when a source read is pending", asy
   ).rejects.toMatchObject({ _tag: "AnalysisCancelledError", cause: reason });
 });
 
-it("stops source reads at the shared collection deadline and retains metadata", async () => {
-  vi.useFakeTimers();
-  try {
-    const input = inspectWebPageInputSchema.parse({
-      cdp_endpoint: "http://127.0.0.1:9222",
-      target_id: "page-1",
-      allowed_origins: ["https://example.test"],
-      observation_ms: 0,
-      include_script_sources: true,
-    });
-    const events = new CdpCaptureEvents(input, new Set(input.allowed_origins));
-    events.scripts.set("first", script("first"));
-    events.scripts.set("second", script("second"));
-    const send = vi.fn(
-      (
-        _method: string,
-        _params: unknown,
-        _sessionId: string | undefined,
-        signal?: AbortSignal,
-      ) =>
-        new Promise((_resolve, reject) => {
-          signal?.addEventListener(
-            "abort",
-            () => reject(new AnalysisCancelledError("inspect_web_page")),
-            { once: true },
-          );
-        }),
-    );
-    const context = {
-      connection: { send } as unknown as CdpConnection,
-      sessionId: undefined,
-      operation: "inspect_web_page",
-      discovery: undefined,
-      target: undefined,
-      input,
-    } as unknown as CaptureContext;
-    const pending = captureScripts({
-      context,
-      events,
-      rawResources: [],
-      resources: [],
-      frameIds: new Set(),
-    });
+it.each([
+  { selection: "default", commandTimeoutMs: undefined, deadlineMs: 20_000 },
+  { selection: "caller-selected", commandTimeoutMs: 1_234, deadlineMs: 1_234 },
+])(
+  "stops source reads at the $selection collection deadline and retains metadata",
+  async ({ commandTimeoutMs, deadlineMs }) => {
+    vi.useFakeTimers();
+    try {
+      const input = inspectWebPageInputSchema.parse({
+        cdp_endpoint: "http://127.0.0.1:9222",
+        target_id: "page-1",
+        allowed_origins: ["https://example.test"],
+        observation_ms: 0,
+        include_script_sources: true,
+        ...(commandTimeoutMs === undefined
+          ? {}
+          : { command_timeout_ms: commandTimeoutMs }),
+      });
+      const events = new CdpCaptureEvents(
+        input,
+        new Set(input.allowed_origins),
+      );
+      events.scripts.set("first", script("first"));
+      events.scripts.set("second", script("second"));
+      const send = vi.fn(
+        (
+          _method: string,
+          _params: unknown,
+          _sessionId: string | undefined,
+          signal?: AbortSignal,
+        ) =>
+          new Promise((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => reject(new AnalysisCancelledError("inspect_web_page")),
+              { once: true },
+            );
+          }),
+      );
+      const context = {
+        connection: { send } as unknown as CdpConnection,
+        sessionId: undefined,
+        operation: "inspect_web_page",
+        discovery: undefined,
+        target: undefined,
+        input,
+      } as unknown as CaptureContext;
+      const pending = captureScripts({
+        context,
+        events,
+        rawResources: [],
+        resources: [],
+        frameIds: new Set(),
+      });
 
-    await vi.advanceTimersByTimeAsync(20_000);
-    const result = await pending;
+      await vi.advanceTimersByTimeAsync(deadlineMs);
+      const result = await pending;
 
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(result.inventory.items.map((item) => item.source)).toEqual([
-      {
-        included: false,
-        reason:
-          "script source was omitted because the 20-second source collection deadline elapsed",
-      },
-      {
-        included: false,
-        reason:
-          "script source was omitted because the 20-second source collection deadline elapsed",
-      },
-    ]);
-    expect(events.completeness.snapshot().excluded).toContainEqual({
-      section: "script_sources",
-      reason: "resource_budget_exhausted",
-      count: 2,
-    });
-  } finally {
-    vi.useRealTimers();
-  }
-});
+      expect(send).toHaveBeenCalledTimes(1);
+      expect(result.inventory.items).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            cdp_hash: "first",
+            url: "https://example.test/first.js",
+          }),
+          expect.objectContaining({
+            cdp_hash: "second",
+            url: "https://example.test/second.js",
+          }),
+        ]),
+      );
+      const expectedReason = `script source was omitted because the ${deadlineMs} ms command_timeout_ms source collection deadline elapsed (deadlineExpired). This is not the caller observation window. The 33554432-byte source budget stays fixed. This release has no runtime override. command_timeout_ms does not raise it.`;
+      expect(result.inventory.items.map((item) => item.source)).toEqual([
+        {
+          included: false,
+          reason: expectedReason,
+        },
+        {
+          included: false,
+          reason: expectedReason,
+        },
+      ]);
+      expect(events.completeness.snapshot().excluded).toContainEqual({
+        section: "script_sources",
+        reason: "resource_budget_exhausted",
+        count: 2,
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  },
+);
 
 it("leaves source-off capture unchanged and does not issue source reads", async () => {
   const { result, events, send } = await capture({ first: "unused" }, false);

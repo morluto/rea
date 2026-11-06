@@ -5,7 +5,11 @@ import {
   type ProcessOwnershipHost,
 } from "./ProcessOwnership.js";
 import { observeOwnedProcessLineage } from "./ProcessOwnershipObservation.js";
-import { createOwnership, host } from "./ProcessOwnership.fixture.js";
+import {
+  createOwnership,
+  host,
+  verifiedLineage,
+} from "./ProcessOwnership.fixture.js";
 
 let ownership = createOwnership();
 beforeEach(() => {
@@ -173,20 +177,12 @@ describe("owned process-group cleanup discovery", () => {
     });
     await expect(
       observeOwnedProcessLineage(ownership, adapter),
-    ).resolves.toEqual({
-      status: "verified",
-      observedAt: expect.any(String),
-      lineage: {
-        runId: "run-token",
-        launcherPid: 100,
-        launcherParentPid: 1,
-        processGroupId: 100,
-        descendants: [
-          { pid: 101, parentPid: 100, processGroupId: 100 },
-          { pid: 102, parentPid: 100, processGroupId: 100 },
-        ],
-      },
-    });
+    ).resolves.toEqual(
+      verifiedLineage([
+        { pid: 101, parentPid: 100, processGroupId: 100 },
+        { pid: 102, parentPid: 100, processGroupId: 100 },
+      ]),
+    );
   });
 });
 

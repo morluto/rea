@@ -2,6 +2,10 @@ import { access } from "node:fs/promises";
 
 import { expect, it, vi } from "vitest";
 
+import {
+  HopperCancelledError,
+  HopperProcessError,
+} from "../../../../src/domain/hopperErrors.js";
 import { HopperClient } from "../../../../src/hopper/HopperClient.js";
 import { ok } from "../../../../src/domain/result.js";
 import { ProviderRunLineage } from "../../../../src/process/ProviderRunLineage.js";
@@ -16,11 +20,13 @@ it("preserves a warm provider when an already cancelled caller joins", async () 
   const client = trackHopperClient(new HopperClient({ launcher }));
   await expect(client.start()).resolves.toMatchObject({ ok: true });
   const controller = new AbortController();
-  controller.abort();
-  await expect(client.start(controller.signal)).resolves.toMatchObject({
-    ok: false,
-    error: { _tag: "HopperCancelledError" },
-  });
+  const reason = { source: "caller", opaque: 7 };
+  controller.abort(reason);
+  const joined = await client.start(controller.signal);
+  expect(joined.ok).toBe(false);
+  if (joined.ok) throw new Error("Expected cancellation");
+  expect(joined.error).toBeInstanceOf(HopperCancelledError);
+  expect(joined.error.cause).toBe(reason);
   expect(client.isReady()).toBe(true);
   expect(client.operationHealth()).toMatchObject({ state: "idle" });
   await expect(
@@ -137,13 +143,18 @@ it.each([0, 1])(
       void waits[cancelledIndex]?.then((result) => {
         cancelled = result;
       });
-      controllers[cancelledIndex]?.abort();
+      const reason = { source: "caller", opaque: cancelledIndex };
+      controllers[cancelledIndex]?.abort(reason);
       await vi.waitFor(() =>
         expect(cancelled).toMatchObject({
           ok: false,
           error: { _tag: "HopperCancelledError" },
         }),
       );
+      if (cancelled === undefined || cancelled.ok)
+        throw new Error("Expected cancellation");
+      expect(cancelled.error).toBeInstanceOf(HopperCancelledError);
+      expect(cancelled.error.cause).toBe(reason);
       expect(launcher.processes).toHaveLength(0);
       release?.();
       await expect(waits[1 - cancelledIndex]).resolves.toMatchObject({
@@ -218,6 +229,55 @@ it.each(["cancelled", "rejected"] as const)(
     }
   },
 );
+
+it("keeps a post-connect launcher exit ahead of cancellation during lineage finalization", async () => {
+  let entered: (() => void) | undefined;
+  let release: (() => void) | undefined;
+  const pending = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const original = ProviderRunLineage.prototype.observe;
+  const observe = vi.spyOn(ProviderRunLineage.prototype, "observe");
+  observe.mockImplementationOnce(async function (
+    this: ProviderRunLineage,
+    launch,
+  ) {
+    entered?.();
+    await gate;
+    await original.call(this, launch);
+  });
+  const launcher = new HopperFixtureLauncher();
+  const client = trackHopperClient(new HopperClient({ launcher }));
+  const controller = new AbortController();
+  const starting = client.start(controller.signal);
+  try {
+    await pending;
+    const child = launcher.processes[0];
+    if (child === undefined) throw new Error("Missing fixture process");
+    child.kill("SIGKILL");
+    expect(await waitForExit(child, 5_000)).toBe(true);
+    controller.abort({ source: "after launcher exit" });
+    release?.();
+
+    const result = await starting;
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "HopperProcessError", exitCode: null },
+    });
+    if (result.ok) throw new Error("Expected launcher exit failure");
+    expect(result.error).toBeInstanceOf(HopperProcessError);
+    expect((result.error as HopperProcessError).launcherFailure).toMatchObject({
+      exit_code: null,
+      signal: "SIGKILL",
+    });
+  } finally {
+    release?.();
+    await starting;
+  }
+});
 
 it("keeps an unstarted client reusable after an already cancelled startup wait", async () => {
   const launcher = new HopperFixtureLauncher();

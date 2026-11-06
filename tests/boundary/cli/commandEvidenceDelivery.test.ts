@@ -1,6 +1,6 @@
 import { Cli, z } from "incur";
 import pino from "pino";
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished, vi } from "vitest";
 import { registerReverseEngineeringCommands } from "../../../src/cli/reverseEngineeringCommands.js";
@@ -11,7 +11,9 @@ import {
   parseEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
+import { parseEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
 import { ok } from "../../../src/domain/result.js";
+import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
 import { GdbSessionManager } from "../../../src/gdb/GdbSessionManager.js";
 import { TestReverseEngineeringService } from "../../support/reverseEngineeringService.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -197,7 +199,7 @@ it.each(kinds)(
       detail: "summary",
       evidence_output: destination,
     });
-    expect(await readFile(destination)).toEqual(original);
+    expect(Buffer.compare(await readFile(destination), original)).toBe(0);
     expect(output).toHaveProperty("code");
     expect(output).not.toHaveProperty("summary");
     expect(output).toHaveProperty("details.partial_observation.evidence_id");
@@ -205,5 +207,75 @@ it.each(kinds)(
       expect(f.close).toHaveBeenCalledOnce();
       expect(f.closeAll).toHaveBeenCalledOnce();
     } else expect(f.closeService).toHaveBeenCalledOnce();
+  },
+);
+
+const interruptAt = (method: "assertReadyForPublication" | "close"): void => {
+  const original = OwnedStagedOutput.prototype[method];
+  const seam = vi
+    .spyOn(OwnedStagedOutput.prototype, method)
+    .mockImplementationOnce(async function (
+      this: OwnedStagedOutput,
+      ...arguments_: Parameters<OwnedStagedOutput[typeof method]>
+    ) {
+      await Reflect.apply(original, this, arguments_);
+      process.emit("SIGINT");
+    });
+  onTestFinished(() => {
+    seam.mockRestore();
+    process.exitCode = undefined;
+  });
+};
+
+it.each(kinds)(
+  "keeps the committed %s receipt when SIGINT arrives during final staging cleanup",
+  async (kind) => {
+    const f = await fixture(kind);
+    const destination = join(f.directory, "complete.json");
+    interruptAt("close");
+    const output = await f.invoke({
+      detail: "summary",
+      evidence_output: destination,
+    });
+    expect(process.exitCode).toBe(130);
+    const serialized = await readFile(destination, "utf8");
+    const parent = parseEvidenceBundle(JSON.parse(serialized)).records[0]!;
+    expect(output).toMatchObject({
+      code: "cancelled",
+      details: {
+        diagnostics: {
+          evidence_bundle: {
+            path: destination,
+            bytes: Buffer.byteLength(serialized),
+          },
+        },
+        partial_observation: {
+          evidence_links: [parent.evidence_id],
+          normalized_result: { parent_evidence_id: parent.evidence_id },
+        },
+      },
+    });
+    expect(await readdir(f.directory)).not.toContainEqual(
+      expect.stringMatching(/^\.rea-write-/u),
+    );
+  },
+);
+
+it.each(kinds)(
+  "publishes no %s bundle or receipt when SIGINT arrives before commit",
+  async (kind) => {
+    const f = await fixture(kind);
+    const destination = join(f.directory, "complete.json");
+    interruptAt("assertReadyForPublication");
+    const output = await f.invoke({
+      detail: "summary",
+      evidence_output: destination,
+    });
+    expect(process.exitCode).toBe(130);
+    expect(output).toMatchObject({ code: "cancelled" });
+    expect(output).not.toHaveProperty("details.diagnostics");
+    expect(JSON.stringify(output)).not.toContain(destination);
+    expect(output).toHaveProperty("details.partial_observation.raw_result");
+    expect(await readdir(f.directory)).toEqual(["input.bin"]);
   },
 );

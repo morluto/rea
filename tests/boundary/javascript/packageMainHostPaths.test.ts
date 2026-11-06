@@ -2,21 +2,27 @@ import { createRequire } from "node:module";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 
-import { resolveArtifactPathByContext } from "../../../src/application/javascript/JavaScriptArtifactPathResolution.js";
+import { resolveStandaloneArtifactPath } from "../../support/javascriptArtifactPathResolution.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { writeFixtureFiles } from "../../support/workspace/writeFixtureFiles.js";
 
-it.each(["absolute-host", "relative-package"] as const)(
-  "compares %s package main with the native Node resolver",
+it.each([
+  "absolute-host",
+  "relative-package",
+  "inherited-main",
+  "inherited-exports",
+] as const)(
+  "compares %s package selection with the native Node resolver",
   async (kind) => {
     const root = await createTestTempDirectory("rea-package-main-host-");
     const artifact = join(root, "artifact");
     const host = join(root, "host/window.cjs");
     const main = kind === "absolute-host" ? host : "entry.cjs";
+    const metadata = kind.startsWith("inherited-") ? {} : { main };
     const contents = {
       "app/main.cjs": "throw new Error('Analyzed input must never execute');",
-      "app/node_modules/fixture/package.json": JSON.stringify({ main }),
+      "app/node_modules/fixture/package.json": JSON.stringify(metadata),
       "app/node_modules/fixture/entry.cjs":
         "throw new Error('Package input must never execute');",
       "app/node_modules/fixture/index.js":
@@ -34,11 +40,6 @@ it.each(["absolute-host", "relative-package"] as const)(
       ),
     });
     const loader = createRequire(join(artifact, "app/main.cjs"));
-    expect(loader.resolve("fixture")).toBe(
-      kind === "absolute-host"
-        ? host
-        : join(artifact, "app/node_modules/fixture/entry.cjs"),
-    );
     const files = new Map<string, JavaScriptArtifactFile>(
       Object.entries(contents).map(([path, value]) => [
         path,
@@ -54,18 +55,43 @@ it.each(["absolute-host", "relative-package"] as const)(
         },
       ]),
     );
-    expect(
-      resolveArtifactPathByContext({
+    const property = kind === "inherited-exports" ? "exports" : "main";
+    const previous = Object.getOwnPropertyDescriptor(
+      Object.prototype,
+      property,
+    );
+    let nativePath: string;
+    let resolution: ReturnType<typeof resolveStandaloneArtifactPath>;
+    try {
+      if (kind.startsWith("inherited-"))
+        Object.defineProperty(Object.prototype, property, {
+          configurable: true,
+          writable: true,
+          value: property === "main" ? host : "./entry.cjs",
+        });
+      nativePath = loader.resolve("fixture");
+      resolution = resolveStandaloneArtifactPath({
         declaredPath: "fixture",
         sourcePath: "app/main.cjs",
         context: "module-specifier",
         moduleKind: "require",
         files,
-      }),
-    ).toMatchObject({
+      });
+    } finally {
+      if (previous === undefined)
+        Reflect.deleteProperty(Object.prototype, property);
+      else Object.defineProperty(Object.prototype, property, previous);
+    }
+    const target = kind.startsWith("inherited-") ? "index.js" : "entry.cjs";
+    expect(nativePath).toBe(
+      kind === "absolute-host"
+        ? host
+        : join(artifact, "app/node_modules/fixture", target),
+    );
+    expect(resolution).toMatchObject({
       resolution_status: kind === "absolute-host" ? "unavailable" : "resolved",
       resolved_path:
-        kind === "absolute-host" ? null : "app/node_modules/fixture/entry.cjs",
+        kind === "absolute-host" ? null : `app/node_modules/fixture/${target}`,
     });
   },
 );

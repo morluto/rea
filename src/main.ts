@@ -8,19 +8,12 @@ import { realpathSync } from "node:fs";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
 import { parseConfig } from "./config/parseConfig.js";
-import { createBinarySession } from "./composition/binary.js";
-import { createLogger } from "./logger.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
 import type { RuntimeDependencies } from "./main/types.js";
+import { runDeferred } from "./main/deferredRuntime.js";
+import { RECORDED_MCP_CATALOG_SHA256 } from "./recordedMcpCatalog.js";
 import { SERVER_START_FAILED } from "./main/messages.js";
-import { openInitialTarget } from "./main/startup.js";
-import { startMcpTransport } from "./main/transport.js";
-import {
-  createOptionalObservationFactories,
-  loadOptionalObservationProviders,
-} from "./composition/optionalObservationProviders.js";
-import { createToolResultDelivery } from "./server/toolResult.js";
-import { createShutdown } from "./main/shutdown.js";
+
 import {
   createExitStatus,
   latchSignalShutdown,
@@ -36,6 +29,7 @@ import {
 
 const runtimeDependencies = (): RuntimeDependencies => ({
   env: process.env,
+  stdin: process.stdin,
   serve: serveStdio,
   writeStderr: (text) => process.stderr.write(text),
   setExitCode: (code) => {
@@ -53,6 +47,7 @@ const httpRuntimeDependencies = (
   const base = runtimeDependencies();
   return {
     ...base,
+    transport: "http",
     setExitCode: exit.set,
     serve: async (factory, options) => {
       // Loaded here so the default stdio entry never loads the HTTP listener.
@@ -90,12 +85,7 @@ const httpRuntimeDependencies = (
   };
 };
 
-/**
- * Start the long-lived MCP adapter and install idempotent shutdown handlers.
- * The adapter owns its BinarySession for the process lifetime; stdin EOF on
- * the stdio transport and process signals on either transport close bridge
- * resources without assuming ownership of the Hopper app.
- */
+/** Start discovery without constructing unused analysis validators. */
 export const run = async (
   dependencies: RuntimeDependencies = runtimeDependencies(),
 ): Promise<number> => {
@@ -105,38 +95,29 @@ export const run = async (
     dependencies.writeStderr(`${projectAnalysisError(config.error).message}\n`);
     return 1;
   }
-  const logger = createLogger("mcp", config.value.logLevel);
-  const serverLogger = logger.child({ layer: "server" });
-  const session = createBinarySession(config.value, logger, environment);
-  const opened = await openInitialTarget(
-    session,
+  const fullOutputCatalog =
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined ||
+    environment.REA_MCP_OUTPUT_SCHEMA_PROFILE === "full";
+  // The recorded catalog holds the complete inventory and its full-catalog
+  // identity, so only an unscoped registration can be served from it. A
+  // scoped one composes the canonical scope itself instead of advertising
+  // tools whose identity the runtime cannot verify.
+  const scopedToolFamilies = environment.REA_MCP_TOOL_FAMILIES !== undefined;
+  if (
+    RECORDED_MCP_CATALOG_SHA256 !== undefined &&
+    dependencies.transport !== "http" &&
+    config.value.hopperTargetPath === undefined &&
+    fullOutputCatalog &&
+    !scopedToolFamilies &&
+    dependencies.createServer === undefined &&
+    dependencies.loadOptionalProviders === undefined
+  ) {
+    return runDeferred({ ...dependencies, env: environment }, config.value);
+  }
+  return (await import("./main/eagerRuntime.js")).runEager(
+    { ...dependencies, env: environment },
     config.value,
-    serverLogger,
-    dependencies.writeStderr,
   );
-  if (!opened.ok) return opened.exitCode;
-  const transport = await startMcpTransport(dependencies, session, {
-    logger,
-    serverLogger,
-    environment,
-    delivery: createToolResultDelivery(config.value.mcpMaxResponseBytes),
-    loadOptionalProviders:
-      dependencies.loadOptionalProviders ??
-      (() =>
-        loadOptionalObservationProviders(
-          createOptionalObservationFactories(environment),
-        )),
-  });
-  if (!transport.ok) return 1;
-  createShutdown({
-    handle: transport.handle,
-    closeAndroid: transport.closeAndroid,
-    closeOptionalProviders: transport.closeOptionalProviders,
-    session,
-    dependencies,
-    serverLogger,
-  });
-  return 0;
 };
 
 /** Run the executable boundary without exposing an unexpected startup cause. */
@@ -194,6 +175,9 @@ export const runMcpHttpEntrypoint = async (
   const endpoint = parseMcpHttpEndpoint(snapshotEnvironment(process.env), {
     ...(parsed.host === undefined ? {} : { host: parsed.host }),
     ...(parsed.port === undefined ? {} : { port: parsed.port }),
+    ...(parsed.allowedHosts === undefined
+      ? {}
+      : { allowedHosts: [...parsed.allowedHosts] }),
   });
   if (!endpoint.ok) {
     io.writeStderr(`${projectAnalysisError(endpoint.error).message}\n`);

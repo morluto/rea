@@ -6,6 +6,7 @@ import {
 } from "../CaptureRedaction.js";
 import { createHash } from "node:crypto";
 import { readStableArtifact } from "../../../artifacts/readStableArtifact.js";
+import { completedStableArtifactObservation } from "../../../artifacts/StableArtifactObservation.js";
 import {
   historicalCaptureFailure,
   withCaptureReaderCleanup,
@@ -23,6 +24,7 @@ import {
   type WebNetworkCaptureRecord,
 } from "../../../domain/webNetworkCapture.js";
 import type { JsonValue } from "../../../domain/jsonValue.js";
+import { err, ok, type Result } from "../../../domain/result.js";
 import { ProtobufBudget } from "./ProtobufWire.js";
 import type { ProtobufSchema } from "./ProtobufSchema.js";
 import {
@@ -93,6 +95,93 @@ const excludeBody = (
   record.redactions.push({ pointer, reason });
 };
 
+type ProtobufMimeAdmission = Result<
+  {
+    readonly framing: ProtobufDecoding["framing"] | undefined;
+    readonly key: string | undefined;
+  },
+  {
+    readonly _tag: "InvalidProtobufMime";
+    readonly issue: string;
+    readonly declaredFraming: ProtobufDecoding["framing"] | undefined;
+  }
+>;
+const mediaType =
+  /^[\t ]*([!#$%&'*+.^_`|~0-9A-Za-z-]+)\/([!#$%&'*+.^_`|~0-9A-Za-z-]+)/;
+// RFC 9110 token / quoted-string, including quoted-pair and obs-text.
+const mimeParameter =
+  /([!#$%&'*+.^_`|~0-9A-Za-z-]+)=([!#$%&'*+.^_`|~0-9A-Za-z-]+|"(?:[\t \x21\x23-\x5b\x5d-\x7e\x80-\xff]|\\[\t \x21-\x7e\x80-\xff])*")/y;
+
+/** Strict admission keeps malformed/duplicate parameters visible instead of repairing them. */
+const protobufMediaType = (
+  value: string | undefined,
+): ProtobufMimeAdmission => {
+  if (value === undefined) return ok({ framing: undefined, key: undefined });
+  const type = mediaType.exec(value);
+  const essence =
+    type === null
+      ? undefined
+      : `${type[1]!.toLowerCase()}/${type[2]!.toLowerCase()}`;
+  const framing =
+    essence !== undefined && Object.hasOwn(PROTOBUF_FRAMING, essence)
+      ? PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING]
+      : undefined;
+  const invalid = (reason: string): ProtobufMimeAdmission =>
+    err({
+      _tag: "InvalidProtobufMime",
+      issue: `Selected body has an invalid MIME declaration (${reason}); automatic protobuf applicability is unknown.`,
+      declaredFraming: framing,
+    });
+  if (type === null) return invalid("malformed media type");
+  const parameters = new Map<string, string>();
+  let at = type[0].length;
+  while (at < value.length) {
+    while (value[at] === " " || value[at] === "\t") at++;
+    if (at === value.length) break;
+    if (value[at++] !== ";") return invalid("malformed media-type parameters");
+    while (value[at] === " " || value[at] === "\t") at++;
+    // RFC 9110 permits empty parameter slots.
+    if (at === value.length || value[at] === ";") continue;
+    mimeParameter.lastIndex = at;
+    const match = mimeParameter.exec(value);
+    if (match === null) return invalid("malformed media-type parameters");
+    at = mimeParameter.lastIndex;
+    const name = match[1]!.toLowerCase();
+    if (!["encoding", "charset", "version"].includes(name)) continue;
+    const raw = match[2]!;
+    const decoded = raw.startsWith('"')
+      ? raw.slice(1, -1).replace(/\\([\s\S])/g, "$1")
+      : raw;
+    if (parameters.has(name) && parameters.get(name) !== decoded)
+      return invalid(`conflicting ${name} parameters`);
+    parameters.set(name, decoded);
+  }
+  const encoding = parameters.get("encoding");
+  const charset = parameters.get("charset");
+  const version = parameters.get("version");
+  if (
+    framing === "raw" &&
+    ((encoding !== undefined && encoding !== "binary") ||
+      charset !== undefined ||
+      version !== undefined)
+  )
+    return err({
+      _tag: "InvalidProtobufMime",
+      issue:
+        "Selected binary Protobuf MIME profile has an illegal encoding, charset or reserved version parameter; retained bytes were not automatically interpreted. Select explicit framing to interpret the bytes independently of that declaration.",
+      declaredFraming: framing,
+    });
+  return ok({
+    framing,
+    key: JSON.stringify([
+      essence,
+      framing === "raw" ? (encoding ?? "binary") : (encoding ?? null),
+      charset ?? null,
+      version ?? null,
+    ]),
+  });
+};
+
 /** Format-aware owner of body metadata; callers never reinterpret producer JSON. */
 const bodyMetadata = (
   record: WebNetworkCaptureRecord,
@@ -119,6 +208,8 @@ const bodyMetadata = (
   const message = object(object(record.reported)?.[side]);
   if (message === undefined) return undefined;
   const headers = new Map<string, string | undefined>();
+  let headerProfile = protobufMediaType(undefined);
+  let headerDeclaredFraming: ProtobufDecoding["framing"] | undefined;
   let headerNamesKnown = Array.isArray(message.headers);
   if (Array.isArray(message.headers)) {
     for (const [index, item] of message.headers.entries()) {
@@ -143,28 +234,71 @@ const bodyMetadata = (
       if (typeof name === "string") {
         const key = name.toLowerCase();
         const knownValue = typeof value === "string" ? value : undefined;
+        const previous = headers.get(key);
+        if (key === "content-type") {
+          const nextProfile = protobufMediaType(knownValue);
+          const nextDeclaredFraming = nextProfile.ok
+            ? nextProfile.value.framing
+            : nextProfile.error.declaredFraming;
+          const agrees =
+            previous !== undefined &&
+            knownValue !== undefined &&
+            headerProfile.ok &&
+            nextProfile.ok &&
+            headerProfile.value.key === nextProfile.value.key;
+          const first = !headers.has(key);
+          headerDeclaredFraming =
+            first || headerDeclaredFraming === nextDeclaredFraming
+              ? nextDeclaredFraming
+              : undefined;
+          headers.set(key, first ? knownValue : agrees ? previous : undefined);
+          headerProfile = first
+            ? nextProfile
+            : agrees
+              ? headerProfile
+              : protobufMediaType(undefined);
+          continue;
+        }
+        // Other repeated declarations agree only when known and equal.
         headers.set(
           key,
-          headers.has(key) && headers.get(key) !== knownValue
-            ? undefined
-            : knownValue,
+          !headers.has(key)
+            ? knownValue
+            : previous !== undefined &&
+                knownValue !== undefined &&
+                previous === knownValue
+              ? previous
+              : undefined,
         );
       } else headerNamesKnown = false;
     }
   }
+  // A visible declaration selects framing. Absence is established only when every header
+  // name is known; excluded or conflicting values leave framing applicability unknown.
+  const header = headers.get("content-type");
   if (format === "har") {
     if (
       pointer !== `/${side}/${side === "request" ? "postData" : "content"}/text`
     )
       return undefined;
-    const content = object(
+    // HAR requires a string mimeType; any other value is an excluded declaration.
+    const mimeType = object(
       message[side === "request" ? "postData" : "content"],
-    );
+    )?.mimeType;
+    const contentType = typeof mimeType === "string" ? mimeType : undefined;
+    const profile = protobufMediaType(contentType);
+    // An independent header still identifies transport sanitization, not the
+    // excluded producer MIME field's automatic interpretation.
     return {
-      contentType:
-        typeof content?.mimeType === "string"
-          ? content.mimeType
-          : headers.get("content-type"),
+      contentType,
+      mimeProfile: profile,
+      declaredFraming:
+        contentType === undefined
+          ? headerDeclaredFraming
+          : profile.ok
+            ? profile.value.framing
+            : profile.error.declaredFraming,
+      contentTypeKnown: contentType !== undefined,
       httpIdentityKnown: true,
       httpCodingKnown: true,
     };
@@ -172,7 +306,12 @@ const bodyMetadata = (
   if (pointer !== `/${side}/body` && pointer !== `/${side}/content`)
     return undefined;
   return {
-    contentType: headers.get("content-type"),
+    contentType: header,
+    mimeProfile: headerProfile,
+    declaredFraming: headerDeclaredFraming,
+    contentTypeKnown:
+      header !== undefined ||
+      (headerNamesKnown && !headers.has("content-type")),
     httpCodingKnown:
       headerNamesKnown &&
       ["content-encoding", "transfer-encoding"].every(
@@ -257,17 +396,27 @@ export const prepareCaptureProtobuf = async (
         incomplete = true;
         continue;
       }
-      const contentType = metadata.contentType;
-      const essence = contentType?.split(";", 1)[0]?.trim().toLowerCase();
-      const automatic =
-        essence === undefined
-          ? undefined
-          : PROTOBUF_FRAMING[essence as keyof typeof PROTOBUF_FRAMING];
+      const { contentType, mimeProfile, declaredFraming } = metadata;
+      const automatic = mimeProfile.ok ? mimeProfile.value.framing : undefined;
+      const automaticSelected =
+        options?.framing === undefined || options.framing === "auto";
+      if (!mimeProfile.ok) {
+        if (automaticSelected) incomplete = true;
+        record.limitations.push(mimeProfile.error.issue);
+      }
+      if (automaticSelected && !metadata.contentTypeKnown && field.bytes > 0) {
+        incomplete = true;
+        record.limitations.push(
+          "Selected body's MIME metadata is excluded, conflicting or unavailable, so automatic protobuf framing applicability is unknown; its retained bytes were not interpreted. Select explicit framing to decode them.",
+        );
+      }
       const framing =
         options?.framing === undefined || options.framing === "auto"
-          ? automatic
+          ? (automatic ?? declaredFraming)
           : options.framing;
-      if (framing === undefined) continue;
+      if (framing === undefined) {
+        continue;
+      }
       if (
         field.bytes > WEB_NETWORK_CAPTURE_LIMITS.inputBytes ||
         field.content_base64.length >
@@ -306,9 +455,9 @@ export const prepareCaptureProtobuf = async (
       // Caller overrides do not turn off exclusions for the transport declared by the source.
       const declared =
         prepared.excluded === undefined &&
-        automatic !== undefined &&
-        automatic !== framing
-          ? await prepareProtobufBody(body, automatic, exclusions, signal)
+        declaredFraming !== undefined &&
+        declaredFraming !== framing
+          ? await prepareProtobufBody(body, declaredFraming, exclusions, signal)
           : prepared;
       const excluded = prepared.excluded ?? declared.excluded;
       if (excluded !== undefined) {
@@ -339,6 +488,8 @@ export const prepareCaptureProtobuf = async (
         );
         continue;
       }
+      if (automaticSelected && (!mimeProfile.ok || !metadata.contentTypeKnown))
+        continue;
       bodies.push({ field, body, contentType, framing, prepared });
     }
   }
@@ -396,7 +547,7 @@ export const decodeCaptureProtobuf = async (
       undefined,
       resources,
     ).catch((cause: unknown) => {
-      throw withCaptureReaderCleanup(
+      const failure = withCaptureReaderCleanup(
         historicalCaptureFailure(
           input,
           cause,
@@ -405,27 +556,31 @@ export const decodeCaptureProtobuf = async (
         ),
         cause,
       );
+      const snapshot = completedStableArtifactObservation(cause, path);
+      // The caller retains the sanitized capture as its partial observation.
+      if (snapshot !== undefined)
+        failure.retainDiagnostics({ descriptor_set_snapshot: snapshot });
+      throw failure;
     });
     const { ProtobufSchema } = await import("./ProtobufSchema.js");
-    try {
-      schema = await ProtobufSchema.read(
-        snapshot.bytes,
-        options.schema.message_type,
-        budget,
-        redact,
-      );
-    } catch (cause) {
-      if (signal?.aborted === true && cause === signal.reason) throw cause;
-      if (cause instanceof CaptureFormatError) throw cause;
+    const admitted = await ProtobufSchema.read(
+      snapshot.bytes,
+      options.schema.message_type,
+      budget,
+      redact,
+    );
+    if (!admitted.ok)
       throw new AnalysisInputError("inspect_web_network_capture", undefined, [
         {
-          path: ["protobuf", "schema"],
-          reason: "invalid_format",
-          message:
-            "The selected local FileDescriptorSet or message type is invalid or exceeds decoding budgets",
+          path: ["protobuf", "schema", admitted.error.field],
+          reason:
+            admitted.error.kind === "missing-message"
+              ? "invalid_value"
+              : "invalid_format",
+          message: redact(admitted.error.message),
         },
       ]);
-    }
+    schema = admitted.value;
     schemaSource = {
       decoder: "protobuf-es-2.16.0",
       descriptor_set_path: redact(path),

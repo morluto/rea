@@ -1,6 +1,31 @@
 import type { NormalizedWorkflowRun } from "./workflow-run.mjs";
 import type { StaticTaskContext } from "./static-task-context.mjs";
-export type { StaticTaskContext } from "./static-task-context.mjs";
+
+export interface CiRun {
+  readonly id?: string | number;
+  readonly run_attempt?: number;
+  readonly status?: string;
+  readonly conclusion?: string | null;
+  readonly event?: string;
+  readonly path?: string;
+  readonly head_sha?: string;
+  readonly head_branch?: string;
+  readonly repository?: { readonly full_name?: string };
+  readonly pull_requests?: readonly {
+    readonly base?: {
+      readonly sha?: string;
+      readonly repo?: { readonly full_name?: string };
+    };
+  }[];
+}
+
+export interface CiJob {
+  readonly name?: string;
+  readonly status?: string;
+  readonly conclusion?: string | null;
+  readonly run_id?: number;
+  readonly run_attempt?: number;
+}
 
 export interface StaticDiagnostic {
   readonly kind: "lint" | "jscpd";
@@ -11,15 +36,20 @@ export interface StaticDiagnostic {
   readonly severity?: string;
 }
 
+export interface StaticEvidence {
+  readonly context: StaticTaskContext;
+  readonly diagnostics: readonly StaticDiagnostic[];
+}
+
 export function classifyFailure(input: {
   repository: string;
   defaultBranch: string;
-  run: Record<string, unknown> & NormalizedWorkflowRun;
-  job: Record<string, unknown>;
+  run: CiRun & NormalizedWorkflowRun;
+  job: CiJob;
   diagnostics: readonly StaticDiagnostic[];
   context: StaticTaskContext;
-  mainRun: Record<string, unknown> & NormalizedWorkflowRun;
-  mainJob: Record<string, unknown>;
+  mainRun: CiRun & NormalizedWorkflowRun;
+  mainJob: CiJob;
   mainDiagnostics: readonly StaticDiagnostic[];
   mainContext: StaticTaskContext;
   executionSourcesVerified: boolean;
@@ -47,7 +77,7 @@ export function safeSha(value: unknown): string | null;
 export function validRepoPath(value: unknown): value is string;
 export function selectStaticCheckArtifact(
   page: unknown,
-  run: { id?: string | number; head_sha?: string },
+  run: Pick<CiRun, "id" | "head_sha">,
   runAttempt: number,
   name?: string,
 ): unknown | null;
@@ -57,12 +87,8 @@ export function readStaticCheckArtifact(options: {
   artifactId: number | string;
   token: string;
   fetchImpl?: typeof fetch;
-}): Promise<{
-  context: StaticTaskContext;
-  diagnostics: readonly StaticDiagnostic[];
-}>;
+}): Promise<StaticEvidence>;
 
-export function parseStaticArchive(archivePath: string): Promise<{
-  context: StaticTaskContext;
-  diagnostics: readonly StaticDiagnostic[];
-}>;
+export function parseStaticArchive(
+  archivePath: string,
+): Promise<StaticEvidence>;

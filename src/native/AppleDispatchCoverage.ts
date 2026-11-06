@@ -1,7 +1,9 @@
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerFixups } from "./AppleMachoFixups.js";
-import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
-import type { FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
+import type {
+  DecodeIssue,
+  FacetDecodeFacts,
+} from "./AppleDispatchDecodeFacts.js";
 
 const describeFixups = (fixups: PointerFixups): string => {
   const descriptions: string[] = [];
@@ -33,6 +35,7 @@ export const pushDispatchCoverage = (input: {
   readonly objcListScanTruncated: boolean;
   readonly objcClassListScanTruncated: boolean;
   readonly fixups: PointerFixups;
+  readonly declarations: FacetDecodeFacts;
   readonly vtables: FacetDecodeFacts;
   readonly swift: FacetDecodeFacts;
 }): void => {
@@ -46,6 +49,7 @@ export const pushDispatchCoverage = (input: {
     objcListScanTruncated,
     objcClassListScanTruncated,
     fixups,
+    declarations,
     vtables,
     swift,
   } = input;
@@ -177,7 +181,7 @@ export const pushDispatchCoverage = (input: {
     facet: "swift_generic_resilient_witnesses_overrides_async_coroutines",
     status: "unsupported",
     reason:
-      "This reader admits simple Swift conformance/static witness records and non-generic, non-resilient class vtables; generic/resilient tables and other Swift metadata families are not decoded",
+      "This reader admits Swift nominal type declarations, simple conformance/static witness records and non-generic, non-resilient class vtables; generic/resilient tables and other Swift metadata families are not decoded",
     examined: 0,
     decoded: 0,
   });
@@ -211,6 +215,17 @@ export const pushDispatchCoverage = (input: {
       ].join("; ") || null,
     examined: swift.examined,
     decoded: swift.decoded,
+  });
+  result.coverage.push({
+    facet: "swift_declarations",
+    status: declarations.exhaustive && !truncated ? "complete" : "partial",
+    reason:
+      [
+        ...declarations.issues.map(formatIssue),
+        ...(truncated ? ["max_records_reached"] : []),
+      ].join("; ") || null,
+    examined: declarations.examined,
+    decoded: declarations.decoded,
   });
   result.coverage.push({
     facet: "swift_class_vtable_descriptors",

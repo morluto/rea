@@ -3,6 +3,7 @@ import type { WebNetworkCaptureRecord } from "../../domain/webNetworkCapture.js"
 import { parseRecordedTransportUrl } from "../../domain/recordedTransportUrl.js";
 
 type Redaction = WebNetworkCaptureRecord["redactions"][number];
+type TransportUrlContext = { readonly credentialBaseUrl?: string };
 const CREDENTIAL_HEADERS = new Set([
   "authorization",
   "proxy-authorization",
@@ -39,7 +40,17 @@ export const isCaptureCredentialHeaderBytes = (
 export class CaptureRedaction {
   readonly redactions: Redaction[] = [];
   readonly #sensitiveByteValues: readonly Buffer[];
-  constructor(readonly sensitiveValues: readonly string[]) {
+  readonly #requestUrl: string | undefined;
+  constructor(
+    readonly sensitiveValues: readonly string[],
+    source?: unknown,
+  ) {
+    const request =
+      captureObject(source) && captureObject(source.request)
+        ? source.request
+        : undefined;
+    this.#requestUrl =
+      typeof request?.url === "string" ? request.url : undefined;
     // An unpaired surrogate has no UTF-8 representation. Buffer.from would
     // invent replacement-character bytes and incorrectly discard real evidence.
     this.#sensitiveByteValues = sensitiveValues.flatMap((value) => {
@@ -49,10 +60,14 @@ export class CaptureRedaction {
   }
 
   /** Preserve exact text unless explicitly sensitive or known transport URL userinfo. */
-  text(value: string, pointer: string, transportUrl = false): string | null {
+  text(
+    value: string,
+    pointer: string,
+    transportUrl?: TransportUrlContext,
+  ): string | null {
     let result = value;
-    if (transportUrl) {
-      const { credentials } = parseRecordedTransportUrl(value);
+    if (transportUrl !== undefined) {
+      const { credentials } = parseRecordedTransportUrl(value, transportUrl);
       if (credentials === "ambiguous") return this.credential(pointer);
       if (credentials !== null) {
         result = `${value.slice(0, credentials.start)}${value.slice(credentials.end)}`;
@@ -109,14 +124,21 @@ export class CaptureRedaction {
   harTransportUrl(
     pointer: string,
     parent?: Readonly<Record<string, unknown>>,
-  ): boolean {
-    return (
-      pointer === "/request/url" ||
-      pointer === "/response/redirectURL" ||
-      (/^\/(request|response)\/headers\/\d+\/value$/.test(pointer) &&
-        typeof parent?.name === "string" &&
-        ["location", "referer", "origin"].includes(parent.name.toLowerCase()))
-    );
+  ): TransportUrlContext | undefined {
+    const header = /^\/(request|response)\/headers\/\d+\/value$/.test(pointer)
+      ? typeof parent?.name === "string"
+        ? parent.name.toLowerCase()
+        : undefined
+      : undefined;
+    if (pointer === "/response/redirectURL" || header === "location")
+      return this.#requestUrl === undefined
+        ? {}
+        : { credentialBaseUrl: this.#requestUrl };
+    return pointer === "/request/url" ||
+      header === "referer" ||
+      header === "origin"
+      ? {}
+      : undefined;
   }
 
   /** Preserve bytes unless an explicitly declared UTF-8 literal occurs in them. */

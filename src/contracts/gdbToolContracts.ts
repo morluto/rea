@@ -73,7 +73,7 @@ export const GDB_TOOL_CONTRACTS = [
       recent_mi_records_truncated: z.boolean(),
       mi_invalid_utf8: z.boolean(),
       stderr: z.string(),
-      stderr_observed_bytes: z.number().int().nonnegative(),
+      stderr_observed_bytes: z.int().nonnegative(),
       stderr_truncated: z.boolean(),
       stderr_invalid_utf8: z.boolean(),
       diagnostics_truncated: z.boolean(),

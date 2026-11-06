@@ -3,8 +3,10 @@ import {
   AnalysisCancelledError,
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
-
-export const NATIVE_UI_DEADLINE_MS = 180_000;
+import {
+  DEFAULT_NATIVE_UI_DEADLINE_MS,
+  nativeDeadlineRecovery,
+} from "../domain/native/nativeDeadlines.js";
 
 type Interruption =
   | { readonly kind: "caller"; readonly reason: unknown }
@@ -17,6 +19,7 @@ export class NativeUiInterruptionControl {
   #interruption: Interruption | undefined;
   #caller: AbortSignal | undefined;
   #deadline: AbortSignal;
+  #deadlineMs: number;
   #onCallerAbort = (): void => {
     this.#interrupt("caller", this.#caller?.reason);
   };
@@ -24,9 +27,19 @@ export class NativeUiInterruptionControl {
     this.#interrupt("deadline", this.#deadline.reason);
   };
 
-  constructor(caller: AbortSignal | undefined, deadline: AbortSignal) {
+  /** Selected `native_ui_deadline_ms`, including the omitted default. */
+  get deadlineMs(): number {
+    return this.#deadlineMs;
+  }
+
+  constructor(
+    caller: AbortSignal | undefined,
+    deadline: AbortSignal,
+    deadlineMs = DEFAULT_NATIVE_UI_DEADLINE_MS,
+  ) {
     this.#caller = caller;
     this.#deadline = deadline;
+    this.#deadlineMs = deadlineMs;
     this.signal = this.#controller.signal;
 
     // Match AbortSignal.any's iterable priority when both are already aborted.
@@ -40,6 +53,22 @@ export class NativeUiInterruptionControl {
     }
   }
 
+  /**
+   * A helper subprocess reached the selected deadline before the abort signal
+   * settled. Caller cancellation already recorded on this control stays primary.
+   */
+  deadlineFailure(
+    operation: string,
+    partialObservation?: AnalysisPartialObservation,
+  ): AnalysisTimeoutError | AnalysisCancelledError {
+    if (this.#interruption === undefined)
+      this.#interrupt("deadline", this.#deadline.reason);
+    const error = this.error(operation, partialObservation);
+    if (error === undefined)
+      throw new Error("UI deadline failure requires an interruption.");
+    return error;
+  }
+
   error(
     operation: string,
     partialObservation?: AnalysisPartialObservation,
@@ -47,9 +76,19 @@ export class NativeUiInterruptionControl {
     const interruption = this.#interruption;
     if (interruption === undefined) return undefined;
     return interruption.kind === "deadline"
-      ? new AnalysisTimeoutError(operation, NATIVE_UI_DEADLINE_MS, {
+      ? new AnalysisTimeoutError(operation, this.#deadlineMs, {
           cause: interruption.reason,
           partialObservation,
+          ...nativeDeadlineRecovery({
+            timeoutMs: this.#deadlineMs,
+            setting: "native_ui_deadline_ms",
+            cliFlag: "--native-ui-deadline-ms",
+            defaultMs: DEFAULT_NATIVE_UI_DEADLINE_MS,
+            phase: "native UI observation deadline",
+            detail: " A partial observation may already be retained.",
+            unchanged:
+              "The 67108864-byte scenario output allowance and the 180000 ms cap on one wait step have no runtime override.",
+          }),
         })
       : new AnalysisCancelledError(operation, {
           cause: interruption.reason,

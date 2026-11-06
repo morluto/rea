@@ -32,10 +32,13 @@ const paddedBase64SchemaRules = [
   { not: { pattern: INVALID_BASE64_PADDING_PATTERN.source } },
 ];
 
-/** Canonical padded base64 with zero pad bits, including the empty encoding. */
+/** Canonical padded base64 with zero pad bits; invalid bytes never enter enclosing range checks. */
 export const canonicalBase64Schema = z
   .string()
-  .refine(isCanonicalBase64, "Expected canonical padded base64")
+  .refine(isCanonicalBase64, {
+    message: "Expected canonical padded base64",
+    abort: true,
+  })
   .meta({
     allOf: [
       ...paddedBase64SchemaRules,

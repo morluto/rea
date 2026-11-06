@@ -43,7 +43,7 @@ export const deriveFindings = (
         explanation: `The modeled dyld search checks ${earlier.join(", ")} before ${edge.resolution.image ?? edge.install_name}. A compatible Mach-O placed at an earlier modeled path could take precedence over that fallback, subject to unmodeled search inputs and code-signing library validation; library validation is not evaluated here (see inspect_signature).${edge.loader_conditional ? " This loader loads only conditionally; if it never loads, this search never occurs." : ""}${edge.resolution.status === "conditional" ? " Unmodeled environment overrides or earlier unknown candidates may take precedence; placing an image at this rpath does not establish which image dyld will load." : ""}`,
       });
   });
-  // Slices can share an architecture name (arm64e and arm64e.x1), so each
+  // Capability-bit variants can share an architecture name, so each
   // finding uses the slice its root was traced from, not a name lookup.
   for (const { image, slice } of roots) {
     const { architecture } = slice;
@@ -70,7 +70,10 @@ const unresolvedFinding = (edge: Edge, index: number): Finding => {
     basis: "derived",
   } as const;
   const lazy = isLazyLoadCommand(edge.command);
-  const missing = `No candidate for ${dependencyPhrase(edge, lazy)} exists in the analyzed root`;
+  const missing = missingCandidateExplanation(
+    edge,
+    dependencyPhrase(edge, lazy),
+  );
   // Below a conditional fallback, every consequence applies only if it loads.
   const when = edge.loader_conditional
     ? `. ${edge.loader} loads only conditionally; if it loads, `
@@ -92,6 +95,52 @@ const unresolvedFinding = (edge: Edge, index: number): Finding => {
         kind: "required-load-unresolved",
         explanation: `${missing}${when}dyld would fail to load this required dependency for ${edge.root} (${edge.architecture}) unless the image is supplied elsewhere.`,
       };
+};
+
+/** Use the resolver's physical-candidate facts without rechecking source paths. */
+const missingCandidateExplanation = (
+  edge: Edge,
+  dependency: string,
+): string => {
+  const present = edge.candidates.flatMap(({ outcome, resolved_path }) =>
+    resolved_path === null ? [] : [{ outcome, path: resolved_path }],
+  );
+  if (present.length === 0)
+    return `No candidate for ${dependency} exists in the analyzed root`;
+  const descriptions = present.map(
+    ({ outcome, path }) => `${path} (${candidateRejection(outcome)})`,
+  );
+  return `No usable candidate for ${dependency} exists in the analyzed root; found ${descriptions.join(", ")}`;
+};
+
+/** Explain a found candidate from the resolver's outcome, not by reopening it. */
+const candidateRejection = (
+  outcome: Edge["candidates"][number]["outcome"],
+): string => {
+  switch (outcome) {
+    case "not-mach-o":
+      return "not a Mach-O image";
+    case "malformed":
+      return "malformed";
+    case "architecture-missing":
+      return "missing the process architecture";
+    case "not-loadable":
+      return "not a loadable dylib";
+    case "platform-mismatch":
+      return "incompatible with the process platform";
+    case "unsupported":
+      return "unsupported by the parser";
+    case "resolved":
+      return "loadable";
+    case "absent":
+      return "absent";
+    case "outside-target":
+      return "outside the analyzed root";
+    case "escapes-target":
+      return "escapes the analyzed root";
+    case "undetermined":
+      return "of undetermined loadability";
+  }
 };
 
 /** Name the dependency the way the finding's consequence treats it. */

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdtemp,
+  mkdir,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,9 +18,18 @@ import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 
 import { parseEvidence } from "../dist/domain/evidence.js";
+import { cleanupOwnedProcessGroup } from "../dist/process/ProcessOwnership.js";
+import {
+  ProviderProcessSupervisor,
+  spawnOwnedProviderProcess,
+} from "../dist/process/ProviderProcess.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-raw.mjs");
@@ -36,6 +52,7 @@ assert.equal(installation.status, "available", JSON.stringify(installation));
 
 const run = createVerifierRun();
 const workspace = await mkdtemp(join(tmpdir(), "rea-raw-proof-"));
+let fixtureCleaned = true;
 const runtime = join(workspace, "runtime");
 await mkdir(runtime);
 const bytes = Buffer.from("1eff2fe1", "hex"); // ARM little-endian bx lr.
@@ -50,6 +67,17 @@ const env = {
   REA_ANALYSIS_PROVIDER: "ghidra",
   REA_PROCESS_RUN_ID: run.run_id,
   GHIDRA_INSTALL_DIR: process.env.GHIDRA_INSTALL_DIR,
+  ...(process.env.REA_MCP_INPUT_SCHEMA_PROFILE === undefined
+    ? {}
+    : {
+        REA_MCP_INPUT_SCHEMA_PROFILE: process.env.REA_MCP_INPUT_SCHEMA_PROFILE,
+      }),
+  ...(process.env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
+    ? {}
+    : {
+        REA_MCP_OUTPUT_SCHEMA_PROFILE:
+          process.env.REA_MCP_OUTPUT_SCHEMA_PROFILE,
+      }),
   ...(process.env.JAVA_HOME === undefined
     ? {}
     : { JAVA_HOME: process.env.JAVA_HOME }),
@@ -75,8 +103,13 @@ transport.stderr?.on("data", (chunk) => {
   stderr = (stderr + chunk.toString()).slice(-65536);
 });
 let report;
+let searchDefinition;
 try {
   await client.connect(transport);
+  searchDefinition = (await client.listTools()).tools.find(
+    (tool) => tool.name === "search_bytes",
+  );
+  assert.ok(searchDefinition?.outputSchema);
   const profiles = [];
   const sessions = [];
   for (const entryPoint of ["0x08000000", "0x8000000", "0x09000000"]) {
@@ -140,11 +173,23 @@ try {
       address: entry,
     });
     assert.equal(instruction.normalized_result.address, entry);
+    assert.ok(Array.isArray(instruction.normalized_result.decoder_context));
+    const tmodeContext = instruction.normalized_result.decoder_context.find(
+      (ctx) => ctx.register === "TMode",
+    );
+    assert.ok(tmodeContext !== undefined);
+    assert.equal(tmodeContext.source, "ghidra-program-context");
+    assert.ok([null, "0", "1"].includes(tmodeContext.value));
   }
   assert.equal(profiles[0], profiles[1]);
   assert.notEqual(profiles[1], profiles[2]);
   assert.equal(sessions[0], sessions[1]);
   assert.notEqual(sessions[1], sessions[2]);
+  await call("annotate_native_function", {
+    procedure: "0x9000000",
+    name: "retained_after_failed_open",
+    comment: "Owned session annotation",
+  });
   const rejected = await client.callTool({
     name: "open_binary",
     arguments: {
@@ -156,9 +201,28 @@ try {
   });
   assert.equal(rejected.isError, true);
   assert.match(JSON.stringify(rejected.content), /must be 4-byte aligned/);
+  const rejection = JSON.parse(rejected.content[0].text).error;
+  assert.equal(
+    rejection.details.target_at_open_completion.entry_point,
+    "0x9000000",
+  );
+  assert.equal(rejection.details.provider_id_at_open_completion, "ghidra");
   const unchanged = await call("binary_session");
   assert.equal(unchanged.analysis_run.run_id, sessions[2]);
   assert.equal(unchanged.entry_point, "0x9000000");
+  const retained = await call("analyze_function", {
+    procedure: "0x9000000",
+    detail: "complete",
+  });
+  assert.equal(
+    retained.normalized_result.procedure.name,
+    "retained_after_failed_open",
+  );
+  assert.ok(
+    retained.normalized_result.comments.some(
+      (comment) => comment.text === "Owned session annotation",
+    ),
+  );
   await call("close_binary");
 
   const { stdout } = await promisify(execFile)(
@@ -290,6 +354,198 @@ try {
   assert.equal(wrongCursor.isError, true);
   await call("close_binary");
   assert.deepEqual(await readFile(repeatedPath), repeatedBytes);
+
+  // Two adjacent virtual regions backed by disjoint file ranges. The same
+  // signature crosses their boundary and overlaps at every possible start.
+  const splitPath = join(workspace, "split.elf");
+  const splitBytes = splitSearchElf(0);
+  const splitSha256 = createHash("sha256").update(splitBytes).digest("hex");
+  await writeFile(splitPath, splitBytes);
+  await call("open_binary", { path: splitPath, provider_id: "ghidra" });
+  let cursorReopened = false;
+  for (const pattern of ["aa aa aa", "aa ?? aa"]) {
+    let cursor;
+    const addresses = [];
+    const pages = [];
+    do {
+      const evidence = await call(
+        "search_bytes",
+        {
+          pattern,
+          start: "0x401000",
+          end: "0x401007",
+          limit: 2,
+          ...(cursor === undefined ? {} : { cursor }),
+        },
+        splitSha256,
+        "elf",
+      );
+      const result = evidence.normalized_result;
+      addresses.push(...result.matches.map((match) => match.address));
+      pages.push({
+        matches: result.matches.map(({ address, segment, file_offset }) => ({
+          address,
+          segment,
+          file_offset,
+        })),
+        blocks: result.searched.blocks,
+      });
+      cursor = result.next_cursor ?? undefined;
+      if (cursor !== undefined && !cursorReopened) {
+        const snapshot = join(workspace, "split-snapshot.json");
+        await call("close_binary", { snapshot_path: snapshot });
+        await call("open_binary", {
+          path: splitPath,
+          provider_id: "ghidra",
+          snapshot_path: snapshot,
+        });
+        cursorReopened = true;
+      }
+    } while (cursor !== undefined);
+    assert.deepEqual(addresses, [
+      "0x401000",
+      "0x401001",
+      "0x401002",
+      "0x401003",
+      "0x401004",
+      "0x401005",
+    ]);
+    assert.deepEqual(pages, [
+      {
+        matches: [
+          { address: "0x401000", segment: "segment_0", file_offset: 0x1000 },
+          { address: "0x401001", segment: "segment_0", file_offset: 0x1001 },
+        ],
+        blocks: [
+          {
+            segment: "segment_0",
+            start: "0x401000",
+            end: "0x401003",
+            bytes: 4,
+          },
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401004",
+            bytes: 1,
+          },
+        ],
+      },
+      {
+        matches: [
+          { address: "0x401002", segment: "segment_0", file_offset: 0x1002 },
+          { address: "0x401003", segment: "segment_0", file_offset: 0x1003 },
+        ],
+        blocks: [
+          {
+            segment: "segment_0",
+            start: "0x401002",
+            end: "0x401003",
+            bytes: 2,
+          },
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401006",
+            bytes: 3,
+          },
+        ],
+      },
+      {
+        matches: [
+          { address: "0x401004", segment: "segment_1", file_offset: 0x3000 },
+          { address: "0x401005", segment: "segment_1", file_offset: 0x3001 },
+        ],
+        blocks: [
+          {
+            segment: "segment_1",
+            start: "0x401004",
+            end: "0x401007",
+            bytes: 4,
+          },
+        ],
+      },
+    ]);
+    const bounded = await call(
+      "search_bytes",
+      {
+        pattern,
+        start: "0x401000",
+        end: "0x401005",
+        limit: 20,
+      },
+      splitSha256,
+      "elf",
+    );
+    assert.deepEqual(
+      bounded.normalized_result.matches.map((match) => match.address),
+      addresses.slice(0, 4),
+    );
+  }
+  assert.equal(cursorReopened, true);
+  const fileStart = await call(
+    "address_to_file_offset",
+    { address: "0x401000" },
+    splitSha256,
+    "elf",
+  );
+  const fileSecond = await call(
+    "address_to_file_offset",
+    { address: "0x401004" },
+    splitSha256,
+    "elf",
+  );
+  assert.equal(fileStart.normalized_result.file_offset, 0x1000);
+  assert.equal(fileSecond.normalized_result.file_offset, 0x3000);
+  await call("close_binary");
+  assert.deepEqual(await readFile(splitPath), splitBytes);
+  await verifyCrossBlockProject(splitPath, splitSha256);
+  const gapPath = join(workspace, "gap.elf");
+  const gapBytes = splitSearchElf(1);
+  const gapSha256 = createHash("sha256").update(gapBytes).digest("hex");
+  await writeFile(gapPath, gapBytes);
+  await call("open_binary", { path: gapPath, provider_id: "ghidra" });
+  const gap = await call(
+    "search_bytes",
+    {
+      pattern: "aa aa aa aa ?? aa aa aa aa",
+      start: "0x401000",
+      end: "0x401008",
+    },
+    gapSha256,
+    "elf",
+  );
+  assert.deepEqual(gap.normalized_result.matches, []);
+  await call("close_binary");
+  assert.deepEqual(await readFile(gapPath), gapBytes);
+  const zeroFillPath = join(workspace, "initialized-zerofill.elf");
+  const zeroFillBytes = splitSearchElf(1, true);
+  const zeroFillSha256 = createHash("sha256")
+    .update(zeroFillBytes)
+    .digest("hex");
+  await writeFile(zeroFillPath, zeroFillBytes);
+  await call("open_binary", { path: zeroFillPath, provider_id: "ghidra" });
+  const zeroFill = await call(
+    "search_bytes",
+    {
+      pattern: "aa aa aa aa ?? aa aa aa aa",
+      start: "0x401000",
+      end: "0x401008",
+    },
+    zeroFillSha256,
+    "elf",
+  );
+  // This Ghidra loader initializes the ELF zero-fill byte in this fixture.
+  assert.deepEqual(
+    zeroFill.normalized_result.matches.map((match) => match.address),
+    ["0x401000"],
+  );
+  assert.deepEqual(
+    zeroFill.normalized_result.searched.skipped_uninitialized,
+    [],
+  );
+  await call("close_binary");
+  assert.deepEqual(await readFile(zeroFillPath), zeroFillBytes);
   report = {
     ok: true,
     mocked: false,
@@ -311,6 +567,7 @@ try {
     original_unchanged: true,
     x86_targets: x86Targets,
     byte_search: {
+      cross_block_paging_and_gap: true,
       matches: 1005,
       page_size: 1000,
       first_search_elapsed_ms: searchElapsedMs,
@@ -326,7 +583,7 @@ try {
 } finally {
   await client.close();
   await transport.close();
-  await rm(workspace, { recursive: true, force: true });
+  if (fixtureCleaned) await rm(workspace, { recursive: true, force: true });
 }
 const verifierRun = await completeVerifierRun(run);
 assert.equal(verifierRun.process_lineage.status, "verified");
@@ -339,21 +596,211 @@ process.stdout.write(
   }) + "\n",
 );
 
-async function call(name, args = {}, targetSha256 = sha256) {
+async function call(
+  name,
+  args = {},
+  targetSha256 = sha256,
+  targetFormat = "raw-binary",
+) {
   const result = await client.callTool(
     { name, arguments: args },
-    { timeout: 240000 },
+    {
+      timeout: 240000,
+      ...(name === "search_bytes" ? { toolDefinition: searchDefinition } : {}),
+    },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const projected = requireMcpOperationResult(result, name);
-  if (
-    name === "open_binary" ||
-    name === "close_binary" ||
-    name === "binary_session"
-  )
-    return projected;
-  const evidence = parseEvidence(result.structuredContent);
+  if (["open_binary", "close_binary", "binary_session"].includes(name))
+    return requireMcpLifecycleResult(result, name);
+  const output = requireMcpOutput(result, name);
+  const evidence = parseEvidence(output);
   assert.equal(evidence.subject.digest.sha256, targetSha256);
-  assert.equal(evidence.subject.format, "raw-binary");
+  assert.equal(evidence.subject.format, targetFormat);
   return evidence;
+}
+
+// Minimal static ELF64 with adjacent (or one-byte-separated) virtual segments
+// and noncontiguous file backing. The target is never executed.
+function splitSearchElf(gap, zeroFill = false) {
+  const result = Buffer.alloc(0x3004);
+  result.set([0x7f, 0x45, 0x4c, 0x46, 2, 1, 1, 0]);
+  result.writeUInt16LE(2, 16); // ET_EXEC
+  result.writeUInt16LE(62, 18); // EM_X86_64
+  result.writeUInt32LE(1, 20);
+  result.writeBigUInt64LE(0x401000n, 24);
+  result.writeBigUInt64LE(64n, 32);
+  result.writeUInt16LE(64, 52);
+  result.writeUInt16LE(56, 54);
+  result.writeUInt16LE(2, 56);
+  const segment = (offset, fileOffset, address, memorySize = 4) => {
+    result.writeUInt32LE(1, offset); // PT_LOAD
+    result.writeUInt32LE(4, offset + 4); // PF_R
+    result.writeBigUInt64LE(BigInt(fileOffset), offset + 8);
+    result.writeBigUInt64LE(BigInt(address), offset + 16);
+    result.writeBigUInt64LE(BigInt(address), offset + 24);
+    result.writeBigUInt64LE(4n, offset + 32);
+    result.writeBigUInt64LE(BigInt(memorySize), offset + 40);
+    result.writeBigUInt64LE(1n, offset + 48);
+    result.fill(0xaa, fileOffset, fileOffset + 4);
+  };
+  segment(64, 0x1000, 0x401000, zeroFill ? 5 : 4);
+  segment(120, 0x3000, 0x401004 + gap);
+  return result;
+}
+
+// Add test-only memory to an owned project, then let REA inspect its private copy.
+async function verifyCrossBlockProject(target, targetSha256) {
+  const projectDirectory = join(workspace, "boundary-project");
+  await mkdir(projectDirectory);
+  const scriptDirectory = fileURLToPath(
+    new URL("../tests/conformance/ghidra", import.meta.url),
+  );
+  const launch = await spawnOwnedProviderProcess({
+    command: installation.analyzeHeadlessPath,
+    arguments: [
+      projectDirectory,
+      "Boundary",
+      "-import",
+      target,
+      "-noanalysis",
+      "-scriptPath",
+      scriptDirectory,
+      "-postScript",
+      "ReaCrossBlockFixture.java",
+    ],
+    env,
+    runId: run.run_id,
+    expectedCommand: null,
+  });
+  fixtureCleaned = false;
+  const supervisor = new ProviderProcessSupervisor({
+    ...launch,
+    ownsProcessLifetime: true,
+    cleanup: () => cleanupOwnedProcessGroup(launch.ownership),
+  });
+  await withVerifierCleanup(async () => {
+    assert.ok(await supervisor.waitForExit(180000), "Fixture setup timed out");
+    assert.ok(
+      await supervisor.waitForOutputClose(1000),
+      "Fixture output did not close",
+    );
+    const snapshot = supervisor.snapshot();
+    const output = `${snapshot.stdout.text}\n${snapshot.stderr.text}`;
+    assert.equal(snapshot.exitCode, 0, output);
+    assert.doesNotMatch(output, /REPORT SCRIPT ERROR/u);
+  }, [
+    async () => {
+      const stopped = await supervisor.stop();
+      fixtureCleaned = stopped.status === "verified-cleanup";
+      assert.ok(
+        fixtureCleaned,
+        `Owned cleanup incomplete; retained ${workspace}: ${JSON.stringify(stopped)}`,
+      );
+    },
+  ]);
+  const beforeProject = await fingerprintFiles(projectDirectory);
+  const projectTransport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: {
+      ...env,
+      REA_GHIDRA_PROJECT_PATH: join(projectDirectory, "Boundary.gpr"),
+    },
+    stderr: "pipe",
+  });
+  const projectClient = new Client({
+    name: "rea-cross-block-project-proof",
+    version: "1",
+  });
+  try {
+    await projectClient.connect(projectTransport);
+    const definition = (await projectClient.listTools()).tools.find(
+      (tool) => tool.name === "search_bytes",
+    );
+    assert.ok(definition?.outputSchema);
+    const projectCall = async (name, args) => {
+      const reply = await projectClient.callTool(
+        { name, arguments: args },
+        {
+          timeout: 240000,
+          ...(name === "search_bytes" ? { toolDefinition: definition } : {}),
+        },
+      );
+      if (name === "open_binary" || name === "close_binary")
+        return requireMcpLifecycleResult(reply, name);
+      const output = requireMcpOutput(reply, name);
+      const evidence = parseEvidence(output);
+      assert.equal(evidence.subject.digest.sha256, targetSha256);
+      return evidence.normalized_result;
+    };
+    await projectCall("open_binary", { path: target, provider_id: "ghidra" });
+    const pattern = "de ad ?? ?? be ef";
+    const adjacent = await projectCall("search_bytes", {
+      pattern,
+      start: "0x60000000",
+      end: "0x60000005",
+    });
+    assert.deepEqual(
+      adjacent.matches.map((match) => match.address),
+      ["0x60000000"],
+    );
+    const gap = await projectCall("search_bytes", {
+      pattern,
+      start: "0x60000100",
+      end: "0x60000105",
+    });
+    assert.deepEqual(gap.matches, []);
+    assert.ok(
+      gap.searched.skipped_uninitialized.some(
+        (block) => block.start === "0x60000102" && block.end === "0x60000103",
+      ),
+    );
+    const all = await projectCall("search_bytes", { pattern });
+    assert.ok(all.matches.some((match) => match.address === "0x60000000"));
+    assert.ok(
+      !all.matches.some((match) => match.address.startsWith("overlay_test:")),
+    );
+    assert.ok(
+      all.searched.skipped_not_loaded.some(
+        (block) => block.segment === "overlay_test",
+      ),
+    );
+    const overlay = await projectCall("search_bytes", {
+      pattern,
+      start: "overlay_test:0x60000000",
+      end: "overlay_test:0x60000005",
+    });
+    assert.deepEqual(
+      overlay.matches.map((match) => match.address),
+      ["overlay_test:0x60000000"],
+    );
+    await projectCall("close_binary", {});
+  } finally {
+    await projectClient.close();
+    await projectTransport.close();
+  }
+  assert.deepEqual(await fingerprintFiles(projectDirectory), beforeProject);
+}
+
+async function fingerprintFiles(directory) {
+  const result = [];
+  const visit = async (relative) => {
+    const entries = await readdir(join(directory, relative), {
+      withFileTypes: true,
+    });
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      const name = join(relative, entry.name);
+      if (entry.isDirectory()) await visit(name);
+      else if (entry.isFile())
+        result.push([
+          name,
+          createHash("sha256")
+            .update(await readFile(join(directory, name)))
+            .digest("hex"),
+        ]);
+      else throw new Error(`Unexpected project entry: ${name}`);
+    }
+  };
+  await visit("");
+  return result;
 }
