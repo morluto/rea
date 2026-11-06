@@ -68,7 +68,10 @@ describe("Ghidra seed parsing", () => {
   });
 
   it.each([
-    ["401000\tfunction", "line 1: address must be 0x-prefixed hex"],
+    [
+      "401000\tfunction",
+      "line 1: address must be 0x-prefixed hex, optionally qualified by an encoded address space",
+    ],
     ["0x401000\tdata", "line 1: kind must be function, code or label"],
     ["0x401000", "line 1: expected address<TAB>kind[<TAB>name]"],
     ["0x401000\tlabel", "line 1: a label seed requires a name"],

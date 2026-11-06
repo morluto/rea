@@ -18,6 +18,7 @@ const headerArchitectureSchema = architectureSchema.exclude([
   ...RAW_ONLY_ARCHITECTURES,
   "hexagon",
   "arm64_32",
+  "sm83",
 ]);
 const identity = { path: z.string(), sha256: digestSchema };
 const executable = { ...identity, kind: z.literal("executable") };
@@ -26,10 +27,17 @@ const executable = { ...identity, kind: z.literal("executable") };
 export const liveBinaryTargetSummaryVariants = [
   z.object({
     ...executable,
+    format: z.literal("gameboy-rom"),
+    architecture: z.literal("sm83"),
+    entry_point: z.literal("0x100"),
+  }),
+  z.object({
+    ...executable,
     format: z.literal("elf"),
     architecture: architectureSchema.exclude([
       ...RAW_ONLY_ARCHITECTURES,
       "arm64_32",
+      "sm83",
     ]),
   }),
   z.object({

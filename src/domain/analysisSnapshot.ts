@@ -64,6 +64,7 @@ const formatSchema = z.enum([
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "gameboy-rom",
   "zip",
   "ipa",
   "apk",
@@ -104,16 +105,23 @@ const targetIdentitySchema = z.object({
 });
 const targetSchema = z.discriminatedUnion("format", [
   targetIdentitySchema.extend({
+    format: z.literal("gameboy-rom"),
+    kind: z.literal("executable"),
+    architecture: z.literal("sm83"),
+    entry_point: z.literal("0x100"),
+  }),
+  targetIdentitySchema.extend({
     format: z.enum(
       formatSchema.options.filter(
         (format) =>
           format !== "raw-binary" &&
           format !== "gamecube-dol" &&
+          format !== "gameboy-rom" &&
           format !== "esp-flash-image",
       ),
     ),
     architecture: architectureSchema
-      .exclude([...RAW_ONLY_ARCHITECTURES])
+      .exclude([...RAW_ONLY_ARCHITECTURES, "sm83"])
       .nullable(),
   }),
   targetIdentitySchema.extend({
@@ -417,7 +425,7 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
         format: target.format,
         entry_point: target.entryPoint,
       }
-    : target.format === "gamecube-dol"
+    : target.format === "gameboy-rom"
       ? {
           sha256: target.sha256,
           kind: target.kind,
@@ -425,21 +433,29 @@ export const snapshotTarget = (target: BinaryTarget): AnalysisSnapshotTarget =>
           format: target.format,
           entry_point: target.entryPoint,
         }
-      : target.format === "esp-flash-image"
+      : target.format === "gamecube-dol"
         ? {
             sha256: target.sha256,
             kind: target.kind,
-            architecture: null,
+            architecture: target.architecture,
             format: target.format,
-            flash_offset: target.espFlash.flashOffset,
-            partition_table_offset: target.espFlash.partitionTableOffset,
+            entry_point: target.entryPoint,
           }
-        : {
-            sha256: target.sha256,
-            kind: target.kind,
-            architecture: target.architecture ?? null,
-            format: target.format,
-          };
+        : target.format === "esp-flash-image"
+          ? {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: null,
+              format: target.format,
+              flash_offset: target.espFlash.flashOffset,
+              partition_table_offset: target.espFlash.partitionTableOffset,
+            }
+          : {
+              sha256: target.sha256,
+              kind: target.kind,
+              architecture: target.architecture ?? null,
+              format: target.format,
+            };
 
 /** Build the immutable provider/profile binding used by a cached snapshot. */
 export const snapshotBinding = (
@@ -464,6 +480,9 @@ export const snapshotMatchesTarget = (
       snapshot.entry_point === target.entryPoint)) &&
   (snapshot.format !== "gamecube-dol" ||
     (target.format === "gamecube-dol" &&
+      snapshot.entry_point === target.entryPoint)) &&
+  (snapshot.format !== "gameboy-rom" ||
+    (target.format === "gameboy-rom" &&
       snapshot.entry_point === target.entryPoint)) &&
   (snapshot.format !== "esp-flash-image" ||
     (target.format === "esp-flash-image" &&

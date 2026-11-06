@@ -9,6 +9,7 @@ const VERIFIED_LOAD_IMAGE_FORMAT_LABELS = {
   "dos-com": "explicitly selected DOS COM",
   "raw-binary": "caller-supplied raw-binary",
   "gamecube-dol": "caller-selected GameCube DOL",
+  "gameboy-rom": "caller-selected Game Boy/Color cartridge ROM",
 } as const satisfies Partial<Record<BinaryTarget["format"], string>>;
 
 export type GhidraVerifiedLoadImageFormat =

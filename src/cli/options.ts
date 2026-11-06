@@ -64,7 +64,7 @@ export const formatSelectionOption = executableFormatHintSchema
   .exclude(["esp-flash-image"])
   .optional()
   .describe(
-    "Explicit interpretation: dos-com or raw-binary (headerless), or gamecube-dol (GameCube/Wii DOL, never auto-detected); omission preserves header-based detection",
+    "Explicit interpretation: gameboy-rom (Game Boy/Color cartridge, SM83, entry 0x100), dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset); omission preserves header-based detection",
   );
 
 export const architectureSelectionOption = binaryArchitectureSchema

@@ -7,6 +7,7 @@ import {
   nativeDosLoadImageSchema,
   nativeRawLoadImageSchema,
   nativeDolLoadImageSchema,
+  nativeGameBoyLoadImageSchema,
 } from "../native/nativeLoadImage.js";
 import { nativeAddressObservationSchema } from "../native/nativeAddress.js";
 import { jsonValueSchema } from "../jsonValue.js";
@@ -127,6 +128,11 @@ export const nativeLoadImageSummarySchema = z.strictObject({
       checks: true,
     }),
     nativeRawLoadImageSchema.omit({
+      observations: true,
+      limitations: true,
+      checks: true,
+    }),
+    nativeGameBoyLoadImageSchema.omit({
       observations: true,
       limitations: true,
       checks: true,

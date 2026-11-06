@@ -91,6 +91,7 @@ import {
 } from "../process/WindowsAuthority.js";
 
 const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
+  "sm83",
   "x86",
   "x86_64",
   "arm",

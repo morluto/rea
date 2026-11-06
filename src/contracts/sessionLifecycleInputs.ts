@@ -30,7 +30,7 @@ export const openBinaryInputSchema = z
     format: executableFormatHintSchema
       .optional()
       .describe(
-        "Explicit interpretation: dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset). Omission preserves header-based detection.",
+        "Explicit interpretation: gameboy-rom (Game Boy/Color cartridge, SM83, entry 0x100), dos-com or raw-binary (headerless), gamecube-dol (GameCube/Wii DOL, never auto-detected), or esp-flash-image (an ESP flash dump read with flash_offset and partition_table_offset). Omission preserves header-based detection.",
       ),
     architecture: binaryArchitectureSchema
       .optional()

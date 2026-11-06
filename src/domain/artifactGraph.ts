@@ -79,6 +79,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "gameboy-rom",
   "hopper",
   "analysis-database",
   "ipa",

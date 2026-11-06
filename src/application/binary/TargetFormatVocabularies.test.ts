@@ -1,4 +1,6 @@
 import { describe, expect, it } from "vitest";
+import { buildGameBoyRom } from "../../../tests/conformance/ghidra/gameboy-fixture.mjs";
+import { parseGameBoyHeader } from "../../domain/gameBoyRom.js";
 
 import {
   analysisSnapshotSchema,
@@ -28,8 +30,19 @@ type TargetFixtures = {
 const identity = { path: "/fixture/target", sha256: "a".repeat(64) } as const;
 const archive = { ...identity, kind: "archive" } as const;
 const artifact = { ...identity, kind: "artifact" } as const;
+const gameBoyHeader = parseGameBoyHeader(buildGameBoyRom({ banks: 2 }), 0x8000);
+if (!gameBoyHeader.ok) throw new Error(gameBoyHeader.error);
 
 const TARGETS: TargetFixtures = {
+  "gameboy-rom": {
+    ...identity,
+    kind: "executable",
+    format: "gameboy-rom",
+    architecture: "sm83",
+    availableArchitectures: ["sm83"],
+    entryPoint: "0x100",
+    gameBoy: gameBoyHeader.value,
+  },
   "mach-o": {
     ...identity,
     kind: "executable",

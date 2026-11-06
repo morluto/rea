@@ -113,6 +113,7 @@ it("records which formats receive independent load-image verification", () => {
     "dos-com",
     "raw-binary",
     "gamecube-dol",
+    "gameboy-rom",
   ]);
   expect(limitationsFor("inspect_native_load_image")).toContain(
     ghidraLoadImageVerificationNote(),

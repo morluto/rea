@@ -33,10 +33,14 @@ describe("persisted observation subject declarations", () => {
         });
         const allowed =
           architecture !== "unsupported" &&
-          (format === "gamecube-dol"
-            ? architecture === "powerpc"
-            : format === "raw-binary" ||
-              (architecture !== "6502" && architecture !== "m68k"));
+          (format === "gameboy-rom"
+            ? architecture === "sm83"
+            : format === "gamecube-dol"
+              ? architecture === "powerpc"
+              : format === "raw-binary" ||
+                (architecture !== "6502" &&
+                  architecture !== "m68k" &&
+                  architecture !== "sm83"));
         expect(evidence.success, JSON.stringify(declaration)).toBe(allowed);
         expect(snapshot.success, JSON.stringify(declaration)).toBe(allowed);
         const manifest = evidenceBundleSchema.shape.artifacts.element.safeParse(

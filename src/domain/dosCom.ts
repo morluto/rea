@@ -9,6 +9,7 @@ export const executableFormatHintSchema = z.enum([
   "dos-com",
   "raw-binary",
   "gamecube-dol",
+  "gameboy-rom",
   "esp-flash-image",
 ]);
 /**

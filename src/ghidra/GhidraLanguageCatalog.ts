@@ -1,4 +1,5 @@
-import { readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
 import { decodeXmlPlistText } from "../domain/propertyListXmlText.js";
@@ -59,7 +60,11 @@ const languageDirectories = async (installDir: string): Promise<string[]> => {
     try {
       modules = await readdir(join(installDir, root));
     } catch (cause: unknown) {
-      if (cause instanceof Error && "code" in cause && cause.code === "ENOENT")
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+      )
         continue;
       throw cause;
     }
@@ -136,6 +141,73 @@ export const readGhidraLanguageCatalog = (
     }
     return definitions;
   });
+
+/** Hash the installed processor inputs that can change a language's decoding. */
+export const readGhidraLanguageFingerprint = async (
+  installDir: string,
+  languageId: string,
+  resources: ArtifactResourceScope,
+  signal?: AbortSignal,
+): Promise<string | null> => {
+  const modules = await languageDirectories(installDir);
+  const matching: string[] = [];
+  for (const directory of modules) {
+    let entries: string[];
+    try {
+      entries = await readdir(directory);
+    } catch (cause: unknown) {
+      if (
+        cause instanceof Error &&
+        "code" in cause &&
+        (cause.code === "ENOENT" || cause.code === "ENOTDIR")
+      )
+        continue;
+      throw cause;
+    }
+    for (const entry of entries
+      .filter((value) => value.endsWith(".ldefs"))
+      .sort()) {
+      const definitions = await readLanguageDefinitionFile(
+        join(directory, entry),
+        resources,
+        signal,
+      );
+      if (definitions.some((definition) => definition.id === languageId))
+        matching.push(join(directory, "..", ".."));
+    }
+  }
+  if (matching.length === 0) return null;
+  const files: string[] = [];
+  const visit = async (path: string): Promise<void> => {
+    for (const entry of (await readdir(path, { withFileTypes: true })).sort(
+      (a, b) => a.name.localeCompare(b.name),
+    )) {
+      const child = join(path, entry.name);
+      if (entry.isDirectory()) await visit(child);
+      else if (
+        entry.isFile() &&
+        /\.(?:ldefs|sla|pspec|cspec|sinc)$/u.test(entry.name)
+      )
+        files.push(child);
+    }
+  };
+  for (const module of [...new Set(matching)].sort()) await visit(module);
+  const hash = createHash("sha256");
+  for (const path of files.sort()) {
+    if (signal?.aborted === true)
+      throw new RegularFileOperationCancelled(signal.reason);
+    const relative = path.slice(installDir.length + 1).replaceAll("\\", "/");
+    const bytes = await readFile(path);
+    hash
+      .update(relative)
+      .update("\0")
+      .update(String(bytes.length))
+      .update("\0")
+      .update(bytes)
+      .update("\0");
+  }
+  return hash.digest("hex");
+};
 
 /**
  * Check a configured import language against the installation before launch,

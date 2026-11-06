@@ -330,6 +330,7 @@ const NON_ZIP_FORMATS = {
   "dos-com": described("dos-com", plain),
   "raw-binary": described("raw-binary", plain),
   "gamecube-dol": described("gamecube-dol", plain),
+  "gameboy-rom": described("gameboy-rom", plain),
   hopper: described("hopper", plain),
   "analysis-database": described("analysis-database", plain),
   plist: described("plist", plain),
