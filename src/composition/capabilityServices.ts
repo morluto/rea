@@ -32,6 +32,7 @@ import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
+import { createUnityAddressablesService } from "./unityAddressables.js";
 import { createElectronFuseService } from "./electronFuses.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
@@ -86,6 +87,7 @@ import type { ApkSignatureService } from "../application/apkSignature/ApkSignatu
 import type { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
 import type { SqliteDatabaseService } from "../application/sqlite/SqliteDatabaseService.js";
 import type { Il2cppMetadataService } from "../application/il2cpp/Il2cppMetadataService.js";
+import type { UnityAddressablesService } from "../application/unity/UnityAddressablesService.js";
 import type { GoBinaryService } from "../application/go/GoBinaryService.js";
 import type { ElectronFuseService } from "../application/electron/ElectronFuseService.js";
 import type { RustBinaryService } from "../application/rust/RustBinaryService.js";
@@ -123,6 +125,7 @@ export interface CapabilityServiceOptions {
   readonly binaryLayout?: BinaryLayoutService;
   readonly goBinary?: GoBinaryService;
   readonly il2cppMetadata?: Il2cppMetadataService;
+  readonly unityAddressables?: UnityAddressablesService;
   readonly rustBinary?: RustBinaryService;
   readonly pythonPyc?: PythonPycService;
   readonly erlangBeam?: BeamService;
@@ -336,6 +339,10 @@ const modules = {
   gpuCodeObjects: service(() => createGpuCodeObjectsService()),
   il2cppMetadata: service(
     ({ options }) => options.il2cppMetadata ?? createIl2cppMetadataService(),
+  ),
+  unityAddressables: service(
+    ({ options }) =>
+      options.unityAddressables ?? createUnityAddressablesService(),
   ),
   peResources: service(() => createPeResourcesService()),
   nativeExports: service(() => createNativeExportsService()),
