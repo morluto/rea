@@ -306,6 +306,70 @@ const exportVendorCapture = async (local: DesktopApplicationCapture) => {
   return { result, directory };
 };
 
+describe("exportDesktopApplication of a program in another package", () => {
+  it("installs the package of the program the desktop entry runs beside the entry's, or refuses when it cannot", async () => {
+    const local = capture();
+    const withProgram = (reason?: string) =>
+      exportCapture({
+        ...local,
+        application: {
+          ...local.application,
+          package: {
+            ...local.application.package,
+            executable_package: "notes-bin",
+            ...(reason === undefined
+              ? {}
+              : { executable_package_reason: reason }),
+          },
+        },
+      });
+
+    const { result, directory } = await withProgram();
+    const refused = await withProgram(
+      "apt-cache policy did not say where notes-bin comes from",
+    );
+
+    if (result instanceof Error) throw result;
+    expect(
+      await readFile(join(directory, "envs/notes/notes_app.py"), "utf8"),
+    ).toContain('packages=Packages(apt=["notes", "notes-bin"])');
+    expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+      "`notes-bin`, which owns the program the desktop entry runs, is installed with it.",
+    );
+    expect(refused.result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["capture"] })],
+    });
+    expect(JSON.stringify(refused.result)).toContain(
+      "the program it runs belongs to notes-bin, which the computer cannot install: apt-cache policy did not say where notes-bin comes from",
+    );
+    expect(await exists(refused.directory)).toBe(false);
+  });
+
+  it("refuses a capture whose desktop entry runs a program no package owns, and writes nothing", async () => {
+    const local = capture();
+    const { result, directory } = await exportCapture({
+      ...local,
+      application: {
+        ...local.application,
+        package: {
+          ...local.application.package,
+          executable_package_reason: `no package owns ${HOME}/.local/bin/notes`,
+        },
+      },
+    });
+
+    expect(result).toMatchObject({
+      _tag: "AnalysisInputError",
+      issues: [expect.objectContaining({ path: ["capture"] })],
+    });
+    expect(JSON.stringify(result)).toContain(
+      `the computer cannot install the program it runs: no package owns ${HOME}/.local/bin/notes`,
+    );
+    expect(await exists(directory)).toBe(false);
+  });
+});
+
 describe("exportDesktopApplication from a vendor repository", () => {
   it("copies the verified key, declares the repository and library packages, and turns the sandbox off", async () => {
     const { result, directory } = await exportVendorCapture(
@@ -496,6 +560,19 @@ describe("exportDesktopApplication home paths", () => {
     expect(result.normalized_result).toMatchObject({
       paths: [".config/notes", ".local/share/notes"],
       seed_files: [".config/notes/settings.ini", ".local/share/notes/notes.db"],
+    });
+  });
+
+  it("owns a profile folder the application created beside a state directory in another letter case", async () => {
+    const { result } = await exportWalked({
+      stateDirectories: [`${HOME}/.config/notes`, `${HOME}/.local/share/notes`],
+      baseline: [],
+      created: [[`${HOME}/.config/Notes/2.10/sessionrc`, "[ui]\nwrap=true\n"]],
+    });
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      paths: [".config/Notes"],
     });
   });
 
