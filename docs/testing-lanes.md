@@ -1021,9 +1021,9 @@ command fails with an actionable capability error before the launch.
 
 `npm run fixtures:firmware` uses existing Python 3 and a host C compiler to make
 an ignored gzip/USTAR firmware fixture and independent offset/hash oracle.
-`npm run verify:firmware` requires caller-supplied Binwalk 3.1.0, Unblob 26.6.4
-and util-linux prlimit on Linux, with `7z` on `PATH` for the gzip/USTAR
-fixture's Unblob extractor. The provider also accepts other 3.1.x and
+`npm run verify:firmware` requires caller-supplied binwalk-ng 4.0.0,
+Unblob 26.6.4 and util-linux prlimit on Linux, with `7z` on `PATH` for the
+gzip/USTAR fixture's Unblob extractor. The provider also accepts other 4.0.x and
 26.6.x builds and reports them as unverified; this lane proves the audited
 releases. It verifies CLI/MCP parity, selected ranges,
 unknown chunks, depth limits and extracted child digests. The optional

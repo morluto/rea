@@ -103,7 +103,7 @@ vi.mock("../../src/firmware/FirmwareCommand.js", async (importOriginal) => {
               ]),
         );
       }
-      const text = version ? "binwalk 3.1.0" : "";
+      const text = version ? "binwalk-ng 4.0.0" : "";
       return {
         stdout: { text, bytes: Buffer.byteLength(text), truncated: false },
         stderr: { text: "", bytes: 0, truncated: false },

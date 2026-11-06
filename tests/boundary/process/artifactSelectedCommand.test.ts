@@ -306,7 +306,8 @@ it.skipIf(process.platform === "win32").each(["firmware", "wakaru"] as const)(
         _tag: "AnalysisArtifactChangedError",
         path: selectedPath,
         capturedOutput: {
-          stdout: kind === "firmware" ? "binwalk 3.1.0\n" : "wakaru 1.14.0\n",
+          stdout:
+            kind === "firmware" ? "binwalk-ng 4.0.0\n" : "wakaru 1.14.0\n",
         },
       });
       await unlink(`${selectedPath}.retarget`);
