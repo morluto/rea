@@ -281,6 +281,12 @@ REA mengekspor lingkungan yang dapat dijalankan dengan uji dasar untuk memeriksa
 [Referensi lingkungan](../agent-environments.md) ·
 [Tonton demo di X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Lingkungan aplikasi desktop
+
+REA juga dapat membuat lingkungan untuk aplikasi desktop Linux yang digunakan agen melalui tangkapan layar, mouse, dan keyboard. Dari permintaan satu baris, seperti "Buatkan lingkungan Gnote tempat agen menambahkan minyak zaitun ke catatan daftar belanja", agen Anda memasang aplikasi di komputer build lokal, menulis tugas, mengekspor lingkungan, dan memeriksa tugas di komputer baru. Mesin yang membuatnya memerlukan Linux di amd64 atau arm64, Docker, dan versi framework agentenv yang ditetapkan panduan.
+
+[Siapkan lingkungan aplikasi desktop](../desktop-build-computer.md)
+
 ## FAQ
 
 <details>

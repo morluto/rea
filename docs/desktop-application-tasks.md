@@ -804,7 +804,10 @@ done
 ```
 
 The agent defaults to Claude Code and the model is the caller's choice (Claude
-Sonnet 5.5 is a reasonable reference). A run reported as `scored below 1`
+Sonnet 5.5 is a reasonable reference). The agent calls a model endpoint, and
+agentenv refuses the run without one: set `LITELLM_BASE_URL` and
+`LITELLM_API_KEY` where the runs start, or `base_url` and `api_key` under
+`[model]` in `.agentenv/config.toml`. A run reported as `scored below 1`
 failed the checks and counts as a miss; one reported as `failed` did not finish,
 as when the computer or the app could not be reached, and is run again rather
 than counted. Each run's instance keeps the verifier's results per check under
