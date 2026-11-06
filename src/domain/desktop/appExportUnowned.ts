@@ -145,6 +145,24 @@ export const isLockFile = (
   );
 };
 
+/** A log's own name: `*.log`, or `log.<n>` as Freeplane's `log.0`. */
+const LOG_NAME = /(?:\.log|^log\.\d+)$/iu;
+
+/**
+ * Whether a home file is a log by its name: `*.log` or `log.<n>`, a file
+ * under a `logs` folder, or the `.lck` or `.lock` beside such a log. An app
+ * writes facts about the host into its log, such as the kernel, CPU and
+ * memory, and none needs its old log to start.
+ */
+export const isAppLog = (file: string): boolean => {
+  const segments = file.split("/");
+  const name = (segments.at(-1) ?? "").replace(/\.(?:lck|lock)$/iu, "");
+  return (
+    LOG_NAME.test(name) ||
+    segments.slice(0, -1).some((folder) => folder.toLowerCase() === "logs")
+  );
+};
+
 const KINDS: readonly RuntimeSeedKind[] = ["web_storage", "cache"];
 const KIND_LABELS: Readonly<Record<RuntimeSeedKind, string>> = {
   web_storage: "WebKit or Chromium storage",
@@ -263,6 +281,29 @@ export const unreadDconfLimitation = (
   return `${names} changed by the seed checkpoint but could not be read (${errors}), so the app's settings stored in dconf, if any, are not seeded. Export where dconf-cli is installed, or with REA_DCONF_COMMAND naming dconf; a build computer installs it, so capture again on a new one.`;
 };
 
+/** The files left out of the seed, once each and by path: the app's logs apart from its lock files. */
+export const leftOutSeeds = (
+  files: readonly string[],
+  isLog: (home: string) => boolean,
+): {
+  readonly leftOutLocks: readonly string[];
+  readonly leftOutLogs: readonly string[];
+} => {
+  const sorted = [...new Set(files)].sort();
+  return {
+    leftOutLocks: sorted.filter((file) => !isLog(file)),
+    leftOutLogs: sorted.filter(isLog),
+  };
+};
+
+/** The limitation naming the app's logs left out of the seed; none when there were none. */
+export const leftOutLogsLimitation = (
+  logs: readonly string[],
+): string | undefined =>
+  logs.length === 0
+    ? undefined
+    : `Left out of the seed: the app's logs in its own state (*.log, log.<n>, files under a logs folder, and their locks), which record facts about the capture host, such as its kernel, CPU and memory, and which no app needs to start: ${listed(logs, false)}. A log that is a document or a path named in ${STATE_PATH_INPUTS} is seeded.`;
+
 /** The limitation naming unowned folders the capture saw change; none when there are none. */
 export const unownedFoldersLimitation = (
   folders: readonly string[],
@@ -279,11 +320,14 @@ export const runtimeSeedsLimitation = (
     ? undefined
     : `The seed holds files the app keeps for its own running, seeded as captured: ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, false)}`).join("; ")}. A stale one can change how the app starts.`;
 
-/** The README lines on unowned folders, runtime seeds and left-out locks, each starting on a new line; empty when there are none. */
+/** The README lines on unowned folders, runtime seeds and left-out locks and logs, each starting on a new line; empty when there are none. */
 export const unownedReadmeNotes = (
   folders: readonly string[],
   seeds: readonly RuntimeSeeds[],
-  locks: readonly string[],
+  leftOut: {
+    readonly locks: readonly string[];
+    readonly logs: readonly string[];
+  },
 ): string =>
   [
     ...(folders.length === 0
@@ -299,11 +343,17 @@ export const unownedReadmeNotes = (
           `- Seeded as captured, though the app keeps them for its own running, so a stale one can change how it starts:
   ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, true)}`).join("; ")}.`,
         ]),
-    ...(locks.length === 0
+    ...(leftOut.locks.length === 0
       ? []
       : [
           `- Left out of the seed: lock files the app holds while it runs, since a copied one can make it find its profile or document
-  in use and keep it from starting: ${listed(locks, true)}.`,
+  in use and keep it from starting: ${listed(leftOut.locks, true)}.`,
+        ]),
+    ...(leftOut.logs.length === 0
+      ? []
+      : [
+          `- Left out of the seed: the app's logs, which record facts about the capture host, such as its kernel, CPU and memory,
+  and which it does not need to start: ${listed(leftOut.logs, true)}.`,
         ]),
   ]
     .map((line) => `\n${line}`)

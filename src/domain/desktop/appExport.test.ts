@@ -40,6 +40,7 @@ const plan: DesktopAppExportPlan = {
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
   leftOutLocks: [],
+  leftOutLogs: [],
   unownedFolders: [],
   runtimeSeeds: [],
   dconf: "",

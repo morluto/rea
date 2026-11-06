@@ -470,6 +470,21 @@ Each test below failed before the change and passes now.
 - `DesktopTaskExport.test.ts`: a task whose prompt does not name the app
   gets one limitation naming the app; "In Notes, ..." gets none.
 
+## The app's logs
+
+Run on macOS with source tests and gates. Each test below failed before the
+change and passes now.
+
+- `appExportUnowned.test.ts`: `log.0`, `log.0.lck`, `20261106.log`,
+  `App.LOG`, `log.12`, `app.log.lock` and a file under `logs/` are logs;
+  `catalog.xml`, `logo.png`, `changelog`, `logs.json`, `blog.0`, `log.txt`
+  and `settings.lck` are not.
+- `DesktopApplicationExport.test.ts`: Freeplane's `1.7.x/logs/log.0` and
+  its `log.0.lck` in a state directory, and QElectroTech's `.qet/20261106.log`
+  the app held open, are neither seeded nor in the bundle, and one limitation
+  and the README list them apart from the lock files; a selected `notes.log`
+  in the state directory and a document `build.log` are seeded.
+
 ## Limits of this verification
 
 - The witness acts were scripted by this agent from the task's prompt; no

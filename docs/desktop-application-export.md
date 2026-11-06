@@ -215,7 +215,20 @@ itself by `--state-path` or an absolute `--argument`, is never left out,
 whatever its name. A limitation and the README list them, up to
 eight and a count, after "Left out of the seed". They stay under the owned
 paths, so `data/get` returns the lock the running app holds, and `data/reset`
-restores the seed without them. Other seed files the app keeps for its own
+restores the seed without them.
+
+The app's logs are left out of the seed the same way, since they record facts
+about the capture host that the host scrub does not catch, such as Freeplane's
+`os_version` with the host's kernel, or QElectroTech's CPU model, memory and
+disk sizes, and no app needs its old log to start. A log is a file named
+`*.log` or `log.<n>`, or any file under a `logs` folder, with the `.lck` or
+`.lock` beside such a file, that is in the app's own state: application state
+in the state view, or under one of its state directories. A document or a path
+named itself by `--state-path` is seeded even when it ends in `.log`, since a
+user's own log may be the document. A limitation and the README list them
+apart from the lock files, after "Left out of the seed".
+
+Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
 them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
 `mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`, `Visited Links`,

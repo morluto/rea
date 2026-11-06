@@ -11,6 +11,7 @@ import {
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
 import {
+  isAppLog,
   isLockFile,
   unownedReadmeNotes,
   type RuntimeSeeds,
@@ -68,6 +69,8 @@ export interface DesktopAppExportPlan {
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
   readonly leftOutLocks: readonly string[];
+  /** The app's logs in its own state, left out of the seed since they record facts about the capture host. */
+  readonly leftOutLogs: readonly string[];
   /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
   readonly unownedFolders: readonly string[];
   /** Seed files the app keeps for its own running: web engine storage and caches. */
@@ -266,9 +269,16 @@ export const exportedStateFiles = (
     ...homePaths(roleFacts(capture).selectedRoots),
   ]);
   const recorded = new Set(files.keys());
-  const isLeftOutLock = (home: string) =>
-    !usersOwn.has(home) && isLockFile(home, stateDirectories, recorded);
-  return { homePath, files, dconf, collisions, paths, isLeftOutLock };
+  // A log counts only in the app's own state, where no user keeps one.
+  const isLeftOutLog = (home: string) =>
+    !usersOwn.has(home) &&
+    isAppLog(home) &&
+    (files.get(home)?.role === "application_state" ||
+      stateDirectoryOf(home, stateDirectories) !== undefined);
+  const isLeftOut = (home: string) =>
+    isLeftOutLog(home) ||
+    (!usersOwn.has(home) && isLockFile(home, stateDirectories, recorded));
+  return { homePath, files, dconf, collisions, paths, isLeftOut, isLeftOutLog };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -611,7 +621,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, { locks: plan.leftOutLocks, logs: plan.leftOutLogs })}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

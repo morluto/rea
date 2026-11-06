@@ -677,6 +677,94 @@ describe("exportDesktopApplication of a lock named for the file beside it", () =
   });
 });
 
+describe("exportDesktopApplication of the app's logs", () => {
+  it("leaves Freeplane's and QElectroTech's logs out of the seed and lists them, but seeds a selected or document log", async () => {
+    const locked = lockedCapture();
+    const [baseline, edited] = locked.state.checkpoints;
+    if (baseline === undefined || edited === undefined)
+      throw new Error("the fixture has two checkpoints");
+    const logLine = "os_version = 7.0.0-1014-aws\n";
+    const freeplane = `${HOME}/.config/notes/1.7.x/logs/log.0`;
+    // QElectroTech's log in its own folder, which it holds open as it does its settings.
+    const qet = `${HOME}/.qet`;
+    const selected = `${HOME}/.config/notes/notes.log`;
+    const document = `${HOME}/Documents/build.log`;
+    const written = [
+      [freeplane, logLine, "state"],
+      [`${freeplane}.lck`, "", "state"],
+      [`${qet}/20261106.log`, logLine, "opened"],
+      [`${qet}/qelectrotech.conf`, "[ui]\n", "opened"],
+      [selected, logLine, "state"],
+      [document, logLine, "neither"],
+    ] as const;
+    const recorded: DesktopApplicationCapture = {
+      ...locked,
+      session: {
+        ...locked.session,
+        windows: locked.session.windows.map((window) => ({
+          ...window,
+          titles: [...window.titles, "build.log - Notes"],
+        })),
+      },
+      state: {
+        ...locked.state,
+        content_roots: [...locked.state.content_roots, selected],
+        checkpoints: [
+          baseline,
+          {
+            ...edited,
+            changes: [
+              ...edited.changes,
+              ...written.map(([path, text, mark]) => ({
+                ...change(path, { after: text }, { state: mark === "state" }),
+                opened_by_application: mark === "opened",
+              })),
+            ],
+            retained: [
+              ...edited.retained,
+              ...written.map(([path, text]) => retained(path, text)),
+            ],
+          },
+        ],
+      },
+    };
+
+    const { result, directory } = await exportLocked(recorded, [
+      logLine,
+      "",
+      "[ui]\n",
+    ]);
+
+    const seedFiles = z
+      .object({ seed_files: z.array(z.string()) })
+      .parse(result.normalized_result).seed_files;
+    expect(seedFiles).toEqual(
+      expect.arrayContaining([
+        ".qet/qelectrotech.conf",
+        ".config/notes/notes.log",
+        "Documents/build.log",
+      ]),
+    );
+    const logs = [
+      ".config/notes/1.7.x/logs/log.0",
+      ".config/notes/1.7.x/logs/log.0.lck",
+      ".qet/20261106.log",
+    ];
+    const listed = result.limitations.filter((limitation) =>
+      logs.every((log) => limitation.includes(`~/${log}`)),
+    );
+    expect(listed).toHaveLength(1);
+    // Logs are listed apart from the lock files.
+    expect(listed[0]).not.toContain(".~lock.today.txt#");
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    for (const log of logs) {
+      expect(seedFiles).not.toContain(log);
+      expect(await exists(join(directory, "envs/notes/seed", log))).toBe(false);
+      expect(readme).toContain(`\`~/${log}\``);
+    }
+  });
+});
+
 describe("exportDesktopApplication of LibreOffice's recovery list", () => {
   it("leaves the documents to recover out of a seeded registrymodifications.xcu, and says so", async () => {
     // LibreOffice lists the documents it has open while it runs; seeded, it starts into recovery instead of its window.

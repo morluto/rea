@@ -19,6 +19,8 @@ import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
+  leftOutLogsLimitation,
+  leftOutSeeds,
   runtimeSeeds,
   runtimeSeedsLimitation,
   unownedChangedFolders,
@@ -201,7 +203,7 @@ const planExport = (
   );
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
-  const { homePath, files, collisions, paths, isLeftOutLock } = stateFiles;
+  const { homePath, files, collisions, paths, isLeftOut } = stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -211,7 +213,7 @@ const planExport = (
     files,
     paths,
     context.seed,
-    isLeftOutLock,
+    isLeftOut,
   );
   const unseeded = unseededFiles(capture, homePath, files, {
     paths,
@@ -245,10 +247,11 @@ const planExport = (
     syntheticSeed: request.syntheticSeed === true,
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
-    unseededFiles: unseeded.filter((file) => !isLeftOutLock(file)),
-    leftOutLocks: [
-      ...new Set([...locks, ...unseeded.filter(isLeftOutLock)]),
-    ].sort(),
+    unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
+    ...leftOutSeeds(
+      [...locks, ...unseeded.filter(isLeftOut)],
+      stateFiles.isLeftOutLog,
+    ),
     unownedFolders: unownedChangedFolders(files, paths),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
@@ -336,6 +339,7 @@ const exportLimitations = (
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
+  const logs = leftOutLogsLimitation(plan.leftOutLogs);
   const recovered = recoveryListLimitation(facts.recovered);
   return [
     seedLimitation(plan.syntheticSeed),
@@ -348,6 +352,7 @@ const exportLimitations = (
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
     ...(locks === undefined ? [] : [locks]),
+    ...(logs === undefined ? [] : [logs]),
     ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),

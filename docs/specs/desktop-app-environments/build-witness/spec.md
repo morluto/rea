@@ -176,6 +176,11 @@ and the recording and writes the record as Evidence.
   task's prompt names neither the app's title, environment nor package: a
   solving agent's shell cannot see the computer's files. The unowned paths
   limitation counts files or folders.
+- Gaps of the published bundles: the app's logs in its own state, `*.log`,
+  `log.<n>` and files under a `logs` folder with their `.lck` or `.lock`,
+  are left out of the seed and listed apart from the lock files, since
+  Freeplane's and QElectroTech's recorded the capture host's kernel, CPU,
+  memory and disk sizes; a document or a path selected itself is seeded.
 - The witness reads the build computer's bounded action log: its stage rules
   use the log's count and the last applied action of each kind, and the
   record holds the entries the log keeps, `actions_dropped`, and a

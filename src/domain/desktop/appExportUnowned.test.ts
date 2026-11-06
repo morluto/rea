@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   heldOpenLimitation,
+  isAppLog,
   isLockFile,
   runtimeSeeds,
   unownedChangedFolders,
@@ -228,6 +229,32 @@ describe("the limitations on folders the app held files open in", () => {
     expect(seeded).not.toContain("registrymodifications");
     expect(none).toContain("the seed holds none from there");
     expect(heldOpenLimitation([], home, [])).toBeUndefined();
+  });
+});
+
+describe("isAppLog", () => {
+  it("knows a log by its name, its logs folder or as a log's lock, and nothing else", () => {
+    const logs = [
+      ".config/freeplane/1.7.x/logs/log.0",
+      ".config/freeplane/1.7.x/logs/log.0.lck",
+      ".qet/20261106.log",
+      ".config/app/App.LOG",
+      ".local/share/app/logs/session.txt",
+      ".config/app/log.12",
+      ".config/app/app.log.lock",
+    ];
+    const others = [
+      ".config/app/catalog.xml",
+      ".config/app/logo.png",
+      ".config/app/changelog",
+      ".config/app/logs.json",
+      ".config/app/blog.0",
+      ".config/app/log.txt",
+      ".config/app/settings.lck",
+    ];
+
+    expect(logs.filter(isAppLog)).toEqual(logs);
+    expect(others.filter(isAppLog)).toEqual([]);
   });
 });
 
