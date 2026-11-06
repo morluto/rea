@@ -22,11 +22,20 @@ import {
   API_CONTRACT_OPERATION as operation,
   API_CONTRACT_PROVIDER,
 } from "../../domain/apiContract/apiContract.js";
-import type { InspectApiContractInput } from "../../domain/apiContract/apiContractQuery.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { err, ok } from "../../domain/result.js";
 
-const inputFailure = (path: string, cause: unknown, message: string) =>
+interface ContractDocumentInput {
+  readonly path: string;
+  readonly max_file_bytes: number;
+  readonly parameter?: "path" | "operations_path";
+}
+const inputFailure = (
+  path: string,
+  cause: unknown,
+  message: string,
+  parameter = "path",
+) =>
   new AnalysisInputError(
     operation,
     {
@@ -37,7 +46,7 @@ const inputFailure = (path: string, cause: unknown, message: string) =>
     },
     [
       {
-        path: ["path"],
+        path: [parameter],
         reason: "invalid_format",
         message: `${message} (${path})`,
       },
@@ -46,7 +55,7 @@ const inputFailure = (path: string, cause: unknown, message: string) =>
 
 const readFailure = (
   failure: unknown,
-  input: InspectApiContractInput,
+  input: ContractDocumentInput,
 ): AnalysisError => {
   const { cause, origin } = artifactFilePrimaryFacts(failure);
   if (
@@ -78,7 +87,7 @@ const readFailure = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return inputFailure(input.path, cause, cause.message);
+      return inputFailure(input.path, cause, cause.message, input.parameter);
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")
@@ -90,6 +99,7 @@ const readFailure = (
         input.path,
         cause,
         "Selected API document could not be read",
+        input.parameter,
       );
   }
   return new ArtifactOperationError(
@@ -103,7 +113,7 @@ const readFailure = (
 
 /** The existing owner verifies exactly the bytes whose SHA-256 the inventory cites. */
 export const readApiContract = async (
-  input: InspectApiContractInput,
+  input: ContractDocumentInput,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ) => {
