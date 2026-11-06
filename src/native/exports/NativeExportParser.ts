@@ -694,7 +694,6 @@ function* parseElfExports(
     else if (versions !== null) {
       const raw = reader.u16(versions + index * 2);
       const versionIndex = raw & 0x7fff;
-      if (versionIndex === 0) continue;
       if (versionIndex >= 2) {
         const decodedName = versionNames.get(versionIndex) ?? null;
         if (decodedName === null && !unresolvedVersions.has(versionIndex)) {
