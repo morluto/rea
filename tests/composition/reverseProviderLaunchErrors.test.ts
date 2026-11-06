@@ -347,6 +347,15 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
           provider_id: "process-ownership",
         });
         expect(projected.message).toContain(code);
+        if (code === "identity_snapshot_unavailable") {
+          expect(projected.remediation.action).toContain(
+            "Check host process churn and ensure REA has permission",
+          );
+        } else if (code === "baseline_unavailable") {
+          expect(projected.remediation.action).toContain(
+            "Ensure process ownership inspection is supported",
+          );
+        }
         expect(projected.remediation.action).toContain(
           "REA_OBJDUMP_COMMAND does not need to change",
         );
@@ -386,6 +395,9 @@ it("preserves Linux process ownership admission failure in baseline capture with
         provider_id: "process-ownership",
       });
       expect(projected.message).toContain("identity_snapshot_unavailable");
+      expect(projected.remediation.action).toContain(
+        "Check host process churn and ensure REA has permission",
+      );
       expect(projected.remediation.action).toContain(
         "REA_RIZIN_COMMAND does not need to change",
       );

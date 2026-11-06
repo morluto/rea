@@ -26,6 +26,7 @@ import {
 } from "./evm.js";
 import { createSqliteDatabaseService } from "./sqlite.js";
 import { createDesktopApplicationService } from "./desktop.js";
+import { DesktopBuildComputers } from "../application/desktop/DesktopBuildComputers.js";
 import { createGoBinaryService } from "./go.js";
 import { createRustBinaryService } from "./rust.js";
 import { createBeamService } from "./erlang.js";
@@ -323,6 +324,10 @@ const modules = {
     }),
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
+  desktopBuildComputers: capability(
+    ({ providerEnvironment }) => new DesktopBuildComputers(providerEnvironment),
+    (value) => value.closeAll(),
+  ),
   goBinary: service(
     ({ options }) => options.goBinary ?? createGoBinaryService(),
   ),

@@ -46,7 +46,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../../process/OwnedCommand.js";
-import { LinuxOwnedProcessPrerequisiteError } from "../../process/ProcessOwnershipObservation.js";
+import {
+  LinuxOwnedProcessPrerequisiteError,
+  processOwnershipAdmissionRecovery,
+} from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
@@ -77,6 +80,7 @@ interface CommandLaunchOutcome {
 }
 
 const MAX_COMBINED_OUTPUT_BYTES = 16 * 1024 * 1024;
+export const REVERSE_COMMAND_OUTPUT_LIMITATION = `REA stopped collecting output at its ${String(MAX_COMBINED_OUTPUT_BYTES)}-byte cap and requested termination of the provider process; the captured stdout and stderr are a prefix and command completion is unknown. Narrow the command or page its output.`;
 // Eight concurrent captures bound retained provider output to 128 MiB.
 const MAX_CONCURRENT_REVERSE_ENGINEERING_OPERATIONS = 8;
 
@@ -513,6 +517,7 @@ export class ReverseEngineeringService {
     let cleanupIncomplete = false;
     let cleanupOnlyFailure = false;
     let completionStatus: "complete" | "unknown" = "complete";
+    let outputLimitReached = false;
     let failure: AnalysisError | undefined;
     let cleanupOwner: ProviderProcessSupervisor | undefined;
     let earlyFailure: AnalysisError | undefined;
@@ -574,6 +579,8 @@ export class ReverseEngineeringService {
           ? (execFileOutputFailure(cause.cause)?.code ??
             commandFailureCode(cause.cause))
           : undefined);
+      if (code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER")
+        outputLimitReached = true;
       if (earlyFailure === undefined && code === "E2BIG")
         earlyFailure = new AnalysisResourceConstraintError(
           operation,
@@ -641,6 +648,9 @@ export class ReverseEngineeringService {
           operation === "inspect_with_objdump"
             ? "REA_OBJDUMP_COMMAND"
             : "REA_RIZIN_COMMAND";
+        const recovery = processOwnershipAdmissionRecovery(
+          admissionFailure.code,
+        );
         earlyFailure = new AnalysisCapabilityUnavailableError(
           "process-ownership",
           "prepare_owned_process",
@@ -648,7 +658,7 @@ export class ReverseEngineeringService {
           {
             cause,
             userMessage: `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}.`,
-            remediationAction: `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}; ${setting} does not need to change.`,
+            remediationAction: `${recovery} ${setting} does not need to change.`,
             diagnostics: {
               boundary: "process-ownership",
               system_code: admissionFailure.code,
@@ -899,12 +909,14 @@ export class ReverseEngineeringService {
             )} bytes contain invalid or incomplete UTF-8; replacement characters in the text capture do not preserve the original bytes.`,
           ]
         : []),
-      ...(outputTruncated
-        ? [
-            "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
-          ]
-        : []),
-      ...(signalName === null
+      ...(outputLimitReached
+        ? [REVERSE_COMMAND_OUTPUT_LIMITATION]
+        : outputTruncated
+          ? [
+              "Captured provider output is partial because bytes were omitted; process completion is reported separately.",
+            ]
+          : []),
+      ...(signalName === null || outputLimitReached
         ? []
         : [
             `The provider process terminated by signal ${signalName}; captured output may be partial and command completion is unknown.`,

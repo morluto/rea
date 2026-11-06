@@ -1688,6 +1688,17 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
   }
 }
 
+/** Actionable recovery guidance for process ownership admission failures. */
+export const processOwnershipAdmissionRecovery = (code: string): string => {
+  if (code === "identity_snapshot_unavailable")
+    return "Check host process churn and ensure REA has permission to inspect /proc entries for running processes, then retry once process state settles.";
+  if (code === "current_process_unreported")
+    return "Ensure the host process table reports the running REA process under /proc or ps, then retry.";
+  if (code === "baseline_unavailable")
+    return "Ensure process ownership inspection is supported on the host platform before launching captured children.";
+  return "Verify host process ownership inspection prerequisites before retrying.";
+};
+
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
   signal?: AbortSignal,
