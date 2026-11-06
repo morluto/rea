@@ -118,7 +118,7 @@ while it is one colour throughout. The retries share 10 s, each given only
 what is left of it, and when that runs out REA returns the latest frame;
 progress notifications continue meanwhile. Given `screenshot` with a
 `region`, `format` or `quality`, REA then takes one with them, a `region`
-cropping that frame. The result holds
+cropping that frame rather than capturing the screen again. The result holds
 `computer_id`, agentenv's `sandbox_id`, the environment name or bundle folder,
 `extra_packages`, what the request named beside the app for the export to
 install too (an archive install's `extra_packages` or a `.deb`'s
@@ -137,16 +137,16 @@ progress and waits for them before closing every computer.
 `act_on_build_computer` takes `computer_id`, an `action` and the driver's own
 arguments for `computer_<action>`, which REA passes through:
 
-| `action`     | Arguments                                                       |
-| ------------ | --------------------------------------------------------------- |
-| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                 |
-| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`      |
-| `drag`       | `path` of `[x, y]` points, `button`, `duration_ms`, `modifiers` |
-| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                    |
-| `type`       | `text`, where `\n` presses Enter and `\t` Tab                   |
-| `key`        | `keys`, one chord pressed in order, and `repeat`                |
-| `wait`       | `ms`                                                            |
-| `reset`      | `screenshot`                                                    |
+| `action`     | Arguments                                                               |
+| ------------ | ----------------------------------------------------------------------- |
+| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                         |
+| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
+| `drag`       | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
+| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                            |
+| `type`       | `text`, where `\n` presses Enter and `\t` Tab                           |
+| `key`        | `keys`, one chord pressed in order, and `repeat`                        |
+| `wait`       | `ms`                                                                    |
+| `reset`      | `screenshot`                                                            |
 
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
@@ -170,7 +170,9 @@ The result carries the driver's content unchanged, its text and images, after
 REA's own JSON: `action_index` and the driver's structured result. A refusal,
 such as a stale frame, is an error carrying the computer's message. A response
 larger than the MCP budget is refused with how to ask for a smaller image: a
-`region`, or `jpeg` with a lower `quality`. That error keeps REA's own result,
+`region`, or `jpeg` with a lower `quality`. A screenshot with `region` does not
+capture the screen again; it crops the latest frame, so take a full
+screenshot, or a `wait` with `screenshot: true`, first. That error keeps REA's own result,
 `computer_id` included, as `details.result`, since the action or start has
 happened.
 

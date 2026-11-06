@@ -67,7 +67,9 @@ the first source that has the app:
   MyPaint needs
   `{"kind": "archive", "package": "mypaint", "extra_packages": ["librsvg2-common"]}`
   for its SVG icons, and Freeplane `["openjdk-17-jre"]`, since its launcher
-  refuses noble's Java 21.
+  refuses noble's Java 21. Name one up front, too, when a package the app
+  only recommends holds its content, such as QElectroTech's element library
+  `qelectrotech-data`, without which no component can be placed.
 - Take the `.deb` path only when the app is not in the archive at all, not
   to add a package. Ask the requester for its URL and SHA-256; do not fetch
   a vendor's download page yourself. List its `Depends` as `dependencies`,
@@ -96,8 +98,10 @@ the first source that has the app:
   [the build-computer guide](https://github.com/morluto/rea/blob/main/docs/desktop-build-computer.md).
 - Take a `screenshot` before pointing: points are pixels of the latest
   frame. If a response is too large, ask for a `region`, or `jpeg` with a
-  lower `quality`. A region crops the latest frame and becomes it: take a
-  full screenshot before pointing again.
+  lower `quality`. A screenshot with `region` does not capture the screen
+  again; it crops the latest frame, so take a full screenshot, or a `wait`
+  with `screenshot: true`, first. The crop then becomes the latest frame:
+  take a full screenshot before pointing again.
 - A drawn caret does not prove keyboard focus. After using a toolbar
   control, click into the document, then type a few characters and look
   before a long text.
@@ -147,6 +151,24 @@ the first source that has the app:
   prefilled and selected. Amounts are saved as reduced fractions, such as
   `-1749/20`, so compare them exactly. Untick Help → Tip of the Day → "Show
   tips on startup" before `seed`, or the tip appears at every boot.
+- QElectroTech: an element dropped from Collections follows the pointer until
+  a click on the folio places it. Its title shows only the app, so it needs
+  `state_paths`; its settings are in `~/.qet`.
+- Rosegarden: after a dialog its Transport window can take keyboard focus,
+  so save with File → Save.
+- Pencil2D: the Tools dock is too narrow for its buttons, so use shortcuts
+  (B for the brush); double-click a layer's name to rename it.
+- Umbrello: the title shows no unsaved mark, so confirm a save with a probe
+  checkpoint. An Untitled document autosaves `~/autosave.xmi`: delete it
+  before `seed`. Add attributes from the tree: right-click the class → New →
+  Attribute.
+- Hydrogen: the computer has no audio device, so Hydrogen falls back to a
+  null driver and its BPM field snaps back to 120 within about 100 ms.
+  Before `seed`, set Preferences → Audio System → ALSA with device `null`
+  and click "Apply and restart output", which `~/.hydrogen/hydrogen.conf`
+  keeps for the seed; also set autosaves per hour to 0, and dismiss the
+  development-version dialog with "Don't show again". `pulseaudio` as an
+  extra package does not help.
 - What the app saved under the home before `seed`, such as a document in
   `~/Documents` or its settings, is part of the seed. A file you move to the
   Trash is left out, and the export lists it in `limitations`. Trash a stray
@@ -366,7 +388,9 @@ files the app holds while it runs, such as LibreOffice's `.lock` and
 `.~lock.<name>#`, GnuCash's `<book>.LCK` or Grisbi's `.<file>.lock`, are
 left out of the seed and listed after "Left out of the seed". An app can
 still start fine yet refuse every save when a lock was seeded, so close the
-document before `seed` where the app lets you, and treat "file is locked"
+document before `seed` where the app lets you (apps other than LibreOffice,
+such as Rosegarden, also write `.~lock.<name>#` and autosaves beside a
+document, and closing it covers them too), and treat "file is locked"
 on a save in the witness as a seeded lock: delete it from the bundle's seed
 and witness again in a new computer. In LibreOffice, own the profile
 (`state_paths: [".config/libreoffice"]`) for a clean boot, and close the
