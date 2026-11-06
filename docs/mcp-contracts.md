@@ -188,7 +188,11 @@ The complete field/type diagnostic is preserved when normalization fits the
 response budget, including request-specific rejected fields and reasons. Zod
 input issues retain their field paths and available type and range constraints.
 SDK diagnostic parts may be distributed between field issues and the main
-message so each retained explanation appears once.
+message so each retained explanation appears once. Known neighboring-tool
+argument-name mistakes (such as `address` instead of `procedure`, or `query`
+instead of `pattern`) provide targeted replacement guidance and the expected
+canonical property name without accepting unauthorized aliases or changing
+canonical Evidence parameters.
 If their conservative projection allowance is exhausted, the response states
 that field-level detail was omitted and retains the original SDK diagnostic.
 Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
@@ -574,15 +578,18 @@ after target content was read.
 
 ## Offline API contract declarations
 
-`inspect_api_contract` reads a local OpenAPI 3.0/3.1/3.2 JSON document without
-an active target or any requests to declared servers or references. Default
-summary delivery retains complete declaration Evidence; an optional
-`api-contract` view selects operations, unresolved Path Items or diagnostics in
-this call. Exact filters, field selection and paging share the retained
-`inspect_analysis_view` projector. Coverage describes inline paths only and
-never establishes runtime implementation or full specification conformance.
-See [offline API contracts](api-contracts.md) for identities, source pointers,
-resource bounds and CLI publication.
+`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
+GraphQL SDL (`format: "graphql-sdl"`) without an active target or network requests.
+OpenAPI inventories inline path operations and unresolved Path Items. GraphQL
+inventories type/field declarations; optional `operations_path` adds operation
+owners, aliases, SDL field bindings and explicit fragment-spread edges without
+expanding fragments. Unresolved bindings and unavailable models stay explicit.
+Default summaries retain complete Evidence; `api-contract` or `graphql-contract`
+views select facts immediately with exact filters, fields and paging. Retained
+`inspect_analysis_view` uses the same projector without reopening inputs.
+Coverage describes examined declarations and does not establish runtime behavior
+or full specification/operation validity. See [offline API contracts](api-contracts.md)
+for source identities, parser allowances, supported scope and CLI publication.
 
 ## Retained application Evidence inputs
 
