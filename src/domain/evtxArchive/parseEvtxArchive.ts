@@ -30,7 +30,7 @@ interface DecodeState {
 }
 
 const digest = (prefix: string, ...parts: (string | number)[]) =>
-  `${prefix}:${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
+  `${prefix}_${createHash("sha256").update(parts.join("\u0000")).digest("hex")}`;
 
 /** Reads a 64-bit little-endian value as a number, or null past 2^53. */
 const readCount = (bytes: Buffer, offset: number): number | null => {

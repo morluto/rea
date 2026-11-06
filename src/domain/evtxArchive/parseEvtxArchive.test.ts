@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { evtxArchiveSchema } from "./evtxArchive.js";
 import { parseEvtxArchive } from "./parseEvtxArchive.js";
 import type { EvtxArchive } from "./evtxArchive.js";
 
@@ -86,6 +87,17 @@ describe("parseEvtxArchive", () => {
     expect(archive.events.map((event) => event.ordinal)).toEqual([0, 1, 2]);
     expect(archive.summary.events).toBe(3);
     expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("emits identifiers the declared output schema accepts", () => {
+    // MCP registers evtxArchiveSchema as the success output schema, so an
+    // underscore-less identifier fails the whole inspection at the boundary
+    // rather than here. Parse through the schema, not just the parser.
+    const archive = evtx([chunk(0, [record(1), record(2)])]);
+    expect(evtxArchiveSchema.safeParse(parsed(archive)).success).toBe(true);
+    // An empty inventory still carries an archive_id, so it needs the check.
+    const empty = evtx([]);
+    expect(evtxArchiveSchema.safeParse(parsed(empty)).success).toBe(true);
   });
 
   it("keeps record numbers distinct across wrapped logs", () => {
