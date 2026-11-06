@@ -207,6 +207,7 @@
 * **artifacts:** preserve source and coverage facts ([59a70ad](https://github.com/morluto/rea/commit/59a70adefd4de4fb1964d75a9bddbc2130a9a5a7))
 * **artifacts:** reject inventory counts beyond manifest ([8dc4421](https://github.com/morluto/rea/commit/8dc4421325bc467811884c78510de8617e234ee3))
 * **artifacts:** report required bytes for ASAR header limits ([#7452](https://github.com/morluto/rea/issues/7452)) ([f251009](https://github.com/morluto/rea/commit/f251009e0a30e35e881a3f3396cc9fd21d7a2259))
+* **artifacts:** report ZIP Zstd window refusals as resource limits ([fdc4e39](https://github.com/morluto/rea/commit/fdc4e3908b70d7cf6b03f357fb9c42a133bb5577))
 * **artifacts:** resolve historical retained summaries ([7f65617](https://github.com/morluto/rea/commit/7f6561706428f4d4d1acb7cdb5c5e1a683645a84))
 * **artifacts:** retain archive streams and source receipts ([f1535a1](https://github.com/morluto/rea/commit/f1535a17531a5b05f33b210e7acd7037dd5a25ea))
 * **artifacts:** retain reader work through cleanup ([5da50ab](https://github.com/morluto/rea/commit/5da50ab3f43c7f5498ef8ee84c38289158bcbfe7))
