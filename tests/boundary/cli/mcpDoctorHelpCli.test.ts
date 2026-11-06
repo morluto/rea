@@ -156,7 +156,6 @@ describe("MCP doctor help boundary", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
-
 });
 
 describe("MCP doctor timing boundary", () => {
