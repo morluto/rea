@@ -3,6 +3,7 @@ import type {
   DesktopStateChange,
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { isLockName } from "./runtimeFiles.js";
 
 /** Why a path is, or is not, treated as the application's state. */
 export type DesktopStateReason =
@@ -268,8 +269,10 @@ export const selectedHomePath = (
  * desktop Trash is shared whatever else names it, since the user deleted it.
  * A file the application holds open is a document when a title or the caller
  * names it. A file the caller selects under a hidden folder of the home, such
- * as `~/.config/app`, or a dotfile there, is the application's own state;
- * `selectedAs` is its home path as selected, before links are resolved.
+ * as `~/.config/app`, or a dotfile there, is the application's own state, as
+ * is a lock the app holds, such as LibreOffice's `.~lock.<name>#` beside a
+ * document; `selectedAs` is its home path as selected, before links are
+ * resolved.
  */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
@@ -284,7 +287,8 @@ export const stateRole = (
     return "application_state";
   if (reasons.includes("named_in_window_title")) return "document";
   if (reasons.includes("selected_path"))
-    return selectedAs?.startsWith(".") === true
+    return selectedAs !== null &&
+      (selectedAs.startsWith(".") || isLockName(selectedAs))
       ? "application_state"
       : "document";
   if (reasons.includes("opened_by_application") && !shared)

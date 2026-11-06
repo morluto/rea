@@ -1,6 +1,26 @@
 /** What a file an app keeps for its own running, rather than as the user's data, is. */
 export type RuntimeFileKind = "web_storage" | "cache";
 
+/** Names of lock files an app holds while it runs, lowercase, wherever they lie. */
+const LOCK_NAMES = new Set([
+  "lockfile",
+  "lock",
+  ".lock",
+  ".parentlock",
+  "parent.lock",
+  "singletonlock",
+  // Lucene's index lock, as Poedit's translation memory holds.
+  "write.lock",
+]);
+/** LibreOffice's lock beside a document it has open: `.~lock.<name>#`. */
+const DOCUMENT_LOCK = /^\.~lock\..+#$/u;
+
+/** Whether a file is named as a lock an app holds while it runs, wherever it lies: a profile lock or LibreOffice's document lock. */
+export const isLockName = (file: string): boolean => {
+  const name = file.split("/").at(-1) ?? "";
+  return LOCK_NAMES.has(name.toLowerCase()) || DOCUMENT_LOCK.test(name);
+};
+
 /** Folders WebKit and Chromium keep pages' storage in, lowercase; QtWebEngine's is its whole profile. */
 const WEB_STORAGE_FOLDERS = new Set([
   "qtwebengine",

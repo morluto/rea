@@ -35,7 +35,8 @@ and the recording and writes the record as Evidence.
   nearest existing folder), refuses one outside it or in `~/.rea-build`
   either way before launching anything, and passes each as named to the
   capture as `--state-path`. A selected file is a document, or the app's own
-  state under a hidden folder of the home as named, before links.
+  state under a hidden folder of the home as named, before links, or when it
+  is a lock the app holds, such as LibreOffice's `.~lock.<name>#`.
 - Acknowledgement: `capture-desktop-application` reports, beside each progress
   message, an `event`: `window_open`; `checkpoint` with its name, trigger,
   time, entries walked, changes and retained files and bytes, and up to ten
@@ -54,7 +55,8 @@ and the recording and writes the record as Evidence.
   A draft with no files carries `notes`, coded `no_change`,
   `unowned_changes` (up to five changed home paths with their roles, and a
   count of the rest), `uncheckable_changes` (dconf databases whose app keys
-  were read and changed, which no check reads), `unreadable_changes` (dconf
+  were read and changed, which no check reads, a version kept without its
+  bytes counting as holding none), `unreadable_changes` (dconf
   databases that changed but could not be read, with the read `error`) and
   `no_document`; a drafted file whose suggestions are thin carries one
   naming its `file`, coded `by_position`, `view_state_only`, `long_text`,
@@ -176,17 +178,18 @@ and the recording and writes the record as Evidence.
   task's prompt names neither the app's title, environment nor package: a
   solving agent's shell cannot see the computer's files. The unowned paths
   limitation counts files or folders.
-- Gaps of the published bundles: the app's logs in its own state, `*.log`,
-  `log.<n>` and files under a `logs` folder with their `.lck` or `.lock`,
-  are left out of the seed and listed apart from the lock files, since
-  Freeplane's and QElectroTech's recorded the capture host's kernel, CPU,
-  memory and disk sizes; a document or a path selected itself is seeded,
-  and so is a database's journal of saved writes: a `*.log` in browser
-  storage, under a `leveldb` folder, or numbered beside a LevelDB
-  database's `CURRENT` or `MANIFEST-*`. LibreOffice's recovery list items
-  are found with the shared XML parser and cut by their source ranges, so
-  quoting, spacing, comments and CDATA cannot fool the match, and a
-  registry that is not well-formed ships unchanged.
+- Gaps of the published bundles: the app's logs in its own state, `*.log`
+  and `log.<n>` with their `.lck` or `.lock`, are left out of the seed and
+  listed apart from the lock files, since Freeplane's and QElectroTech's
+  recorded the capture host's kernel, CPU, memory and disk sizes; a
+  document, a path selected itself or a log under a selected folder is
+  seeded, as are Pidgin's conversations and fldigi's logbook under their
+  `logs` folders, and so is a database's journal of saved writes: a
+  `*.log` in browser storage, under a `leveldb` folder, or numbered beside
+  a LevelDB database's `CURRENT` or `MANIFEST-*`. LibreOffice's recovery
+  list items are found with the shared XML parser and cut by their source
+  ranges, so quoting, spacing, comments and CDATA cannot fool the match,
+  and a registry that is not well-formed ships unchanged.
 - Gaps of the seventh batch: a window title names a file only by its whole
   name, or its `~/` or absolute path, never by a folder of a path it shows,
   and an extensionless name only standing alone; files under `~/.cache` and

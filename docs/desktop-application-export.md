@@ -235,16 +235,17 @@ The app's logs are left out of the seed the same way, since they record facts
 about the capture host that the host scrub does not catch, such as Freeplane's
 `os_version` with the host's kernel, or QElectroTech's CPU model, memory and
 disk sizes, and no app needs its old log to start. A log is a file named
-`*.log` or `log.<n>`, or any file under a `logs` folder, with the `.lck` or
-`.lock` beside such a file, that is in the app's own state: application state
-in the state view, or under one of its state directories. A document or a path
-named itself by `--state-path` is seeded even when it ends in `.log`, since a
-user's own log may be the document, and so is a database's journal of saved
-writes: a `*.log` in WebKit or Chromium storage (such as
-`Local Storage/leveldb/000003.log`), under a `leveldb` folder, or numbered
-(`000005.log`) beside a LevelDB database's `CURRENT` or `MANIFEST-*`. A
-limitation and the README list the logs left out apart from the lock files,
-after "Left out of the seed".
+`*.log` or `log.<n>`, with the `.lck` or `.lock` beside such a file, that is
+in the app's own state: application state in the state view, or under one of
+its state directories. Other files under a `logs` folder are seeded, since
+apps keep the user's data there, such as Pidgin's conversations or fldigi's
+logbook. A document, or a path named by `--state-path` or a file under one, is
+seeded even when it ends in `.log`, since a user's own log may be the
+document, and so is a database's journal of saved writes: a `*.log` in WebKit
+or Chromium storage (such as `Local Storage/leveldb/000003.log`), under a
+`leveldb` folder, or numbered (`000005.log`) beside a LevelDB database's
+`CURRENT` or `MANIFEST-*`. A limitation and the README list the logs left out
+apart from the lock files, after "Left out of the seed".
 
 Other seed files the app keeps for its own
 running are seeded as captured and named, collapsed to the folder that holds
@@ -361,7 +362,12 @@ export removes them from what the bundle ships:
   document scrubbed; one already in that form ships as captured. The class copies it at
   boot as it is, so the home it holds stays `/home/user`. One that does not
   decompress ships as captured, its bytes searched, and one the state view did
-  not read is only searched.
+  not read is only searched. One whose document needs no edit but a member of
+  which has an extra field, where BGZF (`.vcf.gz`, `.bam`) and dictzip
+  (`.dict.dz`) files index their blocks, also ships as captured, its bytes
+  searched, so its blocks stay where its index says; one whose document
+  changed is still compressed again as one member, losing them, as the
+  export's limitation says.
 - Binary files, SQLite databases among them, and text files over 256 MiB are
   copied as captured. Then every file the bundle ships, the class module with
   its dconf keys and the README included, is searched by a looser rule than

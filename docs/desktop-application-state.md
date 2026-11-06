@@ -41,9 +41,10 @@ in the desktop Trash, which the user deleted, whatever else names it;
 `application_state` for application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
 caller, even if the application holds it open, except that a selected file
-under a hidden folder of the home, such as `~/.config/MuseScore`, or a
-dotfile there is `application_state`, judged by the path as the caller named
-it, so a file reached through `~/.config/MuseScore` stays the application's
+under a hidden folder of the home, such as `~/.config/MuseScore`, a dotfile
+there, or a lock an application holds, such as LibreOffice's `.~lock.<name>#`
+beside a document, is `application_state`, judged by the path as the caller
+named it, so a file reached through `~/.config/MuseScore` stays the application's
 when that folder is a link to `~/settings/MuseScore`; the innermost selected
 path holding a file decides, so a score selected itself inside the link's
 target keeps its own name and is a document (a capture written before it

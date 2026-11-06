@@ -327,10 +327,14 @@ const entryOf = (
   const { baseline, final } = context.ends;
   const view = kind === "removed" ? baseline : final;
   const located = locatePointer(view, pointer);
+  const found = located.kind === "value";
+  // A text node added or removed is reached only by its index among its element's children.
+  const indexedText =
+    found && kind !== "changed" && /\/children\/\d+$/u.test(pointer);
   const note: ValueNote | undefined =
-    located.kind === "value" && located.byPosition.length > 0
+    found && located.byPosition.length > 0
       ? "by_position"
-      : context.noise(pointer);
+      : (context.noise(pointer) ?? (indexedText ? "by_position" : undefined));
   const refers = referencesOf(references(view), view, pointer).slice(
     0,
     VALUE_LIMITS.references,

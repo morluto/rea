@@ -1,5 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
-import { gunzip, gzipDeterministic, isGzip } from "./gzipDocument.js";
+import {
+  gunzip,
+  gzipDeterministic,
+  hasExtraField,
+  isGzip,
+} from "./gzipDocument.js";
 import {
   identityLeftIn,
   identitySpellings,
@@ -433,8 +438,10 @@ const scrubDocument = (
  * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
  * the format the state view read it as, then compressed again alike on every
  * host whether or not it changed, so no file name, comment or time in the
- * captured header ships. One already so ships as captured, as does one that
- * does not decompress within the size decoded.
+ * captured header ships. One already so ships as captured, as do one that
+ * does not decompress within the size decoded and one whose document needs no
+ * edit but a member of which has an extra field, where BGZF and dictzip index
+ * their blocks; both are searched as their bytes.
  */
 export const scrubSeed = (
   bytes: Buffer,
@@ -446,6 +453,11 @@ export const scrubSeed = (
   if (!document.ok)
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
   const scrub = scrubDocument(document.value, seed, identity);
+  if (scrub.bytes === undefined && hasExtraField(bytes))
+    return {
+      bytes: undefined,
+      holdsIdentity: scrub.holdsIdentity || holdsIdentity(bytes, identity),
+    };
   const shipped = gzipDeterministic(scrub.bytes ?? document.value);
   if (shipped.equals(bytes))
     return { bytes: undefined, holdsIdentity: scrub.holdsIdentity };

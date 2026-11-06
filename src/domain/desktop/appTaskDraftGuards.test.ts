@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   draftOf,
@@ -8,6 +8,7 @@ import {
   xml,
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
+import { draftGuards } from "./appTaskDraftGuards.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -152,5 +153,66 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     expect(drafted?.guards).toEqual([
       { kind: "lines_present", file, lines: [PRIYA, MARCO] },
     ]);
+  });
+});
+
+describe("draftGuards on a long list", () => {
+  /** A ledger of 4,000 operations, each worded as `wording` says. */
+  const ledger = (wording: (index: number) => string) =>
+    xml(
+      `<homebank>${Array.from(
+        { length: 4000 },
+        (_, index) =>
+          `<ope name="op${String(index)}" amount="-${String(index)}.50" wording="${wording(index)}"/>`,
+      ).join("")}</homebank>`,
+    );
+  const payment = (index: number) => `Payment ${String(index)}`;
+  /** The guards of a check of op2000's wording, and a spy called once per sibling a guard is sought on. */
+  const guardsOf = (
+    baseline: ReturnType<typeof xml>,
+    final: ReturnType<typeof xml>,
+  ) => {
+    const noisy = vi.fn(() => false);
+    const guards = draftGuards(
+      {
+        file: FILE,
+        ends: { baseline, final },
+        named: () => true,
+        noisy,
+        chars: 2000,
+      },
+      [
+        {
+          kind: "value_equals",
+          file: FILE,
+          pointer: "/root/children/[name=ope][@name=op2000]/attributes/wording",
+          value: "October rent",
+        },
+      ],
+    );
+    return { guards, noisy };
+  };
+
+  it("reads siblings only until a check has its two guards", () => {
+    const { guards, noisy } = guardsOf(
+      ledger((index) => (index === 2000 ? "Rent" : payment(index))),
+      ledger((index) => (index === 2000 ? "October rent" : payment(index))),
+    );
+
+    expect(guards.map(pointerOf)).toEqual([
+      "/root/children/[name=ope][@name=op1999]/attributes/wording",
+      "/root/children/[name=ope][@name=op2001]/attributes/wording",
+    ]);
+    expect(noisy).toHaveBeenCalledTimes(2);
+  });
+
+  it("reads at most the 16 nearest siblings when none qualifies, as when every one changed", () => {
+    const { guards, noisy } = guardsOf(
+      ledger(payment),
+      ledger((index) => `${payment(index)} (paid)`),
+    );
+
+    expect(guards).toEqual([]);
+    expect(noisy.mock.calls.length).toBeLessThanOrEqual(16);
   });
 });

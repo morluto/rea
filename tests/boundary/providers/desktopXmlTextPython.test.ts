@@ -116,6 +116,7 @@ describe("XML with a DOCTYPE in the exported module", () => {
       "<!DOCTYPE a PUBLIC '  -//A\r\n  B//EN  ' 's  y'><a/>",
       '<!DOCTYPE a PUBLIC "" ""><a b="&lt;&#65;">&amp;&quot;&apos;&gt;</a>',
       '<!DOCTYPE svg:svg PUBLIC "-//W3C//DTD SVG 1.1//EN" "http://www.w3.org/Graphics/SVG/1.1/DTD/svg11.dtd"><svg:svg xmlns:svg="http://www.w3.org/2000/svg"/>',
+      '<!DOCTYPE a SYSTEM "x\r\ny\rz\n"><a/>',
     ];
     const refused = [
       "<!DOCTYPE a []><a/>",
@@ -139,6 +140,9 @@ describe("XML with a DOCTYPE in the exported module", () => {
     expect(ours.slice(accepted.length)).toEqual(refused.map(() => null));
     expect(ours[2]).toMatchObject({
       doctype: { name: "a", public_id: "-//A B//EN", system_id: "s  y" },
+    });
+    expect(ours[5]).toMatchObject({
+      doctype: { name: "a", public_id: null, system_id: "x\ny\nz\n" },
     });
   });
 
