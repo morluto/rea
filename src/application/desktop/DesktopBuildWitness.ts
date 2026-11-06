@@ -153,8 +153,10 @@ export class DesktopBuildWitness {
     if (stage !== undefined && this.#witness?.state === "saving")
       return this.#resave(this.#witness, task, stage, signal);
     const saved =
-      stage === undefined ? undefined : this.#savedAgain(task, stage);
-    if (saved !== undefined) return ok(saved);
+      stage === undefined
+        ? undefined
+        : this.#savedAgain(task, stage, input.directory);
+    if (saved !== undefined) return saved;
     const admitted =
       stage === undefined
         ? undefined
@@ -265,7 +267,11 @@ export class DesktopBuildWitness {
    * same task, such as after a cancelled call whose record was saved anyway;
    * undefined for any other check.
    */
-  #savedAgain(task: DesktopTask, stage: WitnessStage): CheckedTask | undefined {
+  #savedAgain(
+    task: DesktopTask,
+    stage: WitnessStage,
+    directory: string | undefined,
+  ): Result<CheckedTask, AnalysisError> | undefined {
     const witness = this.#witness;
     const filed = witness?.stages.at(-1);
     if (
@@ -274,10 +280,18 @@ export class DesktopBuildWitness {
       taskDigest(task) !== witness.digest
     )
       return undefined;
-    return {
+    // A folder the record was not saved to gets nothing written, so it is refused.
+    if (directory !== undefined && directory !== witness.directory)
+      return err(
+        refused(
+          `This witness's record was saved to ${witness.directory}, not ${directory}.`,
+          "Ask again without directory or with the folder it was saved to; another witness needs a fresh computer.",
+        ),
+      );
+    return ok({
       ...counted(task, filed.results),
       witness: summaryOf(filed, null, witness.record),
-    };
+    });
   }
 
   /** Repeat the check of the stage that ended the witness to retry writing its record, without checking again. */

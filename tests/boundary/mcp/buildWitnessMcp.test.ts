@@ -229,6 +229,16 @@ it("ends the witness when the seed already passes, and refuses its later stages"
     status: "failed",
     record: { verdict: "failed", failed_stage: "seed" },
   });
+  // The same seed check returns the record from its own folder, and refuses another.
+  expect(
+    parsed(await check({ task: passing, stage: "seed", directory })).witness,
+  ).toEqual(seed.witness);
+  const elsewhere = `${directory}-elsewhere`;
+  expect(
+    parseMcpToolError(
+      await check({ task: passing, stage: "seed", directory: elsewhere }),
+    ).error.message,
+  ).toContain(`saved to ${directory}, not ${elsewhere}`);
   await act("type", { text: "eggs\n" });
   expect(
     parseMcpToolError(await check({ task: passing, stage: "after_edit" })).error
