@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { setImmediate } from "node:timers/promises";
+
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 
 import { resolveJavaScriptSourceMapReferences } from "../../domain/javascript/javascriptSourceMapPaths.js";
 import { hasValidSourceMapContents } from "../../domain/sourceMapContents.js";
@@ -77,12 +80,19 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   ) => Promise<void>,
   signal?: AbortSignal,
   onPhase?: (file: JavaScriptArtifactFile, phase: string) => Promise<void>,
+  preloadPaths: ReadonlySet<string> = new Set(),
+  /** Discovery gaps that may leave a declared preload in its package scope. */
+  preloadLimitations: readonly string[] = [],
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
 }> => {
   const state = emptyArtifactAnalysis();
   const sourceIndices: number[] = [];
+  const packageTypeFor = createJavaScriptPackageTypeLookup(
+    fileSet,
+    state.jsonDocuments,
+  );
   let interruption: AnalysisError | null = null;
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
@@ -118,6 +128,10 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         projection.remainingFileCapacity(),
         signal,
         onPhase === undefined ? undefined : (phase) => onPhase(file, phase),
+        preloadPaths.has(`${file.container_sha256}:${file.path}`) &&
+          /\.js$/iu.test(file.path)
+          ? "commonjs"
+          : packageTypeFor(file),
       );
       const facts = result.ok ? result.value : result.error;
       for (const revoked of facts.revokedStaticProjections ?? []) {
@@ -294,11 +308,15 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       );
     }
   }
-  return { analysis: finalizeArtifactAnalysis(state), interruption };
+  return {
+    analysis: finalizeArtifactAnalysis(state, preloadLimitations),
+    interruption,
+  };
 };
 
 const finalizeArtifactAnalysis = (
   state: MutableArtifactAnalysis,
+  preloadLimitations: readonly string[],
 ): JavaScriptArtifactAnalysis => {
   return {
     jsonDocuments: state.jsonDocuments,
@@ -328,6 +346,7 @@ const finalizeArtifactAnalysis = (
             (failure) => (failure === undefined ? [] : [failure.reason]),
           ),
       ),
+      ...preloadLimitations,
     ],
   };
 };
@@ -384,6 +403,54 @@ const addStructuredObservations = (
   const json = analyzeJavaScriptJsonModule(file, state.jsonDocuments);
   state.jsonModules.push(json);
   if (json.status === "invalid") state.parseFailures += 1;
+};
+
+/**
+ * Node's package scope for a source is its nearest package.json; the lookup
+ * stops at a `node_modules` directory (Node's package scope resolution). Only
+ * a same-container, readable manifest object establishes the type; any other
+ * nearest manifest, including one whose bytes are unavailable, or none in the
+ * inventory, leaves the scope unknown.
+ */
+export const createJavaScriptPackageTypeLookup = (
+  fileSet: JavaScriptArtifactFileSet,
+  jsonDocuments: JavaScriptJsonDocuments,
+): ((file: JavaScriptArtifactFile) => JavaScriptPackageType) => {
+  const manifests = new Map<string, JavaScriptArtifactFile>();
+  for (const file of fileSet.files)
+    if (posix.basename(file.path) === "package.json")
+      manifests.set(
+        `${file.container_sha256}:${posix.dirname(file.path)}`,
+        file,
+      );
+  const unavailableManifests = new Set(
+    fileSet.unavailable_relevant_files
+      .filter(({ path }) => posix.basename(path) === "package.json")
+      .map(
+        ({ path, container_sha256 }) =>
+          `${container_sha256}:${posix.dirname(path)}`,
+      ),
+  );
+  return (file) => {
+    for (
+      let directory = posix.dirname(file.path);
+      posix.basename(directory) !== "node_modules";
+      directory = posix.dirname(directory)
+    ) {
+      const key = `${file.container_sha256}:${directory}`;
+      if (unavailableManifests.has(key)) return "unknown";
+      const manifest = manifests.get(key);
+      if (manifest !== undefined) {
+        const document = jsonDocuments.read(manifest);
+        if (document.status !== "included" || document.packageFields === null)
+          return "unknown";
+        const type = document.packageFields.type;
+        return type === "module" || type === "commonjs" ? type : "unspecified";
+      }
+      if (directory === "." || directory === "" || directory === "/") break;
+    }
+    return "unknown";
+  };
 };
 
 const parsePackage = (
@@ -668,7 +735,8 @@ const findingCount = (analysis: JavaScriptStaticAnalysis): number =>
   analysis.electron.ipc.length +
   analysis.electron.sender_validations.length +
   analysis.electron.utility_processes.length +
-  analysis.electron.native_addon_bindings.length;
+  analysis.electron.native_addon_bindings.length +
+  analysis.electron.protocols.length;
 
 const optionalString = (value: unknown): string | null =>
   typeof value === "string" && value.length > 0 ? value : null;

@@ -186,15 +186,36 @@ it("matches renderer, frame, script bytes, and worker without claiming execution
   expect(result.limitations.join(" ")).toMatch(
     /not reported as executed|not code reachability/u,
   );
-  expect(
-    result.graph.edges
-      .filter(({ relation }) => relation === "observed_as")
-      .every(
-        ({ evidence }) =>
-          evidence.authority === "cross-layer-reconciliation" &&
-          evidence.state === "inferred",
-      ),
-  ).toBe(true);
+  const observedAsEdges = result.graph.edges.filter(
+    ({ relation }) => relation === "observed_as",
+  );
+  expect(observedAsEdges).toHaveLength(2);
+  for (const [entityKind, basis] of [
+    ["script", "content-and-location"],
+    ["worker", "artifact-path"],
+  ] as const) {
+    const reconciliation = result.reconciliations.find(
+      ({ entity_kind }) => entity_kind === entityKind,
+    );
+    if (reconciliation === undefined || reconciliation.status !== "matched")
+      throw new TypeError(`Expected matched ${entityKind} reconciliation`);
+    expect(observedAsEdges).toContainEqual(
+      expect.objectContaining({
+        source_node_id: reconciliation.static_node_id,
+        target_node_id: reconciliation.runtime_node_id,
+        relation: "observed_as",
+        properties: expect.objectContaining({
+          reconciliation_id: reconciliation.reconciliation_id,
+          static_layer_id: reconciliation.static_layer_id,
+          basis,
+        }),
+        evidence: expect.objectContaining({
+          authority: "cross-layer-reconciliation",
+          state: "inferred",
+        }),
+      }),
+    );
+  }
   const worker = result.reconciliations.find(
     ({ entity_kind: kind }) => kind === "worker",
   );

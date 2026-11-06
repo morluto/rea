@@ -173,7 +173,14 @@ Results follow retained node order and default to offset 0 and limit 64. Supply
 to examine relationships from that node. Other typed seeds do not search labels.
 
 The result contains the matching basis, complete reachable subgraph, terminal
-paths, authority summaries, and native handoffs. A handoff binds
+paths, authority summaries, and native handoffs. A bidirectional trace of a
+large application can exceed one MCP response. Over MCP, pass
+`view: {"kind":"summary"}` or a `feature-trace` page of `paths`, `nodes`,
+`edges`, `seed_matches` or `native_handoffs` to retain the complete trace in
+the session and return only selected rows with the trace's identity and
+coverage. Page the retained trace with `inspect_analysis_view`; an oversized
+complete reply offers its first `paths` page as a ready-to-call continuation.
+See [MCP contracts](mcp-contracts.md) for filters. A handoff binds
 the exact native artifact digest and requested exports from the application
 graph. Trace direction selects the reachable addons; requested
 exports for each selected addon come from the complete supplied graph, so an
@@ -622,8 +629,10 @@ or process workflows.
 ## CLI and verification
 
 All six CLI commands accept inline JSON or a path to a JSON file. The CLI
-returns an Evidence record directly. Put the full records in a later CLI input;
-a separate CLI process has no retained MCP connection state.
+returns an Evidence record directly. Later workflow inputs can contain full
+records, or exact retained references when `--evidence-bundle PATH` selects an
+authenticated exported bundle. A separate CLI process has no retained MCP
+connection state. See [CLI Evidence reuse](cli.md#import-export-and-compare-evidence).
 
 File inputs must be regular files; symlinks to regular files are accepted.
 Directories, named pipes and device files produce an input error before JSON
@@ -646,8 +655,12 @@ rea trace-application-feature ./trace-input.json --json
 MCP analysis returns the complete Evidence record, with the operation result
 in `normalized_result` and its identity in `evidence_id`. If the connected server advertises retained references, reuse its
 exact returned ID as `{"kind":"retained-evidence","evidence_id":"RETURNED_ID"}`
-in `application`, or `left`/`right` for comparisons. `RETURNED_ID` is a template,
-not a literal valid ID. Native Evidence arrays still use complete records.
+in `application`, or `left`/`right` for comparisons. For summary or inspection
+replies, use `normalized_result.parent_evidence_id` to select the complete source.
+`RETURNED_ID` is a template, not a literal valid ID. Native-observation arrays
+and `reconcile_javascript_runtime`'s nested static layers and runtime-observation
+array also accept references where advertised, independently mixed with inline
+records. Exact identity, coverage and partial or unknown facts are preserved.
 References are scoped to one connection; `close_binary` clears them. Export a
 bundle before closing and import it on another connection, or supply the full
 inline Evidence there. Versions before 4.1.0 accept full inline Evidence only; installing

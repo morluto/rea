@@ -183,3 +183,10 @@ export const PE_LOAD_CONFIG_PROVIDER = Object.freeze({
   name: "REA PE TLS/load-config parser",
   version: "1",
 } as const);
+
+/** Provider identity for portable ELF, PE, and Mach-O hardening inspection. */
+export const BINARY_HARDENING_PROVIDER = Object.freeze({
+  id: "rea-binary-hardening",
+  name: "REA binary hardening parser",
+  version: "1",
+} as const);

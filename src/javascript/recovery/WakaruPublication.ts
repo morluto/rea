@@ -18,11 +18,8 @@ import {
   validateRecoverySourceMap,
   type parseWakaruReports,
 } from "./WakaruReport.js";
-import {
-  RECOVERY_LIMITATIONS,
-  RECOVERY_LIMITS,
-  WAKARU_RELEASE,
-} from "./WakaruRelease.js";
+import { RECOVERY_LIMITATIONS, RECOVERY_LIMITS } from "./WakaruRelease.js";
+import { WAKARU_RELEASE } from "./WakaruProviderIdentity.js";
 import type {
   resolveWakaruCommand,
   runWakaruCommand,

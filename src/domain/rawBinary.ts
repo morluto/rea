@@ -21,7 +21,8 @@ export const BINARY_ARCHITECTURES = [
 /** Provider-neutral CPU family for a caller-supplied raw-binary load. */
 export const binaryArchitectureSchema = z.enum(BINARY_ARCHITECTURES);
 
-const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
+/** Caller-supplied hexadecimal address of at most 64 bits, such as 0x08000000. */
+export const RAW_BINARY_ENTRY_POINT = /^0x[0-9A-Fa-f]{1,16}$/u;
 
 /** Hexadecimal load and entry address; file offset 0 is mapped here. */
 export const rawBinaryEntryPointSchema = z

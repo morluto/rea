@@ -1,11 +1,6 @@
 import { z } from "zod";
-import type { AnalysisError } from "../analysisErrorBase.js";
-import { ok, type Result } from "../result.js";
-import type {
-  AnalysisViewParent,
-  AnalysisViewRequest,
-  UnsignedAnalysisView,
-} from "./analysisView.js";
+import { ok } from "../result.js";
+import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { templateRulesSchema } from "./environmentManifestView.js";
 import type { StateView } from "./environmentStateRules.js";
 import {
@@ -154,18 +149,18 @@ export const summarizeEnvironmentCoverage = (state: {
 /** Project the state an environment would serve and summarize which tools it answers from that state. */
 export const projectEnvironmentCoverageView = (
   parent: AnalysisViewParent,
-  view: Extract<AnalysisViewRequest, { kind: "environment-coverage" }>,
+  view: z.output<typeof environmentCoverageViewRequestSchema>,
   accumulator = createEnvironmentStateAccumulator(view),
-): Result<UnsignedAnalysisView, AnalysisError> => {
+) => {
   const projected = projectEnvironmentStateView(
     parent,
-    { kind: "environment-state", template_rules: view.template_rules },
+    { kind: "environment-state" as const, template_rules: view.template_rules },
     accumulator,
   );
   if (!projected.ok) return projected;
   const state = projected.value;
   return ok({
-    kind: "environment-coverage",
+    kind: "environment-coverage" as const,
     view,
     parent_evidence_id: state.parent_evidence_id,
     parent_operation: state.parent_operation,

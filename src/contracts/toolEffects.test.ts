@@ -4,6 +4,7 @@ import { TOOL_CONTRACTS } from "./toolContracts.js";
 import {
   TOOL_EFFECTS,
   annotationsFromEffects,
+  toolSessionEffects,
   type ToolEffects,
 } from "./toolEffects.js";
 
@@ -17,6 +18,7 @@ const EXECUTION_WORDING =
   /\b(?:run|runs|running|launch|launches|launching|execute|executes|executing|execution|start|starts|install|installs|uninstall|uninstalls)\b/iu;
 
 const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
+  inspect_artifact: "states that mapper execution remains unobserved",
   guided_workflows:
     "renders existing guidance and states that it does not start analysis",
   inspect_analysis_settings:
@@ -39,6 +41,7 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_apple_ips: "states that it does not execute a target",
   inspect_kernel_module: "states that it does not execute the module",
   inspect_pe_load_config: "states that it does not execute the image",
+  inspect_binary_hardening: "states that it does not execute the image",
   inspect_desktop_application:
     "states that directory triage performs no target execution",
   inspect_pe_certificates: "states that it does not execute the image",
@@ -85,6 +88,8 @@ const EXECUTION_WORDING_EXCEPTIONS: Readonly<Record<string, string>> = {
   inspect_adb_client:
     "inspects the operator-selected adb client; never starts its server",
   list_adb_devices: "may start the local adb server, which REA does not own",
+  inspect_api_contract:
+    "states there is no target execution during offline contract parsing",
   inspect_firmware_regions: "states there is no target execution",
   inspect_gpu_code_objects:
     "reads static declarations without executing GPU code",
@@ -173,6 +178,7 @@ describe("tool effects", () => {
       ({ effects }) => effects.executesForeignCode || effects.mutatesDevice,
     );
     expect(destructive.map(({ name }) => name).sort()).toEqual([
+      "act_on_build_computer",
       "capture_browser_scenario",
       "capture_electron_scenario",
       "capture_native_ui_scenario",
@@ -192,6 +198,7 @@ describe("tool effects", () => {
       "rizin_debug_command",
       "start_adb_activity",
       "start_adb_app",
+      "start_build_computer",
       "start_rizin_debug_session",
       "stop_adb_app",
       "uninstall_adb_package",
@@ -255,8 +262,79 @@ describe("tool effects", () => {
   });
 });
 
+it("advertises IDA provider effects while retaining session bases", () => {
+  for (const name of [
+    "procedure_pseudo_code",
+    "procedure_assembly",
+    "read_function_instructions",
+    "analyze_function",
+  ]) {
+    expect(TOOL_EFFECTS[name], name).toMatchObject({
+      mutatesSession: true,
+      changesUiState: true,
+      accessesNetwork: true,
+    });
+    expect(toolSessionEffects(name), name).toMatchObject({
+      mutatesSession: true,
+      changesUiState: false,
+      accessesNetwork: false,
+    });
+    const contract = TOOL_CONTRACTS.find(
+      (candidate) => candidate.name === name,
+    );
+    expect(contract?.annotations, name).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: false,
+      openWorldHint: true,
+    });
+  }
+  for (const name of [
+    "batch_decompile",
+    "decompile_all",
+    "trace_native_values",
+    "inspect_native_api",
+  ]) {
+    expect(TOOL_EFFECTS[name], name).toMatchObject({
+      changesUiState: true,
+      accessesNetwork: true,
+    });
+    expect(toolSessionEffects(name), name).toMatchObject({
+      changesUiState: false,
+      accessesNetwork: false,
+    });
+  }
+});
+
+it("audits network access during lifecycle cleanup across provider changes", () => {
+  for (const name of [
+    "open_binary",
+    "open_bundle_resources",
+    "close_binary",
+    "reset_investigation",
+    "start_rizin_debug_session",
+    "close_rizin_debug_session",
+    "close_gdb_session",
+  ]) {
+    expect(toolSessionEffects(name).accessesNetwork, name).toBe(true);
+    expect(TOOL_EFFECTS[name]?.accessesNetwork, name).toBe(true);
+    expect(
+      TOOL_CONTRACTS.find((contract) => contract.name === name)?.annotations
+        .openWorldHint,
+      name,
+    ).toBe(true);
+  }
+});
+
 it("advertises signature inspection's temporary snapshot filesystem writes", () => {
   expect(TOOL_EFFECTS.inspect_signature).toMatchObject({
+    writesFilesystem: true,
+    mutatesTarget: false,
+    launchesProcess: true,
+  });
+});
+
+it("advertises inspect_macho's temporary private operand filesystem writes", () => {
+  expect(TOOL_EFFECTS.inspect_macho).toMatchObject({
     writesFilesystem: true,
     mutatesTarget: false,
     launchesProcess: true,
