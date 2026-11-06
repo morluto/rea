@@ -165,6 +165,18 @@ mitigations carry `evidence_kind: "inferred"`; enforcement remains unobserved.
 See
 [PE TLS callbacks and load configuration](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
 
+## Binary hardening
+
+Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
+when the question concerns PIE or ASLR, NX, RELRO, stack-protector or FORTIFY
+signs, control-flow flags, or stripped state. No `open_binary`, pwntools, or
+target execution is required. The CLI equivalent is
+`inspect-binary-hardening PATH`. Universal Mach-O files return one image per
+slice. A missing import is `unknown`, not proof the protection was omitted.
+Authenticode and Mach-O code-signature rows report presence, not validity.
+`hardened_runtime` stays unknown and names `inspect_signature`. See
+[binary hardening](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
+
 ## ELF note tables
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
@@ -317,6 +329,17 @@ question. Prefer literal search, names, decompilation, callers, callees, and
 cross-references. Addresses and recovered pseudocode are analysis observations,
 not original source. Provider unavailability and unsupported metadata remain
 unknown rather than false.
+
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
 
 For a completed `analyze_function` dossier, use `inspect_analysis_view` with
 `view: {kind: "native", facet: "value_flow_operations", offset: 0, limit: 32}`

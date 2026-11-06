@@ -43,6 +43,17 @@ focused tools such as `list_procedures` and `analyze_function` on the same sessi
 | What did the declared runtime scenario observe?              | [Desktop](#native-desktop-observation) or [call observation](#native-call-observation) |
 | What can this provider and host establish?                   | [Provider boundaries](#provider-and-verification-boundaries)                           |
 
+For large pseudocode, request `procedure_pseudo_code` with `detail: "summary"`
+on the first MCP call. It retains the complete observation and returns the
+original selection, text availability and length without the body. Use
+`normalized_result.parent_evidence_id` with `inspect_analysis_view` and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
+follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+code units, not lines or tokens. Pages reuse the same observation without
+repeating decompilation. Null and empty text remain distinct. Omitted or
+`complete` detail preserves full inline delivery. Summary delivery requires a
+retaining session and does not reduce the work or memory of decompilation.
+
 ## Exact CLI selectors
 
 `function`, `instructions` and `decompile` accept `--procedure=<name-or-address>`;
@@ -236,6 +247,11 @@ the index retains the complete selected names, addresses, provider facts and
 caveats. Failure details retain at most 32 rows within 2,048 JSON-encoded
 UTF-8 bytes; names may be omitted to keep complete addresses and reasons. The
 index retains every failure and its complete observed name.
+The manifest reports the procedure-inventory limitations of the current call in
+`inventory_limitations`. `decompile-index.json`'s `latest_run` records that
+call's filters, selected and excluded counts, and inventory limitations; older
+runs remain represented only by their retained function records, so a later
+inventory warning is not presented as the history of every file.
 Each function's `decompile-index.json` record, whatever its status, keeps the
 complete limitations of the observations it used.
 When available, `provider_source` records the source of that attempt's
