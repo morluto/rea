@@ -659,6 +659,7 @@
 * **managed:** retain comparison target cleanup ownership ([6734dee](https://github.com/morluto/rea/commit/6734dee6a8579e8d818d5cde99d8509a3f2f0f42))
 * **managed:** retain local signature comparison coverage ([e304464](https://github.com/morluto/rea/commit/e3044645c779e0e776034b172506e963eb195203))
 * **managed:** retain qualified native candidates ([9cad06d](https://github.com/morluto/rea/commit/9cad06db10385b6603be5a7ada8d07838c2cbb71))
+* **managed:** surface capacity limits in member comparison ([fbe7532](https://github.com/morluto/rea/commit/fbe7532fabb78de46bd00db845c1147b5325ad22)), closes [#9021](https://github.com/morluto/rea/issues/9021)
 * **managed:** unify metadata row and coded-index ownership ([416f16e](https://github.com/morluto/rea/commit/416f16e2ede8b31ec3bbb8d02efbf8c62074c8aa))
 * **managed:** unify native module identity matching ([f59fc19](https://github.com/morluto/rea/commit/f59fc19d2170c9fc1800cdd5ed9954731167840b))
 * **mcp:** advertise reduced array elements with Gemini-compatible item types ([#7107](https://github.com/morluto/rea/issues/7107)) ([58a5275](https://github.com/morluto/rea/commit/58a5275aa2247b961cb249ccbe4a98adbb706934)), closes [#5201](https://github.com/morluto/rea/issues/5201)
