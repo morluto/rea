@@ -26,57 +26,53 @@ export const registerOtlpTraceCommand = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.inspectOtlpTrace, {
-      description:
-        "Inventory spans, parent links and timing in a saved OTLP JSON trace export offline without contacting a collector",
-      args: z.object({
-        path: localPathStringSchema.describe(
-          "Local OTLP JSON trace export path",
-        ),
-      }),
-      options: z.object({
-        ...analysisEvidenceDeliveryOptions,
-      }),
-      run: ({ args, options }) =>
-        withCommandCancellation((signal) =>
-          logCliCommand(logger, CLI_COMMANDS.inspectOtlpTrace, async () => {
-            const selected = parseCliAnalysisEvidenceDelivery(
-              operation,
-              options,
-              z.object({ detail: analysisEvidenceDeliveryOptions.detail }),
-            );
-            if (!selected.ok) return projectAnalysisError(selected.error);
-            const resources = new ArtifactResourceScope();
-            const { inspectOtlpTraceEvidence } = await import(
-              "../application/otlpTrace/OtlpTraceService.js"
-            );
-            return deliverCliAnalysisEvidence({
-              callerInputPath: args.path,
-              run: async () => {
-                const inspected = await inspectOtlpTraceEvidence(
-                  { path: absoluteCallerPath(args.path) },
-                  resources,
-                  { signal },
-                );
-                return inspected.ok ? ok(inspected.value.evidence) : inspected;
-              },
-              service: {
-                close: () =>
-                  resources.close().catch((cause: unknown) => {
-                    throw projectArtifactCloseFailure(
-                      cause,
-                      OTLP_TRACE_PROVIDER.id,
-                      operation,
-                    );
-                  }),
-              },
-              providerId: OTLP_TRACE_PROVIDER.id,
-              operation,
-              signal,
-              detail: selected.value.detail,
-              evidenceOutput: selected.value.evidenceOutput,
-            });
-          }),
-        ),
-    },
-  );
+    description:
+      "Inventory spans, parent links and timing in a saved OTLP JSON trace export offline without contacting a collector",
+    args: z.object({
+      path: localPathStringSchema.describe("Local OTLP JSON trace export path"),
+    }),
+    options: z.object({
+      ...analysisEvidenceDeliveryOptions,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.inspectOtlpTrace, async () => {
+          const selected = parseCliAnalysisEvidenceDelivery(
+            operation,
+            options,
+            z.object({ detail: analysisEvidenceDeliveryOptions.detail }),
+          );
+          if (!selected.ok) return projectAnalysisError(selected.error);
+          const resources = new ArtifactResourceScope();
+          const { inspectOtlpTraceEvidence } =
+            await import("../application/otlpTrace/OtlpTraceService.js");
+          return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
+            run: async () => {
+              const inspected = await inspectOtlpTraceEvidence(
+                { path: absoluteCallerPath(args.path) },
+                resources,
+                { signal },
+              );
+              return inspected.ok ? ok(inspected.value.evidence) : inspected;
+            },
+            service: {
+              close: () =>
+                resources.close().catch((cause: unknown) => {
+                  throw projectArtifactCloseFailure(
+                    cause,
+                    OTLP_TRACE_PROVIDER.id,
+                    operation,
+                  );
+                }),
+            },
+            providerId: OTLP_TRACE_PROVIDER.id,
+            operation,
+            signal,
+            detail: selected.value.detail,
+            evidenceOutput: selected.value.evidenceOutput,
+          });
+        }),
+      ),
+  });
 };

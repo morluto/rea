@@ -52,11 +52,14 @@ const readHexId = (value: Json, bytes: number): string | null => {
   if (typeof value !== "string" || value.length === 0) return null;
   if (new RegExp(`^[0-9a-fA-F]{${bytes * 2}}$`, "u").test(value))
     return value.toLowerCase();
-  if (new RegExp(`^[A-Za-z0-9+/]{${Math.ceil((bytes * 4) / 3)}}={0,2}$`, "u").test(value)) {
+  if (
+    new RegExp(
+      `^[A-Za-z0-9+/]{${Math.ceil((bytes * 4) / 3)}}={0,2}$`,
+      "u",
+    ).test(value)
+  ) {
     const decoded = Buffer.from(value, "base64");
-    return decoded.length === bytes
-      ? decoded.toString("hex")
-      : null;
+    return decoded.length === bytes ? decoded.toString("hex") : null;
   }
   return null;
 };
@@ -264,8 +267,9 @@ const parseSpan = (
   const attributes = spanAttributes(retained);
   const redacted = attributes.filter((attribute) => attribute.redacted).length;
   const attributesDropped =
-    rawAttributes.filter((entry) => isRecord(entry) && typeof entry.key === "string")
-      .length - retained.length;
+    rawAttributes.filter(
+      (entry) => isRecord(entry) && typeof entry.key === "string",
+    ).length - retained.length;
   if (attributesDropped > 0)
     problems.push({
       code: "attribute-limit-exceeded",
@@ -352,7 +356,10 @@ const walkResourceSpans = (
   };
   if (!isRecord(envelope) || !Array.isArray(envelope.resourceSpans))
     return { walked, unsupported: true };
-  for (const [resourceIndex, resourceSpans] of envelope.resourceSpans.entries()) {
+  for (const [
+    resourceIndex,
+    resourceSpans,
+  ] of envelope.resourceSpans.entries()) {
     if (!isRecord(resourceSpans)) {
       walked.droppedRecords += 1;
       continue;
@@ -368,7 +375,9 @@ const walkResourceSpans = (
         walked.droppedRecords += 1;
         continue;
       }
-      const scopeRecord = isRecord(scopeSpans.scope) ? scopeSpans.scope : undefined;
+      const scopeRecord = isRecord(scopeSpans.scope)
+        ? scopeSpans.scope
+        : undefined;
       const scope = {
         name: typeof scopeRecord?.name === "string" ? scopeRecord.name : null,
         version:
@@ -544,7 +553,8 @@ export const parseOtlpTrace = (
             span.parent_span_id !== null &&
             span.parent_span_id !== "0000000000000000",
         ).length,
-        distinct_traces: new Set(walked.spans.map((span) => span.trace_id)).size,
+        distinct_traces: new Set(walked.spans.map((span) => span.trace_id))
+          .size,
         distinct_services: new Set(
           walked.spans
             .map((span) => span.service_name)

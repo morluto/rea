@@ -1,8 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  otlpTraceSchema,
-  type OtlpTraceArtifact,
-} from "./otlpTrace.js";
+import { otlpTraceSchema, type OtlpTraceArtifact } from "./otlpTrace.js";
 import { parseOtlpTrace } from "./parseOtlpTrace.js";
 
 const artifact: OtlpTraceArtifact = {
@@ -11,9 +8,7 @@ const artifact: OtlpTraceArtifact = {
   bytes: 1024,
 };
 
-const span = (
-  overrides: Record<string, unknown>,
-): Record<string, unknown> => ({
+const span = (overrides: Record<string, unknown>): Record<string, unknown> => ({
   traceId: "a".repeat(32),
   spanId: "0".repeat(15) + "1",
   name: "root",
@@ -109,7 +104,10 @@ describe("parseOtlpTrace", () => {
   it("preserves a reversed interval without deriving a duration", () => {
     const report = parse(
       envelope([
-        span({ startTimeUnixNano: "2000000000", endTimeUnixNano: "1000000000" }),
+        span({
+          startTimeUnixNano: "2000000000",
+          endTimeUnixNano: "1000000000",
+        }),
       ]),
     );
     expect(report.spans[0]).toMatchObject({
@@ -202,7 +200,6 @@ describe("parseOtlpTrace", () => {
 });
 
 describe("parseOtlpTrace attributes", () => {
-
   it("redacts credential-carrying attribute values and counts only element kinds", () => {
     const report = parse(
       envelope([
