@@ -122,3 +122,13 @@ export const nativeValueTraceSchema = z.strictObject({
     ),
   limitations: z.array(z.string()),
 });
+
+/** Read compatibility for retained trace Evidence from earlier REA versions. */
+export const nativeValueTraceEvidenceSchema = nativeValueTraceSchema.extend({
+  unknowns: z.array(
+    nativeValueTraceSchema.shape.unknowns.element.extend({
+      // Unknowns retained before this field existed read back as null.
+      related_procedure: z.string().nullable().default(null),
+    }),
+  ),
+});

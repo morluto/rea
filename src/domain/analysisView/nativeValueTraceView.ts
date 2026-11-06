@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { nativeValueTraceSchema } from "../native/nativeValueTrace.js";
+import {
+  nativeValueTraceEvidenceSchema,
+  nativeValueTraceSchema,
+} from "../native/nativeValueTrace.js";
 import { err, ok } from "../result.js";
 import type { AnalysisViewParent } from "./analysisViewParent.js";
 import { createAnalysisViewResultReader } from "./analysisViewParent.js";
@@ -32,7 +35,9 @@ export const nativeValueTraceSummarySchema = z.strictObject({
   limitation_count: z.int().nonnegative(),
 });
 
-const readTrace = createAnalysisViewResultReader(nativeValueTraceSchema);
+const readTrace = createAnalysisViewResultReader(
+  nativeValueTraceEvidenceSchema,
+);
 
 /** Keep the bounded graph page and its completeness state in source Evidence. */
 export const projectNativeValueTraceView = (
