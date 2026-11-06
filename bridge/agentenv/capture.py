@@ -46,16 +46,17 @@ def _environment(work: str) -> dict:
 
 
 def _apt(work: str, timeout: float) -> dict:
-    """Download the package lists into the work folder as the session user, once per computer."""
+    """Download the package lists into the work folder as the session user, until one update succeeds."""
     root = os.path.join(work, "apt")
     lists = os.path.join(root, "lists")
+    updated = os.path.join(root, "updated")
     os.makedirs(os.path.join(lists, "partial"), exist_ok=True)
     os.makedirs(os.path.join(root, "cache", "archives", "partial"), exist_ok=True)
     with open(os.path.join(root, "apt.conf"), "w", encoding="utf-8") as conf:
         conf.write(f'Dir::State::Lists "{lists}";\nDir::Cache "{root}/cache";\nDebug::NoLocking "true";\n')
     # apt keeps lists compressed as it fetched them, such as *_Packages.lz4 on Ubuntu.
     count = lambda: len([name for name in os.listdir(lists) if re.search(r"_Packages(\.\w+)?$", name)])  # noqa: E731
-    if count() > 0:
+    if os.path.exists(updated):
         return {"lists": count(), "updated": False}
     log = os.path.join(root, "update.log")
     try:
@@ -65,6 +66,8 @@ def _apt(work: str, timeout: float) -> dict:
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"lists": count(), "updated": True, "error": f"{type(error).__name__}: {error}"}
     if code == 0:
+        # Only a whole update is kept, so a failed or partial one runs again on the next start.
+        open(updated, "w").close()
         return {"lists": count(), "updated": True, "exit_code": code}
     return {"lists": count(), "updated": True, "exit_code": code,
             "error": f"apt-get update exited {code}: {_tail(log)[-1500:].strip()}"}

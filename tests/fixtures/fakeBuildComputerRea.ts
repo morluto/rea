@@ -107,7 +107,7 @@ else:
     sys.exit(f"unexpected command {command}")
 `;
 
-/** apt-get update as an ordinary user under APT_CONFIG: one Packages list in the folder it names. */
+/** apt-get update as an ordinary user under APT_CONFIG: one Packages list in the folder it names, before failing when FAKE_APT_PARTIAL is set. */
 const FAKE_APT_GET = String.raw`
 import os
 import re
@@ -116,6 +116,8 @@ import sys
 with open(os.environ["APT_CONFIG"]) as handle:
     lists = re.search(r'Dir::State::Lists "([^"]+)"', handle.read()).group(1)
 code = int(os.environ.get("FAKE_APT_EXIT", "0"))
+if code != 0 and os.environ.get("FAKE_APT_PARTIAL"):
+    open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages.lz4"), "w").close()
 if code != 0:
     print("Err:1 http://archive.ubuntu.com/ubuntu noble InRelease")
     print("E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'")
