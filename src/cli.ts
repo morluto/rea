@@ -350,18 +350,19 @@ export const createCli = (
         unexpectedArgument !== undefined
       ) {
         const flag = missingValue ?? emptyValue ?? unexpectedArgument!;
-        const message =
-          missingValue !== undefined || emptyValue !== undefined
-            ? `Missing value for flag: ${flag.replace(/=.*$/, "")}`
-            : `Unexpected argument: ${flag}`;
-        const field =
-          unexpectedArgument !== undefined
-            ? "agent"
-            : flag.includes("command") ||
-                flag === "-c" ||
-                flag.startsWith("-c=")
-              ? "command"
-              : "agent";
+        const isMissingValue =
+          missingValue !== undefined || emptyValue !== undefined;
+        const message = isMissingValue
+          ? `Missing value for flag: ${flag.replace(/=.*$/, "")}`
+          : `Unexpected argument: ${flag}`;
+        // The field must come from the same error the message describes: a
+        // stray word alongside a missing `--command` value reports the missing
+        // flag, and scripts read this path to find which option to fix.
+        const field = isMissingValue
+          ? flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
+            ? "command"
+            : "agent"
+          : "agent";
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));

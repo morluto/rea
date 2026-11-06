@@ -145,3 +145,43 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "mcp add names the option the reported error is about",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-mcp-add-field-");
+    const home = join(root, "home");
+    const run = (arguments_: readonly string[]) =>
+      cli.run({
+        arguments: [...arguments_, "--json"],
+        cwd: root,
+        environment: {
+          HOME: home,
+          USERPROFILE: home,
+          XDG_CONFIG_HOME: join(home, ".config"),
+        },
+        timeoutMs: 20_000,
+      });
+
+    // A stray word alongside a missing value: the message describes the missing
+    // flag, so `path` must name that option rather than the stray argument.
+    for (const [arguments_, field] of [
+      [["mcp", "add", "extra", "--command"], "command"],
+      [["mcp", "add", "extra", "-c"], "command"],
+      [["mcp", "add", "extra", "--agent"], "agent"],
+    ] as const) {
+      const result = await run(arguments_);
+      expect(result.exitCode, result.stderr).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({ code: "invalid_value", path: field }),
+        ],
+      });
+      expect(
+        (result.json as { message?: string }).message,
+        "the message and the field must describe the same error",
+      ).toContain("Missing value for flag");
+    }
+  },
+);
