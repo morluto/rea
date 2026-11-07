@@ -84,8 +84,10 @@ export const evtxArchiveSchema = z.strictObject({
       bytes: z.int().nonnegative(),
       first_event_record_id: z.int().nonnegative().nullable(),
       last_event_record_id: z.int().nonnegative().nullable(),
-      first_timestamp_ms: z.int().nonnegative().nullable(),
-      last_timestamp_ms: z.int().nonnegative().nullable(),
+      // A log captured by a clock set before 1970 yields negative Unix
+      // milliseconds; `timestampMs` accepts those, so these fields must too.
+      first_timestamp_ms: z.int().nullable(),
+      last_timestamp_ms: z.int().nullable(),
       events: z.int().nonnegative(),
       /** Header checksum matched, mismatched, or was not checked. */
       checksum: z.enum(["matched", "mismatched", "not-checked"]),

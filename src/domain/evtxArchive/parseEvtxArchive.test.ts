@@ -172,6 +172,38 @@ describe("parseEvtxArchive", () => {
     );
   });
 
+  it("takes the endpoints from the first and last record, not from the first value", () => {
+    // An unset timestamp on either end must stay null instead of borrowing an
+    // inner record's value.
+    const archive = parsed(
+      evtx([
+        chunk(1, [
+          record(1),
+          withTimestamp(record(2), 1_700_000_000_000),
+          record(3),
+        ]),
+      ]),
+    );
+    expect(archive.chunks[0]?.first_timestamp_ms).toBeNull();
+    expect(archive.chunks[0]?.last_timestamp_ms).toBeNull();
+
+    const head = parsed(
+      evtx([chunk(1, [withTimestamp(record(1), 1_700_000_000_000)])]),
+    );
+    expect(head.chunks[0]?.first_timestamp_ms).toBe(1_700_000_000_000);
+    expect(head.chunks[0]?.last_timestamp_ms).toBe(1_700_000_000_000);
+  });
+
+  it("accepts chunk timestamps from before 1970", () => {
+    // `timestampMs` admits them as negative Unix milliseconds, so the output
+    // schema must not reject the chunk fields it feeds.
+    const archive = parsed(
+      evtx([chunk(1, [withTimestamp(record(1), -100_000_000_000)])]),
+    );
+    expect(archive.chunks[0]?.first_timestamp_ms).toBe(-100_000_000_000);
+    expect(evtxArchiveSchema.safeParse(archive).success).toBe(true);
+  });
+
   it("leaves an unset record timestamp null rather than epoch zero", () => {
     const archive = parsed(evtx([chunk(0, [record(7)])]));
     expect(archive.events[0]?.header_timestamp_ms).toBeNull();

@@ -163,10 +163,13 @@ const readChunk = (
         writtenMs === null ? null : new Date(writtenMs).toISOString(),
       record_bytes: size,
     });
+    // The endpoints describe the first and last RECORD, not the first and last
+    // record that happened to carry a value: taking the first non-null would
+    // report an inner record's timestamp (or id) when an endpoint is unset.
     if (first === null) first = recordId;
-    if (firstTs === null) firstTs = writtenMs;
-    if (recordId !== null) last = recordId;
-    if (writtenMs !== null) lastTs = writtenMs;
+    if (events === 0) firstTs = writtenMs;
+    last = recordId;
+    lastTs = writtenMs;
     events += 1;
     cursor += size;
   }
