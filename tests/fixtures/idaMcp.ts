@@ -191,6 +191,19 @@ export class RecordingIdaMcp implements IdaMcpConnection {
             more: false,
           },
         ];
+      case "callgraph":
+        return [
+          {
+            root: Array.isArray(args.roots)
+              ? (args.roots[0] ?? "0x1000")
+              : "0x1000",
+            nodes: [],
+            edges: [],
+            truncated: false,
+            per_func_capped: false,
+            max_edges_per_func: 200,
+          },
+        ];
       case "get_xrefs_to":
         return [{ address: "0x1004", type: "code", function: fn }];
       case "xrefs_to":

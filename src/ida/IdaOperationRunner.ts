@@ -19,6 +19,7 @@ import {
 } from "../process/RegexMatcher.js";
 import {
   AnalysisInputError,
+  AnalysisCapabilityUnavailableError,
   AnalysisCancelledError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
@@ -30,6 +31,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import { combineFunctionRelationshipCoverage } from "../domain/functionCallCoverage.js";
 import { readCallGraphCallees, unavailableCallGraph } from "./IdaCallGraph.js";
+import { readModernCallers } from "./IdaCallers.js";
 import type { IdaMcpConnection } from "./IdaMcpConnection.js";
 import type { IdaOperation } from "./IdaProviderCapabilities.js";
 import {
@@ -520,6 +522,24 @@ export class IdaOperationRunner {
           result.set(item.address, identity(item));
         else queries.push(item.name);
       }
+    } else if (
+      direction === "callers" &&
+      this.protocol === "modern" &&
+      this.options.callGraphAvailable !== false
+    ) {
+      const references = await this.xrefs(fn.address);
+      const callers = await readModernCallers(
+        (tool, args) => this.call(tool, args),
+        fn,
+        references,
+        this.referencesTruncated,
+      );
+      this.limitations.push(...callers.limitations);
+      return {
+        items: callers.callers.map(identity),
+        coverage: callers.coverage,
+        availability: { available: true },
+      };
     } else if (direction === "callers") {
       this.limitations.push(
         "Upstream xrefs classify references as code or data, without proving call edges. Direct callers are unavailable in this profile.",
@@ -698,9 +718,16 @@ export class IdaOperationRunner {
         return lines(await this.assembly(fn)).join("\n");
       case "procedure_callers":
       case "procedure_callees": {
-        if (operation === "procedure_callers" && this.protocol !== "legacy")
-          throw new AnalysisProtocolError(
-            "This IDA MCP profile cannot distinguish direct callers from other code references.",
+        if (
+          operation === "procedure_callers" &&
+          (this.protocol === "native" ||
+            (this.protocol === "modern" &&
+              this.options.callGraphAvailable === false))
+        )
+          throw new AnalysisCapabilityUnavailableError(
+            "ida",
+            operation,
+            "Direct callers require the modern upstream callgraph tool or the legacy get_callers profile.",
           );
         const relationships = await this.relationships(
           fn,

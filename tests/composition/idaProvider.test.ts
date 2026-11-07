@@ -96,6 +96,97 @@ const reobservesExternallyMutableState = async (): Promise<void> => {
   expect(producer.closes).toBe(1);
 };
 
+describe("IDA connected catalog availability", () => {
+  it.each([false, true])(
+    "learns optional caller availability from each connected catalog (callgraph=%s)",
+    async (callgraph) => {
+      const { root, target } = await createIdaTarget();
+      roots.push(root);
+      const path = join(root, "registration.json");
+      await writeFile(
+        path,
+        JSON.stringify({
+          command: "fixture",
+          mode: "headless",
+          workspaceRoot: root,
+        }),
+      );
+      const config = parseConfig({ REA_IDA_MCP_CONFIG: path });
+      if (!config.ok) throw config.error;
+      const producers: RecordingIdaMcp[] = [];
+      let advertised = callgraph;
+      const provider = new IdaProvider(config.value, {}, () => {
+        const producer = new RecordingIdaMcp(target, "headless");
+        const connect = producer.connect.bind(producer);
+        producer.connect = async () =>
+          (await connect()).filter(
+            (name) => advertised || name !== "callgraph",
+          );
+        producers.push(producer);
+        return producer;
+      });
+      const session = new BinarySession(
+        SessionProviderRouter.selectable(
+          new AnalysisProviderRegistry([provider]),
+          [],
+        ),
+      );
+      try {
+        for (const available of [callgraph, !callgraph]) {
+          advertised = available;
+          expect(
+            (await session.open(target.path, { providerId: "ida" })).ok,
+          ).toBe(true);
+          expect((await session.execute("list_procedures", {})).ok).toBe(true);
+          const producer = producers.at(-1)!;
+          expect(producer.calls.some(({ name }) => name === "callgraph")).toBe(
+            false,
+          );
+          expect(await session.status()).toMatchObject({
+            capabilities: expect.arrayContaining([
+              expect.objectContaining({
+                provider: expect.objectContaining({ id: "ida" }),
+                groups: expect.arrayContaining([
+                  expect.objectContaining({
+                    operations: expect.arrayContaining(["procedure_callers"]),
+                    available,
+                    reason: available
+                      ? null
+                      : expect.stringContaining("callgraph"),
+                  }),
+                ]),
+              }),
+            ]),
+          });
+          const callsBefore = producer.calls.length;
+          const callers = await session.execute("procedure_callers", {
+            procedure: "main",
+          });
+          expect(callers.ok).toBe(available);
+          if (!available) {
+            expect(callers).toMatchObject({
+              ok: false,
+              error: { _tag: "AnalysisCapabilityUnavailableError" },
+            });
+            expect(producer.calls).toHaveLength(callsBefore);
+            expect(
+              (
+                await session.execute("procedure_pseudo_code", {
+                  procedure: "main",
+                })
+              ).ok,
+            ).toBe(true);
+          }
+          expect((await session.close()).ok).toBe(true);
+        }
+        expect(producers).toHaveLength(2);
+      } finally {
+        expect((await session.close()).ok).toBe(true);
+      }
+    },
+  );
+});
+
 describe("IDA provider composition", () => {
   it("discovers without launching and commits adapter semantics without persisting credentials", async () => {
     const { root, target } = await createIdaTarget();
@@ -131,7 +222,7 @@ describe("IDA provider composition", () => {
       (await provider.inspectReadinessSnapshot()).capabilities.find(
         ({ operation }) => operation === "procedure_callers",
       )?.available,
-    ).toBe(false);
+    ).toBe(true);
   });
   it(
     "re-observes externally mutable state even when a document is explicit and a snapshot is imported",

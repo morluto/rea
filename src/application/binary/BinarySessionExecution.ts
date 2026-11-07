@@ -22,6 +22,7 @@ import {
   requiresNativeSourceAdmissionBeforeReplay,
 } from "./AnalysisSnapshotCache.js";
 import type { SessionProviderRoute } from "./SessionProviderRouter.js";
+import { sessionRouteCapabilities } from "./SessionProviderRouter.js";
 
 interface ActiveExecutionBinding {
   readonly target: BinaryTarget;
@@ -69,7 +70,9 @@ export const prepareSessionExecution = (
     lookupSnapshot,
   } = input;
   if (active === undefined) return err(new NoBinaryOpenError());
-  const capability = active.route.capabilities.get(operation);
+  const capability = sessionRouteCapabilities(active.route, active.client).get(
+    operation,
+  );
   if (capability?.available !== true) {
     const selectionError = unboundOperationError(operation, active.route);
     if (selectionError !== undefined) return err(selectionError);

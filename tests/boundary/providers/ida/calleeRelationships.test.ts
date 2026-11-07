@@ -28,7 +28,7 @@ const armSession = () =>
     leafRoots: ["0x2000", "0x3000"],
   });
 
-it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", async () => {
+it("keeps partial caller coverage and callee diagnostics in an ARM64 dossier", async () => {
   const { client } = await armSession();
   try {
     const result = await client.execute("analyze_function", {
@@ -36,15 +36,18 @@ it("keeps unknown caller coverage and callee diagnostics in an ARM64 dossier", a
     });
     if (!result.ok) throw result.error;
     expect(result.value.relationshipCoverage).toMatchObject({
-      status: "unknown",
-      reason:
-        "Callers: Upstream xrefs do not establish direct caller relationships.",
+      status: "partial",
+      limited_directions: ["callers"],
+      limitations: expect.arrayContaining([
+        expect.stringContaining("selected entry only"),
+      ]),
       diagnostics: expect.arrayContaining([
         expect.stringContaining("targets IDA does not recognize as functions"),
       ]),
     });
     expect(result.value.result).toMatchObject({
       callers: [],
+      facet_availability: { callers: { available: true } },
       callees: [{ address: "0x2000" }, { address: "0x3000" }],
     });
   } finally {

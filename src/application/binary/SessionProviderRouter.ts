@@ -200,6 +200,37 @@ const capabilityMap = (
 ): ReadonlyMap<string, CapabilityDescriptor> =>
   new Map(capabilities.map((descriptor) => [descriptor.operation, descriptor]));
 
+/** Apply only availability from the bound client; declarations retain identity and effects. */
+export const sessionRouteCapabilities = (
+  route: SessionProviderRoute,
+  client: AnalysisClient,
+): ReadonlyMap<string, CapabilityDescriptor> => {
+  const observed = client.capabilityAvailabilitySnapshot?.() ?? [];
+  if (observed.length === 0) return route.capabilities;
+  const capabilities = new Map(route.capabilities);
+  for (const snapshot of observed) {
+    if (snapshot.available) continue;
+    const declared = capabilities.get(snapshot.operation);
+    if (
+      declared === undefined ||
+      declared.provider.id !== snapshot.provider.id ||
+      declared.provider.name !== snapshot.provider.name ||
+      declared.provider.version !== snapshot.provider.version
+    )
+      continue;
+    const { availabilityCode: _availabilityCode, ...descriptor } = declared;
+    capabilities.set(snapshot.operation, {
+      ...descriptor,
+      available: false,
+      reason: snapshot.reason,
+      ...(snapshot.availabilityCode === undefined
+        ? {}
+        : { availabilityCode: snapshot.availabilityCode }),
+    });
+  }
+  return capabilities;
+};
+
 const assertDisjoint = (
   providers: readonly AnalysisProvider[],
 ): ReadonlySet<string> => {
