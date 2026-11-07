@@ -208,7 +208,7 @@ const nearVerdict = (
   expected: number,
   tolerance: number,
 ): Verdict => {
-  const number = numberOf(found);
+  const number = numberOf(isXmlElement(found) ? elementText(found) : found);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);

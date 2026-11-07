@@ -6,6 +6,7 @@ import {
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
+import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -439,7 +440,9 @@ export const wholeTextCheck = (
   before: string | undefined,
 ): Pick<Placed, "check" | "guards"> => {
   const { value } = now;
-  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`, and the first node alone is then the wrong number.
+  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
+  const numeric = valueEqualsCheck(file, pointer, value, before);
+  if ("tolerance" in numeric) return { check: numeric, guards: [] };
   return (
     (before === undefined
       ? undefined
