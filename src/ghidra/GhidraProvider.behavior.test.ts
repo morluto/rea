@@ -1302,6 +1302,8 @@ describe("Ghidra result projection", () => {
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],
     ["ambiguous", "AnalysisInputError"],
+    ["file_offset_ambiguous", "AnalysisInputError"],
+    ["procedure_ambiguous", "AnalysisInputError"],
     ["method_unavailable", "AnalysisCapabilityUnavailableError"],
   ] as const)(
     "projects remote %s without losing its typed meaning",
