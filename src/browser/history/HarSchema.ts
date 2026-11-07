@@ -129,7 +129,8 @@ const allowObservedProducerRepresentations = (
   const log = value.log;
   if (!captureObject(log.creator) || !Array.isArray(log.entries)) return null;
   const mitmproxy =
-    log.creator.name === "mitmproxy" && log.creator.version === "12.2.3";
+    log.creator.name === "mitmproxy" &&
+    (log.creator.version === "12.2.3" || log.creator.version === "12.3.1");
   const bracketedIpv6Producer = bracketedIpv6ProducerOf(log.creator);
   if (!mitmproxy && bracketedIpv6Producer === null) return null;
   const adaptedEntries: number[] = [];

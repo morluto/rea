@@ -737,35 +737,38 @@ it.each([
   expect(() => decodeHarCapture(text, [])).toThrow();
 });
 
-it("preserves observed SaveHar null post-data without broadening arbitrary HAR producers", () => {
-  const fixture = historicalHar();
-  const first = fixture.log.entries[0];
-  if (first === undefined) throw new Error("fixture missing");
-  const log = {
-    ...fixture.log,
-    creator: { name: "mitmproxy", version: "12.2.3" },
-    entries: [
-      {
-        ...first,
-        request: {
-          ...first.request,
-          postData: { mimeType: "text/plain", text: null },
+it.each(["12.2.3", "12.3.1"])(
+  "preserves observed SaveHar null post-data for mitmproxy %s without broadening arbitrary HAR producers",
+  (version) => {
+    const fixture = historicalHar();
+    const first = fixture.log.entries[0];
+    if (first === undefined) throw new Error("fixture missing");
+    const log = {
+      ...fixture.log,
+      creator: { name: "mitmproxy", version },
+      entries: [
+        {
+          ...first,
+          request: {
+            ...first.request,
+            postData: { mimeType: "text/plain", text: null },
+          },
         },
-      },
-    ],
-  };
-  expect(
-    decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
-  ).toMatchObject({ request: { postData: { text: null } } });
-  expect(() =>
-    decodeHarCapture(
-      JSON.stringify({
-        log: { ...log, creator: { name: "other", version: "1" } },
-      }),
-      [],
-    ),
-  ).toThrow("HAR schema validation failed");
-});
+      ],
+    };
+    expect(
+      decodeHarCapture(JSON.stringify({ log }), []).records[0]?.reported,
+    ).toMatchObject({ request: { postData: { text: null } } });
+    expect(() =>
+      decodeHarCapture(
+        JSON.stringify({
+          log: { ...log, creator: { name: "other", version: "1" } },
+        }),
+        [],
+      ),
+    ).toThrow("HAR schema validation failed");
+  },
+);
 
 it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
   "retains Playwright 1.58.2 bracketed IPv6 spelling in reported Evidence: %s",

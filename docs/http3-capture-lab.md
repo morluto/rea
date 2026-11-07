@@ -33,8 +33,8 @@ generating traffic. Host trust, routes and installed packages stay unchanged.
 Record the image digest, REA source revision and these dependency versions:
 
 - REA's `.nvmrc`, `package.json#packageManager` and locked npm dependencies.
-- Official Linux x86_64 mitmproxy **12.2.3** standalone archive. SHA-256:
-  `2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5`.
+- Official Linux x86_64 mitmproxy **12.3.1** standalone archive. SHA-256:
+  `f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5`.
 - A private Python virtual environment using the complete pinned graph in
   `scripts/fixtures/http3-lab-requirements.txt`. Save `pip freeze` and build/download logs.
 - OpenSSL and cURL advertising HTTP3 and HTTP2 in `curl --version`.
@@ -65,9 +65,9 @@ and verify it, then extract to the guest's private tools directory:
 
 ```sh
 mkdir -p /absolute/lab/tools
-curl --fail --location https://downloads.mitmproxy.org/12.2.3/mitmproxy-12.2.3-linux-x86_64.tar.gz \
+curl --fail --location https://downloads.mitmproxy.org/12.3.1/mitmproxy-12.3.1-linux-x86_64.tar.gz \
   --output /absolute/lab/mitmproxy.tar.gz
-printf '%s  %s\n' 2e95286b618fa6fd33e5e62a78c2e5112571d85f42ec2bac29b97ee242bdb5c5 \
+printf '%s  %s\n' f7b4237f5702f6cd21357fe6e4680a7e905f8f9b816b872230d018ea696c34d5 \
   /absolute/lab/mitmproxy.tar.gz | sha256sum --check --strict
 tar -xzf /absolute/lab/mitmproxy.tar.gz -C /absolute/lab/tools
 /absolute/lab/tools/mitmdump --version
@@ -157,7 +157,7 @@ keys, dependencies or VM disks. Shut down the guest after exporting evidence.
 The reverse proxy can preserve authority `lab.test:18443` while recording origin
 port 19443. Mitmproxy's serialized flow/connection UUIDs are not stream IDs.
 Endpoint stream IDs are scoped observations; this test invents no cross-leg
-mapping. Mitmproxy 12.2.3's `QUICv1` label alone does not prove negotiation: the
+mapping. Mitmproxy 12.3.1's `QUICv1` label alone does not prove negotiation: the
 fixture checks the negotiated `_quic._version` in pinned aioquic 1.2.0.
 
 Coverage is native capture, Linux reverse mode, QUIC v1 and these clients.
@@ -167,9 +167,9 @@ Local/WireGuard, browsers, QUIC v2, migration, 0-RTT, mTLS, replay, sustained lo
 and loss tolerance remain unverified by this profile. Passing it does not
 establish general HTTP/3 support in REA.
 
-Official references: [mitmproxy protocol support](https://github.com/mitmproxy/mitmproxy/blob/v12.2.3/docs/src/content/concepts/protocols.md),
-[HTTP/3 implementation](https://github.com/mitmproxy/mitmproxy/blob/v12.2.3/mitmproxy/proxy/layers/http/_http3.py),
-[serialized HTTP state](https://github.com/mitmproxy/mitmproxy/blob/v12.2.3/mitmproxy/http.py),
+Official references: [mitmproxy protocol support](https://github.com/mitmproxy/mitmproxy/blob/v12.3.1/docs/src/content/concepts/protocols.md),
+[HTTP/3 implementation](https://github.com/mitmproxy/mitmproxy/blob/v12.3.1/mitmproxy/proxy/layers/http/_http3.py),
+[serialized HTTP state](https://github.com/mitmproxy/mitmproxy/blob/v12.3.1/mitmproxy/http.py),
 [aioquic configuration](https://github.com/aiortc/aioquic/blob/1.2.0/src/aioquic/quic/configuration.py).
 
 ## Verifier regressions

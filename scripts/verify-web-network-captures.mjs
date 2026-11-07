@@ -32,7 +32,7 @@ if (
   !isAbsolute(executable)
 )
   throw new Error(
-    "verify:web:network-captures requires Linux and absolute REA_MITMDUMP_COMMAND for caller-supplied mitmdump 12.2.3",
+    "verify:web:network-captures requires Linux and absolute REA_MITMDUMP_COMMAND for caller-supplied mitmdump 12.3.1",
   );
 await access(executable);
 const entrypoint =
@@ -159,7 +159,7 @@ try {
         );
       } else {
         assert.equal(value.container.reported.log.creator.name, "mitmproxy");
-        assert.equal(value.container.reported.log.creator.version, "12.2.3");
+        assert.equal(value.container.reported.log.creator.version, "12.3.1");
         assert.equal(value.records[0].reported.request.postData.text, null);
         assertBinary(
           first,
@@ -930,7 +930,7 @@ console.log(
     {
       status: "passed",
       public_cases: cases,
-      upstream: "mitmproxy 12.2.3 FlowWriter + SaveHar",
+      upstream: "mitmproxy 12.3.1 FlowWriter + SaveHar",
       native_failure_classifications: 7,
       offline: true,
       verifier,
