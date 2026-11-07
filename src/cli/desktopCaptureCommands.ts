@@ -6,6 +6,10 @@ import type { Logger } from "pino";
 import { captureDesktopApplication } from "../application/desktop/DesktopApplicationCapture.js";
 import type { DesktopStateReaders } from "../application/desktop/DesktopApplicationState.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import type { Evidence } from "../domain/evidence.js";
 import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -125,7 +129,54 @@ const withStateReaders = async (
       });
       return result instanceof AnalysisError ? err(result) : ok(result);
     },
-    sqlite,
+    {
+      close: async () => {
+        const failures: unknown[] = [];
+        try {
+          await sqlite.close();
+        } catch (cause: unknown) {
+          failures.push(cause);
+        }
+        if (operation === "export_desktop_application") {
+          try {
+            const { OwnedWorkerRuntime } =
+              await import("../process/OwnedWorkerRuntime.js");
+            await OwnedWorkerRuntime.retryPending();
+          } catch (cause: unknown) {
+            failures.push(cause);
+          }
+        }
+        if (failures.length === 1) throw failures[0];
+        if (failures.length > 1) {
+          const typed = failures.map((cause) => {
+            if (cause instanceof AnalysisError) return cause;
+            const observation =
+              cause instanceof ArtifactReaderFailure
+                ? ArtifactReaderFailure.cleanupObservation(cause, [])
+                : {
+                    resources: [],
+                    reason:
+                      cause instanceof Error ? cause.message : String(cause),
+                  };
+            const failure = new ProviderCleanupError(
+              "rea-desktop",
+              observation.resources,
+              { reason: observation.reason },
+              { operation, cause },
+            );
+            bindArtifactFileCleanup(cause, failure);
+            return failure;
+          });
+          const combined = analysisErrorWithCleanupFailure(
+            typed[0]!,
+            typed[1]!,
+            operation,
+          );
+          combined.bindCleanupDependencies(typed);
+          throw combined;
+        }
+      },
+    },
     "rea-desktop",
     operation,
     signal,

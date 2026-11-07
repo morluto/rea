@@ -4,6 +4,12 @@ import { join } from "node:path";
 
 import type { DesktopTaskReader } from "../../domain/desktop/appTask.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
+import { processWorkerCleanup } from "../../process/OwnedWorkerRuntime.js";
+import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import {
+  readerFailure,
+  retainReaderCleanup,
+} from "./DesktopTaskReaderCleanup.js";
 import {
   READER_RUNNER_SLACK_S,
   readerAnswerView,
@@ -51,6 +57,27 @@ export const readTaskReaderViews = async (
   return views;
 };
 
+/** Recover only a complete, valid answer emitted before later finalization failed. */
+const completedReaderAnswer = (
+  cause: unknown,
+): { readonly view: TaskFileView | undefined } | undefined => {
+  if (
+    !(cause instanceof OwnedCommandFailure) ||
+    cause.collectionFailure ||
+    cause.snapshot?.exitCode !== 0 ||
+    cause.snapshot.outputIncomplete === true
+  )
+    return undefined;
+  const stdout = cause.snapshot.stdout;
+  if (stdout.invalidUtf8 || stdout.bytes !== stdout.observedBytes)
+    return undefined;
+  try {
+    return { view: readerAnswerView(stdout.text) };
+  } catch {
+    return undefined;
+  }
+};
+
 /** Each reader's view of the bytes `bytesOf` gives for its file, each written to a private folder the runner reads. */
 export const readerViewsOfBytes = async (
   readers: readonly DesktopTaskReader[],
@@ -58,6 +85,8 @@ export const readerViewsOfBytes = async (
   run: ReaderCommandRun,
 ): Promise<ReadonlyMap<string, TaskFileView>> => {
   const views = new Map<string, TaskFileView>();
+  if (readers.length > 0) await processWorkerCleanup.retry();
+  const absent: string[] = [];
   for (const reader of readers) {
     const file = await bytesOf(reader);
     if (file.kind === "absent") continue;
@@ -66,15 +95,31 @@ export const readerViewsOfBytes = async (
       continue;
     }
     const folder = await mkdtemp(join(tmpdir(), "rea-reader-bytes-"));
+    let failure: { readonly cause: unknown } | undefined;
     try {
       const path = join(folder, reader.file.split("/").at(-1) ?? "file");
       await writeFile(path, file.bytes);
       // The runner works inside this folder, so removing it cleans up after a runner that was killed.
       const read = await readTaskReaderViews([reader], run, () => path, folder);
       for (const [id, view] of read) views.set(id, view);
-    } finally {
-      await rm(folder, { recursive: true, force: true });
+      if (!read.has(reader.id)) absent.push(reader.id);
+    } catch (cause: unknown) {
+      failure = { cause };
+      const completed = completedReaderAnswer(cause);
+      if (completed !== undefined) {
+        if (completed.view === undefined) absent.push(reader.id);
+        else views.set(reader.id, completed.view);
+      }
     }
+    const facts = { views, absent };
+    const retained = retainReaderCleanup(folder, failure?.cause, facts);
+    if (retained !== undefined) throw retained;
+    try {
+      await rm(folder, { recursive: true, force: true });
+    } catch (cause: unknown) {
+      throw retainReaderCleanup(folder, failure?.cause, facts, { cause });
+    }
+    if (failure !== undefined) throw readerFailure(failure.cause, facts);
   }
   return views;
 };

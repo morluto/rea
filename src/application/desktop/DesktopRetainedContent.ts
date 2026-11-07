@@ -1,11 +1,14 @@
 import { createHash } from "node:crypto";
 import { join } from "node:path";
 
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import {
   ArtifactResourceScope,
   type ArtifactCleanupAttempt,
 } from "../../artifacts/ArtifactResourceScope.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
   RegularFileCleanupFailure,
@@ -120,8 +123,33 @@ export const withRetainedContent = async <Value>(
   }
   const resources = new ArtifactResourceScope();
   const [first, ...rest] = await content.release(resources);
-  if (first !== undefined)
-    throw resources.cleanupFailure(outcome, [first, ...rest]);
+  if (first !== undefined) {
+    const failures = [first, ...rest] as const;
+    if (
+      outcome.kind === "failed" &&
+      outcome.cause instanceof ProviderCleanupError
+    ) {
+      const fileFailure = resources.cleanupFailure(
+        { kind: "completed" },
+        failures,
+      );
+      const fileCleanup = new ProviderCleanupError(
+        "rea-desktop",
+        fileFailure.cleanup?.resources ?? [],
+        { reason: fileFailure.cleanup?.reason ?? fileFailure.message },
+        { operation: outcome.cause.operation, cause: fileFailure },
+      );
+      bindArtifactFileCleanup(fileFailure, fileCleanup);
+      const combined = analysisErrorWithCleanupFailure(
+        outcome.cause,
+        fileCleanup,
+        outcome.cause.operation,
+      );
+      combined.bindCleanupDependencies([outcome.cause, fileCleanup]);
+      throw combined;
+    }
+    throw resources.cleanupFailure(outcome, failures);
+  }
   if (outcome.kind === "failed") throw outcome.cause;
   return outcome.value;
 };
