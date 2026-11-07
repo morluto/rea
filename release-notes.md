@@ -87,6 +87,7 @@
 * **desktop:** capture and export apps installed from a downloaded .deb ([#8954](https://github.com/morluto/rea/issues/8954)) ([970969c](https://github.com/morluto/rea/commit/970969cb53f788976e64eae387076fcea104b603))
 * **desktop:** keep an agentenv computer up and drive it through REA's MCP tools ([#9041](https://github.com/morluto/rea/issues/9041)) ([fc4c381](https://github.com/morluto/rea/commit/fc4c381dd7232cf0e73f7f0ff8b55248e33dc12c))
 * **desktop:** pick seed and end by checkpoint, and keep the capture host out of bundles ([#9037](https://github.com/morluto/rea/issues/9037)) ([c363f3e](https://github.com/morluto/rea/commit/c363f3e27b485d3f6330c3634d5d9c8f80d98d72))
+* **desktop:** read XML with a plain DOCTYPE, and check an element's whole text ([#9050](https://github.com/morluto/rea/issues/9050)) ([ac23dc8](https://github.com/morluto/rea/commit/ac23dc8077e429bd61030c5d443580e432ae619b))
 * **desktop:** suggest managed members for Unity script assemblies ([#5511](https://github.com/morluto/rea/issues/5511)) ([abc647b](https://github.com/morluto/rea/commit/abc647bf6cfe4b7f40343448faccf000adceec32))
 * **dotnet:** expose field constant defaults ([#8015](https://github.com/morluto/rea/issues/8015)) ([1ddee10](https://github.com/morluto/rea/commit/1ddee1089b2300dc8220ade654cc73cd74d46a74))
 * **electron:** report custom URL protocol registrations ([47fa6ab](https://github.com/morluto/rea/commit/47fa6ab3795d547207001ffb01643c0aa39dcad8))
