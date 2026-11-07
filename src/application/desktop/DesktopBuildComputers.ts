@@ -449,7 +449,13 @@ export class DesktopBuildComputers {
       if (action === "reset") {
         const outcome = await reset(computer, call.arguments, signal);
         if (outcome.kind === "unfinished") {
-          logged.settle("failed");
+          // A definite app refusal is a failed reset. Any other lost reply,
+          // including a dropped connection after the seed was restored, stays
+          // unknown and blocks a near miss that would treat it as absent.
+          const knownFailure =
+            outcome.cause instanceof Error &&
+            outcome.cause.message.startsWith("data/reset failed");
+          logged.settle("failed", { unsettled: !knownFailure });
           return err(failure(ACT, outcome.cause, signal));
         }
         // The seed restore is already observed. A later cancel or readiness
