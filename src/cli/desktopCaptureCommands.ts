@@ -11,6 +11,7 @@ import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
@@ -18,7 +19,8 @@ import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
-const positive = (fallback: number) => z.int().positive().default(fallback);
+const positive = (fallback: number) =>
+  cliDecimalField(z.int().positive().default(fallback));
 
 /** Options of `capture-desktop-application`. */
 const captureOptions = z.object({
