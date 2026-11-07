@@ -113,16 +113,26 @@ const readChunk = (
   let lastTs: number | null = null;
   let events = 0;
   const startOrdinal = state.events.length;
-  while (cursor + RECORD_HEADER_BYTES <= chunk.length) {
+  // 0x30 is the chunk's free-space offset: bytes from there to the end are
+  // unused. A wrapped log discards records without zeroing them, so stale
+  // bytes that still parse as a record header would otherwise be inventoried
+  // as live events. Fall back to the chunk end when the field is out of range
+  // rather than trusting an offset the writer may not have maintained.
+  const freeSpaceOffset = chunk.readUInt32LE(0x30);
+  const recordLimit =
+    freeSpaceOffset >= CHUNK_HEADER_BYTES && freeSpaceOffset <= chunk.length
+      ? freeSpaceOffset
+      : chunk.length;
+  while (cursor + RECORD_HEADER_BYTES <= recordLimit) {
     if (chunk.readUInt32LE(cursor) !== RECORD_MAGIC) break;
     const size = chunk.readUInt32LE(cursor + 4);
-    if (size < RECORD_HEADER_BYTES || cursor + size > chunk.length) {
+    if (size < RECORD_HEADER_BYTES || cursor + size > recordLimit) {
       diagnose(
         state,
         chunkNumber,
         startOrdinal + events,
         "truncated-record",
-        `Record at byte ${cursor} declares ${size} bytes but only ${chunk.length - cursor} remain in the chunk.`,
+        `Record at byte ${cursor} declares ${size} bytes but only ${recordLimit - cursor} remain before the chunk's free space.`,
       );
       break;
     }

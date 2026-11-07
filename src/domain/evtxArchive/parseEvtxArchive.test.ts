@@ -75,6 +75,10 @@ const chunk = (
     entry.copy(bytes, cursor, 0, entry.length);
     cursor += entry.length;
   }
+  // 0x30 is the free-space offset: a real writer maintains it, and the parser
+  // uses it to stop before stale bytes. Leave it at 0 and every chunk would
+  // read as fully used.
+  bytes.writeUInt32LE(cursor, 0x30);
   // A chunk this builder produces is intact, so it carries a valid signature.
   bytes.writeUInt32LE(chunkCrc(bytes), 0x7c);
   return bytes;
@@ -285,8 +289,18 @@ describe("parseEvtxArchive", () => {
     expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("matched");
 
     // One bit off the stored value is enough to fail it.
-    signed.writeUInt32LE(chunkCrc(signed) ^ 1, 0x7c);
+    signed.writeUInt32LE((chunkCrc(signed) ^ 1) >>> 0, 0x7c);
     expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("mismatched");
+  });
+
+  it("does not inventory stale bytes after the chunk's free-space offset", () => {
+    // A wrapped chunk discards records without zeroing them. The bytes past
+    // 0x30 are unused, so a record header that survives there is not a record.
+    const wrapped = chunk(1, [record(7)]);
+    record(8).copy(wrapped, wrapped.readUInt32LE(0x30));
+    const archive = parsed(evtx([wrapped]));
+    expect(archive.chunks[0]?.events).toBe(1);
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([7]);
   });
 
   it("does not treat the tail of a wrapped chunk as an error", () => {
