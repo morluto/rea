@@ -1,4 +1,4 @@
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -106,6 +106,39 @@ describe("captureScope", () => {
     expect(saved?.changes).toEqual([
       expect.objectContaining({ path: `${database}-journal`, kind: "created" }),
     ]);
+  });
+
+  it("records each selected path as named beside the physical path it walks, so a link keeps what its name means", async () => {
+    const root = await realpath(
+      await createTestTempDirectory("desktop-scope-"),
+    );
+    const home = join(root, "home/ada");
+    const settings = join(home, "settings/MuseScore");
+    const linked = join(home, ".config/MuseScore");
+    const score = join(home, "Documents/song.mscz");
+    await mkdir(settings, { recursive: true });
+    await mkdir(dirname(linked));
+    await symlink(settings, linked);
+
+    const { scope, selectedPaths } = await captureScope(
+      { ...request([`${linked}/MuseScore3.ini`]), statePaths: [linked, score] },
+      inventory(),
+      home,
+      join(root, "out"),
+    );
+
+    expect(selectedPaths).toEqual([
+      { path: linked, physical: settings },
+      { path: score, physical: score },
+      {
+        path: `${linked}/MuseScore3.ini`,
+        physical: `${settings}/MuseScore3.ini`,
+      },
+    ]);
+    expect(scope.contentRoots).toEqual(
+      expect.arrayContaining([settings, score]),
+    );
+    expect(scope.contentRoots).not.toContain(linked);
   });
 });
 

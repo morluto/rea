@@ -1,15 +1,18 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
   capture,
+  change,
   readers,
+  retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -83,7 +86,152 @@ const unretainedNoteCapture = () => {
   };
 };
 
+/** A note of 6,000 lines, more than the 5,000 a text view keeps, and the edit that adds `milk` at its top. */
+const LONG_NOTE = `${Array.from(
+  { length: 6000 },
+  (_, index) => `note ${String(index + 1)}`,
+).join("\n")}\n`;
+const MILK_NOTE = `milk\n${LONG_NOTE}`;
+
+/** The capture with the long note at the seed and `milk` added to it by the edit. */
+const longNoteCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? {
+              ...checkpoint,
+              retained: [
+                ...checkpoint.retained,
+                retained(NOTE_PATH, LONG_NOTE),
+              ],
+            }
+          : {
+              ...checkpoint,
+              changes: checkpoint.changes.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? change(NOTE_PATH, { before: LONG_NOTE, after: MILK_NOTE })
+                  : entry,
+              ),
+              retained: checkpoint.retained.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? retained(NOTE_PATH, MILK_NOTE)
+                  : entry,
+              ),
+            },
+      ),
+    },
+  };
+};
+
 describe("exportDesktopApplication with a task's seed", () => {
+  it("refuses a task whose only seed failure misses a line its cut view may have left out", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-");
+    const path = join(scratch, "task.json");
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+        ]),
+      ),
+    );
+    const directory = join(scratch, "bundle");
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+
+    expect(result).toBeInstanceOf(AnalysisInputError);
+    const { issues, userMessage } = result as AnalysisInputError;
+    expect(issues.map(({ path }) => path)).toEqual([["task"]]);
+    // The undecided check by id, with its file and line, in any wording.
+    for (const fact of [JSON.stringify("has-milk"), NOTE, '"milk"'])
+      expect(userMessage).toContain(fact);
+    expect(await exists(directory)).toBe(false);
+
+    // A failure on what the seed's view shows still keeps it, and only that one counts.
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+          {
+            id: "row",
+            kind: "row_present",
+            file: DATABASE,
+            table: "notes",
+            where: { id: 2 },
+          },
+        ]),
+      ),
+    );
+    const kept = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+    if (kept instanceof Error) throw kept;
+    expect(kept.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["row"] },
+    });
+  });
+
+  it("keeps a task whose one check failing on the seed is a member count", async () => {
+    const { result } = await exportWithTasks(
+      task([
+        {
+          id: "first",
+          kind: "row_present",
+          file: DATABASE,
+          table: "notes",
+          where: { id: 1 },
+        },
+        {
+          id: "notes",
+          kind: "member_count",
+          file: DATABASE,
+          pointer: "/tables/notes/rows",
+          equals: 2,
+        },
+      ]),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { checks: 2, failing_on_seed: ["notes"] },
+    });
+  });
+
   it("treats a file present but not retained at the baseline as absent on the seed, as the computer starts", async () => {
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");
@@ -199,6 +347,17 @@ describe("exportDesktopApplication with a task", () => {
     ],
     [
       task([
+        {
+          kind: "text_contains",
+          file: NOTE,
+          pointer: "/lines/0",
+          value: "milk",
+        },
+      ]),
+      "which is text; use lines_present",
+    ],
+    [
+      task([
         { id: "eggs", kind: "lines_present", file: NOTE, lines: ["eggs"] },
       ]),
       'Check "eggs" fails on the captured end state: Documents/today.txt has no line "eggs"',
@@ -224,6 +383,280 @@ describe("exportDesktopApplication with a task", () => {
       message,
     );
     expect(await exists(directory)).toBe(false);
+  });
+});
+
+/** A reader of the notes database's last field, which the edit changes from v1 to v2, as an app's headless mode would print it. */
+const VERSION_READER = {
+  id: "version",
+  file: DATABASE,
+  argv: [
+    "python3",
+    "-c",
+    "import sys; print('REA version ' + open(sys.argv[1], 'rb').read().split(b'\\0')[-1].decode())",
+    "{file}",
+  ],
+  output: "lines",
+};
+const readerTask = (lines: string[], reader: object = VERSION_READER) => ({
+  ...task([
+    {
+      id: "version",
+      kind: "lines_present",
+      file: DATABASE,
+      reader: "version",
+      lines,
+    },
+  ]),
+  readers: [reader],
+});
+
+describe("exportDesktopApplication with a task's readers", () => {
+  it("runs a reader on the seed as the bundle ships it and on the end, keeps the task and ships the reader", async () => {
+    const { result, directory } = await exportWithTasks(
+      readerTask(["version v2"]),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-milk", checks: 1, failing_on_seed: ["version"] },
+    });
+    const verifier = await readFile(
+      join(directory, "artifacts/note-milk-check/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain('"reader": "version"');
+    expect(verifier).toContain(
+      '{"id": "version", "arguments": "{\\"id\\":\\"version\\",\\"path\\":\\".local/share/notes/notes.db\\"',
+    );
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("Readers");
+    expect(readme).toContain("`version` reads `.local/share/notes/notes.db`");
+  });
+
+  it.each([
+    [
+      readerTask(["version v3"]),
+      'Check "version" fails on the captured end state',
+      'reader version printed: "version v2"',
+    ],
+    [
+      readerTask(["version v2"], {
+        ...VERSION_READER,
+        argv: ["sh", "-c", "echo 'cannot open {file}' >&2; exit 4"],
+      }),
+      "the reader exited 4",
+      "cannot open",
+    ],
+    [
+      {
+        ...readerTask([]),
+        checks: [
+          {
+            kind: "lines_absent",
+            file: DATABASE,
+            reader: "version",
+            lines: ["version v3"],
+          },
+        ],
+      },
+      "Every check already passes on the seed",
+      "",
+    ],
+  ])(
+    "refuses %j with what its reader read and writes no bundle",
+    async (input, message, detail) => {
+      const { result, directory } = await exportWithTasks(input);
+
+      expect(result).toBeInstanceOf(Error);
+      const { userMessage } = result as Error & { userMessage: string };
+      expect(userMessage).toContain(message);
+      expect(userMessage).toContain(detail);
+      expect(await exists(directory)).toBe(false);
+    },
+  );
+
+  it("refuses a reader of a file outside the app's owned paths", async () => {
+    const { result } = await exportWithTasks({
+      ...task([
+        {
+          kind: "lines_present",
+          file: ".cache/notes/x",
+          reader: "version",
+          lines: ["x"],
+        },
+      ]),
+      readers: [{ ...VERSION_READER, file: ".cache/notes/x" }],
+    });
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error & { userMessage: string }).userMessage).toContain(
+      "not under the app's owned paths",
+    );
+  });
+});
+
+/** The notes capture with nothing changed between its checkpoints, as an app that keeps its state on screen leaves it. */
+const screenOnlyCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? checkpoint
+          : { ...checkpoint, changes: [], retained: [] },
+      ),
+    },
+  };
+};
+
+const SCREEN_TASK = {
+  name: "note-shown",
+  prompt: "In Notes, show the shopping list.",
+  checks: [
+    {
+      id: "shown",
+      kind: "screen_judge",
+      question: "Does the window show the shopping list?",
+    },
+  ],
+};
+
+/** Export `task` from a capture with a screenshot of each named checkpoint, as a build computer keeps them. */
+const exportScreenTask = async (
+  task: unknown,
+  base = screenOnlyCapture(),
+  shots: Readonly<Record<string, string>> = {
+    baseline: "seed shot",
+    edited: "end shot",
+  },
+) => {
+  const scratch = await createTestTempDirectory("desktop-screen-");
+  const screens = join(scratch, "screens");
+  await mkdir(screens);
+  for (const [name, text] of Object.entries(shots))
+    await writeFile(join(screens, `${name}.jpg`), text);
+  const path = join(scratch, "task.json");
+  await writeFile(path, JSON.stringify(task));
+  const directory = join(scratch, "bundle");
+  const result = await exportDesktopApplication(
+    {
+      capture: await writeCaptureFolder(base),
+      directory,
+      name: undefined,
+      tasks: [path],
+      screens,
+    },
+    readers,
+  );
+  return { result, directory };
+};
+
+/** The screen-only capture where a file outside the app's owned paths, a desktop's recent-files list, changed. */
+const unownedChangeCapture = () => {
+  const base = screenOnlyCapture();
+  const recent = NOTE_PATH.replace(
+    "Documents/today.txt",
+    ".local/share/recently-used.xbel",
+  );
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? checkpoint
+          : {
+              ...checkpoint,
+              changes: [change(recent, { after: "milk\n" })],
+              retained: [retained(recent, "milk\n")],
+            },
+      ),
+    },
+  };
+};
+
+describe("exportDesktopApplication with a screen-judged task", () => {
+  it("lets a file outside the app's owned paths change without refusing the screen judge", async () => {
+    const { result } = await exportScreenTask(
+      SCREEN_TASK,
+      unownedChangeCapture(),
+    );
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-shown", failing_on_seed: [] },
+    });
+  });
+
+  it("ships the seed's screenshot as the judge's failing example and the end's as its passing one, and leaves judging to the witness", async () => {
+    const { result, directory } = await exportScreenTask(SCREEN_TASK);
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-shown", checks: 1, failing_on_seed: [] },
+    });
+    expect(
+      (result.normalized_result as { limitations: string[] }).limitations.some(
+        (line) => line.includes("witness") && line.includes("judge"),
+      ),
+    ).toBe(true);
+    const verifier = await readFile(
+      join(directory, "artifacts/note-shown-check/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain(Buffer.from("seed shot").toString("base64"));
+    expect(verifier).toContain(Buffer.from("end shot").toString("base64"));
+    expect(
+      verifier.indexOf(Buffer.from("seed shot").toString("base64")),
+    ).toBeLessThan(
+      verifier.indexOf(Buffer.from("end shot").toString("base64")),
+    );
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("Does the window show the shopping list?");
+    expect(readme).toContain("--judge-model");
+  });
+
+  it.each([
+    [SCREEN_TASK, capture(), undefined, "a check can read"],
+    [SCREEN_TASK, screenOnlyCapture(), { baseline: "seed shot" }, "screenshot"],
+    [
+      SCREEN_TASK,
+      screenOnlyCapture(),
+      { baseline: "x".repeat(2 * 1024 * 1024 + 1), edited: "end shot" },
+      "larger than the 2 MiB",
+    ],
+  ])(
+    "refuses a screen judge where a file shows the change or a screenshot is missing (%#)",
+    async (task, base, shots, message) => {
+      const { result, directory } = await exportScreenTask(task, base, shots);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error & { userMessage: string }).userMessage).toContain(
+        message,
+      );
+      expect(await exists(directory)).toBe(false);
+    },
+  );
+});
+
+describe("exportDesktopApplication with a task's prompt", () => {
+  it("names a prompt that does not name the app in its limitations, since a solver's shell cannot see the computer", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const unnamed = await exportWithTasks(task(checks));
+    const named = await exportWithTasks({
+      ...task(checks),
+      prompt: "In Notes, write down that I need milk.",
+    });
+
+    if (unnamed.result instanceof Error) throw unnamed.result;
+    if (named.result instanceof Error) throw named.result;
+    const naming = (limitations: readonly string[]) =>
+      limitations.filter((line) => line.includes("prompt"));
+    expect(naming(unnamed.result.limitations)).toHaveLength(1);
+    expect(naming(unnamed.result.limitations)[0]).toContain("notes");
+    expect(naming(named.result.limitations)).toEqual([]);
   });
 });
 

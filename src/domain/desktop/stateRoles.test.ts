@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isApplicationDconfGroup,
+  namedInTitles,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -33,6 +34,51 @@ describe("stateRole", () => {
       "shared_desktop",
     );
   });
+
+  it("makes a selected file a document, or the application's state under a hidden folder of the home", () => {
+    expect(
+      stateRole(["selected_path"], "Documents/Scores/Morning_Song.mscz"),
+    ).toBe("document");
+    expect(
+      stateRole(["selected_path"], ".config/MuseScore/MuseScore3.ini"),
+    ).toBe("application_state");
+    expect(stateRole(["selected_path"], ".museScorerc")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], null)).toBe("document");
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        ".local/share/app/notes.txt",
+      ),
+    ).toBe("document");
+  });
+
+  it("keeps a lock the app holds under a selected folder from being a document, unless a title names it", () => {
+    expect(stateRole(["selected_path"], "Documents/.~lock.today.txt#")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
+      "application_state",
+    );
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        "Documents/.~lock.today.txt#",
+      ),
+    ).toBe("document");
+  });
+
+  it("keeps a file in the desktop Trash shared, whatever else names it", () => {
+    expect(
+      stateRole([
+        "opened_by_application",
+        "named_in_window_title",
+        "selected_path",
+        "desktop_trash",
+      ]),
+    ).toBe("shared_desktop");
+  });
 });
 
 describe("stateReasons", () => {
@@ -42,6 +88,7 @@ describe("stateReasons", () => {
       stateDirectories: [],
       stateTails: [],
       selectedRoots: [],
+      selections: [],
       titles: ["*today.txt (~/Documents/plan.md) - Notes"],
       openedFiles: new Set(),
     };
@@ -56,6 +103,58 @@ describe("stateReasons", () => {
     expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
   });
+
+  it("names a file by its whole name or path, never by a folder segment, a cache or a dconf database", () => {
+    // CherryTree shows the document's folder, whose path holds the segment "user".
+    const cherry = [
+      "home-notebook.ctd - /home/user/Documents - CherryTree 1.1.2",
+    ];
+    const named = (path: string, titles: readonly string[]) =>
+      namedInTitles(path, "/home/user", titles);
+
+    expect(named("/home/user/Documents/home-notebook.ctd", cherry)).toBe(true);
+    expect(named("/home/user/.cache/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/.config/dconf/user", cherry)).toBe(false);
+    expect(named("/home/user/Notes/Documents", cherry)).toBe(false);
+    expect(named("/home/user/.cache/app/home-notebook.ctd", cherry)).toBe(
+      false,
+    );
+    // A name without an extension still matches standing alone, or by its path.
+    expect(named("/home/user/src/Makefile", ["Makefile - Editor"])).toBe(true);
+    expect(named("/home/user/src/Makefile", ["~/src/Makefile - Editor"])).toBe(
+      true,
+    );
+    expect(named("/home/user/Makefile", ["/srv/Makefile - Editor"])).toBe(
+      false,
+    );
+    expect(
+      named("/home/user/Documents/plan.md", ["/home/user/Documents/plan.md"]),
+    ).toBe(true);
+  });
+
+  it("marks the desktop Trash, where a file the user deleted keeps its name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      selections: [],
+      titles: ["poster.svg - Inkscape"],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.local/share/Trash/files/poster.svg")).toEqual([
+      "named_in_window_title",
+      "desktop_trash",
+    ]);
+    expect(
+      reasons("/home/ada/.local/share/Trash/info/poster.svg.trashinfo"),
+    ).toEqual(["desktop_trash"]);
+    expect(reasons("/home/ada/.local/share/Trashcan/poster.svg")).toEqual([
+      "named_in_window_title",
+    ]);
+  });
 });
 
 describe("stateReasons for state directories", () => {
@@ -65,6 +164,7 @@ describe("stateReasons for state directories", () => {
       stateDirectories: ["/data/ada/.config/gimp"],
       stateTails: [".config/gimp"],
       selectedRoots: [],
+      selections: [],
       titles: [],
       openedFiles: new Set(),
     };
@@ -93,5 +193,29 @@ describe("isApplicationDconfGroup", () => {
       isApplicationDconfGroup("org/gtk/settings/file-chooser", names),
     ).toBe(false);
     expect(isApplicationDconfGroup("org/mousepadx", names)).toBe(false);
+  });
+});
+
+describe("stateReasons for a state directory the app names with its version", () => {
+  it("counts TreeLine's ~/.treeline-3.1 beside ~/.treeline, and a numbered folder alike, never another app's longer name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: ["/home/ada/.treeline"],
+      stateTails: [".treeline"],
+      selectedRoots: [],
+      selections: [],
+      titles: [],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.treeline-3.1/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treeline3/settings.ini")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.treelines/settings.ini")).toEqual([]);
+    expect(reasons("/home/ada/.treeline-beta/settings.ini")).toEqual([]);
   });
 });

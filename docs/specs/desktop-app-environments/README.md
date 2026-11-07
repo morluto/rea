@@ -42,6 +42,19 @@ The work lands as one PR per step:
 12. [Build computer](build-computer/spec.md): an agentenv computer REA keeps
     up from a request or a bundle, with REA installed inside for building,
     driven through REA's MCP tools while an agent builds the environment.
+13. [Build and witness](build-witness/spec.md): REA's capture, task draft
+    and export run inside the build computer with acknowledged checkpoints,
+    the bundle comes back to the host, and the task is witnessed live in a
+    fresh computer of it: seed, edit, near miss and reset, recorded.
+14. [XML text checks](xml-text-checks/spec.md): XML whose DOCTYPE only names
+    its DTD read as XML, starting with AbiWord, and checks of an element's
+    whole text across the runs an app splits a paragraph into.
+15. [Readers](file-readers/spec.md): checks of a file REA reads as binary,
+    such as GIMP's `.xcf` or Blender's `.blend`, through the app's own
+    headless command, run in the computer on a private copy of the file.
+16. [Screen judges](screen-judge/spec.md): checks of state no file shows,
+    such as a calculator's result, by a model judging a screenshot against
+    the build's labelled seed and end screenshots.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

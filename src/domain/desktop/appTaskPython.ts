@@ -1,5 +1,16 @@
 import type { JsonValue } from "../jsonValue.js";
+import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
+import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import {
+  PYTHON_READER_VIEWS,
+  renderReaderConstants,
+} from "./appTaskReaders.js";
+import {
+  isScreenTask,
+  renderScreenVerifier,
+  type ScreenExamples,
+} from "./appTaskScreen.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -7,6 +18,7 @@ MISSING = object()
 INDEX = re.compile(r"0|[1-9][0-9]*")
 VIEW_FORMATS = ("text", "json", "keyfile", "xml")
 NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
 
 
 def _shown(value) -> str:
@@ -29,75 +41,7 @@ def _same(actual, expected) -> bool:
     return type(actual) is type(expected) and actual == expected
 
 
-def _bracketed(token: str) -> bool:
-    return len(token) >= 2 and token.startswith("[") and token.endswith("]")
-
-
-def _selector(token: str):
-    """A selector's conditions, [KEY=VALUE] or [@KEY=VALUE] one or more times, or None when the token is not one."""
-    if not _bracketed(token):
-        return None
-    conditions = []
-    for part in token[1:-1].split("]["):
-        key, equals, value = part.partition("=")
-        name = key[1:] if key.startswith("@") else key
-        if not equals or not name:
-            return None
-        conditions.append((key.startswith("@"), name, value))
-    return conditions
-
-
-def _selects(member, conditions) -> bool:
-    """Whether an array member meets every condition; selectors compare strings only."""
-    if not isinstance(member, dict):
-        return False
-    for attribute, key, value in conditions:
-        fields = member.get("attributes") if attribute else member
-        if not isinstance(fields, dict) or not isinstance(fields.get(key), str) or fields[key] != value:
-            return False
-    return True
-
-
-def _step(items: list, token: str, last: bool):
-    """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
-    if INDEX.fullmatch(token):
-        # A canonical decimal longer than the array length cannot name a member.
-        if len(token) > len(str(len(items))):
-            return "none", None
-        index = int(token)
-        return ("member", items[index]) if index < len(items) else ("none", None)
-    conditions = _selector(token)
-    if conditions is None:
-        return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (
-            "none", None)
-    matched = [item for item in items if _selects(item, conditions)]
-    if len(matched) == 1:
-        return "member", matched[0]
-    if len(matched) > 1:
-        return "unresolved", f"{token} matches {len(matched)} members, not one"
-    return ("none" if last else "unresolved"), f"{token} matches no member"
-
-
-def _locate(view, pointer: str):
-    """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
-    to the arrays a selector searched on the way."""
-    current, searched = view, []
-    segments = pointer[1:].split("/")
-    for position, segment in enumerate(segments):
-        token = segment.replace("~1", "/").replace("~0", "~")
-        if isinstance(current, list):
-            if not INDEX.fullmatch(token) and _selector(token) is not None:
-                searched.append("".join("/" + part for part in segments[:position]))
-            kind, found = _step(current, token, position == len(segments) - 1)
-            if kind != "member":
-                return kind, found, searched
-            current = found
-        elif isinstance(current, dict) and token in current:
-            current = current[token]
-        else:
-            return "none", None, searched
-    return "value", current, searched
-
+${PYTHON_POINTER}
 
 def _number(value):
     """A number, or a numeral string read as one; None for anything else, a boolean, or a numeral past the doubles."""
@@ -263,6 +207,123 @@ def _value(check, entry):
     return (True, f"{at} has no value") if kind == "none" else (False, f"{at} is {_shown(found)}")
 
 
+def _collapse_whitespace(text: str) -> str:
+    """Each run of XML whitespace (space, tab, CR, LF) made one space, none at either end, as normalize-space()."""
+    return WHITESPACE_RUN.sub(" ", text).strip(" ")
+
+
+def _text_at(view, pointer: str) -> bool:
+    """Whether a string a pointer reaches is text of the document: a member of an element's children (a text node)
+    or attributes (an attribute's value), rather than an element's name or a field of the DOCTYPE."""
+    segments = pointer.split("/")
+    if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
+        return False
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]))
+    return kind == "value" and _is_element(owner)
+
+
+def _not_xml_entry(check, view):
+    """Why a text check's pointer into an archive goes into no XML entry's view, or None when it does or names an
+    entry not listed."""
+    parts = check["pointer"].split("/")
+    if len(parts) < 4 or parts[3] != "view":
+        return f"{check['file']} at {check['pointer']} does not point into an entry's view"
+    if parts[1] != "entries":
+        return None
+    kind, item, _ = _locate(view, "/entries/" + parts[2])
+    if kind != "value" or not isinstance(item, dict) or item.get("format") == "xml":
+        return None
+    # An entry without a view failed before this, so its format is one with a view.
+    name, form = (value if isinstance(value, str) else "" for value in (item.get("name"), item.get("format")))
+    return f"{check['file']} entry {name} is read as {form}, not xml"
+
+
+def _whole_text(check, entry):
+    """An element's whole text, or a text node's, compared with the value or searched for it."""
+    view, truncated, problem = _view_of(check, entry, None)
+    if problem is not None:
+        return False, problem
+    at = f"{check['file']} at {check['pointer']}"
+    if entry is None:
+        return False, f"{at} has no value"
+    form = entry.get("format")
+    if form not in ("xml", "zip"):
+        return False, f"{check['file']} is read as {form}, not xml"
+    kind, found, searched = _locate(view, check["pointer"])
+    viewless = _viewless_entry(view, check["pointer"]) if form == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
+    if any(_array_leaves_out(form, view, array) for array in searched):
+        return _undecided(check)
+    problem = _not_xml_entry(check, view) if form == "zip" else None
+    if problem is not None:
+        return False, problem
+    if kind == "unresolved":
+        return False, f"{at}: {found}"
+    if kind == "none":
+        return False, f"{at} has no value" if found is None else f"{at}: {found}"
+    # Only an element has attributes of its own and of its descendants to join.
+    attribute = check.get("text_attribute")
+    if not ((attribute is None and _text_at(view, check["pointer"])) if isinstance(found, str) else _is_element(found)):
+        what = "an element, a text node or an attribute value" if attribute is None else "an element"
+        return False, f"{at} is {_shown(found)}, not {what}"
+    # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
+    if form == "zip":
+        truncated = _zip_leaves_out(view, check["pointer"])
+    if not isinstance(found, str) and truncated:
+        return _undecided(check)
+    return _compared_text(check, at, _element_text(found, attribute))
+
+
+def _compared_text(check, at: str, found: str):
+    """A text found at a pointer compared with the check's value or searched for it, both collapsed when it asks."""
+    collapse = check.get("normalize_whitespace") is True
+    text = _collapse_whitespace(found) if collapse else found
+    value = _collapse_whitespace(check["value"]) if collapse else check["value"]
+    attribute = check.get("text_attribute")
+    read = "" if attribute is None else f" in its {attribute} values"
+    how = read + (" with whitespace collapsed" if collapse else "")
+    if check["kind"] == "text_equals":
+        if text == value:
+            return True, f"{at} has the text {_shown(value)}{how}"
+        return False, f"{at} has the text {_shown(text)}{how}, not {_shown(value)}"
+    if value in text:
+        return True, f"{at} has text containing {_shown(value)}{how}"
+    return False, f"{at} has the text {_shown(text)}{how}, without {_shown(value)}"
+
+
+def _members(check, entry):
+    """How many members of the array at a pointer, or of those a selector matches, compared with the expected
+    number."""
+    matching, pointer = check.get("matching"), check["pointer"]
+    view, truncated, problem = _view_of(check, entry, None)
+    if problem is not None:
+        return False, problem
+    form = None if entry is None else entry.get("format")
+    # The empty pointer names the whole view, as a JSON file whose top level is an array.
+    kind, found, searched = (("none", None, []) if entry is None else ("value", view, []) if pointer == ""
+                             else _locate(view, pointer))
+    at = check["file"] if pointer == "" else f"{check['file']} at {pointer}"
+    viewless = _viewless_entry(view, pointer) if form == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
+    if any(_array_leaves_out(form, view, array) for array in searched):
+        return _undecided(check)
+    if kind == "unresolved":
+        return False, f"{at}: {found}"
+    if kind == "none":
+        return False, f"{at} has no value" if found is None else f"{at}: {found}"
+    if not isinstance(found, list):
+        return False, f"{at} is {_shown(found)}, not an array"
+    # A count is decided only on an array the view holds whole.
+    if _array_leaves_out(form, view, pointer):
+        return _undecided(check)
+    # The parser refuses a matching that is no selector.
+    conditions = None if matching is None else _selector(matching)
+    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions))
+    return _compared(check, n, f"member(s) of {at}" + ("" if matching is None else f" matching {matching}"))
+
+
 def _rows(check, entry):
     view, _, problem = _view_of(check, entry, "sqlite")
     if problem is not None:
@@ -306,6 +367,10 @@ def _verdict(check, entry):
         return _lines(check, entry)
     if kind in ("value_equals", "value_absent"):
         return _value(check, entry)
+    if kind in ("text_equals", "text_contains"):
+        return _whole_text(check, entry)
+    if kind == "member_count":
+        return _members(check, entry)
     return _rows(check, entry)
 
 
@@ -330,17 +395,96 @@ export const pythonLiteral = (value: JsonValue): string => {
     .join(", ")}}`;
 };
 
-/** The verifier artifact: read the app's state through its data/get, then evaluate the task's checks. */
-export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
+/** Seconds, as the verifier's constants spell them. */
+const pythonSeconds = (ms: number): string =>
+  Number.isInteger(ms / 1000) ? `${String(ms / 1000)}.0` : String(ms / 1000);
+
+/** The verifier's reads of the app until its files settle, as `settledAppData` reads them for the witness. */
+const PYTHON_SETTLE = String.raw`
+
+def _files(answer) -> list:
+    """Each file data/get returned, by its home path or its place among the parts, with the SHA-256 of its bytes as
+    sent: what changes when the app saves."""
+    files = []
+    for index, part in enumerate(answer.parts):
+        if part.kind != "file":
+            continue
+        marker = (getattr(part, "metadata", None) or {}).get(DATA_OBJECTS)
+        path = marker.get("path") if isinstance(marker, dict) else None
+        content = getattr(part.file, "bytes", None) or getattr(part.file, "uri", None) or ""
+        files.append((path if isinstance(path, str) else f"#{index}", hashlib.sha256(content.encode()).hexdigest()))
+    return sorted(files)
+
+
+async def _read(url):
+    answer = await protocol.get_data(url, timeout=120)
+    states = [part.data["state"] for part in answer.parts
+              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
+    if not states:
+        raise RuntimeError(f"the {APP} app's data/get returned no state views")
+    return states[0], _files(answer)
+
+
+async def _settled_views(url):
+    """The app's views once each file's bytes have held for SETTLE_WINDOW_S, counted from the read that returned them,
+    read every SETTLE_INTERVAL_S; else the last completed read's. No read starts SETTLE_BOUND_S or more after the first
+    began, and one still running then is cut. Also whether the files had held, and whether a read was cut."""
+    start = time.monotonic()
+    # The first read is the one a grade needs, so only its own timeout bounds it.
+    views, files = await _read(url)
+    # Offsets from the first read's start: when the last completed read began, and when a read first returned the
+    # bytes it holds.
+    began, since = 0.0, time.monotonic() - start
+    while began - since < SETTLE_WINDOW_S:
+        # Reads come an interval apart, and the one that can settle the files as soon as the window allows.
+        at = max(min(began + SETTLE_INTERVAL_S, since + SETTLE_WINDOW_S), time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        await asyncio.sleep(max(0.0, at - (time.monotonic() - start)))
+        at = max(at, time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        try:
+            latest_views, latest = await asyncio.wait_for(_read(url), SETTLE_BOUND_S - at)
+        except asyncio.TimeoutError:
+            return views, False, True
+        began, views = at, latest_views
+        if latest != files:
+            since, files = time.monotonic() - start, latest
+    return views, True, False
+`;
+
+/** The verifier artifact: a screen-judged task's judge, with the build's examples, or else reads of the app's state through its data/get once its files settle and the task's checks on them. */
+export const renderTaskVerifier = (
+  task: DesktopTask,
+  app: string,
+  examples?: ScreenExamples,
+): string => {
+  if (!isScreenTask(task)) return renderFileVerifier(task, app);
+  if (examples === undefined)
+    throw new TypeError(
+      "A screen-judged task's verifier needs the build's examples.",
+    );
+  return renderScreenVerifier(task, app, examples);
+};
+
+/** The verifier of a task whose checks read files: the app's data/get once its files settle, then the checks. */
+const renderFileVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
 
 It reads the app's data/get through the computer, takes the typed views of its files and evaluates each check: no
-model, no code from the task. A failure to reach the app raises, so the run fails rather than scoring the agent.
+model, no code from the task. It grades once the app's files settle, since an app can save a few seconds after the
+last change: each result's settled says whether they had held for SETTLE_WINDOW_S, or had not by SETTLE_BOUND_S and
+the last completed read was graded, and read_cut whether a read still running at SETTLE_BOUND_S was cut. A failure to
+reach the app raises, so the run fails rather than scoring the agent.
 """
+import asyncio
+import hashlib
 import json
 import math
 import re
-
+import time
+${task.readers === undefined ? "" : "import uuid\n"}
 from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 
@@ -348,19 +492,24 @@ APP = ${JSON.stringify(app)}
 CHECKS = [
 ${task.checks.map((check) => `    ${pythonLiteral(check as unknown as JsonValue)},`).join("\n")}
 ]
-${PYTHON_TASK_EVALUATOR}
+#: The app's data/get is read this often until its files settle.
+SETTLE_INTERVAL_S = ${pythonSeconds(SETTLE_TIMING.intervalMs)}
+#: How long each file's bytes must hold, from the read that returned them, before the views are graded.
+SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
+#: After the first read began: no read starts then or later, one still running is cut, and the last completed read is
+#: graded though the files are still changing.
+SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
+#: Where a data/get file part names its path in the home.
+DATA_OBJECTS = "urn:agentenv:data-objects/v1"
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)
     child = protocol.find_child(card, APP)
     if child is None:
         raise RuntimeError(f"the computer at {env_url} lists no app named {APP}")
-    answer = await protocol.get_data(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH), timeout=120)
-    states = [part.data["state"] for part in answer.parts
-              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
-    if not states:
-        raise RuntimeError(f"the {APP} app's data/get returned no state views")
-    return evaluate(CHECKS, states[0])
+    views, settled, read_cut = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
+${task.readers === undefined ? "" : "    readers = await _reader_views(env_url, card)\n"}    return [{**result, "settled": settled, "read_cut": read_cut} for result in ${task.readers === undefined ? "evaluate(CHECKS, views)" : "evaluate_with_readers(CHECKS, views, readers)"}]
 `;
 
 /** The artifact folder of a task's verifier. */

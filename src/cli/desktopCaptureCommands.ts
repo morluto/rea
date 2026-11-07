@@ -13,7 +13,10 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
+import {
+  DESKTOP_CAPTURE_DEFAULTS,
+  type DesktopCaptureProgress,
+} from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -163,6 +166,24 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      extraPackage: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Ubuntu 24.04 archive package installed beside the application, such as a runtime piece its package does not install; repeat for more",
+        ),
+      syntheticSeed: z
+        .boolean()
+        .default(false)
+        .describe(
+          "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
+        ),
+      screens: z
+        .string()
+        .optional()
+        .describe(
+          "Folder holding a screenshot of each checkpoint as <name>.jpg, which a build computer takes; a task's screen_judge checks ship the seed's and the end's as their judge's examples",
+        ),
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -187,8 +208,14 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    extraPackages: options.extraPackage,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
+                    syntheticSeed: options.syntheticSeed,
+                    screens:
+                      options.screens === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.screens),
                   },
                   readers,
                   signal,
@@ -325,10 +352,15 @@ export const registerDesktopCaptureCommands = (
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),
-                  report: async (message) => {
-                    process.stderr.write(
-                      `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
-                    );
+                  report: async (message, event) => {
+                    const progress: DesktopCaptureProgress = {
+                      rea_progress: {
+                        phase: "desktop_capture",
+                        message,
+                        ...(event === undefined ? {} : { event }),
+                      },
+                    };
+                    process.stderr.write(`${JSON.stringify(progress)}\n`);
                   },
                 },
                 signal,

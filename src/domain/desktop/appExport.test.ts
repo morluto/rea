@@ -5,13 +5,17 @@ import {
   className,
   environmentName,
   launchCommand,
+  launchDocumentLimitation,
+  launchDocumentNote,
   ownedPaths,
   renderAppClass,
   renderEnvToml,
   renderInstallScript,
   renderReadme,
+  seedWording,
   type DesktopAppExportPlan,
 } from "./appExport.js";
+import type { LaunchDocument } from "./seedDocument.js";
 
 const plan: DesktopAppExportPlan = {
   name: "mousepad",
@@ -26,13 +30,20 @@ const plan: DesktopAppExportPlan = {
   packageFile: null,
   electron: false,
   command: ["mousepad"],
+  opens: { kind: "empty" },
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
   seedCheckpoint: "baseline",
+  syntheticSeed: false,
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
+  seedModes: {},
+  leftOutLocks: [],
+  leftOutLogs: [],
+  unownedFolders: [],
+  runtimeSeeds: [],
   dconf: "",
   captureEvidenceId: "ev_1",
 };
@@ -47,6 +58,26 @@ describe("names", () => {
     expect(className("7zip")).toBe("App7zip");
     expect(className("none")).toBe("NoneApp");
     expect(className("true")).toBe("TrueApp");
+  });
+
+  it("names the app by a reverse-DNS id's last part, and by any other id without its trailing version", () => {
+    const names = [
+      "org.gnumeric.gnumeric",
+      "com.github.xournalpp.xournalpp",
+      "glabels-3.0",
+      "gimp-2.10",
+      "display-im6.q16",
+      "mousepad",
+    ].map((id) => environmentName(id, notNumeric));
+
+    expect(names).toEqual([
+      "gnumeric",
+      "xournalpp",
+      "glabels",
+      "gimp",
+      "display-im6-q16",
+      "mousepad",
+    ]);
   });
 
   it("ends a shortened name without a hyphen and prefixes one the name check refuses", () => {
@@ -99,9 +130,11 @@ describe("ownedPaths", () => {
 });
 
 describe("launchCommand", () => {
-  it("keeps commands without home paths and respells home arguments under $HOME", () => {
+  it("starts in the captured working directory, respelling the home and home arguments under $HOME", () => {
     expect(launchCommand(["mousepad"], "/home/ada", "/home/ada")).toEqual([
-      "mousepad",
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad'`,
     ]);
     expect(
       launchCommand(
@@ -109,7 +142,11 @@ describe("launchCommand", () => {
         "/home/ada",
         "/home/ada",
       ),
-    ).toEqual(["sh", "-c", `exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`,
+    ]);
   });
 
   it("respells the home itself and option values under it", () => {
@@ -122,11 +159,11 @@ describe("launchCommand", () => {
     ).toEqual([
       "sh",
       "-c",
-      `exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
+      `cd '/' 2>/dev/null; exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
     ]);
   });
 
-  it("tries the captured working directory, the home included, only for relative arguments", () => {
+  it("never leaves the app in the framework's own folder, whatever its arguments", () => {
     expect(
       launchCommand(
         ["notes", "today.md"],
@@ -139,11 +176,12 @@ describe("launchCommand", () => {
       `cd "$HOME"/'project/docs' 2>/dev/null; exec 'notes' 'today.md'`,
     ]);
     expect(
-      launchCommand(["notes", "today.md"], "/home/ada", "/home/ada"),
-    ).toEqual(["sh", "-c", `cd "$HOME" 2>/dev/null; exec 'notes' 'today.md'`]);
-    expect(
       launchCommand(["notes", "--wrap"], "/home/ada", "/home/ada/project"),
-    ).toEqual(["notes", "--wrap"]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME"/'project' 2>/dev/null; exec 'notes' '--wrap'`,
+    ]);
     expect(launchCommand(["./app"], "/home/ada", "/opt/app")).toEqual([
       "sh",
       "-c",
@@ -168,6 +206,17 @@ describe("renderers", () => {
   it("declares data hooks only when the app owns paths", () => {
     expect(renderAppClass(plan)).toContain("keep_initial(self.paths)");
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
+  });
+
+  it("gives an app without owned paths a reset that only relaunches it when its task judges the screen", () => {
+    const relaunched = renderAppClass({
+      ...plan,
+      paths: [],
+      relaunchOnReset: true,
+    });
+    expect(relaunched).toContain("@reset_data\n    async def relaunch(self)");
+    expect(relaunched).not.toContain("@get_data");
+    expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@reset_data");
   });
 
   it("loads captured dconf settings even without owned paths", () => {
@@ -300,5 +349,74 @@ describe("renderers", () => {
     expect(readme).toContain(
       "such as a trial's terms, is the operator's to check",
     );
+  });
+});
+
+describe("README and class wording", () => {
+  it("adds one README line on what the launch opens: the seed's document, or why it opens none", () => {
+    const command = launchCommand(
+      ["mousepad", "/home/ada/Documents/todo.txt"],
+      "/home/ada",
+      "/home/ada",
+    );
+    const readme = (opens: LaunchDocument) =>
+      renderReadme({ ...plan, command, opens });
+    const bare = readme({ kind: "empty" });
+    const seed = { kind: "seed", document: "Documents/todo.txt" } as const;
+    const none = {
+      kind: "none",
+      reason: "the test gives this reason",
+    } as const;
+
+    expect(command.join(" ")).toContain(`"$HOME"/'Documents/todo.txt'`);
+    expect(bare).toContain(`\`${command.join(" ")}\``);
+    for (const opens of [seed, none]) {
+      const note = launchDocumentNote({ opens });
+      expect(note).not.toBe("");
+      expect(readme(opens).replace(note, "")).toBe(bare);
+    }
+    expect(readme(seed)).toContain("`~/Documents/todo.txt`");
+    expect(bare).not.toContain("~/Documents/todo.txt");
+    const limitation = launchDocumentLimitation(none);
+    expect(limitation).toContain(none.reason);
+    expect(launchDocumentNote({ opens: none })).toContain(limitation);
+    expect(readme({ kind: "captured" })).toBe(bare);
+    for (const opens of [
+      seed,
+      { kind: "captured" },
+      { kind: "empty" },
+    ] as const)
+      expect(launchDocumentLimitation(opens)).toBeUndefined();
+  });
+
+  it("says the seed is the user's own data to keep local, unless it was made for the task", () => {
+    const own = { ...plan, seedCheckpoint: "drafted" };
+    const made = { ...own, syntheticSeed: true };
+    const wording = { own: seedWording(own), made: seedWording(made) };
+    // The README's seed line and closing notice, and the class's docstring.
+    const renderedIn = {
+      origin: renderReadme,
+      notice: renderReadme,
+      docstring: renderAppClass,
+    } satisfies Record<
+      keyof typeof wording.own,
+      (from: DesktopAppExportPlan) => string
+    >;
+
+    for (const [from, kept, other] of [
+      [own, wording.own, wording.made],
+      [made, wording.made, wording.own],
+    ] as const)
+      for (const key of ["origin", "notice", "docstring"] as const) {
+        const rendered = renderedIn[key](from);
+        expect(rendered).toContain(kept[key]);
+        expect(rendered).not.toContain(other[key]);
+      }
+    for (const { origin, docstring } of [wording.own, wording.made]) {
+      expect(origin).toContain("`drafted`");
+      expect(docstring).toContain("drafted");
+    }
+    expect(renderReadme(made)).toContain("`envs/mousepad/seed/`");
+    expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
   });
 });

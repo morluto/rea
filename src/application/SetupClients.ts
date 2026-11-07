@@ -5,6 +5,7 @@ import type {
   SetupProgressEvent,
 } from "./SetupTypes.js";
 import type { SetupClient } from "./SupportedClients.js";
+import { clientEnvironment } from "./SetupPlan.js";
 
 export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
@@ -58,6 +59,9 @@ export const configureDetectedClients = async (options: {
   readonly host: SetupHost;
   readonly detectedClients: readonly SetupClient[];
   readonly providerEnvironment: SetupProviderEnvironment;
+  readonly clientEnvironments?:
+    | Readonly<Record<string, SetupProviderEnvironment>>
+    | undefined;
   readonly command: readonly string[];
   readonly clients: Record<string, ClientConfigurationResult>;
   readonly appliedActions: string[];
@@ -70,7 +74,7 @@ export const configureDetectedClients = async (options: {
     options.onProgress?.({ actionId, label, state: "started" });
     const result = await options.host.configureClient(
       client,
-      options.providerEnvironment,
+      clientEnvironment(options, client.name),
       options.command,
     );
     options.clients[client.name] = result;

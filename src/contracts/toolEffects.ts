@@ -754,6 +754,46 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     executesForeignCode: true,
     idempotent: false,
   }),
+  // Downloads package lists and launches the app inside the computer.
+  start_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  mark_build_checkpoint: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // Closes the app and drafts the task with REA inside the computer.
+  stop_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
+  // Runs the task's readers, commands the task names, on the captured files.
+  export_build_environment: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // A witness stage records the display, runs the task's readers or the bundle's judge, and writes its record here.
+  check_build_task: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
   close_build_computer: effects({
     mutatesSession: true,
     launchesProcess: true,
