@@ -240,6 +240,12 @@ class CargoInventory {
   readonly dependencies: CargoDependency[] = [];
   readonly features: CargoManifest["features"] = [];
   readonly diagnostics: CargoManifest["diagnostics"] = [];
+  /**
+   * A `[package]` edition that is present but is neither a string nor a
+   * `workspace = true` inheritance. Edition-dependent interpretation must stay
+   * unknown instead of falling back to the pre-2024 default.
+   */
+  packageEditionUnreadable = false;
   #retainedBytes = 0;
 
   constructor(readonly artifact: CargoManifestArtifact) {}
@@ -355,7 +361,8 @@ class CargoInventory {
     const features = stringArray(declaration.features) ?? [];
     const edition = this.packages[0]?.edition;
     const legacyStatus =
-      declaredBy === "package" && edition === "inherited"
+      declaredBy === "package" &&
+      (edition === "inherited" || this.packageEditionUnreadable)
         ? "unknown"
         : declaredBy === "package" &&
             typeof edition === "string" &&
@@ -552,6 +559,20 @@ export const parseCargoManifest = (
       const nested = record(value);
       return nested?.workspace === true ? "inherited" : null;
     };
+    // A setting that is present but is neither a string nor an inheritance is a
+    // recorded value this parser cannot interpret. Nulling it would read as an
+    // omitted setting, so name each one and keep the report partial.
+    for (const field of ["version", "edition", "rust-version"]) {
+      const value = packageTable[field];
+      if (value === undefined || inheritedSetting(value) !== null) continue;
+      const recorded = inventory.diagnostic(
+        "invalid-package-table",
+        `/package/${field}`,
+        `[package].${field} is neither a string nor a \`workspace = true\` inheritance.`,
+      );
+      if (!recorded.ok) return recorded;
+      if (field === "edition") inventory.packageEditionUnreadable = true;
+    }
     const version = inheritedSetting(packageTable.version);
     const edition = inheritedSetting(packageTable.edition);
     const rustVersion = inheritedSetting(packageTable["rust-version"]);

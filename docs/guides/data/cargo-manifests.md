@@ -38,6 +38,12 @@ Each dependency keeps the manifest text that produced it:
 | `target`           | the `cfg(...)` or target triple from the containing table                                                                     |
 | `source_pointer`   | JSON Pointer into the parsed manifest                                                                                         |
 
+A `[package]` setting that is present but is neither a string nor a
+`workspace = true` inheritance is reported as an `invalid-package-table`
+diagnostic and kept as absent, so a malformed `edition` never silently becomes a
+pre-2024 default: edition-dependent interpretation such as `default_features`
+stays unknown while that diagnostic is present.
+
 `source_coverage` states what was not examined (`lockfile`, `resolution`,
 `workspace_member_manifests`) and its `status` is `partial` whenever a
 diagnostic was recorded.

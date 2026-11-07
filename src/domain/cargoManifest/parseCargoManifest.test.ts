@@ -624,6 +624,32 @@ both = { version = "1", default-features = false, default_features = true }
       ]),
     );
   });
+
+  it("diagnoses a package setting it cannot interpret instead of dropping it", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+version = 42
+edition = 2024
+[dependencies]
+legacy = { version = "1", default_features = false }
+`),
+    );
+    // A TOML integer is a recorded value, not an absent one: nulling it would
+    // read as an omitted setting and let the report stay complete.
+    expect(value.packages[0]).toMatchObject({ version: null, edition: null });
+    expect(value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ source_pointer: "/package/version" }),
+        expect.objectContaining({ source_pointer: "/package/edition" }),
+      ]),
+    );
+    // The edition was never established, so edition-dependent interpretation
+    // must not fall back to the pre-2024 default.
+    expect(value.dependencies[0]?.default_features).toBeNull();
+    expect(value.source_coverage.status).toBe("partial");
+  });
 });
 
 describe("Cargo source paths", () => {
