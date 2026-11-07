@@ -633,3 +633,70 @@ it.each([
     expect(streamAcquisitionsFor(call)).toEqual([]);
   },
 );
+/**
+ * A computed string key does not stop a getter from running while Node copies the
+ * literal. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get ["reset"](){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get ["reset"](){}, start:-1})              -> stream
+ */
+it("treats a computed string-key getter as eager", () => {
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){this.start=0}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+});
+
+/**
+ * A method written in shorthand reaches the reader as an `ObjectMethod`, and a class
+ * expression has the same runtime type as a function. Measured on Node 24.22.1, all of
+ * `{start(){}}`, `{start: function(){}}`, `{start: class{}}` and `{start: function*(){}}`
+ * throw `ERR_INVALID_ARG_TYPE`, and `{encoding(){}}` throws `ERR_INVALID_ARG_VALUE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start(){}})`],
+  [`fs.createReadStream(p, {end(){}})`],
+  [`fs.createReadStream(p, {fd(){}})`],
+  [`fs.createReadStream(p, {highWaterMark(){}})`],
+  [`fs.createReadStream(p, {start: class{}})`],
+  [`fs.createReadStream(p, {start: function*(){}})`],
+  [`fs.createReadStream(p, {encoding(){}})`],
+] as const)("emits no acquisition for a method-valued member: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+/**
+ * Any truthy non-string `encoding` reaches Node's check and is refused; a falsy one is
+ * skipped first. Measured on Node 24.22.1: `-1`, `1.5`, `Infinity`, `-Infinity`, `{}`
+ * and `[]` throw `ERR_INVALID_ARG_VALUE`, while `0`, `-0`, `""`, `false`, `0n` and `NaN`
+ * all construct a stream.
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: -1})`],
+  [`fs.createReadStream(p, {encoding: 1.5})`],
+  [`fs.createReadStream(p, {encoding: Infinity})`],
+  [`fs.createReadStream(p, {encoding: -Infinity})`],
+  [`fs.createReadStream(p, {encoding: {}})`],
+  [`fs.createReadStream(p, {encoding: []})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: NaN})`],
+  [`fs.createReadStream(p, {encoding: -0})`],
+  [`fs.createReadStream(p, {encoding: 0})`],
+  [`fs.createReadStream(p, {encoding: ""})`],
+  [`fs.createReadStream(p, {encoding: false})`],
+] as const)("keeps the acquisition for a falsy encoding: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
