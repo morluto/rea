@@ -232,3 +232,87 @@ it.each([
     { kind: "register", method, eventName: null },
   ]);
 });
+
+it.each([
+  ["a short-circuiting logical OR non-function", `true || handler`],
+  ["a short-circuiting logical AND non-function", `false && handler`],
+  ["a constant conditional non-function consequent", `true ? 1 : handler`],
+  ["a constant conditional non-function alternate", `false ? handler : 1`],
+  ["a constant nullish coalescing non-nullish primitive", `1 ?? handler`],
+])(
+  "prunes statically unreachable listener branches on child process: %s",
+  (_name, expr) => {
+    const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${expr});
+  `);
+    expect(ir.childProcessInteractions).toEqual([]);
+    expect(ir.eventOperations).toEqual([]);
+  },
+);
+
+it.each([
+  ["a reachable logical OR function branch", `false || handler`],
+  ["a reachable logical AND function branch", `true && handler`],
+  ["a reachable conditional function consequent", `true ? handler : 1`],
+  ["a reachable conditional function alternate", `false ? 1 : handler`],
+  ["a reachable nullish coalescing default function", `null ?? handler`],
+])(
+  "retains reachable callable listener branches on child process: %s",
+  (_name, expr) => {
+    const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${expr});
+  `);
+    expect(ir.childProcessInteractions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "listener",
+          method: "on",
+          eventName: "exit",
+        }),
+      ]),
+    );
+  },
+);
+
+it("does not emit event operations for an unshadowed process emitter with a rejected listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    process.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("keeps valid listener operations on unshadowed global process", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    process.on("exit", () => {});
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+});
+
+it("retains an uncertain candidate if global process listener methods are overridden", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    process.on = function (event) { return this.addListener(event, () => {}); };
+    process.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});

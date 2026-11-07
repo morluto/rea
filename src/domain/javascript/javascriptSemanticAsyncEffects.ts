@@ -8,8 +8,10 @@ import type {
 } from "./javascriptSemanticIr.js";
 import { createSemanticCallableIdStack } from "./javascriptSemanticCallableStack.js";
 import {
+  isNullishJavaScriptSyntax,
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
@@ -25,6 +27,10 @@ import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  semanticGlobalProcessOrigin,
+  semanticGlobalProcessPathOrigin,
+} from "./javascriptSemanticRequireOrigin.js";
 import {
   builtinDataEffectMethod,
   builtinChildProcessMethod,
@@ -153,6 +159,63 @@ export const collectJavaScriptSemanticAsyncEffects = (
   };
 };
 
+/** Determine truthiness from syntax or simple unary/constant expressions. */
+const staticExpressionTruthiness = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean | undefined => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  const direct = staticJavaScriptTruthiness(unwrapped);
+  if (direct !== undefined) return direct;
+  if (t.isUnaryExpression(unwrapped)) {
+    if (unwrapped.operator === "void") return false;
+    if (unwrapped.operator === "!") {
+      const inner = staticExpressionTruthiness(unwrapped.argument, state);
+      return inner === undefined ? undefined : !inner;
+    }
+  }
+  if (
+    t.isIdentifier(unwrapped) &&
+    isUnmodifiedGlobalReference(unwrapped, state, unwrapped.name) &&
+    !semanticOpaqueNameMayHaveChanged(unwrapped, state)
+  ) {
+    if (unwrapped.name === "undefined" || unwrapped.name === "NaN")
+      return false;
+    if (unwrapped.name === "Infinity") return true;
+  }
+  return undefined;
+};
+
+/** Determine whether syntax definitely evaluates to null or undefined. */
+const staticExpressionNullishness = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean | undefined => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (t.isNullLiteral(unwrapped) || isNullishJavaScriptSyntax(unwrapped))
+    return true;
+  if (
+    t.isIdentifier(unwrapped, { name: "undefined" }) &&
+    isUnmodifiedGlobalReference(unwrapped, state, "undefined") &&
+    !semanticOpaqueNameMayHaveChanged(unwrapped, state)
+  )
+    return true;
+  if (
+    t.isBooleanLiteral(unwrapped) ||
+    t.isNumericLiteral(unwrapped) ||
+    t.isStringLiteral(unwrapped) ||
+    t.isBigIntLiteral(unwrapped) ||
+    t.isArrayExpression(unwrapped) ||
+    t.isObjectExpression(unwrapped) ||
+    t.isFunctionExpression(unwrapped) ||
+    t.isArrowFunctionExpression(unwrapped) ||
+    t.isClassExpression(unwrapped) ||
+    t.isRegExpLiteral(unwrapped)
+  )
+    return false;
+  return undefined;
+};
+
 /**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
  * anything is registered or removed when it is omitted or is a value that can
@@ -183,17 +246,62 @@ export const rejectsEventListener = (
     }
     const value = unwrapped.node;
     if (t.isConditionalExpression(value)) {
-      pending.push(
-        { node: value.consequent, depth: depth + 1 },
-        { node: value.alternate, depth: depth + 1 },
-      );
+      const truthiness = staticExpressionTruthiness(value.test, state);
+      if (truthiness === true) {
+        pending.push({ node: value.consequent, depth: depth + 1 });
+      } else if (truthiness === false) {
+        pending.push({ node: value.alternate, depth: depth + 1 });
+      } else {
+        pending.push(
+          { node: value.consequent, depth: depth + 1 },
+          { node: value.alternate, depth: depth + 1 },
+        );
+      }
       continue;
     }
     if (t.isLogicalExpression(value)) {
-      pending.push(
-        { node: value.left, depth: depth + 1 },
-        { node: value.right, depth: depth + 1 },
-      );
+      if (value.operator === "||") {
+        const truthiness = staticExpressionTruthiness(value.left, state);
+        if (truthiness === true) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (truthiness === false) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
+        continue;
+      }
+      if (value.operator === "&&") {
+        const truthiness = staticExpressionTruthiness(value.left, state);
+        if (truthiness === false) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (truthiness === true) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
+        continue;
+      }
+      if (value.operator === "??") {
+        const nullishness = staticExpressionNullishness(value.left, state);
+        if (nullishness === false) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (nullishness === true) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
+        continue;
+      }
       continue;
     }
     if (t.isSequenceExpression(value)) {
@@ -205,11 +313,46 @@ export const rejectsEventListener = (
         pending.push({ node: value.right, depth: depth + 1 });
         continue;
       }
-      if (["||=", "&&=", "??="].includes(value.operator)) {
-        pending.push(
-          { node: value.left, depth: depth + 1 },
-          { node: value.right, depth: depth + 1 },
-        );
+      if (value.operator === "||=") {
+        const truthiness = staticExpressionTruthiness(value.left, state);
+        if (truthiness === true) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (truthiness === false) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
+        continue;
+      }
+      if (value.operator === "&&=") {
+        const truthiness = staticExpressionTruthiness(value.left, state);
+        if (truthiness === false) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (truthiness === true) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
+        continue;
+      }
+      if (value.operator === "??=") {
+        const nullishness = staticExpressionNullishness(value.left, state);
+        if (nullishness === false) {
+          pending.push({ node: value.left, depth: depth + 1 });
+        } else if (nullishness === true) {
+          pending.push({ node: value.right, depth: depth + 1 });
+        } else {
+          pending.push(
+            { node: value.left, depth: depth + 1 },
+            { node: value.right, depth: depth + 1 },
+          );
+        }
         continue;
       }
       continue;
@@ -252,7 +395,7 @@ export const rejectsEventListener = (
 /** Check whether prototype or module writes may have changed Node's listener methods. */
 const hasInheritedListenerMethodOverride = (
   state: JavaScriptSemanticAnalysisState,
-  target: "child_process" | "events",
+  target: "child_process" | "events" | "process",
 ): boolean => {
   for (const binding of state.bindingsById.values()) {
     if (binding.memberWrites.length === 0) continue;
@@ -274,7 +417,9 @@ const hasInheritedListenerMethodOverride = (
           return true;
       }
       if (
-        (target === "events" || target === "child_process") &&
+        (target === "events" ||
+          target === "child_process" ||
+          target === "process") &&
         specifier === "events"
       ) {
         const isClass = origin.importedPath[0] === "EventEmitter";
@@ -284,6 +429,20 @@ const hasInheritedListenerMethodOverride = (
             path.some(
               (segment) =>
                 segment === "prototype" || segment === "EventEmitter",
+            ),
+          )
+        )
+          return true;
+      }
+      if (target === "process" && specifier === "process") {
+        if (
+          binding.memberWrites.some(({ path }) =>
+            path.some(
+              (segment) =>
+                segment === "prototype" ||
+                EVENT_LISTENER_METHODS.includes(
+                  segment as (typeof EVENT_LISTENER_METHODS)[number],
+                ),
             ),
           )
         )
@@ -307,7 +466,9 @@ const hasInheritedListenerMethodOverride = (
         return true;
     }
     if (
-      (target === "events" || target === "child_process") &&
+      (target === "events" ||
+        target === "child_process" ||
+        target === "process") &&
       raw === "events"
     ) {
       if (
@@ -322,6 +483,41 @@ const hasInheritedListenerMethodOverride = (
       )
         return true;
     }
+    if (target === "process" && raw === "process") {
+      if (
+        effects.some(
+          ({ kind, path }) =>
+            kind === "write" &&
+            path.some(
+              (segment) =>
+                segment === "prototype" ||
+                EVENT_LISTENER_METHODS.includes(
+                  segment as (typeof EVENT_LISTENER_METHODS)[number],
+                ),
+            ),
+        )
+      )
+        return true;
+    }
+  }
+  if (target === "process") {
+    if (
+      state.ambientWriteEffects.some(
+        ({ path }) =>
+          (path[0] === "process" &&
+            (path.length === 1 ||
+              EVENT_LISTENER_METHODS.includes(
+                path[1] as (typeof EVENT_LISTENER_METHODS)[number],
+              ))) ||
+          (path[0] === "global" &&
+            path[1] === "process" &&
+            (path.length === 2 ||
+              EVENT_LISTENER_METHODS.includes(
+                path[2] as (typeof EVENT_LISTENER_METHODS)[number],
+              ))),
+      )
+    )
+      return true;
   }
   return false;
 };
@@ -375,6 +571,15 @@ export const isProvenNodeEmitter = (
     t.isNewExpression(unwrapped)
   )
     return isProvenCreationNode(unwrapped, state, unwrapped);
+  if (
+    (t.isIdentifier(unwrapped) &&
+      semanticGlobalProcessOrigin(unwrapped, state) !== undefined) ||
+    (t.isMemberExpression(unwrapped) &&
+      semanticGlobalProcessPathOrigin(unwrapped, state)?.importedPath.length ===
+        0)
+  ) {
+    return !hasInheritedListenerMethodOverride(state, "process");
+  }
   if (!t.isIdentifier(unwrapped)) return false;
   const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
   if (
@@ -390,11 +595,17 @@ export const isProvenNodeEmitter = (
   ];
   if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
     return false;
-  return isProvenCreationNode(
-    initializers[0].node,
-    state,
-    initializers[0]?.node,
-  );
+  const initNode = initializers[0].node;
+  if (
+    (t.isIdentifier(initNode) &&
+      semanticGlobalProcessOrigin(initNode, state) !== undefined) ||
+    (t.isMemberExpression(initNode) &&
+      semanticGlobalProcessPathOrigin(initNode, state)?.importedPath.length ===
+        0)
+  ) {
+    return !hasInheritedListenerMethodOverride(state, "process");
+  }
+  return isProvenCreationNode(initNode, state, initNode);
 };
 
 const collectEvent = (
