@@ -103,6 +103,24 @@ describe("app bundle Info.plist magic", () => {
   });
 });
 
+describe("app bundle Info.plist decode budget", () => {
+  it("refuses an XML Info.plist whose decoded representation exceeds the budget", async () => {
+    const root = await createTestTempDirectory("rea-app-plist-budget-");
+    const bundle = join(root, "Fixture.app");
+    const plistPath = join(bundle, "Contents", "Info.plist");
+    const executable = join(bundle, "Contents", "MacOS", "Fixture");
+    await mkdir(join(bundle, "Contents", "MacOS"), { recursive: true });
+    await writeFile(
+      plistPath,
+      `<plist version="1.0"><dict><key>CFBundleExecutable</key><string>Fixture</string><key>Padding</key><string>${"a".repeat(5_000_000)}</string></dict></plist>`,
+    );
+    await writeFile(executable, "inert fixture; never executed");
+
+    const result = await resolveAppBundleExecutable(bundle);
+    expect(result.ok).toBe(false);
+  });
+});
+
 describe("app bundle program directory containment", () => {
   it("rejects an escaping programs directory before resolving its child", async () => {
     const root = await mkdtemp(join(tmpdir(), "rea-app-programs-"));

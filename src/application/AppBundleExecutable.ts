@@ -552,13 +552,17 @@ const resolveLayoutExecutable = async (
  * host plist tool is required. Values are read with format-aware parsers, not
  * patterns; an unrelated `__proto__` entry must not make the bundle unreadable.
  */
-export const decodeInfoPlistValue = (plist: Buffer): unknown =>
-  hasBinaryPlistSignature(plist)
-    ? decodeBinaryPlistValue(
-        plist,
-        preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
-      )
-    : parseXmlPropertyList(decodeXmlPlistText(plist)).value;
+/** Apply the same decode budget the binary branch enforces before parsing XML. */
+export const decodeInfoPlistValue = (plist: Buffer): unknown => {
+  if (hasBinaryPlistSignature(plist))
+    return decodeBinaryPlistValue(
+      plist,
+      preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES),
+    );
+  const xmlText = decodeXmlPlistText(plist);
+  preflightPropertyListDecode(plist, BINARY_PLIST_DECODE_BYTES, xmlText);
+  return parseXmlPropertyList(xmlText).value;
+};
 
 /** The Info.plist decoded but declares no string CFBundleExecutable. */
 class UndeclaredBundleExecutable extends Error {}
