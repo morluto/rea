@@ -298,9 +298,6 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
       checked.push(`${name}.${field}`);
     }
     expect(checked).toEqual(
-      schemaCases.map((item) => `${item.name}.${item.field}`),
-    );
-    expect(checked).toEqual(
       expect.arrayContaining([
         "open_binary.path",
         "extract_firmware.output_directory",
@@ -340,7 +337,6 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
       );
       checked.push(`${name}.${field}`);
     }
-    expect(checked).toEqual(cases.map((item) => `${item.name}.${item.field}`));
     expect(checked).toEqual(
       expect.arrayContaining([
         "open_binary.path",

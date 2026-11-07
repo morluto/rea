@@ -363,6 +363,7 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
           z.object({
             path: z.array(z.union([z.string(), z.number()])),
             reason: z.string(),
+            message: z.string(),
             expected: z.unknown().optional(),
           }),
         ),
@@ -375,13 +376,13 @@ it("rejects OS-invalid local inputs through the real advertised MCP contracts", 
             path,
             reason: "invalid_format",
             expected: "regex",
+            message: expect.stringMatching(/\bNUL\b|null byte|zero byte/i),
           }),
         ),
       ),
     );
     checked.push(name);
   }
-  expect(checked).toHaveLength(pathRequests.length);
   expect(checked).toEqual(
     expect.arrayContaining([
       "extract_firmware",

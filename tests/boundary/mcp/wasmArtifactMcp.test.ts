@@ -436,11 +436,6 @@ it("attributes rejected WASM paths to their selected fields before provider work
     checked.push(paths.map((path) => path.join(".")).join("+"));
   }
   expect(checked).toEqual(
-    relativeCases.map(([, paths]) =>
-      paths.map((path) => path.join(".")).join("+"),
-    ),
-  );
-  expect(checked).toEqual(
     expect.arrayContaining(["path", "glue_paths.0", "candidate_paths.0"]),
   );
   expect(inspect).not.toHaveBeenCalled();

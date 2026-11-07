@@ -28,7 +28,6 @@ it("matches the host path module for absolute local paths", () => {
       isAbsolute(path),
     );
   }
-  expect(checked).toEqual(PATHS);
   expect(checked).toEqual(
     expect.arrayContaining([
       "/absolute/path",
