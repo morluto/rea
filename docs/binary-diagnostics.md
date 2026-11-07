@@ -424,7 +424,7 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   unbiased 16-bit EAT index; reported biased ordinals may exceed 16 bits. The
   directory's DLL name, ordinal base and timestamp are reported, and an image
   without an export directory is a complete empty inventory.
-- ELF rows list defined `.dynsym` symbols with global, weak or GNU-unique
+- ELF rows list defined dynamic symbols with global, weak or GNU-unique
   binding and default or protected visibility. Each row keeps `value`
   (`st_value` as stored; bit 0 marks Thumb code on 32-bit ARM), `size`, `type`,
   `binding` and `visibility` (`"default"` or `"protected"`; `"unknown"` in older
@@ -437,7 +437,7 @@ rea inspect-native-exports ./libexample.so --detail summary --evidence_output ./
   Latin-1 mapping and the raw bytes remain available. Older retained results
   report null for the newly added encoding fields. `version` is null for an
   unversioned symbol. A versioned
-  symbol reports its GNU index, a name resolved from `.gnu.version_d` or
+  symbol reports its GNU index, a name when resolved from `.gnu.version_d` or
   `.gnu.version_r`, the corresponding `name_bytes_base64` and
   `name_utf8_decodable` facts, and the `hidden` flag from `.gnu.version`.
   Version names use the same UTF-8-when-valid, otherwise byte-preserving
@@ -456,14 +456,22 @@ unambiguous. Gaps, zero-fill and conflicting mappings remain unreadable names.
 Unresolved symbol versions keep their rows: the version name is null when no
 definition or requirement names the index, and `version` is
 `"unknown"` when the version table cannot be read; coverage is likewise
-`partial`. A dynamic symbol table without its null entry is malformed. An ELF
-without section headers is `unsupported`. With section headers, a missing
-`SHT_DYNSYM` section is also `unsupported` when a `PT_DYNAMIC` segment is
-observed, including a directory containing only the inactive null section.
-Enumerating dynamic symbols from that segment is not implemented. A present
-section directory with neither a dynamic symbol table nor a dynamic segment
-reports a complete empty inventory. Mach-O exports are reported by
-`inspect_macho`.
+`partial`. A dynamic symbol table without its null entry is malformed. When
+`SHT_DYNSYM` is absent, including an ELF with no section headers, the reader
+locates symbols and strings through `PT_DYNAMIC` and their file-backed
+`PT_LOAD` mappings. `DT_HASH` or a nonempty `DT_GNU_HASH` supplies the symbol
+count; if both supply a count, they must agree. A missing hash table or empty
+GNU buckets without a SysV count leaves coverage `unsupported`, because the
+complete symbol inventory is unknown. Unmapped, conflicting or truncated
+table ranges are refused.
+
+The dynamic fallback retains readable `DT_VERSYM` indices and hidden flags,
+but does not decode names from `DT_VERDEF` or `DT_VERNEED`. Versioned exports
+therefore retain their rows with null version names and `partial` coverage;
+an unreadable `DT_VERSYM` retains `version: "unknown"`. Section-backed version
+names continue to use the tables described above. A present section directory
+with neither a dynamic symbol table nor a dynamic segment reports a complete
+empty inventory. Mach-O exports are reported by `inspect_macho`.
 
 `max_file_bytes` defaults to 256 MiB (maximum 512 MiB; CLI `--max-file-bytes`).
 Export directories in PE headers are read like those in sections. An export or
