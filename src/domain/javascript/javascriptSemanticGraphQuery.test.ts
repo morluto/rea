@@ -1,5 +1,6 @@
 import { javaScriptSemanticQueryInputSchema } from "./javascriptSemanticQuerySchemas.js";
 import {
+  resolveJavaScriptSemanticEvidence,
   semanticFixtureGraph,
   semanticFixtureInput,
   semanticGraphTestEvidence,
@@ -28,7 +29,6 @@ import {
   isValidatedImmutableJavaScriptSemanticGraph,
   JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticGraphSchema,
-  resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";

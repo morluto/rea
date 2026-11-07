@@ -13,10 +13,7 @@ import { inspectManagedNativeBoundariesBytes } from "../../../../src/dotnet/Mana
 import { executeManagedNativeBoundaries } from "../../../../src/application/managed/ManagedNativeVerificationService.js";
 import { MANAGED_NATIVE_VERIFICATION_EXAMPLE } from "../../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
-import {
-  managedNativeVerificationInputSchema,
-  managedNativeVerificationResultSchema,
-} from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
+import { managedNativeVerificationResultSchema } from "../../../../src/domain/managed/managedNativeVerificationSchemas.js";
 import { managedNativeBoundaryInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
@@ -33,10 +30,7 @@ const readFixtureSource = (input: unknown) => {
   return source.value;
 };
 
-const exampleInput = () =>
-  managedNativeVerificationInputSchema.parse(
-    MANAGED_NATIVE_VERIFICATION_EXAMPLE,
-  );
+const exampleInput = () => structuredClone(MANAGED_NATIVE_VERIFICATION_EXAMPLE);
 
 const nativeEvidenceWithExports = (
   names: readonly string[],
