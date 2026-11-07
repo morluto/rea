@@ -44,10 +44,9 @@ test.each([
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_COMMAND_DEADLINE_MS: "100" },
       {
         spawnProcess: injected.spawnProcess,
-        frameTimeoutMs: 100,
       },
     );
     const server = new McpServer({ name: "rizin-partial-test", version: "1" });
@@ -121,10 +120,9 @@ test.each([
       },
     });
     const manager = createRizinTestManager(
-      {},
+      { REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(maximum) },
       {
         spawnProcess: injected.spawnProcess,
-        maxCommandOutputBytes: maximum,
       },
     );
     try {
@@ -437,11 +435,12 @@ test("publishes the bounded prefix when an oversized frame has no terminator", a
     },
   });
   const manager = createRizinTestManager(
-    {},
+    {
+      REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: "20",
+      REA_DEBUGGER_COMMAND_DEADLINE_MS: "100",
+    },
     {
       spawnProcess: injected.spawnProcess,
-      maxCommandOutputBytes: 20,
-      frameTimeoutMs: 100,
     },
   );
   try {

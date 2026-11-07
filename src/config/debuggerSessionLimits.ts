@@ -34,7 +34,7 @@ export const DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING =
 export interface DebuggerAdmissionLimit {
   readonly setting: string;
   readonly value: number;
-  readonly source: "default" | "setting" | "runtime";
+  readonly source: "default" | "setting";
   readonly defaultValue: number;
   readonly minimum: number;
   readonly maximum: number;
@@ -243,10 +243,3 @@ export const debuggerControlReplyOutput: DebuggerAdmissionLimit = {
   maximum: DEBUGGER_CONTROL_REPLY_BYTES,
   unit: "bytes",
 };
-
-/** Test and caller seams replace the launch value and record that source. */
-export const applyDebuggerAdmissionOverride = (
-  admission: DebuggerAdmissionLimit,
-  value: number | undefined,
-): DebuggerAdmissionLimit =>
-  value === undefined ? admission : { ...admission, value, source: "runtime" };

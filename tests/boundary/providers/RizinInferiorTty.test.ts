@@ -585,7 +585,17 @@ process.stdin.on("data", (chunk) => {
   await chmod(provider, 0o700);
   let providerStderr = "";
   manager = new RizinDebugSessionManager(
-    { ...process.env, REA_RIZIN_COMMAND: provider },
+    {
+      ...process.env,
+      REA_RIZIN_COMMAND: provider,
+      ...(options.maxCommandOutputBytes === undefined
+        ? {}
+        : {
+            REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES: String(
+              options.maxCommandOutputBytes,
+            ),
+          }),
+    },
     {
       spawnProcess: async (spawnOptions) => {
         const launched = await spawnOwnedProviderProcess(spawnOptions);
@@ -611,9 +621,6 @@ process.stdin.on("data", (chunk) => {
         });
         return launched;
       },
-      ...(options.maxCommandOutputBytes === undefined
-        ? {}
-        : { maxCommandOutputBytes: options.maxCommandOutputBytes }),
     },
   );
   const started = await manager.start({
