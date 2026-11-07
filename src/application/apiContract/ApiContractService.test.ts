@@ -21,6 +21,31 @@ const inputFile = async (bytes: Uint8Array | string) => {
   return { root, path };
 };
 
+it("attributes rejected API contract paths to the selected input field", async () => {
+  const { path } = await inputFile("{}");
+  const resources = new ArtifactResourceScope();
+  try {
+    for (const [input, field] of [
+      [{ path: "relative.json" }, "path"],
+      [
+        { path, format: "graphql-sdl", operations_path: "relative.graphql" },
+        "operations_path",
+      ],
+    ] as const) {
+      const result = await inspectApiContractEvidence(input, resources);
+      expect(result).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [expect.objectContaining({ path: [field] })],
+        },
+      });
+    }
+  } finally {
+    await resources.close();
+  }
+});
+
 it("binds the published source bytes to complete Evidence independently of reply selection", async () => {
   const bytes = await readFile(fixture);
   const { path } = await inputFile(bytes);
