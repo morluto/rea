@@ -82,7 +82,7 @@ const parseWithRuntimeContext = (
   runtimeContextByProgram.set(
     file.program,
     isCommonJsSourcePath(sourcePath)
-      ? (sourcePath ?? "").endsWith(".d.cts")
+      ? /\.d\.cts$/iu.test(sourcePath ?? "")
         ? "unknown"
         : "commonjs"
       : isExplicitModuleSourcePath(sourcePath)

@@ -32,6 +32,9 @@ export const moduleResolutionModeForJavaScriptReference = (
   const extension = posix.extname(sourcePath);
   if (extension === ".cjs" || extension === ".cts") return "require";
   if (extension === ".mts") return "import";
-  if (extension === ".ts" || extension === ".tsx") return "compiler-dependent";
+  // Grammar admission is case-insensitive, so `.TS`/`.TSX` stay
+  // compiler-dependent even though no loader suffix names them exactly.
+  const folded = extension.toLowerCase();
+  if (folded === ".ts" || folded === ".tsx") return "compiler-dependent";
   return "import";
 };

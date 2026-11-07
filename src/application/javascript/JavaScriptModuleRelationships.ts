@@ -460,7 +460,10 @@ const moduleFormat = (
   const extension = posix.extname(path);
   if (extension === ".mjs" || extension === ".mts") return "esm";
   if (extension === ".cjs" || extension === ".cts") return "commonjs";
-  if (extension === ".ts" || extension === ".tsx") return "unknown";
+  // Grammar admission is case-insensitive, so `.TS`/`.TSX` stay unknown
+  // even though no loader suffix names them exactly.
+  const folded = extension.toLowerCase();
+  if (folded === ".ts" || folded === ".tsx") return "unknown";
   const esm = ir.moduleLinks.some(({ kind }) =>
     ["import", "export", "re-export"].includes(kind),
   );
