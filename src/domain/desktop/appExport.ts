@@ -195,9 +195,11 @@ export const capturedHomePath = (
       const database = path.slice(0, -suffix.length);
       const base = spell(database);
       const plain = relative(database);
+      // An explicit mapping counts when the database itself sits outside the
+      // home. A plain relative path, including none, is not a mapping.
       if (
         base === undefined ||
-        plain === null ||
+        base.specificity === 0 ||
         base.spelled === plain ||
         (own !== undefined && base.specificity <= own.specificity)
       )
