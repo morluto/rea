@@ -303,6 +303,7 @@
 * **ci:** restore qualification and reduce validation overhead ([6eb37a7](https://github.com/morluto/rea/commit/6eb37a774930b5b9edb137edd441e30652dfd394))
 * **ci:** reuse shared JavaScript AST child traversal ([afc1813](https://github.com/morluto/rea/commit/afc18131f4518783b7bf42ff7e81491639e5328d))
 * **ci:** validate static evidence through receipt owner ([af9bc3a](https://github.com/morluto/rea/commit/af9bc3ab5015da3734e79f16b550b4b28297356a))
+* **cli:** advertise domain constraints for selector and path options ([#9181](https://github.com/morluto/rea/issues/9181)) ([b31fc5d](https://github.com/morluto/rea/commit/b31fc5d5fbc5dc379238c9b839220eb17fa1ef17))
 * **cli:** align ADB directory and package query schemas ([#8974](https://github.com/morluto/rea/issues/8974)) ([1dc83b1](https://github.com/morluto/rea/commit/1dc83b160df80938ab48fa4b030bd1b51efd72bd))
 * **cli:** attribute keyed archive errors to archive argument ([#7731](https://github.com/morluto/rea/issues/7731)) ([3b24249](https://github.com/morluto/rea/commit/3b242491a430b3807853436bfeb9568d606169ac))
 * **cli:** correct completion options and setup guidance ([#7851](https://github.com/morluto/rea/issues/7851)) ([60ab4da](https://github.com/morluto/rea/commit/60ab4da329863ba7bf4530415d14efb05813cb87))
