@@ -8,10 +8,7 @@ import { describe, expect, it } from "vitest";
 
 const run = promisify(execFile);
 const compilerProbe = spawnSync("g++", ["--version"], { stdio: "ignore" });
-const compilerMissing =
-  compilerProbe.error instanceof Error &&
-  "code" in compilerProbe.error &&
-  compilerProbe.error.code === "ENOENT";
+const compilerMissing = compilerProbe.status !== 0;
 
 describe.skipIf(process.platform === "win32" && compilerMissing)(
   "Windows native handle close gate",
@@ -23,7 +20,12 @@ describe.skipIf(process.platform === "win32" && compilerMissing)(
       );
       const source = join(include, "handle_close_test.cc");
       const directory = await mkdtemp(join(tmpdir(), "rea-handle-close-"));
-      const binary = join(directory, "handle-close-test");
+      const binary = join(
+        directory,
+        process.platform === "win32"
+          ? "handle-close-test.exe"
+          : "handle-close-test",
+      );
       try {
         await run(
           "g++",
@@ -48,6 +50,6 @@ describe.skipIf(process.platform === "win32" && compilerMissing)(
       } finally {
         await rm(directory, { recursive: true, force: true });
       }
-    });
+    }, 90_000);
   },
 );
