@@ -141,7 +141,11 @@ describe("draftTaskFiles for a named record that also holds a save time", () => 
     const unwrapped = box("New", "2026-11-08T09:00:00Z");
     const file = xmlDraft(before, saved);
 
-    expect(file.suggested.map((check) => check.pointer)).toEqual([
+    expect(
+      file.suggested.flatMap((check) =>
+        "pointer" in check ? [check.pointer] : [],
+      ),
+    ).toEqual([
       "/root/children/[name=box]/children/[name=body]/children/[name=p]",
     ]);
     expect(passing(FILE, xml(unwrapped), file.suggested).every(Boolean)).toBe(
