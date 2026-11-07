@@ -27,7 +27,7 @@ it.each([
   expect(result.parse_status).toBe("partial");
 });
 
-it("retains complete coverage for an inline Electron factory export", () => {
+it("retains conditional coverage for an inline Electron factory export", () => {
   const result = analyzeJavaScriptStaticSource(`(() => {
     const modules={
       5(module,exports){
@@ -46,14 +46,22 @@ it("retains complete coverage for an inline Electron factory export", () => {
     }
     load(9);
   })();`);
-  expect(result.parse_status).toBe("complete");
+  expect(result.parse_status).toBe("partial");
   expect(result.references).toContainEqual(
-    expect.objectContaining({ kind: "require", specifier: "electron" }),
+    expect.objectContaining({
+      kind: "require",
+      specifier: "electron",
+      loader_authority: "candidate",
+    }),
   );
   expect(result.references.every(({ specifier }) => specifier !== null)).toBe(
     true,
   );
   expect(result.electron.ipc).toContainEqual(
-    expect.objectContaining({ channel: "test:copy", side: "main" }),
+    expect.objectContaining({
+      channel: "test:copy",
+      side: "main",
+      loader_authority: "candidate",
+    }),
   );
 });

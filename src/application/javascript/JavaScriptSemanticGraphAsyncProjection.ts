@@ -9,7 +9,10 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  unknownSemanticEvidence,
+  candidateBuiltinSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import {
   projectSemanticResultBindings,
   type SemanticFlowProjectionContext,
@@ -158,7 +161,18 @@ export const projectSemanticTimers = (
         location: operation.location,
         label: operation.method,
         functionNodeId: owner?.node_id ?? null,
+        ...(operation.builtinAuthority === "candidate"
+          ? {
+              evidence: candidateBuiltinSemanticEvidence(
+                context.file,
+                operation.location,
+              ),
+            }
+          : {}),
         properties: {
+          ...(operation.builtinAuthority === "candidate"
+            ? { builtin_authority: "candidate" }
+            : {}),
           delay_milliseconds: operation.delayMilliseconds,
           method: operation.method,
         },
@@ -177,17 +191,38 @@ const projectTimerSchedule = (
   operation: JavaScriptSemanticTimerOperation,
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
+  const candidateEvidence =
+    operation.builtinAuthority === "candidate"
+      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
+      : undefined;
   addSemanticGraphRelation(context.state, {
     source: context.callSiteAt(operation.location),
     target: timerNodes.get(operation.timerId),
     relation: "schedules-timer",
-    resolution: "resolved",
+    resolution: candidateEvidence === undefined ? "resolved" : "candidate",
+    ...(candidateEvidence === undefined
+      ? {}
+      : {
+          evidence: candidateEvidence,
+          properties: { builtin_authority: "candidate" },
+        }),
   });
   projectSemanticResultBindings(
     context,
     timerNodes.get(operation.timerId),
     operation.projectedResultBindings,
+    candidateEvidence,
   );
+  if (candidateEvidence !== undefined)
+    addSemanticGraphUnknown(context.state, {
+      node_id: timerNodes.get(operation.timerId)?.node_id ?? null,
+      family: "timer",
+      relation_kinds: ["schedules-timer"],
+      reason: "ambiguous-target",
+      detail: "The timer identity is conditional on loader or mutation facts.",
+      candidate_node_ids: [],
+      evidence: unknownSemanticEvidence(context.file, operation.location),
+    });
 };
 
 const projectTimerCancellation = (
@@ -196,6 +231,10 @@ const projectTimerCancellation = (
   timerNodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
 ): void => {
   const callSite = context.callSiteAt(operation.location);
+  const candidateEvidence =
+    operation.builtinAuthority === "candidate"
+      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
+      : undefined;
   const target =
     operation.linkedTimerId === null
       ? undefined
@@ -204,15 +243,28 @@ const projectTimerCancellation = (
     source: callSite,
     target,
     relation: "cancels-timer",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    resolution:
+      candidateEvidence === undefined && operation.resolution === "complete"
+        ? "resolved"
+        : "candidate",
+    ...(candidateEvidence === undefined
+      ? {}
+      : {
+          evidence: candidateEvidence,
+          properties: { builtin_authority: "candidate" },
+        }),
   });
-  if (operation.resolution === "complete") return;
+  if (operation.resolution === "complete" && candidateEvidence === undefined)
+    return;
   addSemanticGraphUnknown(context.state, {
     node_id: callSite?.node_id ?? null,
     family: "timer",
     relation_kinds: ["cancels-timer"],
     reason: "ambiguous-target",
-    detail: `Static ${operation.method} handle resolution was ${operation.resolution}.`,
+    detail:
+      candidateEvidence === undefined
+        ? `Static ${operation.method} handle resolution was ${operation.resolution}.`
+        : `The ${operation.method} identity is conditional on loader or mutation facts.`,
     candidate_node_ids: [],
     evidence: unknownSemanticEvidence(context.file, operation.location),
   });

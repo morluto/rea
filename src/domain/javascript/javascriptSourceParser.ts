@@ -1,6 +1,7 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
+import { explicitJavaScriptLoaderMode } from "./javascriptModuleResolutionMode.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
   hasOnlyInlineTypeImportSpecifiers,
@@ -78,13 +79,14 @@ const parseWithRuntimeContext = (
   packageContext?: JavaScriptPackageType,
 ): ParsedJavaScriptSource => {
   const file = parse(source, options);
+  const filenameMode = explicitJavaScriptLoaderMode(sourcePath);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
-      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+    filenameMode === "commonjs"
+      ? sourcePath?.toLowerCase().endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
-      : isExplicitModuleSourcePath(sourcePath)
+      : filenameMode === "module"
         ? "module"
         : packageContext === "module" || packageContext === "commonjs"
           ? packageContext
@@ -141,16 +143,12 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
-
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  path?.endsWith(".cjs")
     ? "commonjs"
-    : isExplicitModuleSourcePath(path)
+    : explicitJavaScriptLoaderMode(path) === "module"
       ? "module"
       : "unambiguous";
 

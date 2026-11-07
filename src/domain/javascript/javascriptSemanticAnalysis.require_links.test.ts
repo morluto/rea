@@ -275,14 +275,19 @@ describe("CommonJS dependency links", () => {
   });
 
   it("keeps bindings and re-exports without extra dependency links", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const ir = analyzeParsedJavaScriptSemantics(
+      parseJavaScriptSource(
+        `
       const bound = (require("bound") as unknown);
       const { left, right } = require("destructured");
       module.exports = require("forwarded");
       exports = module.exports;
       exports.member = require("member").value;
       exports.first = exports.second = require("chained");
-    `);
+    `,
+        "entry.cts",
+      )!,
+    );
     expect(
       ir.moduleLinks.map(({ kind, specifier, localName, exportedName }) => ({
         kind,
@@ -340,31 +345,36 @@ describe("CommonJS dependency links", () => {
       { specifier: "bound", importedPath: [], resolutionMode: "require" },
     ]);
   });
+});
 
-  it.each([
-    'require("outer", require("inner"));',
-    'const bound = require("outer", require("inner"));',
-    'module.exports = require("outer", require("inner"));',
-  ])("retains a distinct nested call in %s", (source) => {
-    const links = analyzeJavaScriptSemantics(source).moduleLinks;
-    expect(links.map(({ specifier }) => specifier)).toEqual(["outer", "inner"]);
-    expect(links[1]).toMatchObject({
-      kind: "require",
-      importedName: null,
-      localName: null,
-      exportedName: null,
-    });
+it.each([
+  'require("outer", require("inner"));',
+  'const bound = require("outer", require("inner"));',
+  'module.exports = require("outer", require("inner"));',
+])("retains a distinct nested call in %s", (source) => {
+  const links = analyzeJavaScriptSemantics(source).moduleLinks;
+  expect(links.map(({ specifier }) => specifier)).toEqual(["outer", "inner"]);
+  expect(links[1]).toMatchObject({
+    kind: "require",
+    importedName: null,
+    localName: null,
+    exportedName: null,
   });
 });
 
 it("preserves unshadowed require origins through aliases and assignments", () => {
-  const ir = analyzeJavaScriptSemantics(`
+  const ir = analyzeParsedJavaScriptSemantics(
+    parseJavaScriptSource(
+      `
     const { ipcMain: bus } = require("electron");
     const forwarded = bus;
     let assigned;
     assigned = require("electron").ipcMain;
     { const require = localLoader; require("./local.js"); }
-  `);
+  `,
+      "entry.cts",
+    )!,
+  );
   for (const name of ["bus", "forwarded"])
     expect(origin(topLevelBinding(ir, name))).toEqual({
       specifier: "electron",

@@ -1,7 +1,10 @@
 import * as t from "@babel/types";
 import { posix } from "node:path";
 
-import { semanticStaticPropertyKey } from "./javascript/javascriptAstValues.js";
+import {
+  semanticStaticPropertyKey,
+  unwrapJavaScriptExpression,
+} from "./javascript/javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascript/javascriptSemanticAmbientWrites.js";
 import {
   indexJavaScriptBindingsWithReceiversSteps,
@@ -65,7 +68,15 @@ export const referenceSourceRequireCalls = (
       const identifier = callReceiverIdentifier(node.callee);
       if (identifier === undefined) return;
       let fact = semanticRequireLoaderAt(node, index.bindings, factoryBindings);
-      if (fact === "create-require") {
+      const callee = unwrapJavaScriptExpression(node.callee).node;
+      if (
+        fact === "create-require" ||
+        ((t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)) &&
+          ["call", "apply", "resolve"].includes(
+            semanticStaticPropertyKey(callee.property, callee.computed) ?? "",
+          ))
+      ) {
         // Definitions identify a possible factory. Its mutable member reads
         // need the shared write index before they can prove an association.
         completeSemanticSteps(index.indexMemberMutationFactsSteps());
@@ -75,6 +86,7 @@ export const referenceSourceRequireCalls = (
         node,
         index.bindings,
         factoryBindings,
+        index,
       );
       if (callFact === undefined || callFact.loader === "local") return;
       if (fact !== "create-require" && fact !== "commonjs-loader") return;

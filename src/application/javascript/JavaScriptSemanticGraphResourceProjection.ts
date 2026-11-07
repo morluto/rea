@@ -5,7 +5,10 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  candidateBuiltinSemanticEvidence,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
 
 /** Project built-in resource acquisition and exact local release handles. */
@@ -25,7 +28,16 @@ export const projectSemanticResources = (
         source: context.callSiteAt(operation.location),
         target: resourceNodes.get(operation.resourceId),
         relation: "acquires",
-        resolution: "resolved",
+        resolution:
+          operation.builtinAuthority === "candidate" ? "candidate" : "resolved",
+        ...(operation.builtinAuthority === "candidate"
+          ? {
+              evidence: candidateBuiltinSemanticEvidence(
+                context.file,
+                operation.location,
+              ),
+            }
+          : {}),
       });
     else projectRelease(context, operation, resourceNodes);
 };
@@ -44,7 +56,20 @@ const addResourceNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    properties: { method: operation.method },
+    ...(operation.builtinAuthority === "candidate"
+      ? {
+          evidence: candidateBuiltinSemanticEvidence(
+            context.file,
+            operation.location,
+          ),
+        }
+      : {}),
+    properties: {
+      method: operation.method,
+      ...(operation.builtinAuthority === "candidate"
+        ? { builtin_authority: "candidate" }
+        : {}),
+    },
   });
 
 const projectRelease = (
@@ -63,7 +88,18 @@ const projectRelease = (
       target: resource,
       relation: "releases",
       resolution:
-        operation.resolution === "complete" ? "resolved" : "candidate",
+        operation.builtinAuthority !== "candidate" &&
+        operation.resolution === "complete"
+          ? "resolved"
+          : "candidate",
+      ...(operation.builtinAuthority === "candidate"
+        ? {
+            evidence: candidateBuiltinSemanticEvidence(
+              context.file,
+              operation.location,
+            ),
+          }
+        : {}),
     });
   if (operation.resolution === "complete") return;
   addSemanticGraphUnknown(context.state, {

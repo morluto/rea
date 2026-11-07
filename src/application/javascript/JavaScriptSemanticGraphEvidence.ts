@@ -64,6 +64,22 @@ export const inferredSemanticEvidenceAt = (
   limitations: [INFERENCE_LIMITATION],
 });
 
+/** A built-in operation whose identity is conditional on loader or mutation facts. */
+export const candidateBuiltinSemanticEvidence = (
+  file: JavaScriptArtifactFile,
+  location: JavaScriptSourceRange,
+): ApplicationGraphEvidence => {
+  const evidence = inferredSemanticEvidenceAt(file, location);
+  return {
+    ...evidence,
+    confidence: "low",
+    limitations: [
+      ...evidence.limitations,
+      "The built-in identity or its mutation state is unproven; this operation is conditional.",
+    ],
+  };
+};
+
 /** Explicit absence of semantic syntax for an artifact-level fallback root. */
 export const unavailableSemanticRootEvidence = (
   rootArtifactSha256: string,

@@ -15,7 +15,7 @@ import {
   applicationFeatureSeedSchema,
   type ApplicationFeatureSeed,
 } from "./javascriptFeatureTraceSchemas.js";
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import type { JsonValue } from "../jsonValue.js";
 
 const memberFields = [
@@ -451,7 +451,7 @@ const propertyMatch = (node: ApplicationNode, field: string) => ({
 });
 
 const contextBridgeGraph = () => {
-  const analysis = analyzeJavaScriptStaticSource(
+  const analysis = analyzeCommonJsStaticFixture(
     "const { contextBridge } = require('electron');\ncontextBridge.exposeInMainWorld('desktopApi', { openProject() {}, closeProject() {} });",
   );
   expect(analysis.parse_status).toBe("complete");

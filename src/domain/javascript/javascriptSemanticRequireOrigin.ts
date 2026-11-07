@@ -17,6 +17,7 @@ import {
   semanticResolutionBlocked,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
+  type JavaScriptBindingIndex,
 } from "./javascriptSemanticState.js";
 import {
   commonJsWrapperBindingDeclaration,
@@ -173,7 +174,7 @@ const requireLoaderValueAt = (
   if (loader.name !== "require") return "local";
   if (binding === undefined) {
     if (
-      javaScriptRuntimeContext(state.program) === "module" ||
+      javaScriptRuntimeContext(state.program) !== "commonjs" ||
       semanticResolutionBlocked(state, loader, "require")
     )
       return "unknown";
@@ -199,7 +200,10 @@ const requireLoaderValueAt = (
       t.isNewExpression(node)) &&
     isWrapperRequireInitializerCall(binding, node, state)
   )
-    return commonJsLoaderAt(node, state);
+    return binding.hostOrigin === "commonjs-wrapper" ||
+      javaScriptRuntimeContext(state.program) === "commonjs"
+      ? commonJsLoaderAt(node, state)
+      : "unknown";
   const wrapperBinding = commonJsWrapperBindingDeclaration(
     loader,
     "require",
@@ -701,6 +705,8 @@ export interface JavaScriptRequireCallFact {
     | readonly t.CallExpression["arguments"][number][]
     | undefined;
   readonly sourceRelative: boolean;
+  readonly loaderAuthority?: "candidate";
+  readonly memberUnproven?: true;
   /** A createRequire filename relative to the current source directory, when proven. */
   readonly sourceRelativePath?: string;
 }
@@ -710,14 +716,8 @@ export const semanticRequireCallAt = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
   state: JavaScriptSemanticAnalysisState,
   factoryBindingIds: ReadonlySet<string>,
+  index?: JavaScriptBindingIndex,
 ): JavaScriptRequireCallFact | undefined => {
-  if (semanticModuleRequireCallAt(node, state))
-    return {
-      operation: "load",
-      loader: "unknown",
-      arguments: undefined,
-      sourceRelative: false,
-    };
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
@@ -730,6 +730,49 @@ export const semanticRequireCallAt = (
     return {
       operation: "load",
       loader: "local",
+      arguments: undefined,
+      sourceRelative: false,
+    };
+  if (index !== undefined) {
+    let member = callee;
+    while (
+      t.isMemberExpression(member) ||
+      t.isOptionalMemberExpression(member)
+    ) {
+      const key = semanticStaticPropertyKey(member.property, member.computed);
+      if (
+        (key === "call" || key === "apply" || key === "resolve") &&
+        requireLoaderValueAt(member.object, node, state, factoryBindingIds) !==
+          "local"
+      ) {
+        const effects = index.effectsForReferenceAt(node, member.object, [key]);
+        if (
+          !effects.memberEffectsIndexed ||
+          effects.effects.some(
+            ({ kind, timing }) =>
+              timing !== "after" &&
+              (kind === "member-write" || kind === "escape"),
+          )
+        )
+          return {
+            operation: "load",
+            loader: "unknown",
+            // A changed call/apply member has no trustworthy argument mapping.
+            arguments:
+              member === callee && key === "resolve"
+                ? node.arguments
+                : undefined,
+            sourceRelative: false,
+            memberUnproven: true,
+          };
+      }
+      member = unwrapJavaScriptExpression(member.object).node;
+    }
+  }
+  if (semanticModuleRequireCallAt(node, state))
+    return {
+      operation: "load",
+      loader: "unknown",
       arguments: undefined,
       sourceRelative: false,
     };
@@ -804,8 +847,19 @@ export const semanticRequireCallAt = (
         state,
         factoryBindingIds,
       );
-      if (loader !== "local" && loader !== "create-require")
-        return ["require-loader", loader, "relative"];
+      if (loader !== "local" && loader !== "create-require") {
+        const root = unwrapJavaScriptExpression(callee).node;
+        const candidate =
+          loader === "unknown" &&
+          t.isIdentifier(root, { name: "require" }) &&
+          isConditionalRequireAt(root, node, state);
+        return [
+          "require-loader",
+          loader,
+          "relative",
+          ...(candidate ? ["candidate"] : []),
+        ];
+      }
       const selected = selectedRequireSourcesAt(
         callee,
         node,
@@ -836,6 +890,9 @@ export const semanticRequireCallAt = (
               ? "unknown"
               : (invocation.path[1] as JavaScriptRequireLoaderFact),
         arguments: invocation.arguments,
+        ...(invocation.kind === "known" && invocation.path[3] === "candidate"
+          ? { loaderAuthority: "candidate" as const }
+          : {}),
         sourceRelative:
           invocation.kind === "known" && invocation.path[2] === "relative",
         ...(selected?.sourceRelativePath === undefined
@@ -1267,6 +1324,18 @@ const hasCommonJsModuleSource = (
       commonJsWrapperBindingDeclaration(value, "require", state) !==
         undefined &&
       !read.hasDefiniteInitializer;
+    // A top-level `var require` may refer to a host wrapper on an unknown
+    // runtime. Preserve a possible member-loader call without resolving it.
+    if (
+      includeUnknown &&
+      mainModulePath &&
+      javaScriptRuntimeContext(state.program) === "unknown" &&
+      state.scopesById.get(binding.scopeId)?.kind === "program" &&
+      binding.declarationKinds.size === 1 &&
+      binding.declarationKinds.has("var") &&
+      !read.hasDefiniteInitializer
+    )
+      return true;
     if (
       value.name === "module" &&
       copyAdmitsModuleDelegate &&
@@ -1549,40 +1618,84 @@ export const semanticGlobalProcessPathOrigin = (
   };
 };
 
+/** Check one unknown-host wrapper candidate at its source-ordered read. */
+const isConditionalRequireAt = (
+  root: t.Identifier,
+  node: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+  allowAmbientModule = false,
+): boolean => {
+  const runtime = javaScriptRuntimeContext(state.program);
+  if (
+    (runtime !== "unknown" && !(allowAmbientModule && runtime === "module")) ||
+    semanticResolutionBlocked(state, root, "require") ||
+    commonJsDelegateChangedAt(node, state)
+  )
+    return false;
+  const binding = resolveSemanticBindingState(state, root, "require");
+  if (
+    binding !== undefined &&
+    (binding.hostOrigin === "commonjs-wrapper" ||
+      state.scopesById.get(binding.scopeId)?.kind !== "program" ||
+      binding.declarationKinds.size !== 1 ||
+      !binding.declarationKinds.has("var") ||
+      (semanticBindingHasPriorValueWrite(node, binding, state) &&
+        !isWrapperRequireInitializerCall(binding, node, state)))
+  )
+    return false;
+  return !(state.ambientBindingWrites.get("require") ?? []).some(
+    (write) =>
+      !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
+  );
+};
+
 /** Recover an unshadowed literal require origin and its exact member path. */
-export const semanticRequireOrigin = (
+export const semanticRequireOriginCandidate = (
   node: t.Node | null | undefined,
   state: JavaScriptSemanticAnalysisState,
+  allowAmbientModule = false,
 ): JavaScriptRequireOrigin | undefined => {
   const chain = semanticMemberChain(node);
   const current = chain?.root;
   if (
     chain === undefined ||
-    !t.isCallExpression(current) ||
+    (!t.isCallExpression(current) && !t.isOptionalCallExpression(current)) ||
     !t.isIdentifier(current.callee, { name: "require" })
   )
     return undefined;
-  if (commonJsDelegateChangedAt(current, state)) return undefined;
-  const requireBinding = resolveSemanticBindingState(
-    state,
-    current.callee,
-    "require",
-  );
+  const binding = resolveSemanticBindingState(state, current.callee, "require");
+  const runtime = javaScriptRuntimeContext(state.program);
+  const candidate =
+    (runtime === "unknown" ||
+      (allowAmbientModule && runtime === "module" && binding === undefined)) &&
+    binding?.hostOrigin !== "commonjs-wrapper";
   if (
-    (requireBinding !== undefined &&
-      !isUnmodifiedCommonJsWrapperBinding(current.callee, "require", state) &&
-      !isWrapperRequireInitializerCall(requireBinding, current, state)) ||
-    (requireBinding === undefined &&
-      (javaScriptRuntimeContext(state.program) === "module" ||
-        semanticResolutionBlocked(state, current.callee, "require"))) ||
-    (state.ambientBindingWrites.get("require") ?? []).some(
-      (write) =>
-        !semanticTopLevelEffectFollowsCapture(
+    candidate
+      ? !isConditionalRequireAt(
+          current.callee,
           current,
-          write,
-          state.parentsByNode,
-        ),
-    )
+          state,
+          allowAmbientModule,
+        )
+      : commonJsDelegateChangedAt(current, state) ||
+        (binding !== undefined &&
+          !isUnmodifiedCommonJsWrapperBinding(
+            current.callee,
+            "require",
+            state,
+          ) &&
+          !isWrapperRequireInitializerCall(binding, current, state)) ||
+        (binding === undefined &&
+          (javaScriptRuntimeContext(state.program) === "module" ||
+            semanticResolutionBlocked(state, current.callee, "require"))) ||
+        (state.ambientBindingWrites.get("require") ?? []).some(
+          (write) =>
+            !semanticTopLevelEffectFollowsCapture(
+              current,
+              write,
+              state.parentsByNode,
+            ),
+        )
   )
     return undefined;
   const specifier = stringValue(current.arguments[0]);
@@ -1593,9 +1706,39 @@ export const semanticRequireOrigin = (
           specifier,
           importedPath: chain.members,
           resolutionMode: "require",
+          ...(candidate ? { loaderAuthority: "candidate" as const } : {}),
         },
         call: current,
       };
+};
+
+/** Preserve a literal request without assuming that the host supplied require. */
+export const semanticCandidateRequireSpecifier = (
+  node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
+  state: JavaScriptSemanticAnalysisState,
+): string | undefined => {
+  if (t.isNewExpression(node)) return undefined;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  const root =
+    t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)
+      ? semanticStaticPropertyKey(callee.property, callee.computed) ===
+        "resolve"
+        ? callee.object
+        : undefined
+      : callee;
+  return t.isIdentifier(root, { name: "require" }) &&
+    isConditionalRequireAt(root, node, state)
+    ? stringValue(node.arguments[0])
+    : undefined;
+};
+
+/** Only a proven host loader may establish Node builtin identity. */
+export const semanticRequireOrigin = (
+  node: t.Node | null | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptRequireOrigin | undefined => {
+  const result = semanticRequireOriginCandidate(node, state);
+  return result?.origin.loaderAuthority === "candidate" ? undefined : result;
 };
 
 /** Node's exported child objects retain their direct builtin-module identity. */
@@ -1656,4 +1799,5 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
 };
 
 semanticRequireOriginReaders.origin = semanticRequireOrigin;
+semanticRequireOriginReaders.candidate = semanticRequireOriginCandidate;
 semanticRequireOriginReaders.loader = semanticRequireLoaderAt;

@@ -14,6 +14,22 @@ export const isNativeAddonModuleTarget = (
   kind: JavaScriptArtifactFileKind | undefined,
 ): boolean => path.endsWith(".node") && kind === "native-addon";
 
+/** Exact loader suffixes are separate from case-folded artifact grammar. */
+export const explicitJavaScriptLoaderMode = (
+  path?: string,
+): "module" | "commonjs" | undefined => {
+  switch (path?.slice(-4)) {
+    case ".mjs":
+    case ".mts":
+      return "module";
+    case ".cjs":
+    case ".cts":
+      return "commonjs";
+    default:
+      return undefined;
+  }
+};
+
 /** Loader evidence retained for a source-level module reference. */
 export type JavaScriptModuleResolutionMode =
   | "import"
@@ -29,9 +45,10 @@ export const moduleResolutionModeForJavaScriptReference = (
   if (explicitMode !== undefined) return explicitMode;
   if (referenceKind === "require") return "require";
   if (referenceKind === "dynamic-import") return "import";
+  const loaderMode = explicitJavaScriptLoaderMode(sourcePath);
+  if (loaderMode !== undefined)
+    return loaderMode === "commonjs" ? "require" : "import";
   const extension = posix.extname(sourcePath).toLowerCase();
-  if (extension === ".cjs" || extension === ".cts") return "require";
-  if (extension === ".mts") return "import";
   if (extension === ".ts" || extension === ".tsx") return "compiler-dependent";
   return "import";
 };
