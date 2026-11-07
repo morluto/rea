@@ -55,10 +55,7 @@ const singleDefaultOptions: readonly {
   { command: "inspect-signal-decoders", options: ["--offset"] },
 ];
 
-const optionLine = (
-  help: string,
-  option: string,
-): string | undefined => {
+const optionLine = (help: string, option: string): string | undefined => {
   const line = help
     .split(/\r?\n/u)
     .find((candidate) => candidate.trimStart().startsWith(`${option} `));
@@ -80,7 +77,9 @@ describe("CLI help default annotations", () => {
         }
         const statements = line.match(/default/giu)?.length ?? 0;
         if (statements !== 1)
-          repeated.push(`${command} ${option}: ${statements} default statements`);
+          repeated.push(
+            `${command} ${option}: ${statements} default statements`,
+          );
       }
     }
     expect(repeated).toEqual([]);
