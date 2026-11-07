@@ -1,3 +1,4 @@
+import type { Evidence } from "../domain/evidence.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
 import type {
@@ -60,7 +61,7 @@ export interface EnhancedToolRegistration {
     | undefined;
   readonly recordEvidence: EvidenceWriter["recordEvidence"] | undefined;
   readonly admitRecovery?: RecoveryAdmission;
-  readonly hasEvidence?: (id: string) => boolean;
+  readonly evidenceForAnalysis?: (id: string) => Evidence | undefined;
   readonly evidenceById?: EvidenceLookup | undefined;
   readonly recordUnknown: UnknownRegistryPort["recordUnknown"] | undefined;
   readonly allowsSnapshotReplay:
@@ -301,7 +302,7 @@ const executeEnhancedTool = async (
           parameters,
           upstreamProfile: registration.analysisProfile?.(name),
         },
-        registration.hasEvidence,
+        registration.evidenceForAnalysis,
         registration.admitRecovery,
       );
       const finish = async (

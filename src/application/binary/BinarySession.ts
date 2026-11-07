@@ -1578,7 +1578,7 @@ export class BinarySession
                 : execution.value.subject,
           },
           admit: this.admitRecoveryObservation.bind(this),
-          hasEvidence: this.hasEvidence.bind(this),
+          evidenceForAnalysis: this.evidenceForAnalysis.bind(this),
         });
         return sourcesRecorded;
       }

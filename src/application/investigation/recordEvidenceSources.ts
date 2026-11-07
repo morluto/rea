@@ -57,7 +57,7 @@ export const recordEvidenceSources = (
   sources: readonly Evidence[],
   completed?: {
     readonly evidence: Evidence;
-    readonly hasEvidence?: (id: string) => boolean;
+    readonly evidenceForAnalysis?: (id: string) => Evidence | undefined;
   },
 ): Result<null, AnalysisError> => {
   for (const source of sources) {
@@ -67,7 +67,7 @@ export const recordEvidenceSources = (
         preserveCompletedSourceEvidence(
           recorded.error,
           completed.evidence,
-          completed.hasEvidence,
+          completed.evidenceForAnalysis,
         );
       return recorded;
     }

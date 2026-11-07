@@ -121,7 +121,7 @@ it.each([0, 1, 100])(
         parameters: { addresses: items.map((item) => item.address) },
         upstreamProfile: ANALYSIS_SNAPSHOT_PROFILE,
       },
-      () => false,
+      () => undefined,
       (input, _operation, additional) => {
         const base = estimateJsonStorage(input);
         admitted = {

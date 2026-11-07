@@ -3,6 +3,7 @@ import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import { isDigest } from "../../domain/digests.js";
 import {
+  evidenceDisplayMetadataAgree,
   evidenceSchema,
   isImmutableEvidence,
   type Evidence,
@@ -22,7 +23,7 @@ import { admitInvestigationAuthentication } from "./InvestigationRetention.js";
 export const preserveCompletedSourceEvidence = (
   error: AnalysisError,
   evidence: Evidence,
-  hasEvidence: ((id: string) => boolean) | undefined,
+  evidenceForAnalysis: ((id: string) => Evidence | undefined) | undefined,
 ): void => {
   if (!isImmutableEvidence(evidence)) {
     const headroom = admitInvestigationAuthentication(
@@ -52,16 +53,18 @@ export const preserveCompletedSourceEvidence = (
     return;
   }
   const valid = authenticated.value;
+  const retained = evidenceForAnalysis?.(valid.evidence_id);
   error.retainSourcePublication(
     freezeJsonSnapshot(
-      hasEvidence === undefined
+      evidenceForAnalysis === undefined
         ? {
             kind: "inline-evidence" as const,
             retention: "unknown" as const,
             source_closure: "not-established" as const,
             evidence: valid,
           }
-        : hasEvidence(valid.evidence_id)
+        : retained !== undefined &&
+            evidenceDisplayMetadataAgree(retained, valid)
           ? {
               kind: "retained-evidence" as const,
               source_closure: "not-established" as const,
@@ -92,9 +95,16 @@ export const recoverProviderSourceFailure = (input: {
       readonly serializedUtf16Bytes: number;
     },
   ) => Result<void, AnalysisError>;
-  readonly hasEvidence: (id: string) => boolean;
+  readonly evidenceForAnalysis: (id: string) => Evidence | undefined;
 }): void => {
-  const { error, operation, parameters, execution, admit, hasEvidence } = input;
+  const {
+    error,
+    operation,
+    parameters,
+    execution,
+    admit,
+    evidenceForAnalysis,
+  } = input;
   const { sourceEvidence, ...primaryExecution } = execution;
   // The schema owns the envelope shape. Measure its generated fields and then
   // account for source IDs incrementally, before allocating the ID array.
@@ -160,7 +170,7 @@ export const recoverProviderSourceFailure = (input: {
     }
   }
   if (evidence !== undefined) {
-    preserveCompletedSourceEvidence(error, evidence, hasEvidence);
+    preserveCompletedSourceEvidence(error, evidence, evidenceForAnalysis);
     return;
   }
   const observation = jsonObjectSchema.parse({

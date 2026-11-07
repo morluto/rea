@@ -23,6 +23,8 @@ const assertPublication = ({
   sourceKind,
   primaryKind,
   preexisting,
+  differentPath,
+  selectedPath,
   session,
 }: {
   error: ReturnType<typeof parseMcpToolError>["error"];
@@ -38,6 +40,8 @@ const assertPublication = ({
     | "large-limited";
   primaryKind: "small" | "large";
   preexisting: boolean;
+  differentPath: boolean;
+  selectedPath: string;
   session: BinarySession;
 }): void => {
   expect(error.code).toBe(
@@ -74,7 +78,17 @@ const assertPublication = ({
     sourceKind === "invalid-null"
   )
     expect(error.details).not.toHaveProperty("partial_observation");
-  if (preexisting)
+  if (preexisting && differentPath)
+    expect(error.details).toMatchObject({
+      completed_observation: {
+        kind: "unretained-evidence",
+        evidence: {
+          evidence_id: primary!.evidence_id,
+          subject: { local_path: selectedPath },
+        },
+      },
+    });
+  else if (preexisting)
     expect(error.details).toMatchObject({
       completed_observation: {
         kind: "retained-evidence",
@@ -122,19 +136,75 @@ const assertPublication = ({
 };
 
 it.each([
-  { source: "small", primary: "small", preexisting: false },
-  { source: "invalid", primary: "small", preexisting: false },
-  { source: "invalid-id", primary: "small", preexisting: false },
-  { source: "invalid-json", primary: "small", preexisting: false },
-  { source: "invalid-null", primary: "small", preexisting: false },
-  { source: "large", primary: "small", preexisting: false },
-  { source: "large-limited", primary: "small", preexisting: false },
-  { source: "small", primary: "large", preexisting: false },
-  { source: "large", primary: "large", preexisting: false },
-  { source: "large", primary: "small", preexisting: true },
+  {
+    source: "small",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "invalid",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "invalid-id",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "invalid-json",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "invalid-null",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "large",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "large-limited",
+    primary: "small",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "small",
+    primary: "large",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "large",
+    primary: "large",
+    preexisting: false,
+    differentPath: false,
+  },
+  {
+    source: "large",
+    primary: "small",
+    preexisting: true,
+    differentPath: false,
+  },
+  { source: "large", primary: "small", preexisting: true, differentPath: true },
 ] as const)(
-  "retains independently bounded primary and source failure ($source source, $primary primary, preexisting: $preexisting)",
-  async ({ source: sourceKind, primary: primaryKind, preexisting }) => {
+  "retains independently bounded primary and source failure ($source source, $primary primary, preexisting: $preexisting, different path: $differentPath)",
+  async ({
+    source: sourceKind,
+    primary: primaryKind,
+    preexisting,
+    differentPath,
+  }) => {
     const identity = { id: "fixture", name: "Fixture", version: "1" };
     const base = createEvidence(
       undefined,
@@ -211,7 +281,9 @@ it.each([
               ...createAnalysisExecution(result, identity, {
                 sourceEvidence: [source],
               }),
-              subject: target,
+              subject: differentPath
+                ? { ...target, path: `${path}.old` }
+                : target,
             },
             "observed",
           )
@@ -234,6 +306,8 @@ it.each([
         sourceKind,
         primaryKind,
         preexisting,
+        differentPath,
+        selectedPath: path,
         session,
       });
       expect(records.statistics().evidenceRecords).toBe(preexisting ? 1 : 0);
@@ -520,7 +594,8 @@ it("accounts for source links before admitting a completed direct observation", 
       available_heap_bytes: 100000,
     });
     const reported = error.details?.reported_limits as
-      { projected_value_bytes: number } | undefined;
+      | { projected_value_bytes: number }
+      | undefined;
     expect(reported?.projected_value_bytes).toBeGreaterThan(100000);
     expect(records.statistics().evidenceRecords).toBe(1);
     expect(session.hasEvidence(source.evidence_id)).toBe(true);

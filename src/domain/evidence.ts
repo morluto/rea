@@ -35,6 +35,8 @@ import {
 
 /** Predicate shared by ordinary provider analysis observations. */
 export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
+export const MISSING_EVIDENCE_SUBJECT_LIMITATION =
+  "Artifact identity is unavailable for this observation.";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -454,7 +456,7 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
-/** Build the same borrowed envelope used by Evidence normalization; callers must admit it before cloning. */
+/** Borrow input collections for admission; callers account for a missing-subject limitation separately. */
 export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
@@ -487,20 +489,12 @@ export const evidenceEnvelopeForAdmission = (
     confidence: observation.confidence ?? "observed",
     authority: observation.authority ?? "shipped-artifact",
     environment: observation.environment ?? null,
-    limitations: [
-      ...(target === undefined
-        ? [
-            observation.subjectUnavailableReason ??
-              "Artifact identity is unavailable for this observation.",
-          ]
-        : []),
-      ...(observation.limitations ?? []),
-    ],
+    limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
       : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
-    evidence_links: [...(observation.evidenceLinks ?? [])],
+    locations: observation.locations ?? [],
+    evidence_links: observation.evidenceLinks ?? [],
   };
 };
 
@@ -509,7 +503,18 @@ const normalizeEvidenceObservation = (
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
 ) => {
-  const envelope = evidenceEnvelopeForAdmission(target, provider, observation);
+  const borrowed = evidenceEnvelopeForAdmission(target, provider, observation);
+  const envelope =
+    target === undefined
+      ? {
+          ...borrowed,
+          limitations: [
+            observation.subjectUnavailableReason ??
+              MISSING_EVIDENCE_SUBJECT_LIMITATION,
+            ...borrowed.limitations,
+          ],
+        }
+      : borrowed;
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&

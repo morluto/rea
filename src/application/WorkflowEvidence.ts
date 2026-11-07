@@ -23,6 +23,7 @@ import {
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import {
   createEvidence,
+  MISSING_EVIDENCE_SUBJECT_LIMITATION,
   evidenceEnvelopeForAdmission,
   type Evidence,
   type EvidenceLocation,
@@ -310,6 +311,9 @@ const admitWorkflowRecovery = (
     observation.result,
     evidenceInput.upstreamProfile ?? null,
     shell,
+    ...(evidenceInput.target === undefined
+      ? [MISSING_EVIDENCE_SUBJECT_LIMITATION]
+      : []),
   ]);
   return admitRecovery(admissionInput, evidenceInput.operation, additional);
 };
@@ -322,7 +326,7 @@ export const retainComposedWorkflowSources = (
     WorkflowEvidenceInput,
     "result" | "upstreamLimitations" | "upstreamEvidenceLinks"
   >,
-  hasEvidence?: (id: string) => boolean,
+  evidenceForAnalysis?: (id: string) => Evidence | undefined,
   admitRecovery: RecoveryAdmission = (input, operation, additional) =>
     admitInvestigationAuthentication(input, operation, {}, additional),
 ): ReturnType<
@@ -363,7 +367,11 @@ export const retainComposedWorkflowSources = (
         ? {}
         : { upstreamEvidenceLinks: result.value.evidenceLinks }),
     });
-    preserveCompletedSourceEvidence(retained.error, evidence, hasEvidence);
+    preserveCompletedSourceEvidence(
+      retained.error,
+      evidence,
+      evidenceForAnalysis,
+    );
   }
   return retained;
 };

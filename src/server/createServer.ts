@@ -374,7 +374,7 @@ export const createServer = (
         ...analysisOptions,
         ...(session === undefined
           ? {}
-          : { hasEvidence: session.hasEvidence.bind(session) }),
+          : { evidenceForAnalysis: session.evidenceForAnalysis.bind(session) }),
         ...(session === undefined
           ? {}
           : { admitRecovery: session.admitRecoveryObservation.bind(session) }),
