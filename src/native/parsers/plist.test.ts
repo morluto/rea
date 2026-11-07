@@ -32,7 +32,6 @@ it("retains binary dictionary identity after native plist number projection", ()
   const result = parsePlistBinary(
     Buffer.from(buildBinary({ nested: { CF$UID: 7 }, reference: { UID: 7 } })),
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   const value = result.value.value as Record<string, unknown>;
   expect(value).toEqual({ nested: { CF$UID: 7 }, reference: { UID: 7 } });
@@ -50,7 +49,6 @@ it("projects wide integers in binary CF$UID dictionaries as data", () => {
   const result = parsePlistBinary(
     binaryPlistObjectTable(bytes, [8, 11, 18], 27),
   );
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.value).toEqual({
     CF$UID: { $plist_type: "integer", decimal: "9007199254740993" },
@@ -141,7 +139,6 @@ it.each(["<bogus/>", "<plist><data>ＡＡＥ=</data></plist>"])(
 const parseWithoutMutatingSource = (bytes: Buffer) => {
   const original = Buffer.from(bytes);
   const parsed = parsePlistBinary(bytes);
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(Buffer.compare(bytes, original)).toBe(0);
   return parsed.value;
@@ -394,8 +391,6 @@ it("rejects a reachable date with a malformed marker", () => {
 
 it("does not reject an unreachable malformed date object as a decoded value", () => {
   const parsed = parsePlistBinary(binaryWithUnreachableMalformedDate());
-
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toBe("ok");
   expect(parsed.value.limitations).toContainEqual(
@@ -405,8 +400,6 @@ it("does not reject an unreachable malformed date object as a decoded value", ()
 
 it("keeps reachable date uncertainty when another object is malformed", () => {
   const parsed = parsePlistBinary(binaryWithReachableAndUnreachableDate());
-
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([{ $plist_type: "date", iso8601: null }]);
   expect(parsed.value.limitations).toContainEqual(
@@ -422,7 +415,6 @@ it("retains reachable date source facts when an unreachable offset is invalid", 
 
   expect(metadata.dates).toHaveLength(1);
   expect(metadata.dates[0]?.secondsSince2001).toBe(0.1005);
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([{ $plist_type: "date", iso8601: null }]);
   expect(parsed.value.limitations).toContainEqual(
@@ -447,8 +439,6 @@ it("does not rewrite shared bytes when a reachable date overlaps another object"
 
 it("keeps an exactly millisecond-representable overlapping date known", () => {
   const parsed = parsePlistBinary(binaryWithExactOverlappingDateAndNull());
-
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([
     { $plist_type: "date", iso8601: "2001-01-01T00:00:00.000Z" },
@@ -478,8 +468,6 @@ it("keeps a date unknown when its start is inside another reachable payload", ()
 
 it("isolates an overlapping date without losing an independent date", () => {
   const parsed = parsePlistBinary(binaryWithOverlappingAndIndependentDates());
-
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([
     { $plist_type: "data", base64: "ADM/ubpeNT987g==" },
