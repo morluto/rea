@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import {
   isApplicationDconfGroup,
   namedInTitles,
+  roleFacts,
   sqliteSidecarRoots,
   stateReasons,
   stateRole,
@@ -62,6 +64,18 @@ describe("stateRole", () => {
     expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
       "application_state",
     );
+    expect(stateRole(["selected_path"], "Documents/.household.gsb.lock")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], "Documents/plan.vym.lock")).toBe(
+      "application_state",
+    );
+    expect(
+      stateRole(["selected_path"], "Documents/household.gnucash.LCK"),
+    ).toBe("application_state");
+    expect(stateRole(["selected_path"], "Documents/Gemfile.lock")).toBe(
+      "document",
+    );
     expect(
       stateRole(
         ["selected_path", "named_in_window_title"],
@@ -79,6 +93,25 @@ describe("stateRole", () => {
         "desktop_trash",
       ]),
     ).toBe("shared_desktop");
+  });
+});
+
+describe("roleFacts", () => {
+  it("keeps a log the caller selected even when that path is also a state directory", () => {
+    const home = "/home/ada";
+    const log = `${home}/.notes.log`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [{ path: log }] },
+      state: {
+        content_roots: [log],
+        state_directories: [log],
+        selected_paths: [{ path: log, physical: log }],
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(facts.selectedRoots).toEqual([log]);
   });
 });
 

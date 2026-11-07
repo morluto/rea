@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
-import { shippedSeedCheckView } from "./DesktopTaskExport.js";
+import { namesApp, shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
@@ -379,6 +379,19 @@ describe("exportDesktopApplication with a task's prompt", () => {
     expect(naming(unnamed.result.limitations)).toHaveLength(1);
     expect(naming(unnamed.result.limitations)[0]).toContain("notes");
     expect(naming(named.result.limitations)).toEqual([]);
+  });
+
+  it("does not treat a word that only contains the app's name as naming it", () => {
+    const dia = { title: "Dia", name: "dia", aptPackage: "dia" };
+    expect(namesApp("Update the diagram and save it.", dia)).toBe(false);
+    expect(namesApp("In Dia, add a box.", dia)).toBe(true);
+    expect(
+      namesApp("In Notes, write down milk.", {
+        title: "Notes",
+        name: "notes",
+        aptPackage: "notes",
+      }),
+    ).toBe(true);
   });
 });
 
