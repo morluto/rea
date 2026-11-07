@@ -22,12 +22,36 @@ import { semanticPropertySlot } from "./JavaScriptSemanticGraphValueProjection.j
 export function* projectSemanticObjects(
   context: SemanticFlowProjectionContext,
 ): Generator<void, void> {
+  const bindings = new Map(
+    context.ir.bindings.map((binding) => [binding.bindingId, binding]),
+  );
   const values = new Map(
     context.ir.bindings.map((binding) => [binding.bindingId, binding.value]),
   );
   for (const [index, operation] of context.ir.objectOperations.entries()) {
     if (index % 64 === 0) yield;
-    const target = objectTarget(context, values, operation);
+    const binding =
+      operation.objectBindingId === null
+        ? undefined
+        : bindings.get(operation.objectBindingId);
+    const bindingNode =
+      operation.objectBindingId === null
+        ? undefined
+        : context.bindingNodes.get(operation.objectBindingId);
+    const operationFunctionNodeId =
+      operation.ownerCallableId === null
+        ? null
+        : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
+          null);
+    const sameCallable =
+      (bindingNode?.function_node_id ?? null) === operationFunctionNodeId;
+    const readPositionValue =
+      sameCallable &&
+      operation.kind === "destructure" &&
+      operation.readSlotPresence === "present"
+        ? binding?.initializerValue
+        : undefined;
+    const target = objectTarget(context, values, operation, readPositionValue);
     const occurrence = addObjectOccurrence(
       context,
       operation,
@@ -72,15 +96,17 @@ const objectTarget = (
   context: SemanticFlowProjectionContext,
   values: ReadonlyMap<string, JavaScriptSemanticValue>,
   operation: JavaScriptSemanticObjectOperation,
+  readPositionValue?: JavaScriptSemanticValue,
 ): ObjectTarget => {
   const binding =
     operation.objectBindingId === null
       ? undefined
       : context.bindingNodes.get(operation.objectBindingId);
   const value =
-    operation.objectBindingId === null
+    readPositionValue ??
+    (operation.objectBindingId === null
       ? undefined
-      : values.get(operation.objectBindingId);
+      : values.get(operation.objectBindingId));
   if (
     operation.objectBindingId === null ||
     operation.propertyPath === null ||

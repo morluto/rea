@@ -18,6 +18,9 @@ import {
 } from "./javascriptSemanticState.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
+import { semanticSlotAtPath } from "./javascriptSemanticSlots.js";
+import type { JavaScriptSemanticSlotPresence } from "./javascriptSemanticValueTypes.js";
 
 /** Recover bounded static property reads, writes, spreads, and destructuring. */
 export const collectJavaScriptSemanticObjects = (
@@ -150,6 +153,12 @@ const collectDestructuring = (
   output: JavaScriptSemanticObjectOperation[],
 ): void => {
   const source = expressionObjectIdentity(initializer, state);
+  const readSourceValue =
+    source.bindingId !== null &&
+    initializer !== null &&
+    initializer !== undefined
+      ? evaluateSemanticExpression(initializer, state, initializer)
+      : undefined;
   const pending: {
     readonly pattern: t.Node;
     readonly path: readonly string[];
@@ -184,6 +193,12 @@ const collectDestructuring = (
       continue;
     }
     if (!t.isIdentifier(pattern)) continue;
+    const propertyPath =
+      source.path === null ? null : [...source.path, ...path];
+    const readSlotPresence =
+      readSourceValue !== undefined && propertyPath !== null
+        ? semanticSlotAtPath(readSourceValue, path).presence
+        : undefined;
     addObjectOperation(
       {
         node: occurrence,
@@ -193,7 +208,8 @@ const collectDestructuring = (
         targetBindingId:
           resolveSemanticBindingState(state, pattern, pattern.name)
             ?.bindingId ?? null,
-        propertyPath: source.path === null ? null : [...source.path, ...path],
+        propertyPath,
+        ...(readSlotPresence === undefined ? {} : { readSlotPresence }),
       },
       state,
       output,
@@ -208,6 +224,7 @@ interface AddObjectOperationInput {
   readonly objectBindingId: string | null;
   readonly targetBindingId: string | null;
   readonly propertyPath: readonly string[] | null;
+  readonly readSlotPresence?: JavaScriptSemanticSlotPresence | undefined;
 }
 
 const addObjectOperation = (
@@ -229,6 +246,9 @@ const addObjectOperation = (
     objectBindingId: input.objectBindingId,
     targetBindingId: input.targetBindingId,
     propertyPath: input.propertyPath,
+    ...(input.readSlotPresence === undefined
+      ? {}
+      : { readSlotPresence: input.readSlotPresence }),
     resolution:
       input.objectBindingId === null ||
       input.propertyPath === null ||
