@@ -111,6 +111,8 @@ import type { PcapAnalysisPort } from "../application/pcap/PcapAnalysisPort.js";
 import type { FlutterBuildAnalysisPort } from "../application/flutter/FlutterBuildAnalysisPort.js";
 import type { JebAnalysisPort } from "../application/jeb/JebAnalysisPort.js";
 import type { AdbDeviceAnalysisPort } from "../application/adb/AdbDeviceAnalysisPort.js";
+import type { BuildSettle } from "../application/desktop/DesktopBuildSettle.js";
+import type { BuildComputerDefaults } from "../desktop/BuildComputerEnvironment.js";
 
 /** Typed injection inputs shared by a capability host, independent of transport. */
 export interface CapabilityServiceOptions {
@@ -148,6 +150,10 @@ export interface CapabilityServiceOptions {
   readonly electronActiveObservation?: ElectronActiveObservationPort;
   readonly javascriptRuntimeObservation?: JavaScriptRuntimeObservationPort;
   readonly fridaInstrumentation?: FridaInstrumentationPort;
+  /** How build computers read an app until its files settle; the shipped timing on real time unless a test shortens or clocks it. */
+  readonly desktopBuildSettle?: BuildSettle;
+  /** Where build computers look for unset settings; the host's PATH and REA cache unless a test isolates them. */
+  readonly desktopBuildDefaults?: BuildComputerDefaults;
 }
 
 const tsharkLocatable = (environment: Readonly<NodeJS.ProcessEnv>): boolean => {
@@ -320,7 +326,12 @@ const modules = {
   ),
   desktopApplication: service(() => createDesktopApplicationService()),
   desktopBuildComputers: capability(
-    ({ providerEnvironment }) => new DesktopBuildComputers(providerEnvironment),
+    ({ providerEnvironment, options }) =>
+      new DesktopBuildComputers(
+        providerEnvironment,
+        options.desktopBuildSettle,
+        options.desktopBuildDefaults,
+      ),
     (value) => value.closeAll(),
   ),
   goBinary: service(

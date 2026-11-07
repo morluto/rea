@@ -1,0 +1,247 @@
+import { randomUUID } from "node:crypto";
+import { access, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
+import { dirname, isAbsolute, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
+import type { DoctorHost } from "../application/Doctor.js";
+import type {
+  DesktopBuildSetupFacts,
+  DesktopBuildSetupHost,
+} from "../application/SetupDesktopBuild.js";
+import { DESKTOP_EXPORT_FRAMEWORK_VERSION } from "../domain/desktop/appExport.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+} from "../process/ExecFileOutput.js";
+import {
+  agentEnvReportedVersion,
+  BUILD_COMPUTER_SETTINGS,
+  buildComputerArchiveDirectory,
+  defaultBuildComputerArchive,
+  programOnPath,
+} from "./BuildComputerEnvironment.js";
+
+const PACK_SCRIPT = fileURLToPath(
+  new URL("../../scripts/pack-build-computer-runtime.mjs", import.meta.url),
+);
+const CHECKOUT_LOCKFILE = fileURLToPath(
+  new URL("../../package-lock.json", import.meta.url),
+);
+const PROBE = { timeout: 10_000, maxBuffer: 64 * 1024 } as const;
+const PACK = { timeout: 30 * 60_000, maxBuffer: 16 * 1024 * 1024 } as const;
+const INSTALL = { timeout: 10 * 60_000, maxBuffer: 4 * 1024 * 1024 } as const;
+const ARCHIVE = "REA_BUILD_COMPUTER_REA_ARCHIVE";
+
+/** What setup's fact readers share: the caller's environment and registration reader. */
+interface SetupContext {
+  readonly environment: Readonly<NodeJS.ProcessEnv>;
+  readonly platform: NodeJS.Platform;
+  readonly registrations: DoctorHost["clientRegistrations"];
+  probe(
+    command: string,
+    arguments_: readonly string[],
+  ): Promise<{ readonly stdout: string }>;
+}
+
+const exists = (path: string): Promise<boolean> =>
+  access(path).then(
+    () => true,
+    () => false,
+  );
+
+const failureReason = (cause: unknown): string => {
+  const stderr = execFileOutputFailure(cause)?.stderr.trim() ?? "";
+  const message = cause instanceof Error ? cause.message : String(cause);
+  return stderr === "" ? message : `${message}: ${stderr.slice(-2000)}`;
+};
+
+/** Setup's desktop build effects on this host. */
+export const systemDesktopBuildSetupHost = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+  registrations: DoctorHost["clientRegistrations"],
+): DesktopBuildSetupHost => {
+  const run = (
+    command: string,
+    arguments_: readonly string[],
+    limits: typeof PROBE | typeof PACK | typeof INSTALL,
+    env = environment,
+  ) =>
+    execFileOutput(command, arguments_, {
+      ...limits,
+      env,
+      stopSignal: "SIGTERM",
+    });
+  return {
+    facts: (clientIds) =>
+      readSetupFacts(
+        {
+          environment,
+          platform,
+          registrations,
+          probe: (command, arguments_) => run(command, arguments_, PROBE),
+        },
+        clientIds,
+      ),
+    async packRuntime(archive) {
+      const partial = join(dirname(archive), `.rea-${randomUUID()}.tar.xz`);
+      try {
+        await mkdir(dirname(archive), { recursive: true });
+        await run(process.execPath, [PACK_SCRIPT, partial], PACK, {
+          ...environment,
+          npm_config_loglevel: "error",
+          npm_config_progress: "false",
+          npm_config_fund: "false",
+          npm_config_audit: "false",
+        });
+        await rename(partial, archive);
+        return undefined;
+      } catch (cause: unknown) {
+        await rm(partial, { force: true });
+        return failureReason(cause);
+      }
+    },
+    async installAgentenv(uv) {
+      try {
+        await run(
+          uv,
+          [
+            "tool",
+            "install",
+            `agentenv-framework==${DESKTOP_EXPORT_FRAMEWORK_VERSION}`,
+          ],
+          INSTALL,
+        );
+        return undefined;
+      } catch (cause: unknown) {
+        return failureReason(cause);
+      }
+    },
+  };
+};
+
+const readSetupFacts = async (
+  context: SetupContext,
+  clientIds: readonly string[],
+): Promise<DesktopBuildSetupFacts> => {
+  const { environment, platform, probe } = context;
+  const archive = defaultBuildComputerArchive(environment, platform);
+  const selected = BUILD_COMPUTER_SETTINGS.filter(
+    (name) => (environment[name] ?? "") !== "",
+  );
+  const settings = await absoluteSettings(environment, archive);
+  const agentEnv = settings.REA_AGENT_ENV_COMMAND;
+  const uv = await programOnPath("uv", environment);
+  const uvBin =
+    uv === undefined
+      ? undefined
+      : await probe(uv, ["tool", "dir", "--bin"]).then(
+          ({ stdout }) => stdout.trim(),
+          () => undefined,
+        );
+  return {
+    settings,
+    selected,
+    archive,
+    archivePacked: await stat(archive).then(
+      (entry) => entry.isFile(),
+      () => false,
+    ),
+    ...((await exists(PACK_SCRIPT)) && (await exists(CHECKOUT_LOCKFILE))
+      ? {}
+      : {
+          packBlocker:
+            "Packing REA's build-computer runtime needs a REA checkout: run rea setup --desktop-build from one (see docs/installation.md#run-rea-from-a-checkout), or pack an archive yourself and set REA_BUILD_COMPUTER_REA_ARCHIVE.",
+        }),
+    ...(agentEnv === undefined
+      ? {}
+      : await probe(agentEnv, ["--version"]).then(
+          ({ stdout }) => ({
+            agentEnvVersion: agentEnvReportedVersion(stdout),
+          }),
+          () => ({}),
+        )),
+    ...(uv === undefined || uvBin === undefined || uvBin === ""
+      ? {}
+      : { uv: { path: uv, agentEnv: join(uvBin, "agent-env") } }),
+    recorded: await recordedSettings(context, clientIds, settings),
+  };
+};
+
+/** Each build setting as an absolute path: the caller's selection, else its default. */
+const absoluteSettings = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  archive: string,
+): Promise<Record<string, string>> => {
+  const settings: Record<string, string> = {};
+  for (const [name, program] of [
+    ["REA_AGENT_ENV_COMMAND", "agent-env"],
+    ["REA_DOCKER_COMMAND", "docker"],
+  ] as const) {
+    const value = environment[name] ?? "";
+    const path =
+      value === ""
+        ? await programOnPath(program, environment)
+        : isAbsolute(value)
+          ? value
+          : await programOnPath(value, environment);
+    if (path !== undefined) settings[name] = path;
+  }
+  const selectedArchive = environment[ARCHIVE] ?? "";
+  settings[ARCHIVE] =
+    selectedArchive === "" ? archive : resolve(selectedArchive);
+  return settings;
+};
+
+/**
+ * Per client, the build settings its registration records with a value of its
+ * own: an archive REA packed for another version is setup's, not the user's.
+ */
+const recordedSettings = async (
+  { environment, platform, registrations }: SetupContext,
+  clientIds: readonly string[],
+  settings: Readonly<Record<string, string>>,
+): Promise<Record<string, readonly string[]>> => {
+  if (registrations === undefined || clientIds.length === 0) return {};
+  const statuses = await registrations(clientIds, settings);
+  const owned = await ownedArchives(environment, platform, settings[ARCHIVE]);
+  const recorded: Record<string, string[]> = {};
+  for (const status of statuses) {
+    if (!clientIds.includes(status.client) || status.command.length === 0)
+      continue;
+    const unrecorded = status.provider_settings?.unrecorded ?? [];
+    recorded[status.client] = BUILD_COMPUTER_SETTINGS.filter(
+      (name) => !unrecorded.includes(name),
+    );
+  }
+  for (const archive of owned) {
+    const pinned = await registrations(clientIds, { [ARCHIVE]: archive });
+    for (const status of pinned) {
+      const gaps = status.provider_settings;
+      const recordsIt =
+        gaps === undefined ||
+        ![...gaps.unrecorded, ...gaps.differing, ...gaps.unresolved].includes(
+          ARCHIVE,
+        );
+      if (recordsIt && recorded[status.client] !== undefined)
+        recorded[status.client] = recorded[status.client]!.filter(
+          (name) => name !== ARCHIVE,
+        );
+    }
+  }
+  return recorded;
+};
+
+/** Archives setup packed for other REA versions. */
+const ownedArchives = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  platform: NodeJS.Platform,
+  current: string | undefined,
+): Promise<readonly string[]> => {
+  const directory = buildComputerArchiveDirectory(environment, platform);
+  const names = await readdir(directory).catch(() => [] as string[]);
+  return names
+    .filter((name) => /^rea-.+\.tar\.xz$/u.test(name))
+    .map((name) => join(directory, name))
+    .filter((path) => path !== current);
+};

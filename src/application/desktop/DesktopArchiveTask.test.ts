@@ -262,12 +262,118 @@ describe("documents saved as zip archives", () => {
     ).toBe(true);
     expect(task.checks.filter(({ file }) => file === LIST)).toEqual([
       expect.objectContaining({
-        kind: "value_equals",
-        pointer: `${LIST_TEXT}/[name=text:p]/children/0`,
+        kind: "text_equals",
+        pointer: `${LIST_TEXT}/[name=text:p]`,
         value: "Buy milk",
       }),
     ]);
     const { result } = await exportTask(folder, task.checks);
     expect(result).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("task draft values and guards", () => {
+  /** The draft's files, checks and guards, as describe-desktop-application-task returns them. */
+  const draftOf = async (folder: string) => {
+    const drafted = await draftDesktopApplicationTask(folder, readers);
+    if (drafted instanceof Error) throw drafted;
+    return drafted.normalized_result as {
+      files: {
+        file: string;
+        values: { pointer: string; kind: string }[];
+        values_cut: boolean;
+      }[];
+      task: { checks: { id: string }[] };
+      guards: { id: string }[];
+    };
+  };
+
+  it("lists each archive's values by the pointers checks use, and guards the export accepts beside the checks", async () => {
+    const folder = await archiveCapture();
+
+    const { files, task, guards } = await draftOf(folder);
+
+    const plate = files.find(({ file }) => file === PLATE);
+    expect(plate?.values_cut).toBe(false);
+    expect(
+      plate?.values.map(({ kind, pointer }) => [kind, pointer]),
+    ).toContainEqual([
+      "added",
+      "/entries/[name=Document.xml]/view/root/children/[name=Objects]/children/[name=Object][@name=Hole]",
+    ]);
+    expect(guards.map(({ id }) => id)).toEqual(
+      guards.map((_, index) => `guard-${String(index + 1)}`),
+    );
+    expect(guards.length).toBeGreaterThan(0);
+    // Guards hold at the seed and the end, so the task still fails on the seed only through its checks.
+    const { result } = await exportTask(folder, [...task.checks, ...guards]);
+    if (result instanceof Error) throw result;
+  });
+
+  it("points a refused check at the draft's values", async () => {
+    const folder = await archiveCapture();
+
+    const { result } = await exportTask(folder, [{ ...HOLE, value: 7 }]);
+
+    expect(result).toBeInstanceOf(Error);
+    const remediation = (result as Error & { remediationAction?: string })
+      .remediationAction;
+    for (const name of ["values", "stop_build_capture"])
+      expect(remediation).toContain(name);
+  });
+});
+
+describe("paragraphs split into runs", () => {
+  it("drafts and exports a paragraph's whole text once an edit split it into runs, which its first run does not hold", async () => {
+    const run = (text: string) =>
+      `<text:span text:style-name="T1">${text}</text:span>`;
+    const folder = await archiveCapture([
+      odtArchive("Buy bread"),
+      odtArchive(`Buy ${run("oat")} ${run("milk")}`),
+    ]);
+    const paragraph = `${LIST_TEXT}/[name=text:p]`;
+
+    const drafted = await draftDesktopApplicationTask(folder, readers);
+    if (drafted instanceof Error) throw drafted;
+    const { checks } = (
+      drafted.normalized_result as { task: { checks: { file: string }[] } }
+    ).task;
+    expect(checks.filter(({ file }) => file === LIST)).toEqual([
+      expect.objectContaining({
+        kind: "text_equals",
+        pointer: paragraph,
+        value: "Buy oat milk",
+      }),
+    ]);
+
+    const whole = await exportTask(folder, [
+      HOLE,
+      {
+        kind: "text_equals",
+        file: LIST,
+        pointer: paragraph,
+        value: "Buy oat milk",
+      },
+    ]);
+    if (whole.result instanceof Error) throw whole.result;
+    expect(whole.result.normalized_result).toMatchObject({
+      tasks: [{ failing_on_seed: ["check-1", "check-2"] }],
+    });
+
+    const first = await exportTask(folder, [
+      HOLE,
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: `${paragraph}/children/0`,
+        value: "Buy oat milk",
+      },
+    ]);
+    expect(first.result).toBeInstanceOf(Error);
+    // The first run holds only the text before the first span.
+    for (const fact of ['"check-2"', JSON.stringify("Buy ")])
+      expect(
+        (first.result as Error & { userMessage: string }).userMessage,
+      ).toContain(fact);
   });
 });

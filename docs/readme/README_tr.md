@@ -267,6 +267,12 @@ REA, çalıştırılabilir bir ortamı ve başlayıp yanıt verdiğini kontrol e
 [Ortam referansı](../agent-environments.md) ·
 [Demoyu X’te izleyin](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Masaüstü uygulama ortamları
+
+REA, bir ajanın ekran görüntüleri, fare ve klavye ile kullandığı bir Linux masaüstü uygulamasının ortamını da oluşturabilir. “Ajanın alışveriş listesi notuna zeytinyağı eklediği bir Gnote ortamı oluştur” gibi tek satırlık bir istekten ajanınız uygulamayı yerel bir derleme bilgisayarına kurar, görevi yazar, ortamı dışa aktarır ve görevi yeni bir bilgisayarda kontrol eder. Ortamı oluşturan makinede amd64 veya arm64 üzerinde Linux, Docker ve kılavuzun sabitlediği agentenv framework sürümü gerekir.
+
+[Masaüstü uygulama ortamlarını kurun](../desktop-build-computer.md)
+
 ## Sık sorulan sorular
 
 <details>

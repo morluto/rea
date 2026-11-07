@@ -270,6 +270,12 @@ REA exporte un environnement exécutable avec un test de base qui vérifie qu’
 [Référence des environnements](../agent-environments.md) ·
 [Voir la démo sur X](https://x.com/reatools/status/2112574822584918075?s=20)
 
+### Environnements d’applications de bureau
+
+REA peut aussi créer un environnement pour une application de bureau Linux, qu’un agent utilise par captures d’écran, souris et clavier. À partir d’une demande d’une ligne, comme « Crée-moi un environnement Gnote où l’agent ajoute de l’huile d’olive à la note de liste de courses », votre agent installe l’application sur un ordinateur de construction local, rédige la tâche, exporte l’environnement et vérifie la tâche sur un ordinateur neuf. La machine qui le construit a besoin de Linux sur amd64 ou arm64, de Docker et de la version du framework agentenv fixée par le guide.
+
+[Configurer les environnements d’applications de bureau](../desktop-build-computer.md)
+
 ## Questions fréquentes
 
 <details>

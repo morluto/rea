@@ -5,6 +5,7 @@ import {
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
+import { readDesktopBuildFacts } from "./desktop/DesktopBuildDoctorFacts.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
@@ -97,6 +98,7 @@ export const createSystemDoctorHost = (
         signal: inspectionSignal,
       }),
     ],
+    desktopBuildFacts: readDesktopBuildFacts,
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
         environment,
