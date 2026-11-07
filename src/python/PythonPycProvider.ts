@@ -1,5 +1,7 @@
+import { PYTHON_PYC_PROVIDER_IDENTITY } from "./PythonPycProviderIdentity.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
@@ -33,13 +35,6 @@ import {
   PythonPycResourceFailure,
 } from "./PythonPyc.errors.js";
 import { parsePythonPyc } from "./PythonPycParser.js";
-
-/** Bundled reader identity. Header python_version is a separate observed mapping. */
-export const PYTHON_PYC_PROVIDER_IDENTITY = {
-  id: "rea-python-pyc",
-  name: "REA CPython pyc parser",
-  version: "1",
-} as const;
 
 const OPERATION = "inspect_python_pyc";
 
@@ -132,13 +127,17 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

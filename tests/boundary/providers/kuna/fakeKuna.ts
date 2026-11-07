@@ -6,6 +6,8 @@ export interface FakeKunaFunction {
   readonly name: string;
   readonly addr: string;
   readonly error?: string;
+  /** Inventory aliases, such as versioned-symbol names or generated `sub_` names. */
+  readonly aliases?: readonly string[];
 }
 
 /** One inventory-only row; Kuna reports a size of 0 for an unmeasured entry. */
@@ -13,6 +15,7 @@ export interface FakeKunaInventoryEntry {
   readonly name: string;
   readonly addr: string;
   readonly size?: number;
+  readonly aliases?: readonly string[];
 }
 
 export interface FakeKunaString {
@@ -71,6 +74,8 @@ export interface FakeKunaBehavior {
   /** Bytes of an extra root member in the graph JSON. */
   readonly graphPadding?: number;
   readonly xrefs?: "ok" | "hang" | "not-json";
+  /** Additional exact-target incoming call-site addresses. */
+  readonly extraXrefSources?: readonly number[];
   readonly referenceDelayMs?: number;
   readonly referencePadding?: number;
   /** `invalid-then-hang` writes a contradictory first row, then never finishes. */
@@ -119,7 +124,7 @@ if (args[0] === "--version") {
   if (mode === "hang") hang();
   else if (mode === "not-json") process.stdout.write("functions: 2\n");
   else {
-    const listed = [...functions, ...(behavior.inventoryEntries ?? []), ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: [], object_location: null, size: fn.size ?? (fn.name === "puts" ? 0 : 16) }));
+    const listed = [...functions, ...(behavior.inventoryEntries ?? []), ...(behavior.inventoryImports === false ? [] : [{ name: "puts", addr: "0x2000" }])].map((fn) => ({ name: fn.name, address: parseInt(fn.addr, 16), address_hex: fn.addr, aliases: fn.aliases ?? [], object_location: null, size: fn.size ?? (fn.name === "puts" ? 0 : 16) }));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], count: listed.length, total: listed.length, error: null, functions: listed }, null, 2) + "\n"), behavior.inventoryDelayMs ?? 0);
   }
 } else if (args[0] === "strings") {
@@ -155,7 +160,7 @@ if (args[0] === "--version") {
     const identity = (name, value) => ({ name, address: value, address_hex: "0x" + value.toString(16) });
     const aliases = target === "0x2000" ? [identity("puts.slot", 12288)] : [];
     const row = (from, to, kind) => ({ address: from, address_hex: "0x" + from.toString(16), from_address: from, from_address_hex: "0x" + from.toString(16), to_address: to, to_address_hex: "0x" + to.toString(16), kind, from_function: identity("main", 4096), to_function: null, instruction: "fixture reference" + "x".repeat(behavior.referencePadding ?? 0) });
-    const rows = [row(4100, parseInt(target, 16), "call")];
+    const rows = [4100, ...(behavior.extraXrefSources ?? [])].map((source) => row(source, parseInt(target, 16), "call"));
     if (aliases.length) rows.push(row(4164, 12288, "call"));
     setTimeout(() => process.stdout.write(JSON.stringify({ binary: args[1], direction: "to", count: rows.length, target: { ...identity(null, parseInt(target, 16)), aliases }, xrefs: rows })), behavior.referenceDelayMs ?? 0);
   }

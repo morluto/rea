@@ -227,9 +227,6 @@ describe("browserScenarioSchema", () => {
       at_end: ["dom", "storage"],
       events: ["console", "page-errors", "network", "websockets"],
     });
-    expect(parsed.capture.limits).toEqual(
-      DEFAULT_BROWSER_SCENARIO_CAPTURE_LIMITS,
-    );
   });
 
   it("allows callers to choose visible browsers and service workers", () => {

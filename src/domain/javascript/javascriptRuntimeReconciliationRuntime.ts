@@ -94,7 +94,10 @@ const targetEntity = (
     frameKey: null,
     scriptKey: null,
     location,
-    staticKind: "renderer",
+    staticKind:
+      capture.kind === "v8-inspector" && target.type === "node"
+        ? "javascript"
+        : "renderer",
     sourceSha256: null,
     label: target.title,
     properties: {

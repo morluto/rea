@@ -125,6 +125,13 @@ try {
   assert.equal(image.module_bytes, fixture.module_bytes);
   assert.equal(image.entry.linear_address, expected.entry);
   assert.ok(image.checks.every((check) => check.matched));
+  assert.ok(image.observations.relocations.length > 0);
+  assert.ok(
+    image.observations.relocations.every(
+      ({ symbol }) => symbol === null || typeof symbol === "string",
+    ),
+    "Each real Ghidra relocation must record its symbol observation",
+  );
   const cliImage = await cliEvidence("inspect-native-load-image");
   // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
   const stableImage = (value) => ({
