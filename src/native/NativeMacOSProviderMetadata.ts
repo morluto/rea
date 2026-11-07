@@ -2,18 +2,19 @@ import { NATIVE_MACOS_PROVIDER_IDENTITY } from "./NativeMacosProviderIdentity.js
 import type { CapabilityDescriptor } from "../application/AnalysisProvider.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { NATIVE_TOOL_CONTRACTS } from "../contracts/native/nativeToolContracts.js";
+import { APPLE_DISPATCH_TARGET_APPLICABILITY } from "../domain/native/objcSwiftMetadata.js";
 
 /** Source-owned commitment for the pure Apple dispatch metadata reader. */
 export const APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE = createAnalysisProfile(
   {
     id: NATIVE_MACOS_PROVIDER_IDENTITY.id,
     name: NATIVE_MACOS_PROVIDER_IDENTITY.name,
-    version: "apple-metadata-reader-2",
+    version: "apple-metadata-reader-3",
   },
   {
     operation: "inspect_native_dispatch_metadata",
     reader: "apple-dispatch-metadata",
-    revision: 2,
+    revision: 3,
   },
 );
 /** Operations whose target process can show UI, use the network and write files. */
@@ -43,7 +44,10 @@ export const nativeMacOSCapabilities = (
         provider: NATIVE_MACOS_PROVIDER_IDENTITY,
         operation: contract.name,
         ...(contract.name === "inspect_native_dispatch_metadata"
-          ? { analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE }
+          ? {
+              analysisProfile: APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE,
+              targetApplicability: APPLE_DISPATCH_TARGET_APPLICABILITY,
+            }
           : {}),
         ...availability,
         effects: Object.freeze({
@@ -54,7 +58,8 @@ export const nativeMacOSCapabilities = (
           mayWriteFilesystem:
             OWNED_PROCESS_OPERATIONS.has(contract.name) ||
             contract.name === "observe_native_ui" ||
-            contract.name === "inspect_signature",
+            contract.name === "inspect_signature" ||
+            contract.name === "inspect_macho",
           changesPermissions: false,
           requiresRoot: false,
         }),

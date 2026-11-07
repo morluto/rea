@@ -85,7 +85,11 @@ const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
     const cli = createCli({});
     const mismatches: string[] = [];
-    for (const command of createCliInventory(cli).primary) {
+    const primary = createCliInventory(cli).primary;
+    expect(primary).toEqual(
+      expect.arrayContaining(["inspect-pcap-client", "inspect-pcap-capture"]),
+    );
+    for (const command of primary) {
       const advertised = await advertisedSchema(cli, command);
       for (const group of INPUT_GROUPS) {
         const parser = parserSchema(cli, command, group);
@@ -154,7 +158,11 @@ describe("CLI advertised input schemas", () => {
       const validate = ajv.compile(schema.options ?? {});
       for (const count of [16, 17]) {
         const input = {
-          [field]: Array.from({ length: count }, () => "./selected"),
+          [field]: Array.from({ length: count }, () =>
+            command === "recover-javascript-sources"
+              ? "/selected"
+              : "./selected",
+          ),
         };
         expect(validate(input)).toBe(count === 16);
         expect(
@@ -219,7 +227,9 @@ describe("CLI advertised input schemas", () => {
     });
     expect(advertised.options?.properties?.["limit"]).toMatchObject({
       default: 20_000,
-      minimum: 1,
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({ type: "integer", minimum: 1 }),
+      ]),
     });
     expect(
       parserSchema(cli, "inspect-keyed-archive", "args")?.parse({ path: "x" }),

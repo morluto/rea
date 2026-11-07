@@ -23,6 +23,7 @@ import {
   boundedViewMessages,
   completeWithinViewCoverage,
   pageViewCoverage,
+  unavailableViewCoverage,
 } from "./analysisViewCoverage.js";
 
 const observation = nativeLoadImageObservationSchema.shape;
@@ -43,6 +44,7 @@ const defaultFields: Partial<Record<keyof typeof rows, readonly string[]>> = {
       offset: true,
       status: true,
       type: true,
+      symbol: true,
       values: true,
     })
     .keyof().options,
@@ -65,7 +67,7 @@ const request = <Name extends keyof typeof rows>(name: Name) =>
       .optional()
       .describe(
         name === "relocations"
-          ? "Defaults to address, segment, offset, status, type and values. Select original_bytes_hex or memory_bytes_hex explicitly."
+          ? "Defaults to address, segment, offset, status, type, symbol and values. Select original_bytes_hex or memory_bytes_hex explicitly."
           : name === "checks"
             ? "Defaults to name, matched, file_offset and address. Select expected or observed explicitly; these can contain complete comparison inventories."
             : "Omit to return every recorded field in each selected row.",
@@ -289,16 +291,30 @@ export const projectNativeLoadImageView = (
           ? report.sections
           : undefined
         : observed[view.collection];
-  const page = selectRows(selected ?? [], view);
+  const page = selected === undefined ? undefined : selectRows(selected, view);
+  const symbolUnrecorded =
+    view.collection === "relocations" &&
+    (view.fields === undefined ||
+      view.fields.some((field: string) => field === "symbol")) &&
+    (page?.rows.some(({ record }) => !("symbol" in record)) ?? false);
   return ok({
     ...shared,
+    unknowns: symbolUnrecorded
+      ? [
+          ...shared.unknowns,
+          "The relocation symbol was not recorded for at least one selected row.",
+        ]
+      : shared.unknowns,
     kind: "native-load-image" as const,
     verification_status: report.status,
     view,
     items: nativeLoadImageViewItemsSchema.parse({
       collection: view.collection,
-      rows: selected === undefined ? null : page.rows,
+      rows: page?.rows ?? null,
     }),
-    coverage: pageViewCoverage(view.offset, page.rows.length, page.total),
+    coverage:
+      page === undefined
+        ? unavailableViewCoverage()
+        : pageViewCoverage(view.offset, page.rows.length, page.total),
   });
 };
