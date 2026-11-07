@@ -169,6 +169,44 @@ export const collectJavaScriptSemanticAsyncEffects = (
   };
 };
 
+function evaluateConstantNumber(node: t.Node, depth = 0): number | undefined {
+  if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return undefined;
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (t.isNumericLiteral(unwrapped)) {
+    return Number.isFinite(unwrapped.value) ? unwrapped.value : undefined;
+  }
+  if (t.isUnaryExpression(unwrapped)) {
+    if (unwrapped.operator === "+") {
+      return evaluateConstantNumber(unwrapped.argument, depth + 1);
+    }
+    if (unwrapped.operator === "-") {
+      const val = evaluateConstantNumber(unwrapped.argument, depth + 1);
+      return val !== undefined ? -val : undefined;
+    }
+  }
+  if (t.isBinaryExpression(unwrapped)) {
+    const l = evaluateConstantNumber(unwrapped.left, depth + 1);
+    const r = evaluateConstantNumber(unwrapped.right, depth + 1);
+    if (l !== undefined && r !== undefined) {
+      switch (unwrapped.operator) {
+        case "+":
+          return l + r;
+        case "-":
+          return l - r;
+        case "*":
+          return l * r;
+        case "/":
+          return r !== 0 ? l / r : undefined;
+        case "%":
+          return r !== 0 ? l % r : undefined;
+        case "**":
+          return l ** r;
+      }
+    }
+  }
+  return undefined;
+}
+
 /** Determine truthiness from syntax or simple unary/constant expressions. */
 const staticExpressionTruthiness = (
   node: t.Node,
@@ -219,6 +257,41 @@ const staticExpressionTruthiness = (
           !Number.isNaN(unwrapped.argument.value);
         return inverted ? !val : val;
       }
+    }
+    const constNum = evaluateConstantNumber(unwrapped, depth);
+    if (constNum !== undefined) {
+      const val = constNum !== 0 && !Number.isNaN(constNum);
+      return inverted ? !val : val;
+    }
+    if (t.isBinaryExpression(unwrapped)) {
+      const leftLit = readExactJavaScriptLiteral(unwrapped.left);
+      const rightLit = readExactJavaScriptLiteral(unwrapped.right);
+      if (leftLit.found && rightLit.found) {
+        const l = leftLit.value;
+        const r = rightLit.value;
+        let boolResult: boolean | undefined;
+        if (unwrapped.operator === "===" || unwrapped.operator === "==") {
+          boolResult = l === r;
+        } else if (
+          unwrapped.operator === "!==" ||
+          unwrapped.operator === "!="
+        ) {
+          boolResult = l !== r;
+        } else if (typeof l === "number" && typeof r === "number") {
+          if (unwrapped.operator === "<") boolResult = l < r;
+          else if (unwrapped.operator === "<=") boolResult = l <= r;
+          else if (unwrapped.operator === ">") boolResult = l > r;
+          else if (unwrapped.operator === ">=") boolResult = l >= r;
+        }
+        if (boolResult !== undefined) {
+          return inverted ? !boolResult : boolResult;
+        }
+      }
+    }
+    if (t.isAssignmentExpression(unwrapped) && unwrapped.operator === "=") {
+      current = unwrapped.right;
+      depth++;
+      continue;
     }
     if (
       t.isIdentifier(unwrapped) &&
@@ -338,6 +411,10 @@ const isProvablyNonThenablePrimitive = (
     );
   }
 
+  if (t.isAssignmentExpression(value) && value.operator === "=") {
+    return isProvablyNonThenablePrimitive(value.right, state, currentDepth + 1);
+  }
+
   if (isStaticallyNullishOptionalChain(value, state, currentDepth)) {
     return true;
   }
@@ -446,6 +523,13 @@ function staticExpressionNullishness(
     return last !== undefined
       ? staticExpressionNullishness(last, state, currentDepth + 1)
       : undefined;
+  }
+  if (t.isAssignmentExpression(unwrapped) && unwrapped.operator === "=") {
+    return staticExpressionNullishness(
+      unwrapped.right,
+      state,
+      currentDepth + 1,
+    );
   }
   if (t.isConditionalExpression(unwrapped)) {
     const truthiness = staticExpressionTruthiness(

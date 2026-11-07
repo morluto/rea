@@ -1000,3 +1000,36 @@ it("retains candidate when array iterator prototype is modified via alias", () =
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("prunes statically truthy binary listener branches in || expressions", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", (1 + 1) || (() => {}));
+    child.on("error", (2 * 3) || (() => {}));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("propagates non-nullishness through assignment RHS before exploring ?? fallback", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    let x = 0;
+    const child = spawn("worker");
+    child.on("exit", (x = 1) ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when assignment RHS in ?? may be nullish", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    let x;
+    const child = spawn("worker");
+    child.on("exit", (x = null) ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
