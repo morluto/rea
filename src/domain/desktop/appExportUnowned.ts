@@ -329,8 +329,9 @@ const LEVELDB_MARKER = /^(?:CURRENT|MANIFEST-\d+)$/u;
 /**
  * Which home files the seed leaves out: the app's logs in its own state
  * (application state, or under one of its state directories), and lock
- * files. A log under `kept` stays. A lock stays only when `selectedFiles`
- * names that lock itself, not when a parent folder or its document role does.
+ * files. A log under `kept` stays. A lock beside a recorded file stays out
+ * unless `selectedFiles` names that lock. A document whose name only looks
+ * like a lock, such as `Cargo.lock` in the home, stays.
  * A `*.log` in browser storage, under a `leveldb` folder, or
  * numbered beside a LevelDB database's `CURRENT` or `MANIFEST-*` is the
  * database's own journal of saved writes, so it is seeded.
@@ -358,10 +359,22 @@ export const leftOutFiles = (
     !isJournal(home) &&
     (files.get(home)?.role === "application_state" ||
       stateDirectoryOf(home, stateDirectories) !== undefined);
-  const isLeftOut = (home: string) =>
-    isLeftOutLog(home) ||
-    (isLockFile(home, stateDirectories, recorded) &&
-      !selectedFiles.includes(home));
+  const besideRecordedFile = (home: string) => {
+    const folder = folderOf(home);
+    return siblingLockTargets(home).some((locked) =>
+      recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`),
+    );
+  };
+  const isLeftOut = (home: string) => {
+    if (isLeftOutLog(home)) return true;
+    if (
+      !isLockFile(home, stateDirectories, recorded) ||
+      selectedFiles.includes(home)
+    )
+      return false;
+    // A lock named for a file beside it is the app's, even when a title made it a document. A document that merely ends in `.lock` stays.
+    return besideRecordedFile(home) || files.get(home)?.role !== "document";
+  };
   return { isLeftOut, isLeftOutLog };
 };
 
