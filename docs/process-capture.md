@@ -413,6 +413,13 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+On Linux, the target starts as the leader of the capture PTY session. When it
+exits, the kernel sends `SIGHUP` to processes still in the controlling
+terminal's foreground process group. A child in that group can exit before the
+first sample, leaving an empty `process_samples` array. The settlement field
+`cleanup_outcome: "not_required"` describes REA's owned-process cleanup and can
+coexist with this terminal hangup. See [Linux `setsid(2)`](https://man7.org/linux/man-pages/man2/setsid.2.html).
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
