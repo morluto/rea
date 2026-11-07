@@ -121,6 +121,22 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
                     self.assertEqual(report["status"], "ok")
                     self.assertEqual(report["endpoint"], endpoint)
 
+    def test_release_routes_check_the_requested_tag_and_asset(self):
+        cases = (
+            ('tag/series/v1', 'tags/series%2Fv1', 'ok'),
+            ('download/series/v1/tool%20kit.zip', 'tags/series%2Fv1', 'ok'),
+            ('download/series%2Fv1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest', 'latest', 'ok'),
+            ('latest/download/tool%20kit.zip', 'latest', 'ok'),
+            ('latest/download/absent.zip', 'latest', 'broken'),
+        )
+        for route, endpoint, status in cases:
+            with self.subTest(route=route), patch.object(AUDIT, 'github_api', return_value={'assets': [{'name': 'tool kit.zip'}]}) as request:
+                url = 'https://github.com/example/project/releases/' + route
+                report = AUDIT.audit_url((url, ['fixture.html']))
+                self.assertEqual(report['status'], status)
+                request.assert_called_once_with('repos/example/project/releases/' + endpoint)
+
     def test_plain_refs_and_pinned_commits_keep_their_contents_target(self):
         for ref in ("main", "a" * 40):
             responses = {

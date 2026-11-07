@@ -54,8 +54,16 @@ def github_target(url):
         return f"{repo}/{'pulls' if kind == 'pull' else 'issues'}/{parts[3]}"
     if kind == "commit" and len(parts) == 4:
         return f"{repo}/commits/{parts[3]}"
-    if kind == "releases" and len(parts) >= 5 and parts[3] in ("tag", "download"):
-        return f"{repo}/releases/tags/{quote(parts[4], safe='')}"
+    if kind == "releases":
+        if parts[3:] == ["latest"] or (len(parts) == 6 and parts[3:5] == ["latest", "download"]):
+            return f"{repo}/releases/latest"
+        if len(parts) >= 5 and parts[3] == "tag":
+            tag = "/".join(parts[4:])
+        elif len(parts) >= 6 and parts[3] == "download":
+            tag = "/".join(parts[4:-1])
+        else:
+            return None
+        return f"{repo}/releases/tags/{quote(tag, safe='')}"
     return None
 
 
@@ -71,8 +79,8 @@ def audit_url(item):
                 return dict(result, status="unknown", reason="GitHub UI route; check in a browser")
             data = github_api(endpoint)
             parts = url.path.strip("/").split("/")
-            if len(parts) >= 6 and parts[2:4] == ["releases", "download"]:
-                if unquote(parts[5]) not in [asset["name"] for asset in data.get("assets", [])]:
+            if (len(parts) >= 6 and parts[2:4] == ["releases", "download"]) or parts[2:5] == ["releases", "latest", "download"]:
+                if unquote(parts[-1]) not in [asset["name"] for asset in data.get("assets", [])]:
                     return dict(result, status="broken", reason="Release asset is missing")
             return dict(result, status="ok", via="gh api", endpoint=endpoint)
         request = Request(value.split("#", 1)[0], headers={
