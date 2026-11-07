@@ -1392,10 +1392,12 @@ status with the analysis failure status, so it exits `1`. Setup has its own cont
 structured result and process status as separate signals when scripting
 cancellation.
 
-`setup --dry-run` returns `planned` and exits `0`. For `setup` and
-`environment-build`, explicit `--dry-run=true` and `--dry-run=false` are
-accepted; empty or other values fail with `PARSE_ERROR` before any changes.
-Every supplied value is checked even when a later occurrence overrides it.
+`setup --dry-run` returns `planned` and exits `0`. Scalar boolean command
+options accept explicit `--option=true` and `--option=false`; empty or other
+literal values fail with `PARSE_ERROR` before command dispatch. This includes
+`--dry-run` on `setup` and `environment-build`. Every supplied literal is checked
+even when a later occurrence overrides it. Bare and negated flags, aliases,
+and flag-shaped strings bound as data retain their existing meanings.
 A cancelled setup also exits
 `0`. Setup returns `1` for `needs_confirmation` or `needs_human`.
 `doctor` returns `1` when required checks in its selected readiness scope fail;
