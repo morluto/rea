@@ -199,6 +199,16 @@ export class DesktopBuildCapture {
     return err(started.error.failure);
   }
 
+  /**
+   * The capture launched, then the caller cancelled before the start was
+   * reported. The next start stops it; until then it is not a second capture.
+   */
+  abandon(): void {
+    const run = this.#run;
+    if (run?.status === "running" && run.stopped === undefined)
+      run.status = "unreleased";
+  }
+
   async #launch(
     run: CaptureRun,
     entry: string,
