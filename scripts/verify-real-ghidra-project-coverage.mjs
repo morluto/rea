@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
   mkdir,
@@ -14,7 +13,6 @@ import {
 import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
-import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import {
   OwnedCommandFailure,
@@ -35,7 +33,6 @@ import {
   requireMcpToolError,
 } from "./lib/mcp-verifier-results.mjs";
 
-const exec = promisify(execFile);
 export async function verifyProjectCoverage(run) {
   const installDir = process.env.GHIDRA_INSTALL_DIR;
   if (installDir === undefined || !isAbsolute(installDir))
@@ -109,10 +106,29 @@ export async function verifyProjectCoverage(run) {
     return requireMcpOutput(reply, name);
   }
   let commandCleanupIncomplete = false;
+  const command = async (executable, args, timeoutMs) => {
+    try {
+      return await runOwnedCommand(
+        {
+          command: executable,
+          arguments: args,
+          env,
+          runId: run.run_id,
+          expectedCommand: null,
+        },
+        { timeoutMs, diagnosticBytes: 16 * 1024 * 1024 },
+      );
+    } catch (cause) {
+      commandCleanupIncomplete =
+        cause instanceof OwnedCommandFailure &&
+        cause.cleanupOwner !== undefined;
+      throw cause;
+    }
+  };
   const result = await withVerifierCleanup(async () => {
     await mkdir(projects);
-    await exec(
-      // The invoking developer selects the compiler; execFile does not use a shell.
+    // REA_CC is the invoking developer's explicitly selected compiler, not target input.
+    await command(
       process.env.REA_CC ?? "cc",
       [
         "-O0",
@@ -123,7 +139,7 @@ export async function verifyProjectCoverage(run) {
         "-o",
         target,
       ],
-      { env, timeout: 120000 },
+      120000,
     );
     for (const name of ["partial", "analyzed"]) {
       const args = [projects, name, "-import", target];
@@ -135,24 +151,11 @@ export async function verifyProjectCoverage(run) {
           "-postScript",
           "ReaSelectedProjectSeeds.java",
         );
-      let result;
-      try {
-        result = await runOwnedCommand(
-          {
-            command: installation.analyzeHeadlessPath,
-            arguments: args,
-            env,
-            runId: run.run_id,
-            expectedCommand: null,
-          },
-          { timeoutMs: 180000, diagnosticBytes: 16 * 1024 * 1024 },
-        );
-      } catch (cause) {
-        commandCleanupIncomplete =
-          cause instanceof OwnedCommandFailure &&
-          cause.cleanupOwner !== undefined;
-        throw cause;
-      }
+      const result = await command(
+        installation.analyzeHeadlessPath,
+        args,
+        180000,
+      );
       if (name === "partial")
         for (const seed of [
           "rea_project_leaf",
