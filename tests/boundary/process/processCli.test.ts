@@ -77,7 +77,10 @@ describe("documented process CLI workflow", () => {
     async ({ cli }) => {
       const root = await createTestTempDirectory("rea-process-cli-");
       const guide = await readFile(
-        new URL("../../../docs/process-capture.md", import.meta.url),
+        new URL(
+          "../../../docs/guides/runtime/process-capture.md",
+          import.meta.url,
+        ),
         "utf8",
       );
       const recipe = /```sh\nrea capture-process ([^\n]+)\n```/u.exec(

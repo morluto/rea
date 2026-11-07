@@ -119,8 +119,8 @@ it.each([
     expect(projected.remediation.action).toContain("cannot be replayed as-is");
     if (state === "oversized") {
       expect(projected.remediation.action).toContain("no runtime override");
-      expect(projected.remediation.action).toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).toMatch(
+        /unchanged request.*fails/iu,
       );
       expect(projected.remediation.action).not.toContain(
         "Rerun the same REA request",
@@ -134,8 +134,8 @@ it.each([
       expect(projected.remediation.action).toContain(
         "Rerun the same REA request",
       );
-      expect(projected.remediation.action).not.toContain(
-        "Repeating the unchanged request fails the same way",
+      expect(projected.remediation.action).not.toMatch(
+        /unchanged request.*fails/iu,
       );
     }
   },

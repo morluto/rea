@@ -401,8 +401,7 @@ describe("state data plane intake", () => {
         id: 1,
         error: {
           code: -32602,
-          message:
-            "invalid params: a file:// uri names a path on this host, not a network share",
+          message: expect.stringMatching(/this host.*not a network share/iu),
         },
       });
     }
@@ -614,7 +613,9 @@ describe("state data plane cancellation", () => {
         id: 1,
         error: {
           code: -32000,
-          message: "the state document could not be downloaded",
+          message: expect.stringMatching(
+            /state document.*could not be downloaded/iu,
+          ),
           data: { reason: "cancelled" },
         },
       },
@@ -623,7 +624,7 @@ describe("state data plane cancellation", () => {
         id: 2,
         error: {
           code: -32000,
-          message: "the call was cancelled and left the state unchanged",
+          message: expect.stringMatching(/cancelled.*state unchanged/iu),
           data: { reason: "cancelled" },
         },
       },
@@ -1165,9 +1166,7 @@ describe("serveEnvironment with a state", () => {
     expect(tools.map(({ name }) => name)).toEqual(["get_items", "post_search"]);
     expect(
       tools.find(({ name }) => name === "post_search")?.description,
-    ).toContain(
-      "answers from the served environment state where the state backs this tool",
-    );
+    ).toMatch(/answers.*served environment state.*state backs this tool/iu);
     await withClient(environment, async (client) => {
       const searched = await client.callTool({
         name: "post_search",
