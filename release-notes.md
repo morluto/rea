@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* qualify call paths by provider discovery ([#8443](https://github.com/morluto/rea/issues/8443))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **mcp:** The opt-in hot-cold catalog no longer preloads inspect_analysis_view. Discover it before calling it, batch with its producer when needed, or use the unchanged default full profile.
 * **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785))
@@ -520,10 +521,12 @@
 * **ghidra:** admit newer 12.x releases as compatible builds ([#6924](https://github.com/morluto/rea/issues/6924)) ([0d1a454](https://github.com/morluto/rea/commit/0d1a454e25db825567782e461da21530bad4b158))
 * **ghidra:** assemble the Swift verifier's unresolved-jump fixture before linking ([#8325](https://github.com/morluto/rea/issues/8325)) ([2d5dec2](https://github.com/morluto/rea/commit/2d5dec26c31662764c9adfe3ff996174901b8d49)), closes [#8188](https://github.com/morluto/rea/issues/8188)
 * **ghidra:** bind existing MIPS projects to target metadata ([#8605](https://github.com/morluto/rea/issues/8605)) ([982e750](https://github.com/morluto/rea/commit/982e750a7079dd7bad41a1cb2919b5438fdb2d7f))
+* **ghidra:** clarify function annotation selectors ([#8584](https://github.com/morluto/rea/issues/8584)) ([4bb5300](https://github.com/morluto/rea/commit/4bb53000a34544c10cc868d756dfaaeca9d8f464))
 * **ghidra:** compare the DOS verifier's CLI window before its own rename ([#8339](https://github.com/morluto/rea/issues/8339)) ([d54a466](https://github.com/morluto/rea/commit/d54a4661da20382ad8456564a08569fdd24131c5)), closes [#8189](https://github.com/morluto/rea/issues/8189)
 * **ghidra:** decide batch names independently of request order ([#8306](https://github.com/morluto/rea/issues/8306)) ([7c9ed94](https://github.com/morluto/rea/commit/7c9ed94259fef560fdbec0c9b640348c5d54c391))
 * **ghidra:** discover installed versioned Homebrew JDKs ([#8853](https://github.com/morluto/rea/issues/8853)) ([1998e65](https://github.com/morluto/rea/commit/1998e65705afd04dee078724932fa98d446248b9))
 * **ghidra:** distinguish unlisted instruction addresses ([#7823](https://github.com/morluto/rea/issues/7823)) ([bd687bb](https://github.com/morluto/rea/commit/bd687bbc40daf47d93f2b4c65b72004eb8f87c83))
+* **ghidra:** explain literal search candidate evidence ([#8816](https://github.com/morluto/rea/issues/8816)) ([cbd4bd4](https://github.com/morluto/rea/commit/cbd4bd4a66f2520ff04eeb8bd404b8235df50e8b))
 * **ghidra:** explain read-only project edit refusals ([#8413](https://github.com/morluto/rea/issues/8413)) ([810cebc](https://github.com/morluto/rea/commit/810cebcba07d1a793b8657a7f3a5c14fe5995206))
 * **ghidra:** expose bit-field base type identity ([#8602](https://github.com/morluto/rea/issues/8602)) ([9ef7069](https://github.com/morluto/rea/commit/9ef70696dd3eda7d6be73c169672a0ab14b027bb))
 * **ghidra:** guide packed program import recovery ([#8820](https://github.com/morluto/rea/issues/8820)) ([9196c30](https://github.com/morluto/rea/commit/9196c30f6e7a459a11335fc1257c701e113297be))
@@ -662,6 +665,7 @@
 * **kuna:** clarify failed export record availability ([#8789](https://github.com/morluto/rea/issues/8789)) ([4ec2726](https://github.com/morluto/rea/commit/4ec2726b1be38aa5207a258e75c2170dc3b6dd75))
 * **kuna:** clarify single-function fallback evidence ([#8742](https://github.com/morluto/rea/issues/8742)) ([9a79ee8](https://github.com/morluto/rea/commit/9a79ee8e9e2995bd9845e4929ed2f74c9b890516))
 * **kuna:** give actionable lookup recovery ([#8656](https://github.com/morluto/rea/issues/8656)) ([d496d80](https://github.com/morluto/rea/commit/d496d803a4f50dc82248db0630042894c1136d00))
+* **kuna:** guide inventory selector recovery ([#8397](https://github.com/morluto/rea/issues/8397)) ([db0b9ac](https://github.com/morluto/rea/commit/db0b9ac20cd7cfa38e5d70b6c496b6ae2052f027))
 * **kuna:** keep timeout recovery from changing workers ([#8687](https://github.com/morluto/rea/issues/8687)) ([193e01a](https://github.com/morluto/rea/commit/193e01abb15917cb4d1ac0f630645f526c02754c))
 * **kuna:** mark project-dependent operations unavailable on export failure ([#8748](https://github.com/morluto/rea/issues/8748)) ([9044b6f](https://github.com/morluto/rea/commit/9044b6fb36b8f8c839d95e191ece5bf28ac84c08))
 * **kuna:** omit Mach-O data symbols from the procedure inventory ([#8335](https://github.com/morluto/rea/issues/8335)) ([a36c9dd](https://github.com/morluto/rea/commit/a36c9dd9c8d2ff1a1a3d1d16ad30753b84b7946d))
@@ -763,6 +767,7 @@
 * **native:** separate value-trace page omission from traversal truncation ([#8309](https://github.com/morluto/rea/issues/8309)) ([73ff6ca](https://github.com/morluto/rea/commit/73ff6ca0c8634aca1371f33219b94161d5bcf70c)), closes [#8283](https://github.com/morluto/rea/issues/8283)
 * **native:** share otool build tool parsing ([8aa6df2](https://github.com/morluto/rea/commit/8aa6df2d86fe3deb295227a4d482da1bc819e53e))
 * **native:** share Swift symbol recognition ([dcfb618](https://github.com/morluto/rea/commit/dcfb61826d8169aa2426df984c59c7a36b982c9b))
+* **native:** show function match limitations by default ([#8558](https://github.com/morluto/rea/issues/8558)) ([60f9a4c](https://github.com/morluto/rea/commit/60f9a4c69abd0bbc97346434d6006880ecc6d6ba))
 * **native:** stop value traces at unconfirmed child cleanup ([#8576](https://github.com/morluto/rea/issues/8576)) ([f95bdbc](https://github.com/morluto/rea/commit/f95bdbce76fa538d9383a36c7dde0468078b42f4)), closes [#8371](https://github.com/morluto/rea/issues/8371)
 * **native:** use owned address grammar for coordinates ([a529146](https://github.com/morluto/rea/commit/a52914649a5debce3694f81d4bf4bcf9f889d1e6))
 * **native:** validate plist target identity ([bae84d1](https://github.com/morluto/rea/commit/bae84d1b937c4b3c053b54ad3a422fc4b9ca0362))
@@ -863,6 +868,7 @@
 * **pyinstaller:** leave PE carrier binary members unmarked ([#6730](https://github.com/morluto/rea/issues/6730)) ([9317c7d](https://github.com/morluto/rea/commit/9317c7d42265a5ddce5561fe76a729004ce9c670))
 * **python:** preserve code objects after STORE_SLICE ([#7815](https://github.com/morluto/rea/issues/7815)) ([a6295e4](https://github.com/morluto/rea/commit/a6295e433b7e141740ee1aeccd1c077952e77808))
 * **qlog:** exclude hidden custom events from incomplete facts ([#7825](https://github.com/morluto/rea/issues/7825)) ([b0880d6](https://github.com/morluto/rea/commit/b0880d660feecaf9729b0bb69ce384e2b18a361e))
+* qualify call paths by provider discovery ([#8443](https://github.com/morluto/rea/issues/8443)) ([31278c7](https://github.com/morluto/rea/commit/31278c7b5a8ead6849efb8d916f695823135575a))
 * **readers:** preserve completed snapshots through cleanup retries ([9d2c087](https://github.com/morluto/rea/commit/9d2c087d8306803c232286e6e3f05fd6acc7a8ad))
 * **reference:** Exclude Git pointer files from source identities ([#7667](https://github.com/morluto/rea/issues/7667)) ([e01fcfb](https://github.com/morluto/rea/commit/e01fcfb4b2981a96ab817fe640eff35808e6153c)), closes [#7551](https://github.com/morluto/rea/issues/7551)
 * **reference:** preserve incomplete resolution uncertainty ([838f5f4](https://github.com/morluto/rea/commit/838f5f44d272613f58770e4e4f591b0d778a458c))
@@ -1208,6 +1214,7 @@
 * include Kuna in native provider guidance ([#7929](https://github.com/morluto/rea/issues/7929)) ([1631dcb](https://github.com/morluto/rea/commit/1631dcb09a34380f36b34e217efe4e98d96b203f))
 * **installation:** list every engine accepted by doctor --provider ([#4767](https://github.com/morluto/rea/issues/4767)) ([578e4bb](https://github.com/morluto/rea/commit/578e4bb71ae8ff66fdbc7f3ade62638fb965528d))
 * **limits:** say setup forwards the selected MCP response budget ([#8342](https://github.com/morluto/rea/issues/8342)) ([67552d5](https://github.com/morluto/rea/commit/67552d56cce45a4fedffa544f9f6e3bbcc418fcd)), closes [#7420](https://github.com/morluto/rea/issues/7420)
+* **mcp:** clarify residual unknown target scope ([#8547](https://github.com/morluto/rea/issues/8547)) ([18cc161](https://github.com/morluto/rea/commit/18cc16141c5c56b442bc13580c8c86220c3229dc))
 * **mcp:** document native function analysis scope ([#8389](https://github.com/morluto/rea/issues/8389)) ([0ecf3a4](https://github.com/morluto/rea/commit/0ecf3a4cbfdc71242f6ef4635c91a8ce4e5ca049))
 * **mcp:** document verified FastMCP catalog recovery ([#9113](https://github.com/morluto/rea/issues/9113)) ([39827ec](https://github.com/morluto/rea/commit/39827ec7171a311cd5258ffb1ef953068aa84051))
 * **mcp:** explain PowerShell launch environment scope ([#8961](https://github.com/morluto/rea/issues/8961)) ([347dc9a](https://github.com/morluto/rea/commit/347dc9a32cb038c4a82cfe64d4109ad9d8e27da9))
