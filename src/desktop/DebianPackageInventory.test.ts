@@ -886,13 +886,15 @@ describe.skipIf(process.platform === "win32")("desktop entry package", () => {
     expect(fromLocal.installed).toMatchObject({
       name: "libreoffice-writer",
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "neither the Ubuntu 24.04 archive nor a vendor repository the export declares offers libreoffice-common",
+      executable_package_reason: expect.stringMatching(
+        /neither.*Ubuntu 24\.04.*vendor repository.*offers libreoffice-common/iu,
+      ),
     });
     expect(fromUnasked.installed).toMatchObject({
       executable_package: "libreoffice-common",
-      executable_package_reason:
-        "apt-cache policy did not say where libreoffice-common comes from",
+      executable_package_reason: expect.stringMatching(
+        /apt-cache policy.*did not.*libreoffice-common/iu,
+      ),
     });
   });
 
