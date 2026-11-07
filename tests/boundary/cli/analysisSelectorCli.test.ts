@@ -1,5 +1,6 @@
 import { describe, expect } from "vitest";
 
+import { nativeDataTypeInputSchema } from "../../../src/domain/native/nativeDataType.js";
 import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 const selectors = [
@@ -137,18 +138,27 @@ cliTest(
   },
 );
 
+const dataTypeChoiceMessage = (): string => {
+  const parsed = nativeDataTypeInputSchema.safeParse({});
+  if (parsed.success)
+    throw new Error("nativeDataTypeInputSchema accepted empty input");
+  const issue = parsed.error.issues.find((item) => item.path.length === 0);
+  if (issue === undefined)
+    throw new Error("nativeDataTypeInputSchema omitted root selector issue");
+  return issue.message;
+};
+
 cliTest(
   "admits exactly one nonempty native data type selector before opening a target",
   async ({ cli }) => {
+    const message = dataTypeChoiceMessage();
+    expect(message).toContain("type");
+    expect(message).toContain("address");
     const invalid = (issue: Record<string, unknown>) => ({
       code: "invalid_request",
       details: { operation: "inspect_native_data_type", issues: [issue] },
     });
-    const choice = invalid({
-      path: [],
-      reason: "invalid_value",
-      message: "Supply exactly one of type or address",
-    });
+    const choice = invalid({ path: [], reason: "invalid_value", message });
     for (const [selection, expected] of [
       [[], choice],
       [["--type", "/MyStruct", "--address", "0x1000"], choice],

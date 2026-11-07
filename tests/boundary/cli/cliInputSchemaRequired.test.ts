@@ -15,6 +15,7 @@ import {
   MAX_SELECTED_LOCALES,
 } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
+import { dataTypeSelectorGuidance } from "../../../src/cli/analysisSelector.js";
 
 type CliInstance = ReturnType<typeof createCli>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
@@ -707,7 +708,7 @@ const PATTERN_SELECTOR = atLeastOneSelector(
   "the positional pattern or --pattern",
 );
 const EXACTLY_ONE_SCRIPT = "Provide exactly one of --script or --script-file.";
-const EXACTLY_ONE_DATA_TYPE = "Supply exactly one of --type or --address.";
+const DATA_TYPE_OPTIONS = ["--type", "--address"] as const;
 const TARGET = "target.bin";
 
 interface SelectorRequest {
@@ -961,11 +962,11 @@ const selectorDiscovery: readonly SelectorDiscovery[] = [
   },
   {
     command: "inspect-native-data-type",
-    guidance: EXACTLY_ONE_DATA_TYPE,
+    guidance: dataTypeSelectorGuidance,
     choice: "exactly one",
     fields: [
-      { group: "options", name: "type" },
-      { group: "options", name: "address" },
+      { group: "options", name: "type", preserved: DATA_TYPE_OPTIONS },
+      { group: "options", name: "address", preserved: DATA_TYPE_OPTIONS },
     ],
     representable: [
       { args: { path: TARGET }, options: { type: "/MyStruct" } },
