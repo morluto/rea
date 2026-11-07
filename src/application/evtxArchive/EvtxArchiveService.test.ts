@@ -22,6 +22,8 @@ it("reports the selected path and cause when it cannot resolve the event log", a
     expect(result.ok).toBe(false);
     if (result.ok || !(result.error instanceof AnalysisInputError))
       throw new Error("Expected input refusal");
+    expect(result.error.conformsToInputContract).toBe(true);
+    expect(result.error.remediationAction).toContain("host running REA");
     expect(result.error.issues).toEqual([
       {
         path: ["path"],

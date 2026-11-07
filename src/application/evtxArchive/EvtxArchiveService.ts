@@ -41,6 +41,13 @@ const inputFailure = (message: string, cause?: unknown) =>
     operation,
     {
       cause,
+      ...(isSelectedRegularFileError(cause)
+        ? {
+            conformsToInputContract: true,
+            remediationAction:
+              "Check that the selected path exists and is a readable regular file on the host running REA.",
+          }
+        : {}),
       ...(cause instanceof ArtifactReaderFailure
         ? stableArtifactInputRecovery(cause)
         : {}),
