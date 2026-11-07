@@ -97,6 +97,7 @@ const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86_64",
   "arm",
   "arm64",
+  "loongarch",
   "mips",
   "6502",
   "riscv",

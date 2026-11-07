@@ -2,6 +2,7 @@ import type {
   BinaryArchitecture,
   ElfFamilyMetadata,
   HeaderArchitecture,
+  LoongArchElfMetadata,
   MipsElfMetadata,
   PeCodeViewRecord,
   RiscvElfMetadata,
@@ -17,6 +18,7 @@ import type { PeOptionalHeaderFacts } from "./peMachine.js";
 import { readPeCoffHeader } from "./peCoffHeader.js";
 import { readPeSectionHeader } from "./peSectionHeader.js";
 import { readElfFixedHeader } from "./elfFixedHeader.js";
+import { loongarchAbiDeclaration } from "./loongarchAbi.js";
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
@@ -38,6 +40,12 @@ import {
 
 /** Format and architecture facts recovered from an executable header. */
 export type ExecutableMetadata =
+  | {
+      readonly format: "elf";
+      readonly architecture: "loongarch";
+      readonly availableArchitectures: readonly "loongarch"[];
+      readonly loongarch: LoongArchElfMetadata;
+    }
   | {
       readonly format: "elf";
       readonly architecture: "mips";
@@ -399,6 +407,7 @@ const parseElf = (
   if (architecture === null)
     return err(`unsupported ELF architecture: e_machine ${String(machine)}`);
   if (
+    architecture === "loongarch" ||
     architecture === "mips" ||
     architecture === "riscv" ||
     architecture === "powerpc"
@@ -409,6 +418,13 @@ const parseElf = (
       type,
       flags,
     };
+    if (architecture === "loongarch")
+      return ok({
+        format: "elf",
+        architecture,
+        availableArchitectures: [architecture],
+        loongarch: { ...metadata, ...loongarchAbiDeclaration(flags) },
+      });
     if (architecture === "powerpc")
       return ok({
         format: "elf",

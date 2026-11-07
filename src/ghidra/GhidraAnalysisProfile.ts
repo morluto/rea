@@ -19,6 +19,10 @@ import { err, ok, type Result } from "../domain/result.js";
 import { ghidraDisabledAnalyzerPreset } from "./GhidraDisabledAnalyzers.js";
 import type { GhidraInstallationInspection } from "./GhidraInstallation.js";
 import {
+  ghidraLoongArchLanguage,
+  ghidraLoongArchProfileParameters,
+} from "./GhidraLoongArchProfile.js";
+import {
   isLegacyMipsAdmission,
   ghidraMipsProfileParameters,
   ghidraMipsLanguageOverride,
@@ -81,6 +85,7 @@ const sharedAnalysisSemantics = {
 export const ghidraPinnedLanguage = (
   target: BinaryTarget,
 ): GhidraLanguageOverride | undefined =>
+  ghidraLoongArchLanguage(target) ??
   ghidraMipsLanguageOverride(target) ??
   ghidraRiscvLanguageOverride(target) ??
   ghidraPowerPcLanguage(target);
@@ -266,7 +271,9 @@ export const resolveGhidraAnalysisProfile = async (
         `The caller-selected processor or compiler specification is outside the verified ${
           target.architecture === "riscv"
             ? "generic little-endian RISC-V"
-            : "endian-matched MIPS32"
+            : target.architecture === "loongarch"
+              ? "little-endian ELF64 LP64D LoongArch"
+              : "endian-matched MIPS32"
         } profile. The requested override has not been changed.`,
         pinnedLanguage,
       ),
@@ -374,6 +381,7 @@ export const resolveGhidraAnalysisProfile = async (
             }
           : {}),
         ...analyzerParameters,
+        ...ghidraLoongArchProfileParameters(target),
         ...ghidraMipsProfileParameters(target, languageOverride),
         ...ghidraRiscvProfileParameters(target),
         ...ghidraPowerPcProfileParameters(target),
@@ -477,11 +485,13 @@ export const existingGhidraAnalysisProfile = (
   provider: Parameters<typeof createAnalysisProfile>[0],
   project: JsonValue,
 ) => {
+  const loongarchElf = ghidraLoongArchProfileParameters(target).loongarch_elf;
   const mipsElf = ghidraMipsProfileParameters(target).mips_elf;
   return createAnalysisProfile(provider, {
     target_kind: target.kind,
     target_format: target.format,
     architecture: target.architecture ?? null,
+    ...(loongarchElf === undefined ? {} : { loongarch_elf: loongarchElf }),
     ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,

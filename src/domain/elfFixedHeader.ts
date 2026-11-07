@@ -128,6 +128,8 @@ export const elfArchitecture = (
       return "arm64";
     case 243: // EM_RISCV: XLEN, byte order and e_flags remain separate ELF facts.
       return "riscv";
+    case 258: // EM_LOONGARCH: class, byte order and e_flags remain separate facts.
+      return "loongarch";
   }
   return undefined;
 };
