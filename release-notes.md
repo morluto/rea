@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **native:** recognize identical function evidence ([#8442](https://github.com/morluto/rea/issues/8442))
 * **ghidra:** Ghidra snapshots made before the search projection profile revision no longer match. Run fresh analysis and save a new snapshot.
 * qualify call paths by provider discovery ([#8443](https://github.com/morluto/rea/issues/8443))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
@@ -532,6 +533,7 @@
 * **ghidra:** explain literal search candidate evidence ([#8816](https://github.com/morluto/rea/issues/8816)) ([cbd4bd4](https://github.com/morluto/rea/commit/cbd4bd4a66f2520ff04eeb8bd404b8235df50e8b))
 * **ghidra:** explain read-only project edit refusals ([#8413](https://github.com/morluto/rea/issues/8413)) ([810cebc](https://github.com/morluto/rea/commit/810cebcba07d1a793b8657a7f3a5c14fe5995206))
 * **ghidra:** expose bit-field base type identity ([#8602](https://github.com/morluto/rea/issues/8602)) ([9ef7069](https://github.com/morluto/rea/commit/9ef70696dd3eda7d6be73c169672a0ab14b027bb))
+* **ghidra:** guide ambiguous selector recovery ([#8768](https://github.com/morluto/rea/issues/8768)) ([9109e6f](https://github.com/morluto/rea/commit/9109e6f6a7412a32d1bb0390136d3dad068af5ce))
 * **ghidra:** guide packed program import recovery ([#8820](https://github.com/morluto/rea/issues/8820)) ([9196c30](https://github.com/morluto/rea/commit/9196c30f6e7a459a11335fc1257c701e113297be))
 * **ghidra:** guide recovery from unresolved procedure selectors ([#8470](https://github.com/morluto/rea/issues/8470)) ([103684b](https://github.com/morluto/rea/commit/103684bce1971f25414f7e8dd879069720f6c315))
 * **ghidra:** honor current directory in PATH discovery ([81adb89](https://github.com/morluto/rea/commit/81adb8977a2df1b84b628aed9317719e6df91fd8))
@@ -756,6 +758,7 @@
 * **native:** preserve mapping and literal coverage ([b0c48e8](https://github.com/morluto/rea/commit/b0c48e8b6524a809e51acdca155e253b9fe73f14))
 * **native:** preserve Objective-C records with unreadable protocol lists ([81ada02](https://github.com/morluto/rea/commit/81ada025c02be1afb98661817c5784179f54280c))
 * **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785)) ([1ff5a65](https://github.com/morluto/rea/commit/1ff5a655bc8d97738c4e5a1ff7a6786126e6e3fe))
+* **native:** recognize identical function evidence ([#8442](https://github.com/morluto/rea/issues/8442)) ([2d25a09](https://github.com/morluto/rea/commit/2d25a09c0f50eddf74dc3051b399b188a9897b53))
 * **native:** reject mixed dyld refusal diagnostics ([#5778](https://github.com/morluto/rea/issues/5778)) ([d47efe1](https://github.com/morluto/rea/commit/d47efe1a54ada1fab1386d25ce0081edac5fe5f3))
 * **native:** reject nonzero reserved ELF dynamic symbols ([#7528](https://github.com/morluto/rea/issues/7528)) ([7504f2d](https://github.com/morluto/rea/commit/7504f2ddfccc8c518bdda365f23043a07691f6cf))
 * **native:** report dispatch target applicability ([#8400](https://github.com/morluto/rea/issues/8400)) ([bafe378](https://github.com/morluto/rea/commit/bafe3784cd6fd3f46dd472a913e97f08f4d7427f))
