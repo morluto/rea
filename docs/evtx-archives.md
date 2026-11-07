@@ -26,18 +26,22 @@ resolved.
 `not-resolved`. `record_checksums` is always `not-verified` and `network` is
 always `not-contacted`. `status` is `complete-within-scope` only when every chunk was
 read without any diagnostic; a limit, a truncated record, an undecodable chunk
-or a chunk whose first record number disagrees with the id that record states
+or a chunk whose first record identifier disagrees with the identifier in that record
 makes it `partial` and each cause appears in `diagnostics`.
 
 A chunk is numbered by its physical position in the file, never by a value
-stored in the chunk. The header field at `0x08` is the first event record
-number, not a chunk sequence number, so an intact log whose chunks do not start
-at record 1 is not renamed; a disagreement between that field and the first
-record's own id is reported separately as `first-record-number-mismatch`.
+stored in the chunk. The first event record number at `0x08` and the first
+record identifier at `0x18` are distinct fields. A disagreement between the
+identifier and the first record's own identifier is reported as
+`first-record-id-mismatch`.
 
 A wrapped log leaves stale bytes after its last record. Those bytes are not
 reported as a truncation, and they do not discard the events the chunk did
 contain.
+
+An invalid free-space offset leaves the live record region unknown, so the
+chunk's records are skipped and coverage is partial. An incomplete final chunk
+is also reported and skipped. Zero padding before free space is accepted.
 
 ## Structure and bounds
 

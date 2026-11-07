@@ -63,14 +63,15 @@ const withTimestamp = (bytes: Buffer, ms: number): Buffer => {
 const chunk = (
   number: number,
   records: readonly Buffer[],
-  /** 0x08 is a record number, so a realistic chunk states its first record's id. */
+  /** Chunk record identifier, independent of its record number. */
   statedFirstRecordNumber = records[0] !== undefined
     ? readRecordId(records[0])
     : number,
 ): Buffer => {
   const bytes = Buffer.alloc(CHUNK_BYTES);
   bytes.write("ElfChnk\u0000", 0, "latin1");
-  bytes.writeBigUInt64LE(BigInt(statedFirstRecordNumber), 8);
+  bytes.writeBigUInt64LE(BigInt(number), 8);
+  bytes.writeBigUInt64LE(BigInt(statedFirstRecordNumber), 0x18);
   let cursor = CHUNK_HEADER_BYTES;
   for (const entry of records) {
     // `subarray` keeps the parent's storage, so copy only the entry's own bytes.
@@ -90,7 +91,7 @@ const chunk = (
 const chunkCrc = (bytes: Buffer): number =>
   crc32(
     Buffer.concat([
-      bytes.subarray(0, 0x7c),
+      bytes.subarray(0, 0x78),
       bytes.subarray(0x80, CHUNK_HEADER_BYTES),
     ]),
   );
@@ -166,7 +167,7 @@ describe("parseEvtxArchive", () => {
     expect(archive.chunks.map((entry) => entry.chunk_number)).toEqual([0, 1]);
     expect(archive.events.map((event) => event.chunk_number)).toEqual([0, 1]);
     expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
-      "first-record-number-mismatch",
+      "first-record-id-mismatch",
     );
   });
 
@@ -202,6 +203,18 @@ describe("parseEvtxArchive", () => {
     expect(head.chunks[0]?.last_timestamp_ms).toBe(1_700_000_000_000);
   });
 
+  it("preserves an unrepresentable first record identifier as unknown", () => {
+    const first = record(1);
+    first.writeBigUInt64LE(BigInt(Number.MAX_SAFE_INTEGER) + 1n, 8);
+    const archive = parsed(evtx([chunk(0, [first, record(2)], 0)]));
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([
+      null,
+      2,
+    ]);
+    expect(archive.chunks[0]?.first_event_record_id).toBeNull();
+    expect(archive.chunks[0]?.last_event_record_id).toBe(2);
+  });
+
   it("accepts chunk timestamps from before 1970", () => {
     // `timestampMs` admits them as negative Unix milliseconds, so the output
     // schema must not reject the chunk fields it feeds.
@@ -221,7 +234,14 @@ describe("parseEvtxArchive", () => {
   it("reports a chunk whose stated first record disagrees with its first record", () => {
     const archive = parsed(evtx([chunk(5, [record(9)], 5)]));
     expect(archive.diagnostics.map((entry) => entry.code)).toContain(
-      "first-record-number-mismatch",
+      "first-record-id-mismatch",
+    );
+  });
+
+  it("does not compare a record number to a record identifier", () => {
+    const archive = parsed(evtx([chunk(5, [record(9)], 9)]));
+    expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
+      "first-record-id-mismatch",
     );
   });
 
@@ -247,6 +267,17 @@ describe("parseEvtxArchive", () => {
     header.writeUInt16LE(4, 0x28);
     const archive = parsed(header);
     expect(archive.diagnostics[0]?.code).toBe("invalid-header");
+  });
+
+  it("reports an incomplete final chunk instead of claiming complete coverage", () => {
+    const archive = parsed(
+      Buffer.concat([evtx([chunk(0, [record(1)])]), Buffer.alloc(200)]),
+    );
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([1]);
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-chunk",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
   });
 
   it("keeps the events before a record that overruns the chunk", () => {
@@ -286,6 +317,39 @@ describe("parseEvtxArchive", () => {
 });
 
 describe("parseEvtxArchive chunk headers", () => {
+  it("checks the documented header bytes against an independently computed CRC", () => {
+    const signed = chunk(0, []);
+    // Python zlib.crc32 of 0x00..0x77 + 0x80..0x1ff for this header.
+    signed.writeUInt32LE(0x9c77546c, 0x7c);
+    signed.writeUInt32LE(0x12345678, 0x78);
+    expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("matched");
+    signed[0x40] = 1;
+    expect(parsed(evtx([signed])).chunks[0]?.checksum).toBe("mismatched");
+  });
+
+  it("does not invent live records when the free-space offset is invalid", () => {
+    const broken = chunk(1, [record(7)]);
+    broken.writeUInt32LE(0, 0x30);
+    const archive = parsed(evtx([broken]));
+    expect(archive.events).toEqual([]);
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-chunk",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
+  it("allows zero padding but reports unexpected bytes before free space", () => {
+    const padded = chunk(1, [record(7)]);
+    const end = padded.readUInt32LE(0x30);
+    padded.writeUInt32LE(end + 8, 0x30);
+    expect(parsed(evtx([padded])).source_coverage.status).toBe(
+      "complete-within-scope",
+    );
+    padded[end] = 1;
+    const damaged = parsed(evtx([padded]));
+    expect(damaged.events.map((event) => event.event_record_id)).toEqual([7]);
+    expect(damaged.source_coverage.status).toBe("partial");
+  });
   it("evaluates the chunk header checksum", () => {
     // An intact chunk is `matched`, not `mismatched`: EVTX signs the header
     // with CRC32 over 0x00..0x77 and 0x80..0x1ff, so the stored value is

@@ -57,11 +57,11 @@ const crc32 = (bytes: Buffer): number => {
 
 /**
  * EVTX stores the checksum as CRC32 over the 512-byte chunk header, skipping
- * the four-byte stored checksum at `0x7c`.
+ * bytes `0x78..0x7f`, including the stored checksum at `0x7c`.
  */
 const chunkChecksumMatches = (chunk: Buffer): boolean => {
   const signed = Buffer.concat([
-    chunk.subarray(0, 0x7c),
+    chunk.subarray(0, 0x78),
     chunk.subarray(0x80, CHUNK_HEADER_BYTES),
   ]);
   return crc32(signed) >>> 0 === chunk.readUInt32LE(0x7c);
@@ -116,15 +116,35 @@ const readChunk = (
   // 0x30 is the chunk's free-space offset: bytes from there to the end are
   // unused. A wrapped log discards records without zeroing them, so stale
   // bytes that still parse as a record header would otherwise be inventoried
-  // as live events. Fall back to the chunk end when the field is out of range
-  // rather than trusting an offset the writer may not have maintained.
+  // as live events. An invalid offset cannot establish which bytes are live.
   const freeSpaceOffset = chunk.readUInt32LE(0x30);
-  const recordLimit =
-    freeSpaceOffset >= CHUNK_HEADER_BYTES && freeSpaceOffset <= chunk.length
-      ? freeSpaceOffset
-      : chunk.length;
-  while (cursor + RECORD_HEADER_BYTES <= recordLimit) {
-    if (chunk.readUInt32LE(cursor) !== RECORD_MAGIC) break;
+  const validOffset =
+    freeSpaceOffset >= CHUNK_HEADER_BYTES && freeSpaceOffset <= chunk.length;
+  if (!validOffset)
+    diagnose(
+      state,
+      chunkNumber,
+      startOrdinal,
+      "invalid-chunk",
+      `Invalid free-space offset ${freeSpaceOffset}; the record region is unknown.`,
+    );
+  const recordLimit = validOffset ? freeSpaceOffset : CHUNK_HEADER_BYTES;
+  while (cursor < recordLimit) {
+    if (
+      cursor + RECORD_HEADER_BYTES > recordLimit ||
+      chunk.readUInt32LE(cursor) !== RECORD_MAGIC
+    ) {
+      // Archived logs may pad the remainder of the used area with zeroes.
+      if (chunk.subarray(cursor, recordLimit).some((byte) => byte !== 0))
+        diagnose(
+          state,
+          chunkNumber,
+          startOrdinal + events,
+          "truncated-record",
+          `Unexpected bytes at byte ${cursor} before the chunk's free space.`,
+        );
+      break;
+    }
     const size = chunk.readUInt32LE(cursor + 4);
     if (size < RECORD_HEADER_BYTES || cursor + size > recordLimit) {
       diagnose(
@@ -176,8 +196,10 @@ const readChunk = (
     // The endpoints describe the first and last RECORD, not the first and last
     // record that happened to carry a value: taking the first non-null would
     // report an inner record's timestamp (or id) when an endpoint is unset.
-    if (first === null) first = recordId;
-    if (events === 0) firstTs = writtenMs;
+    if (events === 0) {
+      first = recordId;
+      firstTs = writtenMs;
+    }
     last = recordId;
     lastTs = writtenMs;
     events += 1;
@@ -284,6 +306,22 @@ export const parseEvtxArchive = (
     0,
     Math.floor((bytes.length - headerBlockBytes) / EVTX_ARCHIVE_CHUNK_BYTES),
   );
+  if (headerBlockBytes > bytes.length)
+    diagnose(
+      state,
+      null,
+      null,
+      "invalid-header",
+      `The ${headerBlockBytes}-byte header block extends beyond the file.`,
+    );
+  else if ((bytes.length - headerBlockBytes) % EVTX_ARCHIVE_CHUNK_BYTES !== 0)
+    diagnose(
+      state,
+      chunkCount,
+      null,
+      "invalid-chunk",
+      "The final chunk is incomplete and was not inventoried.",
+    );
   const chunks: EvtxArchive["chunks"] = [];
   for (let index = 0; index < chunkCount; index += 1) {
     const start = headerBlockBytes + index * EVTX_ARCHIVE_CHUNK_BYTES;
@@ -298,25 +336,21 @@ export const parseEvtxArchive = (
       );
       continue;
     }
-    // 0x08 is the FIRST EVENT RECORD NUMBER, not a chunk sequence number: an
-    // intact log whose chunks do not start at record 1 (a wrapped file, or one
-    // exported mid-stream) would otherwise be reported as mismatched on every
-    // chunk, and every event's chunk_number would carry a record number. The
-    // physical position is the only chunk number this parser can vouch for, so
-    // the header field is checked against the first record's own id instead.
-    const statedFirstRecordNumber = readCount(chunk, 8);
+    // Record numbers and identifiers are distinct header fields; record
+    // headers carry identifiers, which can only be compared with offset 0x18.
+    const statedFirstRecordId = readCount(chunk, 0x18);
     const inventory = readChunk(chunk, index, index, state);
     if (
-      statedFirstRecordNumber !== null &&
+      statedFirstRecordId !== null &&
       inventory.first_event_record_id !== null &&
-      statedFirstRecordNumber !== inventory.first_event_record_id
+      statedFirstRecordId !== inventory.first_event_record_id
     )
       diagnose(
         state,
         index,
         null,
-        "first-record-number-mismatch",
-        `Chunk at position ${index} states its first record is ${statedFirstRecordNumber}, but the first record reads ${inventory.first_event_record_id}.`,
+        "first-record-id-mismatch",
+        `Chunk at position ${index} states its first record identifier is ${statedFirstRecordId}, but the first record reads ${inventory.first_event_record_id}.`,
       );
     chunks.push({
       chunk_number: inventory.chunk_number,
