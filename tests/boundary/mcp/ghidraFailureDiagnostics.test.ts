@@ -1,3 +1,5 @@
+import { constants } from "node:buffer";
+
 import { nativeLoadImagePartialObservationSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import {
   fixtureDosLoadImage,
@@ -22,9 +24,13 @@ import { expect, it } from "vitest";
 
 import { logCliCommand } from "../../../src/cliLogging.js";
 import { analysisErrorProjectionSchema } from "../../../src/contracts/errorSchemas.js";
+import { err, ok } from "../../../src/domain/result.js";
 import { ok } from "../../../src/domain/result.js";
 import { GhidraRequestQueue } from "../../../src/ghidra/GhidraRequestQueue.js";
-import { bindGhidraSessionFailure } from "../../../src/ghidra/GhidraSessionError.js";
+import {
+  bindGhidraSessionFailure,
+  GhidraSessionError,
+} from "../../../src/ghidra/GhidraSessionError.js";
 import { silentLogger } from "../../../src/logger.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 
@@ -100,6 +106,54 @@ it("preserves queue failure diagnostics through the provider, CLI adapter and SD
   }
 }, 30_000);
 
+it("projects an oversized bridge reply as a transport constraint and keeps the session", async () => {
+  let replies = 0;
+  const harness = await connectGhidraMcp("ghidra-oversized-reply", () =>
+    Promise.resolve(
+      replies++ === 0
+        ? err(
+            new GhidraSessionError(
+              "resource",
+              "Ghidra response line exceeds the runtime string length limit",
+            ),
+          )
+        : ok([]),
+    ),
+  );
+  try {
+    const oversized = await harness.mcp.callTool({
+      name: "list_strings",
+      arguments: {},
+    });
+    expect(parseMcpToolError(oversized)).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action: expect.stringContaining(
+            "The analysis session remains available.",
+          ),
+        },
+        details: {
+          operation: "list_strings",
+          resource: "transport",
+          reported_limits: {
+            maximum_line_length: constants.MAX_STRING_LENGTH,
+          },
+        },
+      },
+    });
+
+    const next = await harness.mcp.callTool({
+      name: "list_strings",
+      arguments: {},
+    });
+    expect(next.isError).not.toBe(true);
+    expect(harness.calls).toEqual(["list_strings", "list_strings"]);
+  } finally {
+    await harness.close();
+  }
+}, 30_000);
 it.each(
   (["cancelled", "protocol"] as const).flatMap((kind) =>
     (["file", "native-aot", "load-image"] as const).map((observation) => ({

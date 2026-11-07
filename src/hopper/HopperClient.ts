@@ -44,6 +44,7 @@ import {
   waitForAbortableDelay,
 } from "../process/ProviderDeadline.js";
 import { redactCapturedTransportCredential } from "../process/ProviderDiagnosticRedaction.js";
+import { oversizedProviderResponse } from "../process/ProviderResponseLines.js";
 import { ProviderRunLineage } from "../process/ProviderRunLineage.js";
 import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
 import {
@@ -84,6 +85,7 @@ import {
 import {
   HopperRequestQueue,
   type HopperRequestActivity,
+  type HopperRequestResult,
 } from "./HopperRequestQueue.js";
 import { HopperResponseStream } from "./HopperResponseStream.js";
 import {
@@ -261,6 +263,7 @@ export class HopperClient {
       hasQueued: (id) => this.#requests.hasQueued(id),
       nextRequestId: () => this.#nextId,
       abort: (message, cause) => this.#abortProtocol(message, cause),
+      oversized: () => this.#failOversizedResponse(),
     });
   }
 
@@ -1059,6 +1062,7 @@ export class HopperClient {
       readonly timeoutMs?: number;
       readonly progress?: ProgressReporter;
     },
+  ): Promise<HopperRequestResult> {
   ): Promise<Result<JsonValue, AnalysisError>> {
     const id = this.#nextId++;
     if (
@@ -1241,6 +1245,23 @@ export class HopperClient {
   #abortProtocol(message: string, cause?: Error): void {
     this.#failAll(new HopperProtocolError(message, { cause }));
     this.#socket?.destroy();
+  }
+
+  /** Hopper answers one request at a time, so the active request owns the reply. */
+  #failOversizedResponse(): boolean {
+    const active = this.#requests.activity();
+    if (
+      active !== null &&
+      this.#requests.accept(
+        active.requestId,
+        err(oversizedProviderResponse(active.operation)),
+      )
+    )
+      return true;
+    this.#abortProtocol(
+      "Hopper response line exceeds the runtime string length limit",
+    );
+    return false;
   }
 
   #failAll(error: HopperError): void {
