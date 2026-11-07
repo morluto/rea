@@ -751,6 +751,7 @@ export const createGhidraProviderClient = (input: {
         (callingConventionReason === undefined
           ? undefined
           : new ProviderAdapterError("ghidra", operation, {
+              userMessage: callingConventionReason,
               diagnostics: { reason: callingConventionReason },
             }));
       if (extensionFailure === undefined && info.analysis_seeds !== undefined)

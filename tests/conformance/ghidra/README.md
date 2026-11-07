@@ -6,9 +6,10 @@ binaries and Ghidra projects are never committed.
 - `../c/riscv.c` and `riscv-probe.S` produce source-owned RV32/RV64 ELF images
   with double-float ABI declarations and an independently known instruction.
   `../c/riscv-float-abi.c`, `riscv-probe.S` and `riscv-isa-probe.S` produce
-  typed and stripped RV32 ilp32 images whose calls cover every rule of the ilp32
-  policy; `riscv-checks.mjs` holds that policy's expected storage and the
-  call-site oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
+  typed and stripped RV32 ilp32 and ilp32f images whose calls cover every rule
+  of the ilp32 and ilp32f policies, and an ilp32f image the bridge must refuse;
+  `riscv-checks.mjs` holds each policy's expected storage and the call-site
+  oracle. `npm run verify:ghidra:riscv` exercises real CLI/MCP
   discovery, decompilation, argument storage, output schemas, profile and
   snapshot identity, admission and refusal diagnostics, immutable source bytes,
   and owned cleanup. It requires BYO Ghidra 12.1.4/JDK 21+ and RISC-V

@@ -148,22 +148,40 @@ describe("Ghidra RISC-V calling-convention report", () => {
     functions: 11,
     definitions: 11,
   };
-  it("accepts the exact committed policy outcome", () => {
+  const single = {
+    policy: "ilp32f-prototype-v1",
+    functions: 17,
+    definitions: 16,
+  };
+  const refused = {
+    policy: "ilp32f-prototype-v1",
+    refused: "1 signature passes rea_riscv_abi_half (_Float16).",
+  };
+  it.each([
+    ["the ilp32 outcome", valid],
+    ["the ilp32f outcome", single],
+    ["an ilp32f refusal", refused],
+  ])("accepts %s exactly", (_label, report) => {
     const parsed = parseGhidraSessionInfo(
-      { ...session(), riscv_calling_convention: valid },
+      { ...session(), riscv_calling_convention: report },
       expected,
     );
     if (!parsed.ok) throw parsed.error;
-    expect(parsed.value.riscv_calling_convention).toEqual(valid);
+    expect(parsed.value.riscv_calling_convention).toEqual(report);
   });
   it.each([
-    ["an unknown policy", { ...valid, policy: "ilp32f-prototype-v1" }],
+    ["an unknown policy", { ...valid, policy: "lp64f-prototype-v1" }],
     ["the MIPS policy", { ...valid, policy: "o32-soft-float-prototype-v1" }],
     ["a negative count", { ...valid, definitions: -1 }],
     ["a fractional count", { ...valid, functions: 1.5 }],
     ["a missing count", { policy: valid.policy, functions: 2 }],
     ["an undeclared field", { ...valid, prototype: "__rea_ilp32" }],
     ["a non-object report", "ilp32-prototype-v1"],
+    ["a custom-storage count", { ...single, custom_storage: 1 }],
+    ["an ilp32 refusal", { ...refused, policy: valid.policy }],
+    ["a refusal with counts", { ...refused, functions: 1 }],
+    ["an empty refusal", { ...refused, refused: "" }],
+    ["an unbounded refusal", { ...refused, refused: "x".repeat(2049) }],
   ])("rejects %s", (_label, report) => {
     expect(
       parseGhidraSessionInfo(
