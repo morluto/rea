@@ -7,6 +7,14 @@ import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
+import {
+  type LogicalPathRootInput,
+  logicalPathRedactionLimitation,
+  redactEvidenceLocations,
+  redactJsonValue,
+  redactLogicalPath,
+  resolveLogicalPathConfig,
+} from "./logicalPath.js";
 
 import {
   analysisProfileSchema,
@@ -226,7 +234,7 @@ export interface EvidenceObservation extends EvidenceObservationInput {
   readonly rawResult?: JsonValue;
 }
 
-type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
+export type EvidenceWithoutId = Omit<EvidenceSchemaValue, "evidence_id">;
 
 /** Target identity shared by semantic commitments, excluding caller-selected display paths. */
 export const evidenceSubjectIdentity = (subject: Evidence["subject"]) =>
@@ -260,7 +268,7 @@ export const evidenceSemanticContent = (
 });
 
 /** Hash semantic content, including raw results and excluding local metadata. */
-const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
+export const computeEvidenceId = (evidence: EvidenceWithoutId): string =>
   `ev_${digestCanonicalValue(evidenceSemanticContent(evidence), "Evidence")}`;
 
 /** Recognize an obsolete commitment for diagnosis only; never admit or rewrite it. */
@@ -353,13 +361,30 @@ export const withEvidenceCallerInputPath = (
   evidence: Evidence,
   rawPath: string,
   additionalPaths?: Readonly<Record<string, string>>,
+  options?: EvidenceCreationOptions,
 ): Evidence => {
-  const callerInputPath = nulFreeStringSchema.parse(rawPath);
+  const config = resolveLogicalPathConfig(
+    options?.logicalRoot,
+    options?.logicalPrefix,
+  );
+  const finalRawPath =
+    config !== undefined ? redactLogicalPath(rawPath, config) : rawPath;
+  const finalAdditionalPaths =
+    config !== undefined && additionalPaths !== undefined
+      ? Object.fromEntries(
+          Object.entries(additionalPaths).map(([k, p]) => [
+            k,
+            redactLogicalPath(p, config),
+          ]),
+        )
+      : additionalPaths;
+
+  const callerInputPath = nulFreeStringSchema.parse(finalRawPath);
   const owned = immutableEvidence(evidence);
   const paths =
-    additionalPaths === undefined
+    finalAdditionalPaths === undefined
       ? undefined
-      : callerInputPathsSchema.parse(additionalPaths);
+      : callerInputPathsSchema.parse(finalAdditionalPaths);
   const samePaths =
     paths === undefined || isDeepStrictEqual(owned.caller_input_paths, paths);
   if (owned.caller_input_path === callerInputPath && samePaths) return owned;
@@ -395,9 +420,11 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
   return evidence;
 };
 
-/** Ownership policy for the freshly parsed Evidence snapshot. */
+/** Ownership and redaction policy for the freshly parsed Evidence snapshot. */
 export interface EvidenceCreationOptions {
   readonly immutable?: boolean;
+  readonly logicalRoot?: LogicalPathRootInput;
+  readonly logicalPrefix?: string;
 }
 
 /** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
@@ -411,6 +438,7 @@ export const createEvidence = (
     target,
     provider,
     observation,
+    options,
   );
   const evidence = {
     ...normalized,
@@ -427,11 +455,96 @@ export const createEvidence = (
   return evidence;
 };
 
+/** Opt-in logical path-root redaction applied to Evidence, updating its semantic content and ID. */
+export const redactEvidence = (
+  evidence: Evidence,
+  options?: LogicalPathRootInput,
+): Evidence => {
+  const config = resolveLogicalPathConfig(options);
+  if (config === undefined) return evidence;
+
+  const subject =
+    evidence.subject === null
+      ? null
+      : {
+          ...evidence.subject,
+          local_path: redactLogicalPath(evidence.subject.local_path, config),
+        };
+
+  const callerInputPath =
+    evidence.caller_input_path === undefined
+      ? undefined
+      : redactLogicalPath(evidence.caller_input_path, config);
+
+  const callerInputPaths =
+    evidence.caller_input_paths === undefined
+      ? undefined
+      : Object.fromEntries(
+          Object.entries(evidence.caller_input_paths).map(([key, val]) => [
+            key,
+            redactLogicalPath(val, config),
+          ]),
+        );
+
+  const parameters = redactJsonValue(evidence.parameters, config) as Record<
+    string,
+    JsonValue
+  >;
+
+  const rawResult =
+    evidence.raw_result === null
+      ? null
+      : (redactJsonValue(evidence.raw_result, config) as JsonValue);
+
+  const normalizedResult = redactJsonValue(
+    evidence.normalized_result,
+    config,
+  ) as JsonValue;
+
+  const locations = redactEvidenceLocations(evidence.locations, config);
+
+  const limitation = logicalPathRedactionLimitation(config);
+  const limitations = evidence.limitations.includes(limitation)
+    ? evidence.limitations
+    : [...evidence.limitations, limitation];
+
+  const unauthenticated = {
+    subject,
+    provider: evidence.provider,
+    analysis_profile: evidence.analysis_profile,
+    predicate_type: evidence.predicate_type,
+    operation: evidence.operation,
+    parameters,
+    ...(callerInputPath === undefined
+      ? {}
+      : { caller_input_path: callerInputPath }),
+    ...(callerInputPaths === undefined
+      ? {}
+      : { caller_input_paths: callerInputPaths }),
+    raw_result: rawResult,
+    normalized_result: normalizedResult,
+    confidence: evidence.confidence,
+    authority: evidence.authority,
+    environment: evidence.environment,
+    limitations,
+    relationship_coverage: evidence.relationship_coverage,
+    locations,
+    evidence_links: evidence.evidence_links,
+  };
+
+  const evidenceId = computeEvidenceId(unauthenticated);
+  return parseEvidence({
+    ...unauthenticated,
+    evidence_id: evidenceId,
+  });
+};
+
 /** Create Evidence from owned immutable JSON while exposing cooperative computation steps. */
 export function* createImmutableEvidenceSteps(
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
+  options?: EvidenceCreationOptions,
 ): Generator<void, Evidence> {
   if (!isImmutableJsonSnapshot(observation.result))
     throw new TypeError(
@@ -444,6 +557,7 @@ export function* createImmutableEvidenceSteps(
     target,
     provider,
     observation,
+    options,
   );
   const digest = yield* canonicalJsonDigestSteps(
     evidenceSemanticContent(normalized),
@@ -458,7 +572,19 @@ const normalizeEvidenceObservation = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  options?: EvidenceCreationOptions,
 ) => {
+  const config = resolveLogicalPathConfig(
+    options?.logicalRoot,
+    options?.logicalPrefix,
+  );
+  const targetPath =
+    target === undefined
+      ? undefined
+      : config !== undefined
+        ? redactLogicalPath(target.path, config)
+        : target.path;
+
   const subject =
     target === undefined
       ? null
@@ -467,8 +593,45 @@ const normalizeEvidenceObservation = (
           digest: { sha256: target.sha256 },
           format: target.format,
           architecture: target.architecture ?? null,
-          local_path: target.path,
+          local_path: targetPath!,
         };
+
+  const parameters =
+    config !== undefined
+      ? (redactJsonValue(observation.parameters, config) as Record<
+          string,
+          JsonValue
+        >)
+      : observation.parameters;
+
+  const rawResult =
+    observation.rawResult === undefined || observation.rawResult === null
+      ? null
+      : config !== undefined
+        ? redactJsonValue(observation.rawResult, config)
+        : observation.rawResult;
+
+  const normalizedResult =
+    config !== undefined
+      ? redactJsonValue(observation.result, config)
+      : observation.result;
+
+  const locations =
+    config !== undefined
+      ? redactEvidenceLocations(observation.locations ?? [], config)
+      : [...(observation.locations ?? [])];
+
+  const limitations = [
+    ...(target === undefined
+      ? [
+          observation.subjectUnavailableReason ??
+            "Artifact identity is unavailable for this observation.",
+        ]
+      : []),
+    ...(observation.limitations ?? []),
+    ...(config !== undefined ? [logicalPathRedactionLimitation(config)] : []),
+  ];
+
   const semantic = {
     subject:
       subject === null
@@ -486,25 +649,17 @@ const normalizeEvidenceObservation = (
     analysis_profile: observation.analysisProfile ?? null,
     predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
-    parameters: observation.parameters,
-    raw_result: observation.rawResult ?? null,
-    normalized_result: observation.result,
+    parameters,
+    raw_result: rawResult,
+    normalized_result: normalizedResult,
     confidence: observation.confidence ?? "observed",
     authority: observation.authority ?? "shipped-artifact",
     environment: observation.environment ?? null,
-    limitations: [
-      ...(target === undefined
-        ? [
-            observation.subjectUnavailableReason ??
-              "Artifact identity is unavailable for this observation.",
-          ]
-        : []),
-      ...(observation.limitations ?? []),
-    ],
+    limitations,
     ...(observation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
       : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
+    locations,
     evidence_links: [...(observation.evidenceLinks ?? [])],
   };
   const sharedResult =

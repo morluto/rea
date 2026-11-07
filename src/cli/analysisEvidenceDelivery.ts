@@ -8,9 +8,11 @@ import { z } from "incur";
 import {
   isImmutableEvidence,
   parseEvidence,
+  redactEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
+import { resolveLogicalPathConfig } from "../domain/logicalPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -50,6 +52,17 @@ export const analysisEvidenceDeliveryOptions = {
     .describe(
       "Save complete Evidence as a bundle; required for summary delivery. Never overwrites.",
     ),
+  logical_root: localPathStringSchema
+    .optional()
+    .describe(
+      "Directory root to redact into a logical path prefix ($WORKSPACE) across emitted Evidence records.",
+    ),
+  logical_prefix: z
+    .string()
+    .optional()
+    .describe(
+      "Logical path prefix to replace logical_root with (defaults to $WORKSPACE).",
+    ),
 };
 
 interface CliEvidenceDelivery {
@@ -59,6 +72,8 @@ interface CliEvidenceDelivery {
   readonly signal: AbortSignal;
   readonly detail: "complete" | "summary";
   readonly evidenceOutput: string | undefined;
+  readonly logicalRoot?: string | undefined;
+  readonly logicalPrefix?: string | undefined;
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
   /** Verbatim named auxiliary path choices for the same direct invocation. */
@@ -131,12 +146,18 @@ export const parseCliAnalysisEvidenceDelivery = <
     readonly detail: "complete" | "summary";
     readonly evidence_output?: string | undefined;
     readonly view?: string | undefined;
+    readonly logical_root?: string | undefined;
+    readonly logical_prefix?: string | undefined;
   },
   schema: {
     readonly safeParse: (input: unknown) => ZodSafeParseResult<Delivery>;
   },
 ): Result<
-  Delivery & { readonly evidenceOutput: string | undefined },
+  Delivery & {
+    readonly evidenceOutput: string | undefined;
+    readonly logicalRoot?: string | undefined;
+    readonly logicalPrefix?: string | undefined;
+  },
   AnalysisError
 > => {
   let view: unknown;
@@ -162,7 +183,12 @@ export const parseCliAnalysisEvidenceDelivery = <
     return err(
       analysisInputErrorFromIssues(operation, parsed.error.issues, raw),
     );
-  const value = { ...parsed.data, evidenceOutput: options.evidence_output };
+  const value = {
+    ...parsed.data,
+    evidenceOutput: options.evidence_output,
+    logicalRoot: options.logical_root,
+    logicalPrefix: options.logical_prefix,
+  };
   const invalid = cliEvidenceDeliveryInputError({ ...value, operation });
   return invalid === undefined ? ok(value) : err(invalid);
 };
@@ -274,7 +300,15 @@ export const publishCliAnalysisEvidence = async (
     withUndeliveredSourceClosure(projectFailure(error), closureInput);
   if (!result.ok)
     return withUndeliveredSourceClosure(result.error, closureInput);
-  const complete = parseEvidence(result.value);
+  const rawComplete = parseEvidence(result.value);
+  const logicalConfig = resolveLogicalPathConfig(
+    input.logicalRoot,
+    input.logicalPrefix,
+  );
+  const complete =
+    logicalConfig !== undefined
+      ? redactEvidence(rawComplete, logicalConfig)
+      : rawComplete;
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
     inputError.retainPartialObservation(complete);
@@ -306,10 +340,13 @@ export const publishCliAnalysisEvidence = async (
   if (!inspectionSources.ok) return undelivered(inspectionSources.error);
   const records = [
     ...new Map(
-      [...capturedSources, ...inspectionSources.value].map((record) => [
-        record.evidence_id,
-        record,
-      ]),
+      [...capturedSources, ...inspectionSources.value].map((record) => {
+        const redacted =
+          logicalConfig !== undefined
+            ? redactEvidence(record, logicalConfig)
+            : record;
+        return [redacted.evidence_id, redacted];
+      }),
     ).values(),
   ];
   // Only skip the writer's heap check when every record is already sealed.

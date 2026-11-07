@@ -45,6 +45,17 @@ export const registerEvidenceCommands = (
     }),
     options: z.object({
       overwrite: z.boolean().default(false).describe("Replace output file"),
+      logical_root: localPathStringSchema
+        .optional()
+        .describe(
+          "Optional directory root to redact into a logical path prefix ($WORKSPACE)",
+        ),
+      logical_prefix: z
+        .string()
+        .optional()
+        .describe(
+          "Optional logical path prefix to replace logical_root with (defaults to $WORKSPACE)",
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -54,6 +65,12 @@ export const registerEvidenceCommands = (
             args.output,
             options.overwrite,
             signal,
+            options.logical_root !== undefined
+              ? {
+                  logicalRoot: options.logical_root,
+                  logicalPrefix: options.logical_prefix,
+                }
+              : undefined,
           );
           return exported.ok ? exported.value : cliError(exported.error);
         }),

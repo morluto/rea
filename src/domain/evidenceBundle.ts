@@ -1,3 +1,4 @@
+import { isDeepStrictEqual } from "node:util";
 import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js";
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
@@ -12,12 +13,18 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
+  computeEvidenceId,
   evidenceSchema,
   immutableEvidence,
   parseEvidence,
   providerSchema,
+  redactEvidence,
   type Evidence,
 } from "./evidence.js";
+import {
+  type LogicalPathRootInput,
+  resolveLogicalPathConfig,
+} from "./logicalPath.js";
 import {
   residualUnknownSchema,
   type ResidualUnknown,
@@ -682,4 +689,42 @@ const uniqueSorted = <Value>(values: readonly Value[]): Value[] => {
   return [...unique.entries()]
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([, value]) => value);
+};
+
+/** Opt-in logical path-root redaction applied across an entire Evidence bundle. */
+export const redactEvidenceBundle = (
+  bundle: EvidenceBundle,
+  options?: LogicalPathRootInput,
+): EvidenceBundle => {
+  const config = resolveLogicalPathConfig(options);
+  if (config === undefined) return bundle;
+
+  const idMap = new Map<string, string>();
+  const initialRedacted = bundle.records.map((record) => {
+    const redacted = redactEvidence(record, config);
+    idMap.set(record.evidence_id, redacted.evidence_id);
+    return redacted;
+  });
+
+  const records = initialRedacted.map((record) => {
+    const updatedLinks = record.evidence_links.map(
+      (link) => idMap.get(link) ?? link,
+    );
+    if (isDeepStrictEqual(updatedLinks, record.evidence_links)) {
+      return record;
+    }
+    const { evidence_id: _id, ...withoutId } = record;
+    const withUpdatedLinks = {
+      ...withoutId,
+      evidence_links: updatedLinks,
+    };
+    const newId = computeEvidenceId(withUpdatedLinks);
+    idMap.set(record.evidence_id, newId);
+    return parseEvidence({
+      ...withUpdatedLinks,
+      evidence_id: newId,
+    });
+  });
+
+  return createEvidenceBundle(records, bundle.unknowns);
 };

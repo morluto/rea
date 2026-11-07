@@ -18,8 +18,10 @@ import {
 } from "../domain/evidence.js";
 import {
   createImmutableEvidenceBundle,
+  redactEvidenceBundle,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
+import type { LogicalPathRootInput } from "../domain/logicalPath.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -70,6 +72,7 @@ export const exportEvidenceBundleCommand = async (
   outputPath: string,
   overwrite: boolean,
   signal?: AbortSignal,
+  logicalPathOptions?: LogicalPathRootInput,
 ): Promise<Result<JsonValue, AnalysisError>> => {
   // The sealed snapshot lets the writer reuse this authentication.
   const loaded = await withBundleReadResources(
@@ -84,8 +87,12 @@ export const exportEvidenceBundleCommand = async (
     signal,
   );
   if (!loaded.ok) return loaded;
+  const bundle =
+    logicalPathOptions !== undefined
+      ? redactEvidenceBundle(loaded.value, logicalPathOptions)
+      : loaded.value;
   const written = await persistEvidenceBundleCommand(
-    loaded.value,
+    bundle,
     outputPath,
     overwrite,
     signal,
@@ -99,7 +106,7 @@ export const exportEvidenceBundleCommand = async (
         diagnostics: { evidence_bundle: { ...written.value } },
       }),
     );
-  return projectWrite(loaded.value, written);
+  return projectWrite(bundle, written);
 };
 
 /** Publish complete parent Evidence before delivering it or its linked summary. */
