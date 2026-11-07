@@ -1,5 +1,6 @@
 import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
+import { compatibleToolInputSchema } from "./inputKeyAliases.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
@@ -32,7 +33,7 @@ const official = <
   inputSchema: Schema,
   retainedSummary?: ToolContract["retainedSummary"],
 ) => {
-  const strictInputSchema = inputSchema.strict();
+  const strictInputSchema = compatibleToolInputSchema(inputSchema.strict());
   return {
     name,
     ...toolContractMetadata(name),
