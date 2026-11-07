@@ -31,7 +31,7 @@ export const webSourceLocationInputSchema = selectedWebScriptInputSchema.extend(
         .string()
         .min(1)
         .describe(
-          "Explicit source-map URL context used to resolve original source names",
+          "Absolute source-map URL context used to resolve original source names; no fetch",
         ),
     }),
     generated_position: webSourcePositionSchema,
