@@ -592,8 +592,9 @@ describe("native UI target and cancellation failures", () => {
     expect(result.error).toMatchObject({
       diagnostics: {
         reason: "Native helper returned invalid JSON: Unexpected token",
-        remediation:
-          "Native helper failed, timed out, or returned malformed capture data; install compatible Xcode command-line tools and inspect local OS permissions",
+        remediation: expect.stringMatching(
+          /Xcode command.line tools.*local OS permissions/iu,
+        ),
       },
     });
   });

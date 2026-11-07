@@ -5,6 +5,7 @@ import {
   type JSONRPCMessage,
 } from "@modelcontextprotocol/client";
 import { expect, it } from "vitest";
+import { OwnedMcpStdioTransport } from "../../../src/process/OwnedMcpStdioTransport.js";
 import type { ProviderProcessHandle } from "../../../src/process/ProviderProcess.js";
 import {
   JadxMcpTransport,
@@ -125,6 +126,47 @@ it("decodes split UTF-8 and newline bytes, then routes multiple complete frames"
   await transport.close();
 });
 
+it("delivers buffered protocol output before reporting process close", async () => {
+  const process = new FixtureProcess();
+  const transport = new OwnedMcpStdioTransport(
+    { command: "fixture", arguments: [] },
+    {
+      provider: "fixture",
+      label: "Fixture",
+      maxFrameBytes: 1024,
+      maxOperationBytes: 4096,
+    },
+    fixtureLauncher(process),
+  );
+  const events: string[] = [];
+  transport.onmessage = () => events.push("message");
+  transport.onclose = () => events.push("close");
+  await transport.start();
+  process.emit("exit", 0, null);
+  expect(transport.observedFailure()).toEqual({ kind: "exit" });
+  expect(events).toEqual([]);
+  process.stdout.write(serializeMessage({ jsonrpc: "2.0", id: 1, result: {} }));
+  process.emit("close", 0, null);
+  expect(events).toEqual(["message", "close"]);
+  await transport.close();
+});
+
+it("reports JADX exit even when a descendant holds the protocol pipes", async () => {
+  const process = new FixtureProcess();
+  const transport = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    fixtureLauncher(process),
+  );
+  let closed = false;
+  transport.onclose = () => {
+    closed = true;
+  };
+  await transport.start();
+  process.emit("exit", 0, null);
+  expect(closed).toBe(true);
+  await transport.close();
+});
+
 it.each([
   ["invalid UTF-8 byte", Buffer.from([0xff])],
   ["truncated UTF-8 sequence", Buffer.from([0xe2, 0x82])],
@@ -220,4 +262,47 @@ it("retries an incomplete owned stop while joining concurrent close callers", as
   cleanupFails = false;
   await transport.close();
   await transport.close();
+});
+
+it("joins late acquisition before releasing the protocol process", async () => {
+  const process = new FixtureProcess();
+  let deliver:
+    | ((launch: Awaited<ReturnType<JadxLauncher>>) => void)
+    | undefined;
+  let acquired = false;
+  let cleaned = false;
+  const transport = new JadxMcpTransport(
+    { command: "fixture", arguments: [] },
+    async ({ runId }) =>
+      new Promise((resolve) => {
+        acquired = true;
+        deliver = resolve;
+        // The owned process is returned only when the test releases acquisition.
+        void runId;
+      }),
+  );
+  const startup = transport.start();
+  expect(acquired).toBe(true);
+  let finished = false;
+  const closing = transport.close().then(() => {
+    finished = true;
+  });
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  expect(finished).toBe(false);
+  deliver?.({
+    process,
+    ownership: { runId: transport.runId, leaderPid: 1, processGroupId: 1 },
+    cleanup: async () => {
+      cleaned = true;
+      process.emit("exit", 0, null);
+      process.emit("close", 0, null);
+      process.stdout.end();
+      process.stderr.end();
+      process.stdin.end();
+      return { cleaned: true, signaled: false };
+    },
+  });
+  await expect(startup).rejects.toThrow("closed during startup");
+  await closing;
+  expect(cleaned).toBe(true);
 });

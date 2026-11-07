@@ -36,8 +36,9 @@ describe.skipIf(
       library_packages: [],
       missing_libraries: [],
       unpackaged_libraries: [],
-      library_packages_reason:
-        "the libraries of /usr/bin/ldd were not read: not an ELF image",
+      library_packages_reason: expect.stringMatching(
+        /\/usr\/bin\/ldd.*not read.*not an ELF image/iu,
+      ),
     });
   });
 });

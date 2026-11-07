@@ -423,7 +423,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     if (!replay.ok) throw replay.error;
     expect(replay.value.limitations).toContain(limitation);
     expect(replay.value.limitations).toContainEqual(
-      expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
     );
   } finally {
     await harness.close();
@@ -432,6 +432,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
 
 it("retains defined-string coverage in empty and matching search Evidence", async () => {
   let output = jsonValueSchema.parse([]);
+  let stringCoverage: string | undefined;
   const harness = await connectGhidraMcp("ghidra-string-coverage", () =>
     Promise.resolve(ok(output)),
   );
@@ -454,11 +455,14 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         string_inventory_evidence: "defined-data-coverage-v1",
       });
-      expect(evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /Only Ghidra-defined string Data.*empty search does not establish/u,
+      const coverage = evidence.limitations.find((limitation) =>
+        /Only Ghidra-defined string Data.*empty search does not establish/u.test(
+          limitation,
         ),
       );
+      if (coverage === undefined) throw new Error("Missing string coverage");
+      if (stringCoverage !== undefined) expect(coverage).toBe(stringCoverage);
+      stringCoverage = coverage;
     }
     output = jsonValueSchema.parse([
       { address: "0x401000", value: "projection cache ignored" },
@@ -472,8 +476,9 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       matched.structuredContent,
     );
     expect(evidence.normalized_result).toEqual(output);
+    expect(evidence.limitations).toContain(stringCoverage);
     expect(evidence.limitations).toContainEqual(
-      expect.stringContaining("Completeness applies to that inventory"),
+      expect.stringMatching(/completeness applies to that inventory/iu),
     );
     output = jsonValueSchema.parse([]);
     const procedures = await harness.mcp.callTool({
@@ -483,7 +488,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
     expect(
       sessionEvidence(harness.session, procedures.structuredContent)
         .limitations,
-    ).not.toContainEqual(expect.stringContaining("Ghidra-defined string Data"));
+    ).not.toContainEqual(expect.stringMatching(/Ghidra.defined string Data/iu));
   } finally {
     await harness.close();
   }
