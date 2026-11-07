@@ -6,6 +6,7 @@ import {
   AnalysisTimeoutError,
 } from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { swiftcCompileTimeoutRecovery } from "../process/DarwinProcessRunTokenReader.js";
 import { NATIVE_MACOS_PROVIDER_IDENTITY as IDENTITY } from "./NativeMacosProviderIdentity.js";
 import {
   DEFAULT_NATIVE_COMMAND_TIMEOUT_MS,
@@ -93,9 +94,18 @@ export const translateNativeCommandFailure = (
             }),
       },
     };
+    const compilerTimeoutMs =
+      compiler?.outcome === "timed_out" ? compiler.timeoutMs : undefined;
     const error =
       preparation.cancellation === undefined
-        ? new ProviderAdapterError(IDENTITY.id, operation, options)
+        ? compilerTimeoutMs === undefined
+          ? new ProviderAdapterError(IDENTITY.id, operation, options)
+          : new AnalysisTimeoutError(operation, compilerTimeoutMs, {
+              ...options,
+              userMessage: `The macOS process ownership helper compiler reached its REA_SWIFTC_COMPILE_TIMEOUT_MS deadline of ${String(compilerTimeoutMs)} ms.`,
+              remediationAction:
+                swiftcCompileTimeoutRecovery(compilerTimeoutMs),
+            })
         : failure.reason === "timeout"
           ? new AnalysisTimeoutError(operation, timeoutMs, {
               ...options,
