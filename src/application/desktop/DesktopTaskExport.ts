@@ -55,8 +55,10 @@ type TaskTarget = Pick<
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
   readonly ends: StateEnds;
-  /** Views of the seeds the export rewrites, as it ships them. */
+  /** Views of the text seeds the export rewrites, as it ships them. */
   readonly seedViews: ReadonlyMap<string, TaskFileView>;
+  /** Home paths the bundle actually ships, including files that are not text. */
+  readonly seeded: ReadonlySet<string>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -161,6 +163,17 @@ const targetProblem = (
     : undefined;
 };
 
+/**
+ * A seed check's view of one file. A file the bundle does not ship is absent,
+ * including a lock the capture saw. A shipped text file uses the scrubbed
+ * view; any other shipped file uses the captured view.
+ */
+export const shippedSeedCheckView = (
+  seeded: boolean,
+  shipped: TaskFileView | undefined,
+  captured: TaskFileView | undefined,
+): TaskFileView | undefined => (seeded ? (shipped ?? captured) : undefined);
+
 /** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
 const viewsAt = (
   target: TaskTarget,
@@ -172,9 +185,15 @@ const viewsAt = (
     // A file not retained at the seed is not seeded, so the computer starts without it.
     if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
-    const shipped = end === "seed" ? target.seedViews.get(home) : undefined;
+    const captured = version === undefined ? undefined : versionView(version);
     const view =
-      shipped ?? (version === undefined ? undefined : versionView(version));
+      end === "seed"
+        ? shippedSeedCheckView(
+            target.seeded.has(home),
+            target.seedViews.get(home),
+            captured,
+          )
+        : captured;
     if (view !== undefined) views.set(home, view);
   }
   return views;
