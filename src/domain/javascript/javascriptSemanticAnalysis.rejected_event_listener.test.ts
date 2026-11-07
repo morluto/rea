@@ -735,3 +735,13 @@ it("retains candidate when Array.prototype[Symbol.iterator] has changed", () => 
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("drops child listener and event operation for a dynamic import expression", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", import("node:fs"));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});

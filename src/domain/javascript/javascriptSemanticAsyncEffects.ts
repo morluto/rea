@@ -260,7 +260,8 @@ const staticExpressionNullishness = (
     t.isArrowFunctionExpression(unwrapped) ||
     t.isClassExpression(unwrapped) ||
     t.isRegExpLiteral(unwrapped) ||
-    t.isTemplateLiteral(unwrapped)
+    t.isTemplateLiteral(unwrapped) ||
+    t.isImportExpression(unwrapped)
   )
     return false;
   return undefined;
@@ -544,7 +545,8 @@ export const rejectsEventListener = (
       t.isBigIntLiteral(value) ||
       t.isRegExpLiteral(value) ||
       t.isArrayExpression(value) ||
-      t.isObjectExpression(value)
+      t.isObjectExpression(value) ||
+      t.isImportExpression(value)
     )
       continue;
     return false;
