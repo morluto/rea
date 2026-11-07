@@ -62,4 +62,26 @@ describe("sameTaskVerifier", () => {
     expect(sameTaskVerifier(hosted, older)).toBe(false);
     expect(sameTaskVerifier(hosted, hosted)).toBe(true);
   });
+
+  it("accepts the older index helper when a leading zero is only in a file name or a URL", () => {
+    const named: DesktopTask = {
+      ...task,
+      checks: [
+        {
+          id: "guide",
+          kind: "text_contains",
+          file: "Documents/01-notes.xml",
+          pointer: "/root",
+          value: "https://example.com/01-guide",
+        },
+      ],
+    };
+    const hosted = renderTaskVerifier(named, "notes");
+    const older = hosted.replace(
+      'INDEX = re.compile(r"0|[1-9][0-9]*")',
+      'INDEX = re.compile(r"[0-9]+")',
+    );
+
+    expect(sameTaskVerifier(hosted, older)).toBe(true);
+  });
 });

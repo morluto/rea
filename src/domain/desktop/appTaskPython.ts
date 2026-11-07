@@ -474,8 +474,8 @@ const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
 /** The index helper this REA ships, and the one an older export wrote. The older one also accepts a leading zero. */
 const CURRENT_INDEX = 'INDEX = re.compile(r"0|[1-9][0-9]*")';
 const OLDER_INDEX = 'INDEX = re.compile(r"[0-9]+")';
-/** A path segment the older index helper reads as an array index and this one does not, such as `01`. */
-const LEADING_ZERO_INDEX = /(?:^|\/)0\d+/u;
+/** A pointer segment the older index helper reads as an array index and this one does not, such as `01`. */
+const LEADING_ZERO_SEGMENT = /^0\d+$/u;
 
 /**
  * The task a verifier states: the app, the checks and the settle timing,
@@ -492,10 +492,19 @@ const verifierEvaluator = (source: string): string | undefined => {
   return at < 0 ? undefined : source.slice(at);
 };
 
+/** Pointers the task description names. A file path or a URL is not one. */
+const describedPointers = (description: string): readonly string[] =>
+  [...description.matchAll(/"pointer": "((?:\\.|[^"\\])*)"/gu)].flatMap(
+    (match) => {
+      const token = match[1];
+      return token === undefined ? [] : [JSON.parse(`"${token}"`) as string];
+    },
+  );
+
 /**
  * Whether two verifiers grade the same task the same way. The description must
  * match. The evaluator must be this REA's, or the older index helper alone
- * when no path segment is a leading-zero number, which that helper would
+ * when no pointer segment is a leading-zero number, which that helper would
  * index and this one would not.
  */
 export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
@@ -506,9 +515,11 @@ export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
   const bundledBody = verifierEvaluator(bundled);
   if (hostedBody === undefined || bundledBody === undefined) return false;
   if (hostedBody === bundledBody) return true;
+  const indexed = describedPointers(expected).some((pointer) =>
+    pointer.split("/").some((segment) => LEADING_ZERO_SEGMENT.test(segment)),
+  );
   return (
-    bundledBody === hostedBody.replace(CURRENT_INDEX, OLDER_INDEX) &&
-    !LEADING_ZERO_INDEX.test(expected)
+    bundledBody === hostedBody.replace(CURRENT_INDEX, OLDER_INDEX) && !indexed
   );
 };
 
