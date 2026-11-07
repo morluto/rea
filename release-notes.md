@@ -1234,6 +1234,7 @@
 
 * **artifacts:** handle blocked open-parent renames ([#7904](https://github.com/morluto/rea/issues/7904)) ([ddefba8](https://github.com/morluto/rea/commit/ddefba83ef72e92fc78f6393a470f5e52a66c288))
 * **artifacts:** verify evidence refresh after reopen ([92213a9](https://github.com/morluto/rea/commit/92213a91557a8ea378757a97ac0a1a34b94332ef))
+* assert absolute-path facts without frozen sentences ([#9231](https://github.com/morluto/rea/issues/9231)) ([2e2f981](https://github.com/morluto/rea/commit/2e2f981ccfe0e675f561949eb7eb9aca0346f0f6))
 * bind MCP validation and cleanup faults to selected inputs ([99062fe](https://github.com/morluto/rea/commit/99062feaa7f48bacf1d53485b4869ecea4333555))
 * **browser:** verify out-of-order response correlation ([69b328e](https://github.com/morluto/rea/commit/69b328eec8904ecd40eb713b09d0cd523951cdc0))
 * **captures:** assert retained snapshot evidence ([492860e](https://github.com/morluto/rea/commit/492860ed0787054b3c6471331d396c75c5e6caf7))
