@@ -10,7 +10,10 @@ import {
   analyzeAndAdoptJavaScriptArtifactFiles,
   analyzeJavaScriptArtifactFiles,
 } from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import { buildJavaScriptArtifactGraph } from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import {
+  buildImmutableJavaScriptArtifactGraphSteps,
+  buildJavaScriptArtifactGraph,
+} from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
@@ -70,6 +73,55 @@ it("keeps per-file failure reasons in the graph while summarizing them globally"
           }),
         ]),
       );
+    const available = Buffer.byteLength(JSON.stringify(graph)) + 1024;
+    const admission = () => {
+      let remaining = available;
+      return {
+        remainingBytes: () => remaining,
+        reserveBytes: (bytes: number) => {
+          if (bytes > remaining) return false;
+          remaining -= bytes;
+          return true;
+        },
+        releaseBytes: (bytes: number) => {
+          remaining += bytes;
+        },
+      };
+    };
+    const complete = buildImmutableJavaScriptArtifactGraphSteps(
+      snapshot,
+      files,
+      outcome.analysis,
+      admission(),
+    );
+    while (!complete.next().done) {
+      /* drain the cooperative graph */
+    }
+    const enlarged = {
+      ...outcome.analysis,
+      files: outcome.analysis.files.map((file) =>
+        file.analysis_failure === undefined
+          ? file
+          : {
+              ...file,
+              analysis_failure: {
+                ...file.analysis_failure,
+                reason: "failure ".repeat(2000),
+              },
+            },
+      ),
+    };
+    const limited = buildImmutableJavaScriptArtifactGraphSteps(
+      snapshot,
+      files,
+      enlarged,
+      admission(),
+    );
+    expect(() => {
+      while (!limited.next().done) {
+        /* drain until refused */
+      }
+    }).toThrow(/Evidence budget/u);
   } finally {
     await reader.close();
   }
