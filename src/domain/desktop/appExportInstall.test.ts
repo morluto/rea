@@ -1,11 +1,14 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  adjustInstalledDesktopText,
   electronLaunchArguments,
   exportInstall,
   fromUbuntuNobleArchive,
+  installsFromPackageFile,
   repositoryRefusal,
 } from "./appExportInstall.js";
+import { parseDesktopEntry, tokenizeDesktopExec } from "./desktopEntry.js";
 import { installLimitations } from "./appExportInstallLimitations.js";
 import {
   VARICAD_FILE,
@@ -558,6 +561,74 @@ describe("electronLaunchArguments", () => {
   });
 });
 
+describe("adjustInstalledDesktopText", () => {
+  const entry = (exec: string) =>
+    `[Desktop Entry]\nType=Application\nName=Typora\nExec=${exec}\n[Desktop Action New]\nExec=typora --new-window\n`;
+
+  it("adds the shared Electron launch policy after the program", () => {
+    const text = entry("typora %U");
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value: entry("typora --no-sandbox %U"),
+    });
+    expect(adjustInstalledDesktopText(text, false)).toEqual({
+      ok: true,
+      value: text,
+    });
+  });
+
+  it("puts the flag after the program an env wrapper launches and keeps a path with spaces", () => {
+    expect(
+      adjustInstalledDesktopText(
+        entry("env APP_MODE=desktop /opt/app/app %U"),
+        true,
+      ),
+    ).toEqual({
+      ok: true,
+      value: entry("env APP_MODE=desktop /opt/app/app --no-sandbox %U"),
+    });
+    expect(
+      adjustInstalledDesktopText(entry('"/opt/REA App/typora" %U'), true),
+    ).toEqual({
+      ok: true,
+      value: entry('"/opt/REA App/typora" --no-sandbox %U'),
+    });
+  });
+
+  it("keeps a quoted trailing backslash when the launch policy rewrites Exec", () => {
+    const text = String.raw`[Desktop Entry]
+Type=Application
+Name=App
+Exec=/usr/bin/true "foo\\\\"
+`;
+    const rewritten = adjustInstalledDesktopText(text, true);
+    if (!rewritten.ok) throw new Error(rewritten.error);
+    const parsed = parseDesktopEntry(rewritten.value);
+    if (!parsed.ok) throw new Error(parsed.error);
+    expect(tokenizeDesktopExec(parsed.value.exec ?? "")).toEqual({
+      ok: true,
+      value: ["/usr/bin/true", "--no-sandbox", "foo\\"],
+    });
+    expect(rewritten.value).toContain(
+      String.raw`Exec=/usr/bin/true --no-sandbox "foo\\\\"`,
+    );
+  });
+
+  it("leaves a command that already passes the flag, and reports an unusable Exec", () => {
+    const text = entry("typora --no-sandbox %U");
+    expect(adjustInstalledDesktopText(text, true)).toEqual({
+      ok: true,
+      value: text,
+    });
+    expect(
+      adjustInstalledDesktopText("[Desktop Entry]\nName=Typora\n", true),
+    ).toEqual({ ok: false, error: "missing_exec" });
+    expect(
+      adjustInstalledDesktopText('[Desktop Entry]\nExec="typora\n', true),
+    ).toEqual({ ok: false, error: "unterminated_quote" });
+  });
+});
+
 describe("installLimitations", () => {
   it("says where the package comes from, which libraries are unmapped and that the sandbox is off", () => {
     const installed: DesktopPackage = {
@@ -695,6 +766,39 @@ describe("exportInstall from a package file", () => {
     expect(install.ok && install.value.skipped).toEqual([
       "https://downloads.typora.io/linux ./: gpgv is not installed",
     ]);
+  });
+});
+
+describe("installsFromPackageFile", () => {
+  it("is true only for a package the export installs from its file rather than from apt", () => {
+    const archive = {
+      sources: [
+        "http://archive.ubuntu.com/ubuntu noble/universe amd64 Packages",
+      ],
+      source_origins: ["Ubuntu"],
+    };
+    expect(installsFromPackageFile(varicad(), "x64")).toBe(true);
+    expect(installsFromPackageFile(varicad(archive), "x64")).toBe(false);
+    expect(
+      installsFromPackageFile(
+        varicad({
+          sources: [TYPORA_SOURCE],
+          source_origins: ["typora.io"],
+          apt_repositories: [repository()],
+        }),
+        "x64",
+      ),
+    ).toBe(false);
+    expect(installsFromPackageFile(varicad({ kind: "snap" }), "x64")).toBe(
+      false,
+    );
+    // The export takes the URL exactly when the package needs it.
+    expect(
+      exportInstall(varicad(archive), "varicad", "x64", VARICAD_URL).ok,
+    ).toBe(false);
+    expect(exportInstall(varicad(), "varicad", "x64", VARICAD_URL).ok).toBe(
+      true,
+    );
   });
 });
 

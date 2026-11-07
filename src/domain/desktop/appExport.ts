@@ -223,14 +223,18 @@ export const exportedStateFiles = (
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
 
-const shellQuote = (value: string): string =>
+/** A value as one single-quoted shell word. */
+export const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
- * The launch command for the computer. Arguments that are or start with a
- * path under the captured home, and `<option>=<path>` values that do, are
- * respelled under the computer user's `$HOME` through `sh -c`, since the
- * declared command is not expanded by a shell.
+ * The launch command for the computer, through `sh -c` since the declared
+ * command is not expanded by a shell. It starts in the captured working
+ * directory, which the framework would otherwise replace with the app's own
+ * folder, where an open or save dialog would show build files. That
+ * directory, arguments that are or start with a path under the captured home,
+ * and `<option>=<path>` values that do, are respelled under the computer
+ * user's `$HOME`.
  */
 export const launchCommand = (
   argv: readonly string[],
@@ -254,34 +258,22 @@ export const launchCommand = (
         : `${shellQuote(argument.slice(0, equals + 1))}${value}`)
     );
   };
-  // The framework launches from the app's folder; a missing working directory must not stop the boot.
-  // A relative program path such as `./app` needs that directory too.
-  const relative = argv.some(
-    (argument, index) =>
-      argument.length > 0 &&
-      !argument.startsWith("/") &&
-      !argument.startsWith("-") &&
-      (index > 0 || argument.includes("/")),
-  );
   const respelled = argv.map(respell);
-  if (!relative && respelled.every((argument) => argument === undefined))
-    return argv;
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  return [
-    "sh",
-    "-c",
-    relative ? `cd ${directory} 2>/dev/null; ${command}` : command,
-  ];
+  // A missing working directory must not stop the boot.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */
-const py = (value: string): string => JSON.stringify(value);
-const pyList = (values: readonly string[]): string =>
+export const py = (value: string): string => JSON.stringify(value);
+export const pyList = (values: readonly string[]): string =>
   `[${values.map(py).join(", ")}]`;
 
 /** The bundle's env.toml: a computer app deployed alone on the X11 base. */
-export const renderEnvToml = (plan: DesktopAppExportPlan): string =>
+export const renderEnvToml = (
+  plan: Pick<DesktopAppExportPlan, "name" | "className">,
+): string =>
   [
     `type = "computer_app"`,
     `module = ${py(`${appModuleFile(plan.name)}:${plan.className}`)}`,
@@ -334,7 +326,10 @@ const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ]),
 ];
 
-const aptSources = (plan: DesktopAppExportPlan): string =>
+/** The decorator's `sources=` line for vendor repositories, or nothing for the archive. */
+export const aptSources = (
+  plan: Pick<DesktopAppExportPlan, "aptSources">,
+): string =>
   plan.aptSources.length === 0
     ? ""
     : `\n    sources=[${plan.aptSources
@@ -515,5 +510,7 @@ The seed is the user's real data. Keep this bundle local; do not publish it.
 ${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */
-export const renderSmokeTask = (plan: DesktopAppExportPlan): string =>
+export const renderSmokeTask = (
+  plan: Pick<DesktopAppExportPlan, "name">,
+): string =>
   `${JSON.stringify([{ id: "env", type: "deploy_env", env_id: plan.name }], null, 2)}\n`;

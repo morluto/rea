@@ -31,6 +31,7 @@ import { registerEvmTools } from "./registerEvmTools.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
 import { registerRecordedCrashTools } from "./registerRecordedCrashTools.js";
 import { registerDesktopApplicationTool } from "./registerDesktopApplicationTool.js";
+import { registerDesktopBuildTools } from "./registerDesktopBuildTools.js";
 import { registerModelArtifactTools } from "./registerModelArtifactTools.js";
 import { registerGoTools } from "./registerGoTools.js";
 import { registerIl2cppTools } from "./registerIl2cppTools.js";
@@ -204,6 +205,7 @@ export const createServer = (
     webSourceLocation,
     webModuleTrace,
     desktopApplication,
+    desktopBuildComputers,
     goBinary,
     rustBinary,
     erlangBeam,
@@ -800,6 +802,7 @@ export const createServer = (
         recordEvidenceWithUnknown,
         withAdmittedAnalysis: analysisAdmission,
       });
+      registerDesktopBuildTools(server, desktopBuildComputers, toolLogger);
     },
     session: () => {
       if (session === undefined) return;

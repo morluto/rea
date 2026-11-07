@@ -56,7 +56,6 @@ it("keeps the integrity failure primary and retains the target descriptor when c
   const { client, path, state } = await fixture(false);
 
   const result = await client.execute("inspect_native_dispatch_metadata", {});
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected integrity and close failures");
   expect(result.error.cleanupIncomplete).toBe(true);
   expect(result.error.cleanupResources).toEqual([path]);
@@ -79,7 +78,6 @@ it("reports a completed read whose close rejects as retained cleanup", async () 
   const { client, path, state } = await fixture(true);
 
   const result = await client.execute("inspect_native_dispatch_metadata", {});
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the close failure");
   expect(result.error).toBeInstanceOf(ProviderCleanupError);
   expect(result.error.cleanupIncomplete).toBe(true);

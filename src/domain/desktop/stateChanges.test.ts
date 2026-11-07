@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
 import { diffStateViews } from "./stateChanges.js";
+import { keyfileView } from "./stateFormats.js";
 import { resolvePointer } from "./viewPointer.js";
 
 describe("diffStateViews", () => {
@@ -81,9 +82,79 @@ describe("diffStateViews", () => {
       changed: ["notes:[1]"],
     });
   });
+
+  it("compares NULL primary-key rows as a multiset while retaining keyed matches", () => {
+    const table = (rows: (string | null)[][]) => ({
+      tables: {
+        items: { columns: ["id", "body"], primary_key: ["id"], rows },
+      },
+    });
+    const before = table([
+      [null, "alpha"],
+      [null, "beta"],
+      ["fixed", "old"],
+    ]);
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          ["fixed", "old"],
+          [null, "beta"],
+          [null, "alpha"],
+        ]),
+      ),
+    ).toMatchObject({
+      added_count: 0,
+      removed_count: 0,
+      changed_count: 0,
+    });
+    expect(
+      diffStateViews(
+        "sqlite",
+        before,
+        table([
+          [null, "gamma"],
+          [null, "beta"],
+          ["fixed", "new"],
+        ]),
+      ),
+    ).toMatchObject({
+      added: ['items:[null,"gamma"]'],
+      removed: ['items:[null,"alpha"]'],
+      changed: ['items:["fixed"]'],
+    });
+  });
 });
 
 describe("diffStateViews fidelity", () => {
+  it("preserves significant keyfile whitespace in views and differences", () => {
+    const view = (suffix: string, unicode: string, padding: string) =>
+      keyfileView(
+        `[ui]\r\nsuffix=${suffix}\r\nunicode=${unicode}\r\npadded=${padding}\r\n`,
+      );
+    const before = view("hello ", "\u00a0hello\u00a0", "   hello");
+    const after = view("hello  ", "\u00a0hello\u00a0\u00a0", "\thello");
+    expect(before.ui).toEqual({
+      suffix: "hello ",
+      unicode: "\u00a0hello\u00a0",
+      padded: "hello",
+    });
+    expect(after.ui).toEqual({
+      suffix: "hello  ",
+      unicode: "\u00a0hello\u00a0\u00a0",
+      padded: "hello",
+    });
+    expect(
+      diffStateViews("keyfile", { groups: before }, { groups: after }),
+    ).toMatchObject({
+      kind: "keys",
+      changed: ["ui/suffix", "ui/unicode"],
+      changed_count: 2,
+      complete: true,
+    });
+  });
+
   it("keeps empty containers as values", () => {
     expect(diffStateViews("json", {}, { items: [] })).toMatchObject({
       added: ["/items"],

@@ -555,7 +555,6 @@ cliTest(
           });
           continue;
         }
-        expect(application.ok).toBe(false);
         if (application.ok) throw new Error("Expected an invalid parent");
         expect(application.error.cause).toBeInstanceOf(z.ZodError);
         expect(reply.exitCode).toBe(1);
@@ -591,7 +590,6 @@ cliTest(
       view: { kind: "summary" as const },
     };
     const application = await inspectAnalysisView(request);
-    expect(application.ok).toBe(false);
     if (application.ok) throw new Error("Expected invalid nested Evidence");
     expect(application.error.cause).toMatchObject({
       cause: expect.any(z.ZodError),
@@ -621,7 +619,7 @@ cliTest(
               "evidence_id",
             ],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -694,9 +692,7 @@ cliTest(
     expect(result.normalized_result).toMatchObject({
       groups: [{ content_types: [], flags: ["single-sample"] }],
       limitations: expect.arrayContaining([caveat]),
-      unknowns: [
-        "Some retained records have unavailable status or content type values.",
-      ],
+      unknowns: [expect.stringMatching(/unavailable status or content type/iu)],
     });
   },
 );

@@ -311,7 +311,6 @@ describe("managed application graph coverage", () => {
     const rejected = projectManagedApplicationGraphEvidence({
       managed_members: mismatched,
     });
-    expect(rejected.ok).toBe(false);
     if (rejected.ok) throw new Error("mismatched managed Evidence accepted");
     expect(JSON.stringify(rejected.error)).toContain(
       `Managed Evidence inspect_managed_members (${mismatched.evidence_id}) subject SHA-256 ${binary.sha256} does not match normalized artifact SHA-256 ${"b".repeat(64)}`,
@@ -530,7 +529,6 @@ describe("managed application graph module identity consistency", () => {
       managed_members: memberEvidence,
       managed_native_boundaries: conflictingBoundaries,
     });
-    expect(projected.ok).toBe(false);
     if (projected.ok) throw new Error("conflicting MVIDs were accepted");
     expect(JSON.stringify(projected.error)).toContain(
       "conflicting known module MVIDs or token scopes",

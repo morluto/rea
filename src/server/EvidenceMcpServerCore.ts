@@ -44,7 +44,10 @@ import {
   AnalysisResourceConstraintError,
   type AnalysisInputIssue,
 } from "../domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import {
+  projectAnalysisError,
+  projectAnalysisErrorWithoutPartialObservation,
+} from "../domain/analysisErrorProjection.js";
 import { projectInputIssueGroupsWithinBudget } from "../domain/inputIssueProjection.js";
 import type { z } from "zod";
 import { createEvidence } from "../domain/evidence.js";
@@ -194,7 +197,11 @@ const partitionSdkDiagnostic = (
       );
     } else {
       for (const issue of group) mapped.push(issue);
-      remaining.push(diagnostic.slice(start, offset));
+      const explainedByIssues =
+        raw.code === "unrecognized_keys" &&
+        group.length > 0 &&
+        group.every((item) => item.message !== undefined);
+      if (!explainedByIssues) remaining.push(diagnostic.slice(start, offset));
     }
   }
   if (offset !== diagnostic.length) return undefined;
@@ -932,7 +939,11 @@ class ErrorEvidenceTransport implements Transport {
             }
           : { retention: recorded === undefined ? "unavailable" : "failed" }),
         ...(recorded !== undefined && !recorded.ok
-          ? { retention_error: projectAnalysisError(recorded.error) }
+          ? {
+              retention_error: projectAnalysisErrorWithoutPartialObservation(
+                recorded.error,
+              ),
+            }
           : {}),
       },
       targetContent,
@@ -1048,6 +1059,7 @@ class ErrorEvidenceTransport implements Transport {
             validation.issues,
             validation.input,
             this.delivery.resultBudgetBytes,
+            tool,
           );
     const projectionLimited = validation !== undefined && groups === undefined;
     const summary = `The arguments for MCP tool ${tool} do not match its advertised input schema.`;

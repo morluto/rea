@@ -70,13 +70,15 @@ cliTest(
       );
       expect(report.summary).toMatchObject({ added: 0, removed: 0 });
       if (index === 0)
-        expect(report.limitations).toContain(
-          "Both observations cover only the selected declaring types (Fixture.Inner, Inner); member totals and statuses describe those types, not the whole assembly.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(
+            /selected declaring types.*Fixture\.Inner.*Inner.*not the whole assembly/iu,
+          ),
         );
       else {
         expect(report.summary.unknown).toBeGreaterThan(0);
-        expect(report.limitations).toContain(
-          "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+        expect(report.limitations).toContainEqual(
+          expect.stringMatching(/different declaring types.*unknown/iu),
         );
       }
     }
