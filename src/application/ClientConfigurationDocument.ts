@@ -167,8 +167,10 @@ const parseDocument = (
       parseHermesConfigurationYaml(text),
       "The configuration root",
     );
-  // ZCode loads nonempty native files with strict JSON.parse.
-  if (format === "zcode")
+  // ZCode loads nonempty native files with strict JSON.parse. Kiro CLI's
+  // default engine skips an mcp.json holding comments, trailing commas or a
+  // BOM, so setup must refuse to register into one rather than accept JSONC.
+  if (format === "zcode" || format === "kiro")
     return requireObject(JSON.parse(text), "The configuration root");
   // Claude Code loads `.claude.json` with strict JSON.parse after a UTF-8 BOM,
   // so comments and trailing commas it rejects must not be admitted as JSONC.
@@ -1790,6 +1792,15 @@ export const clientRegistrationEntry = (
         command: executable,
         args,
         ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+      };
+    case "kiro":
+      // Kiro infers stdio from command. Its MCP panel toggles `disabled`, so
+      // the entry states the enabled state in the client's own spelling.
+      return {
+        command: executable,
+        args,
+        ...(Object.keys(environment).length === 0 ? {} : { env: environment }),
+        disabled: false,
       };
     case "dsh":
       return dshClientRegistrationEntry(command, environment);

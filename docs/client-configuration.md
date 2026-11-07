@@ -694,6 +694,56 @@ from `~/.factory/skills` ([skills](https://docs.factory.com/harness/skills),
 following `FACTORY_HOME_OVERRIDE` when set), so setup installs its skill copy
 there.
 
+## Kiro
+
+For [Kiro](https://kiro.dev/docs/mcp/configuration/), setup writes
+`mcpServers.rea` into the user-level `~/.kiro/settings/mcp.json`, which Kiro
+IDE and Kiro CLI share, so one `kiro` client ID covers both. Entries carry
+`command`, `args`, `env`, and `disabled: false`; stdio is inferred from
+`command`. Kiro discovers personal skills from `~/.kiro/skills`
+([skills](https://kiro.dev/docs/skills/)) rather than the shared directory,
+so setup installs its skill copy there.
+
+Kiro CLI's default V2 engine skips an `mcp.json` that contains comments,
+trailing commas or a UTF-8 BOM (V3 loaded one with a comment), so setup
+refuses to register into such a file instead of writing a registration the
+default engine would not load; repair it and rerun. The V2 engine also skips
+the whole file when any server entry has a member of the wrong type, such as a
+string `timeout` or a non-array `disabledTools`; `kiro-cli mcp list` prints a
+`Failed to parse MCP config` warning naming the problem. Setup and doctor check
+REA's own entry for these cases and name the member to repair; they do not
+check other servers' entries, so if REA's tools are missing while doctor
+reports the registration aligned, look for that warning.
+
+Refreshing REA's own registration keeps its existing `autoApprove`,
+`disabledTools`, `timeout` and REA `env` values. A `rea` entry whose launcher
+does not prove REA ownership blocks setup before any write
+([reviewing setup changes](installation.md#review-setup-changes)), so tool
+approvals granted to a different server named `rea` are never carried over to
+REA. Doctor reports `disabled: true` as stale, and setup re-enables it. Setup writes the file directly rather than through
+`kiro-cli mcp add`, which requires a signed-in session and replaces an
+existing entry only with `--force`. Uninstall removes the `rea` entry and
+keeps the `mcpServers` table, even when it becomes empty, because Kiro skips a
+file without one. Like setup, uninstall leaves a file with comments, trailing
+commas or a BOM unchanged and asks you to repair it first.
+
+Setup writes only the user-level file. A workspace
+`<project>/.kiro/settings/mcp.json` and a custom agent's `mcpServers` take
+precedence over it, and doctor does not inspect either. Custom agents load the
+user-level file only with `"includeMcpJson": true`, and load the skill only
+when their `resources` include `skill://~/.kiro/skills/*/SKILL.md`. Kiro
+exposes the tools as `@rea/<tool_name>`. It reloads `mcp.json` when the file
+changes; start a new session if the tools do not appear.
+
+With Kiro CLI 2.32.0 on macOS, `kiro-cli mcp list` and `mcp status` loaded the
+file setup wrote. Real `@rea/analyze_javascript_application` calls completed
+on the default V2 engine and on V3, each through a workspace agent that
+included `mcp.json` and allowed only that tool; a V2 session without such an
+allowance denied the call at Kiro's permission prompt. Neither engine ended a
+480-second tool call when `timeout` was unset, and a 4-second `timeout` did not
+end a 10-second call, so setup writes no `timeout` of its own. Kiro IDE,
+Windows paths and user-level skill discovery remain unverified.
+
 ## Trae
 
 For [Trae](https://docs.trae.ai/ide/add-mcp-servers), setup writes

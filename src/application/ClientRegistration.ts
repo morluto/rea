@@ -89,6 +89,23 @@ const codexPolicySchema = z
   })
   .passthrough();
 
+// Kiro CLI 2.32.0's default engine skips its whole mcp.json when either member
+// has another type, and ignores a malformed `autoApprove`.
+const KIRO_TOOL_NAMES = "Kiro requires an array of tool-name strings";
+const KIRO_TIMEOUT =
+  "Kiro requires a non-negative integer number of milliseconds";
+const kiroPolicySchema = z
+  .object({
+    disabledTools: z
+      .array(z.string({ error: KIRO_TOOL_NAMES }), { error: KIRO_TOOL_NAMES })
+      .optional(),
+    timeout: z
+      .int({ error: KIRO_TIMEOUT })
+      .nonnegative({ error: KIRO_TIMEOUT })
+      .optional(),
+  })
+  .passthrough();
+
 const registrationError = (error: z.ZodError): ConfigurationError =>
   new ConfigurationError("Invalid client registration settings", {
     settings: error.issues.map((issue) => ({
@@ -144,7 +161,9 @@ const validateClientPolicy = (
       ? codexPolicySchema.safeParse(value)
       : client.format === "copilot_cli"
         ? z.object({ tools: z.array(z.string()).optional() }).safeParse(value)
-        : undefined;
+        : client.format === "kiro"
+          ? kiroPolicySchema.safeParse(value)
+          : undefined;
   return policy === undefined || policy.success
     ? ok(undefined)
     : err(registrationError(policy.error));

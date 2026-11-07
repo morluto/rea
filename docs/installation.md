@@ -653,6 +653,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Hermes             | `hermes`         |
 | Qoder              | `qoder`          |
 | Factory Droid      | `droid`          |
+| Kiro               | `kiro`           |
 | Trae               | `trae`           |
 | WorkBuddy          | `workbuddy`      |
 | LM Studio          | `lm_studio`      |
@@ -665,7 +666,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
 `rea setup --client freebuff` as an unsupported client.
 
-`lm_studio` requires a release after 6.8.0.
+`kiro` and `lm_studio` require a release after 6.8.0.
 
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
