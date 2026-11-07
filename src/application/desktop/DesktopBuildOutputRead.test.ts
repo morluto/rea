@@ -6,6 +6,7 @@ import {
   guestFileAnswerCeiling,
 } from "../../desktop/AgentEnvComputer.js";
 import { readOutput } from "./DesktopBuildCommands.js";
+import { endedCapture } from "./DesktopBuildCaptureFailure.js";
 
 describe("readOutput", () => {
   it("does not fetch a command output whose reported size exceeds the host answer ceiling", async () => {
@@ -58,6 +59,42 @@ describe("readOutput", () => {
     expect(output.failure).toMatchObject({
       code: "busy",
       message: "the app is busy",
+    });
+  });
+});
+
+describe("endedCapture", () => {
+  it("keeps a capacity error from the capture output, including its recovery", async () => {
+    let fetched = false;
+    const failure = await endedCapture(
+      {
+        homeFiles: () => {
+          fetched = true;
+          return Promise.resolve(new Map());
+        },
+        redacted: (text) => text,
+        exec: () => Promise.reject(new Error("unused")),
+      },
+      {
+        operation: "desktop_build_capture_start",
+        when: "before checkpoint seed",
+        afterAppExit: "Start the capture again.",
+        folder: "capture",
+      },
+      { exited: 0, output_bytes: Number.MAX_SAFE_INTEGER },
+      new AbortController().signal,
+    );
+    expect(fetched).toBe(false);
+    expect(failure).toBeInstanceOf(AnalysisResourceConstraintError);
+    if (!(failure instanceof AnalysisResourceConstraintError)) return;
+    expect(failure.operation).toBe("data/get");
+    expect(failure.retryable).toBe(false);
+    expect(failure.remediationAction).toContain("--max-old-space-size");
+    expect(failure.reportedLimits).toMatchObject({
+      guest_file_bytes: Number.MAX_SAFE_INTEGER,
+      file_count: 1,
+      answer_ceiling_bytes: guestFileAnswerCeiling(),
+      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
     });
   });
 });
