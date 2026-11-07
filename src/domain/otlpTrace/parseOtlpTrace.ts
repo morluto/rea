@@ -1,5 +1,5 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { jsonValueSchema } from "../jsonValue.js";
+import { jsonValueSchema, jsonValueValidationIssue } from "../jsonValue.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   OtlpDiagnostic,
@@ -171,7 +171,12 @@ type Problem = {
 };
 
 type ParsedSpan =
-  | { ok: false; problems: readonly Problem[]; limitReached?: boolean }
+  | {
+      ok: false;
+      problems: readonly Problem[];
+      limitReached?: boolean;
+      fatalProblem?: string;
+    }
   | {
       ok: true;
       span: OtlpSpan;
@@ -225,7 +230,20 @@ const parseSpan = (
       : parentSpanId === null
         ? "invalid"
         : "valid";
-  const rawParent = jsonValueSchema.safeParse(record.parentSpanId ?? null);
+  const rawValue = record.parentSpanId ?? null;
+  // The raw value is nested beneath the inventory's spans array and span object.
+  // Validate in that actual context before Evidence clones the result.
+  const parentIssue =
+    typeof rawValue === "object" && rawValue !== null
+      ? jsonValueValidationIssue({ spans: [{ parent_span_id_raw: rawValue }] })
+      : undefined;
+  if (parentIssue !== undefined)
+    return {
+      ok: false,
+      problems: [],
+      fatalProblem: `Parent value at ${pointer}/parentSpanId cannot fit in Evidence: ${parentIssue}`,
+    };
+  const rawParent = jsonValueSchema.safeParse(rawValue);
   if (parentState === "invalid")
     problems.push({
       code: "invalid-record",
@@ -355,7 +373,7 @@ const walkResourceSpans = (
   envelope: unknown,
   budget: { spans: number },
   problems: ProblemCollector,
-): { walked: Walked; unsupported: boolean } => {
+): { walked: Walked; unsupported: boolean; problem?: string } => {
   const walked: Walked = {
     spans: [],
     resources: [],
@@ -445,6 +463,8 @@ const walkResourceSpans = (
           budget,
         );
         if (!parsed.ok) {
+          if (parsed.fatalProblem !== undefined)
+            return { walked, unsupported: false, problem: parsed.fatalProblem };
           if (parsed.limitReached) walked.spansTruncated = true;
           walked.droppedRecords += 1;
           for (const problem of parsed.problems) problems.add(() => problem);
@@ -499,13 +519,18 @@ export const parseOtlpTrace = (
 ): { ok: true; value: OtlpTrace } | { ok: false; problem: string } => {
   const budget = { spans: 0 };
   const problems = new ProblemCollector();
-  const { walked, unsupported } = walkResourceSpans(document, budget, problems);
+  const { walked, unsupported, problem } = walkResourceSpans(
+    document,
+    budget,
+    problems,
+  );
   if (unsupported)
     return {
       ok: false,
       problem:
         "The document is not an OTLP JSON trace export with a resourceSpans array.",
     };
+  if (problem !== undefined) return { ok: false, problem };
   const byId = new Map<string, OtlpSpan>();
 
   // A parent link is only meaningful inside its own trace: the same span id may

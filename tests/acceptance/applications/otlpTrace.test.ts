@@ -1,10 +1,12 @@
 import { writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { cliTest } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { otlpTraceSchema } from "../../../src/domain/otlpTrace/otlpTrace.js";
 
 const exportDocument = {
@@ -216,5 +218,58 @@ cliTest(
       arguments: ["inspect-otlp-trace", path, "--json"],
     });
     expect(result.exitCode, result.stderr).toBe(0);
+  },
+);
+
+cliTest(
+  "retains the verified source when a parent value exceeds Evidence depth",
+  async ({ cli }) => {
+    let parent: unknown = "bad";
+    for (let i = 0; i < 998; i++) parent = [parent];
+    const input = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  parentSpanId: parent,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const path = join(
+      await createTestTempDirectory("rea-otlp-deep-cli-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const partial = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    };
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    expect(
+      parseMcpToolError(await call("inspect_otlp_trace", { path })).error,
+    ).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
+    const result = await cli.run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
   },
 );
