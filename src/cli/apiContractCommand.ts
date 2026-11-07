@@ -1,6 +1,7 @@
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -54,7 +55,7 @@ export const registerApiContractCommand = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      maxFileBytes: apiContractFileBytesSchema,
+      maxFileBytes: cliDecimalField(apiContractFileBytesSchema),
       contractFormat: apiContractFormatSchema
         .default("openapi-json")
         .describe("Input API contract syntax: OpenAPI JSON or GraphQL SDL"),
