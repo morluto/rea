@@ -518,3 +518,85 @@ it.each([
     },
   ]);
 });
+/**
+ * Five shapes where the stream-option filter disagreed with Node 24.22.1:
+ *
+ * 1. A write stream ignores `end`, so neither its own check nor the `start > end`
+ *    ordering applies: `createWriteStream(p, {start: 10, end: 2})` creates a handle.
+ * 2. `end: Infinity` is a valid unlimited end on a read stream, while `start: Infinity`
+ *    is out of range and `end: -Infinity` and `end: NaN` throw.
+ * 3. A unary member is not always `+`: `~0` is `-1` and throws, `~-1` is `0` and does
+ *    not, and `!0`, `!1` and `typeof 1` yield a boolean or a string Node refuses.
+ * 4. Each integer member has its own upper bound: `start` and `end` stop at
+ *    `Number.MAX_SAFE_INTEGER`, `fd` at `2_147_483_647`, and `highWaterMark` has none
+ *    (`1e21` is accepted, `Infinity` is not).
+ * 5. An object, array, function or regular expression member throws
+ *    `ERR_INVALID_ARG_TYPE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start: 10, end: 2})`],
+  [`fs.createReadStream(p, {start: Infinity})`],
+  [`fs.createReadStream(p, {end: -Infinity})`],
+  [`fs.createReadStream(p, {end: NaN})`],
+  [`fs.createReadStream(p, {start: ~0})`],
+  [`fs.createReadStream(p, {end: ~0})`],
+  [`fs.createReadStream(p, {start: !0})`],
+  [`fs.createReadStream(p, {start: !1})`],
+  [`fs.createReadStream(p, {start: typeof 1})`],
+  [`fs.createReadStream(p, {start: 9007199254740992})`],
+  [`fs.createReadStream(p, {end: 9007199254740992})`],
+  [`fs.createReadStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {fd: -2147483648})`],
+  [`fs.createWriteStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {highWaterMark: Infinity})`],
+  [`fs.createReadStream(p, {highWaterMark: NaN})`],
+  [`fs.createReadStream(p, {start: []})`],
+  [`fs.createReadStream(p, {start: {}})`],
+  [`fs.createReadStream(p, {start: () => {}})`],
+  [`fs.createReadStream(p, {start: /x/})`],
+] as const)("emits no stream acquisition for %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a write stream ignoring end",
+    `fs.createWriteStream(p, {start: 10, end: 2})`,
+  ],
+  [
+    "a write stream ignoring a negative end",
+    `fs.createWriteStream(p, {end: -1})`,
+  ],
+  [
+    "a write stream ignoring an infinite end",
+    `fs.createWriteStream(p, {end: Infinity})`,
+  ],
+  ["an infinite end", `fs.createReadStream(p, {end: Infinity})`],
+  ["an overflowing end", `fs.createReadStream(p, {end: 1e400})`],
+  [
+    "an infinite end above a start",
+    `fs.createReadStream(p, {start: 5, end: Infinity})`,
+  ],
+  ["a complemented minus one", `fs.createReadStream(p, {start: ~-1})`],
+  ["a complemented uint32 max", `fs.createReadStream(p, {start: ~4294967295})`],
+  ["a void start", `fs.createReadStream(p, {start: void 0})`],
+  [
+    "an offset at the safe-integer ceiling",
+    `fs.createReadStream(p, {start: 9007199254740991})`,
+  ],
+  ["a descriptor at int32 max", `fs.createReadStream(p, {fd: 2147483647})`],
+  [
+    "a descriptor above int32 on a write stream",
+    `fs.createWriteStream(p, {fd: 2147483647})`,
+  ],
+  [
+    "a high-water mark above int32",
+    `fs.createReadStream(p, {highWaterMark: 2147483648})`,
+  ],
+  [
+    "a high-water mark of 1e21",
+    `fs.createReadStream(p, {highWaterMark: 1e21})`,
+  ],
+] as const)("keeps the stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});

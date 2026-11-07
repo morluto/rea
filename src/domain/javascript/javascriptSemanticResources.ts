@@ -107,22 +107,84 @@ const streamOptionsInSecondArgument = (
     candidate.method === "createWriteStream");
 
 /**
+ * The number a stream-option member evaluates to, or a marker for the shapes that are
+ * not numbers at all.
+ *
+ * `absent` is a member Node skips; `refused` is a present value whose type Node
+ * rejects with `ERR_INVALID_ARG_TYPE`. `undefined` is a value this reader cannot price.
+ *
+ * The unary arm reuses `unaryOperandNumber`, which already resolves `-`, `+` and `~`
+ * chains exactly, so `~0` is `-1` and `~-1` is `0` rather than the operand's magnitude.
+ * `!`, `typeof` and `delete` yield a boolean or a string, which Node refuses.
+ */
+type StreamMemberValue =
+  | { readonly kind: "absent" }
+  | { readonly kind: "refused" }
+  | { readonly kind: "number"; readonly value: number }
+  | undefined;
+
+const streamMemberValue = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): StreamMemberValue => {
+  if (isAbsentOptionValue(value, context.state)) return { kind: "absent" };
+  if (t.isNumericLiteral(value)) return { kind: "number", value: value.value };
+  if (t.isUnaryExpression(value)) {
+    if (
+      value.operator === "!" ||
+      value.operator === "typeof" ||
+      value.operator === "delete"
+    )
+      return { kind: "refused" };
+    const number = unaryOperandNumber(value, context, 0);
+    return number === undefined ? undefined : { kind: "number", value: number };
+  }
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity")
+  )
+    return isUnmodifiedGlobalReference(value, context.state, value.name)
+      ? {
+          kind: "number",
+          value: value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY,
+        }
+      : undefined;
+  // Every remaining exactly readable value is a type Node refuses for these members.
+  if (
+    t.isStringLiteral(value) ||
+    t.isTemplateLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isObjectExpression(value) ||
+    t.isArrayExpression(value) ||
+    t.isFunctionExpression(value) ||
+    t.isArrowFunctionExpression(value) ||
+    t.isRegExpLiteral(value)
+  )
+    return { kind: "refused" };
+  return undefined;
+};
+
+/**
  * Whether a stream's options object provably throws before the handle exists.
  *
- * Measured on Node 24.22.1. Each member has its own check:
+ * Measured on Node 24.22.1. Each member has its own check, and the bounds differ:
  *
- * - `start` / `end`: a non-integer or negative number throws `ERR_OUT_OF_RANGE`; a
- *   string, `null` or boolean throws `ERR_INVALID_ARG_TYPE`; `undefined` is absent.
- *   `-0` is port zero here too, so the sign alone does not decide.
- * - `fd`: the same number rule, but `null` is treated as absent.
- * - `highWaterMark`: an integer below zero or a fraction throws
- *   `ERR_INVALID_ARG_VALUE`; `null` is absent.
+ * - `start`: an integer in `[0, Number.MAX_SAFE_INTEGER]`, so `Infinity` is out of
+ *   range here. `-0` is zero, so the sign alone does not decide.
+ * - `end`: the same range plus `Infinity`, which Node reads as "read to the end". A
+ *   write stream ignores `end` entirely, so `createWriteStream(p, {end: -1})` still
+ *   creates a handle and the `start > end` ordering check does not apply there.
+ * - `fd`: an integer in `[0, 2_147_483_647]`, the signed 32-bit range.
+ * - `highWaterMark`: a non-negative integer with no upper bound — `1e21` is accepted
+ *   while `Infinity` is not.
  * - `encoding`: a nullish or otherwise falsy value is skipped, so only a truthy
  *   literal is decided, and a string must be one `Buffer` accepts.
- * - `start` above `end` throws `ERR_OUT_OF_RANGE`, so the pair is read together.
  *
- * A member this reader cannot price, and an options expression that is not an object
- * literal, leave the call undecided.
+ * For `start`, `end` and `fd`, a string, boolean, BigInt, object, array, function or
+ * regular expression throws `ERR_INVALID_ARG_TYPE`; `null` is present there while
+ * `fd` and `highWaterMark` treat it as absent. A member this reader cannot price, and
+ * an options expression that is not an object literal, leave the call undecided.
  */
 const rejectsStreamOptionsLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -136,89 +198,69 @@ const rejectsStreamOptionsLiteral = (
   if (options === undefined || t.isSpreadElement(options)) return false;
   const value = unwrapJavaScriptExpression(options).node;
   if (!t.isObjectExpression(value)) return false;
-  const member = (
-    name: string,
-  ): { readonly status: string; readonly node?: t.Node } => {
+  const member = (name: string): StreamMemberValue => {
     const read = staticObjectProperty(value, name);
-    if (read.status !== "explicit") return { status: read.status };
-    return {
-      status: "explicit",
-      node: unwrapJavaScriptExpression(read.value as t.Node).node,
-    };
-  };
-  const rejectsNumberMember = (
-    name: string,
-    nullIsAbsent: boolean,
-  ): boolean => {
-    const found = member(name);
-    if (found.status !== "explicit" || found.node === undefined) return false;
-    if (t.isNullLiteral(found.node)) return !nullIsAbsent;
-    if (isNullishJavaScriptSyntax(found.node)) return false;
-    if (t.isNumericLiteral(found.node))
-      return !isUsableIndexNumber(found.node.value);
-    if (t.isUnaryExpression(found.node)) {
-      const operand = unwrapJavaScriptExpression(found.node.argument).node;
-      if (t.isNumericLiteral(operand)) {
-        const signed =
-          found.node.operator === "-" ? -operand.value : operand.value;
-        return !isUsableIndexNumber(signed);
-      }
-      if (
-        t.isIdentifier(operand) &&
-        (operand.name === "NaN" || operand.name === "Infinity")
-      )
-        return isUnmodifiedGlobalReference(
-          operand,
-          context.state,
-          operand.name,
-        );
-    }
-    // `NaN` and `Infinity` are not usable indices, and every other exactly readable
-    // primitive is a type Node refuses.
-    if (
-      t.isIdentifier(found.node) &&
-      (found.node.name === "NaN" || found.node.name === "Infinity")
-    )
-      return isUnmodifiedGlobalReference(
-        found.node,
-        context.state,
-        found.node.name,
-      );
-    return (
-      t.isStringLiteral(found.node) ||
-      t.isBooleanLiteral(found.node) ||
-      t.isBigIntLiteral(found.node) ||
-      t.isTemplateLiteral(found.node)
+    if (read.status !== "explicit") return undefined;
+    return streamMemberValue(
+      unwrapJavaScriptExpression(read.value as t.Node).node,
+      context,
     );
   };
-  // `start` and `end` treat `null` as present, so a null literal is rejected there.
-  // Only a read stream has an `end`: a write stream ignores that member entirely, so
-  // `createWriteStream(p, {end: -1})` still creates a handle.
-  if (rejectsNumberMember("start", false)) return true;
-  if (readStream && rejectsNumberMember("end", false)) return true;
-  if (rejectsNumberMember("fd", true)) return true;
-  if (rejectsNumberMember("highWaterMark", true)) return true;
-  // `start` above `end` throws `ERR_OUT_OF_RANGE`. Both sides must be readable.
-  const start = member("start");
-  const end = member("end");
-  if (
-    start.status === "explicit" &&
-    end.status === "explicit" &&
-    start.node !== undefined &&
-    end.node !== undefined &&
-    t.isNumericLiteral(start.node) &&
-    t.isNumericLiteral(end.node) &&
-    start.node.value > end.node.value
-  )
+  const rejectsIndex = (
+    name: string,
+    max: number,
+    nullIsAbsent: boolean,
+    unlimited: boolean,
+  ): boolean => {
+    const read = staticObjectProperty(value, name);
+    if (read.status !== "explicit") return false;
+    if (t.isNullLiteral(unwrapJavaScriptExpression(read.value as t.Node).node))
+      return !nullIsAbsent;
+    const found = member(name);
+    if (found === undefined || found.kind === "absent") return false;
+    if (found.kind === "refused") return true;
+    const number = found.value;
+    if (unlimited && number === Number.POSITIVE_INFINITY) return false;
+    return !Number.isInteger(number) || number < 0 || number > max;
+  };
+  // `start` and `fd` share the safe-integer range; `end` additionally admits
+  // `Infinity`, and only a read stream looks at it at all.
+  if (rejectsIndex("start", Number.MAX_SAFE_INTEGER, false, false)) return true;
+  if (readStream && rejectsIndex("end", Number.MAX_SAFE_INTEGER, false, true))
     return true;
-  if (rejectsStreamEncoding(member("encoding").node)) return true;
+  if (rejectsIndex("fd", 2_147_483_647, true, false)) return true;
+  // No upper bound for a buffer budget, but `Infinity` and a fraction still throw.
+  if (rejectsIndex("highWaterMark", Number.POSITIVE_INFINITY, true, false))
+    return true;
+  // `start` above `end` throws `ERR_OUT_OF_RANGE`. Only a read stream has an `end`,
+  // and `Infinity` there is above every readable `start`, so it never trips this.
+  if (readStream) {
+    const start = member("start");
+    const end = member("end");
+    if (
+      start !== undefined &&
+      end !== undefined &&
+      start.kind === "number" &&
+      end.kind === "number" &&
+      Number.isFinite(start.value) &&
+      Number.isFinite(end.value) &&
+      start.value > end.value
+    )
+      return true;
+  }
+  if (rejectsStreamEncoding(value, context)) return true;
   return false;
 };
 
 /** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
-const rejectsStreamEncoding = (value: t.Node | undefined): boolean => {
-  if (value === undefined) return false;
-  if (t.isNullLiteral(value) || isNullishJavaScriptSyntax(value)) return false;
+const rejectsStreamEncoding = (
+  options: t.ObjectExpression,
+  context: DataEffectTraversalContext,
+): boolean => {
+  const read = staticObjectProperty(options, "encoding");
+  if (read.status !== "explicit") return false;
+  const value = unwrapJavaScriptExpression(read.value as t.Node).node;
+  if (isAbsentOptionValue(value, context.state)) return false;
   const text = t.isStringLiteral(value)
     ? value.value
     : t.isTemplateLiteral(value) && value.expressions.length === 0
@@ -234,6 +276,7 @@ const rejectsStreamEncoding = (value: t.Node | undefined): boolean => {
   return false;
 };
 
+/** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
 /** Whether a value is an index Node accepts for `start`, `end`, `fd` or a budget. */
 const isUsableIndexNumber = (value: number): boolean =>
   Number.isInteger(value) && value >= 0;
@@ -596,6 +639,22 @@ const isNullishPlaceholder = (
   t.isNullLiteral(value) ||
   t.isUnaryExpression(value, { operator: "void" }) ||
   isUnmodifiedGlobalReference(value, state, "undefined");
+
+/**
+ * Whether a member value is absent, which Node reads as "this option was not passed".
+ *
+ * `null` and `void …` are absent by syntax. The bare `undefined` name is absent only
+ * while nothing has rebound it: under `const undefined = false` the member carries
+ * `false`, so the option is present.
+ */
+const isAbsentOptionValue = (
+  value: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  isNullishJavaScriptSyntax(value) ||
+  (t.isIdentifier(value) &&
+    value.name === "undefined" &&
+    isUnmodifiedGlobalReference(value, state, "undefined"));
 
 const immutableAcquisition = (
   candidate: ResourceCandidate,
