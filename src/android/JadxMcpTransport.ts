@@ -1,12 +1,10 @@
 import {
   OwnedMcpStdioTransport,
   type OwnedMcpLauncher,
-  type OwnedMcpTransportFailure,
 } from "../process/OwnedMcpStdioTransport.js";
 import type { OwnedProviderProcessSpawnOptions } from "../process/ProviderProcess.js";
 
 export type JadxLauncher = OwnedMcpLauncher;
-export type JadxTransportFailure = OwnedMcpTransportFailure;
 
 /** The JADX provider's bounded stdio protocol transport. */
 export class JadxMcpTransport extends OwnedMcpStdioTransport {

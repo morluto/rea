@@ -20,6 +20,10 @@ import type {
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
+  pseudocodeAbsenceSchema,
+  type PseudocodeAbsence,
+} from "../domain/native/pseudocodeAbsence.js";
+import {
   analysisSourceDescriptorSchema,
   type AnalysisSourceDescriptor,
 } from "../domain/analysisSource.js";
@@ -65,6 +69,8 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /** Provider-observed cause of a null pseudocode result, when known. */
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   /**
    * Compact provider-owned facts for this execution. This is not an Evidence
    * record and is not restored by snapshot replay; consumers must treat its
@@ -107,6 +113,7 @@ export interface AnalysisExecution extends AnalysisObservation {
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
@@ -151,6 +158,13 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.pseudocodeAbsence === undefined
+      ? {}
+      : {
+          pseudocodeAbsence: pseudocodeAbsenceSchema.parse(
+            options.pseudocodeAbsence,
+          ),
+        }),
     ...(options.sourceDescriptor === undefined
       ? {}
       : {
@@ -339,6 +353,7 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  readonly independentDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;
