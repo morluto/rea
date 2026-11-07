@@ -1060,3 +1060,545 @@ describe("what a probe did not observe", () => {
   registerProbeCoverageCases();
   registerProbeOrderingAndCaptureCases();
 });
+
+const postProbeEntry = (input: {
+  readonly startedDateTime: string;
+  readonly url: string;
+  readonly requestText: string;
+  readonly responseText: string;
+  readonly requestMime?: string;
+  readonly responseMime?: string;
+}) => ({
+  startedDateTime: input.startedDateTime,
+  time: 10,
+  request: {
+    method: "POST",
+    url: input.url,
+    postData: {
+      mimeType: input.requestMime ?? "application/json",
+      text: input.requestText,
+    },
+  },
+  response: {
+    status: 200,
+    content: {
+      mimeType: input.responseMime ?? "application/json",
+      text: input.responseText,
+    },
+  },
+});
+
+describe("multiplexed POST RPC probe comparison", () => {
+  it("routes multiplexed GraphQL, JSON-RPC 2.0, and XSSI batchexecute probes to their discriminated state-served tools", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { id } }",
+            }),
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            url: "http://grafana.example/graphql",
+            requestText: JSON.stringify({
+              operationName: "ListProjects",
+              query: "query ListProjects { projects { slug } }",
+            }),
+            responseText: JSON.stringify({
+              data: { projects: [{ slug: "alpha" }] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.000Z",
+            url: "http://grafana.example/rpc",
+            requestText: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "tools/list",
+              id: 1,
+            }),
+            responseText: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: { tools: ["ping"] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.500Z",
+            url: "http://grafana.example/rpc",
+            requestText: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "prompts/list",
+              id: 2,
+            }),
+            responseText: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 2,
+              result: { prompts: ["summarize"] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:03.000Z",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=GetNotes",
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["GetNotes", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "application/x-javascript",
+            responseText:
+              ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":7}]",null,null,null,"generic"]]]',
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:03.500Z",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=ListTags",
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["ListTags", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "application/x-javascript",
+            responseText:
+              ')]}\'\n[[["wrb.fr","ListTags","[\\"ops\\"]",null,null,null,"generic"]]]',
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "rpc-probe", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 6,
+      equal: 6,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql_get_viewer",
+      "post_graphql_list_projects",
+      "post_rpc_tools_list",
+      "post_rpc_prompts_list",
+      "post_appui_data_batchexecute_get_notes",
+      "post_appui_data_batchexecute_list_tags",
+    ]);
+  });
+});
+
+describe("single-operation POST /graphql probe comparison", () => {
+  it("keeps single-operation POST /graphql as post_graphql while still serving and matching read-only GraphQL queries", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { id } }",
+            }),
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    expect(rpcSource.manifest.tools.map((tool) => tool.name)).toEqual([
+      "post_graphql",
+    ]);
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "single-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql",
+    ]);
+  });
+});
+
+describe("pretty-printed >64 KiB GraphQL wire budget parity in comparison", () => {
+  it("routes pretty-printed >64 KiB GraphQL requests (compact <64 KiB) to the undispatched fallback tool", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const prettyGraphql = `{\n${" ".repeat(70_000)}"operationName": "GetViewer",\n"query": "query GetViewer { viewer { id } }"\n}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://graphql.example/graphql/query",
+            requestText: JSON.stringify({
+              operationName: "ListProjects",
+              query: "query ListProjects { projects { id } }",
+            }),
+            responseText: JSON.stringify({
+              data: { projects: [{ id: "p1" }] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            url: "http://graphql.example/graphql/query",
+            requestText: prettyGraphql,
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "pretty-oversized-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql_query_list_projects",
+      "post_graphql_query",
+    ]);
+  });
+});
+
+describe("multiplexed RPC budget and XSSI origin parity in comparison", () => {
+  it("routes >64 KiB JSON-RPC POST requests to the undispatched tool instead of a smaller RPC operation's tool", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const paddedRpcText = `{"jsonrpc":"2.0","method":"tools/list","id":2}${" ".repeat(70_000)}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            time: 10,
+            request: {
+              method: "POST",
+              url: "http://rpc.example/rpc/query",
+              postData: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  method: "tools/list",
+                  id: 1,
+                }),
+              },
+            },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  result: ["small"],
+                }),
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            time: 10,
+            request: {
+              method: "POST",
+              url: "http://rpc.example/rpc/query",
+              postData: {
+                mimeType: "application/json",
+                text: paddedRpcText,
+              },
+            },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 2,
+                  result: ["large"],
+                }),
+              },
+            },
+          },
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "oversized-rpc", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_rpc_query_tools_list",
+      "post_rpc_query",
+    ]);
+  });
+});
+
+describe("XSSI response size parity in probe origin selection", () => {
+  it("shares the 64 KiB XSSI size check between manifest and probe origin selection", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const largeXssiJs = `)]}'\n{"pad":"${"x".repeat(70_000)}"}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://api.example/api/items" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify([{ id: "item-1" }]),
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://cdn.example/feed/1" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/javascript",
+                text: largeXssiJs,
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:02.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://cdn.example/feed/2" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/javascript",
+                text: largeXssiJs,
+              },
+            },
+          },
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    expect(manifest.value.normalized_result).toMatchObject({
+      origin: "http://api.example",
+    });
+    const apiSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: apiSource,
+      captureValue: recorded,
+      probes: [{ label: "xssi-origin", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      unobserved: 2,
+    });
+    expect(report.value.probes[0]?.unobserved).toEqual([
+      { ordinal: 1, reason: "other-origin" },
+      { ordinal: 2, reason: "other-origin" },
+    ]);
+  });
+});
+
+describe("overlapping POST RPC templates in comparison", () => {
+  it("matches recorded RPC calls across overlapping literal and templated POST routes without no-tool misses", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/api/orgs/org-1/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetOrgSummary",
+              query: "query GetOrgSummary { org { id } }",
+            }),
+            responseText: JSON.stringify({ data: { org: { id: "org-1" } } }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            url: "http://grafana.example/api/orgs/org-1/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { org } }",
+            }),
+            responseText: JSON.stringify({
+              data: { viewer: { org: "org-1" } },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.000Z",
+            url: "http://grafana.example/api/orgs/org-2/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { org } }",
+            }),
+            responseText: JSON.stringify({
+              data: { viewer: { org: "org-2" } },
+            }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: {
+        kind: "environment-manifest",
+        template_rules: ["sibling-variance"],
+      },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "overlapping-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 3,
+      equal: 3,
+      agreement: 1,
+      categories: { "no-tool": 0, refused: 0 },
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_orgs_org_1_graphql_get_org_summary",
+      "post_orgs_graphql_get_viewer_by_org_id",
+      "post_orgs_graphql_get_viewer_by_org_id",
+    ]);
+  });
+});
+
+describe("single-operation batchexecute form body in comparison", () => {
+  it("accepts form-encoded f.req strings on a single-operation batchexecute route without refusing", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=GetNotes",
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["GetNotes", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "text/plain",
+            responseText:
+              ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":\\"n1\\"}]",null,null,null,"generic"]]]',
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    expect(
+      rpcSource.manifest.tools.map((tool) => ({
+        name: tool.name,
+        rpc_operation: tool.rpc_operation,
+      })),
+    ).toEqual([
+      { name: "post_appui_data_batchexecute", rpc_operation: undefined },
+    ]);
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "single-batchexecute", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      agreement: 1,
+      categories: { "no-tool": 0, refused: 0 },
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_appui_data_batchexecute",
+    ]);
+  });
+});

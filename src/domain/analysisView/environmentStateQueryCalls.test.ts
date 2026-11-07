@@ -22,6 +22,7 @@ interface Call {
   readonly request?: JsonValue;
   readonly tool: string;
   readonly template?: string;
+  readonly rpcOperation?: StateToolFacts["rpc_operation"];
   readonly start?: number;
   readonly end?: number | null;
 }
@@ -61,6 +62,9 @@ const readOnlyOf = (
       name: call.tool,
       method: call.method,
       path_template: call.template ?? call.path,
+      ...(call.rpcOperation === undefined
+        ? {}
+        : { rpc_operation: call.rpcOperation }),
       record_ordinals: [...(known?.record_ordinals ?? []), index],
     });
   });
@@ -754,5 +758,137 @@ describe("the bodies read-only decisions compare", () => {
     expect([...outside]).toEqual([]);
     // Each body is kept as its digest's hex text, charged before it is.
     expect(retained).toBeGreaterThanOrEqual(parsed.size * 64);
+  });
+});
+
+describe("GraphQL operation definition classification with fragments and keyword names", () => {
+  it("skips fragment headers and directive or variable defaults so a fragment never hides a mutation", () => {
+    const graphqlCall = (name: string, query: string): Call => ({
+      method: "POST",
+      path: "/graphql",
+      query: "?op=getViewer",
+      tool: `post_graphql_${name}`,
+      rpcOperation: { kind: "graphql", name },
+      request: { operationName: name, query },
+      response: { data: { ok: true } },
+    });
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "on",
+          "fragment query on Mutation { reset } mutation on { ...query }",
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "mutation",
+          "fragment mutation on Query { viewer { id } } query mutation { ...mutation }",
+        ),
+      ]),
+    ).toEqual(["post_graphql_mutation"]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "Save",
+          'mutation Save($in: Input = { query: "x" }) @dir(arg: { a: 1 }) { update { id } }',
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "getDup",
+          "query getDup { viewer { id } } mutation getDup { reset }",
+        ),
+      ]),
+    ).toEqual([]);
+  });
+});
+
+describe("single-operation POST RPC read-only classification", () => {
+  it("classifies single-operation GraphQL, JSON-RPC, and batchexecute calls when tool.rpc_operation is omitted", () => {
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "query GetViewer { viewer { id } }",
+          },
+          response: { data: { viewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual(["post_graphql"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "mutation GetViewer { updateViewer { id } }",
+          },
+          response: { data: { updateViewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.get", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual(["post_rpc"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.create", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=GetItems",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual(["post_appui_data_batchexecute"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=SaveItem",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual([]);
   });
 });

@@ -5,6 +5,7 @@ import {
   isJsonLike,
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
+import { hasBoundedXssiJsonResponse } from "../../domain/analysisView/rpcOperationSelector.js";
 import {
   primaryOrigin,
   type OriginStats,
@@ -98,16 +99,44 @@ const liveAnswer = (
   return { status, body };
 };
 
+const requestContentType = (
+  record: WebNetworkCaptureRecord,
+): string | undefined => {
+  const facts = readRecordedRequestBody(record.reported);
+  return facts.kind === "request" && facts.postData.kind === "object"
+    ? facts.postData.mimeType
+    : undefined;
+};
+
+const requestBodyText = (record: WebNetworkCaptureRecord): string | null => {
+  const facts = readRecordedRequestBody(record.reported);
+  return facts.kind === "request" && facts.postData.kind === "object"
+    ? (facts.postData.text ?? null)
+    : null;
+};
+
+const isProbeJsonLike = (
+  record: WebNetworkCaptureRecord,
+  rawMime: string,
+): boolean => {
+  const essence = mediaTypeEssence(rawMime);
+  return (
+    isJsonLike(essence) || hasBoundedXssiJsonResponse(record, essence) === true
+  );
+};
+
 /** The origin a probe calls the application at, chosen as the manifest chooses its own. */
 const probeOrigin = (
+  records: readonly WebNetworkCaptureRecord[],
   lines: ReadonlyMap<number, RecordedRequestLine | null>,
 ): string | null => {
   const origins = new Map<string, OriginStats>();
-  for (const line of lines.values()) {
+  for (const record of records) {
+    const line = lines.get(record.ordinal);
     if (line?.kind !== "line") continue;
     const stats = origins.get(line.origin) ?? { records: 0, jsonLike: 0 };
     stats.records += 1;
-    if (isJsonLike(mediaTypeEssence(line.rawMime))) stats.jsonLike += 1;
+    if (isProbeJsonLike(record, line.rawMime)) stats.jsonLike += 1;
     origins.set(line.origin, stats);
   }
   return primaryOrigin(origins);
@@ -140,7 +169,7 @@ export const probeRequests = (
     ]),
   );
   // Another origin's request goes to some other server, so it neither calls nor changes the environment.
-  const origin = probeOrigin(lines);
+  const origin = probeOrigin(records, lines);
   for (const record of ordered) {
     const line = lines.get(record.ordinal);
     const { ordinal } = record;
@@ -153,11 +182,14 @@ export const probeRequests = (
       });
     else {
       const exchange = recordedExchange(record, line);
+      const contentType = requestContentType(record);
       const request = {
         method: line.method,
         path: exchange.path,
         query: exchange.query,
         body: requestBody(record),
+        bodyText: requestBodyText(record),
+        ...(contentType === undefined ? {} : { contentType }),
       };
       // A request whose answer was lost may still have changed the application, so it is made but not compared.
       if (exchange.status === null) {

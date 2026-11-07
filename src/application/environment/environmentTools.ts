@@ -8,6 +8,7 @@ import {
   pointerTokens,
   type JsonObject,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { isBatchExecutePath } from "../../domain/analysisView/rpcOperationSelector.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   schemaBytes,
@@ -33,7 +34,7 @@ export const REPLAY_CATALOG_INSTRUCTIONS =
 /** JSON Schema advertised for one tool argument. */
 export interface EnvironmentToolProperty extends EnvironmentToolSchema {
   readonly oneOf?: readonly (
-    | { readonly type: "string" | "number" | "boolean" }
+    | { readonly type: "string" | "number" | "boolean" | "object" }
     | { readonly type: "array"; readonly items: { readonly type: "string" } }
   )[];
   readonly description: string;
@@ -227,8 +228,13 @@ const toolDescription = (
   tool: EnvironmentManifestTool,
   describe: EnvironmentCatalogOptions["describe"],
   answers: string,
-): string =>
-  `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
+): string => {
+  const rpcOperation =
+    tool.rpc_operation === undefined
+      ? ""
+      : ` (${tool.rpc_operation.kind} ${describeText(tool.rpc_operation.name, "operation", "manifest Evidence", JSON.stringify)})`;
+  return `${REPLAY_CATALOG_INSTRUCTIONS} ${describeText(tool.method, "method")} ${describeText(tool.path_template, "path")}${rpcOperation}; ${describeResponses(tool, source.exchanges)}; ${describe?.(tool) ?? answers} [${describeList(tool.record_ordinals, tool.record_ordinals.length)}]; evidence ${source.evidenceId}`;
+};
 
 /** Captured argument names longer than this are advertised under a short alias; the manifest keeps the name. */
 export const MAX_ARGUMENT_NAME_CHARS = 64;
@@ -328,8 +334,32 @@ export const withQueryText = (
   return spelled ?? args;
 };
 
+const acceptsBatchExecuteFormBody = (
+  source: EnvironmentSource,
+  tool: EnvironmentManifestTool,
+): boolean =>
+  tool.rpc_operation?.kind === "batchexecute" ||
+  (tool.body_shape === null &&
+    (isBatchExecutePath(tool.path_template) ||
+      tool.record_ordinals.some(
+        (ordinal) =>
+          source.exchanges.get(ordinal)?.batchexecuteRequest === true,
+      )));
+
+const defaultBodyProperty = (
+  source: EnvironmentSource,
+  tool: EnvironmentManifestTool,
+): EnvironmentToolProperty =>
+  acceptsBatchExecuteFormBody(source, tool)
+    ? {
+        oneOf: [{ type: "string" }, { type: "object" }],
+        description: bodyDescription(tool),
+      }
+    : { type: "object", description: bodyDescription(tool) };
+
 /** Lazily render properties so admission precedes retaining a whole schema. */
 function* environmentToolProperties(
+  source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   args: EnvironmentToolArguments,
   served: {
@@ -369,11 +399,7 @@ function* environmentToolProperties(
     ];
   }
   if (args.body !== undefined)
-    yield [
-      args.body,
-      served.body ?? { type: "object", description: bodyDescription(tool) },
-      false,
-    ];
+    yield [args.body, served.body ?? defaultBodyProperty(source, tool), false];
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
@@ -413,16 +439,14 @@ export interface EnvironmentCatalogOptions {
 
 /** The body a tool takes in a catalog: a served plan's, else the method's. */
 const catalogBody = (
+  source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   body: EnvironmentCatalogOptions["body"],
 ): {
   readonly property: EnvironmentToolProperty | undefined;
   readonly withBody: boolean;
 } => {
-  const property = body?.(tool, {
-    type: "object",
-    description: bodyDescription(tool),
-  });
+  const property = body?.(tool, defaultBodyProperty(source, tool));
   return {
     property,
     withBody: WRITE_METHODS.has(tool.method) || property !== undefined,
@@ -489,7 +513,7 @@ export const environmentToolDefinitions = (
       !text(tool.name)
     )
       return refused();
-    const { property: taken, withBody } = catalogBody(tool, body);
+    const { property: taken, withBody } = catalogBody(source, tool, body);
     const count =
       tool.params.length + tool.query_parameter_names.length + Number(withBody);
     // A lower bound rejects enormous argument lists before constructing their alias map.
@@ -501,6 +525,7 @@ export const environmentToolDefinitions = (
     const properties = new Map<string, EnvironmentToolProperty>();
     const required: string[] = [];
     for (const [argument, property, mandatory] of environmentToolProperties(
+      source,
       tool,
       args,
       { body: taken, query: query?.(tool) },

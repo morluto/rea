@@ -16,6 +16,14 @@ import {
 } from "./recordedResponseBody.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
+import {
+  hasBoundedXssiJsonResponse,
+  isBatchExecutePath,
+  RPC_QUERY_LIMIT_CHARS,
+  RPC_REQUEST_BODY_LIMIT_BYTES,
+  selectRpcOperationFromText,
+  type RpcOperation,
+} from "./rpcOperationSelector.js";
 import { z } from "zod";
 import { environmentManifestFields } from "./environmentManifestSchema.js";
 import type { ScenarioResponseBodyRetention } from "./scenarioCaptureRecords.js";
@@ -34,6 +42,7 @@ import {
 import {
   applyTemplateRules,
   SEGMENT_LIMITED_RULES,
+  selectGroupsWithOverlappingRpcPeers,
   SIBLING_VARIANCE_SEGMENT_LIMIT,
   type BodyShape,
   type JsonTypeName,
@@ -48,6 +57,7 @@ import {
   SEGMENT_BYTES,
   readQueryParameterNames,
   readRecordedRequestLine,
+  readRecordedRequestQuery,
   routePartCount,
   scanRouteTemplate,
   textBytes,
@@ -189,6 +199,7 @@ const hasParam = (parts: readonly MutablePart[]): boolean =>
 export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumulator {
   readonly #groups = new Map<string, GroupState>();
   readonly #records: RecordLine[] = [];
+  readonly #recordRpcOperations = new Map<number, RpcOperation>();
   readonly #origins = new Map<string, OriginStats>();
   readonly #rules: ReadonlySet<TemplateRule>;
   #unrepresented = 0;
@@ -201,6 +212,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     readonly includeQueryParameterNames = true,
     rules: readonly TemplateRule[] = [],
     budgetSubject = "Environment-manifest",
+    readonly discriminateRpc = true,
   ) {
     super(maximumBytes, budgetSubject);
     this.#rules = new Set(rules);
@@ -209,6 +221,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   /** Whether the finished projection publishes body shapes, and so states their limitation. */
   protected get reportsBodyShapes(): boolean {
     return true;
+  }
+
+  /** Extracted RPC discriminator for one recorded exchange, even when a single-operation route omits `rpc_operation`. */
+  protected recordRpcOperation(ordinal: number): RpcOperation | null {
+    return this.discriminateRpc
+      ? (this.#recordRpcOperations.get(ordinal) ?? null)
+      : null;
   }
 
   add(
@@ -241,7 +260,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (route === null) return this.overBudget();
       const queryNames = readQueryParameterNames(line.query, this.scratch);
       if (queryNames === null) return this.overBudget();
-      // The key copies the method, origin, template and rules; charge that copy before it exists.
+      const rpc =
+        this.discriminateRpc && line.method === "POST"
+          ? this.#rpcOperation(line, record.reported)
+          : ok(undefined);
+      if (!rpc.ok) return rpc;
+      const rpcOperation = rpc.value;
+      // The key copies the method, origin, template, rules and optional RPC operation; charge that copy before it exists.
       if (
         !this.scratch(
           textBytes(
@@ -249,6 +274,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
               line.origin.length +
               route.template.length +
               route.rules.length +
+              (rpcOperation?.kind.length ?? 0) +
+              (rpcOperation?.name.length ?? 0) +
               KEY_OVERHEAD_CHARS,
           ),
         )
@@ -259,6 +286,8 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         line.origin,
         route.template,
         route.rules,
+        rpcOperation?.kind ?? "",
+        rpcOperation?.name ?? "",
       ]);
       const group = this.#groups.get(key);
       const bodyShape =
@@ -266,13 +295,23 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           ? this.#bodyShape(record.reported)
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
+      const mime = mediaTypeEssence(line.rawMime);
+      const xssiJson =
+        !this.discriminateRpc || isJsonLike(mime)
+          ? ok(false)
+          : this.#xssiJsonResponse(record, mime);
+      if (!xssiJson.ok) return xssiJson;
       const grouped = this.#append(
         record.ordinal,
         line,
         route,
         queryNames,
-        { key, group },
-        { shape: bodyShape.value, empty: manifestResponseIsEmpty(record) },
+        { key, group, rpcOperation },
+        {
+          shape: bodyShape.value,
+          empty: manifestResponseIsEmpty(record),
+          xssiJson: xssiJson.value,
+        },
       );
       if (!grouped.ok) return grouped;
       // Keep the parsed line's admission while releasing grouping-only scratch.
@@ -316,13 +355,87 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     return ok({ type: "object", properties: Object.fromEntries(entries) });
   }
 
+  /** Extract a bounded RPC sub-route discriminator on POST requests before grouping. */
+  #rpcOperation(
+    line: RequestLine,
+    reported: unknown,
+  ): Result<RpcOperation | undefined, AnalysisError> {
+    const request = readRecordedRequestBody(reported);
+    const body = request.kind === "request" ? request.postData : undefined;
+    const mimeType = body?.kind === "object" ? body.mimeType : undefined;
+    const text = body?.kind === "object" ? body.text : undefined;
+    if (mimeType !== undefined && !this.scratch(textBytes(mimeType.length)))
+      return this.overBudget();
+    const release = this.temporaryCheckpoint();
+    try {
+      if (
+        text !== undefined &&
+        text.length > 0 &&
+        text.length <= RPC_REQUEST_BODY_LIMIT_BYTES &&
+        !this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4)
+      )
+        return this.overBudget();
+      let query = line.query;
+      if (!this.includeQueryParameterNames && isBatchExecutePath(line.path)) {
+        const rawQuery = readRecordedRequestQuery(reported, (bytes) =>
+          this.temporary(bytes),
+        );
+        if (rawQuery === null) return this.overBudget();
+        query = rawQuery;
+      }
+      if (
+        query !== undefined &&
+        query.length > 0 &&
+        query.length <= RPC_QUERY_LIMIT_CHARS &&
+        isBatchExecutePath(line.path) &&
+        !this.temporary(RECORD_SCRATCH_BYTES + textBytes(query.length) * 2)
+      )
+        return this.overBudget();
+      return ok(
+        selectRpcOperationFromText({
+          method: line.method,
+          path: line.path,
+          query,
+          mimeType,
+          bodyText: text,
+        }),
+      );
+    } finally {
+      release();
+    }
+  }
+
+  /** Detect XSSI-guarded JSON responses whose media type is not already classified as JSON-like. */
+  #xssiJsonResponse(
+    record: WebNetworkCaptureRecord,
+    mime: string | null,
+  ): Result<boolean, AnalysisError> {
+    const release = this.temporaryCheckpoint();
+    try {
+      const matched = hasBoundedXssiJsonResponse(record, mime, (chars) =>
+        this.temporary(RECORD_SCRATCH_BYTES + textBytes(chars) * 4),
+      );
+      return matched === null ? this.overBudget() : ok(matched);
+    } finally {
+      release();
+    }
+  }
+
   #append(
     ordinal: number,
     line: RequestLine,
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
-    bucket: { readonly key: string; readonly group: GroupState | undefined },
-    exchange: { readonly shape: BodyShape | null; readonly empty: boolean },
+    bucket: {
+      readonly key: string;
+      readonly group: GroupState | undefined;
+      readonly rpcOperation: RpcOperation | undefined;
+    },
+    exchange: {
+      readonly shape: BodyShape | null;
+      readonly empty: boolean;
+      readonly xssiJson: boolean;
+    },
   ): Result<void, AnalysisError> {
     const bodyShape = exchange.shape;
     const mime = mediaTypeEssence(line.rawMime);
@@ -350,6 +463,12 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       if (bodyShape !== null)
         for (const name of Object.keys(bodyShape.properties))
           bytes += ENTRY_BYTES + textBytes(name.length);
+      if (bucket.rpcOperation !== undefined)
+        bytes +=
+          ENTRY_BYTES * 2 +
+          textBytes(
+            bucket.rpcOperation.kind.length + bucket.rpcOperation.name.length,
+          );
     } else {
       for (const segment of route.segments) {
         const part = group.parts[segment.segment_index];
@@ -364,8 +483,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     for (const name of queryNames ?? [])
       if (!group?.queryNames.has(name))
         bytes += ENTRY_BYTES + textBytes(name.length);
+    if (bucket.rpcOperation !== undefined) bytes += ENTRY_BYTES;
     // Reserve the whole mutation while route scratch is still live.
     if (!this.retain(bytes)) return this.overBudget();
+    if (bucket.rpcOperation !== undefined)
+      this.#recordRpcOperations.set(ordinal, bucket.rpcOperation);
     const position = this.#records.length;
     this.#records.push({
       ordinal,
@@ -374,7 +496,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       status: line.status,
       contentType: mime,
     });
-    const jsonLike = isJsonLike(mime);
+    const jsonLike = isJsonLike(mime) || exchange.xssiJson;
     const stats = origin ?? { records: 0, jsonLike: 0 };
     stats.records += 1;
     if (jsonLike) stats.jsonLike += 1;
@@ -390,6 +512,9 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         contentTypes: new Set(),
         queryNames: new Set(),
         bodyShape,
+        ...(bucket.rpcOperation === undefined
+          ? {}
+          : { rpcOperation: bucket.rpcOperation }),
         apiPath: isApiPath(route.template),
         jsonLike: false,
         bodiless: BODILESS_WRITE_METHODS.has(line.method),
@@ -412,21 +537,49 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
     const registry = toolNameRegistry();
-    return applyTemplateRules(groups, this.#rules)
+    const templatedGroups = applyTemplateRules(groups, this.#rules);
+    const overlappingRpcGroups =
+      selectGroupsWithOverlappingRpcPeers(templatedGroups);
+    return templatedGroups
       .map((group) => {
         const names = parameterNames(group.parts);
-        return { group, names, template: pathTemplate(group.parts, names) };
+        return {
+          group,
+          names,
+          template: pathTemplate(group.parts, names),
+          rpcOperation: overlappingRpcGroups.has(group)
+            ? group.rpcOperation
+            : undefined,
+        };
       })
       .sort((left, right) =>
         compareTools(
-          { template: left.template, method: left.group.method },
-          { template: right.template, method: right.group.method },
+          {
+            template: left.template,
+            method: left.group.method,
+            ...(left.rpcOperation === undefined
+              ? {}
+              : { rpcOperation: left.rpcOperation }),
+          },
+          {
+            template: right.template,
+            method: right.group.method,
+            ...(right.rpcOperation === undefined
+              ? {}
+              : { rpcOperation: right.rpcOperation }),
+          },
         ),
       )
-      .map(({ group, names, template }): Tool => {
+      .map(({ group, names, template, rpcOperation }): Tool => {
         let next = 0;
         return {
-          name: toolName(group.method, group.parts, names, registry),
+          name: toolName(
+            group.method,
+            group.parts,
+            names,
+            registry,
+            rpcOperation,
+          ),
           method: group.method,
           path_template: template,
           api_surface_template: group.api_surface_template,
@@ -451,6 +604,9 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           record_ordinals: group.positions.map(
             (position) => this.#records[position]!.ordinal,
           ),
+          ...(rpcOperation === undefined
+            ? {}
+            : { rpc_operation: rpcOperation }),
         };
       });
   }
