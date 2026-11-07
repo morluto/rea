@@ -11,6 +11,12 @@ import { jsonValueSchema } from "../../domain/jsonValue.js";
 import { ok } from "../../domain/result.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
+type CompletedObservation = {
+  readonly path: string;
+  readonly sha256: string;
+  readonly bytes: number;
+};
+
 type UnknownKind =
   | "application-version-comparison"
   | "javascript-export-shape"
@@ -45,6 +51,7 @@ export const deliverApplicationEvidence = async (
   view: AnalysisViewRequest | undefined,
   signal: AbortSignal,
   unknownKind?: UnknownKind,
+  completed?: CompletedObservation,
 ): Promise<CallToolResult> => {
   const { delivery } = server;
   const parent = execution.evidence;
@@ -63,11 +70,27 @@ export const deliverApplicationEvidence = async (
             id === parent.evidence_id ? parent : options.evidenceById?.(id),
         );
   await setImmediate();
-  if (signal.aborted)
-    return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
-      contract.returnsTargetContent,
-    );
+  if (signal.aborted) {
+    const cancelled = new AnalysisCancelledError(contract.name, {
+      cause: signal.reason,
+    });
+    // The parent was already read and computed; keep that observation rather than
+    // reporting a bare cancellation that erases completed facts.
+    if (completed !== undefined)
+      cancelled.retainPartialObservation({
+        kind: "file-snapshot-hash",
+        path: completed.path,
+        sha256: completed.sha256,
+        bytes: completed.bytes,
+      });
+    return completed === undefined
+      ? delivery.toErrorToolResult(cancelled, contract.returnsTargetContent)
+      : delivery.toPartialErrorToolResult(
+          cancelled,
+          contract.returnsTargetContent,
+          options.recordEvidence,
+        );
+  }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
     options.recordEvidence,

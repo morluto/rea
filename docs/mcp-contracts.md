@@ -591,6 +591,16 @@ Coverage describes examined declarations and does not establish runtime behavior
 or full specification/operation validity. See [offline API contracts](api-contracts.md)
 for source identities, parser allowances, supported scope and CLI publication.
 
+## Offline Cargo manifest declarations
+
+`inspect_cargo_manifest` reads one local `Cargo.toml` without an active target,
+a lockfile read, or any registry, network or build-script execution. Registry,
+Git, path and workspace-inherited declarations stay distinct, and a renamed
+dependency keeps its manifest key apart from its package name. Target-specific
+tables retain their declared condition unevaluated. See
+[offline Cargo manifests](cargo-manifests.md) for identities, source pointers
+and resource bounds.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
