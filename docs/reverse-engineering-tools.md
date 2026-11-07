@@ -313,6 +313,33 @@ mismatch is an input correction only when the authenticated reply confirms
 completion uncertainty until terminal proof arrives, even if the reply names a
 generation error.
 
+## One-shot output limits and recovery
+
+The 16 MiB combined stdout/stderr cap applies to one-shot Rizin and objdump
+commands, including objdump architecture discovery. When that cap stops output
+collection, Evidence says that REA requested termination. The retained streams
+are prefixes, so JSON output may end inside a value. A retained `signal` such as
+`SIGKILL` does not by itself establish that the provider crashed independently
+of REA's capture limit; read the limitations alongside the raw result.
+
+Check `completion_status` separately from `output_truncated`. Truncation alone
+does not establish command failure, and `completion_status: "unknown"` does not
+establish that the command finished. If owned cleanup remains incomplete, the
+typed failure retains partial Evidence and cleanup resources; inspect and settle
+that cleanup before retrying. Retained output does not prove that the provider
+has exited or that a command's side effects did not occur.
+
+Recover by narrowing the command at the provider, or requesting smaller pages
+where that command supports them. For example, objdump disassembly accepts
+`--symbol my_function` (MCP: `symbol`), which scopes collection before output is
+produced. Filtering an already captured prefix cannot recover omitted bytes.
+Increasing `command_timeout_ms` does not raise the capture cap. Increasing
+`REA_MCP_MAX_RESPONSE_BYTES`, exporting Evidence, or using CLI JSON can help
+deliver retained output, but cannot recover bytes that collection omitted.
+See [MCP response limits](./mcp-contracts.md#tool-results) for that separate
+transport budget. Confirm cleanup and any possible side effects before rerunning
+an unrestricted command.
+
 ## Configuration and coverage
 
 The optional `REA_OBJDUMP_COMMAND`, `REA_GDB_COMMAND`, and `REA_RIZIN_COMMAND` values select executable names or paths; otherwise REA searches `PATH`. Values are passed directly to process spawning, not expanded as shell command lines. A host executable launch refusal preserves the selected command and host error code, with recovery through the corresponding command setting, PATH, or execute/search permissions. GDB does not retry that refusal with MI2; its MI2 fallback applies to protocol initialization failures. Provider versions and capabilities remain unknown until observed from the installed tool and verified in the corresponding real-provider lane.
