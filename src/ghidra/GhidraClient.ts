@@ -1534,6 +1534,8 @@ export class GhidraClient {
             "Ghidra's private runtime directory could not be removed; it is retained for a later close.",
           leftover_paths: leftovers.map(({ path }) => path),
           failures: leftovers.map(({ path, reason }) => `${path}: ${reason}`),
+          // The export is finalized before removal; keep its path and error.
+          ...this.#exportDiagnostics(),
         },
         { cause: firstCause },
       );

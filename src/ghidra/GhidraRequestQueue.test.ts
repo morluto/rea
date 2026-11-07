@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import { err, ok, type Result } from "../domain/result.js";
+import { AnalysisCloseCompletedError } from "../domain/analysisCloseCompletedError.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
@@ -301,6 +302,43 @@ it.each([false, true])(
     expect(original.concurrentCancellation).toBeUndefined();
   },
 );
+
+it("keeps a completed close that failed only at export out of cleanup on a late remote failure", async () => {
+  const execution = deferred<ExecutionResult>();
+  const original = new GhidraSessionError(
+    "remote",
+    "decompile limit reached",
+    { remote_code: "decompile_failed" },
+    { remoteCode: "decompile_failed" },
+  );
+  const exportFailure = new AnalysisCloseCompletedError(
+    "ghidra",
+    "diagnostic_export",
+    { diagnostics: { diagnostics_export_error: "manifest write failed" } },
+  );
+  const controller = new AbortController();
+  const queue = new GhidraRequestQueue(
+    () => execution.promise,
+    failure,
+    () => Promise.resolve(err(exportFailure)),
+  );
+  const pending = queue.run("active", {}, { signal: controller.signal });
+  controller.abort(new Error("client deadline"));
+  execution.resolve(err(original));
+  const result = await pending;
+  if (result.ok) throw new Error("Expected the remote failure");
+  // The session was released, so nothing is left to retry; the export failure
+  // is retained as a diagnostic instead of becoming cleanupFailure.
+  expect(result.error).toMatchObject({
+    kind: "remote",
+    remoteCode: "decompile_failed",
+    cleanupFailure: undefined,
+    diagnostics: { session_closed_by_cancellation: true },
+  });
+  expect(
+    JSON.stringify(result.error.diagnostics["client_close_failure"]),
+  ).toContain("manifest write failed");
+});
 
 it("awaits active cancellation cleanup when execution rejects", async () => {
   const execution = deferred<ExecutionResult>();
