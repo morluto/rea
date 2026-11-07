@@ -241,10 +241,17 @@ export async function verifyProjectCoverage(run) {
           paths[1].normalized_result.goal_status,
           mode === "partial" ? "unknown" : "reached",
         );
-        assert.equal(
-          paths[2].normalized_result.goal_status,
-          selected ? "unknown" : "not_reached",
-        );
+        assert.equal(paths[2].normalized_result.goal_status, "unknown");
+        if (!selected) {
+          assert.equal(
+            paths[2].normalized_result.search_scope.observed_goal_status,
+            "not_reached",
+          );
+          assert.equal(
+            paths[2].normalized_result.search_scope.discovery,
+            "unknown",
+          );
+        }
         if (selected)
           for (const evidence of paths)
             assert.ok(
