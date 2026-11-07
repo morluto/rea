@@ -231,20 +231,28 @@ const targetProblem = (
     : undefined;
 };
 
-/** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
-const viewsAt = (
+/** The captured views at a checkpoint, before export omissions and rewrites. */
+const capturedViewsAt = (
   target: TaskTarget,
   end: keyof StateEnds,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
-  const shippedFiles = new Set(target.seedFiles);
   for (const [home, path] of target.files) {
-    // The seed must reflect the files the bundle actually ships, including omissions.
-    if (end === "seed" && !shippedFiles.has(home)) continue;
     const version = versionAt(path, target.ends[end]);
-    const shipped = end === "seed" ? target.seedViews.get(home) : undefined;
-    const view =
-      shipped ?? (version === undefined ? undefined : versionView(version));
+    const view = version === undefined ? undefined : versionView(version);
+    if (view !== undefined) views.set(home, view);
+  }
+  return views;
+};
+
+/** Apply the bundle's omissions and rewritten files to its captured seed. */
+const shippedSeedViews = (
+  target: TaskTarget,
+  captured: ReadonlyMap<string, TaskFileView>,
+): ReadonlyMap<string, TaskFileView> => {
+  const views = new Map<string, TaskFileView>();
+  for (const home of target.seedFiles) {
+    const view = target.seedViews.get(home) ?? captured.get(home);
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -464,12 +472,16 @@ export const admitDesktopTask = async (
       REWRITE,
     );
   const task = parsed.value;
+  const captured: TaskViews = {
+    seed: capturedViewsAt(target, "seed"),
+    end: capturedViewsAt(target, "end"),
+  };
   const views: TaskViews = {
-    seed: viewsAt(target, "seed"),
-    end: viewsAt(target, "end"),
+    seed: shippedSeedViews(target, captured.seed),
+    end: captured.end,
   };
   refuseTargetProblems(task, target, views);
-  if (isScreenTask(task)) return admitScreenTask(task, target, views);
+  if (isScreenTask(task)) return admitScreenTask(task, target, captured);
   const read = await readersAtEnds(task, target);
   const end = evaluateTaskChecks(task.checks, views.end, read.end);
   const failing = end.find((outcome) => !outcome.passed);

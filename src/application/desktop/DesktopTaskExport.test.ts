@@ -659,6 +659,43 @@ const unownedChangeCapture = () => {
 };
 
 describe("exportDesktopApplication with a screen-judged task", () => {
+  it.each([false, true])(
+    "compares captured log views rather than seed omissions (changed: %s)",
+    async (changed) => {
+      const base = screenOnlyCapture();
+      const log = `${HOME}/.config/notes/notes.log`;
+      const before = "milk\n";
+      const after = changed ? "[ui]\nwrap=true\n" : before;
+      const captureWithLog = {
+        ...base,
+        state: {
+          ...base.state,
+          checkpoints: base.state.checkpoints.map((checkpoint) =>
+            checkpoint.trigger === "baseline"
+              ? {
+                  ...checkpoint,
+                  retained: [...checkpoint.retained, retained(log, before)],
+                }
+              : changed
+                ? {
+                    ...checkpoint,
+                    changes: [change(log, { before, after }, { state: true })],
+                    retained: [retained(log, after)],
+                  }
+                : checkpoint,
+          ),
+        },
+      };
+      const { result } = await exportScreenTask(SCREEN_TASK, captureWithLog);
+      if (changed) {
+        expect(result).toBeInstanceOf(AnalysisInputError);
+        expect((result as AnalysisInputError).userMessage).toContain(
+          "a check can read",
+        );
+      } else if (result instanceof Error) throw result;
+    },
+  );
+
   it("lets a file outside the app's owned paths change without refusing the screen judge", async () => {
     const { result } = await exportScreenTask(
       SCREEN_TASK,
