@@ -150,7 +150,9 @@ export class GhidraClient {
   #memoryCgroupBaseline: LinuxCgroupMemoryState | undefined;
   readonly #fileResources = new ArtifactResourceScope();
   readonly #checkpoint: GhidraCheckpoint | undefined;
-  #checkpointStaging: string | undefined;
+  #checkpointStaging:
+    | { readonly path: string; readonly disposition: "publish" | "discard" }
+    | undefined;
   #checkpointRestore: GhidraPackedProgram | undefined;
   readonly #cleanupFailures = new Set<AnalysisError>();
   #targetAdmission: JsonValue | undefined;
@@ -770,6 +772,7 @@ export class GhidraClient {
           ? (cause.cleanup?.resources ?? [])
           : []),
         ...this.#fileResources.cleanupResources,
+        ...(this.#checkpoint?.cleanupResources ?? []),
         ...[this.#runtimeRoot, this.#socketRoot].flatMap((root) =>
           root === undefined ? [] : [root.path],
         ),
@@ -846,6 +849,7 @@ export class GhidraClient {
         return [
           ...(client.#process === undefined ? [] : ["ghidra-process"]),
           ...client.#fileResources.cleanupResources,
+          ...(client.#checkpoint?.cleanupResources ?? []),
           ...[client.#runtimeRoot, client.#socketRoot].flatMap((root) =>
             root === undefined ? [] : [root.path],
           ),
@@ -1117,18 +1121,18 @@ export class GhidraClient {
     const owner = this.#checkpoint;
     const runtime = this.#runtimeRoot;
     if (owner === undefined || runtime === undefined) return;
-    if (this.#checkpointStaging !== undefined) {
-      await owner.publish(this.#checkpointStaging, signal);
-      await rm(this.#checkpointStaging);
-      this.#checkpointStaging = undefined;
-    }
+    await this.#finishCheckpointStaging(signal);
     const path = join(runtime.path, `checkpoint-${randomUUID()}.gzf`);
     const saved = await this.#wire.request(
       "checkpoint_program",
       { path, force },
       signal === undefined ? {} : { signal },
     );
-    if (!saved.ok) throw saved.error;
+    if (!saved.ok) {
+      if (saved.error.kind === "remote")
+        return this.#discardCheckpoint(path, saved.error, signal);
+      throw saved.error;
+    }
     const parsed = z
       .discriminatedUnion("saved", [
         z.object({ saved: z.literal(false) }).strict(),
@@ -1136,15 +1140,59 @@ export class GhidraClient {
       ])
       .safeParse(saved.value);
     if (!parsed.success)
-      throw this.#failure(
-        "protocol",
-        "Ghidra checkpoint acknowledgement is invalid",
-        parsed.error,
+      return this.#discardCheckpoint(
+        path,
+        this.#failure(
+          "protocol",
+          "Ghidra checkpoint acknowledgement is invalid",
+          parsed.error,
+        ),
+        signal,
       );
     if (!parsed.data.saved) return;
-    this.#checkpointStaging = path;
-    await owner.publish(path, signal);
-    await rm(path);
+    this.#checkpointStaging = { path, disposition: "publish" };
+    await this.#finishCheckpointStaging(signal);
+  }
+
+  /** An acknowledged failed export is owned but is not a valid checkpoint. */
+  async #discardCheckpoint(
+    path: string,
+    failure: GhidraSessionError,
+    signal?: AbortSignal,
+  ): Promise<never> {
+    this.#checkpointStaging = { path, disposition: "discard" };
+    try {
+      await this.#finishCheckpointStaging(signal);
+    } catch (cause: unknown) {
+      const cleanup = this.#retainCleanupFailure(
+        new ProviderCleanupError(
+          "ghidra",
+          [path],
+          {
+            reason:
+              "A failed Ghidra checkpoint export left a partial file; close the target to retry its cleanup before another save.",
+            diagnostics: this.#diagnostics(),
+          },
+          { cause },
+        ),
+      );
+      throw failure.withCleanupFailure(cleanup);
+    }
+    throw failure;
+  }
+
+  async #finishCheckpointStaging(signal?: AbortSignal): Promise<void> {
+    const staged = this.#checkpointStaging;
+    if (staged === undefined) return;
+    if (staged.disposition === "publish") {
+      if (this.#checkpoint === undefined)
+        throw this.#failure(
+          "protocol",
+          "Checkpoint publication owner is missing",
+        );
+      await this.#checkpoint.publish(staged.path, signal);
+    }
+    await rm(staged.path, { force: true });
     this.#checkpointStaging = undefined;
   }
 

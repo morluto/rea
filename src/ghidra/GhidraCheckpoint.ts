@@ -200,6 +200,14 @@ export class GhidraCheckpoint {
   get hasResources(): boolean {
     return this.#lease !== undefined || this.#pendingRemoval.size > 0;
   }
+  get cleanupResources(): readonly string[] {
+    return [
+      ...(this.#lease === undefined
+        ? []
+        : [this.#lease.socketPath ?? this.selection.directory]),
+      ...this.#pendingRemoval,
+    ];
+  }
   get observation() {
     return {
       directory: this.selection.directory,

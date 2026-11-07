@@ -14,6 +14,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
+import { acquireOwnedLease } from "../process/OwnedLease.js";
 import {
   GhidraCheckpoint,
   resolveGhidraCheckpoint,
@@ -24,9 +25,21 @@ vi.mock("node:fs/promises", async (importOriginal) => {
   return { ...actual, rename: vi.fn(actual.rename), rm: vi.fn(actual.rm) };
 });
 
+vi.mock("../process/OwnedLease.js", async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import("../process/OwnedLease.js")>();
+  return { ...actual, acquireOwnedLease: vi.fn(actual.acquireOwnedLease) };
+});
+
 const roots: string[] = [];
 const owners: GhidraCheckpoint[] = [];
 afterEach(async () => {
+  const leases = await vi.importActual<
+    typeof import("../process/OwnedLease.js")
+  >("../process/OwnedLease.js");
+  vi.mocked(acquireOwnedLease)
+    .mockReset()
+    .mockImplementation(leases.acquireOwnedLease);
   const actual =
     await vi.importActual<typeof import("node:fs/promises")>(
       "node:fs/promises",
@@ -37,6 +50,47 @@ afterEach(async () => {
   for (const root of roots.splice(0))
     await rm(root, { recursive: true, force: true });
 });
+
+it.skipIf(process.platform === "win32")(
+  "retains lease identity after release fails and releases it on retry",
+  async () => {
+    const f = await fixture();
+    const actual = await vi.importActual<
+      typeof import("../process/OwnedLease.js")
+    >("../process/OwnedLease.js");
+    vi.mocked(acquireOwnedLease).mockImplementationOnce(async (input) => {
+      const result = await actual.acquireOwnedLease(input);
+      if (!result.acquired) return result;
+      let failed = false;
+      return {
+        acquired: true,
+        lease: {
+          ...result.lease,
+          release: async () => {
+            if (!failed) {
+              failed = true;
+              throw new Error("controlled lease release failure");
+            }
+            await result.lease.release();
+          },
+        },
+      };
+    });
+    await f.owner.acquire("original");
+    const retained = [...f.owner.cleanupResources];
+    expect(retained).toHaveLength(1);
+    await expect(f.owner.close()).rejects.toThrow(
+      "controlled lease release failure",
+    );
+    expect(f.owner.cleanupResources).toEqual(retained);
+    expect(f.owner.hasResources).toBe(true);
+    await f.owner.close();
+    expect(f.owner.cleanupResources).toEqual([]);
+    const peer = new GhidraCheckpoint(f.selection, f.resources);
+    owners.push(peer);
+    expect(await peer.acquire("replacement")).toBeUndefined();
+  },
+);
 const profile = createAnalysisProfile(
   { id: "ghidra", name: "Ghidra", version: "12.1.4" },
   { import_mode: "test" },

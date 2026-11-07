@@ -402,6 +402,7 @@ async function handleCheckpoint(socket, request, state) {
     !state.failedCheckpoint
   ) {
     state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
     socket.write(
       JSON.stringify({
         id: request.id,

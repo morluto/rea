@@ -1,6 +1,13 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { access, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
@@ -144,6 +151,11 @@ it.skipIf(process.platform === "win32")(
       ).ok,
     ).toBe(true);
     expect((await f.client.close()).ok).toBe(false);
+    expect(
+      (await readdir(f.launcher.runtimeRoots[0]!)).filter((name) =>
+        name.startsWith("checkpoint-"),
+      ),
+    ).toEqual([]);
     expect(f.client.isReady()).toBe(true);
     expect(await readFile(path, "utf8")).toEqual(before);
     expect((await f.client.callTool("list_documents", {})).ok).toBe(true);
@@ -186,6 +198,44 @@ it.skipIf(process.platform === "win32")(
     expect((await other.start()).ok).toBe(false);
     f.launcher.processes[0]!.send("release_checkpoint");
     expect((await closing).ok).toBe(true);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "retains a failed partial-file cleanup and retries it before exporting again",
+  async () => {
+    const f = await fixture("checkpoint_fail_close");
+    expect((await f.client.start()).ok).toBe(true);
+    const manifestPath = join(f.selection.directory, "current.json");
+    const before = await readFile(manifestPath, "utf8");
+    await f.client.callTool("set_address_name", {
+      address: "0x1000",
+      name: "changed",
+    });
+    const actual =
+      await vi.importActual<typeof import("node:fs/promises")>(
+        "node:fs/promises",
+      );
+    vi.mocked(rm).mockImplementation(async (path, options) => {
+      if (typeof path === "string" && /checkpoint-[a-f0-9-]+\.gzf$/.test(path))
+        throw new Error("controlled partial cleanup failure");
+      await actual.rm(path, options);
+    });
+    const first = await f.client.close();
+    expect(first.ok).toBe(false);
+    expect((await f.client.close()).ok).toBe(false);
+    expect(await readFile(manifestPath, "utf8")).toBe(before);
+    expect(
+      (await readdir(f.launcher.runtimeRoots[0]!)).filter((name) =>
+        name.startsWith("checkpoint-"),
+      ),
+    ).toHaveLength(1);
+    if (first.ok) throw new Error("partial cleanup unexpectedly succeeded");
+    expect(first.error.cleanupResources).toContain(f.launcher.runtimeRoots[0]);
+    expect(f.client.isReady()).toBe(true);
+    vi.mocked(rm).mockImplementation(actual.rm);
+    expect((await f.client.close()).ok).toBe(true);
+    expect(first.error.cleanupResources).toEqual([]);
   },
 );
 
