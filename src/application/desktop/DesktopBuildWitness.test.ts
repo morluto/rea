@@ -7,6 +7,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { BuildComputerActionLog } from "./DesktopBuildActionLog.js";
 import {
@@ -34,7 +35,12 @@ const computer = {
 } as WitnessedComputer;
 
 const witnessAt = async (bundle: string) =>
-  new DesktopBuildWitness(computer, new BuildComputerActionLog(), bundle);
+  new DesktopBuildWitness(
+    computer,
+    new BuildComputerActionLog(),
+    SETTLE_TIMING,
+    bundle,
+  );
 
 describe("bundle task reads", () => {
   it("returns a cancelled result when reading the bundle's task is aborted", async () => {
