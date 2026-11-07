@@ -11,6 +11,8 @@ import {
   listElectronTargetsInputSchema,
 } from "../domain/javascript/electronObservation.js";
 import { electronActiveObservationInputSchema } from "../domain/javascript/electronActiveObservation.js";
+import { reconcileJavaScriptRuntimeRequestSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
+import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
@@ -37,6 +39,7 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -113,11 +116,10 @@ const registerElectronActiveCommand = (
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one owned Electron scenario with cancellable actions",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file matching capture_electron_scenario",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or a JSON file matching capture_electron_scenario",
+        electronActiveObservationInputSchema,
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -181,11 +183,11 @@ const registerJavaScriptRuntimeReconciliationCommand = (
     description:
       "Reconcile static application and passive runtime Evidence JSON",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
+        getEvidenceInputContract(reconcileJavaScriptRuntimeRequestSchema)
+          .frameSchema,
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
