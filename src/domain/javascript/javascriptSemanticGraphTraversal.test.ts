@@ -1,4 +1,5 @@
 import {
+  resolveJavaScriptSemanticEvidence,
   semanticFixtureGraph,
   semanticGraphTestEvidence,
   unknownSemanticGraphTestEvidence,
@@ -20,7 +21,6 @@ import {
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
   JavaScriptSemanticEvidenceContextRegistry,
-  resolveJavaScriptSemanticEvidence,
   type JavaScriptSemanticGraph,
 } from "./javascriptSemanticGraph.js";
 import { queryJavaScriptSemanticGraph } from "./javascriptSemanticQuery.js";

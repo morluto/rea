@@ -246,7 +246,6 @@ itWithCaptureCapability(
           },
         },
       );
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       expect(result.value.frames.length).toBeGreaterThan(0);
       expect(Date.parse(result.value.manifest.completed_at)).toBeLessThan(
