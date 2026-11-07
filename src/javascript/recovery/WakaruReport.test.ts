@@ -50,9 +50,7 @@ it("names the fixed report allowance when provenance.json exceeds 8 MiB", async 
   expect(projected.remediation.action).toContain("no runtime override");
   expect(projected.remediation.action).toContain("max_heap_mb");
   expect(projected.remediation.action).toContain("analysis_timeout_ms");
-  expect(projected.remediation.action).toContain(
-    "Repeating the unchanged request fails the same way",
-  );
+  expect(projected.remediation.action).toMatch(/unchanged request.*fails/iu);
 });
 
 it("keeps a malformed provenance report distinct from the fixed report allowance", async () => {

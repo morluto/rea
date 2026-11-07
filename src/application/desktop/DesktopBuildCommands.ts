@@ -125,6 +125,7 @@ export const runRea = (
   options: {
     readonly stdout: string;
     readonly files?: Readonly<Record<string, string>>;
+    readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
 ): Promise<number> =>
