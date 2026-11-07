@@ -602,7 +602,10 @@ const hasInheritedListenerMethodOverride = (
         specifier === "events"
       ) {
         const isClass = origin.importedPath[0] === "EventEmitter";
-        const isNamespace = origin.importedPath.length === 0;
+        const isNamespace =
+          origin.importedPath.length === 0 ||
+          (origin.importedPath.length === 1 &&
+            origin.importedPath[0] === "default");
         if (
           isClass ||
           (isNamespace &&
@@ -806,21 +809,44 @@ const isProvenCreationNode = (
   }
   if (!t.isNewExpression(unwrapped)) return false;
   const constructor = unwrapped.callee;
-  if (!t.isIdentifier(constructor)) return false;
-  const owner = resolveSemanticBindingState(
-    state,
-    constructor,
-    constructor.name,
-  );
-  if (
-    owner === undefined ||
-    owner.memberWrites.length > 0 ||
-    owner.escapedPaths.some(
-      (effect) =>
-        escapeLimitNode !== undefined && effect.node !== escapeLimitNode,
+  if (t.isIdentifier(constructor)) {
+    const owner = resolveSemanticBindingState(
+      state,
+      constructor,
+      constructor.name,
+    );
+    if (
+      owner === undefined ||
+      owner.memberWrites.length > 0 ||
+      owner.escapedPaths.some(
+        (effect) =>
+          escapeLimitNode !== undefined && effect.node !== escapeLimitNode,
+      )
     )
-  )
-    return false;
+      return false;
+  } else if (
+    t.isMemberExpression(constructor) &&
+    t.isIdentifier(constructor.object)
+  ) {
+    const owner = resolveSemanticBindingState(
+      state,
+      constructor.object,
+      constructor.object.name,
+    );
+    if (
+      owner === undefined ||
+      owner.escapedPaths.some(
+        (effect) =>
+          escapeLimitNode !== undefined && effect.node !== escapeLimitNode,
+      ) ||
+      owner.memberWrites.some(({ path }) =>
+        path.some(
+          (segment) => segment === "prototype" || segment === "EventEmitter",
+        ),
+      )
+    )
+      return false;
+  }
   return (
     builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
       "EventEmitter" &&

@@ -758,3 +758,31 @@ it("iteratively follows emitter alias chains and bounds traversal at resource li
   expect(ir.childProcessInteractions).toEqual([]);
   expect(ir.eventOperations).toEqual([]);
 });
+
+it("drops rejected listener for EventEmitter constructed via namespace import", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import * as events from "node:events";
+    const e = new events.EventEmitter();
+    e.on("ready", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("drops rejected listener for EventEmitter constructed via default import", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import events from "node:events";
+    const e = new events.EventEmitter();
+    e.on("ready", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidate for EventEmitter when namespace import escapes", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import * as events from "node:events";
+    opaqueHelper(events);
+    const e = new events.EventEmitter();
+    e.on("ready", 1);
+  `);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
