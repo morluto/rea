@@ -39,7 +39,11 @@ import {
   locatePointer,
   resolvePointer,
 } from "./viewPointer.js";
-import type { CheckTree } from "./appTaskDraftTree.js";
+import {
+  referenceRoots,
+  valueFormat,
+  type CheckTree,
+} from "./appTaskDraftTree.js";
 
 type Suggestion = DesktopTaskCheckInput;
 
@@ -546,6 +550,8 @@ export const namedDraft = (
     ends,
     listed: tree.listed,
     noise,
+    format: (view, pointer) => valueFormat(tree, view, pointer),
+    referenceRoots: (view) => referenceRoots(tree, view),
   });
   // The count guard sits outside the cap, so line and sibling guards never squeeze it out.
   const guards = edited

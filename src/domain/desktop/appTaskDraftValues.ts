@@ -139,9 +139,9 @@ const indexUnder = (
  * more than that. A view the app keeps of the document, as Umbrello's
  * `listview` mirroring its model by id, names nothing.
  */
-const referenceIndex = (view: JsonValue | null) => {
+const referenceIndex = (roots: readonly JsonValue[]) => {
   const index = new Map<string, Map<string, JsonValue[]>>();
-  const pending: JsonValue[] = [view];
+  const pending: JsonValue[] = [...roots];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (isXmlElement(node) && isViewStateName(node.name)) continue;
     if (isXmlElement(node)) {
@@ -289,6 +289,11 @@ export interface ValueContext {
   readonly listed: (view: JsonValue | null, pointer: string) => boolean;
   /** Why a pointer is noise, if it is. */
   readonly noise: (pointer: string) => NoiseReason | undefined;
+  readonly format: (
+    view: JsonValue | null,
+    pointer: string,
+  ) => "json" | "xml" | "archive";
+  readonly referenceRoots: (view: JsonValue | null) => readonly JsonValue[];
 }
 
 const byteLength = (value: unknown) =>
@@ -372,6 +377,7 @@ const entryOf = (
   const listPointer = pointer.replace(/\/\d+$/u, "");
   const indexedText =
     found &&
+    context.format(view, pointer) === "xml" &&
     kind !== "changed" &&
     /\/children\/\d+$/u.test(pointer) &&
     Array.isArray(resolvePointer(view, listPointer)) &&
@@ -380,12 +386,17 @@ const entryOf = (
     found && located.byPosition.length > 0
       ? "by_position"
       : (context.noise(pointer) ?? (indexedText ? "by_position" : undefined));
-  const refers = referencesOf(references(view), view, pointer).slice(
-    0,
-    VALUE_LIMITS.references,
-  );
+  const refers =
+    context.format(view, pointer) === "xml"
+      ? referencesOf(references(view), view, pointer).slice(
+          0,
+          VALUE_LIMITS.references,
+        )
+      : [];
   const alternatives =
-    kind === "changed" && note === undefined
+    kind === "changed" &&
+    note === undefined &&
+    context.format(view, pointer) === "xml"
       ? alternativePointers(view, pointer)
       : [];
   return {
@@ -394,11 +405,19 @@ const entryOf = (
     before:
       kind === "added"
         ? null
-        : compactValue(seedValue(context, pointer), VALUE_LIMITS.chars),
+        : compactValue(
+            seedValue(context, pointer),
+            VALUE_LIMITS.chars,
+            context.format(baseline, pointer),
+          ),
     after:
       kind === "removed"
         ? null
-        : compactValue(resolvePointer(final, pointer), VALUE_LIMITS.chars),
+        : compactValue(
+            resolvePointer(final, pointer),
+            VALUE_LIMITS.chars,
+            context.format(final, pointer),
+          ),
     ...(note === undefined ? {} : { note }),
     ...(refers.length === 0 ? {} : { refers_to: refers }),
     ...(alternatives.length === 0 ? {} : { alternatives }),
@@ -489,7 +508,7 @@ export const draftValues = (
   const references = (view: JsonValue | null) => {
     const known = indexes.get(view);
     if (known !== undefined) return known;
-    const made = referencesFrom(referenceIndex(view));
+    const made = referencesFrom(referenceIndex(context.referenceRoots(view)));
     indexes.set(view, made);
     return made;
   };
@@ -497,7 +516,11 @@ export const draftValues = (
   const entries = [
     ...change.added
       .filter((pointer) => context.listed(final, pointer))
-      .flatMap((pointer) => fieldsOf(final, pointer))
+      .flatMap((pointer) =>
+        context.format(final, pointer) === "xml"
+          ? fieldsOf(final, pointer)
+          : [pointer],
+      )
       .map((pointer) => entryOf(context, references, pointer, "added")),
     ...change.changed
       .filter((pointer) => context.listed(final, pointer))
