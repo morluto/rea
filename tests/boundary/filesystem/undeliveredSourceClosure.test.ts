@@ -435,6 +435,26 @@ it("reports the closure when an existing output refuses publication", async () =
   expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
 });
 
+it("reports result sources when an existing output refuses publication", async () => {
+  const root = await createTestTempDirectory("rea-closure-result-sources-");
+  const held = source("held");
+  const requested = delivery(root);
+  await writeFile(requested.evidenceOutput, "original");
+  const output = await publishCliAnalysisEvidence(
+    { ...ok(observed([held.evidence_id])), sourceEvidence: [held] },
+    requested,
+  );
+  expect(output).toMatchObject({ details: { reason: "exists" } });
+  expect(closureOf(output)).toMatchObject({
+    publication: "not_published",
+    complete: true,
+    omitted_count: 0,
+    omitted: [],
+  });
+  expect(closureOf(output).records).toEqual([held]);
+  expect(await readFile(requested.evidenceOutput, "utf8")).toBe("original");
+});
+
 it("defers to the committed bundle receipt after cancellation wins late", async () => {
   const root = await createTestTempDirectory("rea-closure-committed-");
   const held = source("held");

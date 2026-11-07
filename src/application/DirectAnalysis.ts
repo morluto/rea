@@ -20,8 +20,14 @@ import {
   tryParseEvidence,
   withEvidenceCallerInputPath,
 } from "../domain/evidence.js";
-import { createImmutableEvidenceBundle } from "../domain/evidenceBundle.js";
-import { retainAnalysisResultSources } from "./investigation/recordEvidenceSources.js";
+import {
+  createImmutableEvidenceBundle,
+  type EvidenceBundle,
+} from "../domain/evidenceBundle.js";
+import {
+  retainAnalysisResultSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
 import {
   createInvestigationEvidenceClosureChecker,
   collectInvestigationEvidenceClosure,
@@ -147,20 +153,21 @@ export const runDirectAnalysis = async (
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
     readonly includeEvidenceSources?: boolean;
+    /** Capture the exact session Evidence available to a one-shot CLI adapter. */
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
   } = {},
-): Promise<
-  Result<Evidence, JsonValue> & {
-    readonly sourceEvidence?: readonly Evidence[];
-  }
-> =>
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> =>
   withProcessCancellation(options.signal, (signal) =>
     runAnalysis(dependencies, path, tool, arguments_, {
       logger: options.logger ?? silentLogger,
       snapshotPath: options.snapshotPath,
       signal,
-      ...(options.includeEvidenceSources
+      ...(options.includeEvidenceSources === true
         ? { includeEvidenceSources: true }
         : {}),
+      ...(options.onEvidenceBundle === undefined
+        ? {}
+        : { onEvidenceBundle: options.onEvidenceBundle }),
       ...targetSelection(options),
       ...(options.providerId === undefined
         ? {}
@@ -379,6 +386,7 @@ const runAnalysis = async (
     readonly snapshotPath: string | undefined;
     readonly signal: AbortSignal;
     readonly evidenceParameters?: Readonly<Record<string, JsonValue>>;
+    readonly onEvidenceBundle?: (bundle: EvidenceBundle) => void;
     readonly createSession?: () => BinarySession | Promise<BinarySession>;
     readonly includeEvidenceSources?: boolean;
     readonly providerId?: AnalysisProviderSelector;
@@ -387,11 +395,7 @@ const runAnalysis = async (
     readonly entryPoint?: string;
     readonly espFlash?: EspFlashSelection;
   },
-): Promise<
-  Result<Evidence, JsonValue> & {
-    readonly sourceEvidence?: readonly Evidence[];
-  }
-> => {
+): Promise<AnalysisResultWithSources<Evidence, JsonValue>> => {
   const { logger, signal, snapshotPath } = options;
   const evidenceParameters = options.evidenceParameters ?? arguments_;
   let session: BinarySession;
@@ -498,8 +502,6 @@ const runAnalysis = async (
           evidenceProfile,
         });
         if (cached !== undefined) {
-          if (cached.evidence_links.length === 0)
-            return ok(withEvidenceCallerInputPath(cached, path));
           const records = new Map(
             snapshot.evidence_bundle.records.map((record) => [
               record.evidence_id,
@@ -517,6 +519,7 @@ const runAnalysis = async (
             );
             if (!captured.ok)
               return err(captured.error.retainPartialObservation(evidence));
+            options.onEvidenceBundle?.(snapshot.evidence_bundle);
             return ok(evidence);
           }
         }
@@ -544,6 +547,7 @@ const runAnalysis = async (
       evidenceParameters,
       signal,
       evidenceProfile,
+      saveSnapshot: snapshotPath !== undefined,
     });
     if (!executed.ok) {
       if (options.includeEvidenceSources) {
@@ -575,6 +579,7 @@ const runAnalysis = async (
         result: evidence.normalized_result,
         evidenceId: evidence.evidence_id,
         recordUnknown: (unknown) => session.recordUnknown(unknown),
+        evidenceRetained: true,
       });
       if (!unknowns.ok)
         return err(unknowns.error.retainPartialObservation(evidence));
@@ -624,6 +629,7 @@ const runAnalysis = async (
           return err(written.error.retainPartialObservation(evidence));
       }
     }
+    options.onEvidenceBundle?.(session.exportEvidenceBundle());
     return ok(evidence);
   };
   const outcome = await withSessionCleanup<{
@@ -671,6 +677,7 @@ const executeAnalysisTool = async (input: {
   readonly evidenceParameters: Readonly<Record<string, JsonValue>>;
   readonly signal: AbortSignal;
   readonly evidenceProfile: AnalysisProfileCommitment | undefined;
+  readonly saveSnapshot: boolean;
 }): Promise<
   Result<
     {
@@ -735,7 +742,12 @@ const executeAnalysisTool = async (input: {
         : { cachePolicy: result.value.cachePolicy }),
     });
   }
-  let result = await session.execute(tool, input.arguments, { signal });
+  let result = await session.execute(tool, input.arguments, {
+    signal,
+    ...(input.saveSnapshot && tool === "procedure_pseudo_code"
+      ? { snapshotContext: "one-shot-target" as const }
+      : {}),
+  });
   if (
     tool === "xrefs" &&
     typeof input.arguments.address === "string" &&

@@ -15,8 +15,6 @@ export const snapshotReplayBinding = (
     evidenceForAnalysis: lookup,
   }),
 ): SnapshotReplayBinding | null => {
-  if (evidence.evidence_links.length === 0)
-    return { evidenceId: evidence.evidence_id };
   if (!checkClosure(evidence.evidence_links)) return null;
   const sources: Evidence[] = [];
   for (const id of evidence.evidence_links) {
@@ -25,6 +23,9 @@ export const snapshotReplayBinding = (
     if (source === undefined) return null;
     sources.push(source);
   }
+  // The replay is a new observation with its own replay limitation. Retain
+  // its original record as well as the original's immediate sources.
+  sources.push(evidence);
   return {
     evidenceId: evidence.evidence_id,
     sourceEvidence: Object.freeze(sources),

@@ -357,24 +357,41 @@ const registerTraceCommand = (
         .default(false)
         .describe("Match the query with exact letter case"),
       snapshot: snapshotSelectionOption,
+      ...analysisEvidenceDeliveryOptions,
       ...nativeOpenOptionFields,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "trace", () =>
-        runDirectAnalysis(
-          args.path,
-          "trace_feature",
-          {
-            query: resolveCliAnalysisSelector(
-              args.query,
-              options.query,
-              "query",
-              "trace_feature",
-            ),
-            case_sensitive: options.caseSensitive,
-          },
-          directAnalysisOptionsFromCli(logger, options),
-        ).then(projectCliAnalysisResult),
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "trace", async () => {
+          const delivery = {
+            providerId: "auto",
+            operation: "trace_feature",
+            signal,
+            detail: options.detail,
+            evidenceOutput: options.evidence_output,
+          };
+          const inputError = cliEvidenceDeliveryInputError(delivery);
+          if (inputError !== undefined) return projectAnalysisError(inputError);
+          const complete = await runDirectAnalysis(
+            args.path,
+            "trace_feature",
+            {
+              query: resolveCliAnalysisSelector(
+                args.query,
+                options.query,
+                "query",
+                "trace_feature",
+              ),
+              case_sensitive: options.caseSensitive,
+            },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
+          );
+          return publishCliAnalysisEvidence(complete, delivery);
+        }),
       ),
   });
 };
