@@ -247,6 +247,21 @@ describe("openSeedDocument settings spelling", () => {
     });
   });
 
+  it("remaps a captured path in an env assignment and leaves the program", () => {
+    expect(
+      openSeedDocument(["env", `GNUPGHOME=${HOME}/storage/profile`, "gpa"], {
+        ...AT_HOME,
+        exec: "gpa",
+        documents: [],
+        isCaptured: (path) => path === "storage/profile" || path === ".gnupg",
+        spell: (path) => (path === "storage/profile" ? ".gnupg" : path),
+      }),
+    ).toEqual({
+      argv: ["env", `GNUPGHOME=${HOME}/.gnupg`, "gpa"],
+      opens: { kind: "empty" },
+    });
+  });
+
   it("resolves a relative note in the captured directory when that directory moves", () => {
     expect(
       openSeedDocument(["editor", "note.txt"], {
