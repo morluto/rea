@@ -90,9 +90,11 @@ it.each(["compact", "full"] as const)(
         code: "invalid_request",
         message,
         remediation: {
-          action: expect.stringContaining("explicit analysis address"),
+          action: expect.stringContaining("ram:0x1000"),
         },
       });
+      expect(error.remediation.action).toContain("inspect_native_load_image");
+      expect(error.remediation.action).toContain("bare 0x");
       expect(error.recovery).toBeUndefined();
     } finally {
       await harness.close();
