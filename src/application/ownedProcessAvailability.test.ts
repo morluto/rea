@@ -7,6 +7,7 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { ProcessAdmissionError } from "../process/ProcessAdmissionError.js";
 import { LinuxOwnedProcessPrerequisiteError } from "../process/ProcessOwnershipObservation.js";
 import { ownedProcessPrerequisiteAvailability } from "./ownedProcessAvailability.js";
 
@@ -139,5 +140,18 @@ describe("Linux ownership prerequisite discovery", () => {
       expect(eioAvailability.remediation).not.toContain("procps");
       expect(eioAvailability.remediation).not.toContain("PATH");
     }
+
+    const unreported = new LinuxOwnedProcessPrerequisiteError(
+      new ProcessAdmissionError("current_process_unreported"),
+    );
+    expect(ownedProcessPrerequisiteAvailability(unreported)).toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      remediation: expect.stringContaining("/proc or ps"),
+      diagnostics: {
+        stage: "ownership_preparation",
+        admission_code: "current_process_unreported",
+      },
+    });
   });
 });

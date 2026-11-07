@@ -79,6 +79,9 @@ export const ownedProcessPrerequisiteAvailability = (
         stage: "ownership_preparation",
         prerequisite_provider_id: refusal.providerId,
         prerequisite_operation: refusal.operation,
+        ...(refusal.diagnostics?.admission_code === undefined
+          ? {}
+          : { admission_code: refusal.diagnostics.admission_code }),
         ...(refusal.diagnostics?.system_code === undefined
           ? {}
           : { system_code: refusal.diagnostics.system_code }),

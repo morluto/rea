@@ -1514,7 +1514,9 @@ export const createSystemProcessOwnershipHost = (
       if (platform === "linux") {
         const processes = await safeListProcesses(signal);
         if (!processes.some(({ pid }) => pid === process.pid))
-          throw new ProcessAdmissionError("current_process_unreported");
+          throw new LinuxOwnedProcessPrerequisiteError(
+            new ProcessAdmissionError("current_process_unreported"),
+          );
       }
     },
     listProcesses,
@@ -1700,36 +1702,52 @@ export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   readonly systemCode: string | undefined;
+  readonly admissionCode: string | undefined;
 
   constructor(cause: unknown, systemCode?: string) {
+    const admissionCode =
+      cause instanceof ProcessAdmissionError ? cause.code : undefined;
     const rawCode =
       systemCode ??
       execFileOutputFailure(cause)?.code ??
       (typeof cause === "object" && cause !== null
         ? Reflect.get(cause, "code")
         : undefined);
-    const resolvedCode = typeof rawCode === "string" ? rawCode : undefined;
-    const isMissing = resolvedCode === "ENOENT" || resolvedCode === undefined;
-    const reason = isMissing
-      ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
-      : `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`;
-    const remediation = isMissing
-      ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
-      : processOwnershipAdmissionRecovery(
-          "baseline_unavailable",
-          "linux",
-          resolvedCode,
-        );
+    const resolvedCode =
+      admissionCode === undefined && typeof rawCode === "string"
+        ? rawCode
+        : undefined;
+    const isMissing =
+      admissionCode === undefined &&
+      (resolvedCode === "ENOENT" || resolvedCode === undefined);
+    const reason =
+      admissionCode !== undefined || isMissing
+        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+        : `Linux process ownership inspection failed to execute ps (${resolvedCode}): ${errorMessage(cause)}`;
+    const remediation =
+      admissionCode !== undefined
+        ? processOwnershipAdmissionRecovery(admissionCode, "linux")
+        : isMissing
+          ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
+          : processOwnershipAdmissionRecovery(
+              "baseline_unavailable",
+              "linux",
+              resolvedCode,
+            );
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
       remediationAction: remediation,
       diagnostics: {
         boundary: "process-ownership",
+        ...(admissionCode === undefined
+          ? {}
+          : { admission_code: admissionCode }),
         ...(resolvedCode === undefined ? {} : { system_code: resolvedCode }),
       },
     });
     this.systemCode = resolvedCode;
+    this.admissionCode = admissionCode;
   }
 }
 

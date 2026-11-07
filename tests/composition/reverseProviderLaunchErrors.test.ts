@@ -849,6 +849,31 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
     boundary: "process-ownership",
     system_code: "ENOENT",
   });
+
+  const emptyTableHost = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => ({
+        stdout: "    1     0     1     0 Ss   /sbin/init\n",
+        stderr: "",
+        stdoutBytes: 40,
+        stderrBytes: 0,
+      }),
+    },
+  );
+  const unreportedFailure = (await emptyTableHost
+    .prepare?.()
+    .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
+  expect(unreportedFailure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(unreportedFailure.remediationAction).toContain(
+    processOwnershipAdmissionRecovery("current_process_unreported", "linux"),
+  );
+  expect(unreportedFailure.diagnostics).toMatchObject({
+    boundary: "process-ownership",
+    admission_code: "current_process_unreported",
+  });
+  expect(unreportedFailure.diagnostics).not.toHaveProperty("system_code");
 });
 
 it.each(["EIO", "EPERM"] as const)(
