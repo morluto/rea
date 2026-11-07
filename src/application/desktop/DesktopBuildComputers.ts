@@ -233,6 +233,10 @@ const liveComputer = (
  * start past; any other failure as it is. Readiness is `reason`, not the
  * message.
  */
+/** The start failure's notice that the bundle seed still holds lock files. */
+export const seededLockStartNotice = (locks: readonly string[]): string =>
+  `The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`;
+
 const withSeededLocks = async (
   source: BuildSource,
   cause: unknown,
@@ -243,7 +247,7 @@ const withSeededLocks = async (
   return locks.length === 0
     ? cause
     : new ComputerStartFailure(
-        `${cause.message} The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`,
+        `${cause.message} ${seededLockStartNotice(locks)}`,
         cause.remediation,
         cause.cause === undefined ? undefined : { cause: cause.cause },
       );
