@@ -4,12 +4,15 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
   capture,
+  change,
   readers,
+  retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -83,7 +86,126 @@ const unretainedNoteCapture = () => {
   };
 };
 
+/** A note of 6,000 lines, more than the 5,000 a text view keeps, and the edit that adds `milk` at its top. */
+const LONG_NOTE = `${Array.from(
+  { length: 6000 },
+  (_, index) => `note ${String(index + 1)}`,
+).join("\n")}\n`;
+const MILK_NOTE = `milk\n${LONG_NOTE}`;
+
+/** The capture with the long note at the seed and `milk` added to it by the edit. */
+const longNoteCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? {
+              ...checkpoint,
+              retained: [
+                ...checkpoint.retained,
+                retained(NOTE_PATH, LONG_NOTE),
+              ],
+            }
+          : {
+              ...checkpoint,
+              changes: checkpoint.changes.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? change(NOTE_PATH, { before: LONG_NOTE, after: MILK_NOTE })
+                  : entry,
+              ),
+              retained: checkpoint.retained.map((entry) =>
+                entry.path === NOTE_PATH
+                  ? retained(NOTE_PATH, MILK_NOTE)
+                  : entry,
+              ),
+            },
+      ),
+    },
+  };
+};
+
 describe("exportDesktopApplication with a task's seed", () => {
+  it("refuses a task whose only seed failure misses a line its cut view may have left out", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-");
+    const path = join(scratch, "task.json");
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+        ]),
+      ),
+    );
+    const directory = join(scratch, "bundle");
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+
+    expect(result).toBeInstanceOf(AnalysisInputError);
+    const { issues, userMessage } = result as AnalysisInputError;
+    expect(issues.map(({ path }) => path)).toEqual([["task"]]);
+    // The undecided check by id, with its file and line, in any wording.
+    for (const fact of [JSON.stringify("has-milk"), NOTE, '"milk"'])
+      expect(userMessage).toContain(fact);
+    expect(await exists(directory)).toBe(false);
+
+    // A failure on what the seed's view shows still keeps it, and only that one counts.
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "has-milk",
+            kind: "lines_present",
+            file: NOTE,
+            lines: ["milk"],
+          },
+          {
+            id: "row",
+            kind: "row_present",
+            file: DATABASE,
+            table: "notes",
+            where: { id: 2 },
+          },
+        ]),
+      ),
+    );
+    const kept = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(longNoteCapture(), undefined, [
+          LONG_NOTE,
+          MILK_NOTE,
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+      },
+      readers,
+    );
+    if (kept instanceof Error) throw kept;
+    expect(kept.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["row"] },
+    });
+  });
+
   it("treats a file present but not retained at the baseline as absent on the seed, as the computer starts", async () => {
     const scratch = await createTestTempDirectory("desktop-task-");
     const path = join(scratch, "task.json");
@@ -190,6 +312,17 @@ describe("exportDesktopApplication with a task", () => {
       task([
         {
           kind: "value_equals",
+          file: NOTE,
+          pointer: "/lines/0",
+          value: "milk",
+        },
+      ]),
+      "which is text; use lines_present",
+    ],
+    [
+      task([
+        {
+          kind: "text_contains",
           file: NOTE,
           pointer: "/lines/0",
           value: "milk",

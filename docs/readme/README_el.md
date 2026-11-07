@@ -9,7 +9,7 @@
 **Βρήκες μια λειτουργία που σου αρέσει; Μάθε πώς λειτουργεί, μέχρι το επίπεδο του δυαδικού κώδικα.**
 
 [![Έκδοση npm](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![Κατάλογος εργαλείων MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![Κατάλογος εργαλείων MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Απαιτήσεις Node.js](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#τι-μπορείς-να-αναλύσεις)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![Άδεια MIT](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -82,7 +82,7 @@ npx rea-agents setup
 
 Επίλεξε τους agents σου, έλεγξε τις προτεινόμενες αλλαγές και ενέκρινέ τες. Η διαδικασία προσθέτει τον MCP server του REA και τις αντίστοιχες οδηγίες εργασίας, κρατώντας αντίγραφα ασφαλείας των υφιστάμενων ρυθμίσεων. Στη συνέχεια, επανεκκίνησε τον agent σου.
 
-Υποστηρίζονται τα Claude Code, Codex, Cursor, Gemini CLI, Grok Build και [άλλοι agents](../installation.md#supported-agents). Για τη ρύθμιση των παρόχων ανάλυσης και τη μη αυτόματη καταχώριση MCP, δες τον οδηγό [εγκατάστασης και ρύθμισης](../installation.md).
+Υποστηρίζονται τα Claude Code, Codex, Cursor, Gemini CLI, Grok Build και [άλλοι agents](../getting-started/installation.md#supported-agents). Για τη ρύθμιση των παρόχων ανάλυσης και τη μη αυτόματη καταχώριση MCP, δες τον οδηγό [εγκατάστασης και ρύθμισης](../getting-started/installation.md).
 
 Το MCP χρησιμοποιεί συμπαγή σχήματα εισόδου από προεπιλογή. Για πλήρεις οδηγίες πεδίων και ένθετης επικύρωσης, όρισε `REA_MCP_INPUT_SCHEMA_PROFILE=full` στην καταχώριση MCP. Και τα δύο προφίλ διατηρούν όλα τα εργαλεία και την ίδια κανονική επικύρωση διακομιστή· δες τον οδηγό συμβολαίων MCP.
 
@@ -111,7 +111,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-Για ανάλυση κώδικα μηχανής, ρύθμισε πρώτα έναν πάροχο ανάλυσης. Ο [οδηγός CLI και Evidence](../cli.md) περιγράφει τις σχετικές εντολές, την επιλογή παρόχου, τα στιγμιότυπα και τη χρήση σε scripts.
+Για ανάλυση κώδικα μηχανής, ρύθμισε πρώτα έναν πάροχο ανάλυσης. Ο [οδηγός CLI και Evidence](../getting-started/cli.md) περιγράφει τις σχετικές εντολές, την επιλογή παρόχου, τα στιγμιότυπα και τη χρήση σε scripts.
 
 ### Ενημέρωση του REA
 
@@ -151,46 +151,46 @@ npx rea-agents@latest setup
 
 Το REA απαιτεί Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) ή 26+ (>=26.12.1), καθώς και npm. Τα πρόσθετα εργαλεία και τα υποστηριζόμενα συστήματα εξαρτώνται από τον στόχο:
 
-| Στόχος                                 | Τι επιστρέφει το REA                                                                                                        | Απαιτήσεις και οδηγός                                                                                                               |
-| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../native-investigation.md)                                                    |
-| Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../binary-diagnostics.md)                               |
-| Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                  |
-| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                         |
-| PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                             |
-| PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                       |
-| ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                        |
-| ELF dependencies                       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                          |
-| Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                       |
-| Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                       |
-| Linux kernel modules                   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                              |
-| Erlang BEAM                            | IFF chunks, atoms, exports, and tables                                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                   |
-| Αρχείο WASM                            | Έλεγχο εγκυρότητας, ενότητες, ακριβείς μορφές εισαγωγών/εξαγωγών σε WAT και αποκωδικοποιημένο WAT                           | WABT 1.0.42 που παρέχει ο χρήστης· `inspect_wasm_artifact`                                                                          |
-| Bytecode EVM                           | Selectors επιλογής συνάρτησης, μετατοπίσεις σε bytes, εκτιμώμενα ορίσματα και δυνατότητα μεταβολής της κατάστασης           | Τοπική είσοδος σε ακατέργαστα bytes ή δεκαεξαδική μορφή σε Linux x64· [οδηγός EVM χωρίς εκτέλεση](../evm-bytecode.md)               |
-| Βάσεις δεδομένων SQLite                | Πίνακες, στήλες, ευρετήρια, όψεις, triggers και επιλεγμένες γραμμές κανονικών πινάκων                                       | Τοπικό στιγμιότυπο βάσης δεδομένων/WAL· Node.js 24.x >=24.15 ή 26+ με εγγενή όρια SQLite                                            |
-| Καταγεγραμμένες καταρρεύσεις στο Linux | Ακατέργαστες εγγραφές notes, καταχωρητές/σήματα κάθε καταγεγραμμένου νήματος και προαιρετικές πιθανές αντιστοιχίσεις μνήμης | pwntools που παρέχει ο χρήστης σε Linux x64· προαιρετικά GDB/pwndbg· [καταγεγραμμένες καταρρεύσεις](../recorded-crashes.md)         |
-| Εγκαταστάσεις επιφάνειας εργασίας      | Υποψήφια περιβάλλοντα εκτέλεσης, αρχεία τεκμηρίωσης, στοιχεία και επόμενα βήματα                                            | Περιορισμένη επιθεώρηση καταλόγων και κεφαλίδων；[Εφαρμογές επιφάνειας εργασίας](../desktop-applications.md)                        |
-| JavaScript / Electron                  | Modules, εισαγωγές, source maps, διαδρομές, IPC και σχέσεις με πρόσθετα κώδικα μηχανής                                      | Node.js και npm· [ανάλυση εφαρμογών](../javascript-application-workflows.md); Linux: procps `ps`                                    |
-| Ιστότοποι                              | Δομή σελίδων, scripts, παρατηρήσεις δικτύου και ζητούμενα στιγμιότυπα οθόνης                                                | Πρόγραμμα περιήγησης της οικογένειας Chrome· [ανάλυση μέσω προγράμματος περιήγησης](../browser-observation.md)                      |
-| Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../web-network-captures.md) |
-| Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../managed-code-analysis.md)                        |
-| PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                               |
-| APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../android-analysis.md)                   |
-| Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../adb-device-analysis.md)                                    |
-| Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../jeb-analysis.md)         |
-| Πόροι Android                          | Αποκωδικοποιημένο manifest, πίνακες συμβολοσειρών, τοπικές ρυθμίσεις και στοιχεία έκδοσης                                   | Launcher του Apktool που παρέχει ο χρήστης· [οδηγός πόρων](../apktool-resource-analysis.md)                                         |
-| Εφαρμογές Flutter                      | Hash του στιγμιότυπου Dart, ψηφιακά αποτυπώματα βιβλιοθηκών ανά ABI και στοιχεία προέλευσης του build της μηχανής           | Καμία πρόσθετη απαίτηση (στατική ανάλυση APK)· [οδηγός Flutter](../flutter-analysis.md)                                             |
-| Firmware                               | Περιοχές, αποτελέσματα εξαγωγής και παραπομπές για ανάλυση κώδικα μηχανής                                                   | Binwalk / Unblob σε Linux· [οδηγός firmware](../firmware-analysis.md)                                                               |
-| Καταγεγραμμένα πακέτα                  | Επιλεγμένα πεδία, επαναλαμβανόμενες τιμές, φίλτρα και κανόνες decode-as                                                     | Linux: TShark 4.x + prlimit· [οδηγός καταγραφών](../packet-captures.md)                                                             |
-| Σύνοψη πακέτων                         | Τερματικά σημεία, DNS, TLS SNI, κατανομή πρωτοκόλλων και αιτήματα HTTP                                                      | tshark και capinfos που παρέχει ο χρήστης (επαληθευμένα σε Linux)· [οδηγός pcap](../pcap-analysis.md)                               |
-| Καταγεγραμμένα λογικά σήματα           | Σχολιασμούς αποκωδικοποιητή, εύρη δειγμάτων και διαγνωστικά                                                                 | Linux: sigrok-cli 0.7.2 + prlimit· [καταγραφές σημάτων](../signal-recordings.md)                                                    |
-| Πακέτα και πόροι                       | Καταλόγους αρχείων, ψηφιακά αποτυπώματα, plists, δομή bundles της Apple και εξαγόμενους πόρους                              | [Οδηγός αρχείων και JavaScript](../javascript-artifact-reconstruction.md), [εφαρμογές Apple](../apple-application-analysis.md)      |
-| Συμπεριφορά διεργασιών                 | Έξοδο τερματικού, αλληλεπιδράσεις, παρατηρήσεις τερματισμού και συστήματος αρχείων, καθώς και συγκρίσεις εκτελέσεων         | Linux/macOS με εγγενές PTY· [καταγραφή διεργασιών](../process-capture.md)                                                           |
-| Αντικείμενα κώδικα GPU                 | Στόχοι CUDA/HIP, παράμετροι και πόροι επιλεγμένων kernels, διατηρημένο κείμενο PTX                                          | Ενσωματωμένη στατική επιθεώρηση ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                              |
-| Αρχεία μοντέλων                        | Μεταδεδομένα GGUF / safetensors, δηλώσεις tensors και παράγωγα σύνολα                                                       | Επιθεώρηση κεφαλίδων· προαιρετικό hash ολόκληρου αρχείου; [GGUF / safetensors](../model-artifacts.md)                               |
-| Μεταδεδομένα IL2CPP                    | Εικόνες assemblies Unity global-metadata.dat, ονόματα τύπων/μεθόδων και εύρη δεικτών                                        | Στατική αποκωδικοποίηση εκδόσεων 24, 27, 29, 31, 39· χωρίς Unity                                                                    |
-| Godot PCK                              | Απογραφή και εξαγωγή αρχείου, αρχικές κεφαλίδες/κατάλογοι και ταυτότητες επιλεγμένου περιεχομένου                           | Στατικές μορφές 2, 3, 4· χωρίς Godot                                                                                                |
-| Υπογραφές APK                          | Υπογράφοντες v1/v2/v3/v3.1, αποτυπώματα πιστοποιητικών, εναλλαγή κλειδιών και εσωτερική συνέπεια digests                    | Ενσωματωμένη στατική επιθεώρηση; `inspect_apk_signature`                                                                            |
+| Στόχος                                 | Τι επιστρέφει το REA                                                                                                        | Απαιτήσεις και οδηγός                                                                                                                                         |
+| -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../guides/native/native-investigation.md)                                                                |
+| Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../guides/native/binary-diagnostics.md)                                           |
+| Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                                            |
+| Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                                                   |
+| PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
+| PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
+| ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
+| ELF dependencies                       | DT_NEEDED, SONAME, RPATH/RUNPATH, GNU versions, and undefined imports                                                       | Built-in static ELF inspection; [ELF dependencies](../elf-dependencies.md)                                                                                    |
+| Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
+| Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
+| Linux kernel modules                   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
+| Erlang BEAM                            | IFF chunks, atoms, exports, and tables                                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                             |
+| Αρχείο WASM                            | Έλεγχο εγκυρότητας, ενότητες, ακριβείς μορφές εισαγωγών/εξαγωγών σε WAT και αποκωδικοποιημένο WAT                           | WABT 1.0.42 που παρέχει ο χρήστης· `inspect_wasm_artifact`                                                                                                    |
+| Bytecode EVM                           | Selectors επιλογής συνάρτησης, μετατοπίσεις σε bytes, εκτιμώμενα ορίσματα και δυνατότητα μεταβολής της κατάστασης           | Τοπική είσοδος σε ακατέργαστα bytes ή δεκαεξαδική μορφή σε Linux x64· [οδηγός EVM χωρίς εκτέλεση](../guides/evm/evm-bytecode.md)                              |
+| Βάσεις δεδομένων SQLite                | Πίνακες, στήλες, ευρετήρια, όψεις, triggers και επιλεγμένες γραμμές κανονικών πινάκων                                       | Τοπικό στιγμιότυπο βάσης δεδομένων/WAL· Node.js 24.x >=24.15 ή 26+ με εγγενή όρια SQLite                                                                      |
+| Καταγεγραμμένες καταρρεύσεις στο Linux | Ακατέργαστες εγγραφές notes, καταχωρητές/σήματα κάθε καταγεγραμμένου νήματος και προαιρετικές πιθανές αντιστοιχίσεις μνήμης | pwntools που παρέχει ο χρήστης σε Linux x64· προαιρετικά GDB/pwndbg· [καταγεγραμμένες καταρρεύσεις](../guides/native/recorded-crashes.md)                     |
+| Εγκαταστάσεις επιφάνειας εργασίας      | Υποψήφια περιβάλλοντα εκτέλεσης, αρχεία τεκμηρίωσης, στοιχεία και επόμενα βήματα                                            | Περιορισμένη επιθεώρηση καταλόγων και κεφαλίδων；[Εφαρμογές επιφάνειας εργασίας](../desktop-applications.md)                                                  |
+| JavaScript / Electron                  | Modules, εισαγωγές, source maps, διαδρομές, IPC και σχέσεις με πρόσθετα κώδικα μηχανής                                      | Node.js και npm· [ανάλυση εφαρμογών](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
+| Ιστότοποι                              | Δομή σελίδων, scripts, παρατηρήσεις δικτύου και ζητούμενα στιγμιότυπα οθόνης                                                | Πρόγραμμα περιήγησης της οικογένειας Chrome· [ανάλυση μέσω προγράμματος περιήγησης](../guides/web/browser-observation.md)                                     |
+| Αποθηκευμένες καταγραφές δικτύου       | Αιτήματα, αποκρίσεις, διαθέσιμα δεδομένα φορτίου και θέσεις στην πηγή                                                       | HAR ή SAZ του Fiddler Everywhere· mitmdump σε Linux για την εγγενή μορφή mitmproxy· [οδηγός καταγραφών](../guides/web/web-network-captures.md)                |
+| Assemblies .NET                        | Μεταδεδομένα, εντολές CIL, δηλωμένες εξαρτήσεις από κώδικα μηχανής και συγκρίσεις builds                                    | Καμία πρόσθετη απαίτηση (μόνο στατική ανάλυση)· [οδηγός διαχειριζόμενου κώδικα](../guides/managed/managed-code-analysis.md)                                   |
+| PyInstaller                            | CArchive, PYZ, Python bytecode                                                                                              | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                                         |
+| APK Android                            | Δηλώσεις manifest, κλάσεις, απομεταγλωττισμένες μέθοδοι και αναφορές                                                        | JADX χωρίς γραφικό περιβάλλον και πλήρες JDK σε Linux/macOS/Windows x64· [οδηγός Android](../guides/android/android-analysis.md)                              |
+| Συσκευές Android                       | Συσκευές, πακέτα, διεργασίες, logs, dumps, στιγμιότυπα οθόνης και μεταφορές APK/αρχείων                                     | adb που παρέχει ο χρήστης (εξομοιωτής ή φυσική συσκευή)· [οδηγός ADB](../guides/android/adb-device-analysis.md)                                               |
+| Έργα JEB                               | Μονάδες έργου από τη μηχανή ανάλυσης, ψηφιακά αποτυπώματα αρχείων και ψευδοκώδικα τύπων/μεθόδων                             | Client JEB που έχει ξεκινήσει ο χρήστης και παρέχει MCP, επιλεγμένος μέσω REA_JEB_MCP_URL· [οδηγός JEB](../providers/jeb-analysis.md)                         |
+| Πόροι Android                          | Αποκωδικοποιημένο manifest, πίνακες συμβολοσειρών, τοπικές ρυθμίσεις και στοιχεία έκδοσης                                   | Launcher του Apktool που παρέχει ο χρήστης· [οδηγός πόρων](../guides/android/apktool-resource-analysis.md)                                                    |
+| Εφαρμογές Flutter                      | Hash του στιγμιότυπου Dart, ψηφιακά αποτυπώματα βιβλιοθηκών ανά ABI και στοιχεία προέλευσης του build της μηχανής           | Καμία πρόσθετη απαίτηση (στατική ανάλυση APK)· [οδηγός Flutter](../guides/android/flutter-analysis.md)                                                        |
+| Firmware                               | Περιοχές, αποτελέσματα εξαγωγής και παραπομπές για ανάλυση κώδικα μηχανής                                                   | Binwalk / Unblob σε Linux· [οδηγός firmware](../guides/firmware/firmware-analysis.md)                                                                         |
+| Καταγεγραμμένα πακέτα                  | Επιλεγμένα πεδία, επαναλαμβανόμενες τιμές, φίλτρα και κανόνες decode-as                                                     | Linux: TShark 4.x + prlimit· [οδηγός καταγραφών](../guides/data/packet-captures.md)                                                                           |
+| Σύνοψη πακέτων                         | Τερματικά σημεία, DNS, TLS SNI, κατανομή πρωτοκόλλων και αιτήματα HTTP                                                      | tshark και capinfos που παρέχει ο χρήστης (επαληθευμένα σε Linux)· [οδηγός pcap](../guides/data/pcap-analysis.md)                                             |
+| Καταγεγραμμένα λογικά σήματα           | Σχολιασμούς αποκωδικοποιητή, εύρη δειγμάτων και διαγνωστικά                                                                 | Linux: sigrok-cli 0.7.2 + prlimit· [καταγραφές σημάτων](../guides/signals/signal-recordings.md)                                                               |
+| Πακέτα και πόροι                       | Καταλόγους αρχείων, ψηφιακά αποτυπώματα, plists, δομή bundles της Apple και εξαγόμενους πόρους                              | [Οδηγός αρχείων και JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [εφαρμογές Apple](../guides/apple/apple-application-analysis.md) |
+| Συμπεριφορά διεργασιών                 | Έξοδο τερματικού, αλληλεπιδράσεις, παρατηρήσεις τερματισμού και συστήματος αρχείων, καθώς και συγκρίσεις εκτελέσεων         | Linux/macOS με εγγενές PTY· [καταγραφή διεργασιών](../guides/runtime/process-capture.md)                                                                      |
+| Αντικείμενα κώδικα GPU                 | Στόχοι CUDA/HIP, παράμετροι και πόροι επιλεγμένων kernels, διατηρημένο κείμενο PTX                                          | Ενσωματωμένη στατική επιθεώρηση ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                        |
+| Αρχεία μοντέλων                        | Μεταδεδομένα GGUF / safetensors, δηλώσεις tensors και παράγωγα σύνολα                                                       | Επιθεώρηση κεφαλίδων· προαιρετικό hash ολόκληρου αρχείου; [GGUF / safetensors](../model-artifacts.md)                                                         |
+| Μεταδεδομένα IL2CPP                    | Εικόνες assemblies Unity global-metadata.dat, ονόματα τύπων/μεθόδων και εύρη δεικτών                                        | Στατική αποκωδικοποίηση εκδόσεων 24, 27, 29, 31, 39· χωρίς Unity                                                                                              |
+| Godot PCK                              | Απογραφή και εξαγωγή αρχείου, αρχικές κεφαλίδες/κατάλογοι και ταυτότητες επιλεγμένου περιεχομένου                           | Στατικές μορφές 2, 3, 4· χωρίς Godot                                                                                                                          |
+| Υπογραφές APK                          | Υπογράφοντες v1/v2/v3/v3.1, αποτυπώματα πιστοποιητικών, εναλλαγή κλειδιών και εσωτερική συνέπεια digests                    | Ενσωματωμένη στατική επιθεώρηση; `inspect_apk_signature`                                                                                                      |
 
 Για εξέταση δυαδικών αρχείων με κώδικα μηχανής χωρίς εκτέλεση, το REA υποστηρίζει
 επίσης GNU objdump και Rizin που παρέχει ο χρήστης. Δες τον
@@ -202,7 +202,7 @@ npx rea-agents@latest setup
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Οι μορφές κώδικα μηχανής και τα υποστηριζόμενα συστήματα διαφέρουν ανά πάροχο ανάλυσης. Δες τη [ρύθμιση Hopper και Ghidra](../installation.md#hopper), τον [οδηγό IDA](../ida-provider.md) (που περιλαμβάνει προαιρετική γέφυρα MCP για κώδικα μηχανής), [Kuna](../kuna-provider.md) και την [πειραματική υποστήριξη Ghidra στα Windows](../windows-ghidra-p0.md). Το Ghidra υποστηρίζει επίσης [ανάλυση DOS 16 bit](../ghidra-dos.md). Για μεγάλα δυαδικά αρχεία, αύξησε το χρονικό όριο εκκίνησης του παρόχου με `REA_GHIDRA_STARTUP_TIMEOUT_MS` ή `REA_HOPPER_STARTUP_TIMEOUT_MS`. Για την επιλογή παρόχου, δες τον [οδηγό CLI](../cli.md#choose-a-provider). Έλεγξε τη [διαθεσιμότητα ανά έκδοση](../installation.md#released-package-and-main) για λειτουργίες που προστέθηκαν μετά την τελευταία έκδοση στο npm.
+Οι μορφές κώδικα μηχανής και τα υποστηριζόμενα συστήματα διαφέρουν ανά πάροχο ανάλυσης. Δες τη [ρύθμιση Hopper και Ghidra](../getting-started/installation.md#hopper), τον [οδηγό IDA](../providers/ida-provider.md) (που περιλαμβάνει προαιρετική γέφυρα MCP για κώδικα μηχανής), [Kuna](../kuna-provider.md) και την [πειραματική υποστήριξη Ghidra στα Windows](../providers/windows-ghidra-p0.md). Το Ghidra υποστηρίζει επίσης [ανάλυση DOS 16 bit](../providers/ghidra-dos.md). Για μεγάλα δυαδικά αρχεία, αύξησε το χρονικό όριο εκκίνησης του παρόχου με `REA_GHIDRA_STARTUP_TIMEOUT_MS` ή `REA_HOPPER_STARTUP_TIMEOUT_MS`. Για την επιλογή παρόχου, δες τον [οδηγό CLI](../getting-started/cli.md#choose-a-provider). Έλεγξε τη [διαθεσιμότητα ανά έκδοση](../getting-started/installation.md#released-package-and-main) για λειτουργίες που προστέθηκαν μετά την τελευταία έκδοση στο npm.
 
 ## Μελέτες περίπτωσης
 
@@ -281,28 +281,28 @@ agent-env run ./my-env
 <details>
 <summary><strong>Ποιοι agents μπορούν να χρησιμοποιήσουν το REA;</strong></summary>
 
-Κάθε agent που υποστηρίζει τοπικούς MCP servers. Η διαδικασία εγκατάστασης ρυθμίζει τους [υποστηριζόμενους agents](../installation.md#supported-agents). Οι υπόλοιποι clients μπορούν να χρησιμοποιήσουν τη [μη αυτόματη καταχώριση MCP](../installation.md#mcp-registry).
+Κάθε agent που υποστηρίζει τοπικούς MCP servers. Η διαδικασία εγκατάστασης ρυθμίζει τους [υποστηριζόμενους agents](../getting-started/installation.md#supported-agents). Οι υπόλοιποι clients μπορούν να χρησιμοποιήσουν τη [μη αυτόματη καταχώριση MCP](../getting-started/installation.md#mcp-registry).
 
 </details>
 
 <details>
 <summary><strong>Χρειάζομαι Hopper, Ghidra, IDA ή Kuna;</strong></summary>
 
-Η εις βάθος ανάλυση κώδικα μηχανής χρησιμοποιεί ένα από αυτά. Η στατική εξέταση JavaScript και .NET λειτουργεί χωρίς μηχανή ανάλυσης κώδικα μηχανής. Η διαδικασία εγκατάστασης μπορεί να εγκαταστήσει το Hopper μετά την έγκρισή σου· το Ghidra, το IDA και το Kuna χρησιμοποιούν τις υπάρχουσες εγκαταστάσεις σου. Δες τη [ρύθμιση παρόχων ανάλυσης](../installation.md#hopper).
+Η εις βάθος ανάλυση κώδικα μηχανής χρησιμοποιεί ένα από αυτά. Η στατική εξέταση JavaScript και .NET λειτουργεί χωρίς μηχανή ανάλυσης κώδικα μηχανής. Η διαδικασία εγκατάστασης μπορεί να εγκαταστήσει το Hopper μετά την έγκρισή σου· το Ghidra, το IDA και το Kuna χρησιμοποιούν τις υπάρχουσες εγκαταστάσεις σου. Δες τη [ρύθμιση παρόχων ανάλυσης](../getting-started/installation.md#hopper).
 
 </details>
 
 <details>
 <summary><strong>Πρέπει να ξεκινήσω πρώτα το Hopper;</strong></summary>
 
-Το REA ξεκινά το Hopper όταν το χρειάζεται κάποια λειτουργία. Στο macOS, κατά την πρώτη εκκίνηση μπορεί να εμφανιστεί παράθυρο που ζητά να επιλέξεις τη δοκιμαστική λειτουργία ή να ενεργοποιήσεις την άδειά σου. Ολοκλήρωσε αυτό το βήμα στην ίδια συνεδρία χρήστη πριν από την πρώτη λειτουργία CLI/MCP ή εργασία χωρίς επίβλεψη. Άνοιξε το Hopper χειροκίνητα αν χρειαστεί. Δες την [εκκίνηση και αντιμετώπιση προβλημάτων του Hopper](../installation.md#launcher-paths-and-troubleshooting).
+Το REA ξεκινά το Hopper όταν το χρειάζεται κάποια λειτουργία. Στο macOS, κατά την πρώτη εκκίνηση μπορεί να εμφανιστεί παράθυρο που ζητά να επιλέξεις τη δοκιμαστική λειτουργία ή να ενεργοποιήσεις την άδειά σου. Ολοκλήρωσε αυτό το βήμα στην ίδια συνεδρία χρήστη πριν από την πρώτη λειτουργία CLI/MCP ή εργασία χωρίς επίβλεψη. Άνοιξε το Hopper χειροκίνητα αν χρειαστεί. Δες την [εκκίνηση και αντιμετώπιση προβλημάτων του Hopper](../getting-started/installation.md#launcher-paths-and-troubleshooting).
 
 </details>
 
 <details>
 <summary><strong>Τι προσφέρει η εγκατάσταση του skill από το skills.sh;</strong></summary>
 
-Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx rea-agents setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../installation.md#skill-only-installation).
+Το skill παρέχει οδηγίες διερεύνησης για τον agent σου. Χρησιμοποίησε `npx rea-agents setup` για να καταχωρίσεις τον MCP server του REA και να εγκαταστήσεις τις αντίστοιχες οδηγίες. Στη συνέχεια, επανεκκίνησε τον agent σου. Δες την [εγκατάσταση μόνο του skill](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -345,12 +345,12 @@ npx rea-agents@latest setup
 
 Ξεκίνα από τους [οδηγούς με ολοκληρωμένα παραδείγματα](https://rea.tools/guides/) στον ιστότοπο. Για τις ακριβείς επιλογές, τις προϋποθέσεις και τις προδιαγραφές των αποτελεσμάτων:
 
-- [Εγκατάσταση και ρύθμιση](../installation.md): καταχώριση agents, ρύθμιση παρόχων ανάλυσης, ενημερώσεις και απεγκατάσταση.
-- [Έλεγχος ετοιμότητας και αντιμετώπιση προβλημάτων](../installation.md#check-readiness-for-your-task): διάγνωση ενός agent ή μιας μηχανής ανάλυσης.
-- [CLI και Evidence](../cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
-- [Προδιαγραφές MCP](../mcp-contracts.md) και [prompts για agents](../mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
-- [Κατάλογος εργαλείων](../mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
-- [Οδικός χάρτης](../roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
+- [Εγκατάσταση και ρύθμιση](../getting-started/installation.md): καταχώριση agents, ρύθμιση παρόχων ανάλυσης, ενημερώσεις και απεγκατάσταση.
+- [Έλεγχος ετοιμότητας και αντιμετώπιση προβλημάτων](../getting-started/installation.md#check-readiness-for-your-task): διάγνωση ενός agent ή μιας μηχανής ανάλυσης.
+- [CLI και Evidence](../getting-started/cli.md): εντολές, επιλογή παρόχου, στιγμιότυπα, εισαγωγή/εξαγωγή και κωδικοί εξόδου.
+- [Προδιαγραφές MCP](../reference/mcp-contracts.md) και [prompts για agents](../getting-started/mcp-prompts.md): αποτελέσματα εργαλείων, συνεδρίες και καθοδηγούμενες διερευνήσεις.
+- [Κατάλογος εργαλείων](../reference/mcp-contracts.md#generated-catalog): αυτόματα παραγόμενος κατάλογος εργαλείων, παρόχων και εντολών CLI.
+- [Οδικός χάρτης](../development/roadmap.md): προγραμματισμένες εργασίες και παρακολούθηση της ανάπτυξης δυνατοτήτων.
 
 Ανάφερε ευπάθειες ακολουθώντας το [SECURITY.md](../../SECURITY.md).
 
@@ -380,7 +380,7 @@ npx rea-agents@latest setup
 
 Θα χαρούμε να βοηθήσεις στο REA! [Άνοιξε ένα issue](https://github.com/morluto/rea/issues) για να αναφέρεις ένα σφάλμα ή να προτείνεις μια λειτουργία, ή [στείλε ένα pull request](https://github.com/morluto/rea/pulls) για να βελτιώσεις τον κώδικα ή την τεκμηρίωση.
 
-Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture.mermaid) για τη δομή του έργου.
+Δες το [CONTRIBUTING.md](../../CONTRIBUTING.md) για τη ρύθμιση του περιβάλλοντος ανάπτυξης και τους ελέγχους, τον [οδηγό δοκιμών](../development/testing.md) για τις διαδικασίες επαλήθευσης και τον [χάρτη αρχιτεκτονικής](../architecture/architecture.mermaid) για τη δομή του έργου.
 
 ## Άδεια χρήσης
 

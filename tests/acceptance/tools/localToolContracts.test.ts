@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it } from "vitest";
+import { z } from "zod";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
@@ -330,21 +331,84 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["start_gdb_session", { inferior_tty: nul }],
 ];
 
+const nulIssuePaths = (
+  value: unknown,
+  path: readonly (string | number)[] = [],
+): (string | number)[][] => {
+  if (typeof value === "string") return value.includes("\0") ? [[...path]] : [];
+  if (Array.isArray(value))
+    return value.flatMap((item, index) =>
+      nulIssuePaths(item, [...path, index]),
+    );
+  if (typeof value === "object" && value !== null)
+    return Object.entries(value).flatMap(([key, item]) =>
+      nulIssuePaths(item, [...path, key]),
+    );
+  return [];
+};
+
 it("rejects OS-invalid local inputs through the real advertised MCP contracts", async () => {
   const { call } = await connectLocalToolsMcp();
+  const checked: string[] = [];
   for (const [name, arguments_] of pathRequests) {
-    const response = await call(name, arguments_);
-    expect(response.isError, name).toBe(true);
-    expect(JSON.stringify(response.content), name).toContain("NUL");
+    const paths = nulIssuePaths(arguments_);
+    expect(paths.length, name).toBeGreaterThan(0);
+    const error = parseMcpToolError(await call(name, arguments_)).error;
+    expect(error, name).toMatchObject({
+      code: "invalid_request",
+      details: { operation: name },
+    });
+    const issues = z
+      .object({
+        issues: z.array(
+          z.object({
+            path: z.array(z.union([z.string(), z.number()])),
+            reason: z.string(),
+            message: z.string(),
+            expected: z.unknown().optional(),
+          }),
+        ),
+      })
+      .parse(error.details).issues;
+    expect(issues, name).toEqual(
+      expect.arrayContaining(
+        paths.map((path) =>
+          expect.objectContaining({
+            path,
+            reason: "invalid_format",
+            expected: "regex",
+            message: expect.stringMatching(/\bNUL\b|null byte|zero byte/i),
+          }),
+        ),
+      ),
+    );
+    checked.push(name);
   }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "extract_firmware",
+      "inspect_wasm_artifact",
+      "demangle_swift",
+      "capture_electron_scenario",
+    ]),
+  );
   const relative = await call("extract_firmware", {
     path: "/tmp/firmware.bin",
     output_directory: "relative-output",
   });
-  expect(relative.isError).toBe(true);
-  expect(JSON.stringify(relative.content)).toContain(
-    "absolute local filesystem path",
-  );
+  expect(parseMcpToolError(relative).error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      operation: "extract_firmware",
+      issues: [
+        expect.objectContaining({
+          path: ["output_directory"],
+          reason: "invalid_format",
+          expected: "regex",
+        }),
+      ],
+    },
+  });
 }, 60_000);
 
 const ignoredOptions = [
