@@ -280,6 +280,10 @@ const ELF_BINDINGS: Readonly<Record<number, ElfExport["binding"]>> = {
   2: "weak",
   10: "unique",
 };
+const ELF_VISIBILITIES: Readonly<Record<number, ElfExport["visibility"]>> = {
+  0: "default",
+  3: "protected",
+};
 
 const versionSectionData = (
   reader: BinaryReader,
@@ -620,6 +624,13 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
+  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
+  // after every field is observed as zero; neither ELF layout has padding.
+  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -670,12 +681,12 @@ function* parseElfExports(
       );
     const symbol = parsedSymbol.value;
     const binding = ELF_BINDINGS[symbol.binding];
-    const visibility = symbol.other & 3;
+    const visibility = ELF_VISIBILITIES[symbol.other & 3];
     // Undefined, local and hidden/internal symbols are not exports.
     if (
       binding === undefined ||
       symbol.section_index === 0 ||
-      (visibility !== 0 && visibility !== 3)
+      visibility === undefined
     )
       continue;
     let version: ElfExport["version"] = null;
@@ -683,7 +694,6 @@ function* parseElfExports(
     else if (versions !== null) {
       const raw = reader.u16(versions + index * 2);
       const versionIndex = raw & 0x7fff;
-      if (versionIndex === 0) continue;
       if (versionIndex >= 2) {
         const decodedName = versionNames.get(versionIndex) ?? null;
         if (decodedName === null && !unresolvedVersions.has(versionIndex)) {
@@ -742,6 +752,7 @@ function* parseElfExports(
       size: symbol.size.toString(),
       type: ELF_TYPES[symbol.type] ?? "other",
       binding,
+      visibility,
       version,
     });
   }

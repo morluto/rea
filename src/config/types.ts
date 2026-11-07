@@ -7,6 +7,7 @@ import type { AnalysisProviderSelector } from "../domain/providerSelection.js";
 import type { GhidraLanguageOverride } from "./ghidraLanguageOverride.js";
 import type { McpInputSchemaProfile } from "./mcpInputSchemaProfile.js";
 import type { McpOutputSchemaProfile } from "./mcpOutputSchemaProfile.js";
+import type { McpToolCatalogProfile } from "./mcpToolCatalogProfile.js";
 import type { BridgeMaxRequestBytes } from "./bridgeMaxRequestBytes.js";
 import type { RegexMatchingDeadline } from "./regexMatchingDeadline.js";
 import type { RegexWorkerHeapRequest } from "./regexWorkerHeapRequest.js";
@@ -18,6 +19,7 @@ export interface AppConfig {
   readonly mcpMaxInputElements?: number;
   readonly mcpInputSchemaProfile?: McpInputSchemaProfile;
   readonly mcpOutputSchemaProfile?: McpOutputSchemaProfile;
+  readonly mcpToolCatalogProfile?: McpToolCatalogProfile;
   readonly analysisProvider: AnalysisProviderSelector;
   readonly idaMcpConfigPath?: string;
   readonly ghidraInstallDir: string | undefined;
@@ -29,6 +31,8 @@ export interface AppConfig {
   readonly ghidraDisabledAnalyzers?: readonly string[];
   readonly ghidraSeedFile?: string;
   readonly ghidraExistingProject?: GhidraProjectSelection;
+  /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */
+  readonly ghidraCheckpointDirectory?: string;
   readonly ghidraNativeAotJar?: string;
   readonly ilspyCmdPath: string | undefined;
   readonly hopperLauncherPath: string;

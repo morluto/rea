@@ -57,7 +57,10 @@ const classifyLayer = (
   const direct = new Map<string, string[]>();
   const ambiguous = new Set<string>();
   const incomplete = new Set<string>();
-  for (const match of matches)
+  // A target's entry location establishes correspondence, not script presence.
+  for (const match of matches.filter(
+    ({ entity_kind }) => entity_kind === "script",
+  ))
     if (
       match.status === "matched" &&
       match.static_layer_id === layer.layerId &&
