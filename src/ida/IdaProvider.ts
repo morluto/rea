@@ -257,7 +257,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
           code: "open_options_invalid",
           reason: unusable,
           remediation:
-            "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/ida-provider.md.",
+            "Set workspaceRoot to an existing directory REA can create entries in, or omit it to use the system temporary directory; see docs/providers/ida-provider.md.",
           diagnostics: {
             ...registrationDiagnostics,
             mode: "headless",
@@ -460,6 +460,6 @@ export class IdaProvider implements AnalysisProviderCandidate {
 const readIdaConfigurationNotConfigured = () =>
   err(
     idaConfigurationError(
-      "Set REA_IDA_MCP_CONFIG to an upstream IDA MCP JSON registration; see docs/ida-provider.md.",
+      "Set REA_IDA_MCP_CONFIG to an upstream IDA MCP JSON registration; see docs/providers/ida-provider.md.",
     ),
   );

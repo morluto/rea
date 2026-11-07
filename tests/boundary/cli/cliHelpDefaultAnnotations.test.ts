@@ -62,6 +62,18 @@ const optionLine = (help: string, option: string): string | undefined => {
   return line?.trim();
 };
 
+it("explains standalone Evidence import in command help", async () => {
+  const { stdout, exitCode } = await serve(createCli({}), [
+    "evidence-import",
+    "--help",
+  ]);
+  expect(exitCode).toBe(0);
+  const help = stdout.replace(/\s+/gu, " ");
+  expect(help).toMatch(/validat.*bundle/iu);
+  expect(help).toMatch(/unknown revisions/iu);
+  expect(help).toMatch(/does not retain.*mcp session/iu);
+});
+
 describe("CLI help default annotations", () => {
   it("states each schema-owned option default exactly once", async () => {
     const cli = createCli({});

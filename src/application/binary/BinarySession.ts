@@ -1551,12 +1551,10 @@ export class BinarySession
     }
     if (
       execution.ok &&
-      isSourceEvidenceRetainable(
-        name,
-        capability,
-        arguments_,
-        options?.snapshotContext,
-      ) &&
+      isSourceEvidenceRetainable(name, capability, arguments_, {
+        snapshotContext: options?.snapshotContext,
+        requiresSourceEvidence: execution.value.requiresSourceEvidence === true,
+      }) &&
       profile !== undefined
     ) {
       const evidence = createAnalysisExecutionEvidence(
@@ -1573,7 +1571,11 @@ export class BinarySession
         "observed",
       );
       const recorded = this.recordEvidence(evidence);
-      if (!recorded.ok) return recorded;
+      if (!recorded.ok) {
+        // The provider finished. A full ledger must not discard that observation.
+        recorded.error.retainPartialObservation(evidence);
+        return recorded;
+      }
       const retained = { ...execution.value, evidenceId: evidence.evidence_id };
       if (cacheable && execution.value.cachePolicy !== "live")
         this.recordSnapshot({

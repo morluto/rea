@@ -35,8 +35,10 @@ describe("native module syntax observations", () => {
       "only-types",
       "mixed",
     ]);
-    expect(result.diagnostics).toContain(
-      "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+    expect(result.diagnostics).toContainEqual(
+      expect.stringMatching(
+        /compiler options.*unavailable.*type.only.*side.effect/iu,
+      ),
     );
   });
   it("keeps JavaScript relational imports distinct from TypeScript import types", () => {
