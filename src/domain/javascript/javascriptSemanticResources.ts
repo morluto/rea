@@ -298,9 +298,16 @@ const encodingTruthiness = (
 ): boolean | undefined => {
   const shared = staticJavaScriptTruthiness(value);
   if (shared !== undefined) return shared;
-  // A shorthand method and a class expression are both objects at runtime, so they are
-  // truthy like the function and object literals the shared reader already covers.
-  if (t.isObjectMethod(value) || t.isClassExpression(value)) return true;
+  // A shorthand method, a class expression and a regular expression are all objects at
+  // runtime, so they are truthy like the function and object literals the shared reader
+  // already covers. Measured on Node 24.22.1, `{encoding: /x/}` throws
+  // `ERR_INVALID_ARG_VALUE` for both stream methods.
+  if (
+    t.isObjectMethod(value) ||
+    t.isClassExpression(value) ||
+    t.isRegExpLiteral(value)
+  )
+    return true;
   if (
     t.isIdentifier(value) &&
     (value.name === "NaN" || value.name === "Infinity")

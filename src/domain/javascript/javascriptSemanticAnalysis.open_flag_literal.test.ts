@@ -730,6 +730,9 @@ it.each([
   [`fs.createReadStream(p, {encoding: !0})`],
   [`fs.createReadStream(p, {encoding: ~0})`],
   [`fs.createReadStream(p, {encoding: typeof 1})`],
+  // A regular expression is an object at runtime, and Node refuses it as an encoding.
+  [`fs.createReadStream(p, {encoding: /x/})`],
+  [`fs.createWriteStream(p, {encoding: /x/})`],
 ] as const)(
   "emits no acquisition for a truthy non-string encoding: %s",
   (call) => {
