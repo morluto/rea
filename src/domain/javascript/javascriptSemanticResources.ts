@@ -17,6 +17,7 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -161,6 +162,7 @@ const streamMemberValue = (
     t.isBooleanLiteral(value) ||
     t.isBigIntLiteral(value) ||
     t.isObjectExpression(value) ||
+    t.isNewExpression(value) ||
     t.isObjectMethod(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
@@ -229,6 +231,17 @@ const rejectsStreamOptionsLiteral = (
   // A getter anywhere in the literal can replace another member before Node reads it,
   // so no member's declared value is what Node sees.
   if (optionsHasEagerAccessor(value)) return false;
+  // Node copies into an ordinary object. An inherited setter may intercept a
+  // copied value, so a source-visible prototype change before (or possibly
+  // before) this call makes the copied members uncertain.
+  if (
+    context.state.prototypeMutationSites.some(
+      (effect) =>
+        effect.owner === "Object" &&
+        semanticEffectTiming(node, effect.node, context.state) !== "after",
+    )
+  )
+    return false;
   // Node copies own enumerable keys by assignment. An own __proto__ key, including
   // one supplied by a spread or dynamic key, can install setters on the copy before
   // a later option is assigned. The literal's values then do not prove a rejection.
@@ -238,6 +251,7 @@ const rejectsStreamOptionsLiteral = (
     const read = staticObjectProperty(value, name);
     if (read.status !== "explicit") return undefined;
     const memberValue = unwrapJavaScriptExpression(read.value as t.Node).node;
+    if (name === "fd" && t.isNewExpression(memberValue)) return undefined;
     // A FileHandle can be the prototype of an object literal, so the literal's
     // shape alone does not prove that Node rejects it as a descriptor.
     if (
@@ -315,7 +329,8 @@ const encodingTruthiness = (
   if (
     t.isObjectMethod(value) ||
     t.isClassExpression(value) ||
-    t.isRegExpLiteral(value)
+    t.isRegExpLiteral(value) ||
+    t.isNewExpression(value)
   )
     return true;
   if (

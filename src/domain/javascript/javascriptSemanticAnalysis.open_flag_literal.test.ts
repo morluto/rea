@@ -443,6 +443,62 @@ const streamAcquisitionsFor = (call: string) =>
   ).resourceOperations.map(({ kind, method }) => ({ kind, method }));
 
 it.each(["createReadStream", "createWriteStream"] as const)(
+  "retains %s and its release when Object.prototype may intercept option copying",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      import fs from "node:fs";
+      Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+      const stream = fs.${method}("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "acquire", method }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
+it("still rejects a bad option when a prototype change is definitely later", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    fs.createReadStream("input", { start: -1 });
+    Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("retains a bad option when prototype mutation timing crosses a callable", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    function configure() { Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true }); }
+    function open() { return fs.createReadStream("input", { start: -1 }); }
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
+});
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "rejects boxed numeric and encoding values for %s while leaving constructed fd unknown",
+  (method) => {
+    for (const member of [
+      "start: new Number(0)",
+      "highWaterMark: new Number(0)",
+      "encoding: new String('utf8')",
+    ])
+      expect(streamAcquisitionsFor(`fs.${method}(p, { ${member} })`)).toEqual(
+        [],
+      );
+    expect(
+      streamAcquisitionsFor(`fs.${method}(p, { end: new Number(0) })`),
+    ).toHaveLength(method === "createReadStream" ? 0 : 1);
+    expect(
+      streamAcquisitionsFor(`fs.${method}(p, { fd: new Handle() })`),
+    ).toHaveLength(1);
+  },
+);
+
+it.each(["createReadStream", "createWriteStream"] as const)(
   "keeps %s and its close when delete may evaluate to false",
   (method) => {
     const operations = analyzeJavaScriptSemantics(`

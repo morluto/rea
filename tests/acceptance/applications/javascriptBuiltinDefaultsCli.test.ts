@@ -50,6 +50,58 @@ it("retains streams with an undecidable delete encoding through CLI and MCP", as
   await client.ping();
 }, 60000);
 
+it("keeps prototype-intercepted streams and rejects boxed options through CLI and MCP", async () => {
+  const root = await createTestTempDirectory("rea-stream-option-ownership-");
+  await writeFile(
+    join(root, "prototype.cjs"),
+    `
+    const fs = require("node:fs");
+    Object.defineProperty(Object.prototype, "start", { set(value) {}, configurable: true });
+    const read = fs.createReadStream("input", { start: -1 });
+    const write = fs.createWriteStream("output", { start: -1 });
+    read.close(); write.close();
+  `,
+  );
+  await writeFile(
+    join(root, "boxed.cjs"),
+    `
+    const fs = require("node:fs");
+    fs.createReadStream("input", { start: new Number(0) });
+    fs.createWriteStream("output", { encoding: new String("utf8") });
+    fs.createReadStream("input", { fd: new Handle() });
+  `,
+  );
+  const { stdout } = await execute(
+    process.execPath,
+    ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
+    { cwd: process.cwd(), maxBuffer: 16 * 1024 * 1024 },
+  );
+  const evidence = parseEvidence(JSON.parse(stdout));
+  const graph = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  ).semantic_graph;
+  const resources = graph.nodes.filter(({ kind }) => kind === "resource");
+  expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "prototype.cjs",
+    ),
+  ).toHaveLength(2);
+  expect(
+    resources.filter(({ identity }) => identity.module_path === "boxed.cjs"),
+  ).toHaveLength(1);
+  expect(
+    graph.relations.filter(({ relation }) => relation === "releases"),
+  ).toHaveLength(2);
+  const { client, call } = await connectLocalToolsMcp();
+  const response = await call("analyze_javascript_application", {
+    input_path: root,
+    format: "auto",
+  });
+  expect(response.isError, JSON.stringify(response)).not.toBe(true);
+  expect(response.structuredContent).toEqual(evidence);
+  await client.ping();
+}, 60000);
+
 it("preserves earlier and sibling effects without inventing replaced cached-module or process effects", async () => {
   const root = await createTestTempDirectory("rea-builtin-identity-");
   await writeFile(
