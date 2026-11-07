@@ -8,15 +8,17 @@ export const XML_LINE_ENDING = /\r\n?|\n/gu;
 export class XmlDocumentParseError extends Error {
   readonly _tag = "XmlDocumentParseError";
   constructor(
-    readonly reason: "malformed" | "doctype" | "resource",
+    readonly reason: "malformed" | "doctype" | "internal-subset" | "resource",
     cause?: unknown,
   ) {
     super(
       reason === "resource"
         ? "XML document exceeds its projection node allowance"
-        : reason === "doctype"
-          ? "XML document types are unsupported"
-          : `XML is not well-formed${cause instanceof Error ? `: ${cause.message}` : ""}`,
+        : reason === "internal-subset"
+          ? "XML document type internal subsets are unsupported"
+          : reason === "doctype"
+            ? "XML document types are unsupported"
+            : `XML is not well-formed${cause instanceof Error ? `: ${cause.message}` : ""}`,
       { cause },
     );
   }
@@ -32,10 +34,44 @@ export class XmlDocumentNodeLimitError extends XmlDocumentParseError {
   }
 }
 
-/** Read XML syntax as a stream, throwing at the first error; it holds only the open elements. */
+/** Whether a DOCTYPE's text, as saxes reports it, opens an internal subset: a `[` outside its quoted literals. */
+const declaresInternalSubset = (declaration: string): boolean =>
+  declaration.replace(/"[^"]*"|'[^']*'/gu, "").includes("[");
+
+/** XML 1.0's `NameStartChar`, and the further characters `NameChar` allows. */
+const NAME_START = String.raw`:A-Z_a-z\u{C0}-\u{D6}\u{D8}-\u{F6}\u{F8}-\u{2FF}\u{370}-\u{37D}\u{37F}-\u{1FFF}\u{200C}\u{200D}\u{2070}-\u{218F}\u{2C00}-\u{2FEF}\u{3001}-\u{D7FF}\u{F900}-\u{FDCF}\u{FDF0}-\u{FFFD}\u{10000}-\u{EFFFF}`;
+const NAME_MORE = String.raw`\-.0-9\u{B7}\u{300}-\u{36F}\u{203F}\u{2040}`;
+/** XML 1.0's `PubidChar` but the apostrophe, which only a double-quoted literal may hold. */
+const PUBID = String.raw`\n\r a-zA-Z0-9\-()+,./:=?;!*#@$_%`;
+const SPACE = String.raw`[ \t\r\n]`;
+
+/**
+ * A DOCTYPE without an internal subset, as XML 1.0's `doctypedecl` spells it
+ * between `<!DOCTYPE` and `>`: a name, then optionally `SYSTEM` and a literal,
+ * or `PUBLIC` and a public identifier and a literal.
+ */
+const EXTERNAL_DOCTYPE = new RegExp(
+  `^${SPACE}+[${NAME_START}][${NAME_START}${NAME_MORE}]*` +
+    `(?:${SPACE}+(?:SYSTEM|PUBLIC${SPACE}+(?:"[${PUBID}']*"|'[${PUBID}]*'))` +
+    `${SPACE}+(?:"[^"]*"|'[^']*'))?${SPACE}*$`,
+  "u",
+);
+
+/**
+ * Which DOCTYPE a document may have: any, none, or with `external` one
+ * without an internal subset, so the document declares no entity. Neither
+ * parser reads an external DTD.
+ */
+type DoctypePolicy = "allow" | "reject" | "external";
+
+/**
+ * Read XML syntax as a stream, throwing at the first error; it holds only the
+ * open elements. Saxes reads a DOCTYPE without checking it, so the policy
+ * checks one it admits without an internal subset against XML's grammar.
+ */
 const checkXmlSyntax = (
   source: string,
-  doctype: "allow" | "reject",
+  doctype: DoctypePolicy,
   maxNodes?: number,
 ): void => {
   const syntax = new SaxesParser({
@@ -43,8 +79,13 @@ const checkXmlSyntax = (
     defaultXMLVersion: "1.0",
     forceXMLVersion: true,
   });
-  syntax.on("doctype", () => {
+  syntax.on("doctype", (declaration) => {
     if (doctype === "reject") throw new XmlDocumentParseError("doctype");
+    if (doctype !== "external") return;
+    if (declaresInternalSubset(declaration))
+      throw new XmlDocumentParseError("internal-subset");
+    if (!EXTERNAL_DOCTYPE.test(declaration))
+      throw new XmlDocumentParseError("malformed");
   });
   if (maxNodes !== undefined) {
     let nodes = 0;
@@ -63,10 +104,14 @@ const checkXmlSyntax = (
   syntax.write(source).close();
 };
 
-/** Whether XML passes the syntax check `parseXmlDocument` makes, without building a document. */
+/**
+ * Whether XML passes the syntax check `parseXmlDocument` makes, without
+ * building a document. An internal subset's syntax needs the DOM parser, so
+ * the policy must refuse one.
+ */
 export const isWellFormedXml = (
   source: string,
-  policy: { readonly doctype: "allow" | "reject" },
+  policy: { readonly doctype: Exclude<DoctypePolicy, "allow"> },
 ): boolean => {
   try {
     checkXmlSyntax(source, policy.doctype);
@@ -76,11 +121,11 @@ export const isWellFormedXml = (
   }
 };
 
-/** One boundary owns strict XML syntax and the source-located DOM projection. */
+/** One boundary owns strict XML syntax, under a DOCTYPE policy, and the source-located DOM projection. */
 export const parseXmlDocument = (
   source: string,
   policy: {
-    readonly doctype: "allow" | "reject";
+    readonly doctype: DoctypePolicy;
     readonly lineEndings: "preserve" | "normalize";
     readonly maxNodes?: number;
   },
@@ -106,4 +151,36 @@ export const parseXmlDocument = (
         : new XmlDocumentParseError("malformed", cause),
     );
   }
+};
+
+/** A DOCTYPE's name and external identifiers, null where it gives none. */
+export interface DeclaredDocumentType {
+  readonly name: string;
+  readonly publicId: string | null;
+  readonly systemId: string | null;
+}
+
+/** A quoted literal's value; the DOM keeps the quotes, and holds "" where there is no literal. */
+const literalValue = (literal: string): string | null =>
+  literal === "" ? null : literal.slice(1, -1);
+
+/**
+ * The document's DOCTYPE as declared, or undefined without one. The public
+ * identifier is normalized as XML matches it, and as expat reports it: each
+ * run of spaces and line breaks becomes one space, and the ends are trimmed.
+ */
+export const declaredDocumentType = (
+  document: Document,
+): DeclaredDocumentType | undefined => {
+  const doctype = document.doctype;
+  if (doctype === null) return undefined;
+  const publicId = literalValue(doctype.publicId);
+  return {
+    name: doctype.name,
+    publicId:
+      publicId === null
+        ? null
+        : publicId.replace(/[ \r\n]+/gu, " ").replace(/^ | $/gu, ""),
+    systemId: literalValue(doctype.systemId),
+  };
 };

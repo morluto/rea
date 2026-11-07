@@ -200,6 +200,16 @@ it("keeps every translated README and authored guide on the documentation lane",
   });
 });
 
+it("runs documentation verification when only its published-route verifier changes", async () => {
+  const { directory, base } = await fixture();
+  const head = await change(directory, [
+    "scripts/verify-documentation-routes.mjs",
+  ]);
+  expect(await classify(directory, base, head)).toMatchObject({
+    docs: true,
+  });
+});
+
 it.each(["cjs", "cts", "js", "jsx", "mjs", "mts", "ts", "tsx"])(
   "selects static checks for authored documentation code (%s) without provider lanes",
   async (extension) => {

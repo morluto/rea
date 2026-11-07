@@ -50,15 +50,24 @@ operation `describe_desktop_application_task` and predicate type
   role `document`, or of the app's own state files when no document changed.
   A text file gains `lines_present` for its new lines and `lines_absent` for
   lines it lost (when either is at most ten), and `line_count` for each line
-  holding a letter whose count changed; JSON, XML and key files gain
+  holding a letter whose count changed; JSON and key files gain
   `value_equals` and `value_absent` by pointer; SQLite tables gain rows added,
-  changed and removed, by primary key, and their new row count. A zip archive
-  gains checks inside the JSON, key file and XML views of its entries, by
-  [selectors](#pointers-and-selectors) and never through an element by
-  position: an element added whole that it exists, one removed whole that it
-  is absent, then values changed, added and removed, an entry or a JSON value
-  added whole through its members, and an empty array or object as it is.
-  Values that look like a time the app stamps are left out.
+  changed and removed, by primary key, and their new row count. An XML file,
+  and the JSON, key file and XML views of a zip archive's entries, gain checks
+  by [selectors](#pointers-and-selectors) and never through an element by
+  position: in XML, first [`text_equals`](#whole-text) for each element whose
+  text changed, then an element added whole that it exists, one removed whole
+  that it is absent, then values changed, added and removed, an entry or a
+  JSON value added whole through its members, and an empty array or object as
+  it is. The text check names the paragraph rather than a run inside it: it
+  goes up from an element sitting in its parent's text, and from one named by
+  its tag or position alone to the nearest ancestor named by an attribute, as
+  AbiWord's `p` by its `xid`; the text nodes and runs inside it get no other
+  check, but an element holding no text that is added or removed there, such
+  as an image or a line break, keeps its own, since the text check never
+  reads it. Whitespace an app lays out between elements is not checked, and
+  values that look like a time the app stamps, in ISO 8601 or as C's
+  `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
 
 The suggestions are a starting point. Keep the ones that say what the user
 did; drop the ones that only follow from how the app saves its file. A LibreCAD
@@ -99,6 +108,8 @@ file, in the shapes of the state view.
 | `line_count`    | `exact` or `contains`; `equals`, `at_least` or `at_most`     | The number of lines equal to `exact`, or holding `contains`, compares so |
 | `value_equals`  | `pointer`, `value`; optional `tolerance`                     | The pointer names a value equal to `value`, or within `tolerance` of it  |
 | `value_absent`  | `pointer`                                                    | The pointer names no value                                               |
+| `text_equals`   | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's [whole text](#whole-text) equals `value`               |
+| `text_contains` | `pointer`, `value`; optional `normalize_whitespace`          | The XML element's whole text holds `value`                               |
 | `row_present`   | `table`, `where`                                             | A row of the SQLite table has every column in `where` equal              |
 | `row_absent`    | `table`, `where`                                             | No row does                                                              |
 | `row_count`     | `table`; optional `where`; `equals`, `at_least` or `at_most` | The number of rows, or of rows matching `where`, compares so             |
@@ -109,7 +120,8 @@ The rules both evaluators follow:
   `value_absent` and `row_absent` pass on it and a count is 0.
 - A file that has no view (binary, over the read limit, or unreadable) fails
   every check but `file_present` and `file_absent`. Line checks need a text
-  view and row checks a SQLite view; another format fails.
+  view, row checks a SQLite view and text checks an XML view, in a file or an
+  archive entry; another format fails.
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
@@ -127,9 +139,9 @@ The rules both evaluators follow:
   no regular expressions: a pattern run on what the agent wrote could stall
   the verifier, and JavaScript and Python read some patterns differently.
 - A check decided by what a view leaves out (`lines_absent`, `value_absent`,
-  `row_absent`, the counts, and `value_equals` of a whole object or array)
-  fails when that view is truncated; a check satisfied by what the view holds
-  is decided on it.
+  `row_absent`, the counts, `value_equals` of a whole object or array, and
+  the text checks of an element) fails when that view is truncated; a check
+  satisfied by what the view holds is decided on it.
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a file that is text
@@ -137,9 +149,11 @@ at the seed, as the bundle ships it, or at the end checkpoint, the empty
 pointer (the whole file), a value that names the captured home, or the
 capture host's name or `user@host` anywhere (which the
 [export removes from the seed](desktop-application-export.md#host-name-and-user)), a
-`tolerance` with a value that is not a number, and a value that looks like an
-ISO 8601 date and time. Other volatile content, such as a counter the app
-bumps on every save, is for the author to leave out.
+`tolerance` with a value that is not a number, an empty `text_contains`
+value, or one of only whitespace with `normalize_whitespace`, and a value that
+looks like a date and time, in ISO 8601 or `asctime`'s form. Other volatile
+content, such as a
+counter the app bumps on every save, is for the author to leave out.
 
 ## Pointers and selectors
 
@@ -236,6 +250,48 @@ Inkscape writes a line of text as a `tspan` inside its `text` element, and
 Writer keeps a paragraph's style in `text:style-name`. A prefix is the one the
 document uses, so a check names the prefixes the app writes.
 
+## Whole text
+
+A text node is only the stretch of text between two pieces of markup, and
+apps split a paragraph into runs as they save it. AbiWord wraps text typed
+into a reopened document in `c` elements, so changing a time to `3:30` saves
+`<p>The team meeting starts at <c>3</c>:<c>30</c> in room 4.</p>`; Writer,
+which records revision IDs by default, writes text typed in one session as
+`text:span` runs. A `value_equals` on the paragraph's `children/0` then reads
+`"The team meeting starts at "` and fails. `text_equals` and `text_contains`
+read the element's whole text instead:
+
+```json
+{
+  "id": "time",
+  "kind": "text_equals",
+  "file": "Documents/meeting.abw",
+  "pointer": "/root/children/[name=section]/children/[name=p][@xid=3]",
+  "value": "The team meeting starts at 3:30 in room 4."
+}
+```
+
+- The pointer names an element of an XML view, in a file or in an archive
+  entry's `view`, or a text node or attribute value in one, whose text is its
+  value. Another format, a pointer into an archive outside an XML entry's
+  view, or any other value fails, an element's `name` and the `doctype`'s
+  fields included: they are strings of the view, not text of the document.
+- An element's text is XPath's `string()` of what the view keeps: every text
+  node in it and in its descendants, CDATA included, in document order, with
+  nothing between them. The view drops whitespace-only text between child
+  elements only in an element that holds no other text, outside
+  `xml:space="preserve"`, so the space between two runs of a paragraph is
+  part of its text. Elements that stand for characters, such as Writer's
+  `text:s`, `text:tab` and `text:line-break`, add none.
+- `text_equals` passes when the text equals `value` exactly, case and all;
+  `text_contains` when it holds `value`, as a time within a sentence, so the
+  check holds whatever the rest of the sentence says.
+- `normalize_whitespace: true` collapses each run of XML whitespace (space,
+  tab, carriage return, line feed) in both the text and `value` to one space
+  and trims both ends before comparing, as XPath's `normalize-space()` does,
+  for an app that reflows text or a value written across lines. A no-break
+  space is not whitespace there.
+
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
@@ -245,9 +301,13 @@ capture host's name and user removed, and at the end checkpoint, the
 captured end state. Those are the capture's first and last checkpoints unless
 `--seed-checkpoint` and `--end-checkpoint` name others.
 It refuses a task whose every check passes on the seed, and a check that fails
-on the end state, with that check's reason. A capture yields one task, so the
-option is taken once. The result's `task` names the task, its number of checks
-and those that fail on the seed. A refused task writes no bundle.
+on the end state, with that check's reason. Only a failure on what the seed's
+view shows counts: a task whose checks fail on the seed only because a view
+could not be read or may have left out what they look for, such as a line past
+the 5,000 a text view keeps, is refused, naming each failure. A capture yields
+one task, so the option is taken once. The result's `task` names the task, its
+number of checks and those that fail on what the seed shows. A refused task
+writes no bundle.
 
 The bundle then holds, besides the app and `tasks/smoke.json`:
 
