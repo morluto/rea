@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 
-import type { BuildSource } from "../../domain/desktop/appBuild.js";
+import {
+  extraPackagesOf,
+  type BuildSource,
+} from "../../domain/desktop/appBuild.js";
+import { counted } from "../../domain/desktop/appExportUnowned.js";
+import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
 import {
   driverCall,
   type ComputerAction,
@@ -23,6 +28,7 @@ import {
   AgentEnvComputer,
   AppDataRefusal,
   ComputerStartFailure,
+  computerFailedOnReadiness,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
 import {
@@ -36,8 +42,9 @@ import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { writeRequestBundle } from "./DesktopBuildBundle.js";
+import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 
@@ -195,6 +202,7 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
+  settle: BuildSettle,
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
@@ -212,6 +220,7 @@ const liveComputer = (
       witness: new DesktopBuildWitness(
         computer,
         actions,
+        settle,
         source.kind === "bundle" ? source.path : undefined,
       ),
       turns,
@@ -219,6 +228,32 @@ const liveComputer = (
     turns,
     closing: false,
   };
+};
+
+/**
+ * A bundle's start that failed on readiness, naming the lock files its seed
+ * holds, which an app that finds its profile or document in use may never
+ * start past; any other failure as it is. Readiness is `reason`, not the
+ * message.
+ */
+/** The start failure's notice that the bundle seed still holds lock files. */
+export const seededLockStartNotice = (locks: readonly string[]): string =>
+  `The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`;
+
+const withSeededLocks = async (
+  source: BuildSource,
+  cause: unknown,
+): Promise<unknown> => {
+  if (source.kind !== "bundle" || !computerFailedOnReadiness(cause))
+    return cause;
+  const locks = await seededLockFiles(source.path);
+  return locks.length === 0
+    ? cause
+    : new ComputerStartFailure(
+        `${cause.message} ${seededLockStartNotice(locks)}`,
+        cause.remediation,
+        cause.cause === undefined ? undefined : { cause: cause.cause },
+      );
 };
 
 /**
@@ -274,7 +309,10 @@ export class DesktopBuildComputers {
   readonly #starts = new Set<PendingStart>();
   #closed = false;
 
-  constructor(private readonly environment: Readonly<NodeJS.ProcessEnv>) {}
+  constructor(
+    private readonly environment: Readonly<NodeJS.ProcessEnv>,
+    private readonly settle: BuildSettle = SETTLE_TIMING,
+  ) {}
 
   async start(
     input: {
@@ -289,6 +327,7 @@ export class DesktopBuildComputers {
         readonly computer_id: string;
         readonly sandbox_id: string;
         readonly environment: string;
+        readonly extra_packages: string[];
         readonly screenshot: Readonly<Record<string, JsonValue>> | null;
       }>,
       AnalysisError
@@ -367,12 +406,16 @@ export class DesktopBuildComputers {
               shot.value.arguments,
               signal,
             );
-      this.#computers.set(id, liveComputer(computer, target.workspace, source));
+      this.#computers.set(
+        id,
+        liveComputer(computer, target.workspace, source, this.settle),
+      );
       return ok({
         value: {
           computer_id: id,
           sandbox_id: computer.sandboxId,
           environment: target.name,
+          extra_packages: [...extraPackagesOf(source)],
           screenshot: taken.isError ? null : taken.structured,
         },
         content: taken.content,
@@ -395,7 +438,12 @@ export class DesktopBuildComputers {
         closing: true,
       });
       const release = await this.#retire(id);
-      return err(startFailure(cause, signal, owner?.output(), { id, release }));
+      const failed = signal.aborted
+        ? cause
+        : await withSeededLocks(source, cause);
+      return err(
+        startFailure(failed, signal, owner?.output(), { id, release }),
+      );
     }
   }
 

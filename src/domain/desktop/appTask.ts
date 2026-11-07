@@ -3,6 +3,7 @@ import { z } from "zod";
 import { jsonValueSchema, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { describeValidationFailure } from "../validationFailure.js";
+import { selectorOf } from "./viewSelector.js";
 
 /** The prompt a drafted task carries until its author replaces it. */
 export const DRAFT_PROMPT =
@@ -29,6 +30,13 @@ const wholeText = {
   pointer: z.string(),
   value: z.string(),
   normalize_whitespace: z.boolean().optional(),
+  text_attribute: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "Read the element's text from this attribute's values on it and its descendants, in document order, instead of from its text nodes.",
+    ),
 };
 
 /** Text with each run of XML whitespace (space, tab, CR, LF) made one space and none at either end, as XPath's normalize-space(). */
@@ -68,6 +76,16 @@ const checkSchema = z.discriminatedUnion("kind", [
   kind("row_present", { table, where }),
   kind("row_absent", { table, where }),
   kind("row_count", { table, where: where.optional(), ...comparison }),
+  kind("member_count", {
+    pointer: z.string(),
+    matching: z
+      .string()
+      .optional()
+      .describe(
+        "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE] conditions that a member must meet to count; every member counts without it, text nodes of an XML element's children included.",
+      ),
+    ...comparison,
+  }),
 ]);
 
 /** A task file as an agent writes it: a portable name, a prompt and declarative checks. */
@@ -89,9 +107,15 @@ export interface DesktopTask {
   readonly checks: readonly DesktopTaskCheck[];
 }
 
+/** Checks that count lines, rows or the members of an array. */
+export type CountCheck = Extract<
+  DesktopTaskCheck,
+  { kind: "line_count" | "row_count" | "member_count" }
+>;
+
 /** A count comparison: exactly one of equals, at_least and at_most. */
 export const countComparison = (
-  check: Extract<DesktopTaskCheck, { kind: "line_count" | "row_count" }>,
+  check: CountCheck,
 ):
   | { readonly operator: "equals" | "at_least" | "at_most"; readonly n: number }
   | undefined => {
@@ -105,7 +129,14 @@ export const countComparison = (
 /** Checks that read a view at a JSON pointer. */
 export type PointerCheck = Extract<
   DesktopTaskCheck,
-  { kind: "value_equals" | "value_absent" | "text_equals" | "text_contains" }
+  {
+    kind:
+      | "value_equals"
+      | "value_absent"
+      | "text_equals"
+      | "text_contains"
+      | "member_count";
+  }
 >;
 
 export const isPointerCheck = (
@@ -114,7 +145,8 @@ export const isPointerCheck = (
   check.kind === "value_equals" ||
   check.kind === "value_absent" ||
   check.kind === "text_equals" ||
-  check.kind === "text_contains";
+  check.kind === "text_contains" ||
+  check.kind === "member_count";
 
 /** A home-relative path in its one spelling: no leading slash, empty, `.` or `..` segment. */
 const isHomePath = (path: string): boolean =>
@@ -154,8 +186,11 @@ const expectedValues = (check: DesktopTaskCheck): readonly JsonValue[] => {
 
 /** What is wrong with a pointer check's pointer, or with what a text check searches for, or undefined. */
 const pointerProblem = (check: PointerCheck): string | undefined => {
+  // A count may take a whole file, as a JSON file whose top level is an array.
   if (check.pointer === "")
-    return "the empty pointer names the whole file; point at the value that changed";
+    return check.kind === "member_count"
+      ? undefined
+      : "the empty pointer names the whole file; point at the value that changed";
   if (!check.pointer.startsWith("/"))
     return `pointer ${JSON.stringify(check.pointer)} must start with /`;
   return check.kind === "text_contains" &&
@@ -175,12 +210,20 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
   )
     return "line_count takes exactly one of exact and contains";
   if (
-    (check.kind === "line_count" || check.kind === "row_count") &&
+    (check.kind === "line_count" ||
+      check.kind === "row_count" ||
+      check.kind === "member_count") &&
     countComparison(check) === undefined
   )
     return `${check.kind} takes exactly one of equals, at_least and at_most`;
   const pointed = isPointerCheck(check) ? pointerProblem(check) : undefined;
   if (pointed !== undefined) return pointed;
+  if (
+    check.kind === "member_count" &&
+    check.matching !== undefined &&
+    selectorOf(check.matching) === undefined
+  )
+    return `matching ${JSON.stringify(check.matching)} is not a selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>CHILD=VALUE]`;
   if (
     (check.kind === "lines_present" || check.kind === "lines_absent") &&
     new Set(check.lines).size !== check.lines.length

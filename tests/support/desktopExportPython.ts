@@ -17,9 +17,10 @@ import {
 } from "../../src/domain/desktop/appExportPython.js";
 import { PYTHON_TASK_EVALUATOR } from "../../src/domain/desktop/appTaskPython.js";
 import {
-  detectStateFormat,
-  textualView,
-} from "../../src/domain/desktop/stateFormats.js";
+  compressionOf,
+  openStateDocument,
+} from "../../src/domain/desktop/gzipDocument.js";
+import { textualView } from "../../src/domain/desktop/stateFormats.js";
 import { zipArchive } from "../../src/domain/desktop/zipArchive.fixture.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -128,19 +129,26 @@ export const pythonXmlViews = (texts: readonly string[]) =>
     ),
   );
 
-/** REA's state view of a zip, text, JSON, key file or XML file, in the shape data/get serves it. */
+/** REA's state view of a zip, text, JSON, key file, XML or binary file, plain or gzip-compressed, in the shape data/get serves it. */
 export const typescriptFileView = async ({
   name,
   bytes,
 }: SavedFile): Promise<TaskFileView> => {
-  const format = detectStateFormat(name, bytes);
-  if (format === "sqlite" || format === "dconf" || format === "binary")
+  const document = openStateDocument(name, bytes);
+  const file = { format: document.format, ...compressionOf(document) };
+  if ("error" in document)
+    return { ...file, view: null, error: document.error };
+  const { format } = document;
+  if (format === "sqlite" || format === "dconf")
     throw new Error(`${name} is ${format}, which these tests do not read`);
+  if (format === "binary") return { ...file, view: null };
   const read =
-    format === "zip" ? await readZipView(bytes) : textualView(format, bytes);
+    format === "zip"
+      ? await readZipView(document.bytes)
+      : textualView(format, document.bytes);
   return read.ok
-    ? { format, view: read.value }
-    : { format, view: null, error: read.error };
+    ? { ...file, view: read.value }
+    : { ...file, view: null, error: read.error };
 };
 
 /** Both readers give each file the same format and view, or the same error. */
@@ -150,6 +158,7 @@ export const expectSameFileViews = async (files: readonly SavedFile[]) => {
     const ours = await typescriptFileView(file);
     const theirs = fromPython[index] ?? {};
     expect(theirs.format).toBe(ours.format);
+    expect(theirs.compression).toBe(ours.compression);
     expect(theirs.view).toEqual(ours.view);
     expect(theirs.error).toBe(ours.error);
   }
