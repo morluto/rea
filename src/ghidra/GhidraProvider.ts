@@ -5,6 +5,8 @@ import {
   existingProjectCapabilities,
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+  loopbackTransportCapabilities,
+  declareLoopbackNetworkEffect,
   windowsP0Capabilities,
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
 } from "./GhidraProviderCapabilities.js";
@@ -80,6 +82,7 @@ import {
   isGhidraPspTarget,
 } from "./GhidraPspProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
+import { resolveGhidraTransport } from "./GhidraTransport.js";
 import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
   createGhidraProviderClient,
@@ -162,12 +165,34 @@ export class GhidraProvider implements AnalysisProviderCandidate {
   capabilities(): readonly CapabilityDescriptor[] {
     const platform = this.installationHost?.platform ?? process.platform;
     return this.config.ghidraExistingProject !== undefined
-      ? existingProjectCapabilities(platform)
+      ? this.#existingProjectCapabilities(platform)
       : platform === "win32"
         ? windowsP0Capabilities()
-        : this.config.ghidraCheckpointDirectory === undefined
-          ? CAPABILITIES
-          : checkpointCapabilities();
+        : this.#posixCapabilities();
+  }
+
+  /** POSIX hosts keep full authority unless loopback or a checkpoint directory was selected. */
+  #posixCapabilities(): readonly CapabilityDescriptor[] {
+    if (this.config.ghidraBridgeTransport === "authenticated-loopback-tcp")
+      return loopbackTransportCapabilities();
+    return this.config.ghidraCheckpointDirectory === undefined
+      ? CAPABILITIES
+      : checkpointCapabilities();
+  }
+
+  /**
+   * Existing-project reads still run over the selected transport, so a POSIX
+   * loopback session declares the network effect; the Unix socket and the
+   * Windows launch path are unchanged.
+   */
+  #existingProjectCapabilities(
+    platform: NodeJS.Platform,
+  ): readonly CapabilityDescriptor[] {
+    const base = existingProjectCapabilities(platform);
+    return platform !== "win32" &&
+      this.config.ghidraBridgeTransport === "authenticated-loopback-tcp"
+      ? base.map(declareLoopbackNetworkEffect)
+      : base;
   }
 
   async inspectAvailability(
@@ -208,11 +233,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       availability,
       capabilities:
         this.config.ghidraExistingProject !== undefined
-          ? existingProjectCapabilities(installation.platform)
+          ? this.#existingProjectCapabilities(installation.platform)
           : readiness === undefined
-            ? this.config.ghidraCheckpointDirectory === undefined
-              ? CAPABILITIES
-              : checkpointCapabilities()
+            ? this.#posixCapabilities()
             : windowsP0Capabilities(readiness),
     };
   }
@@ -492,6 +515,10 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       target,
       installation.platform,
       this.#inspectionResources,
+      resolveGhidraTransport(
+        installation.platform,
+        this.config.ghidraBridgeTransport,
+      ),
       options?.signal,
     );
     if (!extensions.ok) return extensions;
@@ -589,6 +616,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         target,
         profile,
         this.installationHost?.platform ?? process.platform,
+        this.config,
       );
       if (!admitted.ok) throw admitted.error;
       const installation = await this.#observeInstallation(
