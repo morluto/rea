@@ -9,20 +9,34 @@ import {
   rm,
   rename,
   symlink,
+  type FileHandle,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { createAnalysisProfile } from "../domain/analysisProfile.js";
 import { acquireOwnedLease } from "../process/OwnedLease.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import {
   GhidraCheckpoint,
   resolveGhidraCheckpoint,
 } from "./GhidraCheckpoint.js";
 
+const controls = vi.hoisted(() => ({
+  file: undefined as ((handle: FileHandle, path: string) => void) | undefined,
+}));
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, rename: vi.fn(actual.rename), rm: vi.fn(actual.rm) };
+  return {
+    ...actual,
+    rename: vi.fn(actual.rename),
+    rm: vi.fn(actual.rm),
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      controls.file?.(handle, String(args[0]));
+      return handle;
+    },
+  };
 });
 
 vi.mock("../process/OwnedLease.js", async (importOriginal) => {
@@ -34,6 +48,8 @@ vi.mock("../process/OwnedLease.js", async (importOriginal) => {
 const roots: string[] = [];
 const owners: GhidraCheckpoint[] = [];
 afterEach(async () => {
+  controls.file = undefined;
+  vi.restoreAllMocks();
   const leases = await vi.importActual<
     typeof import("../process/OwnedLease.js")
   >("../process/OwnedLease.js");
@@ -112,6 +128,61 @@ async function fixture() {
   await writeFile(packed, "controlled packed bytes");
   return { root, resources, selection, owner, packed };
 }
+
+it.skipIf(process.platform === "win32").each(
+  ["manifest", "packed"].flatMap((stage) => [
+    { stage, cancel: true, closeFails: false },
+    { stage, cancel: true, closeFails: true },
+    { stage, cancel: false, closeFails: true },
+  ]),
+)(
+  "preserves $stage cancellation=$cancel and descriptor cleanup=$closeFails",
+  async ({ stage, cancel, closeFails }) => {
+    const f = await fixture();
+    await f.owner.acquire("writer");
+    await f.owner.publish(f.packed);
+    await f.owner.close();
+    const controller = new AbortController();
+    const reason = { caller: "stopped hashing" };
+    controls.file = (handle, path) => {
+      if (!path.endsWith(stage === "manifest" ? "current.json" : ".gzf"))
+        return;
+      const read = handle.read.bind(handle);
+      vi.spyOn(handle, "read").mockImplementation(
+        async (...args: Parameters<typeof handle.read>) => {
+          const result = await read(...args);
+          if (cancel) controller.abort(reason);
+          return result;
+        },
+      );
+      if (closeFails)
+        vi.spyOn(handle, "close").mockRejectedValueOnce(
+          new Error("controlled checkpoint close failure"),
+        );
+    };
+    try {
+      const error = await resolveGhidraCheckpoint(
+        f.root,
+        target,
+        profile,
+        f.resources,
+        controller.signal,
+      ).catch((cause: unknown) => cause);
+      if (cancel) {
+        expect(error).toBeInstanceOf(AnalysisCancelledError);
+        expect((error as AnalysisCancelledError).cause).toBe(reason);
+      } else expect(error).toMatchObject({ _tag: "ProviderAdapterError" });
+      expect(error).toMatchObject({ cleanupIncomplete: closeFails });
+      expect(f.resources.hasPending).toBe(closeFails);
+      await f.resources.retryCleanup();
+      expect(error).toMatchObject({ cleanupIncomplete: false });
+      expect(f.resources.hasPending).toBe(false);
+    } finally {
+      controls.file = undefined;
+      await f.resources.retryCleanup();
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "publishes a verified state, reopens it, and separates target and analysis identities",
@@ -295,9 +366,10 @@ it.skipIf(process.platform === "win32")(
     );
     const next = join(f.root, "next.gzf");
     await writeFile(next, "new packed bytes");
-    await expect(f.owner.publish(next)).rejects.toThrow(
-      "controlled publish failure",
-    );
+    await expect(f.owner.publish(next)).rejects.toMatchObject({
+      _tag: "ProviderAdapterError",
+      diagnostics: { reason: "controlled publish failure" },
+    });
     expect(await readFile(path, "utf8")).toEqual(before);
     vi.mocked(rename).mockImplementation(actual.rename);
     await f.owner.publish(next);

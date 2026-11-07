@@ -6,6 +6,7 @@ import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
@@ -63,7 +64,7 @@ import {
   AnalysisTimeoutError,
   resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import {
   providerRetryAction,
@@ -110,6 +111,7 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  type GhidraSessionSource,
   ghidraEmptyXrefsLimitation,
   ghidraEmptyIncomingReferencesLimitation,
   ghidraEmptyDossierIncomingLimitation,
@@ -861,11 +863,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       limitations: [
-        ...limitationsFor(
-          operation,
-          project !== undefined,
-          checkpoint.data !== undefined,
-        ),
+        ...limitationsFor(operation, projection.source),
         ...(observation.limitations ?? []),
         ...sessionLimitations(),
       ],
@@ -962,7 +960,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             limitations: [
-              ...ghidraHealthLimitations(project !== undefined),
+              ...ghidraHealthLimitations(projection.source),
               ...sessionLimitations(),
             ],
           }),
@@ -1243,7 +1241,13 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
-  if (failure.kind === "checkpoint")
+  if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof AnalysisError)
+      return analysisClientFailureForOperation(
+        failure.cause,
+        "ghidra",
+        operation,
+      );
     return new ConfigurationError(failure.message, {
       ...context,
       settings: [
@@ -1252,6 +1256,7 @@ const projectPrimarySessionError = (
       remediationAction:
         "Preserve the checkpoint directory. Correct the reported file, permission or competing-session problem, then reopen the target. Select a new checkpoint directory only if you explicitly want fresh analysis.",
     });
+  }
   // Launch-time copies, such as the verified existing-project copy, report a
   // changed source as the launcher's primary failure; read it through the
   // launch wrapper so the refusal keeps its typed projection.
@@ -1750,11 +1755,6 @@ export const GHIDRA_SESSION_RETAINED = "The Ghidra session remains usable.";
 /** The same addition when a failed search leaves session annotations intact. */
 export const GHIDRA_ANNOTATIONS_RETAINED =
   "The active analysis session and annotations remain available.";
-
-export type GhidraSessionSource =
-  | "fresh-import"
-  | "existing-project"
-  | "owned-checkpoint";
 
 /** What a new Ghidra session repeats in the configured startup mode. */
 const ghidraSessionRestart = (source: GhidraSessionSource): string =>

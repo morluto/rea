@@ -22,6 +22,7 @@ import {
   withArtifactRegularFile,
   assertArtifactReadActive,
   artifactFilePrimaryFacts,
+  mapArtifactFileFailure,
 } from "../artifacts/ArtifactFileOperation.js";
 import {
   sameRegularFileState,
@@ -154,10 +155,14 @@ async function readSource(
     );
   } catch (cause: unknown) {
     if (missing(cause) && !resources.hasPending) return null;
-    throw failure(
-      selection.directory,
-      "the manifest is unreadable or malformed",
-      cause,
+    throw ghidraFileFailure(
+      mapArtifactFileFailure(cause, (primary) =>
+        primary instanceof SyntaxError || primary instanceof z.ZodError
+          ? failure(selection.directory, "the manifest is malformed", primary)
+          : primary,
+      ),
+      "resolve_analysis_profile",
+      { path: appendCallerPath(selection.directory, "current.json") },
     );
   }
   if (
@@ -173,11 +178,7 @@ async function readSource(
   try {
     actual = await hashGhidraPackedProgram(path, resources, signal);
   } catch (cause: unknown) {
-    throw failure(
-      selection.directory,
-      "the packed Program cannot be verified",
-      cause,
-    );
+    throw ghidraFileFailure(cause, "resolve_analysis_profile", { path });
   }
   if (actual !== manifest.source.sha256)
     throw failure(
@@ -396,7 +397,10 @@ export class GhidraCheckpoint {
         );
       throw cause;
     }
-    if (failed) throw primary;
+    if (failed)
+      throw ghidraFileFailure(primary, "checkpoint_program", {
+        path: this.selection.directory,
+      });
     assertArtifactReadActive(signal);
   }
 

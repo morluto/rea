@@ -160,7 +160,7 @@ __attribute__((noinline)) int rea_checkpoint_leaf(CheckpointRecord *record) { re
 int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf(&record); }
 `,
   );
-  await exec(process.env.REA_CC ?? "cc", [
+  await exec("cc", [
     "-O0",
     "-g",
     "-gdwarf-4",
@@ -361,6 +361,36 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       );
       assert.ok(refusal.details.binding_mismatch.profile_digest);
       return {};
+    },
+  );
+  await phase(
+    "an edited live Program switches to identical bytes at another path",
+    async () => {
+      const active = await connect();
+      const alias = join(root, "live-alias");
+      await copyFile(target, alias);
+      try {
+        await active.call("open_binary", {
+          path: target,
+          provider_id: "ghidra",
+        });
+        await active.call("annotate_native_function", {
+          procedure: "rea_checkpoint_retained",
+          comment: "REA checkpoint second comment; saved during alias switch",
+        });
+        await active.call("open_binary", {
+          path: alias,
+          provider_id: "ghidra",
+        });
+        const result = await active.call("procedure_pseudo_code", {
+          procedure: "rea_checkpoint_retained",
+        });
+        assert.match(JSON.stringify(result), /saved during alias switch/);
+        await active.call("close_binary");
+        return { alias_switch_preserved_edits: true };
+      } finally {
+        await active.close();
+      }
     },
   );
   const current = await manifest(),

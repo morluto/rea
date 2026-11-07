@@ -534,6 +534,8 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         ) ||
         ghidraPinnedLanguage(target) !== undefined ||
         extensions.value.length !== 0 ||
+        baseProfile.parameters.loader !== "auto-from-header" ||
+        baseProfile.parameters.psp_extension !== undefined ||
         seeds.value !== undefined ||
         this.config.ghidraLanguageOverride !== undefined ||
         this.config.ghidraDisabledAnalyzers !== undefined)
@@ -564,6 +566,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           );
     return ok({
       ...resolved.value,
+      ...(checkpoint === undefined
+        ? {}
+        : { refreshAfterRetirement: true as const }),
       profile:
         checkpoint === undefined
           ? baseProfile
