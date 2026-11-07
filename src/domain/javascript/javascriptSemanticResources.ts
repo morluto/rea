@@ -326,9 +326,10 @@ const encodingTruthiness = (
       ? value.name === "Infinity"
       : undefined;
   if (!t.isUnaryExpression(value)) return undefined;
-  // `typeof` and `delete` always produce a non-empty string or a boolean, and `void`
-  // is `undefined`.
-  if (value.operator === "typeof" || value.operator === "delete") return true;
+  // `typeof` is a non-empty string and `void` is `undefined`. A `delete`
+  // expression can return either boolean, so its truthiness is unknown.
+  if (value.operator === "typeof") return true;
+  if (value.operator === "delete") return undefined;
   if (value.operator === "void") return false;
   // `!` over an exactly readable operand is the negation of its truthiness.
   if (value.operator === "!") {

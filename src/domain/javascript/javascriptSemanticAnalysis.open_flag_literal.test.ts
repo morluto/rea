@@ -442,6 +442,30 @@ const streamAcquisitionsFor = (call: string) =>
     `import fs from "node:fs";\nfunction g(p, opts, n) { ${call}; }`,
   ).resourceOperations.map(({ kind, method }) => ({ kind, method }));
 
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "keeps %s and its close when delete may evaluate to false",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      const fs = require("node:fs");
+      function open(p) {
+        const o = {};
+        Object.defineProperty(o, "x", { value: 1 });
+        const stream = fs.${method}(p, { encoding: delete o.x });
+        stream.close();
+      }
+    `).resourceOperations;
+    const acquire = operations.find(
+      (operation) => operation.kind === "acquire",
+    );
+    const release = operations.find(
+      (operation) => operation.kind === "release",
+    );
+    expect(acquire).toMatchObject({ kind: "acquire", method });
+    expect(release).toMatchObject({ kind: "release", method: "close" });
+    expect(release?.linkedResourceIds).toContain(acquire?.resourceId);
+  },
+);
+
 it.each([
   ["a negative start", `fs.createReadStream(p, {start: -1})`],
   ["a fractional start", `fs.createReadStream(p, {start: 1.5})`],
