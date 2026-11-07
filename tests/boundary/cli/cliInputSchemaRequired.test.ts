@@ -342,16 +342,16 @@ describe("web source location CLI advertised input schema", () => {
 
     expect(args(validArgs)).toBe(true);
     expect(args({ ...validArgs, manifestPath: "" })).toBe(false);
-    expect(args({ ...validArgs, manifestPath: "manifest\u0000.json" })).toBe(
-      false,
-    );
+    expect(
+      args({ ...validArgs, manifestPath: resolve("manifest\u0000.json") }),
+    ).toBe(false);
     expect(args({ ...validArgs, manifestPath: "./manifest.json" })).toBe(
       false,
     );
     expect(args({ ...validArgs, sourceMapPath: "" })).toBe(false);
-    expect(args({ ...validArgs, sourceMapPath: "map\u0000.json" })).toBe(
-      false,
-    );
+    expect(
+      args({ ...validArgs, sourceMapPath: resolve("map\u0000.json") }),
+    ).toBe(false);
     expect(args({ ...validArgs, sourceMapPath: "./app.js.map" })).toBe(false);
     expect(args({ ...validArgs, sourceMapUrl: "" })).toBe(false);
   });
