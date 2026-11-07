@@ -161,6 +161,36 @@ describe("openSeedDocument", () => {
   });
 });
 
+it("matches file URLs without changing their spelling and keeps URLs when a link is retargeted", () => {
+  const url = `file://${HOME}/Documents/poster.svg`;
+  expect(
+    openSeedDocument(["inkscape", url], {
+      ...AT_HOME,
+      exec: "inkscape %U",
+      documents: poster,
+    }),
+  ).toEqual({ argv: ["inkscape", url], opens: { kind: "captured" } });
+  expect(
+    openSeedDocument(
+      ["inkscape", `file://${HOME}/storage/poster%20one.svg?mode=edit#page`],
+      {
+        ...AT_HOME,
+        exec: "inkscape %U",
+        documents: ["Documents/poster one.svg"],
+        isDocument: (path) => path === "Documents/poster one.svg",
+        spell: (path) =>
+          path === "storage/poster one.svg" ? "Documents/poster one.svg" : path,
+      },
+    ),
+  ).toEqual({
+    argv: [
+      "inkscape",
+      `file://${HOME}/Documents/poster%20one.svg?mode=edit#page`,
+    ],
+    opens: { kind: "captured" },
+  });
+});
+
 describe("openSeedDocument settings spelling", () => {
   it("respells a separate --config directory and an equals option", () => {
     const settings = (path: string) =>

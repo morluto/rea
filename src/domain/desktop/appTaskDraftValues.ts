@@ -117,6 +117,7 @@ const isArchiveEntry = (value: JsonValue): value is Record<string, JsonValue> =>
  */
 export const compactValue = (
   value: JsonValue | undefined,
+  format: "json" | "xml" | "archive",
   max: number = VALUE_LIMITS.chars,
 ): JsonValue => {
   if (value === undefined) return null;
@@ -130,7 +131,7 @@ export const compactValue = (
     return length <= max;
   };
   const write = (node: JsonValue): boolean => {
-    if (isXmlElement(node)) {
+    if (format === "xml" && isXmlElement(node)) {
       const start = startTag(node);
       if (node.children.length === 0) return push(`${start}/>`);
       return (
@@ -141,7 +142,7 @@ export const compactValue = (
         push(`</${node.name}>`)
       );
     }
-    if (isArchiveEntry(node))
+    if (format === "archive" && isArchiveEntry(node))
       return push(
         JSON.stringify({
           name: node.name,
@@ -205,9 +206,9 @@ const indexUnder = (
  * and by tag: at most `PER_TAG` of a tag in document order, so a key that
  * records or archive entries repeat costs no more than that.
  */
-const referenceIndex = (view: JsonValue | null) => {
+const referenceIndex = (roots: readonly JsonValue[]) => {
   const index = new Map<string, Map<string, JsonValue[]>>();
-  const pending: JsonValue[] = [view];
+  const pending: JsonValue[] = [...roots];
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (isXmlElement(node))
       for (const [key, value] of Object.entries(attributesOf(node)))
@@ -286,6 +287,11 @@ export interface ValueContext {
   readonly listed: (view: JsonValue | null, pointer: string) => boolean;
   /** Why a pointer is noise, if it is. */
   readonly noise: (pointer: string) => NoiseReason | undefined;
+  readonly format: (
+    view: JsonValue | null,
+    pointer: string,
+  ) => "json" | "xml" | "archive";
+  readonly referenceRoots: (view: JsonValue | null) => readonly JsonValue[];
 }
 
 const byteLength = (value: unknown) =>
@@ -330,23 +336,42 @@ const entryOf = (
   const located = locatePointer(view, pointer);
   const found = located.kind === "value";
   // A text node added or removed is reached only by its index among its element's children.
+  const listPointer = pointer.replace(/\/\d+$/u, "");
   const indexedText =
-    found && kind !== "changed" && /\/children\/\d+$/u.test(pointer);
+    found &&
+    context.format(view, pointer) === "xml" &&
+    kind !== "changed" &&
+    /\/children\/\d+$/u.test(pointer) &&
+    Array.isArray(resolvePointer(view, listPointer)) &&
+    isXmlElement(resolvePointer(view, listPointer.replace(/\/children$/u, "")));
   const note: ValueNote | undefined =
     found && located.byPosition.length > 0
       ? "by_position"
       : (context.noise(pointer) ?? (indexedText ? "by_position" : undefined));
-  const refers = referencesOf(references(view), view, pointer).slice(
-    0,
-    VALUE_LIMITS.references,
-  );
+  const refers =
+    context.format(view, pointer) === "xml"
+      ? referencesOf(references(view), view, pointer).slice(
+          0,
+          VALUE_LIMITS.references,
+        )
+      : [];
   return {
     pointer,
     kind,
     before:
-      kind === "added" ? null : compactValue(resolvePointer(baseline, pointer)),
+      kind === "added"
+        ? null
+        : compactValue(
+            resolvePointer(baseline, pointer),
+            context.format(baseline, pointer),
+          ),
     after:
-      kind === "removed" ? null : compactValue(resolvePointer(final, pointer)),
+      kind === "removed"
+        ? null
+        : compactValue(
+            resolvePointer(final, pointer),
+            context.format(final, pointer),
+          ),
     ...(note === undefined ? {} : { note }),
     ...(refers.length === 0 ? {} : { refers_to: refers }),
   };
@@ -383,7 +408,7 @@ export const draftValues = (
   const references = (view: JsonValue | null) => {
     const known = indexes.get(view);
     if (known !== undefined) return known;
-    const made = referencesFrom(referenceIndex(view));
+    const made = referencesFrom(referenceIndex(context.referenceRoots(view)));
     indexes.set(view, made);
     return made;
   };
