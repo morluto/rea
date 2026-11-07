@@ -183,6 +183,7 @@ export const inspectLibraryPackages = async (
   const knownOwners = owners.ok ? owners.value : owners.error.owners;
   const names: string[] = [];
   const unpackaged: string[] = [];
+  let ownershipUnresolved = false;
   for (const library of located) {
     const found = library.candidates
       .map((candidate) => knownOwners.get(candidate))
@@ -192,10 +193,11 @@ export const inspectLibraryPackages = async (
       library.candidates.every((candidate) => knownOwners.has(candidate))
     )
       unpackaged.push(library.path);
+    else ownershipUnresolved = true;
   }
   const reason = [
     incompleteReason(closure),
-    owners.ok ? undefined : owners.error.reason,
+    owners.ok || !ownershipUnresolved ? undefined : owners.error.reason,
   ]
     .filter((value): value is string => value !== undefined)
     .join("; ");

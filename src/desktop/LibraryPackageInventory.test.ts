@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, realpath, writeFile } from "node:fs/promises";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -104,5 +104,37 @@ it.skipIf(process.platform === "win32")(
     );
     expect(result.unpackaged_libraries).toEqual([]);
     expect(result.library_packages_reason).toContain("pattern characters");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "does not report a skipped pattern alias when its real path has a known owner",
+  async () => {
+    const root = await createTestTempDirectory("rea-library-alias-");
+    const bin = join(root, "bin");
+    const lib = join(root, "lib");
+    await Promise.all([mkdir(bin), mkdir(lib)]);
+    const physical = join(lib, "physical.so");
+    const alias = join(lib, "lib[1].so");
+    const executable = join(bin, "app");
+    await Promise.all([
+      writeFile(physical, elfImage({})),
+      writeFile(executable, elfImage({ needed: [alias] })),
+    ]);
+    await symlink(physical, alias);
+    const resolved = await realpath(physical);
+    const result = await inspectLibraryPackages(
+      executable,
+      "app",
+      async (command, args) => {
+        if (command === "ldconfig") return { stdout: "", exitCode: 0 };
+        expect(args).not.toContain(alias);
+        return { stdout: `lib-owner: ${resolved}`, exitCode: 1 };
+      },
+      undefined,
+    );
+    expect(result.library_packages).toEqual(["lib-owner"]);
+    expect(result.unpackaged_libraries).toEqual([]);
+    expect(result).not.toHaveProperty("library_packages_reason");
   },
 );
