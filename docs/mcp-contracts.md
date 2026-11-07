@@ -318,6 +318,8 @@ Retained `xrefs` Evidence also supports `native-observation` address pages and
 default and does not accept `detail`; when its MCP response exceeds the budget,
 follow the returned continuation to page the retained result. These addresses
 remain untyped; paging does not add reference kinds or establish completeness.
+The page tells callers that any additional provider detail recorded in the parent
+requires retrieving or exporting the complete Evidence.
 
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with

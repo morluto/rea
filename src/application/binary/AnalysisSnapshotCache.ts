@@ -117,25 +117,30 @@ const DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS: ReadonlySet<AnalysisOperation> =
 
 /**
  * Whether a source observation is safe to retain as Evidence.
- * A missing document selector blocks snapshot replay. Only caller and callee
- * walks stay in the ledger without one.
+ * A missing document selector blocks snapshot replay. A producer can require
+ * its observation as Evidence independently of whether it can be replayed.
  */
 export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
-  context?: ExecutionOptions["snapshotContext"],
+  options: {
+    readonly snapshotContext?: ExecutionOptions["snapshotContext"];
+    readonly requiresSourceEvidence?: boolean;
+  } = {},
 ): descriptor is CapabilityDescriptor =>
   !STATEFUL_OPERATIONS.has(operation) &&
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
     typeof parameters.document === "string" ||
     DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
-    isOneShotPseudocode(operation, descriptor, context)) &&
+    options.requiresSourceEvidence === true ||
+    isOneShotPseudocode(operation, descriptor, options.snapshotContext)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
-  (descriptor.cachePolicy === "snapshot" ||
+  (options.requiresSourceEvidence === true ||
+    descriptor.cachePolicy === "snapshot" ||
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
 
@@ -146,7 +151,9 @@ export const isSnapshotCacheable = (
   parameters: Readonly<Record<string, JsonValue>>,
   context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
-  isSourceEvidenceRetainable(operation, descriptor, parameters, context) &&
+  isSourceEvidenceRetainable(operation, descriptor, parameters, {
+    snapshotContext: context,
+  }) &&
   (replayDocumentSelected(operation, parameters) ||
     isOneShotPseudocode(operation, descriptor, context)) &&
   descriptor.cachePolicy !== "live";
@@ -589,9 +596,15 @@ export class AnalysisSnapshotCache {
   ): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
-    // The snapshot format does not carry reference truncation; a replay would
-    // present a capped read as complete, so it is not recorded.
-    if (execution.referencesTruncated === true) return;
+    // The snapshot format does not carry reference truncation or stored-pointer
+    // classifications. Replaying either would present a capped or untyped read
+    // as the live observation.
+    if (
+      execution.referencesTruncated === true ||
+      execution.referenceClassifications !== undefined ||
+      execution.referenceCoverageGaps !== undefined
+    )
+      return;
     let sourceBinding: SnapshotReplayBinding | undefined;
     if ((execution.sourceEvidence?.length ?? 0) > 0) {
       if (execution.evidenceId === undefined || lookup === undefined) return;
