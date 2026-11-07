@@ -477,15 +477,27 @@ it.each([
     `fs.createWriteStream(p, {highWaterMark: -1})`,
   ],
   ["a write-stream numeric encoding", `fs.createWriteStream(p, {encoding: 5})`],
-  [
-    "a bad start after a spread",
-    `fs.createReadStream(p, {...opts, start: -1})`,
-  ],
 ] as const)("emits no stream acquisition for %s", (_name, call) => {
   expect(streamAcquisitionsFor(call)).toEqual([]);
 });
 
 it.each([
+  [
+    "a descriptor with an unknown prototype",
+    `fs.createReadStream(p, {fd: {__proto__: opts}})`,
+  ],
+  [
+    "a copied prototype setter",
+    `fs.createReadStream(p, {["__proto__"]: {set start(v) {}}, start: -1})`,
+  ],
+  [
+    "a spread that may supply a prototype setter",
+    `fs.createReadStream(p, {...opts, start: -1})`,
+  ],
+  [
+    "a computed key that may be a prototype setter",
+    `fs.createWriteStream(p, {[n]: opts, start: -1})`,
+  ],
   ["a zero start", `fs.createReadStream(p, {start: 0})`],
   ["a negative zero start", `fs.createReadStream(p, {start: -0})`],
   ["an undefined start", `fs.createReadStream(p, {start: undefined})`],
