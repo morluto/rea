@@ -165,6 +165,8 @@ interface Collected {
     real: number;
     readonly tags: Set<string>;
   };
+  /** Fields of an added record left unchecked because their text is past the limit. */
+  readonly fieldLong: string[];
 }
 
 const named = (
@@ -265,6 +267,7 @@ const elementChecks = (
       named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
     noisy: (at: string) => collected.context.noise(at) !== undefined,
+    long: collected.fieldLong,
   };
   if (!named(collected, ends.final, `${pointer}/name`)) {
     const fields = fieldChecks(added, pointer, value);
@@ -401,6 +404,7 @@ const collectChecks = (
     values: [],
     noise: { elements: [], values: [] },
     positional: { count: 0, real: 0, tags: new Set() },
+    fieldLong: [],
   };
   const { ends, tree } = context;
   const runs = attributeTexts(collected, change);
@@ -585,7 +589,7 @@ const factsOf = (
 ): NamedFacts => ({
   positional: checks.positional.count,
   positionalTags: [...checks.positional.tags],
-  long: texts.long,
+  long: [...new Set([...texts.long, ...checks.fieldLong])],
   changes: change.listed.length,
   noise: change.listed.filter((pointer) => change.noise(pointer) !== undefined)
     .length,
