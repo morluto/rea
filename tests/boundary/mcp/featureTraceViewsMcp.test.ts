@@ -7,6 +7,8 @@ import { JAVASCRIPT_FEATURE_TRACE_EXAMPLE } from "../../../src/contracts/javascr
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { analysisViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { parseEvidence, type Evidence } from "../../../src/domain/evidence.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
 import { applicationFeatureTraceResultSchema } from "../../../src/domain/javascript/javascriptFeatureTraceSchemas.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
 import { createServer } from "../../../src/server/createServer.js";
@@ -501,7 +503,7 @@ it("names the retained trace and a smaller page when a selected page is oversize
   );
 });
 
-it("commits no session facts when cancelled after the trace completes", async () => {
+it("retains a completed trace and its sources when cancelled before delivery", async () => {
   const session = createTestBinarySession(() => {
     throw new Error("No deep provider");
   });
@@ -511,10 +513,9 @@ it("commits no session facts when cancelled after the trace completes", async ()
   if (!traceExecution.ok) throw traceExecution.error;
   const artifactResources = new ArtifactResourceScope();
   onTestFinished(() => artifactResources.close());
-  const before = session.exportEvidenceBundle();
   for (const view of [undefined, { kind: "summary" } as const]) {
     const cancelled = new AbortController();
-    cancelled.abort(new Error("client cancelled"));
+    setImmediate(() => cancelled.abort(new Error("client cancelled")));
     // Cancellation can only arrive between completion and commit through this
     // staging step, which the public workflow cannot schedule deterministically.
     const delivered = await deliverApplicationEvidence(
@@ -531,10 +532,78 @@ it("commits no session facts when cancelled after the trace completes", async ()
       view,
       cancelled.signal,
     );
-    // Same contract as compare_source_to_bundle: a cancelled request leaves the session unchanged.
     expect(parseMcpToolError(delivered)).toMatchObject({
-      error: { code: "cancelled" },
+      error: {
+        code: "cancelled",
+        details: {
+          partial_observation: {
+            kind: "retained-evidence",
+            evidence_id: traceExecution.value.evidence.evidence_id,
+          },
+        },
+      },
     });
-    expect(session.exportEvidenceBundle()).toEqual(before);
+    expect(
+      session.evidenceById(traceExecution.value.evidence.evidence_id),
+    ).toEqual(traceExecution.value.evidence);
+    for (const source of traceExecution.value.sources)
+      expect(session.evidenceById(source.evidence_id)).toEqual(source);
   }
+});
+
+it("reports source retention failure without discarding the completed parent on cancellation", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("No deep provider");
+  });
+  const trace = traceApplicationFeatureEvidence(
+    JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
+  );
+  if (!trace.ok) throw trace.error;
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const controller = new AbortController();
+  controller.abort("cancelled after computation");
+  const failure = new AnalysisResourceConstraintError(
+    "record_evidence",
+    "capacity",
+    "source refused",
+    null,
+  );
+  const result = await deliverApplicationEvidence(
+    { delivery: createToolResultDelivery(undefined) },
+    {
+      artifactResources: resources,
+      logger: silentLogger,
+      evidenceById: (id) => session.evidenceById(id),
+      recordEvidence: (evidence) =>
+        evidence.evidence_id === trace.value.evidence.evidence_id
+          ? session.recordEvidence(evidence)
+          : err(failure),
+      recordEvidenceWithUnknown: undefined,
+    },
+    toolContract("trace_application_feature"),
+    trace.value,
+    undefined,
+    controller.signal,
+  );
+  expect(parseMcpToolError(result)).toMatchObject({
+    error: {
+      code: "cancelled",
+      details: {
+        partial_observation: {
+          kind: "retained-evidence",
+          evidence_id: trace.value.evidence.evidence_id,
+        },
+        diagnostics: {
+          source_retention_error: { code: "resource_constraint" },
+        },
+      },
+    },
+  });
+  expect(session.evidenceById(trace.value.evidence.evidence_id)).toEqual(
+    trace.value.evidence,
+  );
+  expect(
+    session.evidenceById(trace.value.sources[0]!.evidence_id),
+  ).toBeUndefined();
 });

@@ -1303,6 +1303,17 @@ attempt and its delivery result in `details.partial_observation`, with
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
 
+Application-tool delivery attempts to retain an already completed parent and its
+source Evidence when cancellation is observed before delivery, without committing a
+selected view or a new Unknown. A successful retention is identified by
+`details.partial_observation` as `retained-evidence`; if a source cannot be
+retained, `details.diagnostics.source_retention_error` reports that failure.
+When the client SDK suppresses the cancelled reply, the retained records can
+still be inspected or exported from the same session. If parent retention is
+unavailable or refused, the error carries the parent inline when it can be
+delivered; suppressed or oversized replies may make that inline observation
+unavailable.
+
 Bundle recovery requires a recorded Evidence ID. Some provider errors carry
 typed raw observations in `details.partial_observation` instead of Evidence.
 Those raw observations are not recorded in the Evidence bundle. If the SDK
