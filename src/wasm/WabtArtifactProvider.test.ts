@@ -10,7 +10,21 @@ import { PrivateRuntimeRootUnavailableError } from "../process/PrivateRuntimeRoo
 import { spawnOwnedProviderProcess } from "../process/ProviderProcess.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { WABT_LIMITS } from "./WabtRelease.js";
+import {
+  WABT_LIMITS,
+  admitWabtVersion,
+  WABT_ACCEPTED_RANGE,
+} from "./WabtRelease.js";
+
+// Admission must not outrun the `1.0.x` banners wasmArtifactSchema accepts.
+it("admits 1.0.x releases but not the 1.1.0 upper boundary", () => {
+  expect(WABT_ACCEPTED_RANGE).toBe(">=1.0.42 <1.1.0");
+  expect(admitWabtVersion("1.0.41").status).toBe("unsupported");
+  expect(admitWabtVersion("1.0.42").status).toBe("verified");
+  expect(admitWabtVersion("1.0.99").status).toBe("compatible");
+  expect(admitWabtVersion("1.1.0").status).toBe("unsupported");
+  expect(admitWabtVersion("2.0.0").status).toBe("unsupported");
+});
 import { wabtFailure } from "./WabtFailures.js";
 
 const nodeHostEnvironment = (
@@ -593,6 +607,51 @@ it("admits a compatible caller WABT release and records the observed banner", as
       expect.stringContaining("uses caller-supplied WABT 1.0.44"),
     );
     expect(result.value.provider.version).toBe("wabt@1.0.44");
+  } finally {
+    await provider.close();
+  }
+});
+
+it("keeps the compatible-release warning when validation rejects the input", async () => {
+  const root = await realpath(
+    await createTestTempDirectory("rea-wabt-compatible-rejection-"),
+  );
+  const suffix = process.platform === "win32" ? ".exe" : "";
+  for (const name of ["wasm-validate", "wasm-objdump", "wasm2wat"])
+    await writeFile(join(root, name + suffix), "owned executable seam", {
+      mode: 0o700,
+    });
+  const modulePath = join(root, "rejected.wasm");
+  await writeFile(modulePath, Buffer.alloc(76, 1));
+  const provider = new WabtArtifactProvider(
+    { REA_WABT_BIN_DIRECTORY: root },
+    (input) => {
+      const version = input.arguments[0] === "--version";
+      const rejected = input.command.includes("wasm-validate");
+      return spawnOwnedProviderProcess({
+        ...input,
+        hostEnvironment: nodeHostEnvironment(input.hostEnvironment),
+        command: process.execPath,
+        arguments: [
+          "-e",
+          `process.stderr.write(${JSON.stringify(rejected && !version ? "rejected" : "")}); process.stdout.write(${JSON.stringify(version ? "1.0.44\n" : "")}); process.exit(${rejected && !version ? 1 : 0});`,
+        ],
+      });
+    },
+  );
+  try {
+    const result = await provider.inspect({
+      path: modulePath,
+      glue_paths: [],
+      candidate_paths: [],
+    });
+    if (result.ok) throw new Error("Expected validation rejection");
+    expect(result.error.partialObservation).toMatchObject({
+      normalized_result: { validation: "rejected-by-selected-profile" },
+      limitations: expect.arrayContaining([
+        expect.stringContaining("uses caller-supplied WABT 1.0.44"),
+      ]),
+    });
   } finally {
     await provider.close();
   }

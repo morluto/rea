@@ -198,6 +198,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                   : validationState === "valid"
                     ? "WABT validated the selected module, but inspection did not complete. Acquired file identities and glue references do not establish runtime loading or execution."
                     : "WABT validation has no completed result. Acquired file identities and glue references do not establish module validity, runtime loading or execution.",
+                ...(compatibleLimitation === undefined
+                  ? []
+                  : [compatibleLimitation]),
               ],
             },
           );
@@ -525,6 +528,9 @@ export class WabtArtifactProvider implements WasmArtifactPort {
                 locations: [{ kind: "artifact-path", path: input.path }],
                 limitations: [
                   "WABT rejected these exact selected bytes with --enable-all and --ignore-custom-section-errors; no complete inspection or target execution occurred.",
+                  ...(compatibleLimitation === undefined
+                    ? []
+                    : [compatibleLimitation]),
                 ],
               },
             ),

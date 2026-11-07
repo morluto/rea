@@ -6,8 +6,11 @@ export const WABT_VERSION = "1.0.42";
  * Releases admitted for caller-configured tools. WABT changes `wasm-validate`,
  * `wasm-objdump` and `wasm2wat` output only by addition within a minor version;
  * 1.0.42 is the release this adapter verified. Managed downloads stay pinned.
+ * The upper bound is exclusive of 1.1.0 so admission matches the `1.0.x`
+ * banners `wasmArtifactSchema` accepts; letting 1.1.0 through would admit a
+ * tool profile whose report the schema then rejects after inspection ran.
  */
-export const WABT_ACCEPTED_RANGE = "^1.0.42";
+export const WABT_ACCEPTED_RANGE = ">=1.0.42 <1.1.0";
 /** Upstream revision of the verified release. */
 export const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
 export const WABT_PROVIDER_IDENTITY = {
@@ -35,6 +38,14 @@ export type WabtVersionAdmission =
 export const wabtReleaseLine = (): string =>
   `WABT ${WABT_ACCEPTED_RANGE} (verified with ${WABT_VERSION})`;
 
+/**
+ * Release warning for inspections that did not reach a report. Successful
+ * reports carry the same text through the admission limitation, so a failure
+ * never drops the compatible-release disclaimer that a success would state.
+ */
+export const wabtReleaseLimitation = (version: string): string =>
+  `This inspection uses caller-supplied WABT ${version}. REA verified the tool arguments and output parsing against ${WABT_VERSION}; other releases in ${WABT_ACCEPTED_RANGE} are admitted and the observed banner is reported.`;
+
 /** Classify one `--version` banner against the accepted release range. */
 export const admitWabtVersion = (banner: string): WabtVersionAdmission => {
   const token = banner.trim();
@@ -47,6 +58,6 @@ export const admitWabtVersion = (banner: string): WabtVersionAdmission => {
   return {
     status: "compatible",
     version: token,
-    limitation: `This inspection uses caller-supplied WABT ${token}. REA verified the tool arguments and output parsing against ${WABT_VERSION}; other releases in ${WABT_ACCEPTED_RANGE} are admitted and the observed banner is reported.`,
+    limitation: wabtReleaseLimitation(token),
   };
 };
