@@ -11,6 +11,7 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   isNullishJavaScriptSyntax,
+  isObjectPrototypeSetter,
   readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   staticObjectProperty,
@@ -487,19 +488,51 @@ const isAbsentOptionValue = (
     isUnmodifiedGlobalReference(value, state, "undefined"));
 
 /**
- * Whether a value is an exactly readable literal, and therefore can never be a
- * `net.Socket` instance at runtime.
+ * Whether a value is an exactly readable literal, and therefore cannot carry a
+ * `net.Socket`'s stream methods at runtime.
  *
  * A literal `socket` member is what makes `tls.connect` fail its own stream check
- * rather than connect, so it is decided rather than left unknown.
+ * rather than connect, so it is decided rather than left unknown — with one exception
+ * for object literals, handled by `objectLiteralMayInheritStream`.
  */
 const isExactlyReadableLiteral = (
   value: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  isExactlyNonObjectExpression(value, state) ||
-  t.isObjectExpression(value) ||
-  t.isTemplateLiteral(value);
+): boolean => {
+  if (t.isObjectExpression(value))
+    return !objectLiteralMayInheritStream(value, state, 0);
+  return (
+    isExactlyNonObjectExpression(value, state) || t.isTemplateLiteral(value)
+  );
+};
+
+/**
+ * Whether an object literal may inherit stream methods through a `__proto__` setter.
+ *
+ * Measured on Node 24.22.1: `tls.connect({port:-1, socket:{__proto__: stream}})` returns
+ * a `TLSSocket` when `stream` is a `PassThrough`, because `tls` wraps any object that
+ * carries the stream methods and never reads the port. `{}`, `{__proto__: null}`,
+ * `{__proto__: {}}`, `{__proto__: 5}` and — because a computed key is an own property
+ * rather than a prototype change — `{["__proto__"]: stream}` all throw instead.
+ *
+ * So only a non-computed `__proto__` whose value is not exactly readable leaves the
+ * literal open; every other object literal is decided.
+ */
+const objectLiteralMayInheritStream = (
+  value: t.ObjectExpression,
+  state: JavaScriptSemanticAnalysisState,
+  depth: number,
+): boolean => {
+  if (depth > 8) return true;
+  return value.properties.some((property) => {
+    if (!t.isObjectProperty(property)) return false;
+    if (!isObjectPrototypeSetter(property)) return false;
+    const prototype = unwrapJavaScriptExpression(property.value).node;
+    if (t.isObjectExpression(prototype))
+      return objectLiteralMayInheritStream(prototype, state, depth + 1);
+    return !isExactlyNonObjectExpression(prototype, state);
+  });
+};
 
 /** Expressions whose runtime value can never supply an options `port`. */
 const isExactlyNonObjectExpression = (
