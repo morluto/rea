@@ -118,11 +118,12 @@ The class declares:
   taskbar or says it is a splash, and an app whose splash shows first would
   otherwise count as ready before its own window opens. Arguments that are the captured home or under it, and
   `<option>=<path>` values under it, are respelled under the computer user's
-  `$HOME`. agentenv starts the app in its own folder, so when an argument, or
-  the program's own path such as `./app`, is relative the command first
-  changes to the captured working directory
-  (`"$HOME"` when that was the home), and still starts if that folder is
-  missing. The export refuses a capture that saw no application window.
+  `$HOME`. agentenv starts the app in its own folder, where an open or save
+  dialog would show the framework's files, so the command first changes to the
+  captured working directory (`"$HOME"` when that was the home, as for a
+  desktop entry without `Path`), which a relative argument or program path
+  such as `./app` also needs, and still starts if that folder is missing. The
+  export refuses a capture that saw no application window.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the
@@ -154,7 +155,10 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders.
+content the capture did not retain, a limitation names those folders. The
+desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
+the user moved there is neither owned nor seeded, even when a window title
+names it; a limitation lists the files the Trash held at the seed.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -306,8 +310,8 @@ entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
 bounded chunks no further than a byte past its declared size. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-or nested more than 500 levels deep, gets an `error` instead of a view, as in
-REA, while text that is not one JSON
+or whose retained value nests more than 500 levels deep, gets an `error` instead of a view, as in
+REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. XML is read with Python's `expat` twice: with namespace
