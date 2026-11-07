@@ -515,3 +515,27 @@ describe("capturedHomePath", () => {
     expect(path(`${home}/data/vendor-journal`)).toBe(".config/vendor/state");
   });
 });
+
+describe("capturedHomePath outside the home", () => {
+  it("keeps a database log when the database link leaves the home", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/Documents/books.db`,
+            physical: "/mnt/data/books.db",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path("/mnt/data/books.db")).toBe("Documents/books.db");
+    expect(path("/mnt/data/books.db-wal")).toBe("Documents/books.db-wal");
+    expect(path("/mnt/data/books.db-journal")).toBe(
+      "Documents/books.db-journal",
+    );
+  });
+});
