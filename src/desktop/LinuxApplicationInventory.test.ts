@@ -55,7 +55,10 @@ describe.skipIf(process.platform === "win32")(
             candidate,
           );
         const selected = join(bin, "lookup-notes");
-        await symlink("/bin/echo", selected);
+        const target = join(home, "notes-launcher");
+        await writeFile(target, "#!/bin/sh\nprintf '%s\\n' \"$1\"\n");
+        await chmod(target, 0o755);
+        await symlink(target, selected);
         const program = basename(selected);
         const launchEnvironment = { ...environment, PATH: `${first}:${bin}` };
 
@@ -74,12 +77,15 @@ describe.skipIf(process.platform === "win32")(
           timeout: 5_000,
         });
 
-        expect(launched.status, launched.error?.message).toBe(0);
+        expect(
+          launched.status,
+          launched.error?.message ?? launched.stderr,
+        ).toBe(0);
         expect(launched.stdout.trim()).toBe("selected");
         if (!inspected.ok) throw new Error(inspected.error.reason);
         expect(inspected.value.inventory.executable).toEqual({
           path: selected,
-          resolved_path: await realpath("/bin/echo"),
+          resolved_path: await realpath(target),
           electron_markers: [],
         });
         expect(inspected.value.inventory.argv).toEqual([program, "selected"]);
