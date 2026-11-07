@@ -263,6 +263,71 @@ it("witnesses a task: the seed fails, the edit passes, a near miss fails and so 
   ).toContain("already witnessed");
 });
 
+it("witnesses a task whose check reads a binary file through a reader run in the computer", async () => {
+  const poster = "Documents/poster.xcf";
+  const task = {
+    name: "rename-layer",
+    prompt:
+      "In Pictures, rename the Headline layer to Summer Sale and save it.",
+    checks: [
+      {
+        id: "renamed",
+        kind: "lines_present",
+        file: poster,
+        reader: "layers",
+        lines: ["layer Summer Sale"],
+      },
+    ],
+    readers: [
+      {
+        id: "layers",
+        file: poster,
+        argv: [
+          "python3",
+          "-c",
+          "import sys; print('banner'); print('REA layer ' + open(sys.argv[1], 'rb').read().split(b'\\0')[-1].decode())",
+          "{file}",
+        ],
+        output: "lines",
+      },
+    ],
+  };
+  const home = await createTestTempDirectory("witness-home-");
+  await mkdir(join(home, "Documents"));
+  const save = (layer: string) =>
+    writeFile(join(home, poster), `gimp xcf\0${layer}`);
+  await save("Headline");
+  const { act, check, computer, directory } = await witnessed(
+    0,
+    { exec: { home, bin: home } },
+    task,
+  );
+
+  await check({ task, stage: "seed", directory });
+  await act("type", { text: "Summer Sale\n" });
+  await save("Summer Sale");
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "Summer Sail\n" });
+  await save("Summer Sail");
+  const near = parsed(await check({ task, stage: "near_miss" }));
+  expect(near.results[0]?.description).toContain(
+    'has no line "layer Summer Sale"',
+  );
+  await act("reset");
+  await save("Headline");
+  const last = await check({ task, stage: "after_reset" });
+  expectNoToken(computer, last);
+  const record = parsed(last).witness?.record;
+  expect(record?.verdict).toBe("held");
+  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+    false,
+    true,
+    false,
+    false,
+  ]);
+  expect(await readFile(join(home, poster), "utf8")).toBe("gimp xcf\0Headline");
+});
+
 it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {
   const task = {
     ...TASK,

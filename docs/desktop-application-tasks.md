@@ -523,7 +523,8 @@ sends it to the screen; `checks` holds 1 to 32
 checks. Each check has a `kind`, a `file` given as a path under the home such as
 `Documents/todo.txt`, and an optional `id` (`check-1`, `check-2` and so on by
 position otherwise). A check reads the typed view `data/get` returns for that
-file, in the shapes of the state view.
+file, in the shapes of the state view, or, with `reader`, the view one of the
+task's [readers](#readers) makes of it with the app's own headless mode.
 
 | Kind            | Fields                                                                | Passes when                                                                                        |
 | --------------- | --------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
@@ -587,8 +588,9 @@ capture host's name or `user@host` anywhere (which the
 value, or one of only whitespace with `normalize_whitespace`, an empty
 `text_attribute`, a count without exactly one of `equals`, `at_least` and
 `at_most`, and a value that looks like a date and time, in ISO 8601 or
-`asctime`'s form. Other volatile
-content, such as a
+`asctime`'s form. It refuses a reader whose file is outside the owned paths,
+or whose argv or stdin names the captured home or the capture host. Other
+volatile content, such as a
 counter the app bumps on every save, is for the author to leave out.
 
 ## Pointers and selectors
@@ -795,6 +797,97 @@ array. A pointer that names no array, an absent file's included, fails and
 says what it found there. Like the other counts, it is undecided on a view
 that may hold only part of the array.
 
+## Readers
+
+A file REA reads as binary, such as a GIMP `.xcf` image or a Blender
+`.blend` scene, has no view a check can look into. The app can usually read
+it without its window: GIMP's Script-Fu batch mode, Blender's `-b` with a
+Python expression, LibreOffice's `--convert-to`. A task's `readers` run such
+a command in the computer, on the file, and make what it prints a view for
+checks to read:
+
+```json
+{
+  "name": "move-crate",
+  "prompt": "In Blender, move the Crate to x = 2 m in Documents/scene.blend and save it.",
+  "readers": [
+    {
+      "id": "objects",
+      "file": "Documents/scene.blend",
+      "argv": [
+        "blender",
+        "-b",
+        "--factory-startup",
+        "{file}",
+        "--python-expr",
+        "import bpy, json; print('REA ' + json.dumps({o.name: {'type': o.type, 'location': [round(v, 4) for v in o.location]} for o in bpy.data.objects}, sort_keys=True))"
+      ],
+      "output": "json"
+    }
+  ],
+  "checks": [
+    {
+      "id": "moved",
+      "kind": "value_equals",
+      "file": "Documents/scene.blend",
+      "reader": "objects",
+      "pointer": "/Crate/location/0",
+      "value": 2,
+      "tolerance": 0.001
+    }
+  ]
+}
+```
+
+| Field       | Meaning                                                                                          |
+| ----------- | ------------------------------------------------------------------------------------------------ |
+| `id`        | Lowercase letters, digits and hyphens; a check names the reader by it in `reader`                |
+| `file`      | The file it reads, a path under the home; every check through the reader gives it as its `file`  |
+| `argv`      | The command; `{file}` in any argument becomes the path of a private copy of the file             |
+| `stdin`     | Optional text sent to the command's stdin, `{file}` there too, such as a Script-Fu program       |
+| `output`    | `json`: the marked lines, joined, are one JSON value; `lines`: they are text lines               |
+| `timeout_s` | Optional, 1 to 300 seconds, 60 by default                                                        |
+| `display`   | Optional; `true` runs the command with the desktop's display, for an app without a headless mode |
+
+Each line the command prints that starts with `REA ` (with the space) is a
+line of its view, without the marker; every other line, such as the app's
+banner or a warning, is left out. A `json` reader's view is a JSON value that
+`value_equals`, `value_absent` and `member_count` point into; a `lines`
+reader's is a text view that `lines_present`, `lines_absent` and `line_count`
+read. The other kinds take no `reader`. A task holds at most 8 readers, each
+read by at least one check, and their argv or stdin must name `{file}`.
+
+REA's reader runner, one Python program the export, the witness and the
+exported verifier all run, runs the command as the computer's user:
+
+- on a copy of the file in a new temporary folder, which is the command's
+  working folder and is deleted afterwards, so the command can change only
+  its copy, never the file the app keeps open;
+- with `HOME` and the `XDG_` folders in that folder, so the app starts from
+  its defaults rather than from settings the solving agent changed;
+- without `DISPLAY`, unless the reader asks for it, and never with the
+  session bus or the computer's `AGENTENV_` variables, which hold its control
+  token, so the command can neither hand the file to the running app nor
+  reach the computer's framework-only routes;
+- for at most `timeout_s`, after which it and every process it started are
+  killed; it may print at most 1 MiB, and its view must fit in 960 KiB.
+
+A file the home does not hold has no reader view, which checks read as an
+absent file. A reader that cannot start, exits other than 0, runs past its
+timeout, prints too much, prints no marked line, or prints marked lines that
+are not one JSON value for `json` (or hold a number past 2^53) gives a view
+with that error and the end of its stderr, which fails every check through
+it as undecided, as an unreadable file does.
+
+The export runs each reader in the build computer, where the app is
+installed, on the file's bytes at the seed, as the bundle ships them, and at
+the end checkpoint, and a check through a reader counts like any other there.
+When such a check fails on the end state, the refusal adds what the reader
+printed. The witness runs the readers in the witness computer through
+`computer-exec/v1` once the app's files settle, and the exported verifier
+does the same in the solving agent's computer, under the run's grant of the
+computer's control token. The README lists each reader's command.
+
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`
@@ -822,7 +915,8 @@ The bundle then holds, besides the app and `tasks/smoke.json`:
 
 The verifier finds the app among the computer's child environments, calls its
 `data/get` under the run's grant of the computer's control token, and reads
-the `state` data part. It reads again until the app's files settle, as
+the `state` data part; a task with readers then runs each through the
+computer's `computer-exec/v1`, as [readers](#readers) describes. It reads again until the app's files settle, as
 [grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved)
 describes, and each result's `settled` says whether they did, and `read_cut`
 whether the bound cut a read still running. It raises when the app cannot be reached, so the run

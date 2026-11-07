@@ -55,4 +55,14 @@ describe("draftTaskFiles notes on thin files", () => {
       ["Documents/b.xml", ["cut_view"]],
     ]);
   });
+
+  it("points a binary file at a reader, the app's own headless mode, as the way to check inside it", () => {
+    const [binary] = draftOf({
+      "Documents/poster.xcf": statePath("document", "binary", {}, {}),
+    });
+
+    const message = binary?.notes[0]?.message ?? "";
+    expect(message).toContain("readers");
+    expect(message).toContain("headless");
+  });
 });

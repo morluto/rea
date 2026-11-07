@@ -4,6 +4,7 @@ import {
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
+  type DesktopTaskReader,
 } from "../../domain/desktop/appTask.js";
 import {
   evaluateTaskChecks,
@@ -57,6 +58,11 @@ type TaskTarget = Pick<
   readonly ends: StateEnds;
   /** Views of the seeds the export rewrites, as it ships them. */
   readonly seedViews: ReadonlyMap<string, TaskFileView>;
+  /** Each reader's view of its file, by reader id: at the seed as the bundle ships it, or at the end. */
+  readonly readerViews: (
+    readers: readonly DesktopTaskReader[],
+    end: keyof StateEnds,
+  ) => Promise<ReadonlyMap<string, TaskFileView>>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -127,6 +133,50 @@ interface TaskViews {
   readonly end: ReadonlyMap<string, TaskFileView>;
 }
 
+/** What a capture's identity check reads of a value: the captured home, or the host's name or user, if it names one. */
+const identityProblem = (
+  values: readonly string[],
+  target: TaskTarget,
+): string | undefined => {
+  for (const value of values) {
+    if (value.includes(target.capturedHome))
+      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+    const named = identityLeftIn(value, target.identity);
+    if (named !== undefined)
+      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  }
+  return undefined;
+};
+
+/** Why a reader cannot run in this app's computer, or undefined. */
+const readerProblem = (
+  reader: DesktopTaskReader,
+  target: TaskTarget,
+): string | undefined =>
+  isWithinAny(reader.file, target.paths)
+    ? identityProblem([...reader.argv, reader.stdin ?? ""], target)
+    : `reads ${reader.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
+
+/** What a reader read for a failing check, for the author to fix the check from, or nothing. */
+const readerRead = (
+  check: DesktopTaskCheck,
+  readers: ReadonlyMap<string, TaskFileView>,
+): string => {
+  if (!("reader" in check) || check.reader === undefined) return "";
+  const read = readers.get(check.reader);
+  if (read === undefined || read.view === null) return "";
+  const view = read.view;
+  const lines =
+    read.format === "text" &&
+    typeof view === "object" &&
+    !Array.isArray(view) &&
+    Array.isArray(view.lines)
+      ? view.lines.map((line) => JSON.stringify(line)).join(", ")
+      : JSON.stringify(view);
+  const shown = lines.length > 600 ? `${lines.slice(0, 600)}…` : lines;
+  return `; reader ${check.reader} printed: ${shown}`;
+};
+
 /** Every string in a value, member names included. */
 const valueStrings = (value: JsonValue | undefined): string[] => {
   if (typeof value === "string") return [value];
@@ -148,14 +198,17 @@ const targetProblem = (
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
   // What the check compares and names; its field names, kind and id label it.
   const { id: _id, kind: _kind, ...fields } = check;
-  for (const value of Object.values(fields).flatMap(valueStrings)) {
-    if (value.includes(target.capturedHome))
-      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-    const named = identityLeftIn(value, target.identity);
-    if (named !== undefined)
-      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
-  }
-  if (!isPointerCheck(check)) return undefined;
+  const named = identityProblem(
+    Object.values(fields).flatMap(valueStrings),
+    target,
+  );
+  if (named !== undefined) return named;
+  // A reader's view is JSON or lines whatever the file's own format.
+  if (
+    !isPointerCheck(check) ||
+    ("reader" in check && check.reader !== undefined)
+  )
+    return undefined;
   return [views.seed, views.end].some(
     (at) => at.get(check.file)?.format === "text",
   )
@@ -182,6 +235,17 @@ const viewsAt = (
   return views;
 };
 
+/** The README's list of a task's readers, if it has any. */
+const readersReadme = (task: DesktopTask): string =>
+  task.readers === undefined
+    ? ""
+    : `
+Readers, each run in the computer on a private copy of its file in a fresh home, without the display unless it asks
+for it; the lines it prints starting with \`REA \` are its view:
+
+${task.readers.map((reader) => `- \`${reader.id}\` reads \`${reader.file}\` as ${reader.output}: \`${JSON.stringify(reader.argv)}\`${reader.stdin === undefined ? "" : `, with stdin \`${JSON.stringify(reader.stdin)}\``}`).join("\n")}
+`;
+
 const taskReadme = (
   task: DesktopTask,
   app: string,
@@ -190,7 +254,7 @@ const taskReadme = (
 ## Task \`${task.name}\`
 
 \`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
-the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views and needs
+the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which reads the app's \`data/get\` views${task.readers === undefined ? "" : " and runs its readers in the computer"} and needs
 no model. It grades once the app's files have held for ${String(SETTLE_TIMING.windowMs / 1000)} s, so a save the app makes on its own within that
 time of the agent stopping counts; each result's \`settled\` is false when they were still changing ${String(SETTLE_TIMING.boundMs / 1000)} s after the
 first read. \`evals/${app}.toml\` names it, so a run of the bundle runs it.
@@ -203,7 +267,7 @@ ${task.prompt
 Checks, each of which must pass:
 
 ${task.checks.map(({ id, ...check }) => `- \`${id}\`: \`${JSON.stringify(check)}\``).join("\n")}
-
+${readersReadme(task)}
 REA kept the task because its checks fail on the seed (${failingOnSeed.map((id) => `\`${id}\``).join(", ")}) and all
 pass on the captured end state.
 
@@ -212,6 +276,43 @@ whose summary line says \`passed\`; a run that says \`failed\` did not finish an
 
     agent-env run <this folder> --task ${task.name} --agent claude-code --model MODEL
 `;
+
+/** Refuse a check or reader this app's computer cannot serve, naming it. */
+const refuseTargetProblems = (
+  task: DesktopTask,
+  target: TaskTarget,
+  views: TaskViews,
+): void => {
+  for (const check of task.checks) {
+    const problem = targetProblem(check, target, views);
+    if (problem !== undefined)
+      throw refuse(
+        `Check ${JSON.stringify(check.id)} ${problem}.`,
+        "task",
+        REWRITE,
+      );
+  }
+  for (const reader of task.readers ?? []) {
+    const problem = readerProblem(reader, target);
+    if (problem !== undefined)
+      throw refuse(
+        `Reader ${JSON.stringify(reader.id)} ${problem}.`,
+        "task",
+        REWRITE,
+      );
+  }
+};
+
+/** The readers' views at the end, as retained, and at the seed, as the bundle ships it: the app's own headless mode on those bytes. */
+const readersAtEnds = async (
+  task: DesktopTask,
+  target: TaskTarget,
+): Promise<TaskViews> => {
+  const readers = task.readers ?? [];
+  if (readers.length === 0) return { seed: new Map(), end: new Map() };
+  const end = await target.readerViews(readers, "end");
+  return { seed: await target.readerViews(readers, "seed"), end };
+};
 
 /** Read, validate and render the task a caller passed with the export, if any. */
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
@@ -257,24 +358,19 @@ export const admitDesktopTask = async (
     seed: viewsAt(target, "seed"),
     end: viewsAt(target, "end"),
   };
-  for (const check of task.checks) {
-    const problem = targetProblem(check, target, views);
-    if (problem !== undefined)
-      throw refuse(
-        `Check ${JSON.stringify(check.id)} ${problem}.`,
-        "task",
-        REWRITE,
-      );
-  }
-  const end = evaluateTaskChecks(task.checks, views.end);
+  refuseTargetProblems(task, target, views);
+  const read = await readersAtEnds(task, target);
+  const end = evaluateTaskChecks(task.checks, views.end, read.end);
   const failing = end.find((outcome) => !outcome.passed);
-  if (failing !== undefined)
+  if (failing !== undefined) {
+    const check = task.checks.find(({ id }) => id === failing.id);
     throw refuse(
-      `Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}.`,
+      `Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}${check === undefined ? "" : readerRead(check, read.end)}.`,
       "task",
       `Write checks that the captured end state passes; ${DRAFT}.`,
     );
-  const seed = evaluateTaskChecks(task.checks, views.seed).filter(
+  }
+  const seed = evaluateTaskChecks(task.checks, views.seed, read.seed).filter(
     (outcome) => !outcome.passed,
   );
   if (seed.length === 0)

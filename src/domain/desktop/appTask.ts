@@ -55,22 +55,37 @@ const kind = <Kind extends string, Shape extends z.ZodRawShape>(
     ...shape,
   });
 
+/** What a reader's argv or stdin names the file by: the path of a private copy of it. */
+export const READER_FILE_PLACEHOLDER = "{file}";
+
+const readerField = {
+  reader: z
+    .string()
+    .min(1)
+    .optional()
+    .describe(
+      "The id of one of the task's readers: the check reads that reader's view of its file instead of the file's own. Give the reader's file as file.",
+    ),
+};
+
 const checkSchema = z.discriminatedUnion("kind", [
   kind("file_present", {}),
   kind("file_absent", {}),
-  kind("lines_present", { lines }),
-  kind("lines_absent", { lines }),
+  kind("lines_present", { lines, ...readerField }),
+  kind("lines_absent", { lines, ...readerField }),
   kind("line_count", {
     exact: line.optional(),
     contains: line.optional(),
     ...comparison,
+    ...readerField,
   }),
   kind("value_equals", {
     pointer: z.string(),
     value: jsonValueSchema,
     tolerance: z.number().min(0).optional(),
+    ...readerField,
   }),
-  kind("value_absent", { pointer: z.string() }),
+  kind("value_absent", { pointer: z.string(), ...readerField }),
   kind("text_equals", wholeText),
   kind("text_contains", { ...wholeText, value: z.string().min(1) }),
   kind("row_present", { table, where }),
@@ -85,27 +100,99 @@ const checkSchema = z.discriminatedUnion("kind", [
         "A selector of one or more [KEY=VALUE], [@KEY=VALUE] or [>PATH=VALUE] conditions that a member must meet to count, where PATH is up to three /-separated steps inside the member; every member counts without it, text nodes of an XML element's children included.",
       ),
     ...comparison,
+    ...readerField,
   }),
 ]);
 
-/** A task file as an agent writes it: a portable name, a prompt and declarative checks. */
+/** How long a reader may run when it does not say, and the most it may ask for. */
+export const READER_TIMEOUT_S = { default: 60, max: 300 } as const;
+
+const readerSchema = z.strictObject({
+  id: z
+    .string()
+    .regex(/^[a-z0-9][a-z0-9-]{0,63}$/u)
+    .describe(
+      "Lowercase letters, digits and hyphens; a check names the reader by it.",
+    ),
+  file: z
+    .string()
+    .min(1)
+    .describe(
+      "The file the reader reads, a path under the home such as Documents/poster.xcf.",
+    ),
+  argv: z
+    .array(z.string().min(1))
+    .min(1)
+    .max(64)
+    .describe(
+      `The app's own headless command, run in the computer on a private copy of the file that ${READER_FILE_PLACEHOLDER} names, in a fresh home without the display; each line it prints starting with "REA " is a line of its view.`,
+    ),
+  stdin: z
+    .string()
+    .max(64 * 1024)
+    .optional()
+    .describe(
+      `Text sent to the command's stdin, where ${READER_FILE_PLACEHOLDER} also names the copy.`,
+    ),
+  output: z
+    .enum(["json", "lines"])
+    .describe(
+      "json: the marked lines, joined, are one JSON value that value_equals, value_absent and member_count point into; lines: they are the lines lines_present, lines_absent and line_count read.",
+    ),
+  timeout_s: z
+    .int()
+    .min(1)
+    .max(READER_TIMEOUT_S.max)
+    .optional()
+    .describe(
+      `Seconds the command may run, ${String(READER_TIMEOUT_S.default)} when omitted.`,
+    ),
+  display: z
+    .boolean()
+    .optional()
+    .describe(
+      "Run the command with the desktop's display, for an app without a headless mode; off when omitted.",
+    ),
+});
+
+/** A task file as an agent writes it: a portable name, a prompt, declarative checks and the readers some read through. */
 export const desktopTaskSchema = z.strictObject({
   name: z.string().min(1),
   prompt: z.string().trim().min(1),
   checks: z.array(checkSchema).min(1).max(32),
+  readers: z
+    .array(readerSchema)
+    .min(1)
+    .max(8)
+    .optional()
+    .describe(
+      "Commands that read a file REA cannot read itself, such as a binary document, with the app's own headless mode; a check reads one's view by naming it in reader.",
+    ),
 });
 
 /** One check as written, its id optional. */
 export type DesktopTaskCheckInput = z.infer<typeof checkSchema>;
 /** One check with its id settled. */
 export type DesktopTaskCheck = DesktopTaskCheckInput & { readonly id: string };
+/** A command that reads one file with the app's own headless mode, for checks to read its view. */
+export type DesktopTaskReader = z.infer<typeof readerSchema>;
 
-/** A task whose checks are well formed and have unique ids. */
+/** A task whose checks are well formed and have unique ids, with the readers its checks read through, if any. */
 export interface DesktopTask {
   readonly name: string;
   readonly prompt: string;
   readonly checks: readonly DesktopTaskCheck[];
+  readonly readers?: readonly DesktopTaskReader[];
 }
+
+/** The check kinds each reader output serves. */
+const READER_KINDS = {
+  json: ["value_equals", "value_absent", "member_count"],
+  lines: ["lines_present", "lines_absent", "line_count"],
+} as const satisfies Record<
+  DesktopTaskReader["output"],
+  readonly DesktopTaskCheck["kind"][]
+>;
 
 /** Checks that count lines, rows or the members of an array. */
 export type CountCheck = Extract<
@@ -241,6 +328,51 @@ const checkProblem = (check: DesktopTaskCheck): string | undefined => {
     : `${JSON.stringify(stamped)} looks like a time the app stamps; leave volatile values out of checks`;
 };
 
+/** What is wrong with one reader on its own, or undefined. */
+const readerProblem = (reader: DesktopTaskReader): string | undefined => {
+  if (!isHomePath(reader.file))
+    return `file ${JSON.stringify(reader.file)} must be a path under the home, such as Documents/poster.xcf, without a leading slash, . or .. segments`;
+  return [...reader.argv, reader.stdin ?? ""].some((part) =>
+    part.includes(READER_FILE_PLACEHOLDER),
+  )
+    ? undefined
+    : `its argv and stdin name no ${READER_FILE_PLACEHOLDER}, the copy of ${reader.file} it reads`;
+};
+
+/** What is wrong with the readers and the checks that read through them, or undefined. */
+const readersProblem = (
+  readers: readonly DesktopTaskReader[],
+  checks: readonly DesktopTaskCheck[],
+): string | undefined => {
+  const ids = readers.map((reader) => reader.id);
+  const repeated = ids.find((id, index) => ids.indexOf(id) !== index);
+  if (repeated !== undefined)
+    return `two readers have the id ${JSON.stringify(repeated)}.`;
+  for (const reader of readers) {
+    const problem = readerProblem(reader);
+    if (problem !== undefined)
+      return `reader ${JSON.stringify(reader.id)}: ${problem}.`;
+  }
+  for (const check of checks) {
+    if (!("reader" in check) || check.reader === undefined) continue;
+    const reader = readers.find(({ id }) => id === check.reader);
+    if (reader === undefined)
+      return `check ${JSON.stringify(check.id)} names reader ${JSON.stringify(check.reader)}, which the task does not define in readers.`;
+    if (check.file !== reader.file)
+      return `check ${JSON.stringify(check.id)} reads ${reader.id}, so its file is ${reader.file}, not ${check.file}.`;
+    const kinds: readonly string[] = READER_KINDS[reader.output];
+    if (!kinds.includes(check.kind))
+      return `check ${JSON.stringify(check.id)} is ${check.kind}, but reader ${reader.id} reads ${reader.output}, which ${kinds.join(", ").replace(/, (?=[^,]*$)/u, " and ")} check.`;
+  }
+  const unread = readers.find(
+    (reader) =>
+      !checks.some((check) => "reader" in check && check.reader === reader.id),
+  );
+  return unread === undefined
+    ? undefined
+    : `reader ${JSON.stringify(unread.id)} is read by no check; remove it or name it in a check's reader.`;
+};
+
 /** Parse a task file and settle its check ids, or say what is wrong with it. */
 export const parseDesktopTask = (
   value: unknown,
@@ -248,7 +380,7 @@ export const parseDesktopTask = (
 ): Result<DesktopTask, string> => {
   const parsed = desktopTaskSchema.safeParse(value);
   if (!parsed.success) return err(describeValidationFailure(parsed.error));
-  const { name, prompt, checks } = parsed.data;
+  const { name, prompt, checks, readers } = parsed.data;
   if (!isPortableName(name) || name === "smoke")
     return err(
       `name ${JSON.stringify(name)} must be a portable bundle name other than smoke: lowercase letters, digits and hyphens.`,
@@ -270,5 +402,12 @@ export const parseDesktopTask = (
     if (problem !== undefined)
       return err(`check ${JSON.stringify(check.id)}: ${problem}.`);
   }
-  return ok({ name, prompt: prompt.trim(), checks: settled });
+  const problem = readersProblem(readers ?? [], settled);
+  if (problem !== undefined) return err(problem);
+  return ok({
+    name,
+    prompt: prompt.trim(),
+    checks: settled,
+    ...(readers === undefined ? {} : { readers }),
+  });
 };

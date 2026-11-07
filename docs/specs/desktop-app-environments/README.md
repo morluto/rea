@@ -49,6 +49,9 @@ The work lands as one PR per step:
 14. [XML text checks](xml-text-checks/spec.md): XML whose DOCTYPE only names
     its DTD read as XML, starting with AbiWord, and checks of an element's
     whole text across the runs an app splits a paragraph into.
+15. [Readers](file-readers/spec.md): checks of a file REA reads as binary,
+    such as GIMP's `.xcf` or Blender's `.blend`, through the app's own
+    headless command, run in the computer on a private copy of the file.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

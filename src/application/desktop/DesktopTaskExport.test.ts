@@ -386,6 +386,115 @@ describe("exportDesktopApplication with a task", () => {
   });
 });
 
+/** A reader of the notes database's last field, which the edit changes from v1 to v2, as an app's headless mode would print it. */
+const VERSION_READER = {
+  id: "version",
+  file: DATABASE,
+  argv: [
+    "python3",
+    "-c",
+    "import sys; print('REA version ' + open(sys.argv[1], 'rb').read().split(b'\\0')[-1].decode())",
+    "{file}",
+  ],
+  output: "lines",
+};
+const readerTask = (lines: string[], reader: object = VERSION_READER) => ({
+  ...task([
+    {
+      id: "version",
+      kind: "lines_present",
+      file: DATABASE,
+      reader: "version",
+      lines,
+    },
+  ]),
+  readers: [reader],
+});
+
+describe("exportDesktopApplication with a task's readers", () => {
+  it("runs a reader on the seed as the bundle ships it and on the end, keeps the task and ships the reader", async () => {
+    const { result, directory } = await exportWithTasks(
+      readerTask(["version v2"]),
+    );
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-milk", checks: 1, failing_on_seed: ["version"] },
+    });
+    const verifier = await readFile(
+      join(directory, "artifacts/note-milk-check/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain('"reader": "version"');
+    expect(verifier).toContain(
+      '{"id": "version", "arguments": "{\\"id\\":\\"version\\",\\"path\\":\\".local/share/notes/notes.db\\"',
+    );
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("Readers");
+    expect(readme).toContain("`version` reads `.local/share/notes/notes.db`");
+  });
+
+  it.each([
+    [
+      readerTask(["version v3"]),
+      'Check "version" fails on the captured end state',
+      'reader version printed: "version v2"',
+    ],
+    [
+      readerTask(["version v2"], {
+        ...VERSION_READER,
+        argv: ["sh", "-c", "echo 'cannot open {file}' >&2; exit 4"],
+      }),
+      "the reader exited 4",
+      "cannot open",
+    ],
+    [
+      {
+        ...readerTask([]),
+        checks: [
+          {
+            kind: "lines_absent",
+            file: DATABASE,
+            reader: "version",
+            lines: ["version v3"],
+          },
+        ],
+      },
+      "Every check already passes on the seed",
+      "",
+    ],
+  ])(
+    "refuses %j with what its reader read and writes no bundle",
+    async (input, message, detail) => {
+      const { result, directory } = await exportWithTasks(input);
+
+      expect(result).toBeInstanceOf(Error);
+      const { userMessage } = result as Error & { userMessage: string };
+      expect(userMessage).toContain(message);
+      expect(userMessage).toContain(detail);
+      expect(await exists(directory)).toBe(false);
+    },
+  );
+
+  it("refuses a reader of a file outside the app's owned paths", async () => {
+    const { result } = await exportWithTasks({
+      ...task([
+        {
+          kind: "lines_present",
+          file: ".cache/notes/x",
+          reader: "version",
+          lines: ["x"],
+        },
+      ]),
+      readers: [{ ...VERSION_READER, file: ".cache/notes/x" }],
+    });
+    expect(result).toBeInstanceOf(Error);
+    expect((result as Error & { userMessage: string }).userMessage).toContain(
+      "not under the app's owned paths",
+    );
+  });
+});
+
 describe("exportDesktopApplication with a task's prompt", () => {
   it("names a prompt that does not name the app in its limitations, since a solver's shell cannot see the computer", async () => {
     const checks = [

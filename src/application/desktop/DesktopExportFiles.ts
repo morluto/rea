@@ -115,6 +115,19 @@ const shippedSeed = (
   };
 };
 
+/** A seed's bytes as the bundle ships them, for a task's reader to read at the seed. */
+export const shippedSeedBytes = async (
+  content: RetainedContent,
+  copy: RetainedCopy,
+  identity: HostIdentity,
+  signal: AbortSignal | undefined,
+): Promise<Buffer> => {
+  const bytes = await retainedBytes(content, copy, signal);
+  return copy.seed === undefined
+    ? bytes
+    : (shippedSeed(bytes, copy.seed, identity).bytes ?? bytes);
+};
+
 /**
  * The view of each text seed the scrub rewrites, as the bundle ships it, for
  * a task's checks on the seed: the computer starts from these bytes.

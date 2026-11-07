@@ -46,6 +46,7 @@ import {
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
+import { readTaskReaderViews } from "./DesktopTaskReaders.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -59,7 +60,7 @@ const FRESH =
 /** The computer routes the witness reads. */
 export type WitnessedComputer = Pick<
   AgentEnvComputer,
-  "appData" | "startRecording" | "endRecording" | "recordingSegments"
+  "appData" | "startRecording" | "endRecording" | "recordingSegments" | "exec"
 >;
 
 type WitnessSummary = {
@@ -245,7 +246,7 @@ export class DesktopBuildWitness {
     return filed.ok ? ok({ ...checked, witness: filed.value }) : filed;
   }
 
-  /** The task's checks against the app's views once its files settle, one result per check. */
+  /** The task's checks against the app's views once its files settle, and its readers' views read then, one result per check. */
   async #grade(
     task: DesktopTask,
     signal: AbortSignal,
@@ -262,18 +263,22 @@ export class DesktopBuildWitness {
             .catch(() => undefined),
       );
       const views = appStateViews(read.parts);
-      return views.ok
-        ? ok({
-            results: [...evaluateTaskChecks(task.checks, views.value)],
-            settled: read.settled,
-            read_cut: read.readCut,
-          })
-        : err(
-            refused(
-              views.error,
-              "Start the computer from a bundle export_build_environment wrote.",
-            ),
-          );
+      if (!views.ok)
+        return err(
+          refused(
+            views.error,
+            "Start the computer from a bundle export_build_environment wrote.",
+          ),
+        );
+      const readers = await readTaskReaderViews(
+        task.readers ?? [],
+        (argv, timeoutS) => this.computer.exec(argv, timeoutS, signal),
+      );
+      return ok({
+        results: [...evaluateTaskChecks(task.checks, views.value, readers)],
+        settled: read.settled,
+        read_cut: read.readCut,
+      });
     } catch (cause: unknown) {
       return err(
         cause instanceof AnalysisError

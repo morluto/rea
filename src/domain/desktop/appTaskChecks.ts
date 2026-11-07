@@ -539,12 +539,18 @@ const verdict = (
   }
 };
 
-/** Evaluate each check against views by home path, as the exported verifier does. */
+/** Evaluate each check against views by home path, or its reader's view of its file by reader id, as the exported verifier does. */
 export const evaluateTaskChecks = (
   checks: readonly DesktopTaskCheck[],
   views: ReadonlyMap<string, TaskFileView>,
+  readers: ReadonlyMap<string, TaskFileView> = new Map(),
 ): readonly TaskCheckOutcome[] =>
   checks.map((check) => ({
     id: check.id,
-    ...verdict(check, views.get(check.file)),
+    ...verdict(
+      check,
+      "reader" in check && check.reader !== undefined
+        ? readers.get(check.reader)
+        : views.get(check.file),
+    ),
   }));

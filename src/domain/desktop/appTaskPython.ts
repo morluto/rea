@@ -2,6 +2,10 @@ import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import {
+  PYTHON_READER_VIEWS,
+  renderReaderConstants,
+} from "./appTaskReaders.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -461,7 +465,7 @@ import json
 import math
 import re
 import time
-
+${task.readers === undefined ? "" : "import uuid\n"}
 from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
 
@@ -478,7 +482,7 @@ SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
 SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
 #: Where a data/get file part names its path in the home.
 DATA_OBJECTS = "urn:agentenv:data-objects/v1"
-${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}
+${task.readers === undefined ? "" : renderReaderConstants(task.readers)}${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}${task.readers === undefined ? "" : PYTHON_READER_VIEWS}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)
@@ -486,7 +490,7 @@ async def verify(mcp_url, env_url):
     if child is None:
         raise RuntimeError(f"the computer at {env_url} lists no app named {APP}")
     views, settled, read_cut = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
-    return [{**result, "settled": settled, "read_cut": read_cut} for result in evaluate(CHECKS, views)]
+${task.readers === undefined ? "" : "    readers = await _reader_views(env_url, card)\n"}    return [{**result, "settled": settled, "read_cut": read_cut} for result in ${task.readers === undefined ? "evaluate(CHECKS, views)" : "evaluate_with_readers(CHECKS, views, readers)"}]
 `;
 
 /** The artifact folder of a task's verifier. */

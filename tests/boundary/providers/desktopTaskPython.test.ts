@@ -4,20 +4,34 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
-import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
-import { evaluateTaskChecks } from "../../../src/domain/desktop/appTaskChecks.js";
+import type {
+  DesktopTaskCheck,
+  DesktopTaskReader,
+} from "../../../src/domain/desktop/appTask.js";
+import {
+  evaluateTaskChecks,
+  type TaskFileView,
+} from "../../../src/domain/desktop/appTaskChecks.js";
 import {
   CHECK_CASES,
   CHECK_VIEWS,
 } from "../../../src/domain/desktop/appTaskChecks.fixture.js";
 import { SETTLE_TIMING } from "../../../src/domain/desktop/appSettle.js";
 import { renderTaskVerifier } from "../../../src/domain/desktop/appTaskPython.js";
+import {
+  readerAnswerView,
+  readerCommand,
+} from "../../../src/domain/desktop/appTaskReaders.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 /** The protocol client calls the verifier makes, replaced so it reads the given views. */
 const STUB_CLIENT = `
 def find_child(card, name):
     return next((child for child in card.get("children_environments") or [] if child.get("name") == name), None)
+
+
+def find_extension(card, uri):
+    return next((ext for ext in (card.get("capabilities") or {}).get("extensions") or [] if ext.get("uri") == uri), None)
 `;
 
 /**
@@ -33,6 +47,7 @@ from agentenv_protocol import client
 
 scenario = json.load(sys.stdin)
 saves, durations, called, reads, clock = scenario["saves"], scenario["durations"], [], [], [0.0]
+answers, execs = scenario.get("answers") or {}, []
 #: Virtual seconds each data/get takes, a binary fraction so the clock stays exact.
 READ_S = 0.125
 
@@ -43,7 +58,16 @@ def views_at(now):
 
 async def get_card(url, **_):
     called.append(url)
-    return {"name": "computer", "children_environments": [{"name": "notes", "url": "/svc/notes/agentenv"}]}
+    extensions = [{"uri": "urn:agentenv:computer-exec/v1"}] if scenario.get("exec", True) else []
+    return {"name": "computer", "children_environments": [{"name": "notes", "url": "/svc/notes/agentenv"}],
+            "capabilities": {"extensions": extensions}}
+
+
+async def invoke_extension(url, card, uri, params=None, timeout=30, verify=True, *, method=None, headers=None):
+    execs.append({"url": url, "uri": uri, "method": method, "timeout": timeout, **params})
+    answer = answers[json.loads(params["argv"][-1])["id"]]
+    stdout = answer if isinstance(answer, str) else "Python noise\n" + json.dumps(answer) + "\n"
+    return {"exit_code": 0, "stdout": stdout, "stderr": "", "truncated": False, "timed_out": False}
 
 
 async def get_data(url, **_):
@@ -74,18 +98,19 @@ async def wait_for(awaitable, timeout):
     return result
 
 
-client.get_card, client.get_data = get_card, get_data
+client.get_card, client.get_data, client.invoke_extension = get_card, get_data, invoke_extension
 spec = importlib.util.spec_from_file_location("verifier", verifier)
 module = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(module)
 module.time = types.SimpleNamespace(monotonic=lambda: clock[0])
 module.asyncio = types.SimpleNamespace(sleep=sleep, wait_for=wait_for, TimeoutError=Cut)
 results = asyncio.run(module.verify("http://mcp", "http://computer:8080"))
-print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results}))
+print(json.dumps({"called": called, "reads": reads, "ended": clock[0], "results": results, "execs": execs}))
 `;
 
 type VerifierOutput = {
   called: string[];
+  execs: Record<string, unknown>[];
   reads: number[];
   ended: number;
   results: {
@@ -102,6 +127,11 @@ const runVerifier = async (
   checks: readonly DesktopTaskCheck[],
   saves: readonly (readonly [number, Record<string, unknown>])[],
   durations: readonly number[] = [],
+  computer: {
+    readonly readers?: readonly DesktopTaskReader[];
+    readonly answers?: Readonly<Record<string, unknown>>;
+    readonly exec?: boolean;
+  } = {},
 ): Promise<VerifierOutput> => {
   const folder = await createTestTempDirectory("desktop-task-python-");
   await mkdir(join(folder, "agentenv_protocol"));
@@ -115,13 +145,25 @@ const runVerifier = async (
   await writeFile(
     verifier,
     renderTaskVerifier(
-      { name: "edit-notes", prompt: "Edit.", checks: [...checks] },
+      {
+        name: "edit-notes",
+        prompt: "Edit.",
+        checks: [...checks],
+        ...(computer.readers === undefined
+          ? {}
+          : { readers: computer.readers }),
+      },
       "notes",
     ),
   );
   return JSON.parse(
     execFileSync("python3", ["-I", "-B", "-c", DRIVER, folder, verifier], {
-      input: JSON.stringify({ saves, durations }),
+      input: JSON.stringify({
+        saves,
+        durations,
+        answers: computer.answers,
+        exec: computer.exec ?? true,
+      }),
       encoding: "utf8",
     }),
   ) as VerifierOutput;
@@ -240,3 +282,190 @@ it("grades an app that saved before the check within the window plus one interva
   expect(graded(output)).toEqual([[true, true, false]]);
   expect(output.reads.at(-1)).toBeLessThanOrEqual(WINDOW_S + INTERVAL_S);
 });
+
+const READERS: readonly DesktopTaskReader[] = [
+  {
+    id: "layers",
+    file: "Documents/poster.xcf",
+    argv: ["gimp-console-2.10", "-i", "-b", "-"],
+    stdin: '(gimp-file-load RUN-NONINTERACTIVE "{file}" "{file}")',
+    output: "lines",
+  },
+  {
+    id: "objects",
+    file: "Documents/scene.blend",
+    argv: ["blender", "-b", "{file}", "--python-expr", "print('REA {}')"],
+    output: "json",
+    timeout_s: 20,
+  },
+  {
+    id: "broken",
+    file: "Documents/broken.xcf",
+    argv: ["gimp-console-2.10", "{file}"],
+    output: "lines",
+  },
+  {
+    id: "gone",
+    file: "Documents/gone.xcf",
+    argv: ["gimp-console-2.10", "{file}"],
+    output: "lines",
+  },
+];
+/** What REA's reader runner answers for each reader, as its last line. */
+const ANSWERS: Readonly<Record<string, unknown>> = {
+  layers: {
+    view: {
+      format: "text",
+      view: {
+        lines: ["layer Summer Sale", "layer Background"],
+        line_count: 2,
+        truncated: false,
+      },
+    },
+  },
+  objects: {
+    view: {
+      format: "json",
+      view: {
+        Crate: { location: [2.0004, 0, 0] },
+        Camera: { location: [7, -6, 5] },
+      },
+    },
+  },
+  broken: {
+    error: "the reader exited 1; its stderr ends: cannot open the file",
+  },
+  gone: { absent: true },
+};
+const READER_CHECKS: DesktopTaskCheck[] = [
+  {
+    id: "renamed",
+    kind: "lines_present",
+    file: "Documents/poster.xcf",
+    reader: "layers",
+    lines: ["layer Summer Sale"],
+  },
+  {
+    id: "kept",
+    kind: "lines_absent",
+    file: "Documents/poster.xcf",
+    reader: "layers",
+    lines: ["layer Headline"],
+  },
+  {
+    id: "moved",
+    kind: "value_equals",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Crate/location/0",
+    value: 2,
+    tolerance: 0.001,
+  },
+  {
+    id: "camera",
+    kind: "value_equals",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Camera/location/0",
+    value: 8,
+  },
+  {
+    id: "objects",
+    kind: "member_count",
+    file: "Documents/scene.blend",
+    reader: "objects",
+    pointer: "/Crate/location",
+    equals: 3,
+  },
+  {
+    id: "broken",
+    kind: "line_count",
+    file: "Documents/broken.xcf",
+    reader: "broken",
+    contains: "layer",
+    at_least: 1,
+  },
+  {
+    id: "gone",
+    kind: "lines_absent",
+    file: "Documents/gone.xcf",
+    reader: "gone",
+    lines: ["layer"],
+  },
+];
+
+it("reads each reader's view through the computer's computer-exec and grades it as REA does", async () => {
+  const output = await runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+    readers: READERS,
+    answers: ANSWERS,
+  });
+
+  expect(
+    output.execs.map(({ url, uri, method, argv, timeout_s }) => ({
+      url,
+      uri,
+      method,
+      argv,
+      timeout_s,
+    })),
+  ).toEqual(
+    READERS.map((reader) => ({
+      url: "http://computer:8080",
+      uri: "urn:agentenv:computer-exec/v1",
+      method: "run",
+      argv: readerCommand(reader, undefined),
+      timeout_s: (reader.timeout_s ?? 60) + 30,
+    })),
+  );
+  // computer-exec answers a repeated request id with its first result, so each reader's is new.
+  expect(new Set(output.execs.map(({ request_id }) => request_id)).size).toBe(
+    READERS.length,
+  );
+  const readers = new Map<string, TaskFileView>();
+  for (const [id, answer] of Object.entries(ANSWERS)) {
+    const view = readerAnswerView(JSON.stringify(answer));
+    if (view !== undefined) readers.set(id, view);
+  }
+  const typescript = evaluateTaskChecks(
+    READER_CHECKS,
+    new Map(Object.entries(CHECK_VIEWS)),
+    readers,
+  );
+  expect(
+    output.results.map(({ id, result, description }) => [
+      id,
+      result,
+      description,
+    ]),
+  ).toEqual(
+    typescript.map(({ id, passed, description }) => [id, passed, description]),
+  );
+  expect(output.results.map(({ result }) => result)).toEqual([
+    true,
+    true,
+    true,
+    false,
+    true,
+    false,
+    true,
+  ]);
+});
+
+it.each([
+  [{ exec: false }, "offers no urn:agentenv:computer-exec/v1"],
+  [
+    { answers: { ...ANSWERS, layers: "Traceback (most recent call last)\n" } },
+    "REA's reader runner",
+  ],
+])(
+  "raises rather than grading when the readers cannot be run (%j)",
+  async (computer, message) => {
+    await expect(
+      runVerifier(READER_CHECKS, [[0, CHECK_VIEWS]], [], {
+        readers: READERS,
+        answers: ANSWERS,
+        ...computer,
+      }),
+    ).rejects.toThrow(message);
+  },
+);

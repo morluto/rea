@@ -60,7 +60,6 @@ import {
 } from "./DesktopOutputTree.js";
 import {
   retainedCopies,
-  shippedSeedViews,
   writeFiles,
   type SeedVersion,
 } from "./DesktopExportFiles.js";
@@ -68,6 +67,7 @@ import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
 import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import { taskReads } from "./DesktopExportReaders.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -400,18 +400,18 @@ const runExport = async (
       identity,
     });
   const copies = retainedCopies(plan, seeds);
-  // A task's seed checks read the seeds as the bundle ships them, scrubbed.
-  const seedViews =
-    request.tasks.length === 0
-      ? new Map()
-      : await withRetainedContent(
-          request.capture,
-          (content) => shippedSeedViews(content, copies, identity, signal),
-          SEED_MAX_BYTES,
-        );
+  const reads = await taskReads(request.tasks.length, {
+    capture: request.capture,
+    copies,
+    files,
+    ends,
+    identity,
+    maxBytes: SEED_MAX_BYTES,
+    signal,
+  });
   const admitted = await admitDesktopTask(
     request.tasks,
-    { ...plan, files, identity, ends, seedViews },
+    { ...plan, files, identity, ends, ...reads },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
