@@ -1,5 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
-import { collapseWhitespace } from "./appTask.js";
+import { collapseWhitespace, isTimestamp } from "./appTask.js";
 import { bracketed, selectorOf, type Condition } from "./viewSelector.js";
 
 /** The arrays a pointer stepped into, each as the pointer to it. */
@@ -82,6 +82,13 @@ const fieldOf = (member: JsonValue, { prefix, key }: Condition) => {
   return typeof value === "string" ? value : undefined;
 };
 
+/** An element's text with save-time leaves removed, so a name around a timestamp still matches after the time changes. */
+const textWithoutStamps = (node: JsonValue): string => {
+  if (typeof node === "string") return isTimestamp(node) ? "" : node;
+  if (!isRecord(node) || !Array.isArray(node.children)) return "";
+  return node.children.map((child) => textWithoutStamps(child)).join("");
+};
+
 /** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
 const hasChildText = (member: JsonValue, { key, value }: Condition) =>
   isXmlElement(member) &&
@@ -89,7 +96,7 @@ const hasChildText = (member: JsonValue, { key, value }: Condition) =>
     (child) =>
       isXmlElement(child) &&
       child.name === key &&
-      collapseWhitespace(elementText(child)) === value,
+      collapseWhitespace(textWithoutStamps(child)) === value,
   );
 
 /** Whether an array member meets every condition; selectors compare strings only. */

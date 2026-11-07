@@ -208,14 +208,40 @@ export const attributeChecks = (
 };
 
 /**
- * A field's text with save-time leaves removed. Joining those leaves into the
- * field would hide the stamp from `isStamp` and make a later save of only
- * that time fail the check.
+ * A field's text with save-time leaves removed, split where a timestamp sat
+ * between them. `Delphine` and `Moreau` around a save time stay two checks;
+ * joining them would look for text the file never contains.
  */
-const keptFieldText = (node: JsonValue): string => {
-  if (typeof node === "string") return isStamp(node) ? "" : node;
-  if (!isXmlElement(node)) return "";
-  return node.children.map((child) => keptFieldText(child)).join("");
+const keptFieldPieces = (node: JsonValue): string[] => {
+  if (typeof node === "string") return isStamp(node) ? [] : [node];
+  if (!isXmlElement(node)) return [];
+  const pieces: string[] = [];
+  let run = "";
+  const flush = () => {
+    if (run !== "") pieces.push(run);
+    run = "";
+  };
+  for (const child of node.children) {
+    if (typeof child === "string") {
+      if (isStamp(child)) flush();
+      else run += child;
+      continue;
+    }
+    if (!isXmlElement(child)) continue;
+    if (isStamp(elementText(child))) {
+      flush();
+      continue;
+    }
+    const nested = keptFieldPieces(child);
+    if (nested.length !== 1) {
+      flush();
+      pieces.push(...nested);
+      continue;
+    }
+    run += nested[0] ?? "";
+  }
+  flush();
+  return pieces;
 };
 
 /** The nearest ancestor both ends hold that a check names without a step by position. */
@@ -262,6 +288,7 @@ export const fieldChecks = (
   const seen = elementText(resolvePointer(ends.baseline, at) ?? null);
   const { keys } = pairMembers(element.children, []).newer;
   const texts: string[] = [];
+  let alreadySeen = false;
   element.children.forEach((field, index) => {
     if (!isXmlElement(field)) return;
     const key = keys[index] ?? String(index);
@@ -272,25 +299,38 @@ export const fieldChecks = (
       context.noisy?.(fieldAt) === true
     )
       return;
-    const value = keptFieldText(field);
-    const text = value.trim();
-    if (
-      text.length < MIN_FIELD_CHARS ||
-      !/[\p{L}\d]/u.test(text) ||
-      seen.includes(text) ||
-      isStamp(text) ||
-      isVolatileValue(text)
-    )
-      return;
-    if (value.length > context.chars) {
-      context.long?.push(fieldAt);
-      return;
+    for (const value of keptFieldPieces(field)) {
+      const text = value.trim();
+      if (
+        text.length < MIN_FIELD_CHARS ||
+        !/[\p{L}\d]/u.test(text) ||
+        isStamp(text) ||
+        isVolatileValue(text)
+      )
+        continue;
+      if (seen.includes(text)) {
+        alreadySeen = true;
+        continue;
+      }
+      if (value.length > context.chars) {
+        context.long?.push(fieldAt);
+        continue;
+      }
+      texts.push(text);
     }
-    texts.push(text);
   });
-  return [...new Set(texts)]
-    .slice(0, MAX_FIELD_CHECKS)
-    .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
+  if (texts.length > 0)
+    return [...new Set(texts)]
+      .slice(0, MAX_FIELD_CHECKS)
+      .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
+  // Every new field repeats text the seed already has. The list's own text still shows the record was added, when it fits.
+  const now = elementText(resolvePointer(ends.final, at) ?? null);
+  return alreadySeen &&
+    now !== seen &&
+    now.length > 0 &&
+    now.length <= context.chars
+    ? [{ kind: "text_equals", file, pointer: at, value: now }]
+    : [];
 };
 
 /** Each field's text that every like sibling at the end holds in a field of its tag, as Osmo's `<group>None</group>` on every record: a default, not what the user entered. */
@@ -397,7 +437,7 @@ const fieldsOf = (
     ...sharedFields(context, pointer, element),
     ...(selector ? [] : selectorFields(pointer)),
   ]);
-  return element.children.flatMap((field, index) => {
+  return element.children.flatMap((field, index): Suggestion[] => {
     const key = keys[index] ?? "";
     const at = `${pointer}/children/${escapeToken(key)}`;
     if (
@@ -425,23 +465,28 @@ const fieldsOf = (
           : [],
       );
     }
-    const value = elementText(field);
-    if (value.length > context.chars) {
-      context.long?.push(at);
-      return [];
+    const pieces = keptFieldPieces(field)
+      .map((piece) => piece.trim())
+      .filter(
+        (piece) => piece !== "" && !isStamp(piece) && !isVolatileValue(piece),
+      );
+    if (pieces.length === 0 || holdsIds(field)) return [];
+    const whole = elementText(field).trim();
+    if (pieces.length === 1 && pieces[0] === whole) {
+      const value = pieces[0];
+      if (value.length > context.chars) {
+        context.long?.push(at);
+        return [];
+      }
+      return [
+        wholeTextCheck(file, at, { value, children: field.children }, undefined)
+          .check,
+      ];
     }
-    return value.trim() === "" ||
-      isStamp(value) ||
-      isVolatileValue(value) ||
-      holdsIds(field)
-      ? []
-      : [
-          wholeTextCheck(
-            file,
-            at,
-            { value, children: field.children },
-            undefined,
-          ).check,
-        ];
+    return pieces.flatMap((value) =>
+      value.length > context.chars
+        ? []
+        : [{ kind: "text_contains" as const, file, pointer: at, value }],
+    ) satisfies Suggestion[];
   });
 };

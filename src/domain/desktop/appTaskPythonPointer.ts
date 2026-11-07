@@ -41,10 +41,24 @@ def _selector(token: str):
     return conditions
 
 
+_ISO_STAMP = re.compile(
+    r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$"
+)
+
+
+def _text_without_stamps(node) -> str:
+    """An element's text with ISO save-time leaves removed, matching the selector that named it."""
+    if isinstance(node, str):
+        return "" if _ISO_STAMP.fullmatch(node.strip()) else node
+    if not _is_element(node):
+        return ""
+    return "".join(_text_without_stamps(child) for child in node["children"])
+
+
 def _has_child_text(member, key: str, value: str) -> bool:
     """Whether an element has a child element named key whose text, its whitespace collapsed, is value."""
     return _is_element(member) and any(
-        _is_element(child) and child["name"] == key and _collapse_whitespace(_element_text(child)) == value
+        _is_element(child) and child["name"] == key and _collapse_whitespace(_text_without_stamps(child)) == value
         for child in member["children"])
 
 

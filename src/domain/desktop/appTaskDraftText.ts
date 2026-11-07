@@ -573,6 +573,12 @@ const textCheck = (
   const { pointer, now } = found;
   const before = resolvePointer(context.ends.baseline, pointer);
   if (!added && !isXmlElement(before)) return undefined;
+  const holdsStamp = (node: JsonValue): boolean =>
+    typeof node === "string"
+      ? isStamp(node)
+      : isXmlElement(node) && node.children.some(holdsStamp);
+  // A timestamp between other text is not part of the check. Joining across it asks for text the file never contains.
+  if (holdsStamp(now)) return undefined;
   const value = elementText(now);
   const old = isXmlElement(before) ? elementText(before) : undefined;
   const relaidOut =

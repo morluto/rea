@@ -254,6 +254,41 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
     ]);
   });
 
+  it("checks the name inside a nested field and leaves its save time out", () => {
+    const records = (extra: string) =>
+      `<records><record><field>Hannah</field></record>${extra}</records>`;
+    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified></details></record>`;
+    const before = records("");
+    const after = records(added);
+    const restamped = records(
+      added.replace("2026-11-07T10:12:00Z", "2026-11-08T09:00:00Z"),
+    );
+    const file = xmlDraft(before, after);
+    const values = file.suggested.flatMap((check) =>
+      check.kind === "text_contains" ? [check.value] : [],
+    );
+
+    expect(values).toEqual(["Delphine"]);
+    expect(passing(FILE, xml(restamped), file.suggested).every(Boolean)).toBe(
+      true,
+    );
+  });
+
+  it("checks each name around a nested save time, not the two names joined", () => {
+    const records = (extra: string) =>
+      `<records><record><field>Hannah</field></record>${extra}</records>`;
+    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified><name>Moreau</name></details></record>`;
+    const file = xmlDraft(records(""), records(added));
+    const values = file.suggested.flatMap((check) =>
+      check.kind === "text_contains" ? [check.value] : [],
+    );
+
+    expect(values).toEqual(["Delphine", "Moreau"]);
+    expect(
+      passing(FILE, xml(records(added)), file.suggested).every(Boolean),
+    ).toBe(true);
+  });
+
   it("suggests no check a cut view leaves undecided for a record only position names, added before the cut", () => {
     const book = (...people: string[]) =>
       `<book><contacts>${people
@@ -385,6 +420,53 @@ describe("draftTaskFiles for an identified record's own text", () => {
     expect(passing(FILE, xml(before), file.suggested).some(Boolean)).toBe(
       false,
     );
+  });
+});
+
+describe("draftTaskFiles for an added record whose words the seed already has", () => {
+  const list = (people: readonly (readonly [string, string])[]) =>
+    `<records>${people
+      .map(
+        ([first, last]) =>
+          `<record><field>${first}</field><field>${last}</field></record>`,
+      )
+      .join("")}</records>`;
+
+  it("checks the list text when every new field repeats a word the seed has", () => {
+    const before = list([["Ada", "Lin"]]);
+    const after = list([
+      ["Ada", "Lin"],
+      ["Lin", "Ada"],
+    ]);
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested.map(({ kind }) => kind)).toContain("text_equals");
+    expect(passing(FILE, xml(before), file.suggested).every(Boolean)).toBe(
+      false,
+    );
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
+
+  it("does not check a long list whole when the added record only repeats its words", () => {
+    const people = Array.from(
+      { length: 80 },
+      () => ["NorthwindHouse", "QuillPublisher"] as const,
+    );
+    const before = list(people);
+    const after = list([...people, ["QuillPublisher", "NorthwindHouse"]]);
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested.some(({ kind }) => kind === "text_equals")).toBe(
+      false,
+    );
+    expect(
+      file.suggested.some(
+        (check) =>
+          "value" in check &&
+          (check.value === "NorthwindHouse" ||
+            check.value === "QuillPublisher"),
+      ),
+    ).toBe(false);
   });
 });
 
