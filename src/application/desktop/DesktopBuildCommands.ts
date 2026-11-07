@@ -12,6 +12,10 @@ import {
   type JsonValue,
 } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  guestFileAnswerCeiling,
+  guestFileAnswerRefusal,
+} from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   runRea as runControllerRea,
@@ -155,6 +159,8 @@ export const readOutput = async (
   bytes: number,
   signal: AbortSignal,
 ): Promise<CommandOutput> => {
+  const refusal = guestFileAnswerRefusal(bytes, 1, guestFileAnswerCeiling());
+  if (refusal !== undefined) throw refusal;
   const content = (await computer.homeFiles([path], bytes, signal)).get(path);
   if (content === undefined) throw new Error(`The computer has no ${path}.`);
   const value: unknown = JSON.parse(content.toString("utf8"));
