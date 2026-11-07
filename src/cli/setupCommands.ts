@@ -117,7 +117,11 @@ const registerDoctorCommand = (
   cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: z
+        .string()
+        .min(1)
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
