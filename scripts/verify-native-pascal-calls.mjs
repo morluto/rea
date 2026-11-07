@@ -3,6 +3,7 @@ import { readFile, rm } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 
 import {
   artifactCli,
@@ -108,54 +109,54 @@ const stable = (result) =>
     })),
   }));
 try {
-  const version = (
-    await execute(compiler, ["-iV"], { timeout: 30_000 })
-  ).stdout.trim();
-  const architecture = (
-    await execute(compiler, ["-iTP"], {
-      timeout: 30_000,
-    })
-  ).stdout.trim();
-  await execute(
-    compiler,
-    [
-      "-dDEBUG",
-      "-gw3",
-      "-O-",
-      "-Xs-",
-      `-FE${directory}`,
-      `-FU${directory}`,
-      source,
-    ],
-    { timeout: 120_000 },
-  );
-  const binary = join(directory, "calls");
-  const cli = await artifactCli(
-    "observe-native-calls",
-    binary,
-    [JSON.stringify(input)],
-    { timeoutMs: 180_000, signal: cancellation.signal },
-  );
-  cancellation.signal.throwIfAborted();
-  inspect(cli);
-  await withArtifactMcp(
-    binary,
-    async (client) => {
-      const mcp = await artifactMcpResult(
-        client,
-        "observe_native_calls",
-        input,
-        { signal: cancellation.signal },
-      );
-      cancellation.signal.throwIfAborted();
-      inspect(mcp);
-      assert.deepEqual(stable(mcp), stable(cli));
-    },
-    { signal: cancellation.signal },
-  );
-  cancellation.signal.throwIfAborted();
-  console.log(
-    JSON.stringify({
+  const result = await withVerifierCleanup(async () => {
+    const version = (
+      await execute(compiler, ["-iV"], { timeout: 30_000 })
+    ).stdout.trim();
+    const architecture = (
+      await execute(compiler, ["-iTP"], {
+        timeout: 30_000,
+      })
+    ).stdout.trim();
+    await execute(
+      compiler,
+      [
+        "-dDEBUG",
+        "-gw3",
+        "-O-",
+        "-Xs-",
+        `-FE${directory}`,
+        `-FU${directory}`,
+        source,
+      ],
+      { timeout: 120_000 },
+    );
+    const binary = join(directory, "calls");
+    const cli = await artifactCli(
+      "observe-native-calls",
+      binary,
+      [JSON.stringify(input)],
+      { timeoutMs: 180_000, signal: cancellation.signal, commands },
+    );
+    cancellation.signal.throwIfAborted();
+    inspect(cli);
+    await withArtifactMcp(
+      binary,
+      async (client) => {
+        const mcp = await artifactMcpResult(
+          client,
+          "observe_native_calls",
+          input,
+          { signal: cancellation.signal },
+        );
+        cancellation.signal.throwIfAborted();
+        inspect(mcp);
+        assert.deepEqual(stable(mcp), stable(cli));
+      },
+      { signal: cancellation.signal, commands },
+    );
+    cancellation.signal.throwIfAborted();
+    return {
       ok: true,
       mocked: false,
       compiler,
@@ -166,17 +167,20 @@ try {
       stdio_mcp: true,
       scope:
         "bounded native call entries and compiler-provided source coordinates; no typed Pascal locals or interactive stepping",
-    }),
-  );
+    };
+  }, [() => commands.close()]);
+  cancellation.signal.throwIfAborted();
+  console.log(JSON.stringify(result));
 } catch (cause) {
-  if (shutdownSignal === undefined) throw cause;
+  const cancelled =
+    cause === cancellation.signal.reason ||
+    (cause?.reason === "cancelled" &&
+      cause.cancellation?.reason === cancellation.signal.reason &&
+      cause.cleanupFailure === null);
+  if (shutdownSignal === undefined || !cancelled) throw cause;
   console.error(`Verification cancelled by ${shutdownSignal}.`);
   process.exitCode = signalExitCodes[shutdownSignal];
 } finally {
-  try {
-    await commands.close();
-  } finally {
-    for (const signal of Object.keys(signalExitCodes))
-      process.off(signal, signalHandlers[signal]);
-  }
+  for (const signal of Object.keys(signalExitCodes))
+    process.off(signal, signalHandlers[signal]);
 }
