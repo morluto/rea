@@ -5,7 +5,6 @@ import {
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
-import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
@@ -438,12 +437,8 @@ export const wholeTextCheck = (
   now: { readonly value: string; readonly children: readonly JsonValue[] },
   before: string | undefined,
 ): Pick<Placed, "check" | "guards"> => {
-  const { value, children } = now;
-  const [only] = children;
-  if (children.length === 1 && typeof only === "string") {
-    const check = valueEqualsCheck(file, `${pointer}/children/0`, only, before);
-    if ("tolerance" in check) return { check, guards: [] };
-  }
+  const { value } = now;
+  // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`, and the first node alone is then the wrong number.
   return (
     (before === undefined
       ? undefined

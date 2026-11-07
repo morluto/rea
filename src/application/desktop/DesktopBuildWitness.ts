@@ -20,6 +20,7 @@ import {
 import {
   renderTaskSteps,
   renderTaskVerifier,
+  sameTaskVerifier,
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import {
@@ -145,7 +146,10 @@ const bundleTaskDifference = async (
     !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
   )
     return `the bundle's ${stepsPath} differs from this task's steps.`;
-  return verifier.toString("utf8") === renderTaskVerifier(task, app)
+  return sameTaskVerifier(
+    renderTaskVerifier(task, app),
+    verifier.toString("utf8"),
+  )
     ? undefined
     : `the bundle's ${verifierPath} differs from this task's checks.`;
 };
