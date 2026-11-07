@@ -519,3 +519,16 @@ describe("entries an app numbers by where it saves them", () => {
     ).toBe(false);
   });
 });
+
+describe("elements keyed only by an id a save numbered with six digits", () => {
+  const notes = (hello: string) =>
+    `<notes><p xml:id="id123456">${hello}</p><p xml:id="id654321">There</p></notes>`;
+
+  it("checks the edited paragraph by that id, counted once", () => {
+    const file = xmlDraft(notes("Hello"), notes("Hi"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=p][@xml:id=id123456]",
+    ]);
+  });
+});
