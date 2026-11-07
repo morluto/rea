@@ -1196,6 +1196,36 @@ it("maps a sealed result and retains outside-root subject disclosure", () => {
   );
 });
 
+it("creates equivalent cooperative and synchronous Evidence after mapping a sealed result", () => {
+  const result = freezeJsonSnapshot({
+    target_location: "/tmp/work/file",
+    entries: Array.from({ length: 12_000 }, (_, id) => ({ id })),
+  });
+  const input = {
+    operation: "inspect",
+    parameters: {},
+    logicalPathFields: { result: [["target_location"]] },
+    result,
+  };
+  const options = { logicalRoot: { root: "/tmp/work" } };
+  const expected = createEvidence(undefined, PROVIDER, input, options);
+  const steps = createImmutableEvidenceSteps(
+    undefined,
+    PROVIDER,
+    input,
+    options,
+  );
+  let yields = 0;
+  let current = steps.next();
+  while (!current.done) {
+    yields += 1;
+    current = steps.next();
+  }
+  expect(yields).toBeGreaterThan(0);
+  expect(current.value).toEqual(expected);
+  expect(result.target_location).toBe("/tmp/work/file");
+});
+
 it("discloses an outside-root target even when no observation path is mapped", () => {
   const evidence = createEvidence(
     { path: "/outside/file", sha256: "a".repeat(64), format: "file" },

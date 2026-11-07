@@ -2,7 +2,13 @@ import { describe, expect, it } from "vitest";
 import {
   normalizeLogicalPath,
   redactEvidenceObservationPaths,
+  redactEvidenceObservationPathsSteps,
 } from "./logicalPathRoot.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
+import { jsonValueValidationSteps } from "./jsonValue.js";
 
 describe("normalizeLogicalPath", () => {
   it("normalizes a path within the root to the default workspace:// prefix", () => {
@@ -133,6 +139,45 @@ describe("normalizeLogicalPath", () => {
     ]);
     expect(outcome.mappedCount).toBe(3);
   });
+});
+
+it("cooperatively seals and validates mapped immutable results", () => {
+  const source = freezeJsonSnapshot({
+    artifact: { path: "/tmp/work/file" },
+    entries: Array.from({ length: 12_000 }, (_, id) => ({ id })),
+  });
+  for (const _ of jsonValueValidationSteps(source)) {
+    /* prime the source validation */
+  }
+  const observation = {
+    operation: "inspect",
+    parameters: {},
+    result: source,
+    logicalPathFields: { result: [["artifact", "path"]] },
+  };
+  const cancelled = redactEvidenceObservationPathsSteps(observation, {
+    root: "/tmp/work",
+  });
+  expect(cancelled.next().done).toBe(false);
+  cancelled.return(undefined as never);
+  expect(source.artifact.path).toBe("/tmp/work/file");
+  expect(source.entries).toHaveLength(12_000);
+
+  const steps = redactEvidenceObservationPathsSteps(observation, {
+    root: "/tmp/work",
+  });
+  let yields = 0;
+  let current = steps.next();
+  while (!current.done) {
+    yields += 1;
+    current = steps.next();
+  }
+  expect(yields).toBeGreaterThan(0);
+  expect(current.value.observation.result).toEqual({
+    artifact: { path: "workspace://file" },
+    entries: source.entries,
+  });
+  expect(isImmutableJsonSnapshot(current.value.observation.result)).toBe(true);
 });
 
 it.skipIf(process.platform === "win32")(

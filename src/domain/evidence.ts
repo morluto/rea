@@ -12,7 +12,7 @@ import {
   DEFAULT_LOGICAL_ROOT_PREFIX,
   normalizeLogicalPath,
   normalizeLogicalPrefix,
-  redactEvidenceObservationPaths,
+  redactEvidenceObservationPathsSteps,
   type LogicalPathRootMapping,
   type LogicalPathFields,
 } from "./logicalPathRoot.js";
@@ -454,11 +454,20 @@ export function* createImmutableEvidenceSteps(
   // The envelope parser below retains its usual diagnostics, using the completed
   // immutable validation rather than traversing the payload synchronously again.
   yield* jsonValueValidationSteps(observation.result);
+  const applied =
+    options?.logicalRoot === undefined
+      ? undefined
+      : yield* applyLogicalRootRedactionSteps(
+          target,
+          observation,
+          options.logicalRoot,
+        );
   const { normalized } = normalizeEvidenceObservation(
     target,
     provider,
     observation,
     options,
+    applied,
   );
   const digest = yield* canonicalJsonDigestSteps(
     evidenceSemanticContent(normalized),
@@ -480,6 +489,18 @@ const applyLogicalRootRedaction = (
   observation: EvidenceObservationInput,
   mapping: LogicalPathRootMapping,
 ): AppliedLogicalPathRootOutcome => {
+  const steps = applyLogicalRootRedactionSteps(target, observation, mapping);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+};
+
+function* applyLogicalRootRedactionSteps(
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): Generator<void, AppliedLogicalPathRootOutcome> {
   let outsideCount = 0;
   let effectiveTarget = target;
   if (target !== undefined) {
@@ -500,7 +521,7 @@ const applyLogicalRootRedaction = (
     observation: effectiveObservation,
     mappedCount,
     outsideCount: obsOutsideCount,
-  } = redactEvidenceObservationPaths(observation, mapping);
+  } = yield* redactEvidenceObservationPathsSteps(observation, mapping);
 
   const totalOutsideCount = outsideCount + obsOutsideCount;
   const addedLimitations: string[] = [];
@@ -527,22 +548,24 @@ const applyLogicalRootRedaction = (
   }
 
   return { effectiveTarget, effectiveObservation, addedLimitations };
-};
+}
 
 const normalizeEvidenceObservation = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
   options?: EvidenceCreationOptions,
+  applied?: AppliedLogicalPathRootOutcome,
 ) => {
   const { effectiveTarget, effectiveObservation, addedLimitations } =
-    options?.logicalRoot !== undefined
+    applied ??
+    (options?.logicalRoot !== undefined
       ? applyLogicalRootRedaction(target, observation, options.logicalRoot)
       : {
           effectiveTarget: target,
           effectiveObservation: observation,
           addedLimitations: [],
-        };
+        });
 
   const subject =
     effectiveTarget === undefined

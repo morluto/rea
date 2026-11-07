@@ -3,12 +3,40 @@ import { describe, expect, it, vi } from "vitest";
 import type { JsonValue } from "./jsonValue.js";
 import {
   freezeJsonSnapshot,
+  freezeOwnedJsonSnapshotSteps,
   canBorrowParsedJsonSnapshot,
   immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 
 describe("owned immutable JSON snapshots", () => {
+  it("yields during wide owned snapshots and authenticates only after completion", () => {
+    const entries = Array.from({ length: 12_000 }, (_, id) => ({ id }));
+    const steps = freezeOwnedJsonSnapshotSteps(entries);
+    expect(steps.next().done).toBe(false);
+    expect(isImmutableJsonSnapshot(entries)).toBe(false);
+    steps.return(undefined as never);
+    expect(isImmutableJsonSnapshot(entries)).toBe(false);
+
+    const fresh = Array.from({ length: 12_000 }, (_, id) => ({ id }));
+    const complete = freezeOwnedJsonSnapshotSteps(fresh);
+    let current = complete.next();
+    while (!current.done) current = complete.next();
+    expect(isImmutableJsonSnapshot(fresh)).toBe(true);
+    expect(Object.isFrozen(fresh[11_999])).toBe(true);
+  });
+
+  it("rejects cycles and accessors in cooperative snapshots", () => {
+    const cycle: { child?: unknown } = {};
+    cycle.child = cycle;
+    expect(() => [...freezeOwnedJsonSnapshotSteps(cycle as JsonValue)]).toThrow(
+      "circular",
+    );
+    const accessor = Object.defineProperty({}, "value", { get: () => 1 });
+    expect(() => [
+      ...freezeOwnedJsonSnapshotSteps(accessor as JsonValue),
+    ]).toThrow("accessors");
+  });
   it("borrows only the selected own child of a completed sealed root", () => {
     const value = freezeJsonSnapshot({
       selected: { values: [1, 2] },

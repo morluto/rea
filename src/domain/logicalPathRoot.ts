@@ -4,10 +4,12 @@ import { isPathWithinRoot } from "./localPath.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
+  jsonValueValidationSteps,
   type JsonValue,
 } from "./jsonValue.js";
 import {
-  freezeJsonSnapshot,
+  freezeOwnedJsonSnapshotSteps,
+  immutableJsonSnapshotMember,
   isImmutableJsonSnapshot,
 } from "./immutableJson.js";
 import type { EvidenceLocation, EvidenceObservationInput } from "./evidence.js";
@@ -120,47 +122,63 @@ export interface RedactEvidenceObservationPathsOutcome {
 }
 
 /** Map only declared locations in validated JSON, retaining all other members. */
-const mapDeclaredPath = (
+function* mapDeclaredPathSteps(
   value: JsonValue,
   path: readonly string[],
   mapString: (value: string) => string,
-): JsonValue => {
+): Generator<void, JsonValue> {
   if (path.length === 0)
     return typeof value === "string" ? mapString(value) : value;
   if (value === null || typeof value !== "object") return value;
   const [key, ...rest] = path;
   if (key === undefined || !Object.hasOwn(value, key)) return value;
+  // A selected member of an authenticated snapshot inherits its ownership
+  // proof. Copies can then reuse unchanged subtrees without resealing them.
+  immutableJsonSnapshotMember(value, key);
   if (Array.isArray(value)) {
     if (!/^(0|[1-9][0-9]*)$/u.test(key)) return value;
     const index = Number(key);
     if (!Number.isSafeInteger(index) || index >= value.length) return value;
-    const mapped = mapDeclaredPath(value[index]!, rest, mapString);
+    const mapped = yield* mapDeclaredPathSteps(value[index]!, rest, mapString);
     if (mapped === value[index]) return value;
-    const copy = [...value];
-    copy[index] = mapped;
+    const copy: JsonValue[] = [];
+    for (let i = 0; i < value.length; i += 1) {
+      if (i > 0 && i % 4096 === 0) yield;
+      immutableJsonSnapshotMember(value, String(i));
+      copy.push(i === index ? mapped : value[i]!);
+    }
     return copy;
   }
   const child = value[key];
   if (child === undefined) return value;
-  const mapped = mapDeclaredPath(child, rest, mapString);
+  const mapped = yield* mapDeclaredPathSteps(child, rest, mapString);
   if (mapped === child) return value;
-  return Object.fromEntries(
-    Object.entries(value).map(([name, entry]) => [
-      name,
-      name === key ? mapped : entry,
-    ]),
-  );
-};
+  const copy: Record<string, JsonValue> = {};
+  let count = 0;
+  for (const name in value) {
+    if (!Object.hasOwn(value, name)) continue;
+    if (count++ > 0 && count % 4096 === 0) yield;
+    immutableJsonSnapshotMember(value, name);
+    Object.defineProperty(copy, name, {
+      value: name === key ? mapped : value[name],
+      enumerable: true,
+      configurable: true,
+      writable: true,
+    });
+  }
+  return copy;
+}
 
-const mapDeclaredPaths = (
+function* mapDeclaredPathsSteps(
   value: JsonValue,
   paths: readonly (readonly string[])[],
   mapString: (value: string) => string,
-): JsonValue =>
-  paths.reduce(
-    (current, path) => mapDeclaredPath(current, path, mapString),
-    value,
-  );
+): Generator<void, JsonValue> {
+  let current = value;
+  for (const path of paths)
+    current = yield* mapDeclaredPathSteps(current, path, mapString);
+  return current;
+}
 
 // Keep the same field names as the public Evidence envelope in validation errors.
 const observationJsonSchema = z.object({
@@ -176,6 +194,17 @@ export const redactEvidenceObservationPaths = (
   observation: EvidenceObservationInput,
   mapping: LogicalPathRootMapping,
 ): RedactEvidenceObservationPathsOutcome => {
+  const steps = redactEvidenceObservationPathsSteps(observation, mapping);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+};
+
+export function* redactEvidenceObservationPathsSteps(
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): Generator<void, RedactEvidenceObservationPathsOutcome> {
   let mappedCount = 0;
   let outsideCount = 0;
 
@@ -215,24 +244,26 @@ export const redactEvidenceObservationPaths = (
     raw_result: observation.rawResult ?? null,
     normalized_result: observation.result,
   });
-  const newParameters = mapDeclaredPaths(
+  const newParameters = (yield* mapDeclaredPathsSteps(
     admitted.parameters,
     observation.logicalPathFields?.parameters ?? [],
     mapString,
-  ) as Record<string, JsonValue>;
+  )) as Record<string, JsonValue>;
   const originalResult = admitted.normalized_result;
-  const mappedResult = mapDeclaredPaths(
+  const mappedResult = yield* mapDeclaredPathsSteps(
     originalResult,
     observation.logicalPathFields?.result ?? [],
     mapString,
   );
   const newResult = isImmutableJsonSnapshot(observation.result)
-    ? freezeJsonSnapshot(mappedResult)
+    ? yield* freezeOwnedJsonSnapshotSteps(mappedResult)
     : mappedResult;
+  if (isImmutableJsonSnapshot(observation.result))
+    yield* jsonValueValidationSteps(newResult);
   const newRawResult =
     observation.rawResult === undefined || observation.rawResult === null
       ? observation.rawResult
-      : mapDeclaredPaths(
+      : yield* mapDeclaredPathsSteps(
           admitted.raw_result,
           observation.logicalPathFields?.rawResult ?? [],
           mapString,
@@ -249,4 +280,4 @@ export const redactEvidenceObservationPaths = (
     mappedCount,
     outsideCount,
   };
-};
+}
