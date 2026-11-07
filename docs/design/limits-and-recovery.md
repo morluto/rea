@@ -121,9 +121,22 @@ launch environment affects the next REA process.
 is the byte-budget shape: a decimal safe integer with a 10 MiB floor
 (`MINIMUM_RESPONSE_BYTES`), the same shared schema, and no silent fallback. A
 change needs a REA restart and a matching client receive buffer. It does not
-raise REA's reserved string limit or Node's string ceiling. The setup
-allowlist does not copy this setting. A new headroom setting should, following
-the regex deadline.
+raise REA's reserved string limit or Node's string ceiling. Like the regex
+deadline, it is in `SELECTED_REGISTRATION_SETTINGS`, so setup forwards an
+explicit selection into the client registration.
+
+Windows ChangeTime admission waits out a fresh timestamp before recording a
+baseline. `REA_WINDOWS_CHANGE_TIME_DRIFT_MS` (default 2000 ms, floor 1 ms,
+maximum 60000 ms), `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS` (default 25 ms,
+floor 1 ms, maximum 1000 ms), and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`
+(default 40, floor 1, maximum 1000) are launch settings. Unset keeps those
+defaults. An invalid value is a configuration error: it names the setting, the
+rejected value, source `setting`, the default, the floor, and the maximum, and
+says to set a positive decimal integer in the environment that starts REA and
+then restart REA. There is no runtime override. Setup forwards an explicit
+selection. When the poll budget runs out, admission keeps the last observation
+instead of failing the readable file. Raising a setting only changes how long
+that wait can last. It does not change Windows ChangeTime itself.
 
 A per-call budget can have a runtime default without having an environment
 setting. JavaScript `max_heap_mb`
@@ -222,6 +235,25 @@ Error copying, attribution, redaction, and delivery must preserve these facts.
 Human-readable remediation explains the same failure; clients should not need
 to parse that sentence to identify an editable setting.
 
+`scope` and `applies_at` describe a continuing caller, such as an MCP
+connection. A one-shot invocation, such as a CLI command, has released its
+provider session and exited its runtime before its caller reads the failure,
+so its adapter projects with an explicit `"invocation"` caller lifetime.
+`details.limit` then keeps every other field and reports
+`scope: "rea-invocation"`, `applies_at: "next_invocation"` and the launch
+`environment` seed when one exists. `agent_editable: true` still holds, because
+the caller chooses that environment value or per-call `parameter` for the new
+invocation; `rea_restart_required: false` means no running REA process needs a
+restart. A producer keeps guidance that holds only while its caller retains the
+session, such as "the Ghidra session remains usable" or a same-session runtime
+update, in `continuingCallerGuidance`; the shared presentation adds it only for
+a continuing caller. The producer's own message and remediation must stay true
+after the session is released. A composed error records each embedded child
+failure through `childFailureDiagnostics`, which snapshots it at composition
+for both lifetimes when they differ, so cleanup history keeps its state and
+the final projection selects the caller's form. Failures retained inside
+Evidence keep the continuing form, so CLI and MCP Evidence stay identical.
+
 Cache policy is part of enforcement. Successful reusable analysis can survive
 a budget update. Transient Ghidra decompile failures remain uncached so a raised
 deadline can recover on the same Program. Admission checks still apply to reused
@@ -286,7 +318,9 @@ whether live repair is possible.
 ## What agents do
 
 Use `details.limit` for a direct runtime update when it names an editable
-setting. Follow `remediation.action` for per-call, fixed and external controls.
+setting with `scope: "rea-runtime"`. For `scope: "rea-invocation"`, set its
+`environment` or `parameter` for a new invocation instead.
+Follow `remediation.action` for per-call, fixed and external controls.
 Inspect settings only when bounds or application details are missing. Restart only when it says the value is
 read at startup. A sentence that a control does not raise the limit is not a
 request to change it.
@@ -316,8 +350,12 @@ request to change it.
   `runtime-configuration:` check. Re-run `rea setup` for that client when the
   setting is on the registration allowlist, then reconnect so the new process
   sees it.
-- `invalid_request`: correct the reported fields from the current schema or
-  CLI help. Do not repeat the unchanged call.
+- `invalid_request`: follow the specific recovery and reported issue. Inspect
+  the schema or CLI help when the input violates the contract or the response
+  asks for `inspect_input_contract`. A valid selector can instead require a
+  different choice, such as selecting a reported address; an inventory miss
+  does not establish that the target lacks the item. Do not repeat the
+  unchanged call when the response says it cannot succeed unchanged.
 
 A restart is required to adopt a changed launch environment or registration.
 The curated runtime settings above require no REA restart. It is not the first step for a transient

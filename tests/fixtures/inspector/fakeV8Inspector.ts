@@ -48,6 +48,9 @@ export const startFakeV8Inspector = async (
   const sockets = new Set<WebSocket>();
   let port = 0;
   const http = createServer((request, response) => {
+    // The in-process client may block on schema validation past the idle socket
+    // deadline. Keep discovery independent of pooled-socket expiry races.
+    response.setHeader("connection", "close");
     response.setHeader("content-type", "application/json");
     if (request.url === "/json/version") {
       response.end(

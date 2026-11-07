@@ -1,4 +1,4 @@
-import type { Evidence } from "./evidence.js";
+import { ANALYSIS_EVIDENCE_PREDICATE, type Evidence } from "./evidence.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { readEvidence, readEvidencePayload } from "./evidenceValidation.js";
@@ -70,7 +70,7 @@ export const parseFunctionEvidence = (
     );
   if (
     evidence.operation !== "analyze_function" ||
-    evidence.predicate_type !== "rea.analysis"
+    evidence.predicate_type !== ANALYSIS_EVIDENCE_PREDICATE
   ) {
     const location = selection.path.map(String).join(".");
     const subject =
@@ -81,7 +81,10 @@ export const parseFunctionEvidence = (
           : `Evidence at ${location}`;
     return invalidSelection(
       `Function analysis requires analyze_function Evidence with the rea.analysis predicate; the ${subject} has operation ${evidence.operation} and predicate ${evidence.predicate_type}.`,
-      { operation: "analyze_function", predicate_type: "rea.analysis" },
+      {
+        operation: "analyze_function",
+        predicate_type: ANALYSIS_EVIDENCE_PREDICATE,
+      },
     );
   }
   if (evidence.subject === null)

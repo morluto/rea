@@ -1,8 +1,9 @@
+import { RIZIN_DEBUGGER_PROVIDER_IDENTITY } from "./RizinDebuggerProviderIdentity.js";
 import { persistentDebuggerHostSupported } from "../process/PersistentDebuggerHost.js";
 import { randomUUID } from "node:crypto";
 import { isUtf8 } from "node:buffer";
 import { open, readlink, realpath, stat } from "node:fs/promises";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, type Stats } from "node:fs";
 import { isatty } from "node:tty";
 
 import {
@@ -53,12 +54,6 @@ const MIN_QUEUED_FRAME_CHARGE_BYTES = 64;
 const MAX_COMMAND_FRAMES = 4096;
 const MAX_RECENT_FRAME_BYTES = 16 * 1024;
 const MAX_DIAGNOSTIC_BYTES = 64 * 1024;
-
-export const RIZIN_DEBUGGER_PROVIDER_IDENTITY = {
-  id: "rizin.debugger",
-  name: "Rizin debugger",
-  version: null,
-} as const;
 
 interface RizinLaunchProvenance {
   readonly caller_selected_path: string;
@@ -337,7 +332,7 @@ export class RizinDebugSessionManager {
             path: ["inferior_tty"],
             reason: "missing_argument",
             message:
-              "Select a persistent readable and writable Linux terminal for inferior output.",
+              "Select a persistent readable and writable Linux terminal for inferior input and output.",
           },
         ]),
       );
@@ -450,6 +445,10 @@ export class RizinDebugSessionManager {
       "-N",
       "-0",
       "-d",
+      // Rizin reads REA's commands from its own stdin. Without this key the
+      // target inherits that stream and, once resumed, reads those commands.
+      "-R",
+      `stdin=${ttyPath}`,
       "-R",
       `stdout=${ttyPath}`,
       "-R",
@@ -1289,6 +1288,7 @@ export class RizinDebugSessionManager {
     );
     await this.#verifyDebuggerExitPolicy(session);
     await this.#verifyInferiorOutputDescriptors(session, pid);
+    await this.#verifyInferiorStdinIsolated(session, pid);
     await this.#runInternalCommand(session, `o- ${fd}`);
     const after = parseRizinPtraceRows(
       await this.#runInternalCommand(session, "olj"),
@@ -1346,6 +1346,34 @@ export class RizinDebugSessionManager {
           `Inferior descriptor ${descriptor} is not routed to the selected TTY.`,
         );
     }
+  }
+
+  /**
+   * Detach resumes the inferior, which would then read the commands that must
+   * confirm the detach. Only sharing the command stream is refused: a target may
+   * close or replace its own stdin, and neither can consume those commands.
+   */
+  async #verifyInferiorStdinIsolated(
+    session: RizinDebugSession,
+    pid: string,
+  ): Promise<void> {
+    let inferiorStdin: Stats;
+    try {
+      inferiorStdin = await stat(`/proc/${pid}/fd/0`);
+    } catch (cause) {
+      if ((cause as NodeJS.ErrnoException).code === "ENOENT") return;
+      throw cause;
+    }
+    const commandStream = await stat(
+      `/proc/${String(session.launched.process.pid)}/fd/0`,
+    );
+    if (
+      inferiorStdin.dev === commandStream.dev &&
+      inferiorStdin.ino === commandStream.ino
+    )
+      throw new Error(
+        "Inferior stdin is the Rizin command stream rather than the selected TTY; detaching would let the target consume debugger commands.",
+      );
   }
 
   async #synchronizeCleanup(session: RizinDebugSession): Promise<void> {

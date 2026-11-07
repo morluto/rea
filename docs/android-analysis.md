@@ -73,6 +73,9 @@ spellings; the original SDK declaration strings remain unchanged.
 it remains null for unknown provider target SDKs, nonliteral declarations, or
 components with filters targeting API 31 or later that omit the now-required
 explicit declaration. A limitation records the latter validation error.
+As in Android's package parser, an activity, alias or receiver filter without
+an `<action>` is discarded and does not count toward either rule; a service
+keeps such a filter. `intent_filter_count` still counts every declared filter.
 Provider authorities and all inventory dimensions are bounded. `status:
 "partial"` and `limitations` identify omitted declarations or values; a
 capacity limitation appears only when an actual collection limit was reached.
