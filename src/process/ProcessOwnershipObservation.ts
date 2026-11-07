@@ -1,3 +1,9 @@
+import {
+  DEFAULT_PROCESS_TABLE_MAX_BYTES,
+  parseProcessTableMaxBytes,
+  PROCESS_TABLE_MAX_BYTES_SETTING,
+} from "../config/processTableOutputBudget.js";
+import { ConfigurationError } from "../domain/configurationErrors.js";
 import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { readFile, stat as statPath } from "node:fs/promises";
 import { performance } from "node:perf_hooks";
@@ -19,7 +25,11 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import {
+  execFileFailureCapturedOutput,
+  execFileOutput,
+  execFileOutputFailure,
+} from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
@@ -1182,6 +1192,9 @@ export const createSystemProcessOwnershipHost = (
     readonly compileTimeoutMs?: number;
   } = {},
 ): ProcessOwnershipHost => {
+  const processTableBudget = parseProcessTableMaxBytes(
+    hostEnvironment[PROCESS_TABLE_MAX_BYTES_SETTING],
+  );
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
     hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
@@ -1218,12 +1231,14 @@ export const createSystemProcessOwnershipHost = (
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
+    if (!processTableBudget.ok) throw processTableBudget.error;
     const { stdout } = await execFileOutput(
       "ps",
       ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
       {
         env: hostEnvironment,
         stopSignal: "SIGTERM",
+        maxBuffer: processTableBudget.value,
         ...(signal === undefined ? {} : { signal }),
       },
     );
@@ -1480,8 +1495,15 @@ export const createSystemProcessOwnershipHost = (
           if (!processes.some(({ pid }) => pid === process.pid))
             throw new ProcessAdmissionError("current_process_unreported");
         } catch (cause: unknown) {
-          if (isExpectedAbort(cause, signal)) throw cause;
-          throw new LinuxOwnedProcessPrerequisiteError(cause);
+          if (
+            isExpectedAbort(cause, signal) ||
+            cause instanceof ConfigurationError
+          )
+            throw cause;
+          throw new LinuxOwnedProcessPrerequisiteError(
+            cause,
+            processTableBudget.ok ? processTableBudget.value : undefined,
+          );
         }
       }
     },
@@ -1661,14 +1683,37 @@ export const signalProcessWithStartIdentity = async (
   }
 };
 
-/** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
+/** Refusal before an owned launch when Linux process inspection is unavailable. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
-  constructor(cause: unknown) {
-    const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+  readonly outputLimitBytes: number | undefined;
+
+  constructor(cause: unknown, maximumBytes = DEFAULT_PROCESS_TABLE_MAX_BYTES) {
+    const failure = execFileOutputFailure(cause);
+    const outputLimitBytes =
+      failure?.code === "ERR_CHILD_PROCESS_STDIO_MAXBUFFER"
+        ? maximumBytes
+        : undefined;
+    const reason =
+      outputLimitBytes === undefined
+        ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+        : `Linux process ownership inspection is unknown because ps exceeded the ${String(outputLimitBytes)}-byte per-stream output allowance; the incomplete process table was not used. Raise ${PROCESS_TABLE_MAX_BYTES_SETTING} in REA's launch environment if needed and restart REA; a larger allowance can retain more memory.`;
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
+      ...(failure === undefined
+        ? {}
+        : { capturedOutput: execFileFailureCapturedOutput(failure) }),
+      ...(outputLimitBytes === undefined
+        ? {}
+        : {
+            diagnostics: {
+              prerequisite: "ps",
+              reason: "output_limit",
+              max_output_bytes_per_stream: outputLimitBytes,
+            },
+          }),
     });
+    this.outputLimitBytes = outputLimitBytes;
   }
 }
 

@@ -382,6 +382,7 @@ Select the part you want to check:
 | ----------------------------------- | -------------------------------------------------------------------------- |
 | Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.             |
 | One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
+| One firmware integration            | `rea doctor --provider binwalk --json` (or `unblob`)                       |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
 
@@ -1730,6 +1731,24 @@ copying full command lines or environments into reports. Heap and affinity
 settings affect cost and latency; they are not part of REA's semantic analysis
 profile identity. See [real-provider testing](testing.md) for bounded
 verification workflows.
+
+### Process-table inspection budget
+
+Owned-process launch and cleanup on Linux and macOS read the whole host process
+table, including command lines. This inventory has a separate **8 MiB per
+stdout/stderr stream** default allowance, independent of firmware doctor's
+64 KiB tool-probe budget. Set `REA_PROCESS_TABLE_MAX_BYTES` to a positive decimal
+byte count in the environment that starts REA, then restart REA to apply it.
+For example, `REA_PROCESS_TABLE_MAX_BYTES=16777216` allows 16 MiB per stream on
+a busy host. `rea setup` preserves an explicit selection in client registrations.
+Values above Node's single-string limit are rejected because each captured
+stream must be decoded before parsing. The allowance limits captured bytes,
+not total RSS: decoded strings, parsed rows and temporary copies also use memory.
+
+Overflow never accepts an incomplete table. Linux launch preparation reports
+the effective limit, firmware readiness stays unknown and starts no tool probe,
+and cleanup stays unverifiable rather than claiming the owned processes exited.
+Increase the allowance only when the host needs it and has sufficient memory.
 
 ### Ghidra diagnostics and verification
 
