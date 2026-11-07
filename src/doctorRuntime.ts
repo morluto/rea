@@ -5,10 +5,22 @@ import {
   type DoctorProviderInspection,
 } from "./application/Doctor.js";
 import { fileURLToPath } from "node:url";
-import { inspectJadxProvider } from "./android/JadxDoctor.js";
-import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
-import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
-import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
+import {
+  JADX_DOCTOR_SETTINGS,
+  inspectJadxProvider,
+} from "./android/JadxDoctor.js";
+import {
+  GHIDRA_DOCTOR_SETTINGS,
+  inspectSystemGhidraProvider,
+} from "./ghidra/GhidraDoctor.js";
+import {
+  IDA_DOCTOR_SETTINGS,
+  inspectIdaRegistration,
+} from "./ida/IdaDoctor.js";
+import {
+  KUNA_DOCTOR_SETTINGS,
+  inspectKunaProvider,
+} from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
 import { ok } from "./domain/result.js";
@@ -40,6 +52,8 @@ interface SelectedRegistrationEnvironment {
   readonly environment: Readonly<Record<string, string | undefined>>;
   /** Names the client records as expressions this process cannot evaluate. */
   readonly unresolved: ReadonlySet<string>;
+  /** The registration could not be read or its effective settings resolved. */
+  readonly unknown?: boolean;
 }
 
 const selectedRegistrationEnvironment = async (
@@ -61,15 +75,16 @@ const selectedRegistrationEnvironment = async (
     process.platform,
     processEnvironment,
   ).find(({ name }) => name === selected);
-  if (client === undefined || client.format === "unsupported") return undefined;
+  if (client === undefined || client.format === "unsupported")
+    return { environment: {}, unresolved: new Set(), unknown: true };
   const registered = await readSelectedRegistration(
     client,
     resourceScope,
     process.platform,
   );
-  // Absent, unreadable, or unresolvable: the terminal is the only environment
-  // this process can honestly describe.
   if (registered === undefined) return undefined;
+  if ("unknown" in registered)
+    return { environment: {}, unresolved: new Set(), unknown: true };
   return {
     environment: registered.values,
     unresolved: registered.unresolvedSettings,
@@ -122,7 +137,7 @@ const readSelectedRegistration = async (
   client: Parameters<typeof readEffectiveClientRegistrationConfiguration>[0],
   resourceScope: RetainedResourceScope,
   platform: NodeJS.Platform,
-): Promise<SelectedRegistration | undefined> => {
+): Promise<SelectedRegistration | { readonly unknown: true } | undefined> => {
   // A failed close is a retained owner, not a read outcome: transfer it to the
   // caller's scope so `close()` retries it instead of losing it.
   const configuration = await resourceScope
@@ -138,7 +153,14 @@ const readSelectedRegistration = async (
     });
   // A registration this process cannot read says nothing about the values the
   // client passes on; the terminal is not those values.
-  if (configuration === undefined || !configuration.ok) return undefined;
+  if (configuration === undefined) return { unknown: true };
+  if (!configuration.ok) {
+    const cleanup = configuration.error.cleanupFailure;
+    if (cleanup !== undefined)
+      resourceScope.retain(cleanup.owner, cleanup.path);
+    return { unknown: true };
+  }
+  if (configuration.value.document === undefined) return undefined;
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     {},
@@ -150,7 +172,70 @@ const readSelectedRegistration = async (
         values: details.value.values,
         unresolvedSettings: details.value.unresolvedSettings,
       }
-    : undefined;
+    : { unknown: true };
+};
+
+/** Registration settings read by each provider's readiness probe. */
+const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
+  ghidra: GHIDRA_DOCTOR_SETTINGS,
+  ida: IDA_DOCTOR_SETTINGS,
+  jadx: JADX_DOCTOR_SETTINGS,
+  kuna: KUNA_DOCTOR_SETTINGS,
+};
+
+const unresolvedProvider = (
+  id: string,
+  selected: SelectedRegistrationEnvironment | undefined,
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+): DoctorProviderInspection | undefined => {
+  if (selected === undefined) return undefined;
+  const normalize = (key: string) =>
+    platform === "win32" ? key.toUpperCase() : key;
+  const read = new Set((PROVIDER_SETTINGS[id] ?? []).map(normalize));
+  const unresolved = [...selected.unresolved].filter((name) =>
+    read.has(normalize(name)),
+  );
+  if (selected.unknown !== true && unresolved.length === 0) return undefined;
+  const configurationKeys: Readonly<Record<string, string>> = {
+    ghidra: "GHIDRA_INSTALL_DIR",
+    ida: "REA_IDA_MCP_CONFIG",
+    jadx: "REA_JADX_MCP_JAR",
+    kuna: "REA_KUNA_COMMAND",
+  };
+  const configurationKey = configurationKeys[id];
+  const unknownConfiguration =
+    selected.unknown === true ||
+    configurationKey === undefined ||
+    unresolved.some((name) => normalize(name) === normalize(configurationKey));
+  const configuration =
+    configurationKey === undefined ? undefined : environment[configurationKey];
+  const configured = unknownConfiguration
+    ? null
+    : id === "kuna"
+      ? configuration !== undefined && configuration.length > 0
+      : configuration !== undefined;
+  return {
+    id,
+    configured,
+    available: null,
+    providerVersion: null,
+    registrationEnvironment: {},
+    checks: [
+      {
+        name: "configuration",
+        ok: false,
+        code: "registration_environment_unknown",
+        classification: "unknown",
+        detail:
+          selected.unknown === true
+            ? "The selected client's registration could not be read or resolved."
+            : `The selected client's registration has unresolved settings: ${unresolved.join(", ")}.`,
+        remediation:
+          "Inspect the selected client's registration on the host and rerun doctor.",
+      },
+    ],
+  };
 };
 
 /** Compose provider diagnostics at the outer CLI adapter boundary. */
@@ -222,32 +307,56 @@ export const createSystemDoctorHost = (
         environment,
       );
       return [
-        await inspectSystemGhidraProvider(
+        unresolvedProvider(
+          "ghidra",
+          selected,
           inspectionEnvironment,
-          resourceScope,
-          inspectionSignal,
-        ),
-        await inspectIdaRegistration(
-          inspectionEnvironment.REA_IDA_MCP_CONFIG,
-          resourceScope,
-          inspectionSignal,
-          inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
-            ? undefined
-            : readRegistration(
-                inspectionEnvironment.REA_IDA_MCP_CONFIG,
-                resourceScope,
-                inspectionSignal,
-              ),
-        ),
-        await inspectJadxProvider(
+          process.platform,
+        ) ??
+          (await inspectSystemGhidraProvider(
+            inspectionEnvironment,
+            resourceScope,
+            inspectionSignal,
+          )),
+        unresolvedProvider(
+          "ida",
+          selected,
           inspectionEnvironment,
-          resourceScope,
-          inspectionSignal,
-        ),
-        await inspectKunaProvider(inspectionEnvironment, process.platform, {
-          resourceScope,
-          signal: inspectionSignal,
-        }),
+          process.platform,
+        ) ??
+          (await inspectIdaRegistration(
+            inspectionEnvironment.REA_IDA_MCP_CONFIG,
+            resourceScope,
+            inspectionSignal,
+            inspectionEnvironment.REA_IDA_MCP_CONFIG === undefined
+              ? undefined
+              : readRegistration(
+                  inspectionEnvironment.REA_IDA_MCP_CONFIG,
+                  resourceScope,
+                  inspectionSignal,
+                ),
+          )),
+        unresolvedProvider(
+          "jadx",
+          selected,
+          inspectionEnvironment,
+          process.platform,
+        ) ??
+          (await inspectJadxProvider(
+            inspectionEnvironment,
+            resourceScope,
+            inspectionSignal,
+          )),
+        unresolvedProvider(
+          "kuna",
+          selected,
+          inspectionEnvironment,
+          process.platform,
+        ) ??
+          (await inspectKunaProvider(inspectionEnvironment, process.platform, {
+            resourceScope,
+            signal: inspectionSignal,
+          })),
       ] satisfies readonly DoctorProviderInspection[];
     },
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>

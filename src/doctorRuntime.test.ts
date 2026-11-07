@@ -19,10 +19,12 @@ import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
-import { runDoctorOwned } from "./application/Doctor.js";
+import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
+import * as configurationFiles from "./application/ClientConfigurationFiles.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 
 const readyDisplay = {
   ok: true,
@@ -632,6 +634,7 @@ test("does not fill a registration's unresolvable expression from the terminal",
       "        args: [mcp]",
       "        env:",
       "          GHIDRA_INSTALL_DIR: !!js caller.ghidra",
+      "          REA_JADX_MCP_JAR: /opt/jadx.jar",
       "",
     ].join("\n"),
     { flag: "w" },
@@ -642,9 +645,12 @@ test("does not fill a registration's unresolvable expression from the terminal",
   });
   try {
     const inspections = await host.providerInspections?.(["dsh"]);
-    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
-      false,
-    );
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: null,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
   } finally {
     await host.close?.();
   }
@@ -687,6 +693,226 @@ test.each([["win32"], ["linux"]] as const)(
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "60000",
         OTHER: "kept",
       });
+    }
+  },
+);
+
+test("retains a failed registration-file close returned as a read error", async () => {
+  const home = await createTestTempDirectory("rea-doctor-registration-close-");
+  const close = vi.fn().mockResolvedValue(undefined);
+  const path = join(home, ".config/opencode/opencode.json");
+  const failure = new RegularFileCleanupFailure({
+    path,
+    owner: { close } as never,
+    outcome: { kind: "failed", cause: new Error("read failed") },
+    cleanupCause: new Error("close failed"),
+  });
+  const read = vi
+    .spyOn(configurationFiles, "readEffectiveClientRegistrationConfiguration")
+    .mockResolvedValue(
+      err({
+        kind: "unreadable",
+        path,
+        detail: "unreadable",
+        cleanupFailure: failure,
+      }),
+    );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    await host.providerInspections?.(["opencode"]);
+    await host.close?.();
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    read.mockRestore();
+    await host.close?.();
+  }
+});
+
+test("retries a retained registration-file close after a failed retry", async () => {
+  const home = await createTestTempDirectory(
+    "rea-doctor-registration-close-retry-",
+  );
+  const close = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("close still failed"))
+    .mockResolvedValue(undefined);
+  const path = join(home, ".config/opencode/opencode.json");
+  const failure = new RegularFileCleanupFailure({
+    path,
+    owner: { close } as never,
+    outcome: { kind: "failed", cause: new Error("read failed") },
+    cleanupCause: new Error("close failed"),
+  });
+  const read = vi
+    .spyOn(configurationFiles, "readEffectiveClientRegistrationConfiguration")
+    .mockResolvedValue(
+      err({
+        kind: "unreadable",
+        path,
+        detail: "unreadable",
+        cleanupFailure: failure,
+      }),
+    );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    await host.providerInspections?.(["opencode"]).catch(() => undefined);
+    await host.close?.().catch(() => undefined);
+    await host.close?.();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    read.mockRestore();
+    await host.close?.();
+  }
+});
+
+test("does not use terminal readiness when a selected registration is malformed", async () => {
+  const home = await createTestTempDirectory(
+    "rea-doctor-malformed-registration-",
+  );
+  await mkdir(join(home, ".config/opencode"), { recursive: true });
+  await writeFile(join(home, ".config/opencode/opencode.json"), "not JSON");
+  const host = createSystemDoctorHost({
+    HOME: home,
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: null,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    const report = await runDoctor(undefined, host, {
+      clients: ["opencode"],
+      providers: ["ghidra"],
+    });
+    expect(report.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "ghidra",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
+    expect(report.scope_checks).not.toContainEqual(
+      expect.objectContaining({
+        name: "provider:ghidra",
+        classification: "missing_analysis_engine",
+      }),
+    );
+  } finally {
+    await host.close?.();
+  }
+});
+
+test("keeps a known provider configuration when only its Java setting is unresolved", async () => {
+  const home = await createTestTempDirectory("rea-dsh-doctor-partial-");
+  await mkdir(join(home, ".dsh"), { recursive: true });
+  await writeFile(
+    join(home, ".dsh/cordis.patch.yml"),
+    [
+      "- insert:",
+      "    - id: rea-mcp",
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      "      config:",
+      "        serverName: rea",
+      "        transport: stdio",
+      "        command: rea",
+      "        args: [mcp]",
+      "        env:",
+      "          GHIDRA_INSTALL_DIR: /opt/ghidra",
+      "          JAVA_HOME: !!js caller.java",
+      "",
+    ].join("\n"),
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    JAVA_HOME: "/terminal/java",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["dsh"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: true,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
+it("probes Kuna when only the unused client PATH is unresolved", async () => {
+  const home = await createTestTempDirectory("rea-dsh-doctor-kuna-path-");
+  const kuna = join(home, "kuna");
+  await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
+  await mkdir(join(home, ".dsh"), { recursive: true });
+  await writeFile(
+    join(home, ".dsh/cordis.patch.yml"),
+    [
+      "- insert:",
+      "    - id: rea-mcp",
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      "      config:",
+      "        serverName: rea",
+      "        transport: stdio",
+      "        command: rea",
+      "        args: [mcp]",
+      "        env:",
+      "          PATH: !!js caller.path",
+      `          REA_KUNA_COMMAND: ${JSON.stringify(kuna)}`,
+      `          REA_KUNA_CACHE_DIR: ${JSON.stringify(join(home, "cache"))}`,
+      "",
+    ].join("\n"),
+  );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.(["dsh"]);
+    expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+      configured: true,
+      available: true,
+      providerVersion: "1.833",
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
+test.skipIf(process.platform !== "win32")(
+  "reports Kuna's Windows limitation when the client PATH is unresolved",
+  async () => {
+    const home = await createTestTempDirectory("rea-dsh-doctor-kuna-windows-");
+    await mkdir(join(home, ".dsh"), { recursive: true });
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        "          PATH: !!js caller.path",
+        `          REA_KUNA_COMMAND: ${JSON.stringify(join(home, "kuna.exe"))}`,
+        "",
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({ HOME: home, USERPROFILE: home });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+        configured: true,
+        available: false,
+        checks: [
+          expect.objectContaining({
+            code: "unsupported_host",
+            classification: "unsupported_host",
+          }),
+        ],
+      });
+    } finally {
+      await host.close?.();
     }
   },
 );
