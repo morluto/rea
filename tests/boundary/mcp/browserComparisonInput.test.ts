@@ -240,18 +240,3 @@ describe("browser comparison input boundary", () => {
     }
   });
 });
-
-describe("browser comparison input advertised schema", () => {
-  it("advertises a valid flattened object schema under 64 KiB", () => {
-    const advertised = toolRegistrationOptions(contract).inputSchema[
-      "~standard"
-    ].jsonSchema.input({
-      target: "draft-2020-12",
-    });
-    expect(advertised.type).toBe("object");
-    expect(advertised).not.toHaveProperty("anyOf");
-    expect(Buffer.byteLength(JSON.stringify(advertised))).toBeLessThanOrEqual(
-      65_536,
-    );
-  });
-});

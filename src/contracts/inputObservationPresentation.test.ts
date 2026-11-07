@@ -68,3 +68,39 @@ it.each(["draft-2020-12", "draft-07"] as const)(
     ).toBe(false);
   },
 );
+
+it.each([false, true])(
+  "preserves marked root union alternatives (referenced: %s)",
+  (referenced) => {
+    const marked = {
+      type: "object",
+      "x-rea-complete-observation": true,
+      properties: { before: { type: "string" } },
+      required: ["before"],
+      additionalProperties: false,
+    };
+    const canonical = {
+      $schema: "https://json-schema.org/draft/2020-12/schema",
+      ...(referenced ? { $defs: { marked } } : {}),
+      anyOf: [
+        referenced ? { $ref: "#/$defs/marked" } : marked,
+        {
+          type: "object",
+          properties: { after: { type: "integer" } },
+          required: ["after"],
+          additionalProperties: false,
+        },
+      ],
+    };
+    const presented = presentInputJsonSchema(canonical, () => undefined);
+    expect(presented).toMatchObject({
+      type: "object",
+      properties: { before: { type: "string" }, after: { type: "integer" } },
+    });
+    expect(presented).not.toHaveProperty("anyOf");
+    const validate = new Ajv2020({ strict: false }).compile(presented);
+    expect(validate({ before: "x" })).toBe(true);
+    expect(validate({ after: 1 })).toBe(true);
+    expect(validate({ before: 1 })).toBe(false);
+  },
+);

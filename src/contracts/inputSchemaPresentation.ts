@@ -45,22 +45,6 @@ const describeSchema = (
   propertyDescription?: string,
 ): unknown => {
   if (!isObject(schema)) return schema;
-  // These operands are complete producer results, not fields an agent builds.
-  // Their owner keeps full canonical validation; only their wire declaration
-  // omits the repeated result schema. Analyst-authored controls stay explicit.
-  if (schema.type === "object" && schema["x-rea-complete-observation"] === true)
-    return {
-      type: "object",
-      description: [
-        propertyDescription ??
-          (typeof schema.description === "string"
-            ? schema.description
-            : undefined),
-        "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
-      ]
-        .filter((text) => text !== undefined)
-        .join(" "),
-    };
   const scope = references.enter(schema, inherited);
   const described = Object.fromEntries(
     Object.entries(schema).map(([key, value]) => {
@@ -110,6 +94,68 @@ const describeSchema = (
   return propertyDescription === undefined
     ? described
     : { ...described, description: propertyDescription };
+};
+
+// Collapse complete observations before collecting root-union properties, but
+// preserve the alternatives themselves: their fields define the input groups.
+const collapseObservations = (
+  root: Record<string, unknown>,
+): Record<string, unknown> => {
+  const references = new JsonSchemaReferences(root);
+  const protectedBranches = new Set<unknown>();
+  const alternatives = root.anyOf ?? root.oneOf;
+  if (Array.isArray(alternatives)) {
+    for (const alternative of alternatives) {
+      protectedBranches.add(alternative);
+      if (isObject(alternative) && typeof alternative.$ref === "string") {
+        const target = references.resolve(
+          references.rootScope,
+          alternative.$ref,
+        );
+        if (target.kind === "target") protectedBranches.add(target.value);
+      }
+    }
+  }
+  const visit = (schema: unknown): unknown => {
+    if (!isObject(schema)) return schema;
+    if (
+      !protectedBranches.has(schema) &&
+      schema !== root &&
+      schema.type === "object" &&
+      schema["x-rea-complete-observation"] === true
+    )
+      return {
+        type: "object",
+        description: [
+          typeof schema.description === "string"
+            ? schema.description
+            : undefined,
+          "Pass the complete returned normalized_result unchanged. Its fields are omitted from this declaration; the server still validates the complete canonical observation.",
+        ]
+          .filter((text) => text !== undefined)
+          .join(" "),
+      };
+    return Object.fromEntries(
+      Object.entries(schema).map(([key, value]) => {
+        if (schemaMaps.has(key) && isObject(value))
+          return [
+            key,
+            Object.fromEntries(
+              Object.entries(value).map(([name, child]) => [
+                name,
+                visit(child),
+              ]),
+            ),
+          ];
+        if (schemaArrays.has(key) && Array.isArray(value))
+          return [key, value.map(visit)];
+        if (schemaChildren.has(key))
+          return [key, Array.isArray(value) ? value.map(visit) : visit(value)];
+        return [key, value];
+      }),
+    );
+  };
+  return visit(root) as Record<string, unknown>;
 };
 
 const objectBranch = (
@@ -587,17 +633,7 @@ export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
-  const rootReferences = new JsonSchemaReferences(root);
-  const describedRoot = describeSchema(
-    root,
-    rootReferences,
-    rootReferences.rootScope,
-    describeProperty,
-  );
-  const rootToFlatten = isObject(describedRoot)
-    ? (describedRoot as Record<string, unknown>)
-    : root;
-  const flattened = presentDiscriminatedRoot(rootToFlatten);
+  const flattened = presentDiscriminatedRoot(collapseObservations(root));
   const references = new JsonSchemaReferences(flattened);
   const described = describeSchema(
     flattened,
