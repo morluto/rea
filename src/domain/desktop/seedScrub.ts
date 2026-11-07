@@ -1,5 +1,11 @@
 import type { JsonValue } from "../jsonValue.js";
 import {
+  gunzip,
+  gzipDeterministic,
+  hasExtraField,
+  isGzip,
+} from "./gzipDocument.js";
+import {
   identityLeftIn,
   identitySpellings,
   scrubHostIdentity,
@@ -13,6 +19,8 @@ export interface SeedScrub {
   readonly bytes: Buffer | undefined;
   /** Whether what it ships still holds the captured home, `user@host` or the host name, its escapes decoded. */
   readonly holdsIdentity: boolean;
+  /** The bytes are a gzip file compressed again only to clear its header: its document is as captured. */
+  readonly recompressed?: true;
 }
 
 /** Seeds up to this size are decoded, well inside a JavaScript string; a larger one is only searched byte for byte. */
@@ -406,7 +414,7 @@ const holdsIdentity = (bytes: Buffer, identity: HostIdentity): boolean => {
  * syntax changes. Other bytes ship as captured. Either way what ships is
  * searched, its escapes decoded, for what is left.
  */
-export const scrubSeed = (
+const scrubDocument = (
   bytes: Buffer,
   seed: Seed,
   identity: HostIdentity,
@@ -423,5 +431,39 @@ export const scrubSeed = (
   return {
     bytes: scrub.text === decoded.text ? undefined : decoded.encode(scrub.text),
     holdsIdentity: identityLeftIn(scrub.decoded, identity) !== undefined,
+  };
+};
+
+/**
+ * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
+ * the format the state view read it as, then compressed again alike on every
+ * host whether or not it changed, so no file name, comment or time in the
+ * captured header ships. One already so ships as captured, as do one that
+ * does not decompress within the size decoded and one whose document needs no
+ * edit but a member of which has an extra field, where BGZF and dictzip index
+ * their blocks; both are searched as their bytes.
+ */
+export const scrubSeed = (
+  bytes: Buffer,
+  seed: Seed,
+  identity: HostIdentity,
+): SeedScrub => {
+  if (!isGzip(bytes)) return scrubDocument(bytes, seed, identity);
+  const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
+  if (!document.ok)
+    return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
+  const scrub = scrubDocument(document.value, seed, identity);
+  if (scrub.bytes === undefined && hasExtraField(bytes))
+    return {
+      bytes: undefined,
+      holdsIdentity: scrub.holdsIdentity || holdsIdentity(bytes, identity),
+    };
+  const shipped = gzipDeterministic(scrub.bytes ?? document.value);
+  if (shipped.equals(bytes))
+    return { bytes: undefined, holdsIdentity: scrub.holdsIdentity };
+  return {
+    bytes: shipped,
+    holdsIdentity: scrub.holdsIdentity,
+    ...(scrub.bytes === undefined ? { recompressed: true as const } : {}),
   };
 };

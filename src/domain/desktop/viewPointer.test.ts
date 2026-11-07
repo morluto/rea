@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { JsonValue } from "../jsonValue.js";
-import { locatePointer, pairMembers } from "./viewPointer.js";
+import { pairMembers } from "./memberPairing.js";
+import { locatePointer, memberLookup } from "./viewPointer.js";
 
 const element = (
   name: string,
@@ -108,6 +109,97 @@ describe("locatePointer", () => {
       kind: "none",
     });
     expect(locatePointer(null, "/x")).toMatchObject({ kind: "none" });
+  });
+
+  it("names a member by a child element's text, its whitespace collapsed, alike in locatePointer and memberLookup", () => {
+    const ada = element("contact", {}, [
+      element("first", {}, ["Ada"]),
+      element("first", {}, ["\n Ann  Lee "]),
+    ]);
+    const bob = element("contact", {}, [element("first", {}, ["Bob"])]);
+    const members: JsonValue[] = [
+      "Ada",
+      { ">first": "Ada", name: "first" },
+      ada,
+      bob,
+      element("group", {}, [element("first", {}, ["Bob"])]),
+    ];
+    const named = (token: string) => [
+      locatePointer({ members }, `/members/${token}`),
+      memberLookup(members, [token])(token),
+    ];
+
+    expect(named("[>first=Ann Lee]")).toEqual([
+      expect.objectContaining({ kind: "value", value: ada }),
+      ada,
+    ]);
+    expect(named("[>first=Ada][>first=Ann Lee]")[1]).toBe(ada);
+    expect(named("[name=contact][>first=Bob]")[1]).toBe(bob);
+    expect(named("[>first=Bob]")).toEqual([
+      expect.objectContaining({ kind: "unresolved" }),
+      undefined,
+    ]);
+    expect(named("[>first=Zed]")).toEqual([
+      expect.objectContaining({ kind: "none" }),
+      undefined,
+    ]);
+    expect(named("[>=Ada]")).toEqual([
+      expect.objectContaining({ kind: "unresolved" }),
+      undefined,
+    ]);
+  });
+});
+
+describe("locatePointer and memberLookup by a path inside a member", () => {
+  it("names a member by a path of up to three steps inside it: a JSON record's string, an element's descendant text or a child's attribute, alike in locatePointer and memberLookup", () => {
+    const book = (title: JsonValue, year: JsonValue = "2015") => ({
+      data: { Title: title, Year: year },
+      format: "BOOK",
+    });
+    const silk = book("The Silk Roads");
+    const spqr = book("SPQR", 2015);
+    const button = (id: string, label: string) =>
+      element("child", {}, [
+        element("object", { id }, [element("property", {}, [label])]),
+      ]);
+    const [submit, cancel] = [
+      button("submit_button", "\n Send "),
+      button("cancel_button", "Cancel"),
+    ];
+    const members: JsonValue[] = [
+      "The Silk Roads",
+      silk,
+      spqr,
+      book({ text: "SPQR" }, "1999"),
+      submit,
+      cancel,
+    ];
+    const named = (selector: string) => {
+      const located = locatePointer(
+        { members },
+        `/members/${selector.replaceAll("~", "~0").replaceAll("/", "~1")}`,
+      );
+      const looked = memberLookup(members, [selector])(selector);
+      return located.kind === "value" && located.value === looked
+        ? looked
+        : [located.kind, looked];
+    };
+
+    expect(named("[format=BOOK][>data/Title=The Silk Roads]")).toBe(silk);
+    expect(named("[>data/Year=2015]")).toBe(silk);
+    expect(named("[>data/Title/text=SPQR]")).toBe(members[3]);
+    expect(named("[>format=BOOK][>data/Title=SPQR]")).toBe(spqr);
+    expect(named("[>object@id=submit_button]")).toBe(submit);
+    expect(named("[>object/property=Send]")).toBe(submit);
+    expect(named("[name=child][>object/property=Cancel]")).toBe(cancel);
+    expect(named("[>data/Title=Missing]")).toEqual(["none", undefined]);
+    expect(named("[>object@id/property=Cancel]")).toEqual(["none", undefined]);
+    expect(named("[>object/property@id=x]")).toEqual(["none", undefined]);
+    expect(named("[>data/Title/text/x=SPQR]")).toEqual([
+      "unresolved",
+      undefined,
+    ]);
+    expect(named("[>data//Title=SPQR]")).toEqual(["unresolved", undefined]);
   });
 });
 
@@ -236,5 +328,107 @@ describe("pairMembers", () => {
         [],
       ).newer.keys,
     ).toEqual(["[name=Save][@id=1]", "[name=Save][@id=2]"]);
+  });
+});
+
+describe("pairMembers by ranked attributes", () => {
+  it("keys a member by two attributes together where no single one names it, spelled in canonical order whatever order the app wrote them in", () => {
+    const cell = (row: string, col: string) =>
+      element("Cell", { Row: row, Col: col, ValueType: "40" });
+    // The app writes Col before Row in the later save.
+    const later = (row: string, col: string) =>
+      element("Cell", { Col: col, Row: row, ValueType: "40" });
+
+    const pairing = pairMembers(
+      [later("2", "3"), later("2", "4"), later("3", "3"), later("3", "4")],
+      [cell("3", "4"), cell("2", "4"), cell("2", "3"), cell("3", "3")],
+    );
+
+    expect(pairing.newer).toEqual({
+      keys: [
+        "[name=Cell][@Col=3][@Row=2]",
+        "[name=Cell][@Col=4][@Row=2]",
+        "[name=Cell][@Col=3][@Row=3]",
+        "[name=Cell][@Col=4][@Row=3]",
+      ],
+      partners: [2, 1, 3, 0],
+    });
+  });
+
+  it("counts a pair over identified siblings too, while an identified member keeps its identity and a pair whose values changed pairs nothing", () => {
+    const cell = (row: string, col: string, id?: string) =>
+      element("Cell", {
+        ...(id === undefined ? {} : { id }),
+        Row: row,
+        Col: col,
+      });
+    const cells = [
+      cell("1", "1", "x"),
+      cell("1", "1"),
+      cell("1", "2"),
+      cell("2", "1"),
+      cell("2", "2"),
+    ];
+
+    expect(pairMembers(cells, cells).newer.keys).toEqual([
+      "[name=Cell][@id=x]",
+      // Its pair is the identified cell's too, so position keys it.
+      "1",
+      "[name=Cell][@Col=2][@Row=1]",
+      "[name=Cell][@Col=1][@Row=2]",
+      "[name=Cell][@Col=2][@Row=2]",
+    ]);
+    // The cell at row 2, column 2 moved to column 3: no longer the same pair.
+    const moved = pairMembers([...cells.slice(0, 4), cell("2", "3")], cells);
+    expect(moved.newer.partners[4]).toBeUndefined();
+    expect(moved.newer.keys[4]).toBe("[name=Cell][@Col=3]");
+  });
+
+  it("counts a pair over every sibling holding both values, though one ranks six other attributes before them", () => {
+    // Six worded attributes rank before Row and Col, so this cell never takes their pair itself.
+    const styled = element("Cell", {
+      Row: "1",
+      Col: "1",
+      Font: "Sans",
+      Style: "bold",
+      Align: "left",
+      Wrap: "word",
+      Color: "red",
+      Border: "thin",
+    });
+    const plain = element("Cell", { Row: "1", Col: "1", X: "12.75" });
+    const cells = [plain, styled];
+
+    const { newer } = pairMembers(cells, cells);
+    expect(newer).toEqual({
+      keys: ["[name=Cell][@X=12.75]", "[name=Cell][@Font=Sans]"],
+      partners: [0, 1],
+    });
+    for (const [index, key] of newer.keys.entries())
+      expect(locatePointer(cells, `/${key}`)).toMatchObject({
+        kind: "value",
+        value: cells[index],
+      });
+    // Nor does the pair key a member as new when a member of the other version holds both values.
+    const others = [
+      element("Cell", { Row: "1", Col: "2" }),
+      element("Cell", { Row: "2", Col: "1" }),
+    ];
+    expect(
+      pairMembers([plain, ...others], [styled, ...others]).newer.keys[0],
+    ).toBe("[name=Cell][@X=12.75]");
+  });
+
+  it("keys a member by a name-like attribute before a coordinate the app writes first", () => {
+    const frame = (x: string, name: string) =>
+      element("PAGEOBJECT", { XPOS: x, YPOS: "12.5", ANNAME: name });
+
+    expect(
+      pairMembers([frame("146.83", "Headline"), frame("20.5", "Details")], [])
+        .newer.keys,
+    ).toEqual([
+      "[name=PAGEOBJECT][@ANNAME=Headline]",
+      "[name=PAGEOBJECT][@ANNAME=Details]",
+    ]);
   });
 });
