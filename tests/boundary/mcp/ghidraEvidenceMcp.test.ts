@@ -703,9 +703,7 @@ describe("Ghidra MCP evidence parity", () => {
         },
         limitations: expect.arrayContaining([
           expect.stringContaining("default auto-analysis complete"),
-          expect.stringContaining(
-            "original executable bytes are never written",
-          ),
+          expect.stringContaining("original executable bytes are unchanged"),
         ]),
       });
       const directAnalyzed = await new EnhancedTools(session).execute(
