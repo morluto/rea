@@ -38,12 +38,20 @@ try {
   const kind = values.kind?.[0] ?? "executable";
   if (kind !== "executable" && kind !== "database")
     throw new Error("--kind must be executable or database");
-  env = { HOPPER_TARGET_PATH: resolve(positionals[0]), HOPPER_TARGET_KIND: kind };
+  env = {
+    HOPPER_TARGET_PATH: resolve(positionals[0]),
+    HOPPER_TARGET_KIND: kind,
+  };
   const encoded = values["loader-args"]?.[0];
   if (encoded !== undefined) {
     const args = JSON.parse(encoded);
-    if (!Array.isArray(args) || !args.every((arg) => typeof arg === "string" && !arg.includes("\0")))
-      throw new Error("--loader-args must encode an array of strings without NUL bytes");
+    if (
+      !Array.isArray(args) ||
+      !args.every((arg) => typeof arg === "string" && !arg.includes("\0"))
+    )
+      throw new Error(
+        "--loader-args must encode an array of strings without NUL bytes",
+      );
     env.HOPPER_LOADER_ARGS_JSON = encoded;
   }
 } catch (error) {
