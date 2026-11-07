@@ -186,6 +186,22 @@ const connectDriver = async (
  * session to its driver, and its control token, which never leaves this
  * object.
  */
+/**
+ * The app refused a data method. The refusal is the app's own error, not a
+ * lost reply. Callers must use this tag rather than the message text.
+ */
+export class AppDataRefusal extends Error {
+  readonly _tag = "AppDataRefusal" as const;
+
+  constructor(
+    readonly method: "data/get" | "data/reset",
+    readonly appMessage: string,
+  ) {
+    super(`${method} failed: ${appMessage}`);
+    this.name = "AppDataRefusal";
+  }
+}
+
 export class AgentEnvComputer {
   readonly sandboxId: string;
   readonly #baseUrl: string;
@@ -482,9 +498,7 @@ export class AgentEnvComputer {
       ),
     );
     if ("error" in answer)
-      throw new Error(
-        `${method} failed: ${this.#redacted(answer.error.message)}`,
-      );
+      throw new AppDataRefusal(method, this.#redacted(answer.error.message));
     return method === "data/get"
       ? z.object({ parts: z.array(z.unknown()) }).parse(answer.result).parts
       : [];
