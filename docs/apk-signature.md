@@ -264,6 +264,13 @@ file SHA-256 and byte count. These facts describe the acquired file; they do not
 establish any decoded signing facts. Failed cleanup remains visible until the
 provider releases the descriptor on a cleanup retry.
 
+A classic EOCD's disk declarations are checked before using its directory offset
+as a span in the selected file. Nonzero current or central-directory disk numbers
+are unsupported; differing per-disk and total entry counts in a single-disk
+archive are malformed. This also applies to exactly 65,535 classic entries when
+no Zip64 locator is present. A refused layout does not establish that signing
+schemes are absent; select a complete single-disk archive for inspection.
+
 A file that is not a ZIP is refused as an unsupported target. A damaged ZIP
 (local headers but no end-of-central-directory), a central directory that
 cannot be walked or whose declared record count does not account for all of
@@ -275,7 +282,7 @@ input errors, not evidence of an unsupported format. Coherent multi-disk
 locator metadata and 64-bit offsets/counts/sizes beyond the reader's safe
 integer range remain unsupported. The locator offset is disk-relative, so
 multi-disk metadata is checked before applying local file bounds. This follows
-the record fields in [PKWARE APPNOTE 6.3.10, sections 4.3.14–4.3.15](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT);
+the record fields in [PKWARE APPNOTE 6.3.10, sections 4.3.14–4.3.16 and 4.4.19–4.4.22](https://pkware.cachefly.net/webdocs/casestudies/APPNOTE.TXT);
 it does not establish full validation of Zip64 versions or extensible data.
 Signer framing includes signature records, the public-key field and matching
 signed/outer v3 SDK ranges. Suffix bytes beyond known
