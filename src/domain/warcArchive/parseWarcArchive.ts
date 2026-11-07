@@ -125,6 +125,7 @@ const withoutUrlUserInfo = (
 const sanitizedMalformedHeader = (
   text: string,
   previousSensitive: boolean,
+  previousUrl: boolean,
   redaction: RedactionState,
 ): string => {
   const colon = text.indexOf(":");
@@ -142,6 +143,11 @@ const sanitizedMalformedHeader = (
   }
   if (/^[ \t]/u.test(text) && previousSensitive)
     return "[redacted continuation]";
+  if (/^[ \t]/u.test(text) && previousUrl) {
+    const lead = text.slice(0, text.search(/[^ \t]/u));
+    const body = text.slice(lead.length);
+    return `${lead}${body.length > 0 ? withoutUrlUserInfo(body, redaction) : body}`;
+  }
   return text;
 };
 
@@ -205,6 +211,7 @@ const readHeaderBlock = (
   const malformed: string[] = [];
   let cursor = versionLine.end;
   let previousSensitive = false;
+  let previousUrl = false;
   for (;;) {
     if (cursor >= data.length) return { block: null, limit: null };
     const line = findLineEnd(data, cursor);
@@ -241,12 +248,19 @@ const readHeaderBlock = (
         return { block: null, limit: "archive-fields" };
       if (malformedLine)
         malformed.push(
-          sanitizedMalformedHeader(text, previousSensitive, redaction),
+          sanitizedMalformedHeader(
+            text,
+            previousSensitive,
+            previousUrl,
+            redaction,
+          ),
         );
       else fields.set(name, text.slice(colon + 1).trim());
     }
-    if (!/^[ \t]/u.test(text))
+    if (!/^[ \t]/u.test(text)) {
       previousSensitive = SENSITIVE_HTTP_HEADERS.has(name);
+      previousUrl = name === "warc-target-uri" || HTTP_URL_HEADERS.has(name);
+    }
     cursor = line.end;
   }
 };
@@ -473,6 +487,7 @@ const readHttpMessage = (
   let headerBytes = startLine.end;
   let terminated = false;
   let previousSensitive = false;
+  let previousUrl = false;
   let entries = 0;
   let budgetExceeded = false;
   // The block ends at the first empty line. `headerBytes` is measured against
@@ -501,10 +516,16 @@ const readHttpMessage = (
     const colon = text.indexOf(":");
     const name = colon > 0 ? text.slice(0, colon) : "";
     const sensitive = SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase());
+    const url = HTTP_URL_HEADERS.has(name.trim().toLowerCase());
     const continuation = /^[ \t]/u.test(text);
     if (colon <= 0 || !TOKEN.test(name))
       malformed.push(
-        sanitizedMalformedHeader(text, previousSensitive, redaction),
+        sanitizedMalformedHeader(
+          text,
+          previousSensitive,
+          previousUrl,
+          redaction,
+        ),
       );
     else {
       const value = text.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/gu, "");
@@ -517,7 +538,10 @@ const readHttpMessage = (
             : value,
       });
     }
-    if (!continuation) previousSensitive = sensitive;
+    if (!continuation) {
+      previousSensitive = sensitive;
+      previousUrl = url;
+    }
     headerBytes = line.end;
     cursor = line.end;
   }

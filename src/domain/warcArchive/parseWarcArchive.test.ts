@@ -762,6 +762,20 @@ describe("embedded HTTP message inventory", () => {
     ]);
   });
 
+  it("redacts credentials in a continuation of a URL header", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1 302 Found\r\nBad Name: x\r\nLocation:\r\n https://user:pass@example.test/\r\n\r\n",
+      ),
+    );
+    expect(JSON.stringify(archive)).not.toMatch(/user:pass/u);
+    expect(archive.records[0]?.http?.malformed_header_lines).toContain(
+      " https://[redacted]@example.test/",
+    );
+  });
+
   it("omits an unterminated header block instead of reading the body as headers", () => {
     const archive = parsed(
       record(
