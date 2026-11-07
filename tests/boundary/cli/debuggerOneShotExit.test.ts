@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, onTestFinished } from "vitest";
 
 import { MCP_SHUTDOWN_FAILED } from "../../../src/main/messages.js";
+import { retainedDebuggerRemediation } from "../../../src/process/ownedDebuggerCleanupError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   cliProcessEnvironment,
@@ -222,7 +223,7 @@ const expectRetainedOutcome = (
     code: "cleanup_incomplete",
     retryable: false,
     remediation: {
-      action: expect.stringMatching(/debugger.*check process.*stop/iu),
+      action: retainedDebuggerRemediation([pid]),
     },
     details: {
       operation: debuggers[name].operation,
@@ -407,11 +408,7 @@ describe.skipIf(process.platform === "win32")(
         const guidance = () =>
           stderr()
             .split("\n")
-            .find(
-              (line) =>
-                !line.startsWith("{") &&
-                /debugger.*check process.*stop/iu.test(line),
-            );
+            .find((line) => line === retainedDebuggerRemediation([pid]));
         await expect
           .poll(guidance, { timeout: EXIT_DEADLINE_MS })
           .toBeDefined();

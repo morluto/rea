@@ -26,6 +26,7 @@ const errorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
+  expect(text).toContain(mcpPhaseBudgetRecovery(budget));
   expect(budget.floorMilliseconds).toBe(1);
   expect(budget.maximumMilliseconds).toBe(2_147_483_647);
   expect(text).toContain(budget.setting);
@@ -35,7 +36,6 @@ const expectPhaseText = (text: string, budget: McpPhaseBudget) => {
   expect(text).toContain(`default ${String(budget.defaultMilliseconds)} ms`);
   expect(text).toContain(`floor ${String(budget.floorMilliseconds)} ms`);
   expect(text).toContain(`maximum ${String(budget.maximumMilliseconds)} ms`);
-  expect(text).toMatch(/environment.*restart REA/iu);
 };
 
 const expectThrownBudget = async (
@@ -78,6 +78,8 @@ describe("MCP startup policy", () => {
     );
     const doctor = mcpDoctorDeadlineRecovery(budgets.doctor);
     expectPhaseText(doctor, budgets.doctor);
+    expect(doctor).toMatch(/Codex.*startup_timeout_sec.*client guidance/iu);
+    expect(doctor).toMatch(/REA does not enforce/iu);
     const selected = resolveMcpStartupBudgets({
       REA_MCP_INITIALIZE_BUDGET_MS: "16000",
     });
