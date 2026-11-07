@@ -645,3 +645,206 @@ describe("overlapping POST RPC route templates", () => {
     ]);
   });
 });
+
+describe("indexed route overlap scaling for large literal POST batches", () => {
+  it("indexes 1500 distinct literal POST RPC routes without quadratic scans while splitting overlapping pairs and wildcards", () => {
+    const accumulator = new EnvironmentManifestAccumulator(16 * 1024 * 1024);
+    let ordinal = 0;
+    for (let index = 0; index < 1500; index += 1) {
+      expect(
+        accumulator.add(
+          rpcRecord({
+            ordinal,
+            path: `/api/orgs/org-${String(index)}/graphql`,
+            postText: JSON.stringify({
+              operationName: `GetOrg${String(index)}`,
+              query: `query GetOrg${String(index)} { id }`,
+            }),
+          }),
+        ).ok,
+      ).toBe(true);
+      ordinal += 1;
+    }
+    for (const op of ["GetShared", "UpdateShared"] as const) {
+      expect(
+        accumulator.add(
+          rpcRecord({
+            ordinal,
+            path: "/api/orgs/shared/graphql",
+            postText: JSON.stringify({
+              operationName: op,
+              query: `query ${op} { ok }`,
+            }),
+          }),
+        ).ok,
+      ).toBe(true);
+      ordinal += 1;
+    }
+    expect(
+      accumulator.add(
+        rpcRecord({
+          ordinal,
+          path: "/api/teams/7/graphql",
+          postText: JSON.stringify({
+            operationName: "GetTeamNumeric",
+            query: "query GetTeamNumeric { id }",
+          }),
+        }),
+      ).ok,
+    ).toBe(true);
+    ordinal += 1;
+    expect(
+      accumulator.add(
+        rpcRecord({
+          ordinal,
+          path: "/api/teams/%34%32/graphql",
+          postText: JSON.stringify({
+            operationName: "GetTeamEncoded",
+            query: "query GetTeamEncoded { id }",
+          }),
+        }),
+      ).ok,
+    ).toBe(true);
+    ordinal += 1;
+    expect(
+      accumulator.add(
+        rpcRecord({
+          ordinal,
+          path: "/api/teams/search/graphql",
+          postText: JSON.stringify({
+            operationName: "SearchTeams",
+            query: "query SearchTeams { id }",
+          }),
+        }),
+      ).ok,
+    ).toBe(true);
+
+    const start = performance.now();
+    const manifest = finished(accumulator);
+    const elapsedMs = performance.now() - start;
+
+    expect(elapsedMs).toBeLessThan(1000);
+    expect(manifest.tools).toHaveLength(1505);
+    const discriminated = manifest.tools
+      .filter((tool) => tool.rpc_operation !== undefined)
+      .map((tool) => ({
+        path_template: tool.path_template,
+        rpc_operation: tool.rpc_operation,
+      }));
+    expect(discriminated).toEqual([
+      {
+        path_template: "/api/orgs/shared/graphql",
+        rpc_operation: { kind: "graphql", name: "GetShared" },
+      },
+      {
+        path_template: "/api/orgs/shared/graphql",
+        rpc_operation: { kind: "graphql", name: "UpdateShared" },
+      },
+      {
+        path_template: "/api/teams/%34%32/graphql",
+        rpc_operation: { kind: "graphql", name: "GetTeamEncoded" },
+      },
+      {
+        path_template: "/api/teams/{numeric}/graphql",
+        rpc_operation: { kind: "graphql", name: "GetTeamNumeric" },
+      },
+    ]);
+  });
+});
+
+describe("percent-encoded literal route overlap parity", () => {
+  it("matches once-decoded literal segments without conflating twice-encoded or case-distinct encodings", () => {
+    const buildTools = (
+      entries: readonly (readonly [string, string])[],
+    ): readonly {
+      readonly path_template: string;
+      readonly rpc_operation?: { readonly kind: string; readonly name: string };
+    }[] => {
+      const accumulator = new EnvironmentManifestAccumulator(1024 * 1024);
+      for (const [ordinal, [path, op]] of entries.entries())
+        expect(
+          accumulator.add(
+            rpcRecord({
+              ordinal,
+              path,
+              postText: JSON.stringify({
+                operationName: op,
+                query: `query ${op} { ok }`,
+              }),
+            }),
+          ).ok,
+        ).toBe(true);
+      return finished(accumulator).tools.map((tool) => ({
+        path_template: tool.path_template,
+        ...(tool.rpc_operation === undefined
+          ? {}
+          : { rpc_operation: tool.rpc_operation }),
+      }));
+    };
+
+    expect(
+      buildTools([
+        ["/api/books/book%31/graphql", "GetEncoded"],
+        ["/api/books/book1/graphql", "GetPlain"],
+        ["/api/books/other/graphql", "GetOther"],
+      ]),
+    ).toEqual([
+      {
+        path_template: "/api/books/book%31/graphql",
+        rpc_operation: { kind: "graphql", name: "GetEncoded" },
+      },
+      {
+        path_template: "/api/books/book1/graphql",
+        rpc_operation: { kind: "graphql", name: "GetPlain" },
+      },
+      { path_template: "/api/books/other/graphql" },
+    ]);
+
+    expect(
+      buildTools([
+        ["/api/books/book%2531/graphql", "GetTwice"],
+        ["/api/books/book1/graphql", "GetPlain"],
+        ["/api/books/other/graphql", "GetOther"],
+      ]),
+    ).toEqual([
+      { path_template: "/api/books/book%2531/graphql" },
+      { path_template: "/api/books/book1/graphql" },
+      { path_template: "/api/books/other/graphql" },
+    ]);
+
+    expect(
+      buildTools([
+        ["/api/tags/a%2db/graphql", "GetLowerHex"],
+        ["/api/tags/a%2Db/graphql", "GetUpperHex"],
+        ["/api/tags/other/graphql", "GetOther"],
+      ]),
+    ).toEqual([
+      { path_template: "/api/tags/a%2Db/graphql" },
+      { path_template: "/api/tags/a%2db/graphql" },
+      { path_template: "/api/tags/other/graphql" },
+    ]);
+
+    expect(
+      buildTools([
+        ["/api/tags/a%2db/graphql", "GetLowerHex"],
+        ["/api/tags/a%2Db/graphql", "GetUpperHex"],
+        ["/api/tags/a-b/graphql", "GetDecoded"],
+        ["/api/tags/other/graphql", "GetOther"],
+      ]),
+    ).toEqual([
+      {
+        path_template: "/api/tags/a%2Db/graphql",
+        rpc_operation: { kind: "graphql", name: "GetUpperHex" },
+      },
+      {
+        path_template: "/api/tags/a%2db/graphql",
+        rpc_operation: { kind: "graphql", name: "GetLowerHex" },
+      },
+      {
+        path_template: "/api/tags/a-b/graphql",
+        rpc_operation: { kind: "graphql", name: "GetDecoded" },
+      },
+      { path_template: "/api/tags/other/graphql" },
+    ]);
+  });
+});

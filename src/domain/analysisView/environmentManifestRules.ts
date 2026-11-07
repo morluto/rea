@@ -607,10 +607,281 @@ const partsCanMatchSameSegment = (
   );
 };
 
-/** Whether two templated route part sequences can both fit the same incoming request path. */
-export const routePartsOverlap = (
+const routePartsOverlap = (
   left: readonly RoutePart[],
   right: readonly RoutePart[],
 ): boolean =>
   left.length === right.length &&
   left.every((part, index) => partsCanMatchSameSegment(part, right[index]!));
+
+type ParamOverlapKind = RouteRule | "any";
+
+const paramOverlapKind = (part: ParamPart): ParamOverlapKind =>
+  part.rule === "numeric" ||
+  part.rule === "uuid" ||
+  part.rule === "hex" ||
+  part.rule === "iso-date"
+    ? part.rule
+    : "any";
+
+interface RouteOverlapTrieNode<Entry> {
+  exactLiterals?: Map<string, RouteOverlapTrieNode<Entry>>;
+  decodedLiterals?: Map<string, Set<RouteOverlapTrieNode<Entry>>>;
+  formatLiterals?: Map<RouteRule, Set<RouteOverlapTrieNode<Entry>>>;
+  params?: Map<ParamOverlapKind, RouteOverlapTrieNode<Entry>>;
+  leafFirst?: Entry;
+  leafHasMultiple: boolean;
+}
+
+const createTrieNode = <Entry>(): RouteOverlapTrieNode<Entry> => ({
+  leafHasMultiple: false,
+});
+
+const addTrieNodeSet = <Key, Entry>(
+  map: Map<Key, Set<RouteOverlapTrieNode<Entry>>>,
+  key: Key,
+  node: RouteOverlapTrieNode<Entry>,
+): void => {
+  const set = map.get(key);
+  if (set === undefined) map.set(key, new Set([node]));
+  else set.add(node);
+};
+
+const stepLiteralTrieChild = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  value: string,
+): RouteOverlapTrieNode<Entry> => {
+  node.exactLiterals ??= new Map();
+  const existing = node.exactLiterals.get(value);
+  if (existing !== undefined) return existing;
+  const child = createTrieNode<Entry>();
+  node.exactLiterals.set(value, child);
+  const decoded = value.includes("%") ? decodedSegment(value) : value;
+  if (decoded !== value) {
+    node.decodedLiterals ??= new Map();
+    addTrieNodeSet(node.decodedLiterals, decoded, child);
+  }
+  if (value !== "") {
+    const rawRule = segmentRule(value);
+    if (rawRule !== null) {
+      node.formatLiterals ??= new Map();
+      addTrieNodeSet(node.formatLiterals, rawRule, child);
+    }
+    if (decoded !== value) {
+      const decodedRule = segmentRule(decoded);
+      if (decodedRule !== null) {
+        node.formatLiterals ??= new Map();
+        addTrieNodeSet(node.formatLiterals, decodedRule, child);
+      }
+    }
+  }
+  return child;
+};
+
+const insertRouteInTrie = <Entry>(
+  root: RouteOverlapTrieNode<Entry>,
+  parts: readonly RoutePart[],
+  entry: Entry,
+): void => {
+  let node = root;
+  for (const part of parts) {
+    if (part.kind === "literal") {
+      node = stepLiteralTrieChild(node, part.value);
+      continue;
+    }
+    const kind = paramOverlapKind(part);
+    node.params ??= new Map();
+    let child = node.params.get(kind);
+    if (child === undefined) {
+      child = createTrieNode<Entry>();
+      node.params.set(kind, child);
+    }
+    node = child;
+  }
+  if (node.leafFirst === undefined) node.leafFirst = entry;
+  else if (node.leafFirst !== entry) node.leafHasMultiple = true;
+};
+
+const trieHasLiteralPeer = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  value: string,
+  parts: readonly RoutePart[],
+  nextIndex: number,
+  self: Entry,
+): boolean => {
+  const exact = node.exactLiterals?.get(value);
+  if (
+    exact !== undefined &&
+    trieHasOverlappingPeer(exact, parts, nextIndex, self)
+  )
+    return true;
+  const decoded = value.includes("%") ? decodedSegment(value) : value;
+  if (decoded !== value) {
+    const onceDecoded = node.exactLiterals?.get(decoded);
+    if (
+      onceDecoded !== undefined &&
+      trieHasOverlappingPeer(onceDecoded, parts, nextIndex, self)
+    )
+      return true;
+  }
+  const encodedMatches = node.decodedLiterals?.get(value);
+  if (encodedMatches !== undefined)
+    for (const child of encodedMatches)
+      if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
+  if (value === "" || node.params === undefined) return false;
+  const anyParam = node.params.get("any");
+  if (
+    anyParam !== undefined &&
+    trieHasOverlappingPeer(anyParam, parts, nextIndex, self)
+  )
+    return true;
+  const rawRule = segmentRule(value);
+  if (rawRule !== null) {
+    const rawParam = node.params.get(rawRule);
+    if (
+      rawParam !== undefined &&
+      trieHasOverlappingPeer(rawParam, parts, nextIndex, self)
+    )
+      return true;
+  }
+  if (decoded !== value) {
+    const decodedRule = segmentRule(decoded);
+    if (decodedRule !== null && decodedRule !== rawRule) {
+      const decodedParam = node.params.get(decodedRule);
+      if (
+        decodedParam !== undefined &&
+        trieHasOverlappingPeer(decodedParam, parts, nextIndex, self)
+      )
+        return true;
+    }
+  }
+  return false;
+};
+
+const trieHasParamPeer = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  part: ParamPart,
+  parts: readonly RoutePart[],
+  nextIndex: number,
+  self: Entry,
+): boolean => {
+  const kind = paramOverlapKind(part);
+  if (kind === "any") {
+    if (node.exactLiterals !== undefined)
+      for (const [literal, child] of node.exactLiterals)
+        if (
+          literal !== "" &&
+          trieHasOverlappingPeer(child, parts, nextIndex, self)
+        )
+          return true;
+    if (node.params !== undefined)
+      for (const child of node.params.values())
+        if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
+    return false;
+  }
+  const matchingLiterals = node.formatLiterals?.get(kind);
+  if (matchingLiterals !== undefined)
+    for (const child of matchingLiterals)
+      if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
+  const anyParam = node.params?.get("any");
+  if (
+    anyParam !== undefined &&
+    trieHasOverlappingPeer(anyParam, parts, nextIndex, self)
+  )
+    return true;
+  const sameRuleParam = node.params?.get(kind);
+  return (
+    sameRuleParam !== undefined &&
+    trieHasOverlappingPeer(sameRuleParam, parts, nextIndex, self)
+  );
+};
+
+const trieHasOverlappingPeer = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  parts: readonly RoutePart[],
+  index: number,
+  self: Entry,
+): boolean => {
+  const part = parts[index];
+  if (part === undefined)
+    return (
+      node.leafHasMultiple ||
+      (node.leafFirst !== undefined && node.leafFirst !== self)
+    );
+  return part.kind === "literal"
+    ? trieHasLiteralPeer(node, part.value, parts, index + 1, self)
+    : trieHasParamPeer(node, part, parts, index + 1, self);
+};
+
+const isPlainLiteralRoute = (parts: readonly RoutePart[]): boolean =>
+  parts.every((part) => part.kind === "literal" && !part.value.includes("%"));
+
+const addOverlappingRpcBucket = (
+  bucket: readonly ToolGroup[],
+  rpcCandidates: readonly ToolGroup[],
+  overlapping: Set<ToolGroup>,
+): void => {
+  if (bucket.length === 2) {
+    const [first, second] = bucket;
+    if (
+      first !== undefined &&
+      second !== undefined &&
+      first !== second &&
+      routePartsOverlap(first.parts, second.parts)
+    ) {
+      for (const candidate of rpcCandidates) overlapping.add(candidate);
+    }
+    return;
+  }
+  if (bucket.every((group) => isPlainLiteralRoute(group.parts))) {
+    const byLiteralPath = new Map<string, ToolGroup[]>();
+    for (const group of bucket) {
+      const key = compositeKey(
+        group.parts.map((part) => (part.kind === "literal" ? part.value : "")),
+      );
+      const list = byLiteralPath.get(key);
+      if (list === undefined) byLiteralPath.set(key, [group]);
+      else list.push(group);
+    }
+    for (const candidate of rpcCandidates) {
+      const key = compositeKey(
+        candidate.parts.map((part) =>
+          part.kind === "literal" ? part.value : "",
+        ),
+      );
+      if ((byLiteralPath.get(key)?.length ?? 0) > 1) overlapping.add(candidate);
+    }
+    return;
+  }
+  const root = createTrieNode<ToolGroup>();
+  for (const group of bucket) insertRouteInTrie(root, group.parts, group);
+  for (const candidate of rpcCandidates)
+    if (trieHasOverlappingPeer(root, candidate.parts, 0, candidate))
+      overlapping.add(candidate);
+};
+
+/**
+ * Identify RPC-annotated groups whose templated route parts overlap at least one other
+ * same-method group, indexing literal segments before traversing wildcard branches.
+ */
+export const selectGroupsWithOverlappingRpcPeers = (
+  groups: readonly ToolGroup[],
+): ReadonlySet<ToolGroup> => {
+  const byMethodAndDepth = new Map<string, ToolGroup[]>();
+  for (const group of groups) {
+    const key = compositeKey([group.method, group.parts.length]);
+    const bucket = byMethodAndDepth.get(key);
+    if (bucket === undefined) byMethodAndDepth.set(key, [group]);
+    else bucket.push(group);
+  }
+  const overlapping = new Set<ToolGroup>();
+  for (const bucket of byMethodAndDepth.values()) {
+    if (bucket.length <= 1) continue;
+    const rpcCandidates = bucket.filter(
+      (group) => group.rpcOperation !== undefined,
+    );
+    if (rpcCandidates.length > 0)
+      addOverlappingRpcBucket(bucket, rpcCandidates, overlapping);
+  }
+  return overlapping;
+};

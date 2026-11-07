@@ -41,8 +41,8 @@ import {
 } from "./environmentManifestOrigin.js";
 import {
   applyTemplateRules,
-  routePartsOverlap,
   SEGMENT_LIMITED_RULES,
+  selectGroupsWithOverlappingRpcPeers,
   SIBLING_VARIANCE_SEGMENT_LIMIT,
   type BodyShape,
   type JsonTypeName,
@@ -537,36 +537,19 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
     const registry = toolNameRegistry();
-    const templated = applyTemplateRules(groups, this.#rules).map((group) => {
-      const names = parameterNames(group.parts);
-      return { group, names, template: pathTemplate(group.parts, names) };
-    });
-    const byMethodAndDepth = new Map<string, (typeof templated)[number][]>();
-    for (const entry of templated) {
-      const key = compositeKey([entry.group.method, entry.group.parts.length]);
-      const bucket = byMethodAndDepth.get(key);
-      if (bucket === undefined) byMethodAndDepth.set(key, [entry]);
-      else bucket.push(entry);
-    }
-    return templated
-      .map((entry) => {
-        const { group, names, template } = entry;
-        const peers =
-          byMethodAndDepth.get(
-            compositeKey([group.method, group.parts.length]),
-          ) ?? [];
-        const hasOverlappingPeer =
-          group.rpcOperation !== undefined &&
-          peers.some(
-            (other) =>
-              other !== entry &&
-              routePartsOverlap(group.parts, other.group.parts),
-          );
+    const templatedGroups = applyTemplateRules(groups, this.#rules);
+    const overlappingRpcGroups =
+      selectGroupsWithOverlappingRpcPeers(templatedGroups);
+    return templatedGroups
+      .map((group) => {
+        const names = parameterNames(group.parts);
         return {
           group,
           names,
-          template,
-          rpcOperation: hasOverlappingPeer ? group.rpcOperation : undefined,
+          template: pathTemplate(group.parts, names),
+          rpcOperation: overlappingRpcGroups.has(group)
+            ? group.rpcOperation
+            : undefined,
         };
       })
       .sort((left, right) =>
