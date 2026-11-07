@@ -863,6 +863,21 @@ it.each([
     { REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp" },
     "REA_GHIDRA_COMPILER_SPEC_ID",
   ],
+  [
+    "Windows ChangeTime drift window of zero",
+    { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "0" },
+    "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
+  ],
+  [
+    "Windows ChangeTime poll that is not decimal",
+    { REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "1e2" },
+    "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
+  ],
+  [
+    "Windows ChangeTime poll budget above its maximum",
+    { REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001" },
+    "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
+  ],
 ] as const)(
   "refuses %s before changing the configuration",
   async (_name, env, setting) => {

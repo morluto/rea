@@ -327,3 +327,41 @@ it.each([
     ]);
   },
 );
+
+it.each([
+  [
+    "an eval-introduced undefined listener",
+    `eval("var undefined = () => {}"); child.on("exit", undefined);`,
+    "on",
+    "exit",
+  ],
+  [
+    "an eval-introduced NaN listener",
+    `eval("var NaN = () => {}"); child.once("error", NaN);`,
+    "once",
+    "error",
+  ],
+  [
+    "an eval-introduced Infinity listener",
+    `eval("var Infinity = () => {}"); child.addListener("exit", Infinity);`,
+    "addListener",
+    "exit",
+  ],
+] as const)(
+  "keeps the child listener interaction after %s in sloppy script scope",
+  (_name, call, method, eventName) => {
+    const ir = analyzeJavaScriptSemantics(
+      `const { spawn } = require("node:child_process"); function register() { const child = spawn("worker"); ${call} }`,
+    );
+    expect(ir.childProcessInteractions).toMatchObject([
+      {
+        kind: "listener",
+        method,
+        eventName,
+        linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+        resolution: "complete",
+      },
+    ]);
+    expect(ir.eventOperations).toMatchObject([{ kind: "register", method }]);
+  },
+);

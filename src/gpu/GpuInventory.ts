@@ -20,6 +20,7 @@ import type {
 import {
   BinaryFormatFailure,
   BinaryResourceFailure,
+  BinaryStringReadLimitFailure,
 } from "../native/metadata/BinaryContainer.js";
 import {
   readElfSectionDirectory,
@@ -295,7 +296,8 @@ export class GpuInventory {
     )
       throw cause;
     row.inspection =
-      cause instanceof BinaryResourceFailure
+      cause instanceof BinaryResourceFailure ||
+      cause instanceof BinaryStringReadLimitFailure
         ? "capacity"
         : cause.kind === "unsupported"
           ? "unsupported"

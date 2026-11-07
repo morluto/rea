@@ -258,7 +258,16 @@ const redactFailure = (
   if (error instanceof AnalysisInputError)
     return new AnalysisInputError(
       error.operation,
-      context,
+      {
+        ...context,
+        ...(error.userMessage === undefined
+          ? {}
+          : { userMessage: text(error.userMessage) }),
+        ...(error.remediationAction === undefined
+          ? {}
+          : { remediationAction: text(error.remediationAction) }),
+        conformsToInputContract: error.conformsToInputContract,
+      },
       error.issues.map(issueProjection),
     );
   if (error instanceof AnalysisOutputError)
@@ -277,6 +286,19 @@ const redactFailure = (
         ...(error.userMessage === undefined
           ? {}
           : { userMessage: text(error.userMessage) }),
+        ...(error.siblingOperations === undefined
+          ? {}
+          : { siblingOperations: error.siblingOperations }),
+        ...(error.siblingReasons === undefined
+          ? {}
+          : {
+              siblingReasons: Object.fromEntries(
+                Object.entries(error.siblingReasons).map(([op, msg]) => [
+                  op,
+                  text(msg),
+                ]),
+              ),
+            }),
         ...(error.retryable ? { retryable: true } : {}),
       },
     );

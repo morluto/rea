@@ -20,7 +20,9 @@ describe("Hopper response stream", () => {
     expect(accepted).toEqual([]);
     expect(abort).toHaveBeenCalledOnce();
 
-    stream.push('{"id":3,"result":null}\n');
+    stream.push('{"id":3');
+    expect(accepted).toEqual([2]);
+    stream.push(',"result":null}\n');
     expect(accepted).toEqual([2, 3]);
     expect(abort).toHaveBeenCalledOnce();
   });
@@ -45,7 +47,9 @@ describe("Hopper response stream", () => {
       "Hopper returned an unknown response id",
     );
 
-    stream.push('{"id":2,"result":null}\n');
+    stream.push('{"id":2');
+    expect(accepted).toEqual([1]);
+    stream.push(',"result":null}\n');
     expect(accepted).toEqual([1, 2]);
     expect(abort).toHaveBeenCalledOnce();
   });

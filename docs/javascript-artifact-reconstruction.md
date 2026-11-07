@@ -347,6 +347,23 @@ counterparts while resolving to inventoried source files. This substitution
 requires import or require semantics. Literal Electron preload, renderer, and
 utility-process runtime paths retain the runtime filename selected by the caller.
 
+Application `.js` and `.ts` sources use the nearest readable, same-container
+`package.json` type; explicit module/CommonJS suffixes keep their own meaning.
+An unavailable nearer manifest leaves the package type unknown. When a module
+package contains `.js` sources, a preliminary pass through the bounded worker
+collects BrowserWindow preload declarations. Exact same-container `.js`
+preloads use the script-loader context even when their only operation is a
+helper `require`. Renderer API names alone never select that context. Dynamic,
+unresolved, excluded-source, and cross-container declarations do not establish
+a preload identity; this static association is not proof that Electron loaded
+the file. Discovery performs another static pass, while semantic projection
+runs once and existing heap, deadline, cancellation, and cleanup controls remain.
+A source that exceeds its worker limits during discovery contributes no
+declarations, and any other discovery failure ends discovery; source analysis
+then records that failure and retains partial Evidence as usual. Either gap is
+also listed in the Evidence limitations, because source analysis may still read
+that source after a declared preload has kept its package scope.
+
 Selected bounded text is then parsed as inert data to recover:
 
 - `package.json` metadata and declared main or renderer entrypoints;
@@ -540,6 +557,14 @@ location and `resolution_sources` identifies the original object literals in
 the same artifact. Inline option syntax keeps its observed Evidence. This
 does not execute code or establish runtime configuration; popup overrides from
 `setWindowOpenHandler` are not covered by this constant-options resolution.
+
+A hoisted function does not establish initialization timing by declaration order.
+For classic scripts, the shared index also accounts for matching literal global
+property accesses through `globalThis`, `window`, `self`, and `this`, including
+optional and computed literal access. An early read or an indirect activation
+keeps captured options unknown even when a later bare call exists. ES module
+function declarations are not inferred to be global properties. This remains a
+bounded source-order check, not a proof that runtime activation succeeds.
 
 Recognized literal module-table bootstraps also support bounded lexical
 substitution through module exports, import helper bodies, local wrapper calls,
@@ -876,8 +901,22 @@ and Evidence. If that expansion does not fit, the file node retains
 `static_analysis` and any admitted `semantic_module_analysis` observations,
 including their exact values and source locations. Use the public modules item
 view to read them. The graph marks those unexpanded relationships as unknown.
-If cumulative result capacity is exhausted, analysis stops; inventoried but
-unexamined files remain present with explicit unknown scopes.
+
+The parent charges everything it retains against the heap that was free when
+analysis started, less a transfer reserve. Semantic facts and expanded
+relationships stop at half of that capacity, and a source refused there keeps
+its static facts with the refusal reported. Static facts can continue to three
+quarters of it while the live heap also has room for another copy of what it
+holds, so results charged for earlier sources do not cost later sources their
+static facts when the heap can still hold them. When that share runs short,
+relationships that were reserved but not yet expanded are given up before any
+static facts, and each affected file reports the omission.
+
+If static facts themselves exhaust that share, or the parent's live heap cannot
+hold the next checkpoint, analysis stops; inventoried but unexamined files remain
+present with explicit unknown scopes. The failure reports the limit that applied
+in bytes, what was still available, the live heap in use and what the checkpoint
+needed.
 
 ### Large local JSON inputs
 
