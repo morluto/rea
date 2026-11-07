@@ -392,13 +392,15 @@ export const rejectsEventListener = (
   return true;
 };
 
-/** Check whether prototype or module writes may have changed Node's listener methods. */
+/** Check whether prototype, module, or escape effects may have changed Node's listener methods. */
 const hasInheritedListenerMethodOverride = (
   state: JavaScriptSemanticAnalysisState,
   target: "child_process" | "events" | "process",
+  call?: t.Node,
 ): boolean => {
   for (const binding of state.bindingsById.values()) {
-    if (binding.memberWrites.length === 0) continue;
+    if (binding.memberWrites.length === 0 && binding.escapedPaths.length === 0)
+      continue;
     const provenance = evaluateSemanticProvenance(binding, state);
     if (provenance.status !== "module") continue;
     for (const origin of provenance.origins) {
@@ -444,6 +446,9 @@ const hasInheritedListenerMethodOverride = (
                   segment as (typeof EVENT_LISTENER_METHODS)[number],
                 ),
             ),
+          ) ||
+          binding.escapedPaths.some(
+            (effect) => call !== undefined && effect.node !== call,
           )
         )
           return true;
@@ -486,15 +491,26 @@ const hasInheritedListenerMethodOverride = (
     if (target === "process" && raw === "process") {
       if (
         effects.some(
-          ({ kind, path }) =>
-            kind === "write" &&
-            path.some(
-              (segment) =>
-                segment === "prototype" ||
-                EVENT_LISTENER_METHODS.includes(
-                  segment as (typeof EVENT_LISTENER_METHODS)[number],
-                ),
-            ),
+          ({ kind, path, node }) =>
+            (kind === "write" &&
+              (path.length === 0 ||
+                path.some(
+                  (segment) =>
+                    segment === "prototype" ||
+                    EVENT_LISTENER_METHODS.includes(
+                      segment as (typeof EVENT_LISTENER_METHODS)[number],
+                    ),
+                ))) ||
+            (kind === "escape" &&
+              (call === undefined || node !== call) &&
+              (path.length === 0 ||
+                path.some(
+                  (segment) =>
+                    segment === "prototype" ||
+                    EVENT_LISTENER_METHODS.includes(
+                      segment as (typeof EVENT_LISTENER_METHODS)[number],
+                    ),
+                ))),
         )
       )
         return true;
@@ -503,19 +519,45 @@ const hasInheritedListenerMethodOverride = (
   if (target === "process") {
     if (
       state.ambientWriteEffects.some(
-        ({ path }) =>
-          (path[0] === "process" &&
-            (path.length === 1 ||
+        ({ path, node }) =>
+          (call === undefined || node !== call) &&
+          ((path[0] === "process" &&
+            (path.length <= 1 ||
               EVENT_LISTENER_METHODS.includes(
                 path[1] as (typeof EVENT_LISTENER_METHODS)[number],
               ))) ||
-          (path[0] === "global" &&
-            path[1] === "process" &&
-            (path.length === 2 ||
-              EVENT_LISTENER_METHODS.includes(
-                path[2] as (typeof EVENT_LISTENER_METHODS)[number],
-              ))),
+            (path[0] === "global" &&
+              path[1] === "process" &&
+              (path.length <= 2 ||
+                EVENT_LISTENER_METHODS.includes(
+                  path[2] as (typeof EVENT_LISTENER_METHODS)[number],
+                )))),
       )
+    )
+      return true;
+    if (
+      state.ambientEscapeEffects.some(
+        ({ path, node }) =>
+          (call === undefined || node !== call) &&
+          ((path[0] === "process" &&
+            (path.length <= 1 ||
+              EVENT_LISTENER_METHODS.includes(
+                path[1] as (typeof EVENT_LISTENER_METHODS)[number],
+              ))) ||
+            (path[0] === "global" &&
+              path[1] === "process" &&
+              (path.length <= 2 ||
+                EVENT_LISTENER_METHODS.includes(
+                  path[2] as (typeof EVENT_LISTENER_METHODS)[number],
+                )))),
+      )
+    )
+      return true;
+    if (
+      state.ambientEscapes.covers(["process"]) ||
+      state.ambientEscapes.covers(["global", "process"]) ||
+      state.ambientWrites.covers(["process"]) ||
+      state.ambientWrites.covers(["global", "process"])
     )
       return true;
   }
@@ -532,7 +574,11 @@ const isProvenCreationNode = (
   if (t.isCallExpression(unwrapped) || t.isOptionalCallExpression(unwrapped)) {
     return (
       builtinChildProcessMethod(unwrapped.callee, state) !== null &&
-      !hasInheritedListenerMethodOverride(state, "child_process")
+      !hasInheritedListenerMethodOverride(
+        state,
+        "child_process",
+        escapeLimitNode,
+      )
     );
   }
   if (!t.isNewExpression(unwrapped)) return false;
@@ -554,7 +600,8 @@ const isProvenCreationNode = (
     return false;
   return (
     builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
-      "EventEmitter" && !hasInheritedListenerMethodOverride(state, "events")
+      "EventEmitter" &&
+    !hasInheritedListenerMethodOverride(state, "events", escapeLimitNode)
   );
 };
 
@@ -578,7 +625,7 @@ export const isProvenNodeEmitter = (
       semanticGlobalProcessPathOrigin(unwrapped, state)?.importedPath.length ===
         0)
   ) {
-    return !hasInheritedListenerMethodOverride(state, "process");
+    return !hasInheritedListenerMethodOverride(state, "process", call);
   }
   if (!t.isIdentifier(unwrapped)) return false;
   const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
@@ -603,7 +650,7 @@ export const isProvenNodeEmitter = (
       semanticGlobalProcessPathOrigin(initNode, state)?.importedPath.length ===
         0)
   ) {
-    return !hasInheritedListenerMethodOverride(state, "process");
+    return !hasInheritedListenerMethodOverride(state, "process", call);
   }
   return isProvenCreationNode(initNode, state, initNode);
 };

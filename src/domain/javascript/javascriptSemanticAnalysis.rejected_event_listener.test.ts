@@ -316,3 +316,21 @@ it("retains an uncertain candidate if global process listener methods are overri
     ]),
   );
 });
+
+it("retains an uncertain candidate if global process escapes to unknown code", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    function customize(p) { p.on = () => {}; }
+    customize(process);
+    process.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
