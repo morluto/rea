@@ -7,7 +7,7 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { FileWork, fileWorkDeadline } from "./FileWork.js";
+import { fileDeadline } from "./FileDeadline.js";
 
 /** Where a command resolves through an effective PATH, or why it does not. */
 export type ExecutableLookup =
@@ -46,14 +46,6 @@ export type ExecutableLookup =
       readonly by: "cancellation" | "deadline";
       /** The path being checked when the lookup stopped. */
       readonly candidate: string;
-    }
-  /** The file-work owner already held its budget of stalled steps. */
-  | {
-      readonly status: "saturated";
-      /** The path the lookup would have checked next. */
-      readonly candidate: string;
-      readonly held: number;
-      readonly budget: number;
     };
 
 /** Optional bounds for one lookup. */
@@ -63,12 +55,6 @@ export interface ExecutableLookupBounds {
   readonly timeoutMs?: number | undefined;
   readonly stat?: (path: string) => Promise<Stats>;
   readonly access?: (path: string, mode: number) => Promise<void>;
-  /**
-   * Owns the checks the lookup stops waiting for. By default it joins no
-   * budget: a lookup without a deadline could never leave a stalled check, so
-   * it must not take a share that other calls wait for.
-   */
-  readonly fileWork?: FileWork;
 }
 
 /**
@@ -88,10 +74,8 @@ export interface ExecutableLookupBounds {
  * executable lets the search continue, and a match there ends it with
  * `no-working-directory`, since its absolute path cannot be named. So
  * `workingDirectory` must name the process's working directory whenever it
- * can fail. A file-system call cannot itself be cancelled, so an interrupted
- * lookup leaves it with `bounds.fileWork`, whose later work on the same path
- * waits for it instead of starting another. When that owner already holds its
- * budget of stalled steps, the lookup stops with `saturated`.
+ * can fail. A file-system call cannot itself be cancelled, so a check that an
+ * interrupted lookup stops waiting for keeps running until its mount answers.
  */
 export const lookupExecutable = async (
   command: string,
@@ -99,13 +83,7 @@ export const lookupExecutable = async (
   searchPath: string | undefined,
   bounds: ExecutableLookupBounds = {},
 ): Promise<ExecutableLookup> => {
-  const {
-    signal,
-    timeoutMs,
-    stat = statPath,
-    access = accessPath,
-    fileWork = new FileWork(Number.POSITIVE_INFINITY),
-  } = bounds;
+  const { signal, timeoutMs, stat = statPath, access = accessPath } = bounds;
   let cwd: string | undefined;
   const readCwd = (): string => (cwd ??= workingDirectory());
   // An empty PATH component selects the working directory. Windows resolves
@@ -124,7 +102,7 @@ export const lookupExecutable = async (
   const entries = explicit
     ? [command]
     : (searchPath ?? "/usr/bin:/bin").split(delimiter);
-  const deadline = fileWorkDeadline(signal, timeoutMs);
+  const deadline = fileDeadline(signal, timeoutMs);
   try {
     const checked: string[] = [];
     let selectedPath: string | undefined;
@@ -167,11 +145,8 @@ export const lookupExecutable = async (
         unnamed = { cause };
       }
       if (explicit) selectedPath = candidate;
-      const metadata = await fileWork.run(candidate, deadline, () =>
-        stat(candidate),
-      );
-      if (metadata.status === "interrupted" || metadata.status === "saturated")
-        return { ...metadata, candidate };
+      const metadata = await deadline.run(() => stat(candidate));
+      if (metadata.status === "interrupted") return { ...metadata, candidate };
       if (metadata.status === "rejected") {
         const code = systemErrorCode(metadata.cause);
         if (explicit && (code === "EACCES" || code === "EPERM"))
@@ -189,13 +164,10 @@ export const lookupExecutable = async (
         checked.push(`${candidate} (not a regular file)`);
         continue;
       }
-      const executable = await fileWork.run(candidate, deadline, () =>
+      const executable = await deadline.run(() =>
         access(candidate, fsConstants.X_OK),
       );
-      if (
-        executable.status === "interrupted" ||
-        executable.status === "saturated"
-      )
+      if (executable.status === "interrupted")
         return { ...executable, candidate };
       // A launch by name would run a match under an unnamed working
       // directory, so the search stops there without a path to report.

@@ -196,33 +196,17 @@ the version unknown. When the lookup does not accept an explicitly selected
 path, for example because it lacks execute permission or its absolute spelling
 is too long, the command runs the selection as written. Either way, Evidence
 or the launch failure keeps the resolved path as `provider_executable_path`. A
-lookup or hash can stop waiting, at the deadline or on cancellation, for a
-`stat`, an `access`, or a file's open, read or close that a stalled mount
-holds, but it cannot cancel that work. A later lookup or hash of the same path
-waits for the work left behind instead of starting more; work that nobody gave
-up on never makes another call wait. A hash completes only after its file
-closes, so a stalled close also reaches the deadline. A call that returns while
-work it left behind is still running keeps its place among the eight
-concurrent objdump and rizin operations until that work returns; a call that
-only waited for another call's work does not. The capacity error counts such
-calls as `operations_awaiting_file_work`. Each stalled step holds a thread of
-Node's file pool, so these steps share a budget of half that pool: 2 of the
-default 4 threads, or 1 when `UV_THREADPOOL_SIZE` is 2 or 3. A step reserves the
-budget before it starts, so steps that stall together stay within it, and two
-long hashes can make another call's file steps wait within its deadline. Once
-stalled steps fill the budget, a call that needs a new file step is refused with
-a retryable capacity error (`file_steps_held`, `max_held_file_steps`) and starts
-nothing, which keeps file access working for REA's other tools. A retry on a
-path that already has stalled work waits and takes no thread. A post-run hash
-that the budget refuses keeps the command's Evidence, with
-`artifact_digest_after_refused` and a limitation saying the artifact was not
-read. Process capture's
-executable lookup has no deadline, so it could not give up a share of the budget
-and stays outside it. Closing the service does not wait for that work, which a
-mount that never answers would hold forever. The process cannot exit until that
-work returns, even through `process.exit()`, because Node joins its pool threads
-at exit. A CLI command therefore prints its result and then stays alive until
-the mount answers.
+lookup or hash stops waiting, at the deadline or on cancellation, for a `stat`,
+an `access`, or a file's open, read or close that a stalled mount holds, but it
+cannot cancel that work. A hash completes only after its file closes, so a
+stalled close also reaches the deadline. The call then returns and gives back
+its place among the eight concurrent objdump and rizin operations. The work it
+stopped waiting for keeps running, and holds a thread of Node's file pool,
+until the mount answers. REA does not track or bound that work, and a later
+call on the same path starts its own. Closing the service does not wait for
+it. The process cannot exit until that work returns, even through
+`process.exit()`, because Node joins its pool threads at exit. A CLI command
+therefore prints its result and then stays alive until the mount answers.
 
 Captured stdout and stderr are retained up to a 16 MiB combined limit; `output_truncated` marks output beyond that limit. One-shot commands use the `command_timeout_ms` budget described above. That 16 MiB cap has no runtime override. A typed failure's `captured_output` marks a stream that held invalid UTF-8 with `stdout_invalid_utf8` or `stderr_invalid_utf8`.
 

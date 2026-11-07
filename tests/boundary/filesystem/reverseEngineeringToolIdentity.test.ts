@@ -23,7 +23,6 @@ import {
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
 import { DarwinProcessOwnershipInspectionError } from "../../../src/process/DarwinProcessRunTokenReader.js";
 import { lookupExecutable } from "../../../src/process/ExecutableLookup.js";
-import { FileWork } from "../../../src/process/FileWork.js";
 import { RIZIN_VERSION_PROBE } from "../../../src/rizin/RizinCommand.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
 import type { ProviderProcessSupervisor } from "../../../src/process/ProviderProcess.js";
@@ -603,75 +602,6 @@ posix.each(["cancellation", "deadline"] as const)(
   },
 );
 
-posix(
-  "makes later lookups wait for a stalled PATH check instead of starting another",
-  async () => {
-    const { executable, path } = await rizinExecutableFixture();
-    const release = gate();
-    const finished = gate();
-    const checks: string[] = [];
-    const started: Promise<Stats>[] = [];
-    // One stat function for every lookup, as in production.
-    const stalling = (target: string): Promise<Stats> => {
-      checks.push(target);
-      const check = (async () => {
-        try {
-          if (target === executable) await release.opened;
-          return await stat(target);
-        } finally {
-          if (target === executable) finished.open();
-        }
-      })();
-      started.push(check);
-      return check;
-    };
-    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
-    const service = new TestReverseEngineeringService({
-      run,
-      lookup: (command, directory, searchPath, bounds) =>
-        lookupExecutable(command, directory, searchPath, {
-          ...bounds,
-          stat: stalling,
-        }),
-      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
-    });
-    const checksOfExecutable = (): number =>
-      checks.filter((target) => target === executable).length;
-    try {
-      for (const attempt of [1, 2, 3]) {
-        const result = await within(
-          service.executeRizinCommand({
-            path,
-            command: "iI",
-            command_timeout_ms: 50,
-          }),
-          `stalled lookup ${String(attempt)}`,
-        );
-        expect(result.ok ? "ok" : result.error._tag).toBe(
-          "AnalysisTimeoutError",
-        );
-      }
-      // Three timed-out calls wait for one check of the stalled path.
-      expect(checksOfExecutable()).toBe(1);
-      expect(run).not.toHaveBeenCalled();
-      release.open();
-      await within(finished.opened, "the stalled check after its release");
-      await new Promise((resolve) => setImmediate(resolve));
-      const result = await within(
-        service.executeRizinCommand({ path, command: "iI" }),
-        "lookup after the mount answers",
-      );
-      if (!result.ok) throw result.error;
-      expect(checksOfExecutable()).toBe(2);
-      expect(result.value.provider.version).toBe("0.9.1");
-    } finally {
-      release.open();
-      await Promise.allSettled(started);
-      await service.close();
-    }
-  },
-);
-
 posix.each([
   ["ENOENT", "its interpreter is missing", undefined],
   ["EACCES", "its interpreter is not executable", 0o644],
@@ -738,49 +668,6 @@ posix.each([
     } finally {
       await service.close();
     }
-  },
-);
-
-posix(
-  "ends the call without running anything when the lookup meets a held file-step budget",
-  async () => {
-    const { executable, path } = await rizinExecutableFixture();
-    // No budget is left for the lookup itself.
-    await expect(
-      lookupExecutable("rizin", () => process.cwd(), dirname(executable), {
-        fileWork: new FileWork(0),
-      }),
-    ).resolves.toEqual({
-      status: "saturated",
-      candidate: executable,
-      held: 0,
-      budget: 0,
-    });
-    const run = versionProbeRunner(() => "rizin 0.9.1 @ linux-x86-64");
-    const service = new TestReverseEngineeringService({
-      run,
-      // The target's hash has its budget; the lookup does not.
-      lookup: (command, directory, searchPath, bounds) =>
-        lookupExecutable(command, directory, searchPath, {
-          ...bounds,
-          fileWork: new FileWork(0),
-        }),
-      environment: { REA_RIZIN_COMMAND: "rizin", PATH: dirname(executable) },
-    });
-    const result = await service.executeRizinCommand({ path, command: "iI" });
-    if (result.ok) throw new Error("Expected the budget to end the call");
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      resource: "capacity",
-      retryable: true,
-      reportedLimits: { file_steps_held: 0, max_held_file_steps: 0 },
-    });
-    expect(result.error.diagnostics).toMatchObject({
-      phase: "executable_lookup",
-      executable_lookup_candidate: executable,
-      provider_executable: "rizin",
-    });
-    expect(run).not.toHaveBeenCalled();
   },
 );
 

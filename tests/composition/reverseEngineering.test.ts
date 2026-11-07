@@ -11,7 +11,6 @@ import {
   digestFile,
   REVERSE_COMMAND_OUTPUT_LIMITATION,
 } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { FileWork } from "../../src/process/FileWork.js";
 import {
   findsNoExecutable,
   TestReverseEngineeringService as ReverseEngineeringService,
@@ -891,7 +890,7 @@ it.each([
   ["read", stalledRead],
   ["close", stalledClose],
 ] as const)(
-  "makes a hash wait for an earlier %s of the same path that has not returned",
+  "ends a hash at its deadline on a stalled %s, and a later hash of the path starts its own read",
   async (operation, stall) => {
     const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
     let stalled: ReturnType<typeof stall> | undefined;
@@ -908,17 +907,14 @@ it.each([
       >;
     };
     const path = `/tmp/rea-unreturned-${operation}`;
-    const fileWork = new FileWork();
     try {
-      for (const _attempt of [1, 2])
-        await expect(
-          digestFile(path, { stat, timeoutMs: 50, open, fileWork }),
-        ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-      // The second hash waited for the first stream instead of starting another.
-      expect(opened).toHaveLength(1);
-      stalled?.answer();
       await expect(
-        digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
+        digestFile(path, { stat, timeoutMs: 50, open }),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+      expect(stalled?.stream.destroyed).toBe(true);
+      // Nothing tracks the stalled step, so the next hash does not wait for it.
+      await expect(
+        digestFile(path, { stat, timeoutMs: 1_000, open }),
       ).resolves.toBe(createHash("sha256").update("x").digest("hex"));
       expect(opened).toHaveLength(2);
     } finally {
@@ -943,10 +939,9 @@ it("lets hashes of the same path read at the same time", async () => {
     >;
   };
   const path = "/tmp/rea-concurrent-digest";
-  const fileWork = new FileWork(2);
   const digests = Promise.allSettled([
-    digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
-    digestFile(path, { stat, timeoutMs: 1_000, open, fileWork }),
+    digestFile(path, { stat, timeoutMs: 1_000, open }),
+    digestFile(path, { stat, timeoutMs: 1_000, open }),
   ]);
   try {
     // Neither hash waits for the other: both open the file before either
@@ -965,39 +960,6 @@ it("lets hashes of the same path read at the same time", async () => {
     // A failed wait leaves the hashes reading; end them and join them.
     for (const stream of opened) stream.destroy(new Error("test finished"));
     await digests;
-  }
-});
-
-it("makes a hash wait for an earlier stat of the same path that has not returned", async () => {
-  let stats = 0;
-  let answer: (() => void) | undefined;
-  const answered = new Promise<void>((resolve) => {
-    answer = resolve;
-  });
-  const stat = async (): Promise<Stats> => {
-    stats += 1;
-    await answered;
-    return { isFile: () => true } as Stats;
-  };
-  const open = () =>
-    Readable.from([Buffer.from("x")]) as unknown as ReturnType<
-      typeof import("node:fs").createReadStream
-    >;
-  const fileWork = new FileWork();
-  try {
-    for (const _attempt of [1, 2])
-      await expect(
-        digestFile("/tmp/rea-stalled-stat", {
-          stat,
-          timeoutMs: 50,
-          open,
-          fileWork,
-        }),
-      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
-    expect(stats).toBe(1);
-  } finally {
-    answer?.();
-    await answered;
   }
 });
 

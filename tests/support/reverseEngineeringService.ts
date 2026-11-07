@@ -3,7 +3,6 @@ import {
   ReverseEngineeringService,
   type ReverseEngineeringServiceOptions,
 } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { FileWork } from "../../src/process/FileWork.js";
 
 type Processes = NonNullable<ReverseEngineeringServiceOptions["processes"]>;
 type Lookup = Processes["lookup"];
@@ -50,8 +49,6 @@ export class TestReverseEngineeringService extends ReverseEngineeringService {
     const environment = options.environment ?? process.env;
     super({
       ...rest,
-      // Each service gets an owner, so a test's stalled work stays its own.
-      fileWork: options.fileWork ?? new FileWork(),
       environment,
       commands:
         options.commands ?? createReverseEngineeringCommandPort(environment),
