@@ -71,7 +71,7 @@ const draft = async (
       point !== undefined &&
       !point.truncated &&
       point.unreadable_directories === 0 &&
-      (point.unchecked_paths ?? 0) === 0 &&
+      point.unchecked_paths === 0 &&
       point.unconfirmed_changes === 0
     );
   };

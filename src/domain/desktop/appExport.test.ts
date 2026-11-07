@@ -123,6 +123,11 @@ describe("ownedPaths", () => {
     ).toEqual([".config/GIMPshop/2.10"]);
   });
 
+  it("owns the folder a log sits in, and a lock in the home as itself", () => {
+    expect(ownedPaths([".qet/20261106.log"], [], [])).toEqual([".qet"]);
+    expect(ownedPaths(["poedit.lock"], [], [])).toEqual(["poedit.lock"]);
+  });
+
   it("owns a file directly in the home or a shared folder as itself", () => {
     expect(ownedPaths(["books.gnucash"], [], [])).toEqual(["books.gnucash"]);
     expect(

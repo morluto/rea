@@ -286,9 +286,15 @@ export const exportedStateFiles = (
     ...homePaths(roleFacts(capture).selectedRoots),
   ];
   const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
-  // A lock or log never makes a path the app's, as Poedit's `~/poedit.lock` would.
+  // A lock or log directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the log stay seeded.
+  const marksFolder = (home: string) => {
+    const folder = home.split("/").slice(0, -1).join("/");
+    return !SHARED_FOLDERS.has(folder);
+  };
   const paths = ownedPaths(
-    withRole("application_state").filter((home) => !leftOut.isLeftOut(home)),
+    withRole("application_state").filter(
+      (home) => !leftOut.isLeftOut(home) || marksFolder(home),
+    ),
     withRole("document"),
     stateDirectories,
   );

@@ -6,6 +6,7 @@ import { versionAt, type DesktopStatePath } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import {
   isLockName,
+  siblingLockTargets,
   runtimeFile,
   type RuntimeFileKind,
 } from "./runtimeFiles.js";
@@ -106,18 +107,11 @@ export interface RuntimeSeeds {
  * `<file>.LCK`, Grisbi's `.<file>.lock`, and VYM's `<file>.<ext>.lock`, whose
  * file has an extension, so a project's `Gemfile.lock` or `Cargo.lock` is not
  * one.
- */
-const SIBLING_LOCKS = [
-  /^(.+)\.lck$/iu,
-  /^\.(.+)\.(?:lock|lck)$/iu,
-  /^([^.].*\.[^.]+)\.lock$/iu,
-];
-
 /**
  * Whether a home file is a lock an app holds while it runs: a profile lock's
  * name anywhere, LibreOffice's document lock, a lock named for a file of the
- * `recorded` home paths beside it (`SIBLING_LOCKS`), or a `*.lock` or `*.lck`
- * file directly in one of the app's state directories, home-relative.
+ * `recorded` home paths beside it (`siblingLockTargets`), or a `*.lock` or
+ * `*.lck` file directly in one of the app's state directories, home-relative.
  * Elsewhere such a file may be a project's own, such as `Cargo.lock`, which
  * pins dependencies rather than marking a profile in use.
  */
@@ -129,13 +123,9 @@ export const isLockFile = (
   if (isLockName(file)) return true;
   const name = file.split("/").at(-1) ?? "";
   const folder = folderOf(file);
-  const besideItsFile = SIBLING_LOCKS.some((lock) => {
-    const locked = lock.exec(name)?.[1];
-    return (
-      locked !== undefined &&
-      recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`)
-    );
-  });
+  const besideItsFile = siblingLockTargets(file).some((locked) =>
+    recorded.has(folder.length === 0 ? locked : `${folder}/${locked}`),
+  );
   if (besideItsFile) return true;
   // One directly in the home is an app's, as wxWidgets' single-instance `~/poedit.lock`;
   // each state directory on its own, so one nested in another is still found.
