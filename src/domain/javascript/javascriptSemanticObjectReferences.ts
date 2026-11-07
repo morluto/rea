@@ -148,6 +148,7 @@ const classPropertyDescriptors = (
 ) => {
   const isStatic = kind === "static";
   const selectedGetters: t.ClassMethod[] = [];
+  const selectedMethods: t.ClassMethod[] = [];
   const fields: t.ClassProperty[] = [];
   const indexedMembers: {
     readonly member: t.ClassMethod | t.ClassProperty;
@@ -175,6 +176,13 @@ const classPropertyDescriptors = (
     propertyName === null
       ? []
       : indexedMembers.filter(({ key }) => key === propertyName);
+  if (propertyName !== null)
+    for (const { member, key } of [...indexedMembers].reverse()) {
+      if (key !== null && key !== propertyName) continue;
+      if (t.isClassMethod(member) && member.kind === "method")
+        selectedMethods.push(member);
+      if (key === propertyName) break;
+    }
   const uncertainGetters = indexedMembers.filter(
     (entry): entry is typeof entry & { member: t.ClassMethod } => {
       const { member, key } = entry;
@@ -221,6 +229,7 @@ const classPropertyDescriptors = (
       selectedGetters.push(member);
   return {
     getters: selectedGetters,
+    methods: selectedMethods,
     fields,
     inherits: matchingMembers.length === 0,
   };
@@ -298,6 +307,38 @@ export const semanticClassPropertyReferences = (
   return uniqueReferences(possibleResults);
 };
 
+/** Find methods that can occupy a named class property, including uncertain keys. */
+const classMethodCandidates = (
+  roots: readonly (t.ClassDeclaration | t.ClassExpression)[],
+  name: string,
+  isStatic: boolean,
+  state: JavaScriptSemanticAnalysisState,
+): readonly {
+  owner: t.ClassDeclaration | t.ClassExpression;
+  method: t.ClassMethod;
+}[] => {
+  const pending = [...roots];
+  const seen = new Set<t.Node>();
+  const methods: {
+    owner: t.ClassDeclaration | t.ClassExpression;
+    method: t.ClassMethod;
+  }[] = [];
+  for (let cursor = 0; cursor < pending.length; cursor++) {
+    const owner = pending[cursor];
+    if (owner === undefined || seen.has(owner)) continue;
+    seen.add(owner);
+    const descriptors = classPropertyDescriptors(
+      owner,
+      name,
+      isStatic ? "static" : "prototype",
+    );
+    for (const method of descriptors.methods) methods.push({ owner, method });
+    if (descriptors.inherits && owner.superClass != null)
+      pending.push(...semanticClassCandidates(owner.superClass, state));
+  }
+  return methods;
+};
+
 /** Widen receiver-resolved fields/getter results once, without enumerating getter paths. */
 const escapedClassValues = (
   lookup: ClassPropertyLookup,
@@ -358,10 +399,11 @@ const escapedClassValues = (
           callee.property,
           callee.computed,
         );
+        let lexicalOwner = state.parentsByNode.get(callee);
+        while (lexicalOwner !== undefined && !t.isClass(lexicalOwner))
+          lexicalOwner = state.parentsByNode.get(lexicalOwner);
         if (t.isThisExpression(receiver) && t.isPrivateName(callee.property)) {
-          let owner = state.parentsByNode.get(callee);
-          while (owner !== undefined && !t.isClass(owner))
-            owner = state.parentsByNode.get(owner);
+          const owner = lexicalOwner;
           if (t.isClass(owner))
             for (const member of owner.body.body)
               if (
@@ -386,28 +428,31 @@ const escapedClassValues = (
         if (
           (t.isThisExpression(receiver) || t.isSuper(receiver)) &&
           methodName !== null
-        )
-          for (const candidate of classes)
-            for (const member of candidate.body.body)
-              if (
-                t.isClassMethod(member) &&
-                member.kind === "method" &&
-                member.static === (lookup.kind === "static") &&
-                semanticStaticPropertyKey(member.key, member.computed) ===
-                  methodName
-              )
-                for (const reference of getterResultReferences(
-                  {
-                    getter: member,
-                    owner: candidate,
-                    receiver: lookup.receiver ?? lookup.owner,
-                  },
-                  [],
-                  state,
-                  activeGetters,
-                  true,
-                ))
-                  expressions.push(reference.node);
+        ) {
+          const roots = t.isThisExpression(receiver)
+            ? [lookup.receiver ?? lookup.owner]
+            : t.isClass(lexicalOwner) && lexicalOwner.superClass != null
+              ? semanticClassCandidates(lexicalOwner.superClass, state)
+              : [];
+          for (const { owner, method } of classMethodCandidates(
+            roots,
+            methodName,
+            lookup.kind === "static",
+            state,
+          ))
+            for (const reference of getterResultReferences(
+              {
+                getter: method,
+                owner,
+                receiver: lookup.receiver ?? lookup.owner,
+              },
+              [],
+              state,
+              activeGetters,
+              true,
+            ))
+              expressions.push(reference.node);
+        }
       }
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {

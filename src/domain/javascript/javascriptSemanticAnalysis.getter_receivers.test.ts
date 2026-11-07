@@ -237,6 +237,74 @@ describe("getters reached through unknown receiver keys", () => {
     return shared.x;`);
     expect(value?.status).toBe("unknown");
   });
+
+  it("uses the overriding method for a widened this call", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method() { return {}; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("starts widened super calls at the getter's declaring class", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method() { return {}; }
+        get s() { return super.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps a possible computed override during widened dispatch", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return {}; } }
+      class B extends A {
+        [key]() { return shared; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("ignores an earlier computed method overwritten by a known method", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class R {
+        [key]() { return shared; }
+        method() { return {}; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new R().a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
 });
 
 it("widens private receiver aliases through repeated unknown getter reads", () => {
