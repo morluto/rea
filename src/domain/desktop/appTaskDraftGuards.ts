@@ -2,10 +2,12 @@ import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
 import {
+  holdsSplitDate,
   isCoordinates,
   isRenumberedKey,
   isStamp,
 } from "./appTaskDraftNoise.js";
+import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import {
   isIdentifyingAttribute,
@@ -77,6 +79,10 @@ const guardAt = (
       value.trim() === "" ||
       value !== elementText(after) ||
       value.length > context.chars ||
+      holdsNoisyText(before) ||
+      holdsNoisyText(after) ||
+      holdsSplitDate(ends.baseline, pointer) ||
+      holdsSplitDate(ends.final, pointer) ||
       isStamp(value)
     )
       return undefined;
@@ -97,6 +103,11 @@ const guardAt = (
     return value.trim() !== "" &&
       value === read(after) &&
       value.length <= context.chars &&
+      (attribute !== undefined ||
+        (!holdsNoisyText(before) &&
+          !holdsNoisyText(after) &&
+          !holdsSplitDate(ends.baseline, pointer) &&
+          !holdsSplitDate(ends.final, pointer))) &&
       !isStamp(value)
       ? {
           kind: "text_equals",

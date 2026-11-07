@@ -91,7 +91,7 @@ const factNotes = (file: string, facts: NamedFacts): FileNote[] => {
     notes.push({
       code: "long_text",
       file,
-      message: `The text of ${String(facts.long.length)} element(s) in ${home} changed but is longer than the 2,000 characters a text check compares, so no check of its whole text is suggested; check a phrase in it with text_contains.`,
+      message: `${String(facts.long.length)} value(s) in ${home} exceed the 2,000-character check limit, so whole-value checks were omitted; use a smaller check where supported.`,
       pointers: facts.long.slice(0, MAX_LISTED),
     });
   return notes;

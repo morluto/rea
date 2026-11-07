@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   desktopArgumentIndex,
@@ -22,11 +23,25 @@ const homePathOf = (
   argument: string,
   home: string,
   workingDirectory: string,
-): string | undefined => {
+): { readonly path: string; readonly url: URL | undefined } | undefined => {
   // An empty value is not a relative path. Resolving it would name the working directory.
   if (argument === "" || argument.startsWith("-")) return undefined;
-  const path = posix.resolve(workingDirectory, argument);
-  return path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
+  let input = argument;
+  let parsedUrl: URL | undefined;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(argument)) {
+    try {
+      const url = new URL(argument);
+      if (url.protocol !== "file:") return undefined;
+      input = fileURLToPath(url);
+      parsedUrl = url;
+    } catch {
+      return undefined;
+    }
+  }
+  const path = posix.resolve(workingDirectory, input);
+  return path.startsWith(`${home}/`)
+    ? { path: path.slice(home.length + 1), url: parsedUrl }
+    : undefined;
 };
 
 /**
@@ -79,19 +94,29 @@ export const openSeedDocument = (
       ? undefined
       : `${home}/${seedPath}`;
   };
+  const spelledArgument = (absolute: string, url: URL | undefined) => {
+    if (url === undefined) return absolute;
+    const retargeted = new URL(url);
+    retargeted.pathname = pathToFileURL(absolute).pathname;
+    return retargeted.href;
+  };
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");
     if (argument.startsWith("-") && equals > 0) {
       const value = argument.slice(equals + 1);
-      const path = homePathOf(value, home, facts.workingDirectory);
-      const absolute = path === undefined ? undefined : absoluteSeed(path);
+      const parsed = homePathOf(value, home, facts.workingDirectory);
+      const absolute =
+        parsed === undefined ? undefined : absoluteSeed(parsed.path);
       return absolute === undefined
         ? argument
-        : `${argument.slice(0, equals + 1)}${absolute}`;
+        : `${argument.slice(0, equals + 1)}${spelledArgument(absolute, parsed?.url)}`;
     }
-    const path = homePathOf(argument, home, facts.workingDirectory);
-    if (path === undefined) return argument;
-    return absoluteSeed(path) ?? argument;
+    const parsed = homePathOf(argument, home, facts.workingDirectory);
+    if (parsed === undefined) return argument;
+    const absolute = absoluteSeed(parsed.path);
+    return absolute === undefined
+      ? argument
+      : spelledArgument(absolute, parsed.url);
   };
   const command = unwrapDesktopCommand(argv);
   const firstArgument = desktopArgumentIndex(argv);
@@ -99,11 +124,12 @@ export const openSeedDocument = (
     if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
     const split = argument.indexOf("=");
     const value = argument.slice(split + 1);
-    const path = homePathOf(value, home, facts.workingDirectory);
-    const absolute = path === undefined ? undefined : absoluteSeed(path);
+    const parsed = homePathOf(value, home, facts.workingDirectory);
+    const absolute =
+      parsed === undefined ? undefined : absoluteSeed(parsed.path);
     return absolute === undefined
       ? argument
-      : `${argument.slice(0, split + 1)}${absolute}`;
+      : `${argument.slice(0, split + 1)}${spelledArgument(absolute, parsed?.url)}`;
   };
   const argvSpelled = argv.map((argument, index) => {
     if (index === 0 || (command.kind === "direct" && index === command.index))
@@ -120,7 +146,7 @@ export const openSeedDocument = (
         argument.startsWith("-") && equals > 0
           ? argument.slice(equals + 1)
           : argument;
-      return homePathOf(value, home, facts.workingDirectory);
+      return homePathOf(value, home, facts.workingDirectory)?.path;
     })
     .map((path) => (path === undefined ? undefined : spelled(path)));
   if (named.some((path) => path !== undefined && facts.isDocument(path)))

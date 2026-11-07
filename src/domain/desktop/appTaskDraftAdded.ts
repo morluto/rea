@@ -182,16 +182,20 @@ export const attributeChecks = (
   // A value two or more like siblings all hold, as Grisbi's `Cu="1"`, is a default: it comes after what varies.
   const usual = (key: string, value: string) =>
     likes.length > 1 && everywhere(key, value) ? 1 : 0;
+  const eligible = fields.filter(
+    ({ key, value }) =>
+      !(nested && everywhere(key, value)) &&
+      !isPlaceholder(value) &&
+      !isStamp(value) &&
+      !isVolatileValue(value) &&
+      !isViewStateName(key) &&
+      !isRenumberedKey(key),
+  );
+  for (const { key, value } of eligible)
+    if (value.length > context.chars)
+      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    fields.filter(
-      ({ key, value }) =>
-        !(nested && everywhere(key, value)) &&
-        !isPlaceholder(value) &&
-        !isStamp(value) &&
-        !isVolatileValue(value) &&
-        !isViewStateName(key) &&
-        !isRenumberedKey(key),
-    ),
+    eligible.filter(({ value }) => value.length <= context.chars),
   )
     .toSorted(
       (left, right) =>

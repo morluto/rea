@@ -228,7 +228,7 @@ const withoutRuns = (
 };
 
 /** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
-const holdsNoisyText = (value: JsonValue | undefined): boolean => {
+export const holdsNoisyText = (value: JsonValue | undefined): boolean => {
   if (typeof value === "string") {
     const text = value.trim();
     return text.length > 0 && (isStamp(text) || isVolatileValue(text));
@@ -580,12 +580,8 @@ const textCheck = (
   const { pointer, now } = found;
   const before = resolvePointer(context.ends.baseline, pointer);
   if (!added && !isXmlElement(before)) return undefined;
-  const holdsStamp = (node: JsonValue): boolean =>
-    typeof node === "string"
-      ? isStamp(node)
-      : isXmlElement(node) && node.children.some(holdsStamp);
   // A timestamp between other text is not part of the check. Joining across it asks for text the file never contains.
-  if (holdsStamp(now)) return undefined;
+  if (holdsNoisyText(now)) return undefined;
   const value = elementText(now);
   const old = isXmlElement(before) ? elementText(before) : undefined;
   const relaidOut =
