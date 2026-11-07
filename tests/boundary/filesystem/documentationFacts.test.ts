@@ -26,8 +26,8 @@ const README_FACT_FIXTURE_PATHS = [
 
 const README_LINK_DRIFT_MUTATIONS = [
   [
-    "(../installation.md#supported-agents)",
-    "(../installation.md#missing-agents)",
+    "(../getting-started/installation.md#supported-agents)",
+    "(../getting-started/installation.md#missing-agents)",
   ],
   ["https://rea.tools/zh-CN/guides/", "https://rea.tools/zh-CN/missing/"],
   ["https://rea.tools/zh-CN/guides/", "https://rea.tools/zh-TW/guides/"],
