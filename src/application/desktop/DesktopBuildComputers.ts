@@ -26,6 +26,7 @@ import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import {
   AgentEnvComputer,
+  AppDataRefusal,
   ComputerStartFailure,
   type DriverResult,
 } from "../../desktop/AgentEnvComputer.js";
@@ -498,13 +499,12 @@ export class DesktopBuildComputers {
       if (action === "reset") {
         const outcome = await reset(computer, call.arguments, signal);
         if (outcome.kind === "unfinished") {
-          // A definite app refusal is a failed reset. Any other lost reply,
+          // A tagged app refusal is a failed reset. Any other lost reply,
           // including a dropped connection after the seed was restored, stays
           // unknown and blocks a near miss that would treat it as absent.
-          const knownFailure =
-            outcome.cause instanceof Error &&
-            outcome.cause.message.startsWith("data/reset failed");
-          logged.settle("failed", { unsettled: !knownFailure });
+          logged.settle("failed", {
+            unsettled: !(outcome.cause instanceof AppDataRefusal),
+          });
           return err(failure(ACT, outcome.cause, signal));
         }
         // The seed restore is already observed. A later cancel or readiness
