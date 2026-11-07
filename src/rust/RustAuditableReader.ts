@@ -132,11 +132,13 @@ const inflateSection = (
   readonly compressedBytes: number;
 } => {
   // Keep inflate allocation bounded before consumed input is known. PE storage
-  // can include zero alignment bytes, so the ratio is checked after decoding.
-  const allocationMaximum = Math.min(
-    RUST_UNCOMPRESSED_BYTES,
-    bytes.length * RUST_INFLATE_RATIO,
-  );
+  // can include zero alignment bytes that must not raise the reported ratio
+  // ceiling, so PE-aligned sections admit up to the absolute uncompressed cap
+  // and the consumed-stream ratio is enforced after decoding.
+  const allocationMaximum =
+    peFileAlignment !== undefined && peFileAlignment > 0
+      ? RUST_UNCOMPRESSED_BYTES
+      : Math.min(RUST_UNCOMPRESSED_BYTES, bytes.length * RUST_INFLATE_RATIO);
   let result: ReturnType<typeof nodeCodecResult>;
   try {
     result = nodeCodecResult(

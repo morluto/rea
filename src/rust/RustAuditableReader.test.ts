@@ -2,6 +2,7 @@ import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import {
+  RUST_INFLATE_RATIO,
   RUST_SECTION_BYTES,
   readAuditableSection,
   RustAuditableFormatFailure,
@@ -223,6 +224,34 @@ it("stops an inflate that exceeds the section ratio", () => {
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
   ).toThrow(/1 MiB/);
+});
+
+it("reports the consumed-stream inflate limit when PE padding exceeds that ceiling", () => {
+  const document = Buffer.concat([
+    Buffer.from(JSON.stringify({ packages: [] })),
+    Buffer.alloc(40_000, 0x20),
+  ]);
+  const compressed = deflateSync(document);
+  const fileAlignment = 512;
+  expect(compressed.length).toBeLessThan(fileAlignment);
+  const stored = Buffer.alloc(fileAlignment);
+  compressed.copy(stored);
+  const expectedMaximum = compressed.length * RUST_INFLATE_RATIO;
+  expect(document.length).toBeGreaterThan(expectedMaximum);
+  expect(document.length).toBeGreaterThan(stored.length * RUST_INFLATE_RATIO);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, {
+      peFileAlignment: fileAlignment,
+    }),
+  ).toThrow(
+    expect.objectContaining({
+      message: "Inflated dependency JSON exceeds the size limit",
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: expectedMaximum },
+      },
+    }),
+  );
 });
 
 it("retains the compressed-stream limit for a PE section with padding", () => {
