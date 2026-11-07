@@ -391,6 +391,31 @@ describe("executable dispatcher JavaScript shutdown", () => {
     },
   );
 
+  workspaceCliTest.for([
+    "success",
+    "cleanup-failure",
+    "write-failure",
+  ] as const)(
+    "exits with the right status when options.exit() is called with no argument: %s",
+    async (scenario, { processes, workspace }) => {
+      const cleanupFails = scenario === "cleanup-failure";
+      await installCliRuntime(
+        workspace,
+        `export const closeCliResources = () => { ${cleanupFails ? 'return Promise.reject(new Error("worker still owned"));' : ""} }; export const createCli = () => ({ serve: (_args, options) => { options.exit(); } });\n`,
+        `export const createCliResultOutput = () => ({ handled: false, failed: false, captureSdkOutput: () => true, finishSdkOutput: async () => { ${scenario === "write-failure" ? 'throw new Error("final write failed");' : ""} } });\n`,
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(scenario === "success" ? 0 : 1);
+      if (cleanupFails) expect(result.stderr).toContain("worker still owned");
+      if (scenario === "write-failure")
+        expect(result.stderr).toContain("final write failed");
+    },
+  );
+
   workspaceCliTest(
     "reports a failed JavaScript worker shutdown instead of exiting successfully",
     async ({ processes, workspace }) => {
