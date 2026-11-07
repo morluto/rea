@@ -445,6 +445,7 @@ const resultSchemas = {
       blocks: z.array(canonicalByteCoverage),
       skipped_uninitialized: z.array(canonicalByteCoverage),
       skipped_not_loaded: z.array(canonicalByteCoverage),
+      skipped_overlays: z.array(canonicalByteCoverage),
     }),
   }),
   inspect_native_load_image: nativeLoadImageObservationSchema,

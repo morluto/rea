@@ -70,6 +70,7 @@ const sharedAnalysisSemantics = {
   instruction_flow_evidence: "decoded-return-pcode-v1",
   instruction_status: "unlisted-address-without-decode-v1",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
+  byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 
