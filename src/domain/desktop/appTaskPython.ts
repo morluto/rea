@@ -517,22 +517,45 @@ async def _settled_views(url):
 
 /** Where the verifier's evaluator begins. The task description is everything before it. */
 const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
+/** The index helper this REA ships, and the one an older export wrote. The older one also accepts a leading zero. */
+const CURRENT_INDEX = 'INDEX = re.compile(r"0|[1-9][0-9]*")';
+const OLDER_INDEX = 'INDEX = re.compile(r"[0-9]+")';
+/** A path segment the older index helper reads as an array index and this one does not, such as `01`. */
+const LEADING_ZERO_INDEX = /(?:^|\/)0\d+/u;
 
 /**
  * The task a verifier states: the app, the checks and the settle timing,
- * without the evaluator that runs them. An older REA renders that evaluator
- * differently, including its array-index helper, for the same task.
+ * without the evaluator that runs them.
  */
 export const taskVerifierDescription = (source: string): string | undefined => {
   const at = source.indexOf(VERIFIER_EVALUATOR);
   return at < 0 ? undefined : source.slice(0, at + 1);
 };
 
-/** Whether two verifiers state the same task. Their evaluator source may differ. */
+/** The evaluator, from `MISSING` through `verify`, or undefined when that marker is absent. */
+const verifierEvaluator = (source: string): string | undefined => {
+  const at = source.indexOf(VERIFIER_EVALUATOR);
+  return at < 0 ? undefined : source.slice(at);
+};
+
+/**
+ * Whether two verifiers grade the same task the same way. The description must
+ * match. The evaluator must be this REA's, or the older index helper alone
+ * when no path segment is a leading-zero number, which that helper would
+ * index and this one would not.
+ */
 export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
   const expected = taskVerifierDescription(hosted);
   const found = taskVerifierDescription(bundled);
-  return expected !== undefined && expected === found;
+  if (expected === undefined || expected !== found) return false;
+  const hostedBody = verifierEvaluator(hosted);
+  const bundledBody = verifierEvaluator(bundled);
+  if (hostedBody === undefined || bundledBody === undefined) return false;
+  if (hostedBody === bundledBody) return true;
+  return (
+    bundledBody === hostedBody.replace(CURRENT_INDEX, OLDER_INDEX) &&
+    !LEADING_ZERO_INDEX.test(expected)
+  );
 };
 
 /** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
