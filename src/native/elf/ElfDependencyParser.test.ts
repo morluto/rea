@@ -642,6 +642,30 @@ it.each([32, 64] as const)(
   },
 );
 
+it.each([32, 64] as const)(
+  "keeps ELF%i versions for the whole slots of a short .gnu.version table",
+  (bits) => {
+    // Six bytes hold the null slot and the slots of the first two imports.
+    const report = parse(
+      elfDependencyFixture({ bits, sectionSizes: { ".gnu.version": 6 } }),
+    );
+    const complete = parse(elfDependencyFixture({ bits })).imports;
+    expect(report.coverage.status).toBe("partial");
+    expect(report.imports.slice(0, 2)).toEqual(complete.slice(0, 2));
+    expect(report.imports[0]?.version).not.toBeNull();
+    expect(report.imports[1]?.version).not.toBeNull();
+    expect(report.imports.slice(2).map((row) => row.version)).toEqual(
+      complete.slice(2).map(() => null),
+    );
+    expect(report.issues).toContainEqual(
+      expect.objectContaining({
+        code: "table_unavailable",
+        message: expect.stringContaining("GNU versym table holds 3 of"),
+      }),
+    );
+  },
+);
+
 it("keeps readable names and marks truncated dynstr coverage partial", () => {
   const report = parse(elfDependencyFixture({ truncateDynstr: true }));
   expect(report.coverage.status).toBe("partial");

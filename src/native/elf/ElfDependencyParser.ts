@@ -1496,27 +1496,24 @@ const parseImports = (
   }
   let versymBytes: Buffer | null = null;
   if (versym !== null) {
-    if (versym.size < symbolCount * 2)
+    // A short table still holds whole slots for its leading symbols; keep those
+    // and leave only the symbols past its end without a version.
+    const slotCount = Math.min(symbolCount, Math.floor(versym.size / 2));
+    if (slotCount < symbolCount)
       issues.push({
         code: "table_unavailable",
         location: hex(versym.offset),
-        message: "GNU versym table is shorter than the dynamic symbol count",
+        message: `GNU versym table holds ${String(slotCount)} of ${String(symbolCount)} dynamic symbol slots; later imports have no version`,
       });
-    else {
-      try {
-        versymBytes = reader.range(
-          versym.offset,
-          symbolCount * 2,
-          "GNU versym",
-        );
-      } catch (cause) {
-        if (!(cause instanceof BinaryFormatFailure)) throw cause;
-        issues.push({
-          code: "table_unavailable",
-          location: hex(versym.offset),
-          message: cause.message,
-        });
-      }
+    try {
+      versymBytes = reader.range(versym.offset, slotCount * 2, "GNU versym");
+    } catch (cause) {
+      if (!(cause instanceof BinaryFormatFailure)) throw cause;
+      issues.push({
+        code: "table_unavailable",
+        location: hex(versym.offset),
+        message: cause.message,
+      });
     }
   }
   for (let index = 1; index < symbolCount; index += 1) {
@@ -1549,7 +1546,7 @@ const parseImports = (
       `dynsym[${String(index)}]`,
     );
     let version: ElfDependencyImport["version"] = null;
-    if (versymBytes !== null) {
+    if (versymBytes !== null && (index + 1) * 2 <= versymBytes.length) {
       const raw = reader.little
         ? versymBytes.readUInt16LE(index * 2)
         : versymBytes.readUInt16BE(index * 2);

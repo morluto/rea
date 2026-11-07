@@ -492,4 +492,4 @@ missing `PT_DYNAMIC` is an observed empty inventory. Relocatable objects use
 `inspect_kernel_module`; core dumps use `inspect_recorded_crash`. Complete
 delivery remains the default. For a small initial MCP reply, select
 `detail: "summary"` and page `inspect_analysis_view` with `kind:
-"elf-dependencies"`. See [ELF dynamic dependencies](elf-dependencies.md).
+"elf-dependencies"`. See [ELF dynamic dependencies](../../elf-dependencies.md).

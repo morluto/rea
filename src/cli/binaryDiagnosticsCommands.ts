@@ -191,10 +191,18 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      maxFileBytes: inspectElfDependenciesInputSchema.shape.max_file_bytes,
-      maxNeeded: inspectElfDependenciesInputSchema.shape.max_needed,
-      maxVersions: inspectElfDependenciesInputSchema.shape.max_versions,
-      maxImports: inspectElfDependenciesInputSchema.shape.max_imports,
+      maxFileBytes: cliDecimalField(
+        inspectElfDependenciesInputSchema.shape.max_file_bytes,
+      ),
+      maxNeeded: cliDecimalField(
+        inspectElfDependenciesInputSchema.shape.max_needed,
+      ),
+      maxVersions: cliDecimalField(
+        inspectElfDependenciesInputSchema.shape.max_versions,
+      ),
+      maxImports: cliDecimalField(
+        inspectElfDependenciesInputSchema.shape.max_imports,
+      ),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>

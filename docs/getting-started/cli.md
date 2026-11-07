@@ -463,7 +463,7 @@ definitions, derived per-namespace version maxima, and undefined `.dynsym`
 imports joined to `library@version` when known. A missing `PT_DYNAMIC` is an
 observed empty inventory. Relocatable objects use `inspect-kernel-module`;
 core dumps use `inspect-recorded-crash`. See
-[ELF dynamic dependencies](elf-dependencies.md).
+[ELF dynamic dependencies](../elf-dependencies.md).
 
 Inspect an Apple `.ips` crash report without executing a target:
 
