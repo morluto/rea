@@ -1,4 +1,4 @@
-import { symlink, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { createWindowsShortcutService } from "../../../src/composition/binaryDiagnostics.js";
@@ -184,4 +184,42 @@ describe("Windows shortcut stable filesystem boundary", () => {
     if (cancelled.ok) throw new Error("Expected cancellation");
     expect(cancelled.error._tag).toBe("AnalysisCancelledError");
   });
+});
+
+describe("Windows shortcut parent directory links", () => {
+  it.skipIf(process.platform === "win32")(
+    "rejects a parent directory link before reading through it",
+    async () => {
+      const root = await createTestTempDirectory(
+        "rea-windows-shortcut-parent-",
+      );
+      const real = join(root, "real");
+      const linked = join(root, "linked");
+      await mkdir(real);
+      await writeFile(
+        join(real, "shortcut.lnk"),
+        powershellHiddenIconSpoofShortcut(),
+      );
+      await symlink(real, linked);
+      const provider = new WindowsShortcutProvider("win32");
+
+      const result = await provider.inspect(
+        providerInput(join(linked, "shortcut.lnk")),
+      );
+      if (result.ok) throw new Error("Expected parent link rejection");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisInputError",
+        issues: [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: expect.stringContaining(`junction, which`),
+          },
+        ],
+      });
+      expect(
+        await provider.inspect(providerInput(join(real, "shortcut.lnk"))),
+      ).toMatchObject({ ok: true });
+    },
+  );
 });

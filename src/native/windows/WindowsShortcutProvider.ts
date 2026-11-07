@@ -73,6 +73,35 @@ const LINK_BLIND_FILE_SYSTEM: StableArtifactFileSystem = {
   open,
 };
 
+/** Where a Windows path's ancestors begin: past a drive root or device prefix. */
+const WINDOWS_PATH_ROOT = /^(?:[\\/]{2}[?.][\\/])?(?:[A-Za-z]:)?[\\/]*/u;
+
+/**
+ * The first ancestor directory of a Windows path that is a symbolic link or
+ * junction, walked from the root down. Each `lstat` reaches only directories
+ * already checked, so a link to a UNC path is found before anything follows it.
+ * An ancestor that cannot be read ends the walk and leaves the error to the reader.
+ */
+const linkedWindowsAncestor = async (
+  path: string,
+): Promise<string | undefined> => {
+  const start = WINDOWS_PATH_ROOT.exec(path)?.[0].length ?? 0;
+  for (let index = start; index < path.length; index += 1) {
+    const separator = path[index];
+    if (separator !== "\\" && separator !== "/") continue;
+    const previous = path[index - 1];
+    if (previous === "\\" || previous === "/") continue;
+    const ancestor = path.slice(0, index);
+    try {
+      if ((await LINK_BLIND_FILE_SYSTEM.lstat(ancestor)).isSymbolicLink())
+        return ancestor;
+    } catch {
+      return undefined;
+    }
+  }
+  return undefined;
+};
+
 /** Portable Shell Link reader over one bounded, identity-checked regular file. */
 export class WindowsShortcutProvider implements WindowsShortcutPort {
   readonly identity = WINDOWS_SHORTCUT_PROVIDER;
@@ -103,6 +132,20 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
             path: ["path"],
             reason: "invalid_value",
             message: `Selected shortcut is on a network share, which this offline operation does not open: ${input.path}. Copy it to a local path first.`,
+          },
+        ]),
+      );
+    const linkedAncestor =
+      this.platform === "win32"
+        ? await linkedWindowsAncestor(input.path)
+        : undefined;
+    if (linkedAncestor !== undefined)
+      return err(
+        new AnalysisInputError(OPERATION, {}, [
+          {
+            path: ["path"],
+            reason: "invalid_value",
+            message: `Selected shortcut path passes through a directory link or junction, which this offline operation does not follow: ${linkedAncestor}. Select the shortcut by a path without links.`,
           },
         ]),
       );
