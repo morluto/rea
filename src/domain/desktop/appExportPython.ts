@@ -184,11 +184,11 @@ def _table(db, name: str, primary_key: list, encoding: str) -> dict:
 def _sqlite(path: Path) -> dict:
     """The database's ordinary tables, in schema order, up to REA's table and row limits."""
     with contextlib.closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=SQLITE_BUSY_S)) as db:
-        kinds = dict(db.execute("select name, type from pragma_table_list where schema = 'main'"))
+        kinds = dict(db.execute("select name, type from temp.pragma_table_list where schema = 'main'"))
         names = [name for (name,) in db.execute("select name from sqlite_schema where type = 'table'")
                  if kinds.get(name) == "table"]
         keys = {name: [key for (key,) in db.execute(
-            "select name from pragma_table_info(?, 'main') where pk > 0 order by pk", (name,))]
+            "select name from temp.pragma_table_info(?, 'main') where pk > 0 order by pk", (name,))]
             for name in names[:MAX_TABLES]}
         encoding = {"UTF-8": "utf-8", "UTF-16le": "utf-16-le", "UTF-16be": "utf-16-be"}[
             db.execute("PRAGMA encoding").fetchone()[0]]
@@ -396,7 +396,7 @@ def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
     parsed-view limit is refused before its value is built."""
     trimmed = re.sub(r"^[\s﻿]+", "", text)
-    if name.endswith(".json") or trimmed[:1] in ("[", "{"):
+    if name.lower().endswith(".json") or trimmed[:1] in ("[", "{"):
         view = _json_view(text, size)
         if view is not None:
             return view

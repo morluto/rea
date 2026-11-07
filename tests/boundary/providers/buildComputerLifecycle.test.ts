@@ -2,7 +2,7 @@ import { chmod, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
-import { expect, it } from "vitest";
+import { expect, it, onTestFinished } from "vitest";
 
 import { fakeBuildComputers as setUp } from "../../fixtures/fakeAgentEnvComputer.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -68,5 +68,58 @@ it("keeps a failed start whose teardown is unconfirmed, so close and shutdown ca
   await rm(down);
   await computers.closeAll();
   expect(await computers.close(id)).toMatchObject({ ok: false });
+  expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
+});
+
+it("waits for a command the computer answers after fetch's wait for headers ends", async () => {
+  const home = await createTestTempDirectory("fake-exec-home-");
+  const { computers, start } = await setUp({ exec: { home, bin: home } });
+  onTestFinished(() => computers.closeAll());
+  const started = await start();
+  if (!started.ok) throw started.error;
+  const steps = computers.steps(started.value.value.computer_id);
+  if (steps === undefined) throw new Error("the started computer is held");
+  // fetch's dispatcher with undici's 300 s wait for headers cut to 200 ms, which fires after about 1 s.
+  const key = Symbol.for("undici.globalDispatcher.1");
+  const global = globalThis as Record<symbol, unknown>;
+  const dispatcher = global[key] as {
+    readonly constructor: new (options: object) => unknown;
+  };
+  global[key] = new dispatcher.constructor({ headersTimeout: 200 });
+  try {
+    expect(await steps.computer.exec(["sleep", "3"], 10)).toMatchObject({
+      exit_code: 0,
+      timed_out: false,
+    });
+  } finally {
+    global[key] = dispatcher;
+  }
+});
+
+it("cancels a call in progress and the one waiting behind it when the owner closes", async () => {
+  const app = {
+    name: "notes",
+    state: {},
+    seed: {},
+    methods: [],
+    unreadyAfterReset: 600,
+  };
+  const { computers, runner, start } = await setUp({ app });
+  const started = await start();
+  if (!started.ok) throw started.error;
+  const act = (action: "reset" | "screenshot") =>
+    computers.act(
+      { computer_id: started.value.value.computer_id, action },
+      new AbortController().signal,
+    );
+  const reset = act("reset");
+  while (app.methods.length === 0) await delay(50);
+  const waiting = act("screenshot");
+  await computers.closeAll();
+  for (const result of await Promise.all([reset, waiting]))
+    expect(result).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError" },
+    });
   expect(await runner.notes("teardowns.jsonl")).toHaveLength(1);
 });

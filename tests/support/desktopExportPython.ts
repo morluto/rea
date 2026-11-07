@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect } from "vitest";
@@ -20,6 +20,7 @@ import {
   detectStateFormat,
   textualView,
 } from "../../src/domain/desktop/stateFormats.js";
+import { zipArchive } from "../../src/domain/desktop/zipArchive.fixture.js";
 import type { JsonValue } from "../../src/domain/jsonValue.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
@@ -28,6 +29,37 @@ export interface SavedFile {
   readonly name: string;
   readonly bytes: Uint8Array;
 }
+
+const FIXTURES = join(import.meta.dirname, "../fixtures");
+
+/**
+ * A fixture's two saves, before and after its edit, read from
+ * `tests/fixtures/FOLDER/{before,after}/FILE` as the file `name`, each
+ * wrapped, such as a Writer `content.xml` zipped into an `.odt`.
+ */
+export const savedEnds = (
+  folder: string,
+  file: string,
+  name: string = file,
+  wrap: (bytes: Uint8Array) => Uint8Array = (bytes) => bytes,
+): Promise<SavedFile[]> =>
+  Promise.all(
+    (["before", "after"] as const).map(async (end) => ({
+      name,
+      bytes: wrap(await readFile(join(FIXTURES, folder, end, file))),
+    })),
+  );
+
+/** A Writer `content.xml` zipped into an `.odt` after its stored `mimetype`, as Writer saves one. */
+export const odtOf = (content: Uint8Array): Uint8Array =>
+  zipArchive([
+    {
+      name: "mimetype",
+      data: "application/vnd.oasis.opendocument.text",
+      method: 0,
+    },
+    { name: "content.xml", data: content },
+  ]);
 
 /** The exported module's standard library imports, its helpers and the verifier's evaluator, as one program. */
 const PYTHON = `${PYTHON_IMPORTS.split("\n")
