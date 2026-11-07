@@ -70,6 +70,51 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
     expect(results.map(({ passed }) => passed)).toEqual([true]);
   });
 
+  it("keeps quoted CDATA as an exact requested line", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const line =
+      '<text><![CDATA[msgstr "Set \\\"created=2025550123 and save"]]></text>';
+    const file = drafted(`${opening}</map>`, `${opening}${line}\n</map>`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const altered = line.replace("2025550123", "WRONG");
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}${altered}\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(results.map(({ passed }) => passed)).toEqual([false]);
+  });
+
+  it("recognizes an attribute on a later line of an XML tag", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n<node\n';
+    const attribute = 'TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${attribute}\n</map>`);
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: 'TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+  });
+
+  it("keeps quoted text after a Markdown autolink", () => {
+    const line =
+      '<https://example.test> msgstr "Set \\\"created=2025550123 and save"';
+    const file = drafted("# Note", `# Note\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+  });
+
   it("keeps long ordinary text as a whole line", () => {
     const text = `msgstr "${"ordinary words ".repeat(3000)}"`;
     const file = drafted(lines(), lines(text));
