@@ -4,9 +4,14 @@ import { writeFile, readFile, copyFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { closeVerifierResources } from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { verifyCompleteToolCatalog } from "./lib/verify-package-core.mjs";
-import { connectRecordedCrash } from "./verify/recorded-crash/public.mjs";
+import { openRecordedCrashSession } from "./verify/recorded-crash/public.mjs";
 import {
   createRecordedCore,
   fixtureCommand,
@@ -44,6 +49,8 @@ let sentinel;
 let cases = 0;
 let trace;
 let catalogTools;
+let verifier;
+let rootRemoved = false;
 try {
   for (const [command, args] of [
     ["gcc", ["--version"]],
@@ -84,8 +91,11 @@ try {
   );
   const spaced = join(root.path, "recording with spaces.core");
   await copyFile(core, spaced);
-  const basic = await connectRecordedCrash({ entrypoint, environment });
+  // Each session is owned before it connects, so a failed connection still
+  // closes through the cleanup below.
+  const basic = openRecordedCrashSession({ entrypoint, environment });
   sessions.push(basic);
+  await basic.connect();
   const advertised = (await basic.client.listTools()).tools;
   assert.equal(
     advertised.filter((tool) => tool.name === "inspect_recorded_crash").length,
@@ -290,11 +300,12 @@ try {
         `from pathlib import Path\nentry = ${JSON.stringify(environment.REA_PWNDBG_GDBINIT)}\nexec(compile(Path(entry).read_bytes(), entry, 'exec'), {'__name__': '__main__', '__file__': entry})\nimport pwndbg.lib.version\npwndbg.lib.version.__version__ = '0.0.0-source-owned'\n`,
       );
     }
-    const session = await connectRecordedCrash({
+    const session = openRecordedCrashSession({
       entrypoint,
       environment: { ...environment, ...changes },
     });
     sessions.push(session);
+    await session.connect();
     for (const mode of ["cli", "mcp"]) {
       const error = await session.inspect(mode, core, {
         debuggerContext: true,
@@ -339,25 +350,25 @@ try {
 } catch (cause) {
   failures.push(cause);
 } finally {
-  for (const close of [
-    ...sessions.map((session) => () => session.close()),
-    ...(sentinel ? [() => sentinel.close()] : []),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
+  // Every owner this run acquired must finish, and its lineage must verify,
+  // before the root can go. Otherwise the root stays and the report names it.
+  try {
+    await closeVerifierResources([
+      ...sessions.map((session) => () => session.close()),
+      ...(sentinel ? [() => sentinel.close()] : []),
+    ]);
+    verifier = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifier.process_lineage);
+    await root.close();
+    rootRemoved = true;
+  } catch (cause) {
+    failures.push(
+      ...(cause instanceof AggregateError ? cause.errors : [cause]),
+    );
   }
 }
-const verifier = await completeVerifierRun(run);
-try {
-  assert.equal(verifier.process_lineage.status, "verified");
-  assert.deepEqual(verifier.process_lineage.descendants, []);
-} catch (cause) {
-  failures.push(cause);
-}
+// A release that stopped early never observed lineage; report it regardless.
+verifier ??= await completeVerifierRun(run);
 const result = {
   status: failures.length === 0 ? "passed" : "failed",
   public_cases: cases,
@@ -367,11 +378,14 @@ const result = {
   fixture_generation: "owned test program executed",
   inspection_trace: trace,
   historical_pid_access_coverage: historicalPidTraceContract,
+  retained_root: rootRemoved ? null : root.path,
   verifier,
 };
 console.log(JSON.stringify(result, null, 2));
 if (failures.length > 0)
   throw new AggregateError(
     failures,
-    "Recorded crash verification failed; cleanup failures are retained.",
+    rootRemoved
+      ? "Recorded crash verification failed; cleanup failures are retained."
+      : `Recorded crash verification failed; retained fixture root ${root.path} because its cleanup is incomplete.`,
   );
