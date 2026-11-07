@@ -14,6 +14,7 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it, vi } from "vitest";
 import { z } from "zod";
 
+import { seededLockStartNotice } from "../../../src/application/desktop/DesktopBuildComputers.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   buildComputerFakes as fakes,
@@ -239,12 +240,15 @@ it("points a bundle's start that never got ready at the lock files its seed hold
     bundle,
   );
 
+  const locks = [
+    "envs/calc/seed/.config/libreoffice/4/.lock",
+    "envs/calc/seed/Documents/.~lock.q1.ods#",
+  ];
   expect(pointed).toContain(notReady);
-  expect(pointed).toContain(
-    "seed holds lock files, which can keep the app from starting when it finds its profile or document in use: envs/calc/seed/.config/libreoffice/4/.lock, envs/calc/seed/Documents/.~lock.q1.ods#.",
-  );
-  for (const message of [unlocked, otherFailure])
-    expect(message).not.toContain("lock files");
+  expect(pointed).toContain(seededLockStartNotice(locks));
+  for (const lock of locks) expect(pointed).toContain(lock);
+  expect(unlocked).not.toContain(locks[0]);
+  expect(otherFailure).not.toContain(locks[0]);
 });
 
 it("keeps the end of a long build's output, where its failure is", async () => {
