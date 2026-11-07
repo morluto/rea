@@ -976,6 +976,7 @@ export class ReverseEngineeringService {
             "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
           ]
         : []),
+      ...(profile.limitations ?? []),
       ...(stdoutInvalidUtf8 || stderrInvalidUtf8
         ? [
             `Captured ${[

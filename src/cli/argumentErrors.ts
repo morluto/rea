@@ -25,7 +25,8 @@ const isAdbSelector = (command: string, field: string): boolean =>
   (["pull-adb-file", "push-adb-file"].includes(command) &&
     field === "device-path") ||
   (command === "start-adb-activity" &&
-    ["action", "component", "data-uri"].includes(field));
+    ["action", "component", "data-uri"].includes(field)) ||
+  (command === "read-adb-setting" && field === "key");
 
 /** Preserve parser correction fields without embedding its serialized cause. */
 export const presentCliArgumentErrors = (cli: CliInstance): void => {

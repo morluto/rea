@@ -36,11 +36,16 @@ that key, with those libraries, and starts it.
   A VALIDSIG counts whatever gpgv's exit status, unless a BADSIG, EXPSIG,
   EXPKEYSIG, REVKEYSIG or ERRSIG names the same key. Candidates are the
   entry's Signed-By keyrings, or every `.gpg` and `.asc` key in
-  `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`. Each is written into a
-  private temporary folder, an armored key decoded to binary in REA, and the
-  folder is removed; a failed removal fails the capture with the folder's
-  owner and cleanup facts, as does a sources file, key or library whose
-  handle cannot be closed. When the repository check and the library walk
+  `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`. A deb822 Signed-By that
+  holds an armored key block, as `add-apt-repository ppa:…` writes it, is the
+  entry's only candidate: its continuation lines are stripped, a `.` line read
+  as an empty one, from the `BEGIN` line to the last `END` line, and the key's
+  path is the entry's sources file; a held key that does not verify is refused
+  with a reason naming that file and the release file, and no URL. Each is
+  written into a private temporary folder, an armored key decoded to binary in
+  REA, and the folder is removed; a failed removal fails the capture with the
+  folder's owner and cleanup facts, as does a sources file, key or library
+  whose handle cannot be closed. When the repository check and the library walk
   both fail, the failure keeps both causes and every owner. The verified
   key's path, SHA-256, format and primary fingerprint are recorded and its
   bytes retained in the capture's content store, within `--max-file-bytes`
@@ -70,9 +75,10 @@ that key, with those libraries, and starts it.
 - Export: a package from the Ubuntu 24.04 archive installs by name as before,
   for amd64 and arm64. Otherwise each usable vendor repository is declared as
   `AptSource(apt, suite, components, key="apt-keys/<name>.gpg|.asc")` with the
-  retained key copied into the environment folder, one source per URI and
-  suite; the package is named `<package>/<release>` from the first declared
-  repository, so its release wins over the archive, and the bundle supports
+  retained key copied into the environment folder (`.asc` for an armored key,
+  such as one a PPA's Signed-By held), one source per URI and suite; the
+  package is named `<package>/<release>` from the first declared repository,
+  so its release wins over the archive, and the bundle supports
   only the capture host's architecture. A repository is usable when its key
   was verified, its sources entry's URI held no user name or password
   (`uri_credentials_removed`; a capture written before that field whose
@@ -94,9 +100,8 @@ that key, with those libraries, and starts it.
 
 ## Non-goals
 
-- Keys held inline in a deb822 `Signed-By` field, Signed-By fingerprints
-  matched against the signing key, and repositories reached over anything but
-  http or https.
+- Signed-By fingerprints matched against the signing key, and repositories
+  reached over anything but http or https.
 - Pinning the captured version, carrying the host's apt pinning over, or
   checking that the capture host's suite suits Ubuntu 24.04.
 - Ubuntu Pro repositories, which need the host's credentials, and other

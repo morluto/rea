@@ -1,50 +1,22 @@
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
 import { describe, expect, it } from "vitest";
 
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
 import { xmlView } from "../../../src/domain/desktop/stateFormats.js";
-import { zipArchive } from "../../../src/domain/desktop/zipArchive.fixture.js";
 import {
   expectSameCheckResults,
   expectSameFileViews,
+  odtOf,
   pythonXmlViews,
+  savedEnds,
   typescriptFileView,
 } from "../../support/desktopExportPython.js";
 
-const FIXTURES = join(import.meta.dirname, "../../fixtures");
-const ENDS = ["before", "after"] as const;
-
 /** Inkscape's saves of the poster, before and after the headline was changed. */
-const posters = () =>
-  Promise.all(
-    ENDS.map(async (end) => ({
-      name: "poster.svg",
-      bytes: await readFile(join(FIXTURES, "inkscape", end, "poster.svg")),
-    })),
-  );
+const posters = () => savedEnds("inkscape", "poster.svg");
 
 /** LibreOffice Writer's saves of the flyer, before and after the date was changed, zipped with their mimetype. */
 const flyers = () =>
-  Promise.all(
-    ENDS.map(async (end) => ({
-      name: "flyer.odt",
-      bytes: zipArchive([
-        {
-          name: "mimetype",
-          data: "application/vnd.oasis.opendocument.text",
-          method: 0,
-        },
-        {
-          name: "content.xml",
-          data: await readFile(
-            join(FIXTURES, "libreoffice", end, "content.xml"),
-          ),
-        },
-      ]),
-    })),
-  );
+  savedEnds("libreoffice", "content.xml", "flyer.odt", odtOf);
 
 const POSTER = "Pictures/poster.svg";
 const FLYER = "Documents/flyer.odt";
@@ -171,7 +143,7 @@ describe("namespaced XML in the exported module", () => {
       '<a xmlns:p=""/>',
       '<a:b:c xmlns:a="urn:u"/>',
       "<a><?p:x y?></a>",
-      "<!DOCTYPE a><a/>",
+      '<!DOCTYPE a [<!ENTITY e "x">]><a/>',
     ];
 
     const ours = texts.map((text) => xmlView(text) ?? null);
@@ -180,6 +152,22 @@ describe("namespaced XML in the exported module", () => {
     expect(ours.slice(4)).toEqual([null, null, null, null, null, null]);
     expect(ours[1]).toMatchObject({
       root: { children: ["x", "y", "zw", "v", "q", "r"] },
+    });
+  });
+
+  it("keeps whitespace between runs of mixed content, and drops only XML whitespace, as REA does", () => {
+    const texts = [
+      "<p>Meet on <s>Sunday</s> <s>evening</s>.<q>\n  <s/>\n</q></p>",
+      "<p><s>Sunday</s> <s>evening</s></p>",
+      "<a>x<b/><![CDATA[  ]]><c/></a>",
+      "<r><a><b/> <b/></a><a><b/>\u0085<b/></a><a><b/>﻿<b/></a><a><b/>\t\r\n <b/></a></r>",
+    ];
+
+    const ours = texts.map((text) => xmlView(text) ?? null);
+
+    expect(pythonXmlViews(texts)).toEqual(ours);
+    expect(ours[1]).toMatchObject({
+      root: { children: [{ name: "s" }, { name: "s" }] },
     });
   });
 
