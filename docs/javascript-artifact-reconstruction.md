@@ -10,6 +10,15 @@ then [read the analysis](#read-the-analysis). Use [application workflows](javasc
 for tracing and comparisons, or [partial recovery](#recover-partial-analysis)
 when an operation is interrupted.
 
+If process-table inspection fails after analysis completes, the one-shot CLI returns
+`cleanup_incomplete` with completed Evidence in `details.partial_observation`.
+`details.diagnostics.inspection` identifies the inspector command, arguments,
+and observed system error (for example `EPERM`). `ps` is resolved through PATH;
+REA does not assume `/bin/ps`. Use a host context that permits that inspector
+to execute and read the process table, and review the reported retained resources.
+Analysis completion does not establish cleanup. REA keeps inspection mandatory
+and ownership unresolved until the owning runtime confirms resource release.
+
 ## Public workflow
 
 The tool reads the caller-selected local directory or ASAR path directly:

@@ -10,6 +10,7 @@ import {
   ArtifactResourceScope,
 } from "./ArtifactResourceScope.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { expect, it } from "vitest";
 
 import { err, ok } from "../domain/result.js";
@@ -690,8 +691,18 @@ it.each(["artifact", "domain"] as const)(
       );
       expect(error.cleanupResources).toEqual(children);
       children = ["second child"];
-      await expect(scope.retryCleanup()).rejects.toMatchObject({
+      const retry = await scope.retryCleanup().catch((cause: unknown) => cause);
+      expect(retry).toBeInstanceOf(ArtifactResourceRetryFailure);
+      expect(retry).not.toBeInstanceOf(AnalysisError);
+      expect(retry).toMatchObject({
         cleanupLeases: [attempt.lease],
+        cleanup: {
+          reason:
+            kind === "domain"
+              ? "Provider composite adapter failed during close_binary"
+              : "held children",
+          resources: children,
+        },
       });
       expect(error.cleanupIncomplete).toBe(true);
       expect(error.cleanupResources).toEqual(children);

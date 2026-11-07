@@ -28,6 +28,7 @@ import {
 import {
   cliJavaScriptSourcePaths,
   runCliJavaScriptApplicationAnalysis,
+  type CliJavaScriptAnalysisHost,
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -44,6 +45,7 @@ export const registerElectronCommands = (
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
   options: {
+    readonly javascriptAnalysis?: CliJavaScriptAnalysisHost | undefined;
     readonly createActiveProvider?: (
       environment: Readonly<Record<string, string | undefined>>,
     ) => ElectronActiveObservationPort;
@@ -52,7 +54,12 @@ export const registerElectronCommands = (
   registerElectronObservationCommands(cli, logger, environment);
   registerElectronFuseCommand(cli, logger);
   registerElectronActiveCommand(cli, logger, environment, options);
-  registerJavaScriptApplicationCommand(cli, logger, environment);
+  registerJavaScriptApplicationCommand(
+    cli,
+    logger,
+    environment,
+    options.javascriptAnalysis,
+  );
   registerJavaScriptRuntimeReconciliationCommand(cli, logger);
 };
 
@@ -339,6 +346,7 @@ const registerJavaScriptApplicationCommand = (
   cli: ReturnType<typeof Cli.create>,
   logger: Logger,
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
   cli.command(CLI_COMMANDS.analyzeJavaScriptApplication, {
     description:
@@ -403,6 +411,7 @@ const registerJavaScriptApplicationCommand = (
               environment,
               signal,
               delivery.value,
+              javascriptAnalysis,
             );
           },
         ),

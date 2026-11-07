@@ -181,7 +181,9 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       let wroteOutput = false;
       const resultOutput = createCliResultOutput(outputOptions, process.stdout);
       try {
-        await createCli(process.env, resultOutput).serve(cliArgs, {
+        await createCli(process.env, resultOutput, undefined, {
+          finalizeJavaScriptAnalysis: true,
+        }).serve(cliArgs, {
           stdout: (output) => {
             if (resultOutput?.handled) {
               if (resultOutput.failed && !stdoutClosed)
@@ -193,8 +195,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
             writeStdout(output);
           },
           // A command failure caused by the closed pipe keeps the pipe's status.
-          // Worker shutdown is shared with the dispatch finally below. A failed
-          // shutdown is reported here because this callback is what exits.
+          // Await remaining CLI resources before this callback exits. JavaScript
+          // analysis already finalized its worker through the typed result path.
           exit: (code) => {
             exiting = true;
             void (async () => {
@@ -246,8 +248,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
     }
     dispatchFailure = cause;
   } finally {
-    // Serve and output rendering can throw after a worker is parked. Stop it
-    // on that path too, and keep the dispatch failure when both fail.
+    // Serve and output rendering can throw. Settle remaining CLI resources on
+    // that path too, and keep the dispatch failure when both fail.
     try {
       await closeCliResources?.();
     } catch (cleanup) {

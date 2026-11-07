@@ -8,7 +8,10 @@ import {
   type ProviderProcessSupervisorOptions,
   type ProviderProcessStopResult,
 } from "./ProviderProcess.js";
-import { cleanupOwnedProcessGroup } from "./ProcessOwnership.js";
+import {
+  cleanupOwnedProcessGroup,
+  type ProcessInspectionDiagnostic,
+} from "./ProcessOwnership.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 
 export interface OwnedWorkerRuntimeOptions {
@@ -50,17 +53,21 @@ export const processWorkerCleanup = new WorkerCleanupRegistry();
 
 export class OwnedWorkerRuntimeCleanupError extends Error {
   readonly #cleanupEpoch: OwnedWorkerRuntimeCleanupEpoch | undefined;
+  readonly inspection: ProcessInspectionDiagnostic | undefined;
 
   constructor(
     readonly cleanupResources: readonly string[],
     readonly processId: number | null,
     message: string,
     cleanupEpoch: OwnedWorkerRuntimeCleanupEpoch | undefined,
-    options?: ErrorOptions,
+    options?: ErrorOptions & {
+      readonly inspection?: ProcessInspectionDiagnostic;
+    },
   ) {
     super(message, options);
     this.name = "OwnedWorkerRuntimeCleanupError";
     this.#cleanupEpoch = cleanupEpoch;
+    this.inspection = options?.inspection;
   }
 
   bindCleanupFailure(error: OwnedWorkerCleanupFailure | AnalysisError): void {
@@ -397,7 +404,11 @@ export class OwnedWorkerRuntime {
     if (acquisition !== undefined) await acquisition.catch(() => undefined);
     const stopped = await this.stop();
     if (stopped.status === "incomplete")
-      throw this.#cleanupError(stopped.reason);
+      throw this.#cleanupError(
+        stopped.reason,
+        undefined,
+        stopped.cleanupResult?.inspection,
+      );
     if (this.#root !== undefined) {
       try {
         await this.#root.close();
@@ -447,6 +458,7 @@ export class OwnedWorkerRuntime {
   #cleanupError(
     reason: string,
     cause?: unknown,
+    inspection?: ProcessInspectionDiagnostic,
   ): OwnedWorkerRuntimeCleanupError {
     const resources = this.cleanupResources ?? [];
     return new OwnedWorkerRuntimeCleanupError(
@@ -454,7 +466,10 @@ export class OwnedWorkerRuntime {
       this.#supervisor?.launch.process.pid ?? null,
       reason,
       this.#cleanupEpoch,
-      cause === undefined ? undefined : { cause },
+      {
+        ...(cause === undefined ? {} : { cause }),
+        ...(inspection === undefined ? {} : { inspection }),
+      },
     );
   }
 }
