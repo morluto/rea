@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **mcp:** The opt-in hot-cold catalog no longer preloads inspect_analysis_view. Discover it before calling it, batch with its producer when needed, or use the unchanged default full profile.
 * **native:** preserve value-flow absence semantics ([#8785](https://github.com/morluto/rea/issues/8785))
 * **ghidra:** Ghidra analysis snapshots from earlier byte-search policies are refused; reopen the target and create a new snapshot. Historical Evidence remains importable.
@@ -113,6 +114,7 @@
 * **javascript:** compare static endpoints with HAR captures ([#9090](https://github.com/morluto/rea/issues/9090)) ([3708538](https://github.com/morluto/rea/commit/3708538e85775f1c5566ff54b9c9affe125a8875))
 * **javascript:** discover semantic call literals in feature traces ([#7840](https://github.com/morluto/rea/issues/7840)) ([f9e7571](https://github.com/morluto/rea/commit/f9e7571a3d33ef654e396601e2f0e76dbc184ba8))
 * **javascript:** page retained feature traces through analysis views ([#8522](https://github.com/morluto/rea/issues/8522)) ([423059a](https://github.com/morluto/rea/commit/423059a4de9669afa44d81942803083e82149dc4))
+* **kuna:** preserve stored pointer references ([#8851](https://github.com/morluto/rea/issues/8851)) ([f7dc548](https://github.com/morluto/rea/commit/f7dc5489b3cb8a7018136194392b2e8fdcfacaf5))
 * **kuna:** verify release 1.986 and guide version selection ([#8187](https://github.com/morluto/rea/issues/8187)) ([245a581](https://github.com/morluto/rea/commit/245a581818ab13694fa438a06e39898ce03ab206))
 * **kuna:** verify release 1.988 ([#8509](https://github.com/morluto/rea/issues/8509)) ([1d343a8](https://github.com/morluto/rea/commit/1d343a88e53af51101a408d437641c60b7bb34e4))
 * **kuna:** verify release 1.990 ([#8813](https://github.com/morluto/rea/issues/8813)) ([f8f9095](https://github.com/morluto/rea/commit/f8f9095d2d280c6d5ed8f62f28bd073b9f050f20))
@@ -134,6 +136,7 @@
 * **native:** page retained observations and source context ([#7146](https://github.com/morluto/rea/issues/7146)) ([4c8647a](https://github.com/morluto/rea/commit/4c8647a706694665c881e5d8e3d50bfe70239db7))
 * **native:** report binary hardening for ELF, PE and Mach-O ([#8524](https://github.com/morluto/rea/issues/8524)) ([560674e](https://github.com/morluto/rea/commit/560674e2de851cec3f670be8297d28835009247a))
 * **native:** retain decompile export source facts ([#8805](https://github.com/morluto/rea/issues/8805)) ([b970238](https://github.com/morluto/rea/commit/b97023809f7990e798fa27fc1f20a8c824dd9a30))
+* **native:** retain LLDB source coordinates and verify Pascal calls ([#2800](https://github.com/morluto/rea/issues/2800)) ([3e8a5f7](https://github.com/morluto/rea/commit/3e8a5f76d058b2dc687252a4709228f47de54d71))
 * **native:** select retained batch decompile results through analysis views ([#8629](https://github.com/morluto/rea/issues/8629)) ([dec8d2d](https://github.com/morluto/rea/commit/dec8d2d58898c71abb17a37c338935f32bd14210))
 * **plugins:** make Claude Code and Codex installs self-contained ([#7514](https://github.com/morluto/rea/issues/7514)) ([0cd7ef4](https://github.com/morluto/rea/commit/0cd7ef456bf960da265e04b341e82a24b1e377d5))
 * **process:** add a non-executing dry run to capture_process_scenario ([#8469](https://github.com/morluto/rea/issues/8469)) ([6c08320](https://github.com/morluto/rea/commit/6c08320654818fb2f83969d63819d143d0532d90))
@@ -802,6 +805,7 @@
 * **plist:** preserve binary UID and dictionary identity ([a905a71](https://github.com/morluto/rea/commit/a905a71e31f71457cb21fd056b234f872126974e))
 * **plugins:** align listing metadata with REA branding ([#7711](https://github.com/morluto/rea/issues/7711)) ([8397a0c](https://github.com/morluto/rea/commit/8397a0c9eb1d845e548ca1f31b8c63b78d485239))
 * preserve address context input errors ([#8419](https://github.com/morluto/rea/issues/8419)) ([3e6a5cb](https://github.com/morluto/rea/commit/3e6a5cb20ac7aa6353b80421aafb25d7ca552090))
+* preserve address context resource recovery ([#8424](https://github.com/morluto/rea/issues/8424)) ([106ba17](https://github.com/morluto/rea/commit/106ba1730f71f9d0f3d82c87668b77279db4287f))
 * preserve feature traces when owner lookup is unavailable ([#8368](https://github.com/morluto/rea/issues/8368)) ([6e9ee97](https://github.com/morluto/rea/commit/6e9ee97a69cb16c7150d8b550e705cba055ee4f0))
 * preserve nullable source-map facts and streamline model tests ([#8018](https://github.com/morluto/rea/issues/8018)) ([b3d31ed](https://github.com/morluto/rea/commit/b3d31ed106c6f3baef1dc778ea688c23323879ba))
 * preserve source closure during snapshot replay ([#8870](https://github.com/morluto/rea/issues/8870)) ([441ba94](https://github.com/morluto/rea/commit/441ba94086e899f8e8bb159fea2bd8cee617a019))
