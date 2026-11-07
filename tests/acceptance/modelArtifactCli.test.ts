@@ -1367,9 +1367,10 @@ cliTest(
       arguments: ["inspect-model-artifact", real, "--json"],
     });
     expect(resolved.exitCode, resolved.stderr).toBe(0);
-    expect(
+    const report = modelArtifactSchema.parse(
       INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(resolved.json)
-        .normalized_result.format,
-    ).toBe("gguf");
+        .normalized_result,
+    );
+    expect(report.format).toBe("gguf");
   },
 );
