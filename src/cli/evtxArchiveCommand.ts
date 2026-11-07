@@ -16,6 +16,7 @@ import {
   evtxArchiveRecordsSchema,
 } from "../domain/evtxArchive/evtxArchiveQuery.js";
 import { z } from "incur";
+import { cliDecimalField } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
@@ -40,8 +41,10 @@ export const registerEvtxArchiveCommand = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      maxFileBytes: evtxArchiveFileBytesSchema,
-      maxRecords: evtxArchiveRecordsSchema,
+      // Decimal tokens only: numeric coercion would read "0x10" as 16 and
+      // "1e3" as 1000. The shared fields keep their bounds and defaults.
+      maxFileBytes: cliDecimalField(evtxArchiveFileBytesSchema),
+      maxRecords: cliDecimalField(evtxArchiveRecordsSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
