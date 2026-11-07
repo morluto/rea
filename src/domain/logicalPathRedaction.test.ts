@@ -249,3 +249,81 @@ describe("post-creation redaction of Evidence and bundles", () => {
     expect(() => parseEvidence(rebound)).not.toThrow();
   });
 });
+
+it("preserves non-path strings and special JSON keys under a working-directory root", () => {
+  const result = JSON.parse(
+    '{"status":"opened","address":"0x401000","__proto__":{"value":"kept"}}',
+  );
+  const evidence = createEvidence(
+    undefined,
+    TEST_PROVIDER,
+    {
+      operation: "inspect",
+      parameters: {},
+      result,
+    },
+    { logicalRoot: process.cwd() },
+  );
+  expect(evidence.normalized_result).toEqual(result);
+  expect(Object.hasOwn(evidence.normalized_result as object, "__proto__")).toBe(
+    true,
+  );
+  expect(parseEvidence(evidence).normalized_result).toEqual(result);
+});
+
+it("admits JSON before redaction and preserves sealed cooperative results", async () => {
+  const { createImmutableEvidenceSteps } = await import("./evidence.js");
+  const { freezeJsonSnapshot } = await import("./immutableJson.js");
+  let getterCalls = 0;
+  const malformed = {
+    get value() {
+      getterCalls += 1;
+      return "/tmp/run/a";
+    },
+  };
+  expect(() =>
+    createEvidence(
+      undefined,
+      TEST_PROVIDER,
+      {
+        operation: "inspect",
+        parameters: {},
+        result: malformed,
+      },
+      { logicalRoot: "/tmp/run" },
+    ),
+  ).toThrow();
+  expect(getterCalls).toBe(0);
+  expect(() =>
+    createEvidence(
+      undefined,
+      TEST_PROVIDER,
+      {
+        operation: "inspect",
+        parameters: {},
+        result: new Date(),
+      },
+      { logicalRoot: "/tmp/run" },
+    ),
+  ).toThrow();
+  const input = freezeJsonSnapshot({ path: "/tmp/run/a", state: "ready" });
+  const steps = createImmutableEvidenceSteps(
+    undefined,
+    TEST_PROVIDER,
+    {
+      operation: "inspect",
+      parameters: {},
+      result: input,
+    },
+    { logicalRoot: "/tmp/run" },
+  );
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  expect(step.value.normalized_result).toEqual({
+    path: "$WORKSPACE/a",
+    state: "ready",
+  });
+  expect(parseEvidence(step.value).normalized_result).toEqual(
+    step.value.normalized_result,
+  );
+});

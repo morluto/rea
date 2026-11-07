@@ -86,11 +86,12 @@ export const redactLogicalPath = (
   // Also check native relative path for platform-specific containment
   const rel = relative(config.root, rawPath);
   const isWithin =
-    rel === "" ||
-    (rel !== ".." &&
-      !rel.startsWith(`..${sep}`) &&
-      !rel.startsWith("../") &&
-      !isAbsolute(rel));
+    isAbsolute(rawPath) &&
+    (rel === "" ||
+      (rel !== ".." &&
+        !rel.startsWith(`..${sep}`) &&
+        !rel.startsWith("../") &&
+        !isAbsolute(rel)));
 
   if (isWithin) {
     if (rel === "") return config.prefix;
@@ -124,7 +125,12 @@ export const redactJsonValue = (
   if (typeof value === "object" && value !== null) {
     const redactedObject: Record<string, unknown> = {};
     for (const [key, element] of Object.entries(value)) {
-      redactedObject[key] = redactJsonValue(element, config);
+      Object.defineProperty(redactedObject, key, {
+        value: redactJsonValue(element, config),
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
     }
     return redactedObject;
   }

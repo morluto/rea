@@ -457,11 +457,12 @@ export const createEvidence = (
 
 /** Opt-in logical path-root redaction applied to Evidence, updating its semantic content and ID. */
 export const redactEvidence = (
-  evidence: Evidence,
+  input: Evidence,
   options?: LogicalPathRootInput,
 ): Evidence => {
   const config = resolveLogicalPathConfig(options);
-  if (config === undefined) return evidence;
+  if (config === undefined) return input;
+  const evidence = parseEvidence(input);
 
   const subject =
     evidence.subject === null
@@ -598,22 +599,22 @@ const normalizeEvidenceObservation = (
 
   const parameters =
     config !== undefined
-      ? (redactJsonValue(observation.parameters, config) as Record<
-          string,
-          JsonValue
-        >)
+      ? (redactJsonValue(
+          jsonObjectSchema.parse(observation.parameters),
+          config,
+        ) as Record<string, JsonValue>)
       : observation.parameters;
 
   const rawResult =
     observation.rawResult === undefined || observation.rawResult === null
       ? null
       : config !== undefined
-        ? redactJsonValue(observation.rawResult, config)
+        ? redactJsonValue(jsonValueSchema.parse(observation.rawResult), config)
         : observation.rawResult;
 
   const normalizedResult =
     config !== undefined
-      ? redactJsonValue(observation.result, config)
+      ? redactJsonValue(jsonValueSchema.parse(observation.result), config)
       : observation.result;
 
   const locations =
@@ -663,6 +664,7 @@ const normalizeEvidenceObservation = (
     evidence_links: [...(observation.evidenceLinks ?? [])],
   };
   const sharedResult =
+    config === undefined &&
     typeof observation.result === "object" &&
     observation.result !== null &&
     isImmutableJsonSnapshot(observation.result);
