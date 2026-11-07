@@ -1483,6 +1483,16 @@ it.each([
     },
   ],
   [
+    "scripts/lib/runtime-admission.mjs",
+    {
+      code: true,
+      package: true,
+      runtime: true,
+      javascript_recovery: true,
+      readiness: false,
+    },
+  ],
+  [
     "tests/conformance/readiness/report/reconstructionReadiness.ts",
     {
       code: true,
