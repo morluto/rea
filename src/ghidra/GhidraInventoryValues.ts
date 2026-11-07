@@ -200,6 +200,10 @@ const addressedItem = z
   .object({ ...baseItem, symbol: symbolFacts.exactOptional() })
   .strict();
 const procedureItem = addressedItem.extend({ procedure: procedureFacts });
+/** Other symbols at the exact entry that matched; value stays the primary name. */
+const procedureMatchItem = addressedItem.extend({
+  matched_aliases: z.array(z.string().min(1)).min(1).exactOptional(),
+});
 const stringItem = z.object({ ...baseItem, string: stringFacts }).strict();
 
 const availablePermissions = z
@@ -459,7 +463,7 @@ const resultSchemas = {
   list_strings: z.array(stringItem),
   procedure_address: nativeAddressObservationSchema,
   resolve_containing_procedure: containingProcedure,
-  search_procedures: z.array(addressedItem),
+  search_procedures: z.array(procedureMatchItem),
   search_strings: z.array(addressedItem),
 } satisfies Readonly<
   Record<Exclude<GhidraInventoryOperation, GhidraNamingOperation>, z.ZodType>

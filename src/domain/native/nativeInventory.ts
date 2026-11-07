@@ -26,6 +26,13 @@ export const addressedValueSchema = z.object({
       byte_length: z.number().int().min(0),
     })
     .exactOptional(),
+  matched_aliases: z
+    .array(z.string())
+    .min(1)
+    .exactOptional()
+    .describe(
+      "Procedure search only: the procedure's secondary names that matched. value stays its primary name.",
+    ),
 });
 
 /** Canonical row arrays shared by complete delivery and retained source validation. */

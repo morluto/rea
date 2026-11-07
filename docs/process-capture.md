@@ -74,6 +74,16 @@ Read the result's terminal observations, exit/settlement status, and cleanup
 outcome. [Scenario and result details](#scenario-and-result-details) describe
 limits, normalization, filesystem coverage, and incomplete observations.
 
+## Prepare without launching
+
+Add `"dry_run": true` to the scenario, or pass `dry_run: true` to the MCP tool,
+to resolve the executable, working directory, observation paths and admission
+checks without starting a process. The result is planned Evidence with the
+`rea.process-scenario-plan` predicate, not capture Evidence; comparison tools
+refuse it as a capture. Use it to review a scenario before separately requesting
+execution. A planned result does not establish runtime behavior, exit status,
+cleanup or the inherited ambient environment.
+
 ## Compare two captures
 
 Compare saved capture Evidence with:
@@ -358,9 +368,13 @@ sibling filename such as `tool-helper`; selected parent directories still
 normalize within descendant paths, including when the working directory or an
 observation path is spelled with a trailing `/` or `/.`. A selected filesystem
 root `/` also aliases descendant paths, without rewriting URL separators or
-HTML closing tags. The comparison contract
-records these rules as `path-component-boundaries-v3`, so captures made with the
-earlier rules cannot be compared as if the text had the same meaning.
+HTML closing tags. When no temporary root applies to an observation, no temporary-root
+path is selected: literal `<no-temporary-root>` input and sampled command text
+remain unchanged. The comparison contract
+records these rules as `path-component-boundaries-v4`, so captures made with the
+earlier rules cannot be compared as if the text had the same meaning. Historical
+captures remain readable; recapture both sides with the same path normalization
+version before comparing them.
 
 Rendered frame `lines` hold the visible rows after normalization, with trailing
 U+0020 spaces removed. Blank rows and internal spaces remain. `columns` records

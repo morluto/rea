@@ -142,6 +142,8 @@ it.each<[string, JsonValue | undefined]>([
   ["/x~1y/m~0n", true],
   ["/", "blank"],
   ["/a/2/b", undefined],
+  ["/a/01/b", undefined],
+  ["/a/999999999999999999999999/b", undefined],
   ["/a/first", undefined],
   ["/a/0/b/c", undefined],
   ["/missing", undefined],

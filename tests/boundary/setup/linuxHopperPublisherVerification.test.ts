@@ -36,7 +36,10 @@ import {
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
-import { downloadHopperPackage } from "../../../src/application/HopperDownload.js";
+import {
+  downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
+} from "../../../src/application/HopperDownload.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import * as leases from "../../../src/process/HopperLease.js";
@@ -790,11 +793,21 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
         }),
     ),
   );
-  await expect(
-    downloadHopperPackage("https://www.hopperapp.com/fixture", {
+  // REA's own deadline is a returned transport fact; only caller cancellation rejects.
+  expect(
+    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       timeoutMs: 10,
     }),
-  ).rejects.toMatchObject({ name: "TimeoutError" });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "timeout",
+      limit: "deadline",
+      timeoutMs: 10,
+      receivedBytes: 0,
+    },
+  });
   const controller = new AbortController();
   const reason = new Error("Caller cancelled metadata inspection");
   const pending = downloadHopperPackage("https://www.hopperapp.com/fixture", {
@@ -802,6 +815,42 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
   });
   controller.abort(reason);
   await expect(pending).rejects.toBe(reason);
+});
+it("names the release feed and its limit when the metadata fetch times out", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, options: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const publisher = new LinuxHopperPublisher({}, async () => "deb");
+    const pending = publisher.currentRelease("deb");
+    await vi.advanceTimersByTimeAsync(HOPPER_METADATA_TIMEOUT_MS);
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        reason: "release_metadata",
+        download: {
+          request: "release_feed",
+          kind: "timeout",
+          limit: "deadline",
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+          receivedBytes: 0,
+        },
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("cancels an oversized chunked metadata response before retaining it", async () => {
   const cancelled = vi.fn();
@@ -823,7 +872,14 @@ it("cancels an oversized chunked metadata response before retaining it", async (
     await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       maxBytes: 3,
     }),
-  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "response_too_large",
+      maxBytes: 3,
+    },
+  });
   expect(cancelled).toHaveBeenCalledOnce();
 });
 

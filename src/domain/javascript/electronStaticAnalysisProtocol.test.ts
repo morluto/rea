@@ -289,8 +289,18 @@ describe("Electron protocol registrations without a scheme", () => {
 
 describe("Electron protocol calls that register nothing", () => {
   it.each([
-    ["a handler without a callback", 'protocol.handle("app");'],
-    ["a handler with a null callback", 'protocol.handle("app", null);'],
+    [
+      "a legacy handler without a callback",
+      'protocol.registerStringProtocol("app");',
+    ],
+    [
+      "a legacy handler with a null callback",
+      'protocol.registerStringProtocol("app", null);',
+    ],
+    [
+      "a legacy handler with a void callback",
+      'protocol.registerStringProtocol("app", void 0);',
+    ],
     [
       "an interceptor without a callback",
       'protocol.interceptHttpProtocol("https");',
