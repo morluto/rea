@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
+import {
+  CdpBrowserProvider,
+  CDP_TARGET_LIST_COVERAGE,
+  cdpTargetTransportExclusionLimitation,
+} from "../../../src/browser/CdpBrowserProvider.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   inspectWebPageInputSchema,
@@ -151,7 +155,7 @@ describe("CdpBrowserProvider: discovery authorization 1", () => {
       "allowed-page-with-socket",
     ]);
     expect(listed.value.limitations).toContain(
-      "1 otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.",
+      cdpTargetTransportExclusionLimitation(1),
     );
 
     const inspected = await provider.inspectPage(
@@ -183,6 +187,56 @@ describe("CdpBrowserProvider: discovery authorization 1", () => {
       browser.commands.every(({ sessionId }) => sessionId === undefined),
     ).toBe(true);
   });
+});
+
+describe("CdpBrowserProvider: listing coverage", () => {
+  it.each([
+    { filtered: false, missingSocket: false },
+    { filtered: false, missingSocket: true },
+    { filtered: true, missingSocket: false },
+    { filtered: true, missingSocket: true },
+  ])(
+    "qualifies listing coverage by transport admission (origin filter: $filtered, missing socket: $missingSocket)",
+    async ({ filtered, missingSocket }) => {
+      const browser = await startFakeCdpBrowser({
+        pageScopedVersionWebSocket: true,
+        additionalPageWithWebSocket: true,
+        additionalPageWithoutWebSocket: missingSocket,
+      });
+      trackBrowser(browser);
+      const listed = await new CdpBrowserProvider().listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: filtered ? [browser.allowedOrigin] : [],
+        }),
+      );
+      if (!listed.ok) throw listed.error;
+      expect(listed.value.targets.map(({ target_id }) => target_id)).toEqual([
+        "allowed-page",
+        "allowed-page-with-socket",
+      ]);
+      expect(listed.value.excluded).toEqual({
+        disallowed_origin: filtered ? 1 : 0,
+        unsupported_url: 1,
+        non_page: 1,
+      });
+      expect(listed.value.limitations).toContain(
+        filtered
+          ? CDP_TARGET_LIST_COVERAGE.exactOrigin
+          : CDP_TARGET_LIST_COVERAGE.allOrigins,
+      );
+      const excluded = (filtered ? 0 : 1) + (missingSocket ? 1 : 0);
+      const transportWarnings = listed.value.limitations.filter((message) =>
+        [1, 2].some(
+          (count) => message === cdpTargetTransportExclusionLimitation(count),
+        ),
+      );
+      expect(transportWarnings).toEqual(
+        excluded === 0 ? [] : [cdpTargetTransportExclusionLimitation(excluded)],
+      );
+      expect(browser.commands).toEqual([]);
+    },
+  );
 });
 
 it("fails with a protocol error after an unidentifiable frame event and detaches", async () => {

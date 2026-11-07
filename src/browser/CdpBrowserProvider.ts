@@ -97,6 +97,16 @@ const CLEANUP_DOMAINS = [
   "WebMCP",
 ] as const;
 
+export const CDP_TARGET_LIST_COVERAGE = {
+  allOrigins:
+    "All page targets with supported HTTP(S) URLs and a validated CDP transport are listed.",
+  exactOrigin:
+    "Only page targets with a validated CDP transport whose current URL matches an explicitly requested exact origin are listed.",
+} as const;
+
+export const cdpTargetTransportExclusionLimitation = (count: number): string =>
+  `${String(count)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`;
+
 /** Passive browser observation through a selected user-owned CDP endpoint. */
 export class CdpBrowserProvider implements BrowserObservationPort {
   readonly #owner = new CdpTargetSessionOwner();
@@ -164,12 +174,12 @@ export class CdpBrowserProvider implements BrowserObservationPort {
           limitations: [
             ...(discovery.limitations ?? []),
             input.allowed_origins.length === 0
-              ? "All page targets with supported HTTP(S) URLs are listed."
-              : "Only page targets whose current URL matches an explicitly requested exact origin are listed.",
+              ? CDP_TARGET_LIST_COVERAGE.allOrigins
+              : CDP_TARGET_LIST_COVERAGE.exactOrigin,
             ...(selected.unconnectable === 0
               ? []
               : [
-                  `${String(selected.unconnectable)} otherwise allowed page target(s) lacked a validated direct CDP WebSocket and were excluded.`,
+                  cdpTargetTransportExclusionLimitation(selected.unconnectable),
                 ]),
             ...(selected.allowed.some((target) => target.attached === null)
               ? [
