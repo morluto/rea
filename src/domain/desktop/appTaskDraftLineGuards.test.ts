@@ -227,7 +227,9 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
       ),
       reasons: ["selected_path" as const],
     };
-    const logged = draftOf({ ".config/app/notes.log": selected });
+    const logged = draftOf({ ".config/app/notes.log": selected }, [
+      ".config/app/notes.log",
+    ]);
     const noted = draftOf({
       "Documents/state.txt": statePath(
         "document",
