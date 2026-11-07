@@ -79,6 +79,14 @@ export default defineConfig({
             text: "Desktop application tasks",
             link: "/desktop-application-tasks",
           },
+          {
+            text: "Desktop build computer",
+            link: "/desktop-build-computer",
+          },
+          {
+            text: "Building and witnessing",
+            link: "/desktop-build-witness",
+          },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
             text: "Python packaged applications",

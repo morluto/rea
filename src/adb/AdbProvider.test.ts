@@ -239,6 +239,36 @@ fi`,
   expect(result.error.message).toContain(malformedLine);
 });
 
+it("lists a USB device adb has no permission to open alongside online devices", async () => {
+  const { binary } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "devices" ]; then
+  printf 'List of devices attached\\n'
+  printf '07ef9c2a               no permissions; see [http://developer.android.com/tools/device.html] usb:1-1 transport_id:4\\n'
+  printf 'emulator-5554          device transport_id:1\\n'
+  exit 0
+fi`,
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_devices",
+    input: {},
+  });
+  expect(result.devices).toEqual([
+    {
+      serial: "07ef9c2a",
+      state: "no permissions",
+      transport: "usb",
+      product: null,
+      model: null,
+      device: null,
+      transport_id: 4,
+      kind: "physical",
+      kind_basis: "usb_transport",
+    },
+    expect.objectContaining({ serial: "emulator-5554", state: "device" }),
+  ]);
+});
+
 it("lists rescue and detached transports alongside online devices", async () => {
   const { binary } = await writeAdbStub(
     () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
@@ -1968,7 +1998,6 @@ exit 1`,
     operation: "install_adb_package",
     input: { serial: "emulator-5554", apk_path: apk, replace: false },
   });
-  expect(execution.ok).toBe(true);
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
     bytes: 3,
@@ -1976,8 +2005,10 @@ exit 1`,
     replace_requested: false,
     replaced: null,
   });
-  expect(execution.value.limitations).toContain(
-    "Whether an existing package was replaced is unknown; replace_requested records only the adb install mode",
+  expect(execution.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /package was replaced is unknown.*replace_requested.*install mode/iu,
+    ),
   );
 
   const { binary: failing } = await writeAdbStub(

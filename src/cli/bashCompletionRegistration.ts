@@ -5,16 +5,17 @@ export const bashCompletionScript = (name: string): string => {
   return `_incur_complete_${id}() {
     local IFS=$'\\013'
     local _COMPLETE_INDEX=\${COMP_CWORD}
-    local _completions
-    _completions=( $(
+    local _completions _output
+    if ! _output=$(
         export COMPLETE="bash"
         export _COMPLETE_INDEX="$_COMPLETE_INDEX"
         ${command} -- "\${COMP_WORDS[@]}"
-    ) )
-    if [[ $? != 0 ]]; then
+    ); then
         unset COMPREPLY
         return
     fi
+    # Split the protocol records without expanding pathname patterns.
+    read -r -d '' -a _completions < <(printf '%s\\0' "$_output")
     local _nospace=false
     local _nospace_marker=$'\\001'
     local _c

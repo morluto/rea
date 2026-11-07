@@ -11,7 +11,8 @@ export type DesktopStateReason =
   | "named_in_window_title"
   | "selected_path"
   | "dconf_application_keys"
-  | "desktop_service";
+  | "desktop_service"
+  | "desktop_trash";
 
 /** How a later step should treat a path. */
 export type DesktopStateRole =
@@ -30,10 +31,12 @@ const SHARED_DESKTOP_PATHS = [
   ".config/pulse",
   ".local/share/recently-used.xbel",
   ".local/share/gvfs-metadata",
-  ".local/share/Trash",
   ".Xauthority",
   ".ICEauthority",
 ];
+
+/** The freedesktop Trash in the home, where files the user deleted wait under their own names. */
+const DESKTOP_TRASH = ".local/share/Trash";
 
 /**
  * Lowercase names that identify the application in dconf keys. The desktop
@@ -83,6 +86,24 @@ const homePath = (path: string, home: string) =>
 const hiddenTail = (path: string): string | null => {
   const index = path.indexOf("/.");
   return index < 0 ? null : path.slice(index + 1);
+};
+
+/** The state directory a path lies in, or the folder beside one whose name differs only in letter case that the application may create during the capture, as the path spells it. */
+export const stateDirectoryOf = (
+  path: string,
+  directories: readonly string[],
+): string | undefined => {
+  for (const directory of directories) {
+    const parent = directory.slice(0, directory.lastIndexOf("/") + 1);
+    if (!path.startsWith(parent)) continue;
+    const folder = path.slice(parent.length).split("/")[0] ?? "";
+    if (
+      folder.length > 0 &&
+      folder.toLowerCase() === directory.slice(parent.length).toLowerCase()
+    )
+      return `${parent}${folder}`;
+  }
+  return undefined;
 };
 
 /** Facts about the whole capture that every path's reasons draw on. */
@@ -170,8 +191,9 @@ export const stateReasons = (
   const reasons: DesktopStateReason[] = [];
   if (
     changes.some((change) => change.in_state_directory) ||
-    isWithinAny(path, facts.stateDirectories) ||
-    (relative !== null && isWithinAny(relative, facts.stateTails))
+    stateDirectoryOf(path, facts.stateDirectories) !== undefined ||
+    (relative !== null &&
+      stateDirectoryOf(relative, facts.stateTails) !== undefined)
   )
     reasons.push("state_directory");
   if (
@@ -184,16 +206,21 @@ export const stateReasons = (
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
   if (relative !== null && isWithinAny(relative, SHARED_DESKTOP_PATHS))
     reasons.push("desktop_service");
+  if (relative !== null && isWithinAny(relative, [DESKTOP_TRASH]))
+    reasons.push("desktop_trash");
   return reasons;
 };
 
 /**
- * The role that follows from a path's reasons, strongest first. A file the
- * application holds open is a document when a title or the caller names it.
+ * The role that follows from a path's reasons, strongest first. A file in the
+ * desktop Trash is shared whatever else names it, since the user deleted it.
+ * A file the application holds open is a document when a title or the caller
+ * names it.
  */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
 ): DesktopStateRole => {
+  if (reasons.includes("desktop_trash")) return "shared_desktop";
   const shared = reasons.includes("desktop_service");
   if (
     reasons.includes("dconf_application_keys") ||

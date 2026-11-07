@@ -1,3 +1,5 @@
+import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -400,6 +402,10 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
+  | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | GraphqlContract
+  | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
