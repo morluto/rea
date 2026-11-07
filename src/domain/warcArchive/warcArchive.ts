@@ -111,6 +111,7 @@ export const warcHttpOmissionSchema = z.enum([
   "start-line-limit",
   "header-block-limit",
   "malformed-start-line",
+  "unterminated-start-line",
   "unterminated-header-block",
   "archive-header-limit",
 ]);
@@ -170,6 +171,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "http-start-line-limit-reached",
     "http-header-block-limit-reached",
     "http-start-line-invalid",
+    "http-start-line-unterminated",
     "http-header-block-unterminated",
     "archive-header-limit-reached",
     "url-credentials-ambiguous",

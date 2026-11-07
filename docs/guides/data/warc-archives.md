@@ -49,7 +49,10 @@ after the header block; the body itself is neither retained nor interpreted, and
 `Transfer-Encoding` field is present. A malformed header line is kept in
 `malformed_header_lines` rather than dropped, and a header block that never
 reaches its terminating empty line is omitted as `unterminated-header-block`
-instead of having body bytes read as fields.
+instead of having body bytes read as fields. A payload that begins like HTTP but
+carries no line terminator at all is omitted as `unterminated-start-line`
+rather than read as a non-HTTP body, so an unfinished message is never reported
+as complete.
 
 HTTP bodies, content codings and trailers are not decoded. Declared digests are
 reported as written and are not verified. Records are not linked to each other by

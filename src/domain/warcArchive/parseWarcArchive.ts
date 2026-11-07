@@ -415,6 +415,11 @@ const HTTP_OMISSION_DIAGNOSTICS: Record<
     message: (offset) =>
       `The payload at decoded offset ${offset} begins like an HTTP message but its start line is not a request line or a status line.`,
   },
+  "unterminated-start-line": {
+    code: "http-start-line-unterminated",
+    message: (offset) =>
+      `The payload at decoded offset ${offset} begins like an HTTP message but carries no line terminator, so its start line and header block were not read.`,
+  },
   "unterminated-header-block": {
     code: "http-header-block-unterminated",
     message: (offset) =>
@@ -448,7 +453,11 @@ const readHttpMessage = (
   if (!looksLikeHttpMessage(payload, limit, recordType))
     return { message: null, omission: null };
   const startLine = findLineEnd(payload, 0);
-  if (startLine === null) return { message: null, omission: null };
+  // A payload that starts like HTTP but carries no line terminator is an
+  // unfinished message, not a non-HTTP body. Reporting omission null would let
+  // an accurate Content-Length call the record complete-within-scope.
+  if (startLine === null)
+    return { message: null, omission: "unterminated-start-line" };
   if (startLine.contentEnd > HTTP_START_LINE_BYTES)
     return { message: null, omission: "start-line-limit" };
   const startText = payload.toString("latin1", 0, startLine.contentEnd);

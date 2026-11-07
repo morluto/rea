@@ -778,6 +778,20 @@ describe("embedded HTTP message inventory", () => {
     expect(archive.summary.http_omitted).toBe(1);
   });
 
+  it("omits a start line with no terminator instead of reading it as non-HTTP", () => {
+    const archive = parsed(
+      record("response", [["WARC-Record-ID", "<urn:1>"]], "HTTP/1.1 200 OK"),
+    );
+    // The payload names an HTTP message, so silently returning omission null
+    // would let an accurate Content-Length report complete coverage.
+    expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_omitted).toBe("unterminated-start-line");
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "http-start-line-unterminated" }),
+    ]);
+    expect(archive.summary.http_omitted).toBe(1);
+  });
+
   it("does not read a payload outside request and response records", () => {
     const archive = parsed(
       record(

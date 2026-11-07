@@ -636,7 +636,7 @@ line and header block. HTTP bodies are not decoded, declared digests are not
 verified and records are not linked. Unknown record types stay listed. Truncated
 records, malformed headers and invalid lengths remain diagnostics instead of
 ending the inventory silently. See
-[offline WARC archives](warc-archives.md) for identities, compression handling
+[offline WARC archives](../guides/data/warc-archives.md) for identities, compression handling
 and resource bounds.
 
 ## Retained application Evidence inputs
