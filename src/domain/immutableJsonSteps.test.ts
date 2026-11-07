@@ -17,14 +17,15 @@ describe("cooperative owned snapshot sealing", () => {
   it("locks reachable edges before yielding and authenticates only completion", () => {
     const deferred: { [key: string]: JsonValue } = { value: 1 };
     const value = {
-      deferred,
       many: Array.from({ length: 10_000 }, () => ({ value: 1 })),
+      deferred,
     };
     const steps = freezeOwnedJsonSnapshotSteps(value);
     expect(steps.next().done).toBe(false);
     expect(Object.isFrozen(value)).toBe(true);
     expect(isImmutableJsonSnapshot(value)).toBe(false);
     expect(immutableJsonSnapshotMember(value, "deferred")).toBeUndefined();
+    expect(Object.isFrozen(deferred)).toBe(false);
     const introduced = { value: 2 };
     deferred.child = introduced;
     expect(complete(steps)).toBe(value);
@@ -36,11 +37,12 @@ describe("cooperative owned snapshot sealing", () => {
   it("never authenticates abandoned or invalid provisional roots", () => {
     const deferred: { [key: string]: JsonValue } = { value: 1 };
     const value = {
-      deferred,
       many: Array.from({ length: 10_000 }, () => ({ value: 1 })),
+      deferred,
     };
     const steps = freezeOwnedJsonSnapshotSteps(value);
     expect(steps.next().done).toBe(false);
+    expect(Object.isFrozen(deferred)).toBe(false);
     deferred.value = Number.NaN;
     expect(() => complete(steps)).toThrow();
     expect(isImmutableJsonSnapshot(value)).toBe(false);

@@ -1,3 +1,4 @@
+import type { LogicalPathFields } from "./logicalPathRoot.js";
 import { z } from "zod";
 import {
   browserDeadlineIncrease,
@@ -14,6 +15,12 @@ import {
 } from "./protobufWire.js";
 import { qlogCaptureFactsSchema } from "./qlogCapture.js";
 import { canBorrowParsedJsonSnapshot } from "./immutableJson.js";
+
+/** Filesystem facts owned by the saved network-capture contract. */
+export const WEB_NETWORK_CAPTURE_LOGICAL_PATH_FIELDS = {
+  parameters: [["capture_path"], ["protobuf", "schema", "descriptor_set_path"]],
+  result: [["artifact", "path"]],
+} as const satisfies LogicalPathFields;
 
 /** Complete historical evidence budgets; exceeding a budget returns no partial capture. */
 export const WEB_NETWORK_CAPTURE_LIMITS = {
