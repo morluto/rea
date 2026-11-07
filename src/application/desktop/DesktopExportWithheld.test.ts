@@ -4,6 +4,7 @@ import {
   readdir,
   readFile,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { join } from "node:path";
@@ -12,8 +13,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import {
+  ArtifactResourceScope,
+  type ArtifactCleanupAttempt,
+} from "../../artifacts/ArtifactResourceScope.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
@@ -153,6 +160,83 @@ const evidence = (result: Evidence | Error): Evidence => {
   if (result instanceof Error) throw result;
   return result;
 };
+
+it("reports the published bundle when the withheld copy destination is occupied", async () => {
+  const root = await createTestTempDirectory("desktop-copy-refusal-");
+  const occupied = join(root, "occupied");
+  await mkdir(occupied);
+  await writeFile(join(occupied, "keep"), "existing");
+  const { result, directory } = await exportWithheld({
+    withhold: { paths: [SETTINGS] },
+    withheldCopy: occupied,
+  });
+  expect(result).toMatchObject({
+    partialObservation: {
+      operation: "export_desktop_application",
+      normalized_result: { directory },
+    },
+  });
+  expect(await exists(join(directory, "README.md"))).toBe(true);
+  expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
+});
+
+it("retains the bundle cleanup owner when a later withheld copy fails", async () => {
+  const root = await createTestTempDirectory("desktop-copy-close-");
+  const occupied = join(root, "occupied");
+  await mkdir(occupied);
+  await writeFile(join(occupied, "keep"), "existing");
+  const original = SafeOutputTree.prototype.closeHandles;
+  const release = ArtifactResourceScope.prototype.release;
+  const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+  vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+    async function (this: ArtifactResourceScope, owner) {
+      const outcome = await release.call(this, owner);
+      if (outcome.kind === "failed") failures.push(outcome);
+      return outcome;
+    },
+  );
+  vi.spyOn(SafeOutputTree.prototype, "closeHandles")
+    .mockImplementationOnce(async () => {
+      throw new Error("bundle close failed");
+    })
+    .mockImplementation(original);
+  const { result, directory } = await exportWithheld({
+    withhold: { paths: [SETTINGS] },
+    withheldCopy: occupied,
+  });
+  expect(result).toBeInstanceOf(AnalysisError);
+  if (!(result instanceof AnalysisError)) throw new Error("expected failure");
+  expect(result.cleanupIncomplete).toBe(true);
+  expect(result.cleanupResources).toEqual(expect.arrayContaining([directory]));
+  expect(projectAnalysisError(result)).toMatchObject({
+    details: { partial_observation: { normalized_result: { directory } } },
+  });
+  expect(result.partialObservation).toMatchObject({
+    normalized_result: { directory },
+  });
+  expect(result.cleanupPrimary).toBeInstanceOf(Error);
+  expect(result.secondaryFailures).toEqual([
+    expect.objectContaining({ cleanupIncomplete: true }),
+  ]);
+  expect(failures.length).toBeGreaterThan(0);
+  const bundle = failures.find(({ owner }) => owner.resource === directory);
+  const copy = failures.find(({ owner }) => owner.resource === occupied);
+  expect(bundle).toBeDefined();
+  expect(copy).toBeDefined();
+  await bundle?.lease.release();
+  expect(result.cleanupIncomplete).toBe(true);
+  await expect(copy?.lease.release()).rejects.toThrow();
+  expect(await readFile(join(occupied, "keep"), "utf8")).toBe("existing");
+  await unlink(join(occupied, "keep"));
+  await copy?.lease.release();
+  expect(result.cleanupIncomplete).toBe(false);
+  expect(projectAnalysisError(result)).toMatchObject({
+    details: { partial_observation: { normalized_result: { directory } } },
+  });
+  expect(result.partialObservation).toMatchObject({
+    normalized_result: { directory },
+  });
+});
 
 describe("exportDesktopApplication of withheld sign-in state", () => {
   it("leaves a withheld file out of the seed, declares it a secret setting from the environment and copies it aside", async () => {

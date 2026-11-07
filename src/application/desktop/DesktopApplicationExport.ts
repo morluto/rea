@@ -35,6 +35,7 @@ import type { HostIdentity } from "../../domain/desktop/hostIdentity.js";
 import { scrubDconf } from "../../domain/desktop/seedScrub.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import {
   inspectDesktopApplicationState,
   readDesktopCapture,
@@ -393,7 +394,6 @@ const runExport = async (
       ),
     SEED_MAX_BYTES,
   );
-  const opened = { unclosed, copyUnclosed: await copy.write() };
   const limitations = exportLimitations(capture, plan, {
     install: install.limitations,
     collisions,
@@ -427,7 +427,20 @@ const runExport = async (
     withheld_files: plan.withheld ?? [],
     consented_files: plan.consentedFiles ?? [],
   };
-  return { result, captureEvidenceId: evidence.evidence_id, ...opened };
+  let copyUnclosed: Awaited<ReturnType<typeof copy.write>> = undefined;
+  let copyFailure: { readonly cause: unknown } | undefined;
+  try {
+    copyUnclosed = await copy.write();
+  } catch (cause: unknown) {
+    copyFailure = { cause };
+  }
+  return {
+    result,
+    captureEvidenceId: evidence.evidence_id,
+    unclosed,
+    copyUnclosed,
+    copyFailure,
+  };
 };
 
 /** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
@@ -437,7 +450,7 @@ export const exportDesktopApplication = async (
   signal?: AbortSignal,
 ): Promise<Evidence | AnalysisError> => {
   try {
-    const { result, captureEvidenceId, unclosed, copyUnclosed } =
+    const { result, captureEvidenceId, unclosed, copyUnclosed, copyFailure } =
       await runExport(request, readers, signal);
     const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
       predicateType: "rea.desktop-application-export",
@@ -474,6 +487,39 @@ export const exportDesktopApplication = async (
       authority: "analyst-inference",
       limitations: [...result.limitations],
     });
+    if (copyFailure !== undefined) {
+      const failure = desktopOperationFailure(
+        copyFailure.cause,
+        signal,
+        OPERATION,
+        "Desktop export",
+      );
+      failure.retainPartialObservation(evidence);
+      if (unclosed === undefined) return failure;
+      const cleanup = writtenWithOpenHandles(
+        { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what: "bundle" },
+        request.directory,
+        unclosed,
+        evidence,
+      );
+      const combined = new ProviderAdapterError(
+        DESKTOP_PROVIDER.id,
+        OPERATION,
+        {
+          cause: failure,
+          cleanupPrimary: failure,
+          partialObservation: evidence,
+          userMessage: `The bundle was written to ${request.directory}, but the withheld copy failed and bundle handles could not be closed.`,
+          cleanup: {
+            reason: "Bundle output handles could not be closed.",
+            resources: [request.directory],
+          },
+        },
+      );
+      combined.retainSecondaryFailure(cleanup);
+      combined.bindCleanupDependencies([cleanup, failure]);
+      return combined;
+    }
     const open = [
       { what: "bundle", directory: request.directory, release: unclosed },
       {
