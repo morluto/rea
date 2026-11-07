@@ -525,39 +525,34 @@ export const parseKernelModule = (
     limitations.push(image.section_names_limitation);
   const use = { namesComplete, limitations };
   const examined = { count: 0 };
-  const noteDuplicates = (name: string, found: readonly ElfSection[]): void => {
+  const firstNamedSection = (name: string): ElfSection | undefined => {
+    const found = sectionsNamed(sections, name);
     if (found.length > 1)
       limitations.push(
         `Multiple ${name} sections are declared; the first is examined.`,
       );
+    return found[0];
   };
-  const modinfoSections = sectionsNamed(sections, ".modinfo");
-  const versionSections = sectionsNamed(sections, "__versions");
-  const moduleSections = sectionsNamed(sections, ".gnu.linkonce.this_module");
-  noteDuplicates(".modinfo", modinfoSections);
-  noteDuplicates("__versions", versionSections);
-  noteDuplicates(".gnu.linkonce.this_module", moduleSections);
+  const modinfoSection = firstNamedSection(".modinfo");
+  const versionSection = firstNamedSection("__versions");
+  const moduleSection = firstNamedSection(".gnu.linkonce.this_module");
   const modinfo = parseModinfo(
     bytes,
-    modinfoSections[0],
+    modinfoSection,
     use,
     examined,
     input.max_entries,
   );
   const versions = parseVersions(
     bytes,
-    versionSections[0],
+    versionSection,
     image.bits,
     image.byte_order === "little",
     use,
     examined,
     input.max_entries,
   );
-  const modulePresence = presence(
-    moduleSections[0],
-    namesComplete,
-    bytes.length,
-  );
+  const modulePresence = presence(moduleSection, namesComplete, bytes.length);
   const ksymtabNamed = sections.filter(
     (section) => section.name?.startsWith("__ksymtab") === true,
   );
@@ -615,14 +610,14 @@ export const parseKernelModule = (
     },
     init_text: sized(
       bytes,
-      sectionsNamed(sections, ".init.text")[0],
+      firstNamedSection(".init.text"),
       namesComplete,
       limitations,
       ".init.text",
     ),
     exit_text: sized(
       bytes,
-      sectionsNamed(sections, ".exit.text")[0],
+      firstNamedSection(".exit.text"),
       namesComplete,
       limitations,
       ".exit.text",
