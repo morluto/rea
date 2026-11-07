@@ -49,6 +49,7 @@ import {
 } from "../ProgressReporter.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
+import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import {
   writeWitnessRecord,
@@ -533,10 +534,23 @@ export class DesktopBuildWitness {
           "Give a new or empty folder.",
         ),
       );
-    const differs =
-      this.bundle === undefined
-        ? undefined
-        : await bundleTaskDifference(this.bundle, task, signal);
+    let differs: string | undefined;
+    if (this.bundle !== undefined) {
+      try {
+        differs = await bundleTaskDifference(this.bundle, task, signal);
+      } catch (cause: unknown) {
+        // A cancelled read, an I/O failure, or a handle that would not close
+        // stays a Result. A cleanup lease stays bound to that error.
+        return err(
+          desktopOperationFailure(
+            cause,
+            signal,
+            CHECK,
+            "Reading the bundle's task",
+          ),
+        );
+      }
+    }
     if (differs !== undefined)
       return err(
         refused(
