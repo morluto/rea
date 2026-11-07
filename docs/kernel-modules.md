@@ -56,8 +56,10 @@ version and is not decoded. File-backed `__ksymtab*` sections are listed in
 section-header order by name and file range; their records are not decoded.
 Sections that are `SHT_NOBITS` or leave the file are counted in one limitation
 without their names. `.init.text` and `.exit.text` report the
-observed file-backed size. A compressed payload reports the stored size and a
-limitation that the decoded size is unknown.
+observed file-backed size of the first declared section. When either name is
+duplicated, a limitation identifies the first-only selection; no combined size
+or loader choice is inferred. A compressed payload reports the stored size and
+a limitation that the decoded size is unknown.
 
 The signature trailer is the 27-byte magic `~Module signature appended~\n`
 preceded by a 12-byte `module_signature` (`algo`, `hash`, `id_type`,

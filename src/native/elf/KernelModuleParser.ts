@@ -534,9 +534,13 @@ export const parseKernelModule = (
   const modinfoSections = sectionsNamed(sections, ".modinfo");
   const versionSections = sectionsNamed(sections, "__versions");
   const moduleSections = sectionsNamed(sections, ".gnu.linkonce.this_module");
+  const initTextSections = sectionsNamed(sections, ".init.text");
+  const exitTextSections = sectionsNamed(sections, ".exit.text");
   noteDuplicates(".modinfo", modinfoSections);
   noteDuplicates("__versions", versionSections);
   noteDuplicates(".gnu.linkonce.this_module", moduleSections);
+  noteDuplicates(".init.text", initTextSections);
+  noteDuplicates(".exit.text", exitTextSections);
   const modinfo = parseModinfo(
     bytes,
     modinfoSections[0],
@@ -615,14 +619,14 @@ export const parseKernelModule = (
     },
     init_text: sized(
       bytes,
-      sectionsNamed(sections, ".init.text")[0],
+      initTextSections[0],
       namesComplete,
       limitations,
       ".init.text",
     ),
     exit_text: sized(
       bytes,
-      sectionsNamed(sections, ".exit.text")[0],
+      exitTextSections[0],
       namesComplete,
       limitations,
       ".exit.text",
