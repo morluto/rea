@@ -239,7 +239,7 @@ it("keeps cancellation primary when ASAR close fails, then retries the same hand
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(handleState.events).toEqual([
     "open",
@@ -277,7 +277,7 @@ it("keeps an earlier read failure primary over a later abort and close failure",
   expect(mapped?.cleanupPrimary?.cause).toBe(readFailure);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
@@ -306,7 +306,7 @@ it("preserves an arbitrary cancellation reason observed during ASAR read", async
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
@@ -335,7 +335,7 @@ it("preserves cancellation observed after ASAR stat when final close fails", asy
   expect(mapped?.cleanupPrimary?.cause).toBe(reason);
 
   await expect(authorizedElectronFile(location)).resolves.toBe(
-    `${handleState.archive}/index.html`,
+    fileURLToPath(location),
   );
   expect(mapped?.cleanupIncomplete).toBe(false);
 });
