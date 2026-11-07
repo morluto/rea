@@ -135,7 +135,10 @@ distinct hashes leave a single commit unknown.
 
 The selected file is limited to 256 MiB. A dependency section's zlib stream is
 limited to 1 MiB compressed. Inflated JSON is limited to the smaller of 8 MiB
-and 64 times the compressed stream length. The complete report is limited to
+and 64 times the compressed stream length. If inflation stops at its allocation
+cap before the stream ends, `reported_limits.maximum_bytes` identifies that cap;
+`limit_basis` is `inflate_allocation` and `effective_maximum_bytes` is null
+because the consumed-stream ratio limit is not yet known. The complete report is limited to
 8 MiB. Empty sections,
 truncated streams, nonpadding bytes after a zlib stream, invalid JSON, duplicate
 object fields, unknown fields, dependency

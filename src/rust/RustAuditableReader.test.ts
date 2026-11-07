@@ -4,6 +4,7 @@ import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import {
   RUST_INFLATE_RATIO,
   RUST_SECTION_BYTES,
+  RUST_UNCOMPRESSED_BYTES,
   readAuditableSection,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
@@ -249,6 +250,32 @@ it("reports the consumed-stream inflate limit when PE padding exceeds that ceili
       constraint: {
         resource: "memory",
         reported_limits: { maximum_bytes: expectedMaximum },
+      },
+    }),
+  );
+});
+
+it("distinguishes an early inflate allocation cap from the unknown effective ratio limit", () => {
+  const compressed = deflateSync(Buffer.alloc(RUST_UNCOMPRESSED_BYTES + 1));
+  const alignment = 512;
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / alignment) * alignment,
+  );
+  compressed.copy(stored);
+  expect(compressed.length * RUST_INFLATE_RATIO).toBeLessThan(
+    RUST_UNCOMPRESSED_BYTES,
+  );
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, { peFileAlignment: alignment }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: RUST_UNCOMPRESSED_BYTES,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
       },
     }),
   );

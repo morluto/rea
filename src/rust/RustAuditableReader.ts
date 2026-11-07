@@ -55,7 +55,11 @@ export class RustAuditableFormatFailure extends Error {
 export type RustAuditableConstraint =
   | {
       readonly resource: "memory";
-      readonly reported_limits: { readonly maximum_bytes: number };
+      readonly reported_limits: {
+        readonly maximum_bytes: number;
+        readonly limit_basis?: "inflate_allocation";
+        readonly effective_maximum_bytes?: null;
+      };
     }
   | {
       readonly resource: "transport";
@@ -194,8 +198,15 @@ const inflateFailure = (cause: unknown, maximum: number): Error => {
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
   if (code === "ERR_BUFFER_TOO_LARGE")
     return new RustAuditableResourceFailure(
-      { resource: "memory", reported_limits: { maximum_bytes: maximum } },
-      "Inflated dependency JSON exceeds the size limit",
+      {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: maximum,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
+      },
+      "Inflated dependency JSON exceeds the allocation cap; the consumed-stream ratio limit is unknown",
     );
   if (
     code === "ERR_TRAILING_JUNK_AFTER_STREAM_END" ||
