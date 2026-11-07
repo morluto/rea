@@ -412,7 +412,7 @@ describe("process trace dimension attribution", () => {
     },
   );
 
-  it("applies passing filesystem trace timestamp omissions to exact comparison", () => {
+  it("keeps filesystem observer timing non-semantic with or without a trace", () => {
     const base = capture(values(["terminal", "process"]));
     const left = base;
     const right = parseProcessCapture({
@@ -437,8 +437,8 @@ describe("process trace dimension attribution", () => {
     );
 
     expect(compareProcessCaptures(left, right)).toMatchObject({
-      filesystem: "changed",
-      first_divergence: { status: "found", dimension: "filesystem" },
+      filesystem: "unchanged",
+      first_divergence: { status: "none" },
     });
     expect(
       compareProcessCaptures(left, right, {
@@ -513,6 +513,97 @@ describe("process trace dimension attribution", () => {
       terminal: "unchanged",
       process: "changed",
     });
+  });
+});
+
+it("locates timing selected explicitly by a filesystem trace", () => {
+  const left = capture(values(["terminal", "process"]));
+  const right = parseProcessCapture({
+    ...left,
+    filesystem_checkpoints: left.filesystem_checkpoints.map((checkpoint) =>
+      checkpoint.name === "after_settlement"
+        ? { ...checkpoint, at_ms: checkpoint.at_ms + 10 }
+        : checkpoint,
+    ),
+  });
+  const specification = finiteTraceSpecification(
+    left.filesystem_checkpoints.map((checkpoint) => ({
+      id: checkpoint.name,
+      source: "filesystem" as const,
+      exact: jsonValueSchema.parse(checkpoint),
+      cardinality: { kind: "required" as const },
+    })),
+    [{ id: "timed_checkpoints", trace: ["before", "after_settlement"] }],
+  );
+
+  expect(
+    compareProcessCaptures(left, right, {
+      traceSpecification: specification,
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    filesystem: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "filesystem",
+      index: 1,
+      left_at_ms: left.filesystem_checkpoints[1]?.at_ms,
+      right_at_ms: right.filesystem_checkpoints[1]?.at_ms,
+      left: left.filesystem_checkpoints[1],
+      right: right.filesystem_checkpoints[1],
+    },
+  });
+});
+
+it("prefers an earlier selected timing divergence over a later semantic change", () => {
+  const early = { sequence: 0, at_ms: 10, data: "same" };
+  const leftLater = { sequence: 1, at_ms: 50, data: "left" };
+  const rightEarly = { ...early, at_ms: 20 };
+  const rightLater = { ...leftLater, data: "right" };
+  const left = capture({
+    frames: [early, leftLater],
+    process_samples: [],
+    event_journal: [
+      { collection: "frames", index: 0 },
+      { collection: "frames", index: 1 },
+    ],
+  });
+  const right = capture({
+    frames: [rightEarly, rightLater],
+    process_samples: [],
+    event_journal: [
+      { collection: "frames", index: 0 },
+      { collection: "frames", index: 1 },
+    ],
+  });
+  const specification = finiteTraceSpecification(
+    [
+      {
+        id: "early",
+        source: "terminal_raw",
+        exact: early,
+        cardinality: { kind: "required" },
+      },
+    ],
+    [{ id: "timed_frames", trace: ["early"] }],
+  );
+
+  expect(
+    compareProcessCaptures(left, right, {
+      traceSpecification: specification,
+    }),
+  ).toMatchObject({
+    trace: { verdict: "different" },
+    terminal: "changed",
+    first_divergence: {
+      status: "found",
+      dimension: "terminal",
+      index: 0,
+      left_at_ms: early.at_ms,
+      right_at_ms: rightEarly.at_ms,
+      left: { kind: "raw", ...early },
+      right: { kind: "raw", ...rightEarly },
+    },
   });
 });
 

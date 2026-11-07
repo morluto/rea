@@ -41,6 +41,12 @@ behavior unknown. Record truncation, unmatched breakpoints, changed target
 identity and cleanup uncertainty as limitations, rather than treating no retained
 event as proof that the behavior never occurs.
 
+For same-session MCP comparisons, pass each capture inline or reuse it as
+`{"kind":"retained-evidence","evidence_id":"ev_..."}`. Default comparison
+keeps capture-local timing as provenance without treating scheduler or observer
+latency as a behavior change; use an exact `trace_spec` event when timing is part
+of the analyst question.
+
 Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blob/main/docs/frida-instrumentation.md),
 [GDB/Rizin/Cutter](https://github.com/morluto/rea/blob/main/docs/reverse-engineering-tools.md),
 [process capture](https://github.com/morluto/rea/blob/main/docs/process-capture.md),
