@@ -59,6 +59,7 @@ import { semanticTopLevelEffectFollowsCapture } from "./javascriptSemanticMutati
 import {
   semanticFactoryLoaderMemberAt,
   semanticRequireCallAt,
+  semanticCandidateRequireSpecifier,
   semanticRequireLoaderAt,
   semanticModuleRequireCallAt,
   semanticModuleRequireReceiver,
@@ -106,6 +107,9 @@ export const inspectCall = (
       ...(requireCall.loader === undefined
         ? {}
         : { loader: requireCall.loader }),
+      ...(requireCall.loaderAuthority === undefined
+        ? {}
+        : { loaderAuthority: requireCall.loaderAuthority }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -285,6 +289,7 @@ const requireCallSpecifier = (
   readonly operation: "load" | "resolve";
   readonly resolutionBasePath?: string;
   readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
+  readonly loaderAuthority?: "candidate";
 } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -298,9 +303,19 @@ const requireCallSpecifier = (
     !call.sourceRelative
   ) {
     context.accumulator.unknownFindings += 1;
+    const candidate = resolveMemberChanged
+      ? undefined
+      : semanticCandidateRequireSpecifier(node, bindings);
     return {
-      specifier: undefined,
-      operation: resolveMemberChanged ? "load" : call.operation,
+      specifier: candidate,
+      operation: resolveMemberChanged
+        ? "load"
+        : candidate !== undefined && isRequireResolveCall(node)
+          ? "resolve"
+          : call.operation,
+      ...(candidate === undefined
+        ? {}
+        : { loaderAuthority: "candidate" as const }),
     };
   }
   return {
@@ -355,6 +370,9 @@ export const finishModuleRequireCalls = (
         // still names a bundle module key, not a package. Dropping the loader here
         // would read that key as an external specifier.
         ...(call.loader === undefined ? {} : { loader: call.loader }),
+        ...(call.loaderAuthority === undefined
+          ? {}
+          : { loaderAuthority: call.loaderAuthority }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -997,6 +1015,9 @@ export const addReference = (
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
       ...(input.loader === undefined ? {} : { loader: input.loader }),
+      ...(input.loaderAuthority === undefined
+        ? {}
+        : { loader_authority: input.loaderAuthority }),
       module_key: null,
       location: range(input.node),
     },

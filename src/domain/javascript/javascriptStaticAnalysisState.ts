@@ -139,6 +139,7 @@ export interface JavaScriptReferenceInput {
   readonly specifier: string | undefined;
   readonly resolutionBasePath?: string;
   readonly loader?: JavaScriptStaticReference["loader"];
+  readonly loaderAuthority?: "candidate";
 }
 
 /** Candidate route or network endpoint literal. */

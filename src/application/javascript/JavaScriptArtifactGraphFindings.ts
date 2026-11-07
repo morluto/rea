@@ -205,7 +205,8 @@ const addReference = (
       input.value.module_runtime,
     ) ?? input.asset;
   const resolved =
-    input.value.specifier === null
+    input.value.specifier === null ||
+    input.value.loader_authority === "candidate"
       ? null
       : resolveReference(context, input.file.path, input.value, input.coverage);
   if (
@@ -319,11 +320,15 @@ const addReference = (
       operation: input.value.operation,
       specifier: input.value.specifier,
       expression: input.value.expression,
+      ...(input.value.loader_authority === "candidate"
+        ? { loader_authority: "candidate" }
+        : {}),
       resolution_base_path: input.value.resolution_base_path ?? null,
       resolution_mode:
         input.value.kind === "static-import" ||
         input.value.kind === "dynamic-import" ||
-        input.value.kind === "require"
+        (input.value.kind === "require" &&
+          input.value.loader_authority !== "candidate")
           ? moduleResolutionModeForJavaScriptReference(
               input.file.path,
               input.value.kind,
@@ -333,7 +338,18 @@ const addReference = (
       resolution_status: resolved?.resolution?.resolution_status ?? null,
       ...artifactPathResolutionProperties(resolved?.resolution),
     },
-    ...(resolved === null ? {} : { limitations: resolved.limitations }),
+    ...(input.value.loader_authority === "candidate"
+      ? { confidence: "low" as const }
+      : {}),
+    ...(resolved === null
+      ? input.value.loader_authority === "candidate"
+        ? {
+            limitations: [
+              "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+            ],
+          }
+        : {}
+      : { limitations: resolved.limitations }),
   });
 };
 
@@ -925,6 +941,9 @@ const unresolvedReferenceNode = (
           reference_kind: reference.kind,
           specifier: reference.specifier,
           expression: reference.expression,
+          ...(reference.loader_authority === "candidate"
+            ? { loader_authority: "candidate" }
+            : {}),
           resolution: "unresolved",
           ...(resolution === undefined
             ? {}
@@ -940,6 +959,9 @@ const unresolvedReferenceNode = (
           confidence: "low",
           limitations: [
             "The static reference could not be resolved within the inventoried artifact.",
+            ...(reference.loader_authority === "candidate"
+              ? ["The module loader is unknown."]
+              : []),
             ...(resolution?.limitations ?? []),
           ],
         }),

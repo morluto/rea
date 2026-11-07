@@ -206,6 +206,10 @@ const inspectReExport = (
 ): void => {
   const exported = commonJsRuntimeExportValues(node, bindings)[0];
   if (exported === undefined) return;
+  if (exported.loaderAuthority === "candidate") {
+    context.accumulator.unknownFindings += 1;
+    return;
+  }
   const applicability = commonJsExportApplicability(
     receiver,
     exported.exportedName,

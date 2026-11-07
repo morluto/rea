@@ -17,6 +17,118 @@ import { writeFixtureFiles } from "../../support/javascriptApplicationFixture.js
 
 const execute = promisify(execFile);
 
+const expectUnknownLoaderCandidates = (
+  graph: ReturnType<
+    typeof javascriptApplicationAnalysisResultSchema.parse
+  >["graph"],
+): void => {
+  const upper = sourceRequireFacts(graph, "upper-module.MJS");
+  expect(upper.module_format).toBe("unknown");
+  expect(upper.require_targets).toContainEqual([
+    "./dep.cjs",
+    null,
+    "unavailable",
+  ]);
+  const candidate = graph.edges.find(
+    ({ relation, properties, evidence }) =>
+      relation === "imports" &&
+      properties.specifier === "./dep.cjs" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "source-range" &&
+      evidence.location.value.source === "upper-module.MJS",
+  );
+  expect(candidate?.properties.resolution_mode).toBeNull();
+  expect(candidate?.evidence.confidence).toBe("low");
+  expect(candidate?.evidence.limitations).toContain(
+    "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+  );
+  const staticCandidate = graph.edges.find(
+    ({ relation, properties, evidence }) =>
+      relation === "imports" &&
+      properties.kind === "require" &&
+      properties.specifier === "./dep.cjs" &&
+      properties.loader_authority === "candidate" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "source-range" &&
+      evidence.location.value.source === "upper-module.MJS",
+  );
+  expect(staticCandidate).toMatchObject({
+    properties: {
+      resolution_mode: null,
+      resolved_path: null,
+      resolution_status: null,
+    },
+    evidence: {
+      confidence: "low",
+      limitations: expect.arrayContaining([
+        "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+      ]),
+    },
+  });
+  const candidateExports = graph.edges.filter(
+    ({ relation, properties, evidence }) =>
+      relation === "exposes" &&
+      properties.loader_authority === "candidate" &&
+      evidence.location.available &&
+      evidence.location.value.kind === "source-range" &&
+      evidence.location.value.source === "upper-export.MJS",
+  );
+  expect(candidateExports.length).toBeGreaterThan(0);
+  expect(candidateExports[0]?.evidence).toMatchObject({
+    confidence: "low",
+    limitations: expect.arrayContaining([
+      "The module wrapper is unknown, so this export is only a candidate.",
+    ]),
+  });
+  for (const path of ["upper-alias.MJS", "upper-var-export.MJS"]) {
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "exposes",
+        properties: expect.objectContaining({
+          loader_authority: "candidate",
+        }),
+        evidence: expect.objectContaining({
+          confidence: "low",
+          location: expect.objectContaining({
+            value: expect.objectContaining({ source: path }),
+          }),
+        }),
+      }),
+    );
+  }
+  expect(graph.edges).toContainEqual(
+    expect.objectContaining({
+      relation: "imports",
+      properties: expect.objectContaining({
+        module_link_kind: "commonjs-export",
+        loader_authority: "candidate",
+        specifier: "./dep.cjs",
+        resolved_path: null,
+        resolution_status: "unavailable",
+      }),
+      evidence: expect.objectContaining({
+        confidence: "low",
+        location: expect.objectContaining({
+          value: expect.objectContaining({ source: "upper-alias.MJS" }),
+        }),
+      }),
+    }),
+  );
+  const candidateExportSource = graph.nodes
+    .flatMap(({ observations }) => observations)
+    .find(
+      ({ properties }) =>
+        properties.semantic_role === "source-module" &&
+        properties.path === "upper-export.MJS",
+    );
+  expect(
+    candidateExportSource?.properties.omitted_export_names,
+  ).toBeGreaterThan(0);
+  expect(candidateExportSource?.evidence.limitations).toContain(
+    "Candidate CommonJS export names are not included in the proven export names; the candidate relationships are retained separately.",
+  );
+};
+
 cliTest.for(["CLI", "stdio MCP"] as const)(
   "distinguishes exact loader suffixes from uppercase artifact names through %s",
   async (surface, { cli }) => {
@@ -27,13 +139,29 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         type: "commonjs",
         main: "upper-module.MJS",
       }),
-      "upper-module.MJS": source,
+      "upper-module.MJS":
+        'const value = require("./dep.cjs"); console.log(value);',
+      "dep.cjs": "module.exports = 42;",
+      "upper-export.MJS": "module.exports = { value: 42 };",
+      "upper-alias.MJS":
+        'var module; const dep = require("./dep.cjs"); module.exports = dep;',
+      "upper-var-export.MJS": "var exports; exports.name = 42;",
       "upper-wrapper.CJS": source,
       "lower-module.mjs": source,
       "lower-wrapper.cjs": source,
     });
+    const control = await execute(
+      process.execPath,
+      [join(root, "upper-module.MJS")],
+      {
+        cwd: root,
+        timeout: 5_000,
+      },
+    );
+    expect(control.stdout.trim()).toBe("42");
     const result = await analyzeJavaScriptDirectory(surface, cli, root);
     expect(result.statistics.parse_failures).toBe(0);
+    expectUnknownLoaderCandidates(result.graph);
     const modules = result.graph.nodes
       .filter((node) => node.kind === "javascript-module")
       .flatMap((node) =>
@@ -48,6 +176,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         expect.objectContaining({
           path: "upper-wrapper.CJS",
           module_format: "unknown",
+        }),
+        expect.objectContaining({
+          path: "upper-export.MJS",
+          module_format: "unknown",
+          export_names: [],
         }),
         expect.objectContaining({
           path: "lower-module.mjs",

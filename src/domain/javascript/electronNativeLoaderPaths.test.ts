@@ -64,6 +64,32 @@ describe("native addon type-only re-exports", () => {
   });
 });
 
+it("does not claim a native re-export from a candidate wrapper with a proven factory loader", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    globalThis.webpackChunkApp.push([[1], {
+      "factory": function (m, e, load) {
+        const known = load("./known.node");
+        module.exports = load("./addon.node");
+      }
+    }]);
+  `);
+  expect(analysis.electron.native_addon_bindings).toContainEqual(
+    expect.objectContaining({
+      binding_kind: "require",
+      specifier: "./known.node",
+    }),
+  );
+  expect(analysis.electron.native_addon_bindings).not.toContainEqual(
+    expect.objectContaining({
+      binding_kind: "re-export",
+      specifier: "./addon.node",
+    }),
+  );
+  expect(
+    analysis.analysis_coverage?.semantics.unknown_findings,
+  ).toBeGreaterThan(0);
+});
+
 describe("native addon loader provenance", () => {
   it("does not give ESM fixtures an ambient CommonJS loader", () => {
     const analysis = analyzeJavaScriptStaticSource(`

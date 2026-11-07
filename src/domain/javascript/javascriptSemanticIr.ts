@@ -11,6 +11,8 @@ import type { JavaScriptModuleResolutionMode } from "./javascriptModuleResolutio
 
 /** One exact module origin followed through imports, requires, or aliases. */
 export interface JavaScriptModuleOrigin {
+  /** An unbound require whose CommonJS wrapper is not established. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly specifier: string;
   readonly importedPath: readonly string[];
@@ -418,6 +420,8 @@ export interface JavaScriptSemanticFrontier {
 
 /** Static import/export relationship retained for cross-file composition. */
 export interface JavaScriptSemanticModuleLink {
+  /** The literal request is observed, but its CommonJS wrapper is unknown. */
+  readonly loaderAuthority?: "candidate";
   readonly resolutionMode?: JavaScriptModuleResolutionMode;
   readonly kind:
     | "import"

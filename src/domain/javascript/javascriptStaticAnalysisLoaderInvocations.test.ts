@@ -4,6 +4,7 @@ import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
 import { parseReferenceSourceImports } from "../referenceSourceImportParsing.js";
@@ -72,7 +73,7 @@ it.each([
 const imported = "import {createRequire as make} from 'node:module';";
 it("retains consecutive native resolver calls while keeping replaced or escaped loaders uncertain", () => {
   const references = (source: string) =>
-    analyzeJavaScriptStaticSource(source).references.map(
+    analyzeCommonJsStaticFixture(source).references.map(
       ({ operation, specifier }) => ({ operation, specifier }),
     );
   expect(
@@ -293,7 +294,7 @@ it.each([
       require: (request: string) => module.require(request),
     });
     expect(result.join === path.join).toBe(host);
-    const analysis = analyzeJavaScriptStaticSource(source);
+    const analysis = analyzeCommonJsStaticFixture(source);
     expect(analysis.parse_error_count).toBe(0);
     expect(analysis.references).toEqual(
       specifier === undefined

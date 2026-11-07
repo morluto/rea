@@ -327,6 +327,7 @@ const referenceShape = {
   ...findingContext,
   operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
+  loader_authority: z.literal("candidate").exactOptional(),
   // A `factory-loader` specifier is a recovered bundle module key rather than a
   // package specifier, so the loader identity travels with the reference.
   loader: z
@@ -528,20 +529,26 @@ const semanticValue: z.ZodType<JavaScriptSemanticValue> = z.lazy(() =>
 );
 const origin = z
   .strictObject({
+    loaderAuthority: z.literal("candidate").optional(),
     specifier: z.string(),
     importedPath: strings,
     resolutionMode: z
       .enum(["import", "require", "compiler-dependent"])
       .optional(),
   })
-  .transform(({ resolutionMode, ...rest }) => ({
+  .transform(({ resolutionMode, loaderAuthority, ...rest }) => ({
     ...rest,
     ...(resolutionMode === undefined ? {} : { resolutionMode }),
+    ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
   }));
+const provenOrigin = origin.refine(
+  (value) => value.loaderAuthority !== "candidate",
+  "Candidate loader authority cannot establish exact module provenance.",
+);
 const provenance = z.discriminatedUnion("status", [
   z.strictObject({
     status: z.literal("module"),
-    origins: z.tuple([origin]),
+    origins: z.tuple([provenOrigin]),
     reason: z.null(),
   }),
   z.strictObject({
@@ -593,6 +600,7 @@ const coverage = z
   });
 const moduleLink = z
   .strictObject({
+    loaderAuthority: z.literal("candidate").optional(),
     resolutionMode: z
       .enum(["import", "require", "compiler-dependent"])
       .optional(),
@@ -611,9 +619,10 @@ const moduleLink = z
     callableId: z.string().nullable(),
     location: range,
   })
-  .transform(({ resolutionMode, ...rest }) => ({
+  .transform(({ resolutionMode, loaderAuthority, ...rest }) => ({
     ...rest,
     ...(resolutionMode === undefined ? {} : { resolutionMode }),
+    ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
   }));
 const definitionKind = z.enum([
   "import",

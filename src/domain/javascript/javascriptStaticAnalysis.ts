@@ -211,6 +211,7 @@ const finalizeStaticAnalysis = (
       value.operation === "load" &&
       ELECTRON_REFERENCE_KINDS.has(value.kind) &&
       ELECTRON_MODULE.test(value.specifier) &&
+      value.loader_authority !== "candidate" &&
       // A `factory-loader` reference names a recovered bundle module, so its
       // specifier is a module key inside the artifact rather than a package. A
       // real external load in the same file keeps its `commonjs-loader`
