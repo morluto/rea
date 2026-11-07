@@ -29,6 +29,10 @@ import {
 export const KUNA_DOCTOR_SETTINGS = [
   "REA_KUNA_COMMAND",
   "REA_KUNA_CACHE_DIR",
+  // The cache root falls back to these when REA_KUNA_CACHE_DIR is unset, so an
+  // unresolved expression in either leaves the probed directory unknown.
+  "HOME",
+  "XDG_CACHE_HOME",
   "REA_KUNA_CACHE_MAX_BYTES",
   "REA_KUNA_PROJECT_TIMEOUT_MS",
   "REA_KUNA_TIMEOUT_MS",

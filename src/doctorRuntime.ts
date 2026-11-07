@@ -183,6 +183,42 @@ const PROVIDER_SETTINGS: Readonly<Record<string, readonly string[]>> = {
   kuna: KUNA_DOCTOR_SETTINGS,
 };
 
+/**
+ * Whether a setting an unresolved expression removed is one this probe actually
+ * reads for the configuration the client supplied. A literal `JAVA_HOME` and
+ * jar path make JADX never consult `PATH`, so failing that probe closed would
+ * report `unknown` for a provider that has everything it needs.
+ */
+export const settingAffectsProbe = (
+  id: string,
+  name: string,
+  environment: Readonly<Record<string, string | undefined>>,
+  platform: NodeJS.Platform,
+): boolean => {
+  const read = (key: string) =>
+    environment[platform === "win32" ? key.toUpperCase() : key];
+  switch (id) {
+    case "jadx":
+      // Java comes from JAVA_HOME when it is explicit; only then is PATH unused.
+      return name !== "PATH" || read("JAVA_HOME") === undefined;
+    case "ghidra":
+      // Both the install directory and the JDK fall back to PATH lookups.
+      return (
+        name !== "PATH" ||
+        read("GHIDRA_INSTALL_DIR") === undefined ||
+        read("JAVA_HOME") === undefined
+      );
+    case "kuna": {
+      // A literal cache directory decides the root on its own.
+      if (read("REA_KUNA_CACHE_DIR") !== undefined) return false;
+      if (name === "XDG_CACHE_HOME") return platform !== "darwin";
+      return true;
+    }
+    default:
+      return true;
+  }
+};
+
 const unresolvedProvider = (
   id: string,
   selected: SelectedRegistrationEnvironment | undefined,
@@ -193,8 +229,10 @@ const unresolvedProvider = (
   const normalize = (key: string) =>
     platform === "win32" ? key.toUpperCase() : key;
   const read = new Set((PROVIDER_SETTINGS[id] ?? []).map(normalize));
-  const unresolved = [...selected.unresolved].filter((name) =>
-    read.has(normalize(name)),
+  const unresolved = [...selected.unresolved].filter(
+    (name) =>
+      read.has(normalize(name)) &&
+      settingAffectsProbe(id, normalize(name), environment, platform),
   );
   if (selected.unknown !== true && unresolved.length === 0) return undefined;
   const configurationKeys: Readonly<Record<string, string>> = {

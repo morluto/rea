@@ -8,6 +8,7 @@ import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement
 import {
   createSystemDoctorHost,
   selectedProviderSettings,
+  settingAffectsProbe,
 } from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
 import { providerRegistrationEnvironment } from "./application/SetupRegistrationEnvironment.js";
@@ -596,6 +597,53 @@ test("keeps a selected client without a registration on the setup's settings", a
   } finally {
     await host.close?.();
   }
+});
+
+test("decides whether an unresolved setting is one the probe actually reads", () => {
+  // JADX resolves Java from an explicit JAVA_HOME, so a PATH it never consults
+  // must not make the whole provider unknown.
+  expect(
+    settingAffectsProbe("jadx", "PATH", { JAVA_HOME: "/opt/java" }, "linux"),
+  ).toBe(false);
+  expect(settingAffectsProbe("jadx", "PATH", {}, "linux")).toBe(true);
+  expect(
+    settingAffectsProbe(
+      "jadx",
+      "JAVA_HOME",
+      { JAVA_HOME: "/opt/java" },
+      "linux",
+    ),
+  ).toBe(true);
+  // Ghidra still looks either the install directory or the JDK up on PATH.
+  expect(
+    settingAffectsProbe(
+      "ghidra",
+      "PATH",
+      { GHIDRA_INSTALL_DIR: "/opt/ghidra" },
+      "linux",
+    ),
+  ).toBe(true);
+  expect(
+    settingAffectsProbe(
+      "ghidra",
+      "PATH",
+      { GHIDRA_INSTALL_DIR: "/opt/ghidra", JAVA_HOME: "/opt/java" },
+      "linux",
+    ),
+  ).toBe(false);
+  // Kuna's cache root falls back to XDG_CACHE_HOME off Darwin and to HOME.
+  expect(settingAffectsProbe("kuna", "XDG_CACHE_HOME", {}, "linux")).toBe(true);
+  expect(settingAffectsProbe("kuna", "XDG_CACHE_HOME", {}, "darwin")).toBe(
+    false,
+  );
+  expect(
+    settingAffectsProbe(
+      "kuna",
+      "HOME",
+      { REA_KUNA_CACHE_DIR: "/opt/cache" },
+      "linux",
+    ),
+  ).toBe(false);
 });
 
 test("lets a selected client keep the terminal settings its registration omits", async () => {
