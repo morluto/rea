@@ -844,3 +844,34 @@ it("retains candidates when pre-indexed relevant binding escapes despite many lo
   `);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("efficiently indexes required module effects across many unrelated export writes and rejected listeners", () => {
+  const unrelatedWrites = Array.from(
+    { length: 50 },
+    (_, i) => `cp.extraMethod_${i} = function() {};`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    const cp = require("node:child_process");
+    ${unrelatedWrites}
+    const child = cp.spawn("worker");
+    child.on("exit", 1);
+    child.on("error", "not-a-fn");
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when pre-indexed required module effect overrides prototype despite many unrelated export writes", () => {
+  const unrelatedWrites = Array.from(
+    { length: 50 },
+    (_, i) => `cp.extraMethod_${i} = function() {};`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    const cp = require("node:child_process");
+    ${unrelatedWrites}
+    cp.ChildProcess.prototype.off = function (event) { return this.removeAllListeners(event); };
+    const child = cp.spawn("worker");
+    child.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+});

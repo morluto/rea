@@ -584,10 +584,22 @@ interface RelevantListenerOverrideBinding {
   readonly hasMemberOverride: boolean;
 }
 
+interface RelevantModuleEffects {
+  readonly hasWriteOverride: boolean;
+  readonly escapeNodes: readonly t.Node[];
+}
+
 interface RelevantListenerOverrideIndex {
   readonly child_process: readonly RelevantListenerOverrideBinding[];
   readonly events: readonly RelevantListenerOverrideBinding[];
   readonly process: readonly RelevantListenerOverrideBinding[];
+  readonly moduleEffects: {
+    readonly child_process: RelevantModuleEffects;
+    readonly events: RelevantModuleEffects;
+    readonly process: RelevantModuleEffects;
+  };
+  readonly ambientProcessWrites: readonly t.Node[];
+  readonly ambientProcessEscapes: readonly t.Node[];
 }
 
 const listenerOverrideIndexByState = new WeakMap<
@@ -667,10 +679,126 @@ const getListenerOverrideIndex = (
     }
   }
 
+  let cpHasWrite = false;
+  const cpEscapes: t.Node[] = [];
+  let eventsHasWrite = false;
+  const eventsEscapes: t.Node[] = [];
+  let processHasWrite = false;
+  const processEscapes: t.Node[] = [];
+
+  for (const [specifier, effects] of state.requiredModuleEffects.entries()) {
+    const raw = specifier.replace(/^node:/u, "");
+    if (raw === "child_process") {
+      for (const { kind, path, node } of effects) {
+        if (
+          kind === "write" &&
+          path.some((s) => s === "prototype" || s === "ChildProcess")
+        ) {
+          cpHasWrite = true;
+        } else if (
+          kind === "escape" &&
+          (path.length === 0 ||
+            path.some((s) => s === "prototype" || s === "ChildProcess"))
+        ) {
+          if (node !== undefined) cpEscapes.push(node);
+        }
+      }
+    } else if (raw === "events") {
+      for (const { kind, path, node } of effects) {
+        if (
+          kind === "write" &&
+          path.some((s) => s === "prototype" || s === "EventEmitter")
+        ) {
+          eventsHasWrite = true;
+        } else if (
+          kind === "escape" &&
+          (path.length === 0 ||
+            path.some((s) => s === "prototype" || s === "EventEmitter"))
+        ) {
+          if (node !== undefined) eventsEscapes.push(node);
+        }
+      }
+    } else if (raw === "process") {
+      for (const { kind, path, node } of effects) {
+        if (
+          kind === "write" &&
+          (path.length === 0 ||
+            path.some(
+              (s) =>
+                s === "prototype" ||
+                EVENT_LISTENER_METHODS.includes(
+                  s as (typeof EVENT_LISTENER_METHODS)[number],
+                ),
+            ))
+        ) {
+          processHasWrite = true;
+        } else if (
+          kind === "escape" &&
+          (path.length === 0 ||
+            path.some(
+              (s) =>
+                s === "prototype" ||
+                EVENT_LISTENER_METHODS.includes(
+                  s as (typeof EVENT_LISTENER_METHODS)[number],
+                ),
+            ))
+        ) {
+          if (node !== undefined) processEscapes.push(node);
+        }
+      }
+    }
+  }
+
+  const isProcessEffectPath = (
+    path: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number]["path"],
+  ): boolean =>
+    (path[0] === "process" &&
+      (path.length <= 1 ||
+        (typeof path[1] === "string" &&
+          EVENT_LISTENER_METHODS.includes(
+            path[1] as (typeof EVENT_LISTENER_METHODS)[number],
+          )))) ||
+    (path[0] === "global" &&
+      path[1] === "process" &&
+      (path.length <= 2 ||
+        (typeof path[2] === "string" &&
+          EVENT_LISTENER_METHODS.includes(
+            path[2] as (typeof EVENT_LISTENER_METHODS)[number],
+          ))));
+
+  const ambientProcessWrites: t.Node[] = [];
+  for (const { path, node } of state.ambientWriteEffects) {
+    if (node !== undefined && isProcessEffectPath(path)) {
+      ambientProcessWrites.push(node);
+    }
+  }
+  const ambientProcessEscapes: t.Node[] = [];
+  for (const { path, node } of state.ambientEscapeEffects) {
+    if (node !== undefined && isProcessEffectPath(path)) {
+      ambientProcessEscapes.push(node);
+    }
+  }
+
   const index: RelevantListenerOverrideIndex = {
     child_process: childProcessBindings,
     events: eventsBindings,
     process: processBindings,
+    moduleEffects: {
+      child_process: {
+        hasWriteOverride: cpHasWrite,
+        escapeNodes: cpEscapes,
+      },
+      events: {
+        hasWriteOverride: eventsHasWrite,
+        escapeNodes: eventsEscapes,
+      },
+      process: {
+        hasWriteOverride: processHasWrite,
+        escapeNodes: processEscapes,
+      },
+    },
+    ambientProcessWrites,
+    ambientProcessEscapes,
   };
   listenerOverrideIndexByState.set(state, index);
   return index;
@@ -695,6 +823,13 @@ const hasRelevantBindingOverride = (
   return false;
 };
 
+const checkModuleEffects = (
+  effects: RelevantModuleEffects,
+  call?: t.Node,
+): boolean =>
+  effects.hasWriteOverride ||
+  effects.escapeNodes.some((node) => call === undefined || node !== call);
+
 /** Check whether prototype, module, or escape effects may have changed Node's listener methods. */
 const hasInheritedListenerMethodOverride = (
   state: JavaScriptSemanticAnalysisState,
@@ -705,95 +840,33 @@ const hasInheritedListenerMethodOverride = (
   if (target === "child_process") {
     if (
       hasRelevantBindingOverride(index.child_process, call) ||
-      hasRelevantBindingOverride(index.events, call)
+      hasRelevantBindingOverride(index.events, call) ||
+      checkModuleEffects(index.moduleEffects.child_process, call) ||
+      checkModuleEffects(index.moduleEffects.events, call)
     ) {
       return true;
     }
   } else if (target === "events") {
-    if (hasRelevantBindingOverride(index.events, call)) {
+    if (
+      hasRelevantBindingOverride(index.events, call) ||
+      checkModuleEffects(index.moduleEffects.events, call)
+    ) {
       return true;
     }
   } else if (target === "process") {
     if (
       hasRelevantBindingOverride(index.process, call) ||
-      hasRelevantBindingOverride(index.events, call)
+      hasRelevantBindingOverride(index.events, call) ||
+      checkModuleEffects(index.moduleEffects.process, call) ||
+      checkModuleEffects(index.moduleEffects.events, call) ||
+      index.ambientProcessWrites.some(
+        (node) => call === undefined || node !== call,
+      ) ||
+      index.ambientProcessEscapes.some(
+        (node) => call === undefined || node !== call,
+      )
     ) {
       return true;
-    }
-  }
-  for (const [specifier, effects] of state.requiredModuleEffects.entries()) {
-    const raw = specifier.replace(/^node:/u, "");
-    if (target === "child_process" && raw === "child_process") {
-      if (
-        effects.some(
-          ({ kind, path, node }) =>
-            (kind === "write" &&
-              path.some(
-                (segment) =>
-                  segment === "prototype" || segment === "ChildProcess",
-              )) ||
-            (kind === "escape" &&
-              (call === undefined || node !== call) &&
-              (path.length === 0 ||
-                path.some(
-                  (segment) =>
-                    segment === "prototype" || segment === "ChildProcess",
-                ))),
-        )
-      )
-        return true;
-    }
-    if (
-      (target === "events" ||
-        target === "child_process" ||
-        target === "process") &&
-      raw === "events"
-    ) {
-      if (
-        effects.some(
-          ({ kind, path, node }) =>
-            (kind === "write" &&
-              path.some(
-                (segment) =>
-                  segment === "prototype" || segment === "EventEmitter",
-              )) ||
-            (kind === "escape" &&
-              (call === undefined || node !== call) &&
-              (path.length === 0 ||
-                path.some(
-                  (segment) =>
-                    segment === "prototype" || segment === "EventEmitter",
-                ))),
-        )
-      )
-        return true;
-    }
-    if (target === "process" && raw === "process") {
-      if (
-        effects.some(
-          ({ kind, path, node }) =>
-            (kind === "write" &&
-              (path.length === 0 ||
-                path.some(
-                  (segment) =>
-                    segment === "prototype" ||
-                    EVENT_LISTENER_METHODS.includes(
-                      segment as (typeof EVENT_LISTENER_METHODS)[number],
-                    ),
-                ))) ||
-            (kind === "escape" &&
-              (call === undefined || node !== call) &&
-              (path.length === 0 ||
-                path.some(
-                  (segment) =>
-                    segment === "prototype" ||
-                    EVENT_LISTENER_METHODS.includes(
-                      segment as (typeof EVENT_LISTENER_METHODS)[number],
-                    ),
-                ))),
-        )
-      )
-        return true;
     }
   }
   if (target === "child_process") {
@@ -819,42 +892,6 @@ const hasInheritedListenerMethodOverride = (
       return true;
   }
   if (target === "process") {
-    if (
-      state.ambientWriteEffects.some(
-        ({ path, node }) =>
-          (call === undefined || node !== call) &&
-          ((path[0] === "process" &&
-            (path.length <= 1 ||
-              EVENT_LISTENER_METHODS.includes(
-                path[1] as (typeof EVENT_LISTENER_METHODS)[number],
-              ))) ||
-            (path[0] === "global" &&
-              path[1] === "process" &&
-              (path.length <= 2 ||
-                EVENT_LISTENER_METHODS.includes(
-                  path[2] as (typeof EVENT_LISTENER_METHODS)[number],
-                )))),
-      )
-    )
-      return true;
-    if (
-      state.ambientEscapeEffects.some(
-        ({ path, node }) =>
-          (call === undefined || node !== call) &&
-          ((path[0] === "process" &&
-            (path.length <= 1 ||
-              EVENT_LISTENER_METHODS.includes(
-                path[1] as (typeof EVENT_LISTENER_METHODS)[number],
-              ))) ||
-            (path[0] === "global" &&
-              path[1] === "process" &&
-              (path.length <= 2 ||
-                EVENT_LISTENER_METHODS.includes(
-                  path[2] as (typeof EVENT_LISTENER_METHODS)[number],
-                )))),
-      )
-    )
-      return true;
     if (
       state.ambientEscapes.covers(["process"]) ||
       state.ambientEscapes.covers(["global", "process"]) ||
