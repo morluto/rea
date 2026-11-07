@@ -369,10 +369,11 @@ Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
 `target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
 ID with `inspect_analysis_view` when its parent operation supports a compatible
-view. Summary rows are not the complete record. `procedure_pseudo_code` has no
-view of its own: `analyze_function` can collect a separate dossier whose native
-pseudocode view supports paging, and that dossier is a new observation, not a
-view of the original record. Neither discovery nor retained selection starts
+view. Summary rows are not the complete record. Retained `procedure_pseudo_code`
+Evidence supports `summary` and `native`/`pseudocode` views of that original
+observation, including `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`;
+pages do not start a provider or create another decompilation. An
+`analyze_function` dossier is a different observation. Neither discovery nor retained selection starts
 a provider. `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
@@ -388,7 +389,7 @@ records in canonical bundle (Evidence ID) order with `offset` (default 0) and
 and `next_offset`. Each record is the retained Evidence itself, with an
 unchanged ID, subject digest, provider, profile and readback, so it works for
 any operation, including records that `inspect_analysis_view` does not support
-such as annotations and `procedure_pseudo_code`. `missing_evidence_links` lists direct `evidence_links` of
+such as annotations. `missing_evidence_links` lists direct `evidence_links` of
 the returned records that this session or bundle does not retain; links are not
 traversed. A selection is not an Evidence bundle: it omits manifests and
 residual unknowns, cannot be imported, and describes historical observations
