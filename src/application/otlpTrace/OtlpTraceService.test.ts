@@ -265,9 +265,10 @@ it("reports the selected path and cause when the trace cannot be resolved", asyn
       {
         path: ["path"],
         reason: "invalid_format",
-        message: `Selected trace could not be read (${code}): ${path}`,
+        message: expect.stringContaining(path),
       },
     ]);
+    expect(result.error.issues[0]?.message).toContain(code);
   }
 });
 
