@@ -1,5 +1,6 @@
 import * as t from "@babel/types";
 import {
+  javaScriptComputedDefinitionKey,
   unwrapJavaScriptExpression,
   semanticStaticPropertyKey,
 } from "./javascriptAstValues.js";
@@ -82,12 +83,7 @@ const resultBranches = (node: t.Node): readonly t.Node[] | undefined => {
 const evaluatesInOuterThis = (owner: t.Node, child: t.Node): boolean =>
   t.isClass(owner)
     ? child === owner.superClass
-    : (t.isObjectMethod(owner) ||
-        t.isClassMethod(owner) ||
-        t.isClassProperty(owner) ||
-        t.isClassAccessorProperty(owner)) &&
-      owner.computed === true &&
-      child === owner.key;
+    : javaScriptComputedDefinitionKey(owner, child);
 
 /** Each walk owns local aliases; getter-to-getter traversal belongs to the query worklist. */
 export class GetterResultWalker {

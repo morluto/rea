@@ -204,6 +204,18 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
   });
 
   it.each([
+    ["class computed method key", "class { [this]() {} }"],
+    ["class computed field key", "class { [this] = 0; }"],
+    ["object method computed key", "({ [this]() {} })"],
+  ])("invalidates the receiver when a %s converts it", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, toString() { this.x = 2; return 'k'; }, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
     ["uninvoked class method", "class { method() { this.x = 2; } }"],
     [
       "uninvoked computed class method",
