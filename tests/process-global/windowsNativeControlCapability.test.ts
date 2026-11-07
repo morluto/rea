@@ -125,7 +125,7 @@ it("reports a missing Windows native control as an unavailable capability", asyn
       ),
       remediation: {
         action: expect.stringContaining(
-          "matching current Windows x64 REA package",
+          "matches this Windows host's architecture",
         ),
       },
       details: {
