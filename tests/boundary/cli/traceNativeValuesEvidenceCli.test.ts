@@ -63,7 +63,12 @@ const createTraceFixture = () => {
       },
     ],
     unknowns: [
-      { procedure: "0x1000", address: null, reason: "fixture uncertainty" },
+      {
+        procedure: "0x1000",
+        address: null,
+        related_procedure: null,
+        reason: "fixture uncertainty",
+      },
     ],
     total_nodes: 2,
     total_edges: 0,

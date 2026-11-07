@@ -149,6 +149,7 @@ describe("native value trace child stops", () => {
         {
           procedure: "0x1000",
           address: "0x1008",
+          related_procedure: null,
           reason: CLEANUP_STOPPED_VALUE_TRACE,
         },
       ],

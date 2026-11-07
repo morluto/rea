@@ -77,7 +77,7 @@ const trace = { name: "trace_native_values", arguments: request };
 const stops = [
   {
     read: "resolve_native_call_targets:0x1004",
-    stop: { procedure: "0x1000", address: "0x1004" },
+    stop: { procedure: "0x1000", address: "0x1004", related_procedure: null },
     procedures: ["0x1000"],
     calls: [],
     // An unresolved call never discovers 0x2000.
@@ -85,7 +85,7 @@ const stops = [
   },
   {
     read: "analyze_function:0x2000",
-    stop: { procedure: "0x2000", address: null },
+    stop: { procedure: "0x2000", address: null, related_procedure: null },
     procedures: ["0x1000"],
     calls: ["0x1000/call-b->0x2000", "0x1000/call-c->0x3000"],
     // A failed dossier has no call sites to resolve.
@@ -93,7 +93,7 @@ const stops = [
   },
   {
     read: "resolve_native_call_targets:0x2004",
-    stop: { procedure: "0x2000", address: "0x2004" },
+    stop: { procedure: "0x2000", address: "0x2004", related_procedure: null },
     procedures: ["0x1000", "0x2000"],
     calls: ["0x1000/call-b->0x2000", "0x1000/call-c->0x3000"],
     ordinaryReads: [0, 1, 2, 3, 4, 5],
@@ -209,11 +209,13 @@ describe("trace_native_values after a validated seed", () => {
       {
         procedure: "0x1000",
         address: "0x1004",
+        related_procedure: null,
         reason: expect.stringContaining(CHILD_FAILURE),
       },
       {
         procedure: "0x1000",
         address: "0x1008",
+        related_procedure: null,
         reason: CLEANUP_STOPPED_VALUE_TRACE,
       },
     ]);

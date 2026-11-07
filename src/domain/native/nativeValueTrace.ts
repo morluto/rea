@@ -96,6 +96,12 @@ export const nativeValueTraceSchema = z.strictObject({
     z.strictObject({
       procedure: z.string(),
       address: z.string().nullable(),
+      related_procedure: z
+        .string()
+        .nullable()
+        .describe(
+          "The exact identity of the other procedure this unknown names: a call destination the depth budget or ambiguous candidates left untraversed, a callee whose parameter bindings or arguments are missing, or a thunk target no path reached; reason restates it for display. null when the unknown names no other procedure.",
+        ),
       reason: z.string(),
     }),
   ),
@@ -115,4 +121,14 @@ export const nativeValueTraceSchema = z.strictObject({
       "page_truncated or a truncated traversal. Read those fields to distinguish page omission from traversal truncation.",
     ),
   limitations: z.array(z.string()),
+});
+
+/** Read compatibility for retained trace Evidence from earlier REA versions. */
+export const nativeValueTraceEvidenceSchema = nativeValueTraceSchema.extend({
+  unknowns: z.array(
+    nativeValueTraceSchema.shape.unknowns.element.extend({
+      // Unknowns retained before this field existed read back as null.
+      related_procedure: z.string().nullable().default(null),
+    }),
+  ),
 });

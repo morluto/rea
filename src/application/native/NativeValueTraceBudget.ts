@@ -47,6 +47,7 @@ export const createValueTraceBudget = (
     narrow(reason, {
       procedure,
       address: null,
+      related_procedure: null,
       reason: rowBudgetReasons[reason],
     });
   return {

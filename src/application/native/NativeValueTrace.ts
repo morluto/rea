@@ -24,6 +24,35 @@ import {
 } from "../SourceLimitations.js";
 import { createValueTraceBudget } from "./NativeValueTraceBudget.js";
 
+/**
+ * A provider can classify a procedure as a thunk whose model either borrows
+ * its target's operations (an internal branch) or holds only a synthetic
+ * return (an external import). Name the target the trace did not reach so a
+ * stub's small model is not mistaken for the end of the selected call chain.
+ * The target is reported, never traversed, loaded or executed.
+ */
+const unexaminedThunkTarget = (
+  dossier: typeof functionDossierSchema._output,
+  represented: (target: string) => boolean,
+): string | null => {
+  const classification = dossier.procedure.classification;
+  if (
+    classification === null ||
+    !classification.thunk ||
+    classification.thunk_target === null ||
+    represented(classification.thunk_target)
+  )
+    return null;
+  return classification.thunk_target;
+};
+
+const thunkTargetUnknown = (procedure: string, target: string) => ({
+  procedure,
+  address: null,
+  related_procedure: target,
+  reason: `Thunk target ${target} is not represented in this thunk's value-flow model and was not traced`,
+});
+
 /** The located unknown where unconfirmed provider cleanup stopped a trace. */
 export const CLEANUP_STOPPED_VALUE_TRACE =
   "Trace stopped because the provider did not confirm cleanup of resources it owns";
@@ -61,6 +90,10 @@ export const traceNativeValues = async (
     destination: string;
     reason: "max_depth" | "ambiguous_call_candidates";
   }[] = [];
+  // Thunk targets a thunk's own model does not represent. They are reconciled
+  // after traversal: a target another path analyzed, attempted or queued was
+  // examined there; one no path reached is reported by exact identity.
+  const thunkTargets: { procedure: string; target: string }[] = [];
   const budget = createValueTraceBudget(input, unknowns);
   const { nodes, edges } = budget;
   let targetSha256: string | undefined;
@@ -76,13 +109,19 @@ export const traceNativeValues = async (
     address: string | null,
   ): boolean => {
     if (!stopsTraversal(error)) {
-      unknowns.push({ procedure, address, reason: error.message });
+      unknowns.push({
+        procedure,
+        address,
+        related_procedure: null,
+        reason: error.message,
+      });
       return false;
     }
     if (error.cleanupIncomplete)
       budget.narrow("cleanup_incomplete", {
         procedure,
         address,
+        related_procedure: null,
         reason: CLEANUP_STOPPED_VALUE_TRACE,
       });
     return true;
@@ -105,6 +144,7 @@ export const traceNativeValues = async (
       budget.narrow("max_functions", {
         procedure: next.procedure,
         address: null,
+        related_procedure: null,
         reason: "decompilation budget reached",
       });
       // Keep the unanalyzed selector queued so later accounting attributes
@@ -185,14 +225,19 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: address,
         address: null,
+        related_procedure: null,
         reason: flow?.reason ?? UNRECORDED_NATIVE_VALUE_FLOW,
       });
+      const thunkTarget = unexaminedThunkTarget(dossier, () => false);
+      if (thunkTarget !== null)
+        thunkTargets.push({ procedure: address, target: thunkTarget });
       continue;
     }
     if (flow.truncated)
       budget.narrow("provider_pcode_truncated", {
         procedure: address,
         address: null,
+        related_procedure: null,
         reason: "Provider p-code was truncated",
       });
     const ids = new Set<string>();
@@ -272,6 +317,8 @@ export const traceNativeValues = async (
       )
         break;
     }
+    // Destinations this procedure's retained call edges reach.
+    const retainedCalls = new Set<string>();
     for (const operation of flow.operations) {
       if (
         !ids.has(operation.id) ||
@@ -284,6 +331,7 @@ export const traceNativeValues = async (
         budget.narrow("max_call_sites", {
           procedure: address,
           address: operation.address,
+          related_procedure: null,
           reason: "Call-site resolution budget reached",
         });
         break;
@@ -328,6 +376,7 @@ export const traceNativeValues = async (
         unknowns.push({
           procedure: address,
           address: operation.address,
+          related_procedure: null,
           reason: `Call target ${targets.data.status}`,
         });
       for (const target of targets.data.targets) {
@@ -346,6 +395,7 @@ export const traceNativeValues = async (
           )
         )
           break;
+        retainedCalls.add(destination);
         if (target.status !== "candidate")
           callBindings.push({
             caller: address,
@@ -369,6 +419,20 @@ export const traceNativeValues = async (
           });
       }
     }
+    // An internal thunk's model borrows its target's operations; an external
+    // import's model holds only a synthetic return and names no target. Only
+    // admitted operations represent the target: a detached, dead or
+    // budget-rejected one leaves no node in this trace.
+    const thunkTarget = unexaminedThunkTarget(
+      dossier,
+      (target) =>
+        retainedCalls.has(target) ||
+        flow.operations.some(
+          (operation) => ids.has(operation.id) && operation.address === target,
+        ),
+    );
+    if (thunkTarget !== null)
+      thunkTargets.push({ procedure: address, target: thunkTarget });
     // Remaining work is attributed to the rejecting budget recorded above.
     if (stopped !== undefined || budget.exhausted()) break;
   }
@@ -395,11 +459,19 @@ export const traceNativeValues = async (
     budget.narrow(skipped.reason, {
       procedure: skipped.caller,
       address: skipped.address,
+      related_procedure: destination,
       reason:
         skipped.reason === "ambiguous_call_candidates"
           ? "Ambiguous call candidates were not traversed"
           : "Call depth budget reached",
     });
+  }
+  // A thunk target another path analyzed is traced; one attempted failed as
+  // its own unknown, and one still queued is attributed to the ending budget.
+  for (const { procedure, target } of thunkTargets) {
+    if (visited.has(target) || attempted.has(target) || queued.has(target))
+      continue;
+    unknowns.push(thunkTargetUnknown(procedure, target));
   }
   const parametersByProcedure = new Map<string, typeof nodes>();
   const returnsByProcedure = new Map<string, typeof nodes>();
@@ -423,6 +495,7 @@ export const traceNativeValues = async (
       unknowns.push({
         procedure: binding.caller,
         address: null,
+        related_procedure: binding.callee,
         reason: `Parameter bindings for ${binding.callee} are unavailable or omitted`,
       });
     for (const node of parameters) {
@@ -431,6 +504,7 @@ export const traceNativeValues = async (
         unknowns.push({
           procedure: binding.caller,
           address: null,
+          related_procedure: binding.callee,
           reason: `Argument ${ordinal ?? "unknown"} for ${binding.callee} was not recovered`,
         });
         continue;
@@ -494,6 +568,7 @@ export const traceNativeValues = async (
     limitations: [
       "Static decompiler def-use graphs cover recovered block members; when membership is unavailable they exclude operations marked dead. Logical CALL argument positions bind to recovered HighParam ordinals and RETURN values bind to recovered CALL outputs; these are decompiler-derived dependencies, not original source or runtime observations. Missing parameters, variadic arguments and alias dependencies remain unknown.",
       "LOAD and STORE are memory operations; object fields, persistent state and RNG semantics are not inferred from names or pseudocode.",
+      "A procedure the provider classifies as a thunk keeps the provider's model for that stub, and the classification alone does not traverse its target: a target reached through a retained call edge is traversed like any other destination, while a target the model neither contains nor calls, and no other path reaches, is reported in unknowns with its identity in related_procedure. Thunk targets are not loaded or executed by this trace.",
       "Traversal caps depth, decompilations, call-site resolutions, nodes, edges and node payloads (8388608 bytes, 8 MiB); traversal.reasons names each cap or policy this trace reached. This release has no runtime override for the 8388608-byte node-payload allowance. Complete serialized output is bounded to 33554432 bytes (32 MiB) and that output allowance has no runtime override. Pagination reruns analysis and returns edges whose source is on the node page; endpoints outside the page retain stable identities.",
       ...renderSourceLimitations(sourceLimitations),
     ],
