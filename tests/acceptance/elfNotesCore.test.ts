@@ -240,6 +240,13 @@ cliTest.for([
   { name: "NDS32 little", machine: 167, byteOrder: "little", coreFlags: 0 },
   { name: "NDS32 big", machine: 167, byteOrder: "big", coreFlags: 0 },
   { name: "Meta little", machine: 174, byteOrder: "little", coreFlags: 0 },
+  { name: "TILEPro little", machine: 188, byteOrder: "little", coreFlags: 0 },
+  {
+    name: "TILE-Gx m32 little",
+    machine: 191,
+    byteOrder: "little",
+    coreFlags: 0,
+  },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
   async ({ machine, byteOrder, coreFlags }, { cli }) => {
