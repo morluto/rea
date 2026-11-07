@@ -198,6 +198,40 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
+it("keeps a screenshot of each checkpoint in the computer, which the export takes as a screen judge's examples", async () => {
+  const { rea, client } = await fakes();
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  await callOk(client, "export_build_environment", {
+    computer_id: id,
+    task: TASK,
+    directory: join(await createTestTempDirectory("build-screens-"), "out"),
+  });
+
+  const shots = (await files(join(rea.home, ".rea-build"))).filter((path) =>
+    path.endsWith(".jpg"),
+  );
+  expect(shots.map((path) => path.split("/").slice(-2).join("/"))).toEqual([
+    "screens/end.jpg",
+    "screens/seed.jpg",
+  ]);
+  const [, , exported] = (await rea.notes("calls.jsonl")) as {
+    argv: string[];
+  }[];
+  const at = exported?.argv.indexOf("--screens") ?? -1;
+  expect(at).toBeGreaterThan(0);
+  expect(join(rea.home, exported?.argv[at + 1] ?? "")).toBe(
+    join(
+      rea.home,
+      ".rea-build",
+      shots[0]?.split("/").slice(0, -1).join("/") ?? "",
+    ),
+  );
+});
+
 it("takes checkpoints from a REA in the computer that predates their changed files, saying which changed is unknown, also from its log", async () => {
   const { client } = await fakes({
     env: { FAKE_REA_UNLISTED_CHANGES: "1" },

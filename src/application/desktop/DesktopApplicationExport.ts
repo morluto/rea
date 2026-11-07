@@ -90,6 +90,8 @@ export interface DesktopExportRequest {
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
+  /** The folder a build computer keeps a screenshot of each checkpoint in, `<name>.jpg`, for a screen judge's examples. */
+  readonly screens?: string | undefined;
 }
 
 /** What the export wrote. */
@@ -291,7 +293,10 @@ const bundleText = (
       text(`${environment}/env.toml`, renderEnvToml(plan)),
       text(
         `${environment}/${appModuleFile(plan.name)}`,
-        renderAppClass(plan),
+        renderAppClass({
+          ...plan,
+          relaunchOnReset: admitted?.screenJudged === true,
+        }),
         dconfHoldsIdentity,
       ),
       text(`${environment}/SKILL.md`, renderSkill(plan)),
@@ -400,13 +405,12 @@ const runExport = async (
       identity,
     });
   const copies = retainedCopies(plan, seeds);
-  const reads = await taskReads(request.tasks.length, {
-    capture: request.capture,
+  const reads = await taskReads(request, SEED_MAX_BYTES, {
     copies,
     files,
     ends,
     identity,
-    maxBytes: SEED_MAX_BYTES,
+    checkpoints,
     signal,
   });
   const admitted = await admitDesktopTask(

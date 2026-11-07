@@ -208,6 +208,17 @@ describe("renderers", () => {
     expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@get_data");
   });
 
+  it("gives an app without owned paths a reset that only relaunches it when its task judges the screen", () => {
+    const relaunched = renderAppClass({
+      ...plan,
+      paths: [],
+      relaunchOnReset: true,
+    });
+    expect(relaunched).toContain("@reset_data\n    async def relaunch(self)");
+    expect(relaunched).not.toContain("@get_data");
+    expect(renderAppClass({ ...plan, paths: [] })).not.toContain("@reset_data");
+  });
+
   it("loads captured dconf settings even without owned paths", () => {
     const module = renderAppClass({
       ...plan,

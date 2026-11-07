@@ -888,6 +888,56 @@ printed. The witness runs the readers in the witness computer through
 does the same in the solving agent's computer, under the run's grant of the
 computer's control token. The README lists each reader's command.
 
+## Screen judges
+
+Some apps keep a task's state only on screen: a calculator's result, a
+viewer's page, an unsaved canvas. When no file shows the change, a task's
+checks may instead be screen judges:
+
+```json
+{
+  "name": "tip-amount",
+  "prompt": "In Calculator, work out 18% of 47.60 and leave the result showing.",
+  "checks": [
+    {
+      "id": "result-shown",
+      "kind": "screen_judge",
+      "question": "Does the calculator's display show the result 8.568?"
+    }
+  ]
+}
+```
+
+A `screen_judge` has an optional `id` and a `question`, 1 to 2,000
+characters, that the task done makes true and the seed false. A task with one
+holds only screen judges and no readers.
+
+A build computer keeps a screenshot of the screen at each checkpoint, as
+JPEG, in the capture's `screens` folder, and the export's `--screens` names
+it. The export refuses a screen-judged task when a file under the owned paths
+changed between the seed and the end in a way a check could read, or when it
+lacks the seed's or the end's screenshot. It cannot judge a screen, so it
+checks no question on the seed or the end; its limitations say so, and the
+witness checks them.
+
+The bundle's `verify.py` then holds the judge. Once the agent stops, it waits
+a second, takes a screenshot through the computer's `computer_screenshot`
+tool and asks a model each question three times, after two labelled
+examples: the seed's screenshot, where the answer is no, and the end's, where
+it is yes. A question passes when at least two answers are yes; a call that
+fails is asked again up to three times. The model is `[model.roles] judge` in
+the runner's `.agentenv/config.toml`, else `[model] default`, else
+`anthropic/claude-sonnet-5-5`, called through `LITELLM_BASE_URL` and
+`LITELLM_API_KEY`, or `[model] base_url` and `api_key`.
+`agent-env run --judge-model` sets the judge of agentenv's own rubric
+verifiers and does not reach this one. Without an endpoint the verifier
+raises, so the run fails rather than scoring the agent.
+
+REA's witness runs that same `verify.py` as a script, `verify.py judge
+<check> <screenshot>`, with the agentenv runner's Python, on a fresh
+screenshot at each stage, so REA calls no model itself. The witness then
+needs the model endpoint in the environment REA runs in.
+
 ## Validation and export
 
 `rea export-desktop-application <capture> <directory> --task <task.json>`

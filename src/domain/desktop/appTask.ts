@@ -102,6 +102,18 @@ const checkSchema = z.discriminatedUnion("kind", [
     ...comparison,
     ...readerField,
   }),
+  z.strictObject({
+    id: z.string().min(1).max(64).optional(),
+    kind: z.literal("screen_judge"),
+    question: z
+      .string()
+      .trim()
+      .min(1)
+      .max(2000)
+      .describe(
+        "A yes-or-no question about the app's screen that the task done makes true and the seed makes false, such as Does the display show 8.568?; a model judges it on a screenshot, for state no file shows.",
+      ),
+  }),
 ]);
 
 /** How long a reader may run when it does not say, and the most it may ask for. */
@@ -288,7 +300,9 @@ const pointerProblem = (check: PointerCheck): string | undefined => {
 };
 
 /** What is wrong with one check beyond its shape, or undefined. */
-const checkProblem = (check: DesktopTaskCheck): string | undefined => {
+const checkProblem = (
+  check: Exclude<DesktopTaskCheck, { kind: "screen_judge" }>,
+): string | undefined => {
   if (!isHomePath(check.file))
     return `file ${JSON.stringify(check.file)} must be a path under the home, such as Documents/todo.txt, without a leading slash, . or .. segments`;
   if (
@@ -373,6 +387,19 @@ const readersProblem = (
     : `reader ${JSON.stringify(unread.id)} is read by no check; remove it or name it in a check's reader.`;
 };
 
+/** What is wrong with a task's screen judges beside its other checks and readers, or undefined. */
+const screenProblem = (
+  checks: readonly DesktopTaskCheck[],
+  readers: readonly DesktopTaskReader[] | undefined,
+): string | undefined => {
+  if (!checks.some(({ kind }) => kind === "screen_judge")) return undefined;
+  if (checks.some(({ kind }) => kind !== "screen_judge"))
+    return "a task with screen_judge checks holds only screen_judge checks: they judge state no file shows, so a change a file shows is checked in that file instead.";
+  return readers === undefined
+    ? undefined
+    : "a task with screen_judge checks takes no readers.";
+};
+
 /** Parse a task file and settle its check ids, or say what is wrong with it. */
 export const parseDesktopTask = (
   value: unknown,
@@ -398,11 +425,13 @@ export const parseDesktopTask = (
   if (repeated !== undefined)
     return err(`two checks have the id ${JSON.stringify(repeated)}.`);
   for (const check of settled) {
-    const problem = checkProblem(check);
+    const problem =
+      check.kind === "screen_judge" ? undefined : checkProblem(check);
     if (problem !== undefined)
       return err(`check ${JSON.stringify(check.id)}: ${problem}.`);
   }
-  const problem = readersProblem(readers ?? [], settled);
+  const problem =
+    screenProblem(settled, readers) ?? readersProblem(readers ?? [], settled);
   if (problem !== undefined) return err(problem);
   return ok({
     name,

@@ -12,6 +12,11 @@ import type {
   ComputerHelper,
   ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
+import {
+  dataGetSchema,
+  readHomeFiles,
+  writeHomeFiles,
+} from "./ComputerHomeFiles.js";
 import { drawnScreenshot } from "./DrawnScreenshot.js";
 import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
@@ -62,21 +67,6 @@ const recordingManifestSchema = z.looseObject({
 });
 /** An ended recording's manifest, as `computer-recording/v1` returns it. */
 export type RecordingManifest = z.infer<typeof recordingManifestSchema>;
-const dataGetSchema = z.union([
-  z.object({
-    result: z.object({
-      parts: z.array(
-        z.looseObject({
-          file: z.looseObject({ bytes: z.string().optional() }).optional(),
-          metadata: z
-            .record(z.string(), z.looseObject({ path: z.string().optional() }))
-            .optional(),
-        }),
-      ),
-    }),
-  }),
-  z.object({ error: z.looseObject({ message: z.string() }) }),
-]);
 const rpcSchema = z.union([
   z.object({ result: z.looseObject({}) }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
@@ -385,6 +375,18 @@ export class AgentEnvComputer {
     return bytes;
   }
 
+  /** Write files under the computer user's home, by home path, through the driver's `data/add`. */
+  async addHomeFiles(
+    files: ReadonlyMap<string, Buffer>,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    await writeHomeFiles(
+      (body) => this.#request("/agentenv", body, signal),
+      (text) => this.redacted(text),
+      files,
+    );
+  }
+
   /**
    * The files under paths of the computer user's home, by home path, through
    * the driver's `data/get`; its answer is read within `bytes` of files.
@@ -394,31 +396,14 @@ export class AgentEnvComputer {
     bytes: number,
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<string, Buffer>> {
-    const answer = dataGetSchema.parse(
-      await this.#request(
-        "/agentenv",
-        { jsonrpc: "2.0", id: 1, method: "data/get", params: { paths } },
-        signal,
-        {
-          limit: {
-            bytes: dataAnswerBytes(bytes, paths.length),
-            what: `The computer's answer for ${paths.join(", ")}`,
-          },
-        },
-      ),
-    );
-    if ("error" in answer)
-      throw new Error(
-        `data/get failed: ${this.redacted(answer.error.message)}`,
-      );
-    return new Map(
-      answer.result.parts.flatMap((part) => {
-        const path = Object.values(part.metadata ?? {})[0]?.path;
-        const encoded = part.file?.bytes;
-        return path === undefined || encoded === undefined
-          ? []
-          : [[path, Buffer.from(encoded, "base64")] as const];
-      }),
+    const limit = {
+      bytes: dataAnswerBytes(bytes, paths.length),
+      what: `The computer's answer for ${paths.join(", ")}`,
+    };
+    return readHomeFiles(
+      (body) => this.#request("/agentenv", body, signal, { limit }),
+      (text) => this.redacted(text),
+      paths,
     );
   }
 

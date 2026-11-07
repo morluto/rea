@@ -43,6 +43,8 @@ const TASK = {
   ],
 };
 const WITNESS_ORDER = ["seed", "after_edit", "near_miss", "after_reset"];
+/** The build's screenshots a screen-judged bundle ships as its judge's examples. */
+const JUDGE_EXAMPLES = { fail: "c2VlZA==", pass: "ZW5k" };
 const lines = (...text: string[]) => ({
   "Documents/today.txt": {
     format: "text",
@@ -63,7 +65,10 @@ const taskBundle = async (task: unknown, app: string) => {
     "verify.py",
   );
   await mkdir(join(verifier, ".."), { recursive: true });
-  await writeFile(verifier, renderTaskVerifier(parsed.value, app));
+  await writeFile(
+    verifier,
+    renderTaskVerifier(parsed.value, app, JUDGE_EXAMPLES),
+  );
   await writeFile(
     join(bundle, "tasks", `${parsed.value.name}.json`),
     renderTaskSteps(parsed.value, app),
@@ -100,7 +105,7 @@ const witnessed = async (
       action,
       ...fields,
     });
-  return { app, bundle, computer, client, id, directory, check, act };
+  return { app, bundle, computer, runner, client, id, directory, check, act };
 };
 
 /** Act on the app and set its state as that act would leave it. */
@@ -326,6 +331,83 @@ it("witnesses a task whose check reads a binary file through a reader run in the
     false,
   ]);
   expect(await readFile(join(home, poster), "utf8")).toBe("gimp xcf\0Headline");
+});
+
+/** Stand-ins for the runner's model client, agentenv config and MCP client, whose judge answers what `judge-verdict` holds. */
+const JUDGE_STUBS: Readonly<Record<string, string>> = {
+  "litellm/__init__.py": String.raw`
+import json, os, types
+async def acompletion(model, messages, **_):
+    state = os.environ["FAKE_STATE"]
+    with open(os.path.join(state, "judge-calls"), "a") as log:
+        log.write(json.dumps({"model": model, "images": sum(1 for part in messages[0]["content"] if part["type"] == "image_url")}) + "\n")
+    verdict = open(os.path.join(state, "judge-verdict")).read().strip() == "yes"
+    answer = {"verdict": verdict, "reason": "the window shows the result" if verdict else "the window shows no result"}
+    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=types.SimpleNamespace(content=json.dumps(answer)))])
+`,
+  "agent_env/config.py": String.raw`
+import types
+def get_config():
+    call = types.SimpleNamespace(client_kwargs=lambda: {"api_key": "sk-test"})
+    return types.SimpleNamespace(get_model_for_role=lambda role: None, get_litellm_base_url=lambda: "https://models.example",
+                                 resolve_model_call=lambda model: call)
+`,
+  "agentenv_protocol/__init__.py": "",
+  "agentenv_protocol/tool_client.py": "class ToolSession:\n    pass\n",
+};
+
+it("witnesses a screen-judged task with the bundle's own judge on a fresh screenshot at each stage", async () => {
+  const task = {
+    name: "result-shown",
+    prompt: "In Notes, show the total and leave it showing.",
+    checks: [
+      {
+        id: "shown",
+        kind: "screen_judge",
+        question: "Does the window show the total?",
+      },
+    ],
+  };
+  const { act, check, computer, directory, runner } = await witnessed(
+    0,
+    {},
+    task,
+  );
+  for (const [path, source] of Object.entries(JUDGE_STUBS)) {
+    await mkdir(join(runner.state, "site", path, ".."), { recursive: true });
+    await writeFile(join(runner.state, "site", path), source);
+  }
+  const shows = (verdict: boolean) =>
+    writeFile(join(runner.state, "judge-verdict"), verdict ? "yes" : "no");
+
+  await shows(false);
+  const seed = parsed(await check({ task, stage: "seed", directory }));
+  expect(seed.results[0]).toMatchObject({ id: "shown", passed: false });
+  expect(seed.results[0]?.description).toContain("3 of 3 votes");
+  await act("type", { text: "=" });
+  await shows(true);
+  await check({ task, stage: "after_edit" });
+  await act("type", { text: "x" });
+  await shows(false);
+  await check({ task, stage: "near_miss" });
+  await act("reset");
+  const last = await check({ task, stage: "after_reset" });
+  expectNoToken(computer, last);
+  const record = parsed(last).witness?.record;
+  expect(record?.verdict).toBe("held");
+  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+    false,
+    true,
+    false,
+    false,
+  ]);
+  // Three votes a stage, each shown the two examples and the stage's own screenshot.
+  const calls = (await readFile(join(runner.state, "judge-calls"), "utf8"))
+    .trim()
+    .split("\n")
+    .map((line) => JSON.parse(line) as { images: number });
+  expect(calls).toHaveLength(12);
+  expect(calls.every(({ images }) => images === 3)).toBe(true);
 });
 
 it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {

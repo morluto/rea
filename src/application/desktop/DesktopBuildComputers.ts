@@ -6,6 +6,7 @@ import {
 } from "../../domain/desktop/appBuild.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import { SETTLE_TIMING } from "../../domain/desktop/appSettle.js";
+import type { ScreenJudge } from "../../domain/desktop/appTaskScreen.js";
 import {
   driverCall,
   type ComputerAction,
@@ -49,6 +50,7 @@ import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
+import { screenJudgeProcess } from "../../desktop/ScreenJudgeProcess.js";
 
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
@@ -177,7 +179,7 @@ const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
-  settle: BuildSettle,
+  grading: { readonly settle: BuildSettle; readonly judge: ScreenJudge },
 ): HeldComputer => {
   const actions = new BuildComputerActionLog();
   const turns = new DesktopBuildTurns();
@@ -195,8 +197,10 @@ const liveComputer = (
       witness: new DesktopBuildWitness(
         computer,
         actions,
-        settle,
-        source.kind === "bundle" ? source.path : undefined,
+        grading.settle,
+        source.kind === "bundle"
+          ? { path: source.path, judge: grading.judge }
+          : undefined,
       ),
       turns,
     },
@@ -391,7 +395,10 @@ export class DesktopBuildComputers {
             );
       this.#computers.set(
         id,
-        liveComputer(computer, target.workspace, source, this.settle),
+        liveComputer(computer, target.workspace, source, {
+          settle: this.settle,
+          judge: screenJudgeProcess(this.environment),
+        }),
       );
       return ok({
         value: {

@@ -1,7 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
 import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { isDeepStrictEqual } from "node:util";
 
 import { z } from "zod";
 
@@ -17,11 +15,7 @@ import {
   evaluateTaskChecks,
   type TaskCheckOutcome,
 } from "../../domain/desktop/appTaskChecks.js";
-import {
-  renderTaskSteps,
-  renderTaskVerifier,
-  taskVerifierArtifact,
-} from "../../domain/desktop/appTaskPython.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import {
   admitWitnessStage,
   appStateViews,
@@ -34,10 +28,8 @@ import {
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
-import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import {
   silentProgressReporter,
@@ -47,6 +39,12 @@ import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
 import { settledAppData, type BuildSettle } from "./DesktopBuildSettle.js";
 import { readTaskReaderViews } from "./DesktopTaskReaders.js";
+import {
+  bundleTaskDifference,
+  judgeScreenTask,
+  type Graded,
+  type WitnessBundle,
+} from "./DesktopBuildWitnessBundle.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -60,7 +58,12 @@ const FRESH =
 /** The computer routes the witness reads. */
 export type WitnessedComputer = Pick<
   AgentEnvComputer,
-  "appData" | "startRecording" | "endRecording" | "recordingSegments" | "exec"
+  | "appData"
+  | "startRecording"
+  | "endRecording"
+  | "recordingSegments"
+  | "exec"
+  | "callTool"
 >;
 
 type WitnessSummary = {
@@ -70,13 +73,6 @@ type WitnessSummary = {
   readonly status: "open" | "held" | "failed";
   readonly next_stage: WitnessStage | null;
   readonly record: WitnessRecord | null;
-};
-
-/** A task's results on the app's views, whether its files had settled, and whether the bound cut a read. */
-type Graded = {
-  readonly results: TaskCheckOutcome[];
-  readonly settled: boolean;
-  readonly read_cut: boolean;
 };
 
 /** One check of the task against the app's live state, and the witness stage it filed, if any. */
@@ -109,42 +105,6 @@ const usableFolder = async (directory: string): Promise<boolean> =>
     (cause: unknown) =>
       (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
   );
-
-/** The most bytes REA reads of each of the bundle's files for the task. */
-const BUNDLE_FILE_BYTES = 1024 * 1024;
-const stepsSchema = z.array(
-  z.looseObject({ type: z.string(), env_id: z.string().optional() }),
-);
-
-/** Why the bundle's steps and verifier for the task are not what the export writes for it; undefined when they are. */
-const bundleTaskDifference = async (
-  bundle: string,
-  task: DesktopTask,
-  signal: AbortSignal,
-): Promise<string | undefined> => {
-  const stepsPath = `tasks/${task.name}.json`;
-  const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
-  const [steps, verifier] = await Promise.all(
-    [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
-    ),
-  );
-  if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
-    return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
-  const parsed = safeParseUtf8Json(steps);
-  const listed = parsed.ok ? parsed.value : undefined;
-  const app = stepsSchema
-    .safeParse(listed)
-    .data?.find((step) => step.type === "deploy_env")?.env_id;
-  if (
-    app === undefined ||
-    !isDeepStrictEqual(listed, JSON.parse(renderTaskSteps(task, app)))
-  )
-    return `the bundle's ${stepsPath} differs from this task's steps.`;
-  return verifier.toString("utf8") === renderTaskVerifier(task, app)
-    ? undefined
-    : `the bundle's ${verifierPath} differs from this task's checks.`;
-};
 
 /**
  * A witness from its seed on: `open` while stages are checked, `saving`
@@ -203,7 +163,7 @@ export class DesktopBuildWitness {
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
     private readonly settle: BuildSettle = SETTLE_TIMING,
-    private readonly bundle?: string,
+    private readonly bundle?: WitnessBundle,
   ) {}
 
   async check(
@@ -252,6 +212,8 @@ export class DesktopBuildWitness {
     signal: AbortSignal,
     progress: ProgressReporter,
   ): Promise<Result<Graded, AnalysisError>> {
+    if (isScreenTask(task))
+      return judgeScreenTask(this.computer, this.bundle, task, signal);
     try {
       const read = await settledAppData(
         (turn) => this.computer.appData("data/get", turn),
@@ -478,7 +440,7 @@ export class DesktopBuildWitness {
     const differs =
       this.bundle === undefined
         ? undefined
-        : await bundleTaskDifference(this.bundle, task, signal);
+        : await bundleTaskDifference(this.bundle.path, task, signal);
     if (differs !== undefined)
       return err(
         refused(

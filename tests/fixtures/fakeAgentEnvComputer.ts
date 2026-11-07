@@ -15,7 +15,7 @@ import {
   type ServerResponse,
 } from "node:http";
 import type { AddressInfo } from "node:net";
-import { join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 import {
@@ -339,7 +339,13 @@ const buildRoute = async (
     id?: number;
     method?: string;
     argv?: string[];
-    params?: { paths?: string[] };
+    params?: {
+      paths?: string[];
+      parts?: {
+        file: { bytes: string };
+        metadata: Record<string, { path: string }>;
+      }[];
+    };
   };
   if (path === "/.well-known/agent-env.json")
     return {
@@ -355,6 +361,19 @@ const buildRoute = async (
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
     return execRoute(exec, token, request.argv ?? []);
+  // data/add writes each file part under the home, at the path its marker names.
+  if (path === "/agentenv" && request.method === "data/add") {
+    for (const part of request.params?.parts ?? []) {
+      const [marker] = Object.values(part.metadata);
+      if (marker === undefined) continue;
+      await mkdir(dirname(join(exec.home, marker.path)), { recursive: true });
+      await writeFile(
+        join(exec.home, marker.path),
+        Buffer.from(part.file.bytes, "base64"),
+      );
+    }
+    return { jsonrpc: "2.0", id: request.id, result: {} };
+  }
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (

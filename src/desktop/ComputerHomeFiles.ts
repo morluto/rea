@@ -1,0 +1,78 @@
+import { z } from "zod";
+
+/** Where a data-plane file part names its path in the home. */
+const DATA_OBJECTS = "urn:agentenv:data-objects/v1";
+/** A `data/get` answer: file parts, each naming its home path, or an error. */
+export const dataGetSchema = z.union([
+  z.object({
+    result: z.object({
+      parts: z.array(
+        z.looseObject({
+          file: z.looseObject({ bytes: z.string().optional() }).optional(),
+          metadata: z
+            .record(z.string(), z.looseObject({ path: z.string().optional() }))
+            .optional(),
+        }),
+      ),
+    }),
+  }),
+  z.object({ error: z.looseObject({ message: z.string() }) }),
+]);
+const answerSchema = z.union([
+  z.object({ result: z.looseObject({}) }),
+  z.object({ error: z.looseObject({ message: z.string() }) }),
+]);
+
+/**
+ * Write files under a computer user's home, by home path, through the
+ * driver's `data/add`, sent by `post` to the computer's own RPC route;
+ * `redacted` strips the control token from an error the computer returns.
+ */
+export const writeHomeFiles = async (
+  post: (body: unknown) => Promise<unknown>,
+  redacted: (text: string) => string,
+  files: ReadonlyMap<string, Buffer>,
+): Promise<void> => {
+  const parts = [...files].map(([path, bytes]) => ({
+    kind: "file",
+    file: { bytes: bytes.toString("base64") },
+    metadata: { [DATA_OBJECTS]: { path } },
+  }));
+  const answer = answerSchema.parse(
+    await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/add",
+      params: { parts },
+    }),
+  );
+  if ("error" in answer)
+    throw new Error(`data/add failed: ${redacted(answer.error.message)}`);
+};
+
+/** The files under paths of a computer user's home, by home path, through the driver's `data/get` sent by `post`. */
+export const readHomeFiles = async (
+  post: (body: unknown) => Promise<unknown>,
+  redacted: (text: string) => string,
+  paths: readonly string[],
+): Promise<ReadonlyMap<string, Buffer>> => {
+  const answer = dataGetSchema.parse(
+    await post({
+      jsonrpc: "2.0",
+      id: 1,
+      method: "data/get",
+      params: { paths },
+    }),
+  );
+  if ("error" in answer)
+    throw new Error(`data/get failed: ${redacted(answer.error.message)}`);
+  return new Map(
+    answer.result.parts.flatMap((part) => {
+      const path = Object.values(part.metadata ?? {})[0]?.path;
+      const encoded = part.file?.bytes;
+      return path === undefined || encoded === undefined
+        ? []
+        : [[path, Buffer.from(encoded, "base64")] as const];
+    }),
+  );
+};

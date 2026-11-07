@@ -6,6 +6,11 @@ import {
   PYTHON_READER_VIEWS,
   renderReaderConstants,
 } from "./appTaskReaders.js";
+import {
+  isScreenTask,
+  renderScreenVerifier,
+  type ScreenExamples,
+} from "./appTaskScreen.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -449,8 +454,22 @@ async def _settled_views(url):
     return views, True, False
 `;
 
-/** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
-export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
+/** The verifier artifact: a screen-judged task's judge, with the build's examples, or else reads of the app's state through its data/get once its files settle and the task's checks on them. */
+export const renderTaskVerifier = (
+  task: DesktopTask,
+  app: string,
+  examples?: ScreenExamples,
+): string => {
+  if (!isScreenTask(task)) return renderFileVerifier(task, app);
+  if (examples === undefined)
+    throw new TypeError(
+      "A screen-judged task's verifier needs the build's examples.",
+    );
+  return renderScreenVerifier(task, app, examples);
+};
+
+/** The verifier of a task whose checks read files: the app's data/get once its files settle, then the checks. */
+const renderFileVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
 
 It reads the app's data/get through the computer, takes the typed views of its files and evaluates each check: no

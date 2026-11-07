@@ -1,4 +1,4 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -493,6 +493,109 @@ describe("exportDesktopApplication with a task's readers", () => {
       "not under the app's owned paths",
     );
   });
+});
+
+/** The notes capture with nothing changed between its checkpoints, as an app that keeps its state on screen leaves it. */
+const screenOnlyCapture = () => {
+  const base = capture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? checkpoint
+          : { ...checkpoint, changes: [], retained: [] },
+      ),
+    },
+  };
+};
+
+const SCREEN_TASK = {
+  name: "note-shown",
+  prompt: "In Notes, show the shopping list.",
+  checks: [
+    {
+      id: "shown",
+      kind: "screen_judge",
+      question: "Does the window show the shopping list?",
+    },
+  ],
+};
+
+/** Export `task` from a capture with a screenshot of each named checkpoint, as a build computer keeps them. */
+const exportScreenTask = async (
+  task: unknown,
+  base = screenOnlyCapture(),
+  shots: Readonly<Record<string, string>> = {
+    baseline: "seed shot",
+    edited: "end shot",
+  },
+) => {
+  const scratch = await createTestTempDirectory("desktop-screen-");
+  const screens = join(scratch, "screens");
+  await mkdir(screens);
+  for (const [name, text] of Object.entries(shots))
+    await writeFile(join(screens, `${name}.jpg`), text);
+  const path = join(scratch, "task.json");
+  await writeFile(path, JSON.stringify(task));
+  const directory = join(scratch, "bundle");
+  const result = await exportDesktopApplication(
+    {
+      capture: await writeCaptureFolder(base),
+      directory,
+      name: undefined,
+      tasks: [path],
+      screens,
+    },
+    readers,
+  );
+  return { result, directory };
+};
+
+describe("exportDesktopApplication with a screen-judged task", () => {
+  it("ships the seed's screenshot as the judge's failing example and the end's as its passing one, and leaves judging to the witness", async () => {
+    const { result, directory } = await exportScreenTask(SCREEN_TASK);
+
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-shown", checks: 1, failing_on_seed: [] },
+    });
+    expect(
+      (result.normalized_result as { limitations: string[] }).limitations.some(
+        (line) => line.includes("witness") && line.includes("judge"),
+      ),
+    ).toBe(true);
+    const verifier = await readFile(
+      join(directory, "artifacts/note-shown-check/verify.py"),
+      "utf8",
+    );
+    expect(verifier).toContain(Buffer.from("seed shot").toString("base64"));
+    expect(verifier).toContain(Buffer.from("end shot").toString("base64"));
+    expect(
+      verifier.indexOf(Buffer.from("seed shot").toString("base64")),
+    ).toBeLessThan(
+      verifier.indexOf(Buffer.from("end shot").toString("base64")),
+    );
+    const readme = await readFile(join(directory, "README.md"), "utf8");
+    expect(readme).toContain("Does the window show the shopping list?");
+    expect(readme).toContain("--judge-model");
+  });
+
+  it.each([
+    [SCREEN_TASK, capture(), undefined, "a check can read"],
+    [SCREEN_TASK, screenOnlyCapture(), { baseline: "seed shot" }, "screenshot"],
+  ])(
+    "refuses a screen judge where a file shows the change or a screenshot is missing (%#)",
+    async (task, base, shots, message) => {
+      const { result, directory } = await exportScreenTask(task, base, shots);
+      expect(result).toBeInstanceOf(Error);
+      expect((result as Error & { userMessage: string }).userMessage).toContain(
+        message,
+      );
+      expect(await exists(directory)).toBe(false);
+    },
+  );
 });
 
 describe("exportDesktopApplication with a task's prompt", () => {

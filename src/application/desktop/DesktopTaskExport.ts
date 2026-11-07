@@ -19,6 +19,12 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
+import {
+  DEFAULT_JUDGE_MODEL,
+  SCREEN_JUDGE_VOTES,
+  isScreenTask,
+  readableChanges,
+} from "../../domain/desktop/appTaskScreen.js";
 import { STATE_PATH_INPUTS } from "../../domain/desktop/buildCapture.js";
 import {
   versionAt,
@@ -63,6 +69,8 @@ type TaskTarget = Pick<
     readers: readonly DesktopTaskReader[],
     end: keyof StateEnds,
   ) => Promise<ReadonlyMap<string, TaskFileView>>;
+  /** The screenshot a build computer took at the seed or the end, if any. */
+  readonly screens: (end: keyof StateEnds) => Promise<Buffer | undefined>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -74,6 +82,8 @@ export interface AdmittedTask {
   readonly readme: string;
   /** What the export says about the task, such as a prompt that does not name the app. */
   readonly limitations: readonly string[];
+  /** Whether the task judges the screen, whose app then resets by relaunching when it owns no files. */
+  readonly screenJudged?: boolean;
   readonly summary: {
     readonly name: string;
     readonly checks: number;
@@ -194,6 +204,8 @@ const targetProblem = (
   target: TaskTarget,
   views: TaskViews,
 ): string | undefined => {
+  if (check.kind === "screen_judge")
+    return identityProblem([check.question], target);
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
   // What the check compares and names; its field names, kind and id label it.
@@ -314,6 +326,92 @@ const readersAtEnds = async (
   return { seed: await target.readerViews(readers, "seed"), end };
 };
 
+/** The README's section on a screen-judged task: its questions and how its judge is configured. */
+const screenReadme = (task: DesktopTask, app: string): string => `
+## Task \`${task.name}\`
+
+\`tasks/${task.name}.json\` deploys the app, has the agent work through the computer from the prompt below, and grades
+the outcome with \`artifacts/${taskVerifierArtifact(task)}/verify.py\`, which takes a screenshot of the computer once the
+agent stops and asks a model, the judge, each question below ${String(SCREEN_JUDGE_VOTES)} times; a check passes when most answers are yes. The
+judge sees two labelled screenshots from the build first: the app at the seed, where the answer is no, and with the
+task done, where it is yes. \`evals/${app}.toml\` names the task, so a run of the bundle runs it.
+
+${task.prompt
+  .split("\n")
+  .map((line) => `> ${line}`)
+  .join("\n")}
+
+Questions, each of which must be answered yes:
+
+${task.checks.map((check) => `- \`${check.id}\`: ${check.kind === "screen_judge" ? check.question : ""}`).join("\n")}
+
+The judge's model is \`[model.roles] judge\` in the runner's \`.agentenv/config.toml\`, else its \`[model] default\`, else
+\`${DEFAULT_JUDGE_MODEL}\`, called through \`LITELLM_BASE_URL\` and \`LITELLM_API_KEY\` or \`[model] base_url\` and \`api_key\`.
+\`agent-env run --judge-model\` does not reach it. Without an endpoint the verifier raises, so the run fails rather than
+scoring the agent. The export judged no screen; REA's witness ran this judge on a fresh screenshot at each stage.
+
+To measure a solve rate, run the task k times (3 by default) and count the runs whose summary line says \`passed\`:
+
+    agent-env run <this folder> --task ${task.name} --agent claude-code --model MODEL
+`;
+
+/** Admit a screen-judged task: no file shows the change, and the build's seed and end screenshots ship as the judge's examples. */
+const admitScreenTask = async (
+  task: DesktopTask,
+  target: TaskTarget,
+  views: TaskViews,
+): Promise<AdmittedTask> => {
+  const changed = readableChanges(views.seed, views.end);
+  if (changed.length > 0)
+    throw refuse(
+      `A screen_judge judges state no file shows, but ${changed.join(", ")} changed between the seed and the end in a way a check can read.`,
+      "task",
+      `Check what changed in those files instead; ${DRAFT}.`,
+    );
+  const [seed, end] = await Promise.all([
+    target.screens("seed"),
+    target.screens("end"),
+  ]);
+  if (seed === undefined || end === undefined)
+    throw refuse(
+      `A screen_judge needs the screenshots a build computer takes at the seed and end checkpoints, its judge's examples, and the capture has no ${seed === undefined ? "seed" : "end"} screenshot.`,
+      "task",
+      "Capture the app in a build computer, marking seed and end there, and export from it.",
+    );
+  const examples = {
+    fail: seed.toString("base64"),
+    pass: end.toString("base64"),
+  };
+  return {
+    screenJudged: true,
+    summary: {
+      name: task.name,
+      checks: task.checks.length,
+      failing_on_seed: [],
+    },
+    limitations: [
+      ...(namesApp(task.prompt, target)
+        ? []
+        : [
+            `The task's prompt does not name the app (${target.title}), so start it with "In ${target.title}, ".`,
+          ]),
+      "The export judges no screen, so it did not check the screen_judge questions on the seed and the end: the witness does, running the bundle's own judge on a fresh screenshot at each stage, which needs a model endpoint.",
+    ],
+    readme: screenReadme(task, target.name),
+    files: [
+      {
+        path: `tasks/${task.name}.json`,
+        content: renderTaskSteps(task, target.name),
+      },
+      {
+        path: `artifacts/${taskVerifierArtifact(task)}/verify.py`,
+        content: renderTaskVerifier(task, target.name, examples),
+      },
+      { path: `evals/${target.name}.toml`, content: renderTaskEval([task]) },
+    ],
+  };
+};
+
 /** Read, validate and render the task a caller passed with the export, if any. */
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
 const namesApp = (
@@ -359,6 +457,7 @@ export const admitDesktopTask = async (
     end: viewsAt(target, "end"),
   };
   refuseTargetProblems(task, target, views);
+  if (isScreenTask(task)) return admitScreenTask(task, target, views);
   const read = await readersAtEnds(task, target);
   const end = evaluateTaskChecks(task.checks, views.end, read.end);
   const failing = end.find((outcome) => !outcome.passed);

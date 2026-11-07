@@ -178,6 +178,12 @@ const registerDesktopExportCommand = (
         .describe(
           "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
         ),
+      screens: z
+        .string()
+        .optional()
+        .describe(
+          "Folder holding a screenshot of each checkpoint as <name>.jpg, which a build computer takes; a task's screen_judge checks ship the seed's and the end's as their judge's examples",
+        ),
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -206,6 +212,10 @@ const registerDesktopExportCommand = (
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
                     syntheticSeed: options.syntheticSeed,
+                    screens:
+                      options.screens === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.screens),
                   },
                   readers,
                   signal,

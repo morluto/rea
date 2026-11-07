@@ -334,12 +334,12 @@ const solveEndpointCheck = (where: string | undefined): DoctorCheck =>
     "solve-endpoint",
     where !== undefined,
     where === undefined
-      ? "No model endpoint is configured for solver runs."
-      : `Solver runs use the model endpoint in ${where}.`,
+      ? "No model endpoint is configured for solver runs or for a screen_judge task's judge, which its witness and its runs need."
+      : `Solver runs and screen_judge tasks' judges use the model endpoint in ${where}.`,
     {
       classification: "missing_dependency",
       remediation:
-        "For solver runs, export LITELLM_BASE_URL and LITELLM_API_KEY in the shell that starts the agent, or set base_url and api_key under [model] in .agentenv/config.toml.",
+        "For solver runs, and to witness or run a screen_judge task, export LITELLM_BASE_URL and LITELLM_API_KEY in the shell that starts the agent, or set base_url and api_key under [model] in .agentenv/config.toml.",
     },
   );
 

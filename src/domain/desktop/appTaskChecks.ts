@@ -43,6 +43,8 @@ export type TaskCheckOutcome = {
 };
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
+/** A check that reads a file's view, every kind but the screen judge. */
+type FileCheck = Exclude<DesktopTaskCheck, { kind: "screen_judge" }>;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<
   DesktopTaskCheck,
   { kind: Kind }
@@ -135,7 +137,7 @@ const truncatedView = (format: string | null, view: JsonValue | null) => {
 
 /** A file's view of one format, or why the check cannot read it; an absent file reads as empty. */
 const viewOf = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
   format: string | undefined,
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
@@ -508,7 +510,7 @@ const rowVerdict = (
 };
 
 const verdict = (
-  check: DesktopTaskCheck,
+  check: FileCheck,
   entry: TaskFileView | undefined,
 ): Verdict => {
   switch (check.kind) {
@@ -547,10 +549,14 @@ export const evaluateTaskChecks = (
 ): readonly TaskCheckOutcome[] =>
   checks.map((check) => ({
     id: check.id,
-    ...verdict(
-      check,
-      "reader" in check && check.reader !== undefined
-        ? readers.get(check.reader)
-        : views.get(check.file),
-    ),
+    ...(check.kind === "screen_judge"
+      ? unread(
+          "a screen judge's question is answered from the computer's screen by the bundle's judge, which REA's evaluator does not run",
+        )
+      : verdict(
+          check,
+          "reader" in check && check.reader !== undefined
+            ? readers.get(check.reader)
+            : views.get(check.file),
+        )),
   }));

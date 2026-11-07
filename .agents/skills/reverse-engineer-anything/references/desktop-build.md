@@ -342,7 +342,9 @@ the first source that has the app:
    draft command names its own cause to fix. When `draft.files` is empty,
    `draft.notes` says why:
    - `no_change`: nothing was saved between `seed` and `end`. Capture again
-     on a new build computer, and save before marking `end`.
+     on a new build computer, and save before marking `end`. When the app
+     keeps the task's state only on screen, such as a calculator's result,
+     judge the screen instead (see Judge the screen).
    - `unowned_changes` with `no_document`: the app saved your document
      where REA did not count it as the app's. Its `files` list what changed,
      with their roles; the document is among them. Close the computer and
@@ -351,7 +353,7 @@ the first source that has the app:
    - `uncheckable_changes`: the app saved the change in dconf, as gedit does
      its preferences, and no check reads dconf. Saving again does not help:
      choose a change the app saves in a file, and capture again on a new
-     build computer.
+     build computer, or judge the screen (see Judge the screen).
    - `unreadable_changes`: a dconf database changed but REA could not read
      it; `error` says why. This is not evidence the app saved there: report
      the error rather than changing the task.
@@ -524,7 +526,8 @@ with `REA ` (with the space), and name the copy `{file}`:
   Quick Setup with Continue, save the preferences (Edit → Preferences, then
   Save Preferences in the menu at its bottom left), and read a probe
   checkpoint's `changed_files` for `.config/blender/4.0/config/userpref.blend`
-  before `seed`, so solves start on the scene.
+  before `seed`, so solves start on the scene. Blender often takes the first click on a
+  menu or a dialog's button only to focus it: click again.
 
 - A format LibreOffice opens but REA cannot read, such as a legacy `.xls`,
   converted with `--convert-to`:
@@ -562,6 +565,33 @@ and `member_count`; `lines` readers `lines_present`, `lines_absent` and
 and the end: when a check through it fails on the end, the refusal shows
 what the reader printed, and a reader that fails shows its error and the end
 of its stderr. Fix the reader or the check from that and export again.
+
+### Judge the screen
+
+Only when no file shows the change, as when the draft notes `no_change`
+because the app keeps its state on screen, write the task's checks as
+screen judges: `{"id": "shown", "kind": "screen_judge", "question": "Does the
+calculator's display show 8.568?"}`. A model, the judge, answers the question
+on a screenshot three times, and the check passes when most answers are yes.
+
+- REA keeps a screenshot at each checkpoint. Mark `seed` with the screen
+  showing the state before the task, where the answer is no, and `end` with
+  the change showing, where it is yes: the bundle ships both as the judge's
+  examples.
+- Ask about what the change makes visible, with exact values, so the near
+  miss is a no: a result, a label, a selected item. Avoid what a window
+  moved or a cursor blinking can change.
+- The prompt asks to leave the result showing, since the judge sees only
+  the screen when the agent stops.
+- A task with screen judges holds only screen judges and no readers. The
+  export refuses one when a file shows the change, and checks none of its
+  questions: the witness does, running the bundle's own judge with the
+  runner's model endpoint (`LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+  `[model]` in `.agentenv/config.toml`) on a fresh screenshot at each stage.
+  Without an endpoint the witness's check fails: say what to set and stop.
+- The judge's model is `[model.roles] judge`, else `[model] default`, else
+  `anthropic/claude-sonnet-5-5`. `agent-env run --judge-model` does not
+  reach it. Each grade costs about $0.02.
 
 ## Export
 
