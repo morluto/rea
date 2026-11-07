@@ -637,8 +637,8 @@ event XML is not decoded in this version, so channel, provider, event ID, level
 and `EventData` values are absent rather than inferred. Typed payload values and
 event templates are not resolved. Truncated records, undecodable chunks and
 disagreeing chunk numbers remain diagnostics instead of ending the inventory
-silently. See [offline Windows event logs](evtx-archives.md) for identities and
-resource bounds.
+silently. See [offline Windows event logs](../guides/data/evtx-archives.md) for
+identities and resource bounds.
 
 ## Retained application Evidence inputs
 

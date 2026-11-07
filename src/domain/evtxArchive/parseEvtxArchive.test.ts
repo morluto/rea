@@ -245,7 +245,9 @@ describe("parseEvtxArchive", () => {
       "first-record-id-mismatch",
     );
   });
+});
 
+describe("parseEvtxArchive damaged input", () => {
   it("skips a chunk without the ElfChnk signature", () => {
     const broken = Buffer.alloc(CHUNK_BYTES);
     const archive = parsed(evtx([broken]));
@@ -293,27 +295,27 @@ describe("parseEvtxArchive", () => {
     );
     expect(archive.source_coverage.status).toBe("partial");
   });
+});
 
-  describe("chunk boundaries", () => {
-    it("stops at max_records and says so", () => {
-      const archive = parsed(
-        evtx([chunk(0, [record(1), record(2), record(3)])]),
-        { maxRecords: 2 },
-      );
-      expect(archive.events).toHaveLength(2);
-      expect(archive.diagnostics.map((entry) => entry.code)).toContain(
-        "record-limit-reached",
-      );
-      expect(archive.source_coverage.status).toBe("partial");
-    });
+describe("parseEvtxArchive chunk boundaries", () => {
+  it("stops at max_records and says so", () => {
+    const archive = parsed(
+      evtx([chunk(0, [record(1), record(2), record(3)])]),
+      { maxRecords: 2 },
+    );
+    expect(archive.events).toHaveLength(2);
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "record-limit-reached",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+  });
 
-    it("accepts an empty log as an empty inventory", () => {
-      const archive = parsed(evtx([chunk(0, [])]));
-      expect(archive.events).toEqual([]);
-      expect(archive.chunks).toHaveLength(1);
-      expect(archive.diagnostics).toEqual([]);
-      expect(archive.source_coverage.status).toBe("complete-within-scope");
-    });
+  it("accepts an empty log as an empty inventory", () => {
+    const archive = parsed(evtx([chunk(0, [])]));
+    expect(archive.events).toEqual([]);
+    expect(archive.chunks).toHaveLength(1);
+    expect(archive.diagnostics).toEqual([]);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
   });
 });
 
