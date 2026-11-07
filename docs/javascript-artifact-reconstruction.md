@@ -51,9 +51,10 @@ The equivalent MCP input is:
 `input_path` must be absolute. `format` accepts `auto`, `asar`, `directory`, or
 `file` (a single JavaScript/TypeScript source file).
 `integrity_policy` accepts `fail` or `record-and-continue`; both CLI routes and
-the MCP tool default to `fail`. `timeout_policy` (`--timeout-policy` on
-`analyze-javascript-application`) accepts `stop` or `record-and-continue` and
-defaults to `stop`.
+the MCP tool default to `fail`. Optional `timeout_policy` (`--timeout-policy` on
+`analyze-javascript-application`) accepts `stop` or `record-and-continue`;
+omitting it defaults execution to `stop` while keeping `timeout_policy` out of
+`Evidence.parameters`.
 Evidence parameters retain the caller-selected `input_path`, including a
 symlink alias. Both CLI routes anchor relative inputs to their working
 directory without resolving symlinks. The subject and normalized result use
@@ -297,9 +298,13 @@ partial Evidence by default (`timeout_policy: "stop"`). Selecting
 on `analyze-javascript-application`) records the timed-out source as an
 interrupted processing gap with `javascript_analysis_worker_timeout_ms`, starts
 a fresh worker, and continues analyzing remaining sources into a partial-coverage
-Evidence result. Cancellation after source analysis begins can also retain
-completed facts, including when interrupted during cleanup, graph construction,
-or Evidence sealing. Unexamined relationships remain unknown.
+Evidence result. Because `analysis_timeout_ms` applies per source (and during
+preload discovery when `"type": "module"` `.js` files are present),
+`record-and-continue` enforces no separate whole-run time limit unless bounded
+via a smaller `analysis_timeout_ms`, `source_paths`, or caller cancellation.
+Cancellation after source analysis begins can also retain completed facts,
+including when interrupted during cleanup, graph construction, or Evidence
+sealing. Unexamined relationships remain unknown.
 
 Per-file gaps identify the applicable processing phase: JavaScript source analysis
 uses AST authority, while package/JSON, HTML-reference and source-map processing

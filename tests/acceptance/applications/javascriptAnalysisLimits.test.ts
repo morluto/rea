@@ -88,7 +88,6 @@ cliTest.for(cases)(
       input_path: root,
       format: "auto",
       integrity_policy: "fail",
-      timeout_policy: "stop",
       ...controls,
     });
   },
@@ -119,7 +118,6 @@ it("preserves MCP analysis limits in retained Evidence and an exported bundle ro
       input_path: root,
       format: "auto",
       integrity_policy: "fail",
-      timeout_policy: "stop",
       ...controls,
     });
   }
@@ -211,7 +209,6 @@ cliTest(
       input_path: root,
       format: "auto",
       integrity_policy: "fail",
-      timeout_policy: "stop",
       max_heap_mb: 128,
       analysis_timeout_ms: 1,
       source_paths: sourcePaths,

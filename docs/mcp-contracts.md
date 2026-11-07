@@ -527,8 +527,13 @@ cleanup uncertainty.
 
 A host timeout without a REA result is different: execution and cleanup remain
 unknown. Increasing an advertised `analysis_timeout_ms` cannot fix a shorter
-client deadline. Configure the client's tool timeout with execution, cleanup
-and delivery headroom, or report that change is needed when not authorized.
+client deadline. In `analyze_javascript_application`, `analysis_timeout_ms`
+applies per source (and during preload discovery when module `.js` files are
+present), so `timeout_policy: "record-and-continue"` enforces no separate
+whole-run time limit unless bounded via a smaller `analysis_timeout_ms`,
+`source_paths`, or caller cancellation. Configure the client's tool timeout with
+execution, cleanup and delivery headroom, or report that change is needed when
+not authorized.
 Session status does not establish that all target-free work stopped. Detailed
 host settings and bounded retry guidance live in the shipped skill's
 [recovery reference](https://github.com/morluto/rea/blob/main/.agents/skills/reverse-engineer-anything/references/connection-and-recovery.md#distinguish-client-and-server-deadlines).

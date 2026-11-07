@@ -29,11 +29,15 @@ const countSchema = z.int().min(0);
  *
  * `stop` interrupts the remaining sources and returns partial Evidence;
  * `record-and-continue` records the timed-out source as an explicit processing
- * gap and continues analyzing remaining sources with a fresh worker.
+ * gap and continues analyzing remaining sources with a fresh worker (enforcing
+ * no separate whole-run deadline unless bounded via `analysis_timeout_ms`,
+ * `source_paths`, or caller cancellation). Omitting this optional policy keeps
+ * it out of `Evidence.parameters` while defaulting execution to `stop`.
  */
-export const javaScriptTimeoutPolicySchema = z
-  .enum(["stop", "record-and-continue"])
-  .default("stop");
+export const javaScriptTimeoutPolicySchema = z.enum([
+  "stop",
+  "record-and-continue",
+]);
 
 /** Parsed per-source JavaScript timeout policy. */
 export type JavaScriptTimeoutPolicyName = z.infer<
@@ -45,7 +49,11 @@ export const analyzeJavaScriptApplicationInputSchema = z.strictObject({
   input_path: localPathStringSchema,
   format: z.enum(["auto", "asar", "directory", "file"]).default("auto"),
   integrity_policy: artifactIntegrityPolicySchema,
-  timeout_policy: javaScriptTimeoutPolicySchema,
+  timeout_policy: javaScriptTimeoutPolicySchema
+    .optional()
+    .describe(
+      "Behavior when a JavaScript source reaches its per-source analysis_timeout_ms deadline (also used during preload discovery when module .js files are present); defaults to stop. record-and-continue records timed-out sources and continues with no separate whole-run time limit unless bounded via a smaller analysis_timeout_ms, source_paths, or caller cancellation.",
+    ),
   source_paths: javaScriptSourcePathsSchema.optional(),
   ...javaScriptAnalysisResourceControlsSchema.shape,
 });

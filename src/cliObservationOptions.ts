@@ -122,7 +122,9 @@ export const javascriptApplicationOptions = z.object({
     .enum(["fail", "record-and-continue"])
     .default("fail")
     .describe("Behavior when declared application integrity does not match"),
-  timeoutPolicy: javaScriptTimeoutPolicySchema.describe(
-    "Behavior when a JavaScript source reaches analysis_timeout_ms",
-  ),
+  timeoutPolicy: javaScriptTimeoutPolicySchema
+    .optional()
+    .describe(
+      "Behavior when a JavaScript source reaches its per-source analysis_timeout_ms deadline, including preload discovery on module .js files (defaults to stop; record-and-continue enforces no separate whole-run time limit unless bounded via a smaller --analysis-timeout-ms, --source-path, or caller cancellation)",
+    ),
 });

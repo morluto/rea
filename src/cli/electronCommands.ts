@@ -368,7 +368,9 @@ const registerJavaScriptApplicationCommand = (
                   args.path === "" ? args.path : absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
-                timeout_policy: options.timeoutPolicy,
+                ...(options.timeoutPolicy === undefined
+                  ? {}
+                  : { timeout_policy: options.timeoutPolicy }),
                 ...(options.maxSemanticNodes === undefined
                   ? {}
                   : { max_semantic_nodes: options.maxSemanticNodes }),

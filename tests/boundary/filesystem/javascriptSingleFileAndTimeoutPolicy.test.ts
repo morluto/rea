@@ -156,6 +156,7 @@ it.each([
     if (!outcome.ok) throw outcome.error;
 
     const evidence = parseEvidence(outcome.value);
+    expect(evidence.parameters).not.toHaveProperty("timeout_policy");
     expect(evidence.subject).toMatchObject({
       name: filename,
       format: "file",
@@ -562,3 +563,49 @@ it("recovers with a fresh real worker subprocess after a phase-gated timeout whe
     "/recovered-health",
   );
 }, 30_000);
+
+it("omits omitted timeout_policy from Evidence parameters while recording explicit timeout_policy values", async () => {
+  const root = await createTestTempDirectory("rea-js-timeout-policy-params-");
+  await writeFile(join(root, "index.mjs"), "export const ready = true;\n");
+
+  const omittedOutcome = await analyzeJavaScriptApplication({
+    input_path: root,
+  });
+  if (!omittedOutcome.ok) throw omittedOutcome.error;
+  const omittedEvidence = parseEvidence(omittedOutcome.value);
+  expect(omittedEvidence.parameters).not.toHaveProperty("timeout_policy");
+  expect(omittedEvidence.parameters).toEqual({
+    input_path: root,
+    format: "auto",
+    integrity_policy: "fail",
+  });
+
+  const explicitStopOutcome = await analyzeJavaScriptApplication({
+    input_path: root,
+    timeout_policy: "stop",
+  });
+  if (!explicitStopOutcome.ok) throw explicitStopOutcome.error;
+  const explicitStopEvidence = parseEvidence(explicitStopOutcome.value);
+  expect(explicitStopEvidence.parameters).toEqual({
+    input_path: root,
+    format: "auto",
+    integrity_policy: "fail",
+    timeout_policy: "stop",
+  });
+  expect(explicitStopEvidence.evidence_id).not.toBe(
+    omittedEvidence.evidence_id,
+  );
+
+  const explicitContinueOutcome = await analyzeJavaScriptApplication({
+    input_path: root,
+    timeout_policy: "record-and-continue",
+  });
+  if (!explicitContinueOutcome.ok) throw explicitContinueOutcome.error;
+  const explicitContinueEvidence = parseEvidence(explicitContinueOutcome.value);
+  expect(explicitContinueEvidence.parameters).toEqual({
+    input_path: root,
+    format: "auto",
+    integrity_policy: "fail",
+    timeout_policy: "record-and-continue",
+  });
+});

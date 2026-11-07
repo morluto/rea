@@ -193,12 +193,13 @@ export const reconstructJavaScriptArtifact = async (
           overrides?.["javascript.analysis_timeout_ms"] ??
           JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
       };
+      const timeoutPolicy = input.timeout_policy ?? "stop";
       const preloads = await discoverJavaScriptPreloadPaths(
         files,
         sourceLimits,
         scope,
         signal,
-        input.timeout_policy,
+        timeoutPolicy,
       );
       const worker = await createJavaScriptSourceAnalysis(
         sourceLimits,
@@ -242,7 +243,7 @@ export const reconstructJavaScriptArtifact = async (
           },
           preloads.paths,
           preloads.limitations,
-          input.timeout_policy,
+          timeoutPolicy,
         );
       } finally {
         try {
