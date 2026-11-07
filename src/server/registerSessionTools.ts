@@ -1,3 +1,4 @@
+import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import { parseEspFlashAddress } from "../domain/firmware/espFlashSelection.js";
 import { registerNativeFunctionMatchingTool } from "./registerNativeFunctionMatchingTool.js";
 import type { EvidenceMcpServer } from "./EvidenceMcpServer.js";
@@ -9,7 +10,11 @@ import {
   inspectAddressContext,
 } from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { createProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
+import {
+  createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
+} from "../application/process/ProcessEvidence.js";
+import { prepareProcessScenarioPlan } from "../application/process/ProcessScenarioPreparation.js";
 import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
@@ -34,10 +39,7 @@ import {
   registerEvidenceTools,
   registerUnknownTools,
 } from "./registerSessionRecordTools.js";
-import {
-  registerSessionStatusTool,
-  type SessionAvailabilityProbes,
-} from "./registerSessionStatusTool.js";
+import { registerSessionStatusTool } from "./registerSessionStatusTool.js";
 import { sessionAvailabilityPolicy } from "./sessionAvailabilityPolicy.js";
 import type { AvailabilityPolicy } from "../application/CapabilityInventory.js";
 import { logToolExecution } from "./toolLogging.js";
@@ -112,6 +114,39 @@ const registerProcessTools = ({
         context.mcpReq.signal,
         async () => {
           const progress = mcpProgressReporter(context);
+          if (input.dry_run) {
+            const prepared = await logToolExecution(
+              logger,
+              captureContract.name,
+              () =>
+                prepareProcessScenarioPlan(
+                  input,
+                  environment,
+                  process.platform,
+                  context.mcpReq.signal,
+                ),
+            );
+            if (!prepared.ok)
+              return server.delivery.toCallToolResult(
+                prepared,
+                captureContract,
+              );
+            const evidence = createProcessScenarioPlanEvidence(
+              prepared.value,
+              process.platform,
+            );
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok)
+              return server.delivery.toCallToolResult(
+                recorded,
+                captureContract,
+              );
+            return server.delivery.toEvidenceToolResult(
+              evidence,
+              captureContract,
+              recorded,
+            );
+          }
           const captured = await logToolExecution(
             logger,
             captureContract.name,
@@ -150,7 +185,7 @@ const registerProcessTools = ({
   );
 };
 
-export interface LifecycleToolRegistration extends SessionAvailabilityProbes {
+export interface LifecycleToolRegistration extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly logger: Logger;
@@ -239,13 +274,16 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toCallToolResult(opened, openContract);
+        : server.delivery.toOpenFailureToolResult(
+            opened,
+            openContract.returnsTargetContent,
+          );
     },
   );
 };
 
 /** Register MCP-only target lifecycle operations on a long-lived session. */
-export interface SessionToolOptions extends Partial<SessionAvailabilityProbes> {
+export interface SessionToolOptions extends Partial<CapabilityAvailabilityProbes> {
   readonly artifactResources: ArtifactResourceScope;
   /** Server environment snapshot that process capture resolves and inherits. */
   readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -460,7 +498,8 @@ export const registerSessionTools = (
 const missingAndroidAvailability = async (): Promise<ProviderAvailability> => ({
   status: "unavailable",
   code: "not_configured",
-  reason:
+  reason: "No Android JADX analysis provider is configured.",
+  remediation:
     "Set REA_JADX_MCP_JAR to a caller-supplied jadx-headless-mcp 0.7.1 JAR and provide a full JDK on Linux, macOS, or Windows x64 with its matching bundled native controls.",
   diagnostics: { configured: false },
 });

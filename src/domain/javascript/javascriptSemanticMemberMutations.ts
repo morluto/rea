@@ -69,11 +69,11 @@ import {
 import { semanticCoercionOperands } from "./javascriptSemanticLanguageInvocations.js";
 import { SEMANTIC_ALIAS_SELECTION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
-  semanticCopiedReferencePath,
   semanticKnownArrayIteration,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
   semanticArrayIndex,
   joinSemanticPropertyPaths,
@@ -162,11 +162,7 @@ const localAccessorMethods = (
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
       if (binding === undefined) continue;
-      const selected = semanticBindingAtRead(
-        binding,
-        node,
-        state.parentsByNode,
-      ).binding;
+      const selected = semanticBindingAtRead(binding, node, state).binding;
       for (const source of [
         ...selected.initializers,
         ...selected.referenceInitializers,
@@ -1652,7 +1648,7 @@ export function* collectSemanticMemberMutationsSteps(
           else if (node.init != null) markEscaped(node.init, exit);
         }
       }
-      for (const source of semanticPropertyReadSources(node, parent)) {
+      for (const source of semanticPropertyReadSources(node, parent, state)) {
         if (semanticReferenceSourcesInactive(source, state)) continue;
         for (const effect of getterEffects(
           source.node,

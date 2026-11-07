@@ -4,10 +4,8 @@ import { rm } from "node:fs/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import { createIdaTarget, RecordingIdaMcp } from "../../fixtures/idaMcp.js";
 import { IdaSessionClient } from "../../../src/ida/IdaSessionClient.js";
-import {
-  IDA_OPERATIONS,
-  idaCapabilities,
-} from "../../../src/ida/IdaProviderCapabilities.js";
+import { idaCapabilities } from "../../../src/ida/IdaProviderCapabilities.js";
+import { IDA_OPERATIONS } from "../../../src/ida/IdaProviderMetadata.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type { JsonValue } from "../../../src/domain/jsonValue.js";

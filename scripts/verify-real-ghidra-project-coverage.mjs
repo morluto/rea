@@ -297,7 +297,11 @@ await withVerifierCleanup(async () => {
         });
         const error = requireMcpToolError(refused);
         assert.equal(error.code, "evidence_integrity_mismatch");
-        assert.match(error.details.reason, /profile_mismatch/u);
+        assert.deepEqual(error.details.binding_mismatch.profile_digest, {
+          snapshot: createAnalysisProfile(profile.provider, oldParameters)
+            .digest,
+          selected: profile.digest,
+        });
         assert.deepEqual(await readFile(stalePath), staleBefore);
         await call(connection, "open_binary", {
           path: target,

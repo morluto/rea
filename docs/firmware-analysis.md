@@ -13,6 +13,19 @@ On Linux, Binwalk and Unblob run as REA-owned processes and require a
 procps-compatible `ps` on REA's `PATH`; see the shared
 [Linux process prerequisite](installation.md#linux-owned-process-prerequisite).
 
+## Compare stored firmware components
+
+For supported FIT and legacy uImage containers, use the built-in
+`inspect-artifact` / `inspect_artifact` inventory and shared
+`compare-artifacts` / `compare_artifacts` workflow. This route needs no Binwalk,
+Unblob or extraction: exact logical paths, stored-byte hashes and declared
+metadata establish component changes, with source Evidence and explicit unknowns.
+The outer container at `.` is separate from its children. See the
+[FIT version comparison recipe](fit-images.md#comparison) for CLI,
+MCP, summary delivery and selected supporting facts. Its real-data verification
+covers a pair of OpenWrt FIT releases; it does not establish comparison of
+decoded root filesystems or arbitrary firmware formats.
+
 ## Caller-supplied tools
 
 Provide existing tools using absolute executable paths, scoped to your shell:
@@ -26,6 +39,9 @@ REA does not install these tools, their dependencies or system packages. It
 checks the tool's `--version` banner when executing a request. Binwalk must
 print `binwalk <version>` and Unblob must print the version alone. Inspection and
 extraction have independent prerequisites; one does not require the other.
+Capability discovery recommends `REA_BINWALK_COMMAND` for missing inspection
+and `REA_UNBLOB_COMMAND` for missing extraction. Configuring the other engine
+does not enable the unavailable operation.
 Both require util-linux `prlimit`, normally `/usr/bin/prlimit`; override its
 absolute path with `REA_FIRMWARE_PRLIMIT_COMMAND` if needed. `rea doctor` does
 not currently inspect firmware readiness. Engine selection/version checks run
@@ -242,9 +258,12 @@ tree semantics, vulnerability scanning, emulation or hardware runtime capture.
   3, allowed range 1–10.
 
 Staging budgets are polled and rechecked after exit; short-lived overshoot is
-possible. The per-file process limit is the larger of the selected payload budget
-and the fixed report/diagnostic file allowances, so a small payload selection
-still permits the mandatory report. A tighter inherited host limit still applies.
+possible. The per-file process limit is one byte above the larger of the selected
+payload budget and the fixed report/diagnostic file allowances, so a small payload
+selection still permits the mandatory report, and a staged file the kernel stops
+at the limit exceeds its budget instead of passing as complete. A tighter
+inherited host limit still applies and can remove that byte, so a staged file
+that reaches the installed limit is rejected as possibly truncated.
 The inherited file-size limit bounds each file, not total storage;
 address-space limits are per process, not an aggregate memory quota. Worker
 count is not CPU affinity for every external extractor. These limits do not

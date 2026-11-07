@@ -6,9 +6,11 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
+  createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
   RUSTC_HASH,
@@ -465,6 +467,9 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -680,4 +685,31 @@ cliTest(
     await client.ping();
   },
   30000,
+);
+
+cliTest(
+  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      category: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action:
+          "The rustc commit-path inventory is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.",
+      },
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "capacity",
+        reported_limits: { maximum_rustc_hashes: 64 },
+      },
+    });
+  },
 );

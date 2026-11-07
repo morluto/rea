@@ -4,6 +4,7 @@ import { expect, it, vi } from "vitest";
 import {
   analyzeJavaScriptSemantics,
   indexJavaScriptBindingsSteps,
+  indexJavaScriptBindingsWithReceiversSteps,
 } from "./javascriptSemanticAnalysis.js";
 import {
   resolveLocalCallables,
@@ -186,6 +187,73 @@ it("bounds shared partial callback alias expansion by AST size", () => {
   expect(large.referenceReads).toBeLessThan(3 * small.referenceReads);
 });
 
+it("reuses the immutable enclosing-function position across distinct captured reads", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${"0;".repeat(64)} function use(){${"make();".repeat(64)}} use();`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  const fn = state.program.body.find(
+    (n) => t.isFunctionDeclaration(n) && n.id?.name === "use",
+  );
+  if (binding === undefined || fn === undefined)
+    throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(fn, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(64);
+    expect(
+      lookup.mock.calls.filter(([node]) => node === fn).length,
+    ).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
+});
+
+it.each([true, false])(
+  "orders a module direct-eval activation with early=%s",
+  (early) => {
+    const { state } = indexed(
+      `export {}; ${early ? "eval('open()');" : ""} const make = () => 1; function open() { return make(); } ${early ? "" : "eval('open()');"} open();`,
+    );
+    const binding = [...state.bindingsById.values()].find(
+      (binding) => binding.name === "make",
+    );
+    if (binding === undefined) throw new Error("Missing make binding");
+    let reads = 0;
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(!early);
+        }
+      },
+    });
+    expect(reads).toBe(1);
+  },
+);
+
 it.each([
   ["if(flag){cb=fallback;cb();}", true],
   ["if(flag)cb=fallback;cb();", false],
@@ -207,7 +275,7 @@ it.each([
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(expected);
         }
@@ -412,7 +480,7 @@ it.each(["||=", "??="])(
         ) {
           reads++;
           expect(
-            semanticBindingAtRead(binding, node.callee, state.parentsByNode)
+            semanticBindingAtRead(binding, node.callee, state)
               .hasDefiniteInitializer,
           ).toBe(true);
         }
@@ -539,4 +607,88 @@ it("resolves calls in computed method keys before subsequent pattern writes", ()
     resolution: "exact",
     calleeCallableIds: [original?.callableId],
   });
+});
+
+it.each([64, 128])(
+  "indexes receiver effects once for %s reads before distinct writes",
+  (count) => {
+    const source = `const object = {}; ${"object.x;".repeat(count)} ${Array.from({ length: count }, (_, i) => `object.p${i}=1;`).join("")} const make=()=>1; function use(){make();} use();`;
+    const file = parseJavaScriptSource(source, "fixture.js");
+    if (file === null) throw Error("Invalid fixture");
+    const steps = indexJavaScriptBindingsWithReceiversSteps(file.program);
+    let step = steps.next();
+    while (!step.done) step = steps.next();
+    const index = step.value;
+    for (const _ of index.indexMemberMutationFactsSteps()) {
+      void _;
+    }
+    const state = index.bindings;
+    const object = [...state.bindingsById.values()].find(
+      (b) => b.name === "object",
+    );
+    const make = [...state.bindingsById.values()].find(
+      (b) => b.name === "make",
+    );
+    if (object === undefined || make === undefined)
+      throw Error("Missing fixture bindings");
+    let visits = 0;
+    Object.defineProperty(object, "memberWrites", {
+      value: new Proxy(object.memberWrites, {
+        get(target, key, receiver) {
+          if (typeof key === "string" && /^\d+$/.test(key)) visits++;
+          return Reflect.get(target, key, receiver);
+        },
+      }),
+    });
+    let checked = 0;
+    traverseJavaScriptAst(file.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          expect(
+            semanticBindingAtRead(make, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+          checked++;
+        }
+      },
+    });
+    expect(checked).toBe(1);
+    expect(object.memberWrites.length).toBe(count);
+    expect(visits).toBeLessThanOrEqual(count * 2);
+  },
+);
+
+it("indexes one statement body for distinct captured functions", () => {
+  const { state } = indexed(
+    `const make=()=>1; ${Array.from({ length: 128 }, (_, i) => `function use${i}(){make();} use${i}();`).join(" ")}`,
+  );
+  const binding = [...state.bindingsById.values()].find(
+    (b) => b.name === "make",
+  );
+  if (binding === undefined) throw Error("Missing fixture binding");
+  const lookup = vi.spyOn(state.program.body, "indexOf");
+  let reads = 0;
+  try {
+    traverseJavaScriptAst(state.program, {
+      enter(node) {
+        if (
+          t.isCallExpression(node) &&
+          t.isIdentifier(node.callee, { name: "make" })
+        ) {
+          reads++;
+          expect(
+            semanticBindingAtRead(binding, node.callee, state)
+              .hasDefiniteInitializer,
+          ).toBe(true);
+        }
+      },
+    });
+    expect(reads).toBe(128);
+    expect(lookup.mock.calls.length).toBeLessThanOrEqual(1);
+  } finally {
+    lookup.mockRestore();
+  }
 });

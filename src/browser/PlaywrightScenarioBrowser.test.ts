@@ -172,13 +172,59 @@ it("keeps Termux execution support when launching Chromium on Android", async ()
     diagnostics: { startup_error: "launch boundary reached" },
   });
 
-  expect(launchOptions?.args).toEqual(["--no-sandbox", "--single-process"]);
+  expect(launchOptions?.chromiumSandbox).toBe(false);
+  expect(launchOptions?.args).toEqual(["--single-process"]);
   expect(launchOptions?.env).toEqual({
     LANG: "selected-language",
     LD_PRELOAD: "/data/data/com.termux/files/usr/lib/libtermux-exec.so",
     TERMUX_EXEC__PROC_SELF_EXE: process.execPath,
   });
 });
+
+const launchScenario = browserScenarioSchema.parse({
+  browser: { mode: "launch", executable_path: process.execPath },
+  start_url: { url: "https://example.test" },
+  actions: [{ step_id: "settle", action: "wait_for_timeout", duration_ms: 1 }],
+});
+
+it.each([
+  { environment: {}, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "false" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "1" }, sandbox: true },
+  { environment: { REA_BROWSER_NO_SANDBOX: "true" }, sandbox: false },
+])(
+  "launches Chromium with sandbox $sandbox for $environment",
+  async ({ environment, sandbox }) => {
+    Object.defineProperty(process, "platform", { value: "linux" });
+    let launchOptions: Parameters<
+      typeof import("playwright-core").chromium.launchPersistentContext
+    >[1];
+
+    await expect(
+      openPlaywrightScenarioBrowser(launchScenario, environment, {
+        launcher: {
+          connectOverCDP: async () => {
+            throw new Error("Unexpected connection");
+          },
+          launchPersistentContext: async (_profile, options) => {
+            launchOptions = options;
+            throw new Error("launch boundary reached");
+          },
+        },
+      }),
+    ).rejects.toMatchObject({
+      diagnostics: { startup_error: "launch boundary reached" },
+      // Chromium's startup log, not REA, says whether the sandbox caused it.
+      remediationAction: sandbox
+        ? expect.stringContaining("REA_BROWSER_NO_SANDBOX=true")
+        : "Review the selected executable and startup diagnostics, then correct the launch configuration before retrying.",
+    });
+
+    expect(launchOptions?.chromiumSandbox).toBe(sandbox);
+    expect(launchOptions?.args).toEqual([]);
+    expect(launchOptions?.env).toEqual({});
+  },
+);
 
 it("waits for bounded event finalization and owned browser teardown", async () => {
   vi.useFakeTimers();
