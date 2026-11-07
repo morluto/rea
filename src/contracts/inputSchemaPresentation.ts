@@ -587,7 +587,17 @@ export const presentInputJsonSchema = (
   root: Record<string, unknown>,
   describeProperty: (property: string) => string | undefined,
 ): Record<string, unknown> => {
-  const flattened = presentDiscriminatedRoot(root);
+  const rootReferences = new JsonSchemaReferences(root);
+  const describedRoot = describeSchema(
+    root,
+    rootReferences,
+    rootReferences.rootScope,
+    describeProperty,
+  );
+  const rootToFlatten = isObject(describedRoot)
+    ? (describedRoot as Record<string, unknown>)
+    : root;
+  const flattened = presentDiscriminatedRoot(rootToFlatten);
   const references = new JsonSchemaReferences(flattened);
   const described = describeSchema(
     flattened,
