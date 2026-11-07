@@ -35,6 +35,7 @@ export class ArtifactOperationError extends AnalysisError {
       | "inspect_elf_notes"
       | "inspect_devicetree"
       | "inspect_api_contract"
+      | "inspect_warc_archive"
       | "inspect_playwright_trace"
       | "inspect_kernel_module"
       | "inspect_erlang_beam"

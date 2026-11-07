@@ -1,5 +1,6 @@
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
+import { registerWarcArchiveCommand } from "./warcArchiveCommand.js";
 import { Cli, z } from "incur";
 
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -77,6 +78,7 @@ export const registerApplicationCommands = (
   registerSourceToBundleCommand(cli, logger);
   registerStaticObservedEndpointsCommand(cli, logger);
   registerApiContractCommand(cli, logger);
+  registerWarcArchiveCommand(cli, logger);
   registerPlaywrightTraceCommand(cli, logger);
   registerEvidenceJsonCommand({
     cli,

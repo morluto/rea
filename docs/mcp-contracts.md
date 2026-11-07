@@ -593,6 +593,19 @@ Coverage describes examined declarations and does not establish runtime behavior
 or full specification/operation validity. See [offline API contracts](api-contracts.md)
 for source identities, parser allowances, supported scope and CLI publication.
 
+## Offline WARC archive records
+
+`inspect_warc_archive` lists the records of one local WARC or WARC.gz file
+without contacting a target, replaying a request or executing archived content.
+Record headers, declared lengths, digests and record types are reported in
+archive order, and request and response records carry their embedded HTTP start
+line and header block. HTTP bodies are not decoded, declared digests are not
+verified and records are not linked. Unknown record types stay listed. Truncated
+records, malformed headers and invalid lengths remain diagnostics instead of
+ending the inventory silently. See
+[offline WARC archives](warc-archives.md) for identities, compression handling
+and resource bounds.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
@@ -1291,6 +1304,17 @@ attempt and its delivery result in `details.partial_observation`, with
 `elapsed_ms` and `exit_code` null when no exit was observed.
 Derived comparisons and reconstruction verification yield before computation
 and before publication, so cancellation cannot race with successful Evidence.
+
+Application-tool delivery attempts to retain an already completed parent and its
+source Evidence when cancellation is observed before delivery, without committing a
+selected view or a new Unknown. A successful retention is identified by
+`details.partial_observation` as `retained-evidence`; if a source cannot be
+retained, `details.diagnostics.source_retention_error` reports that failure.
+When the client SDK suppresses the cancelled reply, the retained records can
+still be inspected or exported from the same session. If parent retention is
+unavailable or refused, the error carries the parent inline when it can be
+delivered; suppressed or oversized replies may make that inline observation
+unavailable.
 
 Bundle recovery requires a recorded Evidence ID. Some provider errors carry
 typed raw observations in `details.partial_observation` instead of Evidence.

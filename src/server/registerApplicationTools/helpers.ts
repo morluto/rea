@@ -3,12 +3,17 @@ import type { CallToolResult } from "@modelcontextprotocol/server";
 import type { ToolResultDelivery } from "../ToolResultDelivery.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../../contracts/applicationToolContracts.js";
 import { inspectAnalysisViewValidated } from "../../application/analysisView/AnalysisViewService.js";
-import { recordEvidenceSources } from "../../application/investigation/recordEvidenceSources.js";
+import {
+  recordEvidenceSources,
+  retainAnalysisResultSources,
+  withEvidenceSources,
+} from "../../application/investigation/recordEvidenceSources.js";
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { AnalysisViewRequest } from "../../domain/analysisView/analysisView.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { ok } from "../../domain/result.js";
+import { err, ok } from "../../domain/result.js";
 import type { ApplicationToolRegistration } from "./types.js";
 
 type UnknownKind =
@@ -30,8 +35,8 @@ export const recordResult = (
 
 /**
  * Stage an optional caller-selected view against the completed parent, then
- * commit its sources and the parent and deliver. A request cancelled before
- * commit leaves the session unchanged; a delivered view that does not fit
+ * commit its sources and the parent and deliver. Cancellation retains completed
+ * parent and source Evidence without committing the selected view or unknown; a view that does not fit
  * names the retained parent and a smaller page instead of its own record.
  */
 export const deliverApplicationEvidence = async (
@@ -63,11 +68,34 @@ export const deliverApplicationEvidence = async (
             id === parent.evidence_id ? parent : options.evidenceById?.(id),
         );
   await setImmediate();
-  if (signal.aborted)
-    return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
-      contract.returnsTargetContent,
+  if (signal.aborted) {
+    const cancelled = retainAnalysisResultSources(
+      contract.name,
+      options.recordEvidence,
+      withEvidenceSources(
+        err(
+          new AnalysisCancelledError(contract.name, {
+            cause: signal.reason,
+            partialObservation: parent,
+          }),
+        ),
+        execution.sources,
+      ),
     );
+    if (cancelled.ok) throw new Error("Expected cancellation failure");
+    const sourceFailure = cancelled.error.secondaryFailures[0];
+    if (sourceFailure !== undefined)
+      cancelled.error.retainDiagnostics({
+        source_retention_error: jsonValueSchema.parse(
+          projectAnalysisError(sourceFailure),
+        ),
+      });
+    return delivery.toPartialErrorToolResult(
+      cancelled.error,
+      contract.returnsTargetContent,
+      options.recordEvidence,
+    );
+  }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
     options.recordEvidence,
