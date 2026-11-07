@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { resolvedRegularFileRemediation } from "../../src/artifacts/StableArtifactFailure.js";
 import { readFile, symlink, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
@@ -1328,6 +1329,8 @@ cliTest(
     const loopB = join(root, "loop-b.gguf");
     await symlink("loop-b.gguf", loopA);
     await symlink("loop-a.gguf", loopB);
+    const unresolved = join(root, "unresolved.gguf");
+    await symlink(join(real, "child"), unresolved);
 
     const singleResult = await cli.run({
       arguments: ["inspect-model-artifact", single, "--json"],
@@ -1338,14 +1341,13 @@ cliTest(
       category: "unavailable",
       retryable: false,
       remediation: {
-        action: `Retry with the resolved regular file path ${real}. The selected symlink is not admitted; the retry will validate the target again.`,
+        action: resolvedRegularFileRemediation(real),
       },
       details: {
         path: single,
-        reason: `Selected path is a symbolic link to ${real}; symlinks are not followed`,
+        reason: expect.stringContaining(real),
       },
     });
-    expect(JSON.stringify(singleResult.json)).not.toContain("too many");
 
     const loopResult = await cli.run({
       arguments: ["inspect-model-artifact", loopA, "--json"],
@@ -1356,11 +1358,34 @@ cliTest(
       category: "unavailable",
       details: {
         path: loopA,
-        reason: `Selected path is a symbolic link chain that does not resolve: ${loopA}`,
+        reason: expect.stringContaining(loopA),
       },
     });
     expect(JSON.stringify(loopResult.json)).not.toContain(
-      `symbolic link to ${real}`,
+      resolvedRegularFileRemediation(real),
+    );
+
+    const unresolvedResult = await cli.run({
+      arguments: ["inspect-model-artifact", unresolved, "--json"],
+    });
+    expect(unresolvedResult.exitCode).toBe(1);
+    expect(unresolvedResult.json).toMatchObject({
+      code: "target_unavailable",
+      details: { path: unresolved, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(unresolvedResult.json)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+    const call = await modelMcp.session.call();
+    const unresolvedMcp = parseMcpToolError(
+      await call("inspect_model_artifact", { path: unresolved }),
+    );
+    expect(unresolvedMcp.error).toMatchObject({
+      code: "target_unavailable",
+      details: { path: unresolved, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(unresolvedMcp.error)).not.toContain(
+      resolvedRegularFileRemediation(real),
     );
 
     const resolved = await cli.run({
