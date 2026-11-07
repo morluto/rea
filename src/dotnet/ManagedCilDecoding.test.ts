@@ -302,7 +302,9 @@ describe("managed operand extent diagnostics", () => {
       });
     },
   );
+});
 
+describe("managed complete operand decoding", () => {
   // A width declared too small still passes the extent check when no operand
   // bytes are present, so the zero-byte cases above cannot catch it. Supplying
   // one byte less than the real width makes a wrong width let the read run,
