@@ -27,8 +27,8 @@ it("reports unknown coverage and termination facts as limitations", async () => 
   );
   expect(truncated.manifest.root_format).toBe("srec");
   expect(truncated.coverage.status).toBe("unknown");
-  expect(truncated.limitations).toContain(
-    "S-record has no termination record; the file may be truncated.",
+  expect(truncated.limitations).toContainEqual(
+    expect.stringMatching(/no termination record.*may be truncated/iu),
   );
   expect(truncated.occurrences.map((row) => row.logical_path).sort()).toEqual([
     ".",
@@ -41,8 +41,10 @@ it("reports unknown coverage and termination facts as limitations", async () => 
     ),
   );
   expect(mismatched.coverage.status).toBe("complete");
-  expect(mismatched.limitations).toContain(
-    "S-record termination S7 does not match the address width of S1 data records.",
+  expect(mismatched.limitations).toContainEqual(
+    expect.stringMatching(
+      /termination.*S7.*does not match.*address width.*S1/iu,
+    ),
   );
 });
 

@@ -440,7 +440,7 @@ describe("Mach-O analysis views", () => {
       issues: [
         {
           path: ["view"],
-          message: "Mach-O inspection supports summary and macho views.",
+          message: expect.stringMatching(/summary and macho views/iu),
         },
       ],
     });

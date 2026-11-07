@@ -2,7 +2,13 @@ import { err, ok, type Result } from "../result.js";
 import { withoutCredentials, withoutCredentialsIn } from "./aptRepositories.js";
 import { dependencyPackages } from "./debianPackageFile.js";
 import type { AptRepository, DesktopPackage } from "./desktopCapture.js";
-import { unwrapDesktopCommand } from "./desktopEntry.js";
+import {
+  formatDesktopExec,
+  parseDesktopEntry,
+  replaceDesktopExec,
+  tokenizeDesktopExec,
+  unwrapDesktopCommand,
+} from "./desktopEntry.js";
 
 const NOBLE_SUITE =
   / noble(?:-updates|-security|-backports)?\/(?:main|restricted|universe|multiverse) /u;
@@ -378,12 +384,53 @@ const packageFileInstall = (
 };
 
 /**
- * Install from the Ubuntu 24.04 archive by name, or from each vendor
- * repository listing the installed version whose signing key the capture
- * verified and retained, taking the package from the first one's release
- * for the capture host's architecture. A package neither installs, given
- * `--package-url`, is downloaded from it and installed from its captured
- * package file; anything else is refused with the reason.
+ * Install a Debian package by name from the Ubuntu 24.04 archive, or from
+ * each vendor repository listing the installed version whose signing key the
+ * capture verified and retained, taking the package from the first one's
+ * release for the capture host's architecture; or why apt cannot.
+ */
+const aptInstall = (
+  installed: DesktopPackage,
+  aptPackage: string,
+  environment: string,
+  hostArchitecture: string,
+): ReturnType<typeof vendorInstall> =>
+  // An archive package's declared dependencies are complete; a vendor package's may not be.
+  fromUbuntuNobleArchive(installed.sources, installed.source_origins)
+    ? ok({
+        aptPackage,
+        release: null,
+        ...suppliedLibraries(installed, []),
+        libraryPackages: [],
+        sources: [],
+        skipped: [],
+        architectures: [...COMPUTER_ARCHITECTURES.values()],
+        packageFile: null,
+      })
+    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+
+/**
+ * Whether the export installs the captured package from its package file,
+ * and so takes `--package-url`: a Debian package apt does not install by
+ * name. The environment name only names key files, so any name answers.
+ */
+export const installsFromPackageFile = (
+  installed: DesktopPackage,
+  hostArchitecture: string,
+): boolean =>
+  installed.kind === "deb" &&
+  installed.name !== null &&
+  !aptInstall(
+    installed,
+    installed.name.split(":")[0] ?? installed.name,
+    "app",
+    hostArchitecture,
+  ).ok;
+
+/**
+ * Install by name from apt where it can; a package apt does not install,
+ * given `--package-url`, is downloaded from it and installed from its
+ * captured package file; anything else is refused with the reason.
  */
 const packageInstall = (
   installed: DesktopPackage,
@@ -398,22 +445,12 @@ const packageInstall = (
       ),
     );
   const aptPackage = installed.name.split(":")[0] ?? installed.name;
-  // An archive package's declared dependencies are complete; a vendor package's may not be.
-  const named = fromUbuntuNobleArchive(
-    installed.sources,
-    installed.source_origins,
-  )
-    ? ok({
-        aptPackage,
-        release: null,
-        ...suppliedLibraries(installed, []),
-        libraryPackages: [],
-        sources: [],
-        skipped: [],
-        architectures: [...COMPUTER_ARCHITECTURES.values()],
-        packageFile: null,
-      })
-    : vendorInstall(installed, aptPackage, environment, hostArchitecture);
+  const named = aptInstall(
+    installed,
+    aptPackage,
+    environment,
+    hostArchitecture,
+  );
   if (named.ok)
     return packageUrl === undefined
       ? named
@@ -474,4 +511,32 @@ export const electronLaunchArguments = (
   const wrapper = unwrapDesktopCommand(argv);
   const at = wrapper.kind === "direct" ? wrapper.index + 1 : 1;
   return [...argv.slice(0, at), "--no-sandbox", ...argv.slice(at)];
+};
+
+/**
+ * The desktop entry after its main `Exec` command has been prepared with
+ * `electronLaunchArguments`. A non-Electron entry, and an Electron command
+ * that already passes `--no-sandbox`, keep their original text.
+ */
+export const adjustInstalledDesktopText = (
+  text: string,
+  electron: boolean,
+): Result<
+  string,
+  | "missing_desktop_entry_group"
+  | "missing_exec"
+  | "missing_exec_line"
+  | "unterminated_quote"
+  | "empty_command"
+> => {
+  if (!electron) return ok(text);
+  const parsed = parseDesktopEntry(text);
+  if (!parsed.ok) return parsed;
+  const exec = parsed.value.exec;
+  if (exec === null) return err("missing_exec");
+  const tokens = tokenizeDesktopExec(exec);
+  if (!tokens.ok) return tokens;
+  const adjusted = electronLaunchArguments(tokens.value, true);
+  if (adjusted === tokens.value) return ok(text);
+  return replaceDesktopExec(text, formatDesktopExec(adjusted));
 };
