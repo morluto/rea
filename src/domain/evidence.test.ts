@@ -895,3 +895,181 @@ it("diagnoses a previous explicit-null coverage commitment without admitting or 
   });
   expect(parseEvidence(current)).toEqual(current);
 });
+
+describe("issue #9196: post-hoc string redaction vs valid ev_* ID", () => {
+  it("reproduces that post-hoc string redaction invalidates ev_* ID", () => {
+    const hostPath = "/home/alice/work/target.bin";
+    const originalEvidence = createEvidence(
+      {
+        path: hostPath,
+        sha256: "b".repeat(64),
+        format: "elf",
+      },
+      PROVIDER,
+      {
+        operation: "inspect_elf",
+        parameters: { path: hostPath },
+        locations: [{ kind: "artifact-path", path: hostPath }],
+        result: { target_location: hostPath },
+      },
+    );
+
+    expect(originalEvidence.parameters).toEqual({ path: hostPath });
+    expect(originalEvidence.locations).toEqual([
+      { kind: "artifact-path", path: hostPath },
+    ]);
+
+    const sanitizedJson = JSON.stringify(originalEvidence).replaceAll(
+      "/home/alice/work",
+      "workspace:/",
+    );
+    const sanitizedRecord = JSON.parse(sanitizedJson);
+
+    expect(() => parseEvidence(sanitizedRecord)).toThrow(
+      /Evidence semantic identifier does not match its record/u,
+    );
+  });
+});
+
+describe("issue #9196: opt-in logical path root redaction", () => {
+  it("produces identical evidence_id for identical target across different checkout roots", () => {
+    const fixtureSha256 = "c".repeat(64);
+    const runAlphaEvidence = createEvidence(
+      {
+        path: "/tmp/run-alpha/app/target.bin",
+        sha256: fixtureSha256,
+        format: "elf",
+      },
+      PROVIDER,
+      {
+        operation: "inspect_elf",
+        parameters: { path: "/tmp/run-alpha/app/target.bin" },
+        locations: [
+          { kind: "artifact-path", path: "/tmp/run-alpha/app/target.bin" },
+        ],
+        result: {
+          target_location: "/tmp/run-alpha/app/target.bin",
+          status: "ok",
+        },
+      },
+      {
+        logicalRoot: { root: "/tmp/run-alpha/app" },
+      },
+    );
+
+    const runBetaEvidence = createEvidence(
+      {
+        path: "/tmp/run-beta/app/target.bin",
+        sha256: fixtureSha256,
+        format: "elf",
+      },
+      PROVIDER,
+      {
+        operation: "inspect_elf",
+        parameters: { path: "/tmp/run-beta/app/target.bin" },
+        locations: [
+          { kind: "artifact-path", path: "/tmp/run-beta/app/target.bin" },
+        ],
+        result: {
+          target_location: "/tmp/run-beta/app/target.bin",
+          status: "ok",
+        },
+      },
+      {
+        logicalRoot: { root: "/tmp/run-beta/app" },
+      },
+    );
+
+    expect(runAlphaEvidence.evidence_id).toBe(runBetaEvidence.evidence_id);
+
+    const alphaSerialized = JSON.stringify(runAlphaEvidence);
+    const betaSerialized = JSON.stringify(runBetaEvidence);
+    expect(alphaSerialized).not.toContain("run-alpha");
+    expect(betaSerialized).not.toContain("run-beta");
+
+    expect(runAlphaEvidence.parameters).toEqual({
+      path: "workspace://target.bin",
+    });
+    expect(runAlphaEvidence.locations).toEqual([
+      { kind: "artifact-path", path: "workspace://target.bin" },
+    ]);
+
+    expect(parseEvidence(runAlphaEvidence)).toEqual(runAlphaEvidence);
+    expect(parseEvidence(runBetaEvidence)).toEqual(runBetaEvidence);
+
+    expect(runAlphaEvidence.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining(
+          "Local filesystem paths under configured logical root were normalized",
+        ),
+      ]),
+    );
+
+    const bundle = createEvidenceBundle([runAlphaEvidence]);
+    expect(JSON.stringify(bundle)).not.toContain("run-alpha");
+  });
+
+  it("fails closed when path is outside logicalRoot unless allowOutsideRoot is enabled", () => {
+    const fixtureSha256 = "d".repeat(64);
+    expect(() =>
+      createEvidence(
+        {
+          path: "/tmp/outside/target.bin",
+          sha256: fixtureSha256,
+          format: "elf",
+        },
+        PROVIDER,
+        {
+          operation: "inspect_elf",
+          parameters: { path: "/tmp/outside/target.bin" },
+          result: { status: "ok" },
+        },
+        {
+          logicalRoot: { root: "/tmp/run-alpha/app" },
+        },
+      ),
+    ).toThrow(/outside the configured logical root/u);
+
+    const evidence = createEvidence(
+      {
+        path: "/tmp/outside/target.bin",
+        sha256: fixtureSha256,
+        format: "elf",
+      },
+      PROVIDER,
+      {
+        operation: "inspect_elf",
+        parameters: { path: "/tmp/outside/target.bin" },
+        result: { status: "ok" },
+      },
+      {
+        logicalRoot: { root: "/tmp/run-alpha/app", allowOutsideRoot: true },
+      },
+    );
+    expect(parseEvidence(evidence)).toEqual(evidence);
+    expect(evidence.limitations).toContain(
+      "logical-root redaction incomplete; host-local path retained.",
+    );
+  });
+
+  it("preserves unconfigured behavior byte-for-byte when logicalRoot is omitted", () => {
+    const hostPath = "/home/alice/project/file.bin";
+    const evidence = createEvidence(
+      {
+        path: hostPath,
+        sha256: "e".repeat(64),
+        format: "elf",
+      },
+      PROVIDER,
+      {
+        operation: "inspect_elf",
+        parameters: { path: hostPath },
+        result: { status: "ok" },
+      },
+    );
+
+    expect(evidence.parameters).toEqual({ path: hostPath });
+    expect(evidence.limitations).toEqual([]);
+    expect(parseEvidence(evidence)).toEqual(evidence);
+  });
+});
