@@ -182,10 +182,10 @@ class Document(HTMLParser):
         self.handle_data("&#" + name + ";")
 
 
-def skipped(node):
+def skipped(node, protected=PROTECTED):
     """Respect protected evidence and explicit exclusions throughout a subtree."""
     while node:
-        if node.tag in PROTECTED or "data-i18n-skip" in node.attrs or node.attrs.get("translate") == "no":
+        if node.tag in protected or "data-i18n-skip" in node.attrs or node.attrs.get("translate") == "no":
             return True
         node = node.parent
     return False
@@ -319,6 +319,15 @@ def read_runtime(root, page=None):
     return list(dict.fromkeys(text for script, text, _, _ in units if script in scripts))
 
 
+def figure_units(source):
+    """Own SVG translation selection, honoring explicit exclusions in ancestors."""
+    for node in Document(source).nodes:
+        if node.tag in {"text", "title", "desc"} and not skipped(node, protected=()) and not any(isinstance(child, Node) for child in node.children):
+            text = unescape(source[node.open_end:node.end_start]).strip()
+            if translatable(text):
+                yield node, text
+
+
 def source_catalog(root):
     """Build a deterministic POT with source references and protected-placeholder notes."""
     site = root / "website/public"
@@ -348,11 +357,8 @@ def source_catalog(root):
         add("runtime", text, {}, reference, line)
     for path in sorted((site / "assets/figures").glob("*.svg")):
         source = path.read_text(encoding="utf-8")
-        for node in Document(source).nodes:
-            if node.tag in {"text", "title", "desc"} and not any(isinstance(child, Node) for child in node.children):
-                text = unescape(source[node.open_end:node.end_start]).strip()
-                if translatable(text):
-                    add("figure:" + path.name, text, {}, "website/public/assets/figures/" + path.name, node.line)
+        for node, text in figure_units(source):
+            add("figure:" + path.name, text, {}, "website/public/assets/figures/" + path.name, node.line)
     return catalog
 
 
@@ -638,12 +644,10 @@ def build_translations(root, destination, finalize=None):
             for path in sorted((site / "assets/figures").glob("*.svg")):
                 source = path.read_text(encoding="utf-8")
                 edits = []
-                for node in Document(source).nodes:
-                    if node.tag in {"text", "title", "desc"} and not any(isinstance(child, Node) for child in node.children):
-                        text = unescape(source[node.open_end:node.end_start]).strip()
-                        if translatable(text) and ("figure:" + path.name, text) in messages:
-                            translated = messages[("figure:" + path.name, text)]
-                            edits.append((node.open_end, node.end_start, escape(translated, quote=False)))
+                for node, text in figure_units(source):
+                    if ("figure:" + path.name, text) in messages:
+                        translated = messages[("figure:" + path.name, text)]
+                        edits.append((node.open_end, node.end_start, escape(translated, quote=False)))
                 translated = apply_edits(source, edits)
                 output = staging / "assets/localized" / language["code"] / path.relative_to(site / "assets")
                 output.parent.mkdir(parents=True, exist_ok=True)

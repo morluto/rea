@@ -637,6 +637,64 @@ class WebsiteTranslationChecks(unittest.TestCase):
             extract_catalogs(root)
             yield root
 
+    def test_svg_exclusions_preserve_literals_even_when_a_matching_translation_exists(self):
+        with self.translated_project() as root:
+            figure = root / "website/public/assets/figures/literal-test.svg"
+            figure.write_text('<svg xmlns="http://www.w3.org/2000/svg"><text>Translate label</text><g translate="no"><text>Translate label</text><text>20 + 30 × tile_x</text></g><text data-i18n-skip="">generateOTP</text><title translate="no">Literal title</title></svg>', encoding="utf-8")
+            template = extract_catalogs(root)
+            context = "figure:literal-test.svg"
+            self.assertEqual([entry.msgid for entry in template if entry.msgctxt == context], ["Translate label"])
+            path = root / "website/locales/zh-CN/messages.po"
+            po = polib.pofile(path)
+            po.find("Translate label", msgctxt=context).msgstr = "Translated label"
+            po.save(path)
+            build_translations(root, root / "website/_site")
+            rendered = (root / "website/_site/assets/localized/zh-CN/figures/literal-test.svg").read_text(encoding="utf-8")
+            doc = ET.fromstring(rendered)
+            self.assertEqual([node.text for node in doc.iter() if node.tag.endswith("}text")], ["Translated label", "Translate label", "20 + 30 × tile_x", "generateOTP"])
+            self.assertEqual(doc.find("{http://www.w3.org/2000/svg}title").text, "Literal title")
+
+    def test_executable_labels_and_formula_keep_their_source_spelling_in_every_edition(self):
+        site = ROOT / "website/_site"
+        labels = {
+            "get-started/index.html": {"make", "bison", "curl", "unzip"},
+            "showcase/aegis/index.html": {"generateOTP"},
+            "showcase/notion/index.html": {"main/index.js"},
+        }
+        for language in languages(ROOT):
+            code = language["code"]
+            for relative, expected in labels.items():
+                path = site / relative if code == "en" else site / code / relative
+                with self.subTest(language=code, page=relative):
+                    doc = Document(path.read_text(encoding="utf-8"))
+                    protected = {doc.source[node.open_end:node.end_start] for node in doc.nodes if node.attrs.get("translate") == "no"}
+                    self.assertTrue(expected <= protected, expected - protected)
+            figure = site / "assets/figures/dx-ball-sound-pan-investigation.svg" if code == "en" else site / f"assets/localized/{code}/figures/dx-ball-sound-pan-investigation.svg"
+            with self.subTest(language=code, figure=str(figure)):
+                doc = ET.fromstring(figure.read_text(encoding="utf-8"))
+                self.assertIn("20 + 30 × tile_x", [node.text for node in doc.iter() if node.tag.endswith("}text")])
+
+    def test_albanian_copy_buttons_announce_the_copy_action(self):
+        checked = 0
+        for original in reading_pages(ROOT / "website/public"):
+            relative = original.relative_to(ROOT / "website/public")
+            source = Document(original.read_text(encoding="utf-8"))
+            copy_labels = {node.attrs["data-copy"]: node.attrs["aria-label"] for node in source.nodes if node.tag == "button" and "data-copy" in node.attrs and node.attrs.get("aria-label", "").startswith("Copy ")}
+            if not copy_labels:
+                continue
+            translated = Document((ROOT / "website/_site/sq" / relative).read_text(encoding="utf-8"))
+            fallback = any(node.tag == "html" and node.attrs.get("data-translation-fallback") == "true" for node in translated.nodes)
+            buttons = {node.attrs["data-copy"]: node for node in translated.nodes if node.tag == "button" and "data-copy" in node.attrs}
+            for target, source_label in copy_labels.items():
+                with self.subTest(page=str(relative), target=target):
+                    label = buttons[target].attrs.get("aria-label", "")
+                    if fallback:
+                        self.assertEqual(label, source_label)
+                    else:
+                        self.assertTrue(label.startswith(("Kopjo ", "Kopjoni ", "Kopjojeni ")), label)
+                        checked += 1
+        self.assertGreater(checked, 0)
+
     def test_source_change_preserves_review_and_excludes_stale_translation_from_search(self):
         with self.translated_project() as root:
             path = root / "website/locales/zh-CN/messages.po"

@@ -106,8 +106,11 @@ Cloudflare publish this same artifact. No translation API runs during a build
 or in a reader's browser.
 
 Figure labels and accessibility descriptions are included in the catalogs under
-`figure:<filename>`. Keep labels short enough for the diagram. Interaction text
-is extracted directly from `t("message")` calls in `public/assets/*.js`, with
+`figure:<filename>`. Keep labels short enough for the diagram.
+In SVG figures, mark literal formulas and identifiers with `translate="no"` on
+the text element or its containing group. Extraction and rendering both preserve
+those elements, even when another label has the same text and a translation.
+Interaction text is extracted directly from `t("message")` calls in `public/assets/*.js`, with
 source locations in the catalog. Keep named values instead of concatenating
 translated fragments.
 
@@ -150,7 +153,7 @@ the page and language you checked; a screenshot can help explain a layout issue.
 PO catalogs have source references, reviewer comments and explicit pending
 translations. They can be edited locally and can later be connected to Weblate
 without replacing the site's translation format. This keeps one authored layout
-and a small offline build instead of maintaining separate HTML trees.
+and a small offline build instead of maintaining a separate HTML tree for every language.
 
 See [GNU gettext's PO format](https://www.gnu.org/software/gettext/manual/html_node/PO-File-Entries.html),
 [Weblate's translation workflows](https://docs.weblate.org/en/latest/workflows.html)
