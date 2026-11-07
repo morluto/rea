@@ -1,0 +1,21 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>Notes</title>
+  </head>
+  <body>
+    <textarea id="text"></textarea>
+    <input id="path" value="notes.txt" />
+    <button id="save">Save</button>
+    <script>
+      const text = document.getElementById("text");
+      window.notes.load().then((value) => (text.value = value));
+      document
+        .getElementById("save")
+        .addEventListener("click", () =>
+          window.notes.save(document.getElementById("path").value, text.value),
+        );
+    </script>
+  </body>
+</html>

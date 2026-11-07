@@ -1,0 +1,68 @@
+{
+  "schema": "findings-triage/1",
+  "title": "triage-notes static triage",
+  "target": {
+    "name": "triage-notes",
+    "artifact_digest": "771d6f4fab8349260a8c3d4d2b81b54fe200ab483b0508502e6a469b87c51deb"
+  },
+  "findings": [
+    {
+      "id": "notes-save-unchecked-path",
+      "title": "notes:save writes to a path chosen by the renderer",
+      "statement": "The main-process handler for the `notes:save` IPC channel (main.js:20) passes its `filePath` parameter, the first argument sent by the renderer, as argument 0 of the call at main.js:21. REA resolves that parameter-to-argument flow and links the call target to `writeFile` on the `fs` binding as a candidate; main.js requires `node:fs/promises`, and REA leaves the binding's value unresolved. REA reports zero sender-validation observations. The preload's `notes.save` member forwards its arguments to this channel.",
+      "verdict": "defect",
+      "claim_type": "structure",
+      "evidence_ids": [
+        "ev_3607d6dd9ce6a14db9b4b60a4617ac216c36c9728063f33dd75c6bc3f521b6d2"
+      ],
+      "severity": "high",
+      "disclosure": "private",
+      "impact": "Any script running in the window can create or overwrite any file the application user can write by calling `window.notes.save` with an absolute path.",
+      "remediation": "Do not accept a path from the renderer. Write to a fixed file under `app.getPath(\"userData\")`, or resolve the requested name against that directory and reject results outside it. Validate `event.senderFrame` in both `notes:*` handlers."
+    },
+    {
+      "id": "insecure-web-preferences",
+      "title": "BrowserWindow disables webSecurity and the renderer sandbox",
+      "statement": "The only BrowserWindow (main.js:7) sets the literal webPreferences `webSecurity: false` and `sandbox: false`. Disabling webSecurity removes the same-origin policy for the window. Whether that is exploitable depends on what the window loads, which the static analysis does not establish.",
+      "verdict": "suspect",
+      "claim_type": "structure",
+      "evidence_ids": [
+        "ev_3607d6dd9ce6a14db9b4b60a4617ac216c36c9728063f33dd75c6bc3f521b6d2"
+      ],
+      "unknown_id": "unk_0d2d2b37bedc6ea49e59cfd31678634d377daf4e3ec3c9566a83bd83ef7fb7e4",
+      "severity": "medium",
+      "disclosure": "public",
+      "impact": "Content loaded from outside the application directory would run without same-origin restrictions in an unsandboxed renderer that can call `window.notes`.",
+      "remediation": "Remove `webSecurity: false` and set `sandbox: true` unless a documented requirement needs them.",
+      "next_probe": {
+        "operation": "capture_electron_scenario",
+        "rationale": "Exercise the window and record every resource it loads; a non-local origin makes this a defect."
+      }
+    },
+    {
+      "id": "notes-save-page-callers",
+      "title": "Which page code calls window.notes.save",
+      "statement": "REA did not analyze the inline script in index.html, so the Evidence does not show which page code calls `window.notes.save` or where its path argument comes from. This affects how the notes:save defect is reached in normal use, not whether the handler accepts arbitrary paths.",
+      "verdict": "unknown",
+      "claim_type": "behavior",
+      "evidence_ids": [
+        "ev_3607d6dd9ce6a14db9b4b60a4617ac216c36c9728063f33dd75c6bc3f521b6d2"
+      ],
+      "unknown_id": "unk_106b433435da34f219b5150a81ecea1f00ccfd5d9efb2d597113ae8391a5ffe3",
+      "next_probe": {
+        "operation": "capture_electron_scenario",
+        "rationale": "Click #save in a controlled replay and record the notes:save invocation arguments."
+      }
+    },
+    {
+      "id": "preload-bridge-scope",
+      "title": "Preload exposes two named functions, not ipcRenderer",
+      "statement": "With `contextIsolation: true`, preload.js exposes one contextBridge API, `notes`, as an object literal with exactly the members `load` and `save` and no unknown members. Both members invoke literal channels that pair with main-process handlers; `ipcRenderer` itself is not part of the recovered API.",
+      "verdict": "acceptable",
+      "claim_type": "structure",
+      "evidence_ids": [
+        "ev_3607d6dd9ce6a14db9b4b60a4617ac216c36c9728063f33dd75c6bc3f521b6d2"
+      ]
+    }
+  ]
+}
