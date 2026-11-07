@@ -151,6 +151,71 @@ const sanitizedMalformedHeader = (
   return text;
 };
 
+/** A URL field and its folded lines, retained separately but interpreted together. */
+class FoldedUrl {
+  readonly #parts: {
+    readonly text: string;
+    readonly assign: (value: string) => void;
+  }[] = [];
+  constructor(readonly redaction: RedactionState) {}
+
+  add(text: string, assign: (value: string) => void): void {
+    this.#parts.push({ text, assign });
+  }
+
+  finish(): void {
+    const pieces = this.#parts.map(({ text }, index) => {
+      const indent =
+        index === 0 ? 0 : (text.match(/^[ \t]*/u)?.[0].length ?? 0);
+      return { text, indent, value: text.slice(indent) };
+    });
+    const joined = pieces.map(({ value }) => value).join("");
+    const { credentials } = parseRecordedTransportUrl(joined);
+    if (credentials === "ambiguous") {
+      this.redaction.ambiguousUrl = true;
+      this.#parts.forEach(({ assign }, index) =>
+        assign(index === 0 ? AMBIGUOUS_URL : "[redacted continuation]"),
+      );
+      return;
+    }
+    if (
+      credentials === null ||
+      ["", ":"].includes(joined.slice(credentials.start, credentials.end - 1))
+    ) {
+      this.#parts.forEach(({ assign }, index) => {
+        const piece = pieces[index]!;
+        assign(
+          piece.text.slice(0, piece.indent) +
+            withoutUrlUserInfo(piece.value, this.redaction),
+        );
+      });
+      return;
+    }
+    let offset = 0;
+    this.#parts.forEach(({ assign }, index) => {
+      const piece = pieces[index]!;
+      const end = offset + piece.value.length;
+      const startCut = Math.max(credentials.start, offset);
+      const endCut = Math.min(credentials.end, end);
+      if (startCut >= endCut) assign(piece.text);
+      else {
+        const before = piece.value.slice(0, startCut - offset);
+        const after = piece.value.slice(endCut - offset);
+        const marker =
+          credentials.start >= offset && credentials.start < end
+            ? "[redacted]"
+            : "";
+        const at =
+          credentials.end > offset && credentials.end <= end ? "@" : "";
+        assign(
+          piece.text.slice(0, piece.indent) + before + marker + at + after,
+        );
+      }
+      offset = end;
+    });
+  }
+}
+
 /**
  * A version line is `WARC/` followed by a decimal `major.minor`. Accepting any
  * line that merely began with `WARC/` turned `WARC/not-a-version` into a record
@@ -212,6 +277,7 @@ const readHeaderBlock = (
   let cursor = versionLine.end;
   let previousSensitive = false;
   let previousUrl = false;
+  let foldedUrl: FoldedUrl | undefined;
   for (;;) {
     if (cursor >= data.length) return { block: null, limit: null };
     const line = findLineEnd(data, cursor);
@@ -221,6 +287,7 @@ const readHeaderBlock = (
     if (line.end - start > WARC_ARCHIVE_HEADER_BLOCK_BYTES)
       return { block: null, limit: "block-bytes" };
     if (line.contentEnd === cursor) {
+      foldedUrl?.finish();
       return {
         block: {
           version: version.slice(5),
@@ -241,12 +308,21 @@ const readHeaderBlock = (
     const first = invalid ? undefined : fields.get(name);
     const malformedLine =
       invalid || (first !== undefined && !REPEATABLE_FIELDS.has(name));
+    const continuation = /^[ \t]/u.test(text);
+    if (!continuation) {
+      foldedUrl?.finish();
+      foldedUrl =
+        name === "warc-target-uri" || HTTP_URL_HEADERS.has(name)
+          ? new FoldedUrl(redaction)
+          : undefined;
+    }
     if (malformedLine || first === undefined) {
       if (fields.size + malformed.length >= WARC_ARCHIVE_HEADER_FIELDS)
         return { block: null, limit: "block-fields" };
       if (malformedLine && malformed.length >= budget.remaining)
         return { block: null, limit: "archive-fields" };
-      if (malformedLine)
+      if (malformedLine) {
+        const index = malformed.length;
         malformed.push(
           sanitizedMalformedHeader(
             text,
@@ -255,7 +331,20 @@ const readHeaderBlock = (
             redaction,
           ),
         );
-      else fields.set(name, text.slice(colon + 1).trim());
+        if (foldedUrl !== undefined) {
+          const prefix = continuation ? "" : text.slice(0, colon + 1);
+          const value = continuation ? text : text.slice(colon + 1);
+          foldedUrl.add(value, (safe) => {
+            malformed[index] = prefix + safe;
+          });
+        }
+      } else {
+        const value = text.slice(colon + 1).trim();
+        fields.set(name, value);
+        foldedUrl?.add(value, (safe) => {
+          fields.set(name, safe);
+        });
+      }
     }
     if (!/^[ \t]/u.test(text)) {
       previousSensitive = SENSITIVE_HTTP_HEADERS.has(name);
@@ -488,6 +577,7 @@ const readHttpMessage = (
   let terminated = false;
   let previousSensitive = false;
   let previousUrl = false;
+  let foldedUrl: FoldedUrl | undefined;
   let entries = 0;
   let budgetExceeded = false;
   // The block ends at the first empty line. `headerBytes` is measured against
@@ -498,6 +588,7 @@ const readHttpMessage = (
     if (line.contentEnd - cursor > HTTP_START_LINE_BYTES)
       return { message: null, omission: "header-block-limit" };
     if (line.contentEnd === cursor) {
+      foldedUrl?.finish();
       headerBytes = line.end;
       terminated = true;
       break;
@@ -518,7 +609,12 @@ const readHttpMessage = (
     const sensitive = SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase());
     const url = HTTP_URL_HEADERS.has(name.trim().toLowerCase());
     const continuation = /^[ \t]/u.test(text);
-    if (colon <= 0 || !TOKEN.test(name))
+    if (!continuation) {
+      foldedUrl?.finish();
+      foldedUrl = url ? new FoldedUrl(redaction) : undefined;
+    }
+    if (colon <= 0 || !TOKEN.test(name)) {
+      const index = malformed.length;
       malformed.push(
         sanitizedMalformedHeader(
           text,
@@ -527,16 +623,28 @@ const readHttpMessage = (
           redaction,
         ),
       );
-    else {
+      if (foldedUrl !== undefined) {
+        const prefix = continuation ? "" : text.slice(0, colon + 1);
+        const value = continuation ? text : text.slice(colon + 1);
+        foldedUrl.add(value, (safe) => {
+          malformed[index] = prefix + safe;
+        });
+      }
+    } else {
       const value = text.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/gu, "");
+      const index = fields.length;
       fields.push({
         name,
         value: sensitive
           ? null
-          : HTTP_URL_HEADERS.has(name.toLowerCase())
+          : url
             ? withoutUrlUserInfo(value, redaction)
             : value,
       });
+      if (foldedUrl !== undefined)
+        foldedUrl.add(value, (safe) => {
+          fields[index] = { name, value: safe };
+        });
     }
     if (!continuation) {
       previousSensitive = sensitive;

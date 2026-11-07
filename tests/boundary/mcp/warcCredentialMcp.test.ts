@@ -13,7 +13,7 @@ it("withholds archived HTTP credentials from the reply and retained Evidence", a
     "crawl.warc",
   );
   const payload =
-    "GET / HTTP/1.1\r\nAuthorization: Bearer fixture-secret\r\nX-Note: retained\r\n\r\n";
+    "GET / HTTP/1.1\r\nAuthorization: Bearer fixture-secret\r\nX-Note: retained\r\nLocation: https://folded-user:folded-pass\r\n @example.test/path\r\n\r\n";
   await writeFile(
     path,
     `WARC/1.1\r\nWARC-Type: request\r\nContent-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`,
@@ -38,10 +38,12 @@ it("withholds archived HTTP credentials from the reply and retained Evidence", a
   });
   expect(reply.isError).not.toBe(true);
   const evidence = parseEvidence(reply.structuredContent);
-  expect(JSON.stringify(reply)).not.toContain("fixture-secret");
+  expect(JSON.stringify(reply)).not.toMatch(
+    /fixture-secret|folded-user|folded-pass/u,
+  );
   expect(
     JSON.stringify(session.evidenceById(evidence.evidence_id)),
-  ).not.toContain("fixture-secret");
+  ).not.toMatch(/fixture-secret|folded-user|folded-pass/u);
   expect(evidence.normalized_result).toMatchObject({
     records: [
       {
@@ -49,7 +51,9 @@ it("withholds archived HTTP credentials from the reply and retained Evidence", a
           headers: [
             { name: "Authorization", value: null },
             { name: "X-Note", value: "retained" },
+            { name: "Location", value: "https://[redacted]" },
           ],
+          malformed_header_lines: [" @example.test/path"],
         },
       },
     ],

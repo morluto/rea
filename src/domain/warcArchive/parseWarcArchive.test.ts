@@ -761,7 +761,9 @@ describe("embedded HTTP message inventory", () => {
       "NoColonHere",
     ]);
   });
+});
 
+describe("folded URL headers", () => {
   it("redacts credentials in a continuation of a URL header", () => {
     const archive = parsed(
       record(
@@ -773,6 +775,49 @@ describe("embedded HTTP message inventory", () => {
     expect(JSON.stringify(archive)).not.toMatch(/user:pass/u);
     expect(archive.records[0]?.http?.malformed_header_lines).toContain(
       " https://[redacted]@example.test/",
+    );
+  });
+
+  it.each([
+    ["https://user:pass", " @example.test/path"],
+    ["https://us", " er:pass@example.test/path"],
+    ["https://user:", " pass@example.test/path"],
+  ])(
+    "redacts split URL credentials in HTTP and WARC header lines",
+    (first, next) => {
+      const archive = parsed(
+        record(
+          "response",
+          [
+            ["WARC-Record-ID", "<urn:1>"],
+            ["WARC-Target-URI", `${first}\r\n${next}`],
+          ],
+          `HTTP/1.1 302 Found\r\nLocation: ${first}\r\n${next}\r\n\r\n`,
+        ),
+      );
+      const output = JSON.stringify(archive);
+      expect(output).not.toMatch(/user|pass/u);
+      expect(output).toContain("[redacted]");
+      expect(output).toContain("example.test/path");
+    },
+  );
+
+  it("preserves URL fragments in a folded header without credentials", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Target-URI", "https://example.test\r\n /path"]],
+        "HTTP/1.1 302 Found\r\nLocation: https://example.test\r\n /path\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.target_uri).toBe("https://example.test");
+    expect(archive.records[0]?.malformed_header_lines).toContain(" /path");
+    expect(archive.records[0]?.http?.headers).toContainEqual({
+      name: "Location",
+      value: "https://example.test",
+    });
+    expect(archive.records[0]?.http?.malformed_header_lines).toContain(
+      " /path",
     );
   });
 
