@@ -44,6 +44,36 @@ const analyzeThroughCliAndMcp = async (source: string) => {
   return evidence;
 };
 
+it("keeps only possibly callable child listeners through CLI and MCP", async () => {
+  const evidence =
+    await analyzeThroughCliAndMcp(`import { spawn } from 'node:child_process';
+const child = spawn('program');
+child.on('exit', flag ? 1 : 2);
+child.on('exit', flag ? 1 : () => {});
+child.once('error', flag ? null : false);
+child.once('error', flag ? handler : 1);
+`);
+  const { semantic_graph: graph } =
+    javascriptApplicationAnalysisResultSchema.parse(evidence.normalized_result);
+  const nodes = new Map(graph.nodes.map((node) => [node.node_id, node]));
+  const listeners = graph.relations.filter(({ relation }) =>
+    ["listens-exit", "listens-error"].includes(relation),
+  );
+  expect(
+    listeners.map((relation) => ({
+      relation: relation.relation,
+      line: nodes.get(relation.target_node_id)?.identity.source_range?.start
+        .line,
+    })),
+  ).toEqual(
+    expect.arrayContaining([
+      { relation: "listens-exit", line: 4 },
+      { relation: "listens-error", line: 6 },
+    ]),
+  );
+  expect(listeners).toHaveLength(2);
+}, 60000);
+
 it("preserves child ownership uncertainty after replacement through CLI and MCP", async () => {
   const evidence = await analyzeThroughCliAndMcp(
     `import { spawn } from 'node:child_process';
