@@ -321,6 +321,17 @@ describe("exportDesktopApplication with a task", () => {
     ],
     [
       task([
+        {
+          kind: "text_contains",
+          file: NOTE,
+          pointer: "/lines/0",
+          value: "milk",
+        },
+      ]),
+      "which is text; use lines_present",
+    ],
+    [
+      task([
         { id: "eggs", kind: "lines_present", file: NOTE, lines: ["eggs"] },
       ]),
       'Check "eggs" fails on the captured end state: Documents/today.txt has no line "eggs"',

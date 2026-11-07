@@ -46,6 +46,9 @@ The work lands as one PR per step:
     and export run inside the build computer with acknowledged checkpoints,
     the bundle comes back to the host, and the task is witnessed live in a
     fresh computer of it: seed, edit, near miss and reset, recorded.
+14. [XML text checks](xml-text-checks/spec.md): XML whose DOCTYPE only names
+    its DTD read as XML, starting with AbiWord, and checks of an element's
+    whole text across the runs an app splits a paragraph into.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.
