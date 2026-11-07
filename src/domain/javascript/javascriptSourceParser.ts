@@ -1,5 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { posix } from "node:path";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
@@ -80,8 +81,8 @@ const parseWithRuntimeContext = (
   const file = parse(source, options);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
-      ? /\.d\.cts$/iu.test(sourcePath ?? "")
+    isCommonJsSourcePath(sourcePath)
+      ? (sourcePath ?? "").endsWith(".d.cts")
         ? "unknown"
         : "commonjs"
       : isExplicitModuleSourcePath(sourcePath)
@@ -141,14 +142,26 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
+/**
+ * Loader mode comes from the exact suffix Node dispatches on, so a case-folded
+ * `.MJS` or `.CJS` stays unknown rather than borrowing `.mjs`'s module mode.
+ */
+const exactSuffix = (path?: string): string => posix.extname(path ?? "");
+
+export const isExplicitModuleSourcePath = (path?: string): boolean => {
+  const suffix = exactSuffix(path);
+  return suffix === ".mjs" || suffix === ".mts";
+};
+
+const isCommonJsSourcePath = (path?: string): boolean => {
+  const suffix = exactSuffix(path);
+  return suffix === ".cjs" || suffix === ".cts";
+};
 
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  isCommonJsSourcePath(path)
     ? "commonjs"
     : isExplicitModuleSourcePath(path)
       ? "module"
