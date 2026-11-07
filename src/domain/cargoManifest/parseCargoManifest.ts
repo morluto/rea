@@ -164,13 +164,14 @@ const defaultFeatures = (
   source: CargoDependency["source"],
   legacyStatus: "supported" | "unsupported" | "unknown",
 ): boolean | null => {
+  const modern = declaration["default-features"];
+  if (modern !== undefined) return typeof modern === "boolean" ? modern : null;
   if (
     declaration.default_features !== undefined &&
     legacyStatus !== "supported"
   )
     return null;
-  const declared =
-    declaration["default-features"] ?? declaration.default_features;
+  const declared = declaration.default_features;
   if (typeof declared === "boolean") return declared;
   if (declared !== undefined) return null;
   return source === "workspace" ? null : true;

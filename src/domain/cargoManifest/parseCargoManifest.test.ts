@@ -541,7 +541,9 @@ explicit = { workspace = true, default-features = true }
       default_features: false,
     });
   });
+});
 
+describe("Cargo default feature spellings", () => {
   it("recognizes legacy default_features without inventing enabled features", () => {
     const value = required(
       parse(`
@@ -580,9 +582,14 @@ name = "demo"
 edition = "2024"
 [dependencies]
 legacy = { version = "1", default_features = false }
+both = { version = "1", default-features = false, default_features = true }
 `),
     );
-    expect(value.dependencies[0]?.default_features).toBeNull();
+    const byName = new Map(
+      value.dependencies.map((dependency) => [dependency.name, dependency]),
+    );
+    expect(byName.get("legacy")?.default_features).toBeNull();
+    expect(byName.get("both")?.default_features).toBe(false);
     expect(value.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -601,9 +608,14 @@ name = "demo"
 edition.workspace = true
 [dependencies]
 legacy = { version = "1", default_features = false }
+both = { version = "1", default-features = false, default_features = true }
 `),
     );
-    expect(value.dependencies[0]?.default_features).toBeNull();
+    const byName = new Map(
+      value.dependencies.map((dependency) => [dependency.name, dependency]),
+    );
+    expect(byName.get("legacy")?.default_features).toBeNull();
+    expect(byName.get("both")?.default_features).toBe(false);
     expect(value.diagnostics).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -612,7 +624,9 @@ legacy = { version = "1", default_features = false }
       ]),
     );
   });
+});
 
+describe("Cargo source paths", () => {
   it("keeps a local path byte for byte instead of redacting it as a URL", () => {
     const value = required(
       parse(`

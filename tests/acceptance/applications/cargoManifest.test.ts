@@ -120,6 +120,20 @@ cliTest(
       ]),
     );
     expect(report.diagnostics).toEqual([]);
+    await writeFile(
+      path,
+      `[package]\nname = "demo"\nedition.workspace = true\n[dependencies]\nserde = { version = "1", default-features = false, default_features = true }\n`,
+    );
+    const inherited = await call("inspect_cargo_manifest", { path });
+    expect(inherited.isError, JSON.stringify(inherited.content)).not.toBe(true);
+    const inheritedReport = cargoManifestSchema.parse(
+      parseEvidence(inherited.structuredContent).normalized_result,
+    );
+    expect(inheritedReport.dependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "serde", default_features: false }),
+      ]),
+    );
   },
 );
 
