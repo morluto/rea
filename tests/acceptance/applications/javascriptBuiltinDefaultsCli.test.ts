@@ -82,6 +82,18 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     fs.createReadStream("invalid", { encoding: "nope" });
   `,
   );
+  await writeFile(
+    join(root, "superclass.cjs"),
+    `
+    const stream = require("node:stream");
+    stream.Readable = wrapRead;
+    stream.Writable = wrapWrite;
+    const fs = require("node:fs");
+    const read = fs.createReadStream("input", { highWaterMark: -1 });
+    const write = fs.createWriteStream("output", { highWaterMark: -1 });
+    read.close(); write.close();
+  `,
+  );
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -106,8 +118,13 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     ),
   ).toHaveLength(1);
   expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "superclass.cjs",
+    ),
+  ).toHaveLength(2);
+  expect(
     graph.relations.filter(({ relation }) => relation === "releases"),
-  ).toHaveLength(3);
+  ).toHaveLength(5);
   const { client, call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {
     input_path: root,

@@ -112,7 +112,9 @@ export const collectJavaScriptSemanticResources = (
           candidate.node,
           state,
         ) ||
-        !builtinSharedPrototypeUnmodified(
+        // Node lazily captures the stream superclass when fs streams initialize.
+        // A replacement before that point can change constructor validation.
+        !builtinModuleSubtreeUnmodified(
           "stream",
           [
             candidate.method === "createReadStream" ? "Readable" : "Writable",

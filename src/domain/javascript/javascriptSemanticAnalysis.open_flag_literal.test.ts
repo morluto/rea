@@ -568,6 +568,28 @@ it.each([
   },
 );
 
+it.each([
+  ["Readable", "createReadStream"],
+  ["Writable", "createWriteStream"],
+] as const)(
+  "retains %s when its export is replaced before stream initialization",
+  (parent, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+      const stream = require("node:stream");
+      stream.${parent} = wrapper;
+      const fs = require("node:fs");
+      const handle = fs.${method}("input", { highWaterMark: -1 });
+      handle.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "acquire", method }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
 it("retains write streams when the named Buffer constructor escapes", () => {
   const operations = analyzeJavaScriptSemantics(
     `import fs from "node:fs"; import { Buffer as B } from "node:buffer"; configure(B); const stream = fs.createWriteStream("input", { encoding: "nope" }); stream.close();`,
