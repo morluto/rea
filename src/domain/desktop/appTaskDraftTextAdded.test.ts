@@ -27,20 +27,29 @@ describe("draftTaskFiles for lines added to free text", () => {
         value: "olive oil",
       },
     ]);
-    expect(file.guards).toEqual([
-      { kind: "text_contains", file: FILE, pointer: CONTENT, value: LIST },
-    ]);
+    expect(file.guards.map((guard) => "value" in guard && guard.value)).toEqual(
+      ["Shopping List", "eggs", "bread"],
+    );
     const checks = [...file.suggested, ...file.guards];
-    expect(passing(FILE, xml(note(LIST)), checks)).toEqual([false, true]);
+    expect(passing(FILE, xml(note(LIST)), checks)).toEqual([
+      false,
+      true,
+      true,
+      true,
+    ]);
     expect(passing(FILE, xml(note(`${LIST}\nolive oil\n`)), checks)).toEqual([
+      true,
+      true,
       true,
       true,
     ]);
     expect(
-      passing(FILE, xml(note("Shopping List\n\nolive oil\neggs\nbread")), [
-        ...file.suggested,
-      ]),
-    ).toEqual([true]);
+      passing(
+        FILE,
+        xml(note("Shopping List\n\nolive oil\neggs\nbread")),
+        checks,
+      ),
+    ).toEqual([true, true, true, true]);
   });
 
   it("guards each side of the text a line was inserted into", () => {
@@ -55,7 +64,7 @@ describe("draftTaskFiles for lines added to free text", () => {
       },
     ]);
     expect(file.guards.map((guard) => "value" in guard && guard.value)).toEqual(
-      ["Shopping List\n\neggs", "bread"],
+      ["Shopping List", "eggs", "bread"],
     );
   });
 

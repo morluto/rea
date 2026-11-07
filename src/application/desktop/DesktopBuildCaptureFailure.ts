@@ -166,12 +166,11 @@ export const endedCapture = async (
         : undefined) ?? notAnswered(step.operation, answer)
     );
   } catch (cause: unknown) {
+    if (cause instanceof AnalysisError) return cause;
     if (signal.aborted)
-      return cause instanceof AnalysisError
-        ? cause
-        : new AnalysisCancelledError(step.operation, {
-            cause: signal.reason,
-          });
+      return new AnalysisCancelledError(step.operation, {
+        cause: signal.reason,
+      });
     return notAnswered(step.operation, answer);
   }
 };
