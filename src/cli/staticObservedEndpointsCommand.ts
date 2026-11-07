@@ -6,6 +6,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { compareStaticObservedEndpointsFactsSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { getEvidenceInputContract } from "../domain/evidenceInputContract.js";
 import { endpointComparisonViewRequestSchema } from "../domain/analysisView/endpointComparisonView.js";
 import { parseAnalysisInput } from "../application/AnalysisInput.js";
@@ -23,6 +24,9 @@ import {
 } from "./analysisEvidenceDelivery.js";
 
 const operation = "compare_static_and_observed_endpoints";
+const comparisonDocumentSchema = getEvidenceInputContract(
+  compareStaticObservedEndpointsFactsSchema,
+).frameSchema;
 const deliverySchema = z
   .object({
     detail: analysisEvidenceDeliveryOptions.detail,
@@ -73,8 +77,7 @@ const runComparison = async (
   const input = parseAnalysisInput(
     operation,
     raw.value,
-    getEvidenceInputContract(compareStaticObservedEndpointsFactsSchema)
-      .frameSchema,
+    comparisonDocumentSchema,
     signal,
   );
   if (!input.ok) return projectAnalysisError(input.error);
@@ -112,11 +115,10 @@ export const registerStaticObservedEndpointsCommand = (
     description:
       "Compare static JavaScript endpoints and HAR Evidence JSON offline; --detail summary with --evidence_output saves full facts for selected inspect-analysis-view pages",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or file containing application, capture and optional origin",
-        ),
+      inputJson: jsonInputArgument(
+        "Inline JSON or file containing application, capture and optional origin",
+        comparisonDocumentSchema,
+      ),
     }),
     options: commandOptions,
     run: ({ args, options }) =>
