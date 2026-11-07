@@ -149,17 +149,22 @@ const streamMemberValue = (
           value: value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY,
         }
       : undefined;
-  // `!` and `typeof` yield a boolean or a string, and `delete` leaves a boolean; every
-  // one of those is a type Node refuses for these members.
+  // Every remaining exactly readable value is a type Node refuses for these members.
+  // A method written in shorthand reaches this reader as an `ObjectMethod`, and a class
+  // expression has the same runtime type as a function: measured on Node 24.22.1,
+  // `createReadStream(p, {start(){}})`, `{start: function(){}}` and `{start: class{}}`
+  // all throw `ERR_INVALID_ARG_TYPE`.
   if (
     t.isStringLiteral(value) ||
     t.isTemplateLiteral(value) ||
     t.isBooleanLiteral(value) ||
     t.isBigIntLiteral(value) ||
     t.isObjectExpression(value) ||
+    t.isObjectMethod(value) ||
     t.isArrayExpression(value) ||
     t.isFunctionExpression(value) ||
     t.isArrowFunctionExpression(value) ||
+    t.isClassExpression(value) ||
     t.isRegExpLiteral(value)
   )
     return { kind: "refused" };
@@ -175,15 +180,16 @@ const streamMemberValue = (
  * start:-1})` constructs a stream while the same literal without the getter throws
  * `ERR_OUT_OF_RANGE`, so the getter's presence makes every other member undecided.
  *
- * A `set` accessor is not enumerated and a plain method is not invoked during the copy,
- * so neither affects a later member.
+ * A computed string key does not help: `{get ["reset"](){this.start=0}, start:-1}`
+ * also constructs a stream, because the key is materialised when the literal is
+ * created and then enumerated like any other. So every getter counts, computed or not.
+ *
+ * A `set` accessor is not read during the copy and a plain method is not invoked, so
+ * neither affects a later member.
  */
 const optionsHasEagerAccessor = (object: t.ObjectExpression): boolean =>
   object.properties.some(
-    (property) =>
-      t.isObjectMethod(property) &&
-      property.kind === "get" &&
-      !property.computed,
+    (property) => t.isObjectMethod(property) && property.kind === "get",
   );
 
 /**
@@ -276,7 +282,15 @@ const rejectsStreamOptionsLiteral = (
   return false;
 };
 
-/** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
+/**
+ * Whether a stream `encoding` member is one Node's `Buffer` refuses.
+ *
+ * Node skips the member when it is falsy and otherwise requires a string `Buffer`
+ * accepts. Measured on Node 24.22.1: `0`, `-0`, `""`, `false`, `0n` and `NaN` are all
+ * skipped, while `-1`, `1.5`, `Infinity`, `-Infinity`, `{}`, `[]` and a method all throw
+ * `ERR_INVALID_ARG_VALUE`. `NaN` is falsy, so it is skipped like the other zero-ish
+ * values rather than refused.
+ */
 const rejectsStreamEncoding = (
   options: t.ObjectExpression,
   context: DataEffectTraversalContext,
@@ -291,16 +305,18 @@ const rejectsStreamEncoding = (
       ? value.quasis[0]?.value.cooked
       : undefined;
   if (text !== undefined && text !== null)
-    // A falsy encoding is skipped by Node before it validates anything.
     return text.length > 0 && !BUFFER_ENCODINGS.has(text.toLowerCase());
-  // Only a truthy literal reaches Node's check; `0`, `false` and `-0` are skipped.
-  if (t.isNumericLiteral(value)) return value.value !== 0;
   if (t.isBooleanLiteral(value)) return value.value;
   if (t.isBigIntLiteral(value)) return ![0n, -0n].includes(BigInt(value.value));
-  return false;
+  const numeric = streamMemberValue(value, context);
+  if (numeric === undefined) return false;
+  if (numeric.kind === "absent") return false;
+  // Everything else that is exactly readable is truthy and not a string, so Node's
+  // truthiness gate lets it through to the encoding check, which refuses it.
+  if (numeric.kind === "refused") return true;
+  return numeric.value !== 0 && !Number.isNaN(numeric.value);
 };
 
-/** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
 /**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
  * a flag Node rejects at the call site throws synchronously and no descriptor
