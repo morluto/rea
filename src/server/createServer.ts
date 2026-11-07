@@ -22,6 +22,7 @@ import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
+import { registerReleaseExposureTool } from "./registerReleaseExposureTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
@@ -223,6 +224,7 @@ export const createServer = (
     peCertificates,
     peImports,
     electronFuses,
+    releaseExposure,
     pythonPyc,
     webNetworkCapture,
     javascriptRecovery,
@@ -487,6 +489,13 @@ export const createServer = (
       registerPeLoadConfigTool(
         server,
         peLoadConfig,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerReleaseExposureTool(
+        server,
+        releaseExposure,
         toolLogger,
         recordEvidence,
         analysisAdmission,

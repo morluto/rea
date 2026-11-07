@@ -265,6 +265,7 @@ const failureForPrimary = (
     return cause.kind === "unsupported"
       ? new AnalysisUnsupportedTargetError(OPERATION, path, cause.message, {
           cause,
+          undecodedContent: cause.undecodedContent,
         })
       : new AnalysisInputError(OPERATION, { cause }, [
           {

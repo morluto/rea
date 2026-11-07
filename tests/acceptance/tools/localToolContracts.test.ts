@@ -252,6 +252,7 @@ const pathRequests: readonly [string, Record<string, unknown>][] = [
   ["inspect_devicetree", { path: nul }],
   ["inspect_kernel_module", { path: nul }],
   ["inspect_pe_load_config", { path: nul }],
+  ["audit_release_exposure", { path: nul }],
   ["inspect_binary_hardening", { path: nul }],
   ["inspect_python_pyc", { path: nul }],
   ["inspect_erlang_beam", { path: nul }],

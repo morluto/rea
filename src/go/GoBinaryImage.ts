@@ -112,6 +112,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
     throw new BinaryFormatFailure(
       "unsupported",
       "Go build-info flags contain an unsupported format bit",
+      true,
     );
   if ((flags & 2) === 0 && (flags & 1) !== (byte_order === "big" ? 1 : 0))
     throw new BinaryFormatFailure(

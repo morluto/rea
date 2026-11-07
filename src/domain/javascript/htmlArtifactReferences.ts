@@ -22,6 +22,8 @@ export interface HtmlInlineScript {
   readonly scriptType: "classic" | "module";
   /** The body's range, between the opening and closing tags. */
   readonly location: JavaScriptSourceRange;
+  /** The body as the HTML parser decoded it. */
+  readonly text: string;
 }
 
 /**
@@ -157,7 +159,7 @@ export const htmlArtifactReferences = (
         if (inline !== undefined && scriptType !== null) {
           inlineScriptCount += 1;
           if (inlineScripts.length < HTML_INLINE_SCRIPT_LOCATION_LIMIT)
-            inlineScripts.push({ scriptType, location: inline });
+            inlineScripts.push({ scriptType, ...inline });
         }
       }
     }
@@ -173,22 +175,27 @@ export const htmlArtifactReferences = (
 /** Locate a script element's non-blank body; browsers ignore it when src is set. */
 const inlineScriptBody = (
   node: DefaultTreeAdapterTypes.Element,
-): JavaScriptSourceRange | undefined => {
+): Pick<HtmlInlineScript, "location" | "text"> | undefined => {
   const startTag = node.sourceCodeLocation?.startTag;
   if (startTag === undefined) return undefined;
   let blank = true;
+  let text = "";
   let end: DefaultTreeAdapterTypes.TextNode["sourceCodeLocation"];
   for (const child of node.childNodes) {
     if (!defaultTreeAdapter.isTextNode(child)) continue;
     if (blank && /\S/u.test(child.value)) blank = false;
+    text += child.value;
     end = child.sourceCodeLocation ?? end;
   }
   // An unclosed script's element range ends at its opening tag, so the body's
   // own text location bounds it.
   if (blank || end == null) return undefined;
   return {
-    start: sourcePoint(startTag.endLine, startTag.endCol),
-    end: sourcePoint(end.endLine, end.endCol),
+    location: {
+      start: sourcePoint(startTag.endLine, startTag.endCol),
+      end: sourcePoint(end.endLine, end.endCol),
+    },
+    text,
   };
 };
 

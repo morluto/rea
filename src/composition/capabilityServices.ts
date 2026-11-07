@@ -33,6 +33,7 @@ import { createBeamService } from "./erlang.js";
 import { createModelArtifactService } from "./model.js";
 import { createIl2cppMetadataService } from "./il2cpp.js";
 import { createElectronFuseService } from "./electronFuses.js";
+import { createReleaseExposureService } from "./releaseExposure.js";
 import { createPythonPycService } from "./pythonPyc.js";
 import { createWebNetworkCaptureService } from "./webNetworkCaptures.js";
 import { createWebSourceLocationService } from "./webSourceLocations.js";
@@ -349,6 +350,9 @@ const modules = {
   peImports: service(() => createPeImportsService()),
   electronFuses: service(
     ({ options }) => options.electronFuses ?? createElectronFuseService(),
+  ),
+  releaseExposure: service(({ environment, settings }) =>
+    createReleaseExposureService(environment, settings),
   ),
   pythonPyc: service(
     ({ options }) => options.pythonPyc ?? createPythonPycService(),

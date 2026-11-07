@@ -91,6 +91,7 @@ const dependencySection = (
     throw new RustAuditableFormatFailure(
       "unsupported",
       "Compressed dependency sections are unsupported",
+      { undecodedContent: true },
     );
   if (!section.file_backed)
     throw new RustAuditableFormatFailure(

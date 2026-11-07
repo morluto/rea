@@ -22,7 +22,12 @@ import {
   type ArtifactReaderTraversal,
 } from "../ArtifactReader.js";
 import { ArtifactTraversalObservation } from "../ArtifactTraversalObservation.js";
-import { DirectoryArtifactEntryAccessDenied } from "../DirectoryArtifactReader.js";
+import {
+  DirectoryArtifactEntryAccessDenied,
+  DirectoryArtifactReader,
+  DirectoryArtifactTraversalLimit,
+} from "../DirectoryArtifactReader.js";
+import type { ArtifactInventoryOptions } from "./types.js";
 import { AsarArtifactReader } from "../AsarArtifactReader.js";
 import {
   InesArtifactReader,
@@ -56,6 +61,9 @@ const emptyScan = (): {
 } => ({ nodes: new Map(), occurrences: [], pendingContradictions: [] });
 
 interface ScanContext {
+  readonly acquisitionLimits: ArtifactInventoryOptions["acquisitionLimits"];
+  entriesExamined: number;
+  bytesRead: number;
   readonly reader: ArtifactReader;
   readonly signal: AbortSignal | undefined;
   readonly integrity: ArtifactIntegrityPolicyName;
@@ -83,6 +91,7 @@ export const scanReader = async (
   signal?: AbortSignal,
   integrity: ArtifactIntegrityPolicyName = "fail",
   asarHeaderAdmission?: AsarHeaderAdmission,
+  acquisitionLimits?: ArtifactInventoryOptions["acquisitionLimits"],
 ): Promise<{
   readonly nodes: Map<string, ArtifactNode>;
   readonly occurrences: MutableOccurrence[];
@@ -107,6 +116,9 @@ export const scanReader = async (
       rootContradiction: undefined,
     };
   const context: ScanContext = {
+    acquisitionLimits,
+    entriesExamined: 0,
+    bytesRead: 0,
     reader,
     signal,
     integrity,
@@ -176,6 +188,15 @@ const containerContradiction = (
   return pair;
 };
 
+class InventoryAcquisitionLimit extends ArtifactReaderFailure {
+  constructor() {
+    super(
+      "limit",
+      "Artifact inventory acquisition allowance exhausted; member coverage is incomplete.",
+    );
+  }
+}
+
 const inventoryEntries = (
   context: ScanContext,
   reader: ArtifactReader,
@@ -184,6 +205,14 @@ const inventoryEntries = (
   reader
     .entries(context.signal, {
       onCoverage: context.traversal.onCoverage,
+      ...(reader instanceof DirectoryArtifactReader &&
+      context.acquisitionLimits !== undefined
+        ? {
+            maximumEntries:
+              context.acquisitionLimits.maximumEntries -
+              context.entriesExamined,
+          }
+        : {}),
       onOmission: (omission) =>
         context.traversal.onOmission({
           ...omission,
@@ -222,6 +251,12 @@ const visitArtifactEntries = async (
         continue;
       }
       const entry = next.value;
+      if (
+        context.acquisitionLimits !== undefined &&
+        context.entriesExamined >= context.acquisitionLimits.maximumEntries
+      )
+        throw new InventoryAcquisitionLimit();
+      context.entriesExamined += 1;
       const logicalPath = normalizeArtifactPath(
         frame.prefix.length === 0
           ? entry.path
@@ -329,7 +364,15 @@ const visitArtifactEntries = async (
       }
     }
   } catch (cause: unknown) {
-    failure = { cause };
+    if (
+      cause instanceof InventoryAcquisitionLimit ||
+      cause instanceof DirectoryArtifactTraversalLimit
+    )
+      context.traversal.onCoverage({
+        status: "unknown",
+        limitations: [cause.message],
+      });
+    else failure = { cause };
   } finally {
     // Readers remain owned by the inventory until its complete observation is built.
     for (const { iterator, prefix, reader } of stack.reverse()) {
@@ -367,6 +410,13 @@ const digestArtifactEntry = async (
 > => {
   if ((entry.kind !== "file" && entry.kind !== "slice") || entry.encrypted)
     return undefined;
+  if (
+    context.acquisitionLimits !== undefined &&
+    entry.declaredSize !== null &&
+    entry.declaredSize >
+      context.acquisitionLimits.maximumBytes - context.bytesRead
+  )
+    throw new InventoryAcquisitionLimit();
   const reconstruction =
     currentReader === context.reader ? context.reconstruction : undefined;
   if (reconstruction !== undefined && entry.byteOffset !== reconstruction.bytes)
@@ -376,12 +426,19 @@ const digestArtifactEntry = async (
     context.signal,
     entry.declaredIntegrity?.algorithm,
     context.asarHeaderAdmission,
-    reconstruction === undefined
-      ? undefined
-      : (chunk) => {
-          reconstruction.hash.update(chunk);
-          reconstruction.bytes += chunk.length;
-        },
+    (chunk) => {
+      if (
+        context.acquisitionLimits !== undefined &&
+        chunk.length >
+          context.acquisitionLimits.maximumBytes - context.bytesRead
+      )
+        throw new InventoryAcquisitionLimit();
+      context.bytesRead += chunk.length;
+      if (reconstruction !== undefined) {
+        reconstruction.hash.update(chunk);
+        reconstruction.bytes += chunk.length;
+      }
+    },
   );
   reconstruction?.regionOrder.push(entry.path);
   const claim = entry.declaredIntegrity;

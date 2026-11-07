@@ -70,6 +70,7 @@ export const goBuildInfoSearch = (
         throw new BinaryFormatFailure(
           "unsupported",
           "Compressed ELF build-info sections are unsupported",
+          true,
         );
       const search = {
         ...reader.fileRange(

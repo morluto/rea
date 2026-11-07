@@ -19,6 +19,9 @@ import {
   ArtifactEmbeddedFormatProbes,
   type ArtifactEmbeddedFormatProbeFacts,
 } from "../ArtifactEmbeddedFormatProbes.js";
+import type { BunStandaloneProbe } from "../bun/BunModuleGraphLayout.js";
+import type { NodeSeaLocation } from "../nodeSea/NodeSeaLocation.js";
+import type { PyInstallerCookie } from "../pyinstaller/CArchiveLayout.js";
 import {
   assertStableRegularFileIdentity,
   RegularFileChangedError,
@@ -211,6 +214,44 @@ export const classifyAndHashRootForInventory = async (
   return outcome.value;
 };
 
+export type EmbeddedExecutablePackage =
+  | { readonly format: "node-sea"; readonly location: NodeSeaLocation }
+  | {
+      readonly format: "bun-standalone";
+      readonly probe: Extract<
+        BunStandaloneProbe,
+        { readonly status: "present" }
+      >;
+    }
+  | { readonly format: "dotnet-bundle"; readonly headerOffset: number }
+  | { readonly format: "pyinstaller"; readonly cookie: PyInstallerCookie };
+
+/**
+ * Executable-branch package order for a native image.
+ * Root classification and release-exposure probing both use this decision.
+ */
+export const classifyEmbeddedExecutablePackage = async (
+  probes: ArtifactEmbeddedFormatProbes,
+  nativeFormat: string,
+  signal?: AbortSignal,
+): Promise<EmbeddedExecutablePackage | undefined> => {
+  const sea = await probes.nodeSea();
+  abortIfNeeded(signal);
+  if (sea !== undefined) return { format: "node-sea", location: sea };
+  const bun = await probes.bunStandalone();
+  if (bun.status === "present") return { format: "bun-standalone", probe: bun };
+  const packaged = await probes.pyInstaller();
+  abortIfNeeded(signal);
+  if (nativeFormat !== "mach-o-universal") {
+    const headerOffset = await probes.dotnetBundle();
+    if (headerOffset !== undefined)
+      return { format: "dotnet-bundle", headerOffset };
+  }
+  if (packaged !== undefined)
+    return { format: "pyinstaller", cookie: packaged };
+  return undefined;
+};
+
 const classifyRootFormat = async (
   path: string,
   source: RootInventorySource,
@@ -350,32 +391,38 @@ const classifyRootFormat = async (
   )
     return zipRootPackageFormat(lower);
   if (["elf", "pe", "mach-o", "mach-o-universal"].includes(format)) {
-    const sea = await embeddedProbes.nodeSea();
-    abortIfNeeded(signal);
-    if (sea !== undefined) {
+    const embedded = await classifyEmbeddedExecutablePackage(
+      embeddedProbes,
+      format,
+      signal,
+    );
+    if (embedded?.format === "node-sea") {
       const decoded = await decodeNodeSeaBlob(
-        await readNodeSeaBlob(handle, sea, archiveBytes, signal),
+        await readNodeSeaBlob(handle, embedded.location, archiveBytes, signal),
         signal,
       );
-      return { kind: "node-sea", source, location: sea, decoded };
+      return {
+        kind: "node-sea",
+        source,
+        location: embedded.location,
+        decoded,
+      };
     }
-    const bun = await embeddedProbes.bunStandalone();
-    if (bun.status === "present")
-      return { kind: "bun-standalone", source, probe: bun };
-    const packaged = await embeddedProbes.pyInstaller();
-    abortIfNeeded(signal);
-    if (format !== "mach-o-universal") {
-      const headerOffset = await embeddedProbes.dotnetBundle();
-      if (headerOffset !== undefined)
-        return { kind: "dotnet-bundle", source, headerOffset };
-    }
+    if (embedded?.format === "bun-standalone")
+      return { kind: "bun-standalone", source, probe: embedded.probe };
+    if (embedded?.format === "dotnet-bundle")
+      return {
+        kind: "dotnet-bundle",
+        source,
+        headerOffset: embedded.headerOffset,
+      };
     // A valid cookie also proves enough bytes for a thin Mach-O identity;
     // PE and universal Mach-O classification already require stronger proof.
-    if (packaged !== undefined)
+    if (embedded?.format === "pyinstaller")
       return {
         kind: "pyinstaller",
         source,
-        cookie: packaged,
+        cookie: embedded.cookie,
         carrierPathDialect: format === "pe" ? "windows" : "posix",
       };
   }

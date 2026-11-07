@@ -5,6 +5,8 @@ export class BinaryFormatFailure extends Error {
   constructor(
     readonly kind: "malformed" | "unsupported",
     message: string,
+    /** The image holds the metadata, in a form this reader cannot decode. */
+    readonly undecodedContent = false,
   ) {
     super(message);
     this.name = "BinaryFormatFailure";

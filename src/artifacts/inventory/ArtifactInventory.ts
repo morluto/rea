@@ -26,6 +26,15 @@ export const inventoryArtifact = async (
   return artifactInventoryResultSchema.parse(snapshot);
 };
 
+/** Inventory under an admission the caller already holds on its scope. */
+export const inventoryArtifactInScope = async (
+  inputPath: string,
+  options: ArtifactInventoryOptions,
+): Promise<ArtifactInventoryResult> =>
+  artifactInventoryResultSchema.parse(
+    await scanArtifactInventoryInScope(inputPath, options),
+  );
+
 export const scanArtifactInventoryInScope = async (
   inputPath: string,
   options: ArtifactInventoryOptions,
