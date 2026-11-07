@@ -8,12 +8,36 @@ import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
-import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
 import { goBinarySchema } from "../dist/domain/go/goBinary.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { requireMcpOutput } from "./lib/mcp-verifier-results.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
+import { VerifierStdioClientTransport } from "./lib/verifier-stdio-transport.mjs";
+
+/** The retained owner remains the exact authority for retrying this release. */
+class GoVerifierCleanupFailure extends AggregateError {
+  _tag = "GoVerifierCleanupFailure";
+  reason = "cleanup_incomplete";
+
+  constructor(failures, cleanupOwner, retainedRoot) {
+    super(
+      failures,
+      `Real Go metadata verification failed; retained fixture root ${retainedRoot} because its cleanup is incomplete.`,
+    );
+    this.name = "GoVerifierCleanupFailure";
+    this.cleanupOwner = cleanupOwner;
+    this.retainedRoot = retainedRoot;
+  }
+}
 
 const execute = promisify(execFile);
 const compiler = process.env.REA_VERIFY_GO_COMMAND ?? "go";
@@ -50,13 +74,8 @@ const goEnvironment = {
   // Go's own verifier seam isolates telemetry; no global configuration is changed.
   TEST_TELEMETRY_DIR: join(root.path, "telemetry"),
 };
-const client = new Client({ name: "go-binary-verifier", version: "1" });
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [entrypoint, "mcp"],
-  env: environment,
-  stderr: "pipe",
-});
+let client;
+let transport;
 const targets = [
   ["linux", "amd64", "elf", 64, "little"],
   ["linux", "386", "elf", 32, "little"],
@@ -70,8 +89,40 @@ const targets = [
 ];
 const verified = [];
 const omittedCoverage = [];
+let verifier;
+let rootRemoved = false;
+// Each owner a verification acquired must finish before its root can go. Any
+// failure leaves the root and owners in place, and closing again retries them.
+const fixture = {
+  async close() {
+    if (rootRemoved) return;
+    await closeVerifierResources([
+      () => client?.close(),
+      () => transport?.closeAndVerifyChild(),
+    ]);
+    verifier = await completeVerifierRun(run);
+    // On POSIX an unavailable lineage is an unknown, so it keeps the root. Windows
+    // has no lineage facility here, and requiring one would retain every root, so
+    // the report states the weaker proof there instead of implying more.
+    if (process.platform === "win32")
+      omittedCoverage.push(
+        "Verifier process lineage is unavailable on Windows; the fixture root's release relies on the MCP child's completion alone, and other descendants were not observed.",
+      );
+    else assertVerifierCleanupComplete(verifier.process_lineage);
+    await root.close();
+    await assert.rejects(lstat(root.path), { code: "ENOENT" });
+    rootRemoved = true;
+  },
+};
 const failures = [];
-try {
+await withVerifierCleanup(async () => {
+  client = new Client({ name: "go-binary-verifier", version: "1" });
+  transport = new VerifierStdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: environment,
+    stderr: "pipe",
+  });
   await prepareFixture();
   try {
     compilerVersion = (
@@ -194,29 +245,11 @@ try {
     );
     await verify(path, targets[0], oracle, expected);
   }
-} catch (cause) {
-  failures.push(cause);
-} finally {
-  for (const close of [
-    () => client.close(),
-    () => transport.close(),
-    () => root.close(),
-  ]) {
-    try {
-      await close();
-    } catch (cause) {
-      failures.push(cause);
-    }
-  }
-}
-const verifier = await completeVerifierRun(run);
-try {
-  await assert.rejects(lstat(root.path), { code: "ENOENT" });
-  if (verifier.process_lineage.status === "verified")
-    assert.deepEqual(verifier.process_lineage.descendants, []);
-} catch (cause) {
-  failures.push(cause);
-}
+}, [() => fixture.close()]).catch((cause) => {
+  failures.push(...flattenFailures(cause));
+});
+// A release that stopped early never observed lineage; report it regardless.
+verifier ??= await completeVerifierRun(run);
 if (failures.length > 0) {
   console.error(
     JSON.stringify(
@@ -225,16 +258,19 @@ if (failures.length > 0) {
         compiler: compilerVersion,
         verified,
         omitted_coverage: omittedCoverage,
+        retained_root: rootRemoved ? null : root.path,
         verifier,
       },
       null,
       2,
     ),
   );
-  throw new AggregateError(
-    failures,
-    "Real Go metadata verification failed; cleanup failures are retained.",
-  );
+  if (rootRemoved)
+    throw new AggregateError(
+      failures,
+      "Real Go metadata verification failed; cleanup failures are retained.",
+    );
+  throw new GoVerifierCleanupFailure(failures, fixture, root.path);
 }
 console.log(
   JSON.stringify(
@@ -253,6 +289,12 @@ console.log(
     2,
   ),
 );
+
+function flattenFailures(cause) {
+  return cause instanceof AggregateError
+    ? cause.errors.flatMap(flattenFailures)
+    : [cause];
+}
 
 async function go(args, overrides = {}) {
   return execute(compiler, args, {
