@@ -17,6 +17,11 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
+  parseDesktopEntry,
+  tokenizeDesktopExec,
+  unwrapDesktopCommand,
+} from "./desktopEntry.js";
+import {
   BUILD_NODE_VERSION,
   BUILD_PACKAGE_FILE,
   buildSourceSchema,
@@ -702,5 +707,40 @@ describe("installed launch paths", () => {
     expect(await readFile(desktop, "utf8")).toBe(
       original.replace("Exec=typora %U", "Exec=typora --no-sandbox %U"),
     );
+  });
+});
+
+it("preserves a quoted env executable when rewriting an AppImage entry", async () => {
+  const root = await stage("rea-appimage-quoted-env-");
+  const image = join(root, "env/vendor/app.AppImage");
+  await writeFile(
+    image,
+    STUB_APPIMAGE.replace(
+      "'Exec=drawio %U'",
+      "'Exec=\"/usr/bin/env\" QT_QPA_PLATFORM=xcb drawio %U'",
+    ),
+  );
+  await chmod(image, 0o755);
+  await runDownloadInstall(
+    renderBuildBundle(appImageRequest("drawio"), localPayload),
+    root,
+  );
+  const text = await readFile(
+    join(root, "local-share/applications/drawio.desktop"),
+    "utf8",
+  );
+  expect(text).toContain(
+    `Exec="/usr/bin/env" QT_QPA_PLATFORM=xcb ${join(root, "opt/rea-apps/drawio/squashfs-root/AppRun")} %U`,
+  );
+  const parsed = parseDesktopEntry(text);
+  expect(parsed.ok).toBe(true);
+  if (!parsed.ok) throw new Error("invalid desktop entry");
+  const tokens = tokenizeDesktopExec(parsed.value.exec ?? "");
+  expect(tokens.ok).toBe(true);
+  if (!tokens.ok) throw new Error("invalid Exec");
+  expect(unwrapDesktopCommand(tokens.value)).toMatchObject({
+    kind: "direct",
+    environment: { QT_QPA_PLATFORM: "xcb" },
+    program: join(root, "opt/rea-apps/drawio/squashfs-root/AppRun"),
   });
 });

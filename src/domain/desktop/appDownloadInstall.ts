@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { rewriteAppImageDesktop } from "./appDownloadDesktop.js";
+
 /** The Debian architectures an agentenv computer runs. */
 export const COMPUTER_ARCHITECTURES = ["amd64", "arm64"] as const;
 
@@ -135,8 +137,10 @@ const appImageScript = (install: DownloadInstall): string =>
     "  exit 1",
     "fi",
     'chmod -R a+rX "$prefix"',
-    // AppImage entries name their program relative to the image; it becomes AppRun, after any env prefix and its assignments.
-    `sed -E -e '/^TryExec=/d' -e "s#^Exec=[[:space:]]*(([^[:space:]\\"]*/)?env[[:space:]]+((\\"[A-Za-z_][A-Za-z0-9_]*=[^\\"]*\\"|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*)?(\\"[^\\"]*\\"|[^[:space:]]+)#Exec=\\1$prefix/squashfs-root/AppRun#" "$desktop" > "${APPLICATIONS}/$entry.desktop"`,
+    // The installer and export share this format-aware rewrite.
+    `python3 - "$desktop" "${APPLICATIONS}/$entry.desktop" "$prefix/squashfs-root/AppRun" <<'PY'`,
+    rewriteAppImageDesktop,
+    "PY",
     `icon=$(sed -n 's/^Icon=//p' "$desktop" | head -n 1)`,
     'case "$icon" in',
     "  '' | */*) ;;",
