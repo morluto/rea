@@ -254,10 +254,6 @@ def _keyfile(text: str) -> dict:
 
 ${PYTHON_XML_READER}
 
-def _not_json(constant: str):
-    raise ValueError(f"{constant} is not JSON")
-
-
 class _Inexact(Exception):
     """A JSON number that REA's state view refuses, since reading it would change it."""
 
@@ -294,6 +290,8 @@ def _exact_number(text: str):
 
 _INEXACT = object()
 _LEVEL_END = object()
+_INVALID_JSON = object()
+JSON_ATOMS = {"true": True, "false": False, "null": None}
 
 
 def _number_or_mark(spelling: str):
@@ -338,11 +336,21 @@ def _deeper_than(root, limit: int) -> bool:
     return False
 
 
-def _is_json(text: str) -> bool:
-    """Whether text is one JSON value as REA's state view reads it, checked a token at a time without building it or
-    recursing: it holds a byte per open container and one string at a time, so text too deep for Python's parser or
-    too large to parse into a view is still told apart from other text."""
+def _read_json(text: str, build: bool = True):
+    """One JSON value, or _INVALID_JSON, read without recursion so duplicate keys settle before depth is checked.
+    With build=False, only syntax is checked: one byte per open container and one decoded string at a time."""
     containers, expect, empty, at = bytearray(), "value", False, 0
+    values, keys, root = [], [], _INVALID_JSON
+
+    def keep(value) -> None:
+        nonlocal root
+        if not values:
+            root = value
+        elif containers[-1] == ord("["):
+            values[-1].append(value)
+        else:
+            values[-1][keys[-1]] = value
+
     while True:
         token = JSON_TOKEN.match(text, at)
         if token is None:
@@ -350,39 +358,55 @@ def _is_json(text: str) -> bool:
         kind, at = token.lastindex, token.end()
         if kind == 5:
             try:
-                at = json.decoder.scanstring(text, at)[1]
+                value, at = json.decoder.scanstring(text, at)
             except ValueError:
-                return False
+                return _INVALID_JSON
         if kind == 1 and expect == "value":
+            if build:
+                value = [] if text[at - 1] == "[" else {}
+                keep(value)
+                values.append(value)
+                keys.append(None)
             containers.append(ord(text[at - 1]))
             expect, empty = ("value" if text[at - 1] == "[" else "key"), True
         # A closing bracket's code is its opening's plus two.
         elif kind == 2 and (expect == "after" or empty) and containers and containers[-1] == ord(text[at - 1]) - 2:
             containers.pop()
+            if build:
+                values.pop()
+                keys.pop()
             expect, empty = "after", False
         elif kind == 3 and expect == "after" and containers:
             expect = "value" if containers[-1] == ord("[") else "key"
         elif kind == 4 and expect == "colon":
             expect = "value"
         elif kind >= 5 and (expect == "value" or (kind == 5 and expect == "key")):
+            if build:
+                if expect == "key":
+                    keys[-1] = value
+                else:
+                    if kind == 6:
+                        value = JSON_ATOMS.get(token[6], _INVALID_JSON)
+                        if value is _INVALID_JSON:
+                            value = _number_or_mark(token[6])
+                    keep(value)
             expect, empty = ("colon" if expect == "key" else "after"), False
         else:
-            return False
-    return expect == "after" and not containers and JSON_SPACE.fullmatch(text, at) is not None
+            return _INVALID_JSON
+    if expect != "after" or containers or JSON_SPACE.fullmatch(text, at) is None:
+        return _INVALID_JSON
+    return root if build else True
 
 
 def _json_view(text: str, size: int):
     """A JSON text's format and view, or why it has none, as REA reads it; None when it is not JSON. Text over the
-    parsed-view limit, or nested past Python's recursion limit, is told apart without building its value."""
+    parsed-view limit is told apart without building its value."""
     if size > MAX_PARSED_BYTES:
-        return {"format": "json", "view": None, "error": PARSED_TOO_LARGE} if _is_json(text) else None
+        valid = _read_json(text, build=False) is not _INVALID_JSON
+        return {"format": "json", "view": None, "error": PARSED_TOO_LARGE} if valid else None
     # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
-    try:
-        view = json.loads(text, parse_constant=_not_json, parse_float=_number_or_mark, parse_int=_number_or_mark)
-    except RecursionError:
-        # Nesting too deep for Python to parse is far deeper than REA's view keeps, once the rest of it is JSON too.
-        return {"format": "json", "view": None, "error": JSON_TOO_DEEP} if _is_json(text) else None
-    except ValueError:
+    view = _read_json(text)
+    if view is _INVALID_JSON:
         return None
     if _holds_inexact(view):
         return {"format": "json", "view": None,
