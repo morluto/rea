@@ -566,27 +566,28 @@ export class SafeOutputTree {
         logicalParent.length === 0 ? part : `${logicalParent}/${part}`;
       current = join(current, part);
       await assertPathIdentity(parent.path, parent.identity);
-      const creation = await mkdir(current, { mode: 0o700 }).then(
-        () => ({ kind: "created" }) as const,
-        (cause: unknown) => {
-          if (hasUnrepresentableName(cause))
-            throw new DestinationPathUnrepresentableFailure(logicalPath, {
-              cause,
-            });
-          if (!isAlreadyExists(cause)) throw cause;
-          return { kind: "existing", cause } as const;
-        },
-      );
-      if (creation.kind === "existing") {
-        await throwIfDestinationCaseCollision(
-          parent.path,
-          logicalPath,
-          creation.cause,
+      // A directory this tree created under this exact spelling needs no
+      // further mkdir or case scan; the identity checks below still prove it.
+      if (!this.#nestedDirectories.has(current)) {
+        const creation = await mkdir(current, { mode: 0o700 }).then(
+          () => ({ kind: "created" }) as const,
+          (cause: unknown) => {
+            if (hasUnrepresentableName(cause))
+              throw new DestinationPathUnrepresentableFailure(logicalPath, {
+                cause,
+              });
+            if (!isAlreadyExists(cause)) throw cause;
+            return { kind: "existing", cause } as const;
+          },
         );
-        const identity = this.#nestedDirectories.get(current);
-        if (identity === undefined) throw replacedDirectory(current);
-        await assertPathIdentity(current, identity);
-      } else {
+        if (creation.kind === "existing") {
+          await throwIfDestinationCaseCollision(
+            parent.path,
+            logicalPath,
+            creation.cause,
+          );
+          throw replacedDirectory(current);
+        }
         const identity = await readDirectoryIdentity(current).catch(
           (cause: unknown) => {
             this.#unknownDirectories.add(current);
