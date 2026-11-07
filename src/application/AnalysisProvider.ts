@@ -249,6 +249,8 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Closing a client can publish state that invalidates a previewed profile. */
+  readonly refreshAfterRetirement?: true;
   /** Keep provider-private facts bound to this selection without Evidence serialization. */
   readonly createClient?: AnalysisProviderBoundClientFactory;
 }
