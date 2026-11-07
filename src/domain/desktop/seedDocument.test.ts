@@ -189,4 +189,21 @@ describe("openSeedDocument settings spelling", () => {
       opens: { kind: "empty" },
     });
   });
+
+  it("resolves a relative note in the captured directory when that directory moves", () => {
+    expect(
+      openSeedDocument(["editor", "note.txt"], {
+        ...AT_HOME,
+        workingDirectory: `${HOME}/work`,
+        launchDirectory: `${HOME}/.config/vendor`,
+        exec: "editor %f",
+        documents: ["work/note.txt"],
+        isDocument: (path) => path === "work/note.txt",
+        spell: (path) => path,
+      }),
+    ).toEqual({
+      argv: ["editor", `${HOME}/work/note.txt`],
+      opens: { kind: "captured" },
+    });
+  });
 });
