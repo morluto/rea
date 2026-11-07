@@ -158,3 +158,29 @@ it("checks normalized POSIX containment and preserves sibling paths", () => {
     "$WORKSPACE/file",
   );
 });
+
+it("maps repeated separators in embedded diagnostics without changing sibling paths", () => {
+  const config = resolveLogicalPathConfig("/home/alice/project")!;
+  expect(
+    redactLogicalPath(
+      "Error opening /home/alice//project/target.bin: not found",
+      config,
+    ),
+  ).toBe("Error opening $WORKSPACE/target.bin: not found");
+  expect(
+    redactLogicalPath("Unrelated /home/alice/project-other/target.bin", config),
+  ).toBe("Unrelated /home/alice/project-other/target.bin");
+  expect(
+    redactLogicalPath("Token prefix/home/alice/project/target", config),
+  ).toBe("Token prefix/home/alice/project/target");
+});
+
+it("maps recorded Windows diagnostic roots without treating a sibling as inside", () => {
+  const config = resolveLogicalPathConfig("C:\\work\\run-alpha")!;
+  expect(
+    redactLogicalPath("Failed: c:\\WORK\\\\run-alpha\\target.bin", config),
+  ).toBe("Failed: $WORKSPACE\\target.bin");
+  expect(
+    redactLogicalPath("Failed: C:\\work\\run-alpha2\\target.bin", config),
+  ).toBe("Failed: C:\\work\\run-alpha2\\target.bin");
+});

@@ -94,18 +94,24 @@ export const redactLogicalPath = (
     return rawPath;
   }
 
-  const normRoot = config.root.replaceAll("\\", "/").replace(/\/+$/u, "");
-
-  // Fallback: replace any embedded root occurrences (both slash styles)
-  let result = rawPath;
-  if (normRoot !== "" && result.includes(normRoot)) {
-    result = result.replaceAll(normRoot, config.prefix);
-  }
-  const nativeRoot = config.root.replace(/[\\/]+$/u, "");
-  if (nativeRoot !== "" && result.includes(nativeRoot)) {
-    result = result.replaceAll(nativeRoot, config.prefix);
-  }
-  return result;
+  // Free-form diagnostics may contain an absolute path with repeated
+  // separators. Match the selected root at path boundaries, preserving the
+  // rest of the diagnostic and avoiding similarly prefixed sibling names.
+  const windows = isWindowsAbsolute(config.root);
+  const parts = config.root.replaceAll("\\", "/").split("/").filter(Boolean);
+  if (parts.length === 0) return rawPath;
+  const escape = (part: string) => part.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const separator = windows ? "[\\\\/]+" : "/+";
+  const prefix =
+    config.root.startsWith("/") || config.root.startsWith("\\\\")
+      ? separator
+      : "";
+  const pattern = `${prefix}${parts.map(escape).join(separator)}`;
+  const expression = new RegExp(
+    `(?<![\\p{L}\\p{N}_.\\/\\\\-])${pattern}(?=$|[\\/\\\\\\s:.,;)'"\\]\\}])`,
+    windows ? "giu" : "gu",
+  );
+  return rawPath.replace(expression, () => config.prefix);
 };
 
 /** Redact any string path values embedded anywhere within an arbitrary JSON value. */
