@@ -597,6 +597,86 @@ export function* collectSemanticMemberMutationsSteps(
     resolvedBindings.set(node, resolved ?? null);
     return resolved;
   };
+  const isPossibleArrayIterator = (node: t.Node, depth = 0): boolean => {
+    if (depth > 5) return false;
+    const unwrapped = unwrapJavaScriptExpression(node).node;
+    if (
+      t.isCallExpression(unwrapped) ||
+      t.isOptionalCallExpression(unwrapped)
+    ) {
+      const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+      if (
+        t.isMemberExpression(callee) ||
+        t.isOptionalMemberExpression(callee)
+      ) {
+        if (callee.computed) {
+          const prop = unwrapJavaScriptExpression(callee.property).node;
+          if (
+            t.isMemberExpression(prop) &&
+            t.isIdentifier(prop.object, { name: "Symbol" }) &&
+            t.isIdentifier(prop.property, { name: "iterator" })
+          ) {
+            return true;
+          }
+        } else if (
+          t.isIdentifier(callee.property) &&
+          ["values", "entries", "keys"].includes(callee.property.name)
+        ) {
+          return true;
+        }
+      }
+    }
+    if (t.isIdentifier(unwrapped)) {
+      const binding = resolveBinding(unwrapped, unwrapped.name);
+      if (binding !== undefined) {
+        return binding.initializers.some(({ node }) =>
+          isPossibleArrayIterator(node, depth + 1),
+        );
+      }
+    }
+    return false;
+  };
+  const isPossibleArrayIteratorPrototype = (
+    node: t.Node,
+    depth = 0,
+  ): boolean => {
+    if (depth > 5) return false;
+    const unwrapped = unwrapJavaScriptExpression(node).node;
+    if (
+      t.isCallExpression(unwrapped) ||
+      t.isOptionalCallExpression(unwrapped)
+    ) {
+      const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+      if (
+        t.isMemberExpression(callee) ||
+        t.isOptionalMemberExpression(callee)
+      ) {
+        if (
+          t.isIdentifier(callee.object) &&
+          ["Object", "Reflect"].includes(callee.object.name) &&
+          t.isIdentifier(callee.property, { name: "getPrototypeOf" })
+        ) {
+          const firstArg = unwrapped.arguments[0];
+          if (
+            firstArg !== undefined &&
+            !t.isSpreadElement(firstArg) &&
+            isPossibleArrayIterator(firstArg)
+          ) {
+            return true;
+          }
+        }
+      }
+    }
+    if (t.isIdentifier(unwrapped)) {
+      const binding = resolveBinding(unwrapped, unwrapped.name);
+      if (binding !== undefined) {
+        return binding.initializers.some(({ node }) =>
+          isPossibleArrayIteratorPrototype(node, depth + 1),
+        );
+      }
+    }
+    return false;
+  };
   const nodeIdentities = new WeakMap<t.Node, number>();
   let nextNodeIdentity = 0;
   const nodeIdentity = (node: t.Node | undefined): number | null => {
@@ -723,6 +803,16 @@ export function* collectSemanticMemberMutationsSteps(
     definiteReceiver = true,
     selection?: MutationSelectionContext,
   ): void => {
+    if (
+      effect === "write" &&
+      (isPossibleArrayIteratorPrototype(node) ||
+        (path[0] === "__proto__" && isPossibleArrayIterator(node)) ||
+        (path[0] === "constructor" &&
+          path[1] === "prototype" &&
+          isPossibleArrayIterator(node)))
+    ) {
+      state.arrayIterationUnknown = true;
+    }
     type JoinedProjection = {
       readonly path: PropertyPath;
       readonly definiteReceiver: boolean;
@@ -914,16 +1004,22 @@ export function* collectSemanticMemberMutationsSteps(
               mutation,
             );
           if (
-            (["Array", "Object"].includes(expression.name) &&
+            (["Array", "Object", "Iterator"].includes(expression.name) &&
               (current.path[0] === "prototype" || current.path[0] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(1))) ||
+              (arrayPrototypeIterationMayChange(current.path.slice(1)) ||
+                current.path[1] === "next" ||
+                current.path[1] === null)) ||
             (["globalThis", "global", "window", "self"].includes(
               expression.name,
             ) &&
-              (["Array", "Object"].includes(String(current.path[0])) ||
+              (["Array", "Object", "Iterator"].includes(
+                String(current.path[0]),
+              ) ||
                 current.path[0] === null) &&
               (current.path[1] === "prototype" || current.path[1] === null) &&
-              arrayPrototypeIterationMayChange(current.path.slice(2)))
+              (arrayPrototypeIterationMayChange(current.path.slice(2)) ||
+                current.path[2] === "next" ||
+                current.path[2] === null))
           )
             state.arrayIterationUnknown = true;
           if (lookup?.kind !== "uncertain-binding") continue;
@@ -1413,13 +1509,18 @@ export function* collectSemanticMemberMutationsSteps(
     widenedGetterResult = false,
   ): readonly ReferencedValue[] {
     if (
-      t.isArrayExpression(expression) &&
-      ((path[0] === "__proto__" &&
-        (effect === "escape" || path.length > 1) &&
-        arrayPrototypeIterationMayChange(path.slice(1))) ||
-        (path[0] === "constructor" &&
-          path[1] === "prototype" &&
-          arrayPrototypeIterationMayChange(path.slice(2))))
+      (t.isArrayExpression(expression) &&
+        ((path[0] === "__proto__" &&
+          (effect === "escape" || path.length > 1) &&
+          arrayPrototypeIterationMayChange(path.slice(1))) ||
+          (path[0] === "constructor" &&
+            path[1] === "prototype" &&
+            arrayPrototypeIterationMayChange(path.slice(2))))) ||
+      isPossibleArrayIteratorPrototype(expression) ||
+      (path[0] === "__proto__" && isPossibleArrayIterator(expression)) ||
+      (path[0] === "constructor" &&
+        path[1] === "prototype" &&
+        isPossibleArrayIterator(expression))
     )
       state.arrayIterationUnknown = true;
     const references = referencedValues(

@@ -977,3 +977,26 @@ it("evaluates deep optional chains in linear time without exponential checks", (
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("retains candidate when %ArrayIteratorPrototype%.next has been modified", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    Object.getPrototypeOf([][Symbol.iterator]()).next = customNext;
+    const child = spawn("worker");
+    child.on(...["not-exit", 0]);
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
+
+it("retains candidate when array iterator prototype is modified via alias", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const iter = [][Symbol.iterator]();
+    Object.getPrototypeOf(iter).next = customNext;
+    const child = spawn("worker");
+    child.on(...["not-exit", 0]);
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
