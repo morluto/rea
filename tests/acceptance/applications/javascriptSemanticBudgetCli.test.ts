@@ -213,6 +213,40 @@ cliTest.skipIf(process.versions.bun !== undefined)(
         },
       },
     });
+    const exportsMap = Object.fromEntries(
+      Array.from({ length: 2500 }, (_, index) => [
+        `./${String(index).padStart(5, "0")}${"x".repeat(60)}`,
+        "./target.js",
+      ]),
+    );
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "proof-pkg", exports: exportsMap }),
+    );
+    await writeFile(
+      join(root, "app.mjs"),
+      Array.from(
+        { length: 150 },
+        (_, index) => `import "proof-pkg/missing"; // ${String(index)}`,
+      ).join("\n"),
+    );
+    const missingKey = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(missingKey.exitCode).toBe(1);
+    expect(missingKey.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reason: expect.stringContaining(
+          "Application graph facts exceed the remaining Evidence budget",
+        ),
+        partial_observation: { kind: "artifact-inventory" },
+      },
+    });
   },
 );
 
