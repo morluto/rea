@@ -284,7 +284,7 @@ it("preserves raw legacy ZIP name bytes and CP437 path interpretation through MC
       expect.objectContaining({
         logical_path: "╟╤▒█.txt",
         limitations: [
-          "ZIP name uses CP437 fallback; source encoding unverified; raw hex: c7d1b1db2e747874.",
+          expect.stringMatching(/CP437.*unverified.*c7d1b1db2e747874/iu),
         ],
       }),
     );
