@@ -2,6 +2,7 @@ import type { DoctorProviderInspection } from "./Doctor.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 
 const SELECTED_REGISTRATION_SETTINGS = [
+  "REA_GO_MAX_BUILD_INFO_BYTES",
   "GHIDRA_INSTALL_DIR",
   "GHIDRA_HEADLESS_MAXMEM",
   "GHIDRA_MAXMEM",

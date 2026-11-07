@@ -34,7 +34,18 @@ import {
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { fixedAllowanceOptions } from "../domain/fixedAllowanceRemediation.js";
 import { err, ok, type Result } from "../domain/result.js";
+import type { ConfigurationError } from "../domain/configurationErrors.js";
+import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
+import {
+  DEFAULT_GO_BUILD_INFO_ADMISSION,
+  goBuildInfoAdmissionRecovery,
+  type GoBuildInfoAdmission,
+} from "../config/goBuildInfoAdmission.js";
 import { readGoBinaryImage, type GoBinaryImage } from "./GoBinaryImage.js";
+import {
+  GoReportLimitFailure,
+  GO_COMPLETE_REPORT_BYTES,
+} from "./GoReportBudget.js";
 import { requireSelectedNativeImage } from "../native/metadata/MachoSliceSelection.js";
 import {
   BinaryFormatFailure,
@@ -43,13 +54,14 @@ import {
 
 const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
-const OUTPUT_BYTES = 8 * 1024 * 1024;
 
 const failureForPrimary = (
   facts: ArtifactFilePrimaryFacts,
   path: string,
+  admission: GoBuildInfoAdmission,
 ): AnalysisError => {
   const { cause, origin } = facts;
+  if (cause instanceof GoReportLimitFailure) return outputLimit(path, cause);
   if (origin === "owned-or-classified" && cause instanceof AnalysisError)
     return cause;
   if (
@@ -76,14 +88,24 @@ const failureForPrimary = (
       { boundary: cause.boundary, maximum_bytes: cause.maximum_bytes },
       {
         cause,
-        ...fixedAllowanceOptions(
-          cause.boundary === "search"
-            ? "The Go build-info header-search allowance"
-            : cause.boundary === "build-info"
-              ? "The Go build-info string allowance"
-              : "The Go structural decoding allowance",
-          cause.boundary === "search" ? "work" : "parser",
-        ),
+        ...(cause.boundary === "build-info"
+          ? {
+              retryable: false,
+              remediationAction: goBuildInfoAdmissionRecovery(
+                cause.maximum_bytes,
+              ),
+              limit: analysisSettingLimit(
+                "go.max_build_info_bytes",
+                cause.maximum_bytes,
+                admission.source,
+              ),
+            }
+          : fixedAllowanceOptions(
+              cause.boundary === "search"
+                ? "The Go build-info header-search allowance"
+                : "The Go structural decoding allowance",
+              cause.boundary === "search" ? "work" : "parser",
+            )),
       },
     );
   if (cause instanceof BinaryFormatFailure)
@@ -143,8 +165,16 @@ const failureForPrimary = (
   });
 };
 
-const failureFor = (cause: unknown, path: string): AnalysisError => {
-  const primary = failureForPrimary(artifactFilePrimaryFacts(cause), path);
+const failureFor = (
+  cause: unknown,
+  path: string,
+  admission: GoBuildInfoAdmission,
+): AnalysisError => {
+  const primary = failureForPrimary(
+    artifactFilePrimaryFacts(cause),
+    path,
+    admission,
+  );
   return projectStableArtifactFailure(
     cause,
     primary,
@@ -154,23 +184,27 @@ const failureFor = (cause: unknown, path: string): AnalysisError => {
   );
 };
 
-const outputLimit = (path: string) =>
+const outputLimit = (path: string, cause?: GoReportLimitFailure) =>
   new AnalysisResourceConstraintError(
     OPERATION,
     "transport",
     `Complete Go metadata for ${path} exceeds the inline output budget; no partial success is returned.`,
-    { maximum_output_bytes: OUTPUT_BYTES },
-    fixedAllowanceOptions("The Go complete-report allowance", "report"),
+    { maximum_output_bytes: GO_COMPLETE_REPORT_BYTES },
+    {
+      ...fixedAllowanceOptions("The Go complete-report allowance", "report"),
+      ...(cause === undefined ? {} : { cause }),
+    },
   );
 
 /** Fixed reader boundaries plus unknowns left by the observed metadata. */
 const limitationsFor = (
   info: GoBinaryImage["build_info"],
   sectionNamesLimitation: string | undefined,
+  maximumBuildInfoBytes: number,
 ): string[] => [
   "Embedded build metadata is observed file content, not proof of compiler identity, dependency authenticity or runtime behavior.",
   "Only Go build information is inspected; function names, source mappings, type metadata and decompiled code are not recovered.",
-  "Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to 1 MiB, structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.",
+  `Resource guards bound stable artifact reads and cumulative header searches to 256 MiB each, aggregate embedded strings to ${String(maximumBuildInfoBytes)} bytes (go.max_build_info_bytes), structural table decoding to 16 MiB and complete metadata payloads to 8 MiB; these are not operating-system memory or CPU limits.`,
   ...(info !== null && (info.go_version === null || info.module_text === null)
     ? [
         "Some embedded Go strings contain non-UTF8 bytes; undecodable text is null and exact source bytes are preserved as base64.",
@@ -219,6 +253,13 @@ export class GoBinaryProvider implements GoBinaryPort {
   readonly identity = GO_BINARY_PROVIDER_IDENTITY;
   readonly #resources = new ArtifactResourceScope();
 
+  constructor(
+    readonly admission: () => Result<
+      GoBuildInfoAdmission,
+      ConfigurationError
+    > = () => ok(DEFAULT_GO_BUILD_INFO_ADMISSION),
+  ) {}
+
   async close(): Promise<void> {
     try {
       await this.#resources.close();
@@ -236,6 +277,11 @@ export class GoBinaryProvider implements GoBinaryPort {
     input: Omit<InspectGoBinaryInput, "detail">,
     options?: ExecutionOptions,
   ): Promise<Result<GoBinary, AnalysisError>> {
+    // Capture before the first await, so a later update cannot change the
+    // budget or provenance reported for this accepted operation.
+    const resolved = this.admission();
+    if (!resolved.ok) return resolved;
+    const admission = resolved.value;
     try {
       return await this.#resources.run(async () => {
         const snapshot = await readStableArtifact(
@@ -252,7 +298,7 @@ export class GoBinaryProvider implements GoBinaryPort {
           snapshot.bytes,
           input.architecture,
         );
-        const image = readGoBinaryImage(selected.bytes);
+        const image = readGoBinaryImage(selected.bytes, admission.maximumBytes);
         const {
           section_names_limitation: sectionNamesLimitation,
           ...publicImage
@@ -269,9 +315,16 @@ export class GoBinaryProvider implements GoBinaryPort {
             ? {}
             : { selected_slice: selected.selection }),
           build_info: info,
-          limitations: limitationsFor(info, sectionNamesLimitation),
+          limitations: limitationsFor(
+            info,
+            sectionNamesLimitation,
+            admission.maximumBytes,
+          ),
         };
-        if (Buffer.byteLength(JSON.stringify(report), "utf8") > OUTPUT_BYTES)
+        if (
+          Buffer.byteLength(JSON.stringify(report), "utf8") >
+          GO_COMPLETE_REPORT_BYTES
+        )
           throw outputLimit(input.path);
         const parsed = goBinarySchema.safeParse(report);
         if (!parsed.success)
@@ -284,7 +337,7 @@ export class GoBinaryProvider implements GoBinaryPort {
         return ok(parsed.data);
       });
     } catch (cause: unknown) {
-      return err(failureFor(cause, input.path));
+      return err(failureFor(cause, input.path, admission));
     }
   }
 }

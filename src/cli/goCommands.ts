@@ -14,7 +14,11 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 
 /** Resolve caller paths and inspect static build metadata through the shared workflow. */
-export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
+export const registerGoCommands = (
+  cli: CliInstance,
+  logger: Logger,
+  environment: Readonly<Record<string, string | undefined>>,
+): void => {
   cli.command(CLI_COMMANDS.inspectGoBinary, {
     description:
       "Inspect embedded Go compiler, modules and build settings without target execution",
@@ -33,7 +37,7 @@ export const registerGoCommands = (cli: CliInstance, logger: Logger): void => {
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
-        const service = createGoBinaryService();
+        const service = createGoBinaryService(environment);
         return await logCliCommand(
           logger,
           CLI_COMMANDS.inspectGoBinary,

@@ -17,6 +17,7 @@ import {
 } from "../config/parseConfig.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import { parseGoBuildInfoAdmission } from "../config/goBuildInfoAdmission.js";
 import { appendCallerPath } from "../filesystem/callerPath.js";
 
 import { analysisErrorRemediationAction } from "../domain/analysisErrorPresentation.js";
@@ -121,6 +122,8 @@ export interface DoctorHost {
    * Undefined means this host did not run that admission.
    */
   readonly nativeConfiguration?: NativeAnalysisConfigurationInspection;
+  /** Operation-local admission, diagnosed without making it block MCP startup. */
+  readonly goBuildInfoAdmission?: ReturnType<typeof parseGoBuildInfoAdmission>;
   readonly configuredIlspyCmdPath?: string;
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
@@ -714,6 +717,7 @@ export const systemDoctorHost = (
       ? {}
       : { configuredHopperPath: environment.HOPPER_LAUNCHER_PATH }),
     nativeConfiguration,
+    goBuildInfoAdmission: parseGoBuildInfoAdmission(environment),
     ...(environment.REA_ILSPY_CMD_PATH === undefined
       ? {}
       : { configuredIlspyCmdPath: environment.REA_ILSPY_CMD_PATH }),

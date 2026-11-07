@@ -1,6 +1,7 @@
 /** Runtime policy overrides, separate from target state and launch environment. */
 export interface AnalysisSettingValues {
   readonly "asar.max_header_bytes": number;
+  readonly "go.max_build_info_bytes": number;
   readonly "ghidra.startup_timeout_ms": number;
   readonly "hopper.startup_timeout_ms": number;
   readonly "ghidra.decompile_timeout_seconds": number | null;

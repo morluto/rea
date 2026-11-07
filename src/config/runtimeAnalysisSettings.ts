@@ -3,6 +3,10 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { ok, type Result } from "../domain/result.js";
 import type { AppConfig } from "./types.js";
 import {
+  parseGoBuildInfoAdmission,
+  type GoBuildInfoAdmission,
+} from "./goBuildInfoAdmission.js";
+import {
   parseAsarHeaderAdmission,
   type AsarHeaderAdmission,
 } from "./asarHeaderAdmission.js";
@@ -133,3 +137,18 @@ export const runtimeNativeMatchingAllowance =
       ? parseNativeMatchingAllowance(environment)
       : ok({ maximumBytes: override, source: "runtime" });
   };
+
+/** Resolve the accepted snapshot before acquiring the artifact; invalid seeds
+ * remain operation-local and can be repaired by a runtime override. */
+export const runtimeGoBuildInfoAdmission = (
+  environment: Readonly<Record<string, string | undefined>>,
+  read?: AnalysisSettingsReader,
+): (() => Result<GoBuildInfoAdmission, ConfigurationError>) => {
+  const baseline = parseGoBuildInfoAdmission(environment);
+  return () => {
+    const override = read?.().overrides["go.max_build_info_bytes"];
+    return override === undefined
+      ? baseline
+      : ok({ maximumBytes: override, source: "runtime" });
+  };
+};

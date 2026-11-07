@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createCli } from "../../src/cli.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
+import { goBuildInfoAdmissionFixture } from "../fixtures/go/admission.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 
 const initialExitCode = process.exitCode;
@@ -30,6 +31,25 @@ const serve = async (
 };
 
 describe("CLI selected environment", () => {
+  it("uses the selected Go allowance snapshot instead of late ambient or caller changes", async () => {
+    vi.stubEnv("REA_GO_MAX_BUILD_INFO_BYTES", "1");
+    const environment = { REA_GO_MAX_BUILD_INFO_BYTES: "1048577" };
+    const cli = createCli(environment);
+    environment.REA_GO_MAX_BUILD_INFO_BYTES = "0";
+    vi.stubEnv("REA_GO_MAX_BUILD_INFO_BYTES", "0");
+    const root = await createTestTempDirectory("rea-go-selected-env-");
+    const path = join(root, "padded.elf");
+    await writeFile(path, goBuildInfoAdmissionFixture(1048577).bytes);
+    expect(
+      parseEvidence(await serve(cli, ["inspect-go-binary", path])).operation,
+    ).toBe("inspect_go_binary");
+    expect(
+      await serve(createCli({ REA_GO_MAX_BUILD_INFO_BYTES: "1" }), [
+        "inspect-go-binary",
+        path,
+      ]),
+    ).toMatchObject({ code: "resource_constraint" });
+  });
   it("retains the selected binary provider and launcher after caller and ambient environment changes", async () => {
     vi.stubEnv("REA_ANALYSIS_PROVIDER", "ambient-provider");
     vi.stubEnv("HOPPER_LAUNCHER_PATH", "/ambient/hopper");
