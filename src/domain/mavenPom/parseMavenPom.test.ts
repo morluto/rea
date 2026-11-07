@@ -312,6 +312,68 @@ describe("repositories and diagnostics", () => {
       "duplicate-declaration",
     );
   });
+
+  it("reports a same-key pair that differs only in version or scope", () => {
+    // Maven identifies a dependency by group/artifact/type/classifier, so these
+    // are conflicting declarations of one dependency, not two dependencies.
+    const result = parse(
+      pom(`
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>dup</artifactId>
+      <version>1.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>dup</artifactId>
+      <version>2.0</version>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>scoped</artifactId>
+      <version>1.0</version>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>scoped</artifactId>
+      <version>1.0</version>
+      <scope>runtime</scope>
+    </dependency>
+  </dependencies>`),
+    );
+    // Both declarations stay in the result; the conflict is a diagnostic.
+    expect(result.dependencies).toHaveLength(4);
+    expect(
+      result.diagnostics.filter((d) => d.code === "duplicate-declaration"),
+    ).toHaveLength(2);
+  });
+
+  it("counts only dependencies whose version came from management", () => {
+    const result = parse(
+      pom(`
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>org.example</groupId>
+        <artifactId>managed</artifactId>
+        <version>1.0</version>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+  <dependencies>
+    <dependency>
+      <groupId>org.example</groupId>
+      <artifactId>managed</artifactId>
+    </dependency>
+  </dependencies>`),
+    );
+    // One declaration supplies the version and one dependency inherits it; the
+    // supplier is not itself a managed dependency.
+    expect(result.summary.dependency_management).toBe(1);
+    expect(result.summary.managed_dependencies).toBe(1);
+  });
 });
 
 describe("hostile documents", () => {

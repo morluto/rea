@@ -627,7 +627,12 @@ declared version reports `version_origin`: `declared` for a literal version,
 `managed` when this POM's `dependencyManagement` supplies it, `property` for a
 retained `${...}` reference, and `unresolved` when nothing read supplies it.
 Management matching uses Maven's own key, groupId/artifactId/type/classifier,
-so a managed plain JAR does not make a classified variant look managed.
+so a managed plain JAR does not make a classified variant look managed. The same
+key declared twice inside one section and profile is a `duplicate-declaration`
+diagnostic even when the versions or scopes differ, because Maven reads them as
+one dependency; both declarations stay in the result. `summary.managed_dependencies`
+counts only dependencies whose version was supplied by `dependencyManagement`,
+not the management declarations that supply them.
 
 ```
 inspect_maven_pom { "path": "/artifacts/service/pom.xml" }

@@ -536,17 +536,31 @@ export const parseMavenPom = (
     ...dependencyManagement,
     ...profileManagement,
   ];
-  const seen = new Set<string>();
+  // Maven identifies a dependency by group/artifact/type/classifier, so two
+  // entries that differ only in version or scope are still the same
+  // declaration repeated. Keying on `dependency_id` (which includes version and
+  // scope) missed exactly those conflicts while `duplicate_declarations` still
+  // said `reported`.
+  const seen = new Map<string, MavenDependency>();
   for (const dependency of allDependencies) {
-    if (seen.has(dependency.dependency_id))
+    const key = [
+      dependency.declared_by,
+      dependency.profile ?? "",
+      dependency.dependency_key,
+    ].join("\u0000");
+    const previous = seen.get(key);
+    if (previous !== undefined) {
       report(
         collector,
         "duplicate-declaration",
-        `${dependency.group_id}:${dependency.artifact_id} is declared more than once with the same version, scope and classifier; both declarations are retained.`,
+        `${dependency.group_id}:${dependency.artifact_id} is declared more than once in ${dependency.declared_by}${dependency.profile === null ? "" : ` of profile ${dependency.profile}`}; both declarations are retained and the versions are not resolved against each other.`,
         dependency.source_pointer,
         dependency.line,
       );
-    else seen.add(dependency.dependency_id);
+    }
+    // A later declaration is the one a reader needs pointed at, so the newest
+    // pointer stays the reported one while the first declaration keeps its own.
+    if (previous === undefined) seen.set(key, dependency);
   }
 
   const referenceNamesSeen = new Set<string>();
@@ -659,18 +673,11 @@ export const parseMavenPom = (
       dependencies: dependencies.length,
       dependency_management:
         dependencyManagement.length + profileManagement.length,
-      managed_dependencies: allDependencies.filter(
-        (dependency) =>
-          dependency.version_origin.kind === "managed" ||
-          (dependency.version !== null &&
-            managed.has(
-              managementKey(
-                dependency.group_id,
-                dependency.artifact_id,
-                dependency.type,
-                dependency.classifier,
-              ) ?? "",
-            )),
+      // A `dependencyManagement` entry is a version supplier, not a dependency
+      // that inherited one; counting it inflated the figure and let a
+      // management-only POM report managed dependencies.
+      managed_dependencies: dependencies.filter(
+        (dependency) => dependency.version_origin.kind === "managed",
       ).length,
       optional_dependencies: allDependencies.filter(
         (dependency) => dependency.optional === true,
