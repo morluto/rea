@@ -138,11 +138,11 @@ it("keeps incomplete calls unknown through public comparison and verification wh
   );
   expect(left.subject).not.toBeNull();
   expect(right.subject).not.toBeNull();
-  expect(left.limitations).not.toContain(
-    "Artifact identity is unavailable for this observation.",
+  expect(left.limitations).not.toContainEqual(
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   );
-  expect(right.limitations).not.toContain(
-    "Artifact identity is unavailable for this observation.",
+  expect(right.limitations).not.toContainEqual(
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   );
   const compared = await client.callTool({
     name: "compare_functions",

@@ -151,6 +151,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     agentenv: string[];
   }[];
   expect(calls.map(({ argv }) => argv[0])).toEqual([
+    "export-desktop-application",
     "capture-desktop-application",
     "describe-desktop-application-task",
     "export-desktop-application",
@@ -160,7 +161,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       agentenv: [],
       apt_config: join(rea.home, ".rea-build/apt/apt.conf"),
     });
-  expect(calls[0]?.argv).toEqual(
+  expect(calls[1]?.argv).toEqual(
     expect.arrayContaining([
       "--desktop-entry",
       "org.example.notes",
@@ -168,7 +169,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       join(rea.home, ".rea-build"),
     ]),
   );
-  expect(calls.slice(1).map(({ argv }) => argv)).toEqual([
+  expect(calls.slice(2).map(({ argv }) => argv)).toEqual([
     expect.arrayContaining([
       "--seed-checkpoint",
       "seed",
@@ -294,6 +295,45 @@ it("returns a draft note's read error when only a dconf database REA cannot read
       error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
     },
   ]);
+});
+
+it("refuses an older build runtime before capturing the app", async () => {
+  const { rea, client } = await fakes({ env: { FAKE_REA_OLD_EXPORT: "1" } });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("does not support synthetic seeds");
+  expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
+it("reports an unsuccessful runtime schema command without diagnosing its cause", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_SCHEMA_FAILURE: "1" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("exited 23");
+  expect(error.message).toContain("runtime cannot load its export command");
+  expect(error.message).not.toContain("does not support synthetic seeds");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
 });
 
 it("exports a task larger than the old 96 KiB refusal and keeps its prompt", async () => {

@@ -108,6 +108,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
+import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -173,13 +174,17 @@ interface SingleFunctionText {
 
 interface Answer {
   readonly result: JsonValue;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly source: AnswerSource | null;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly locations: readonly EvidenceLocation[];
   readonly limitations: readonly string[];
   readonly referenceSource?: JsonValue;
+  readonly requiresSourceEvidence?: true;
   readonly stringSource?: JsonValue;
   readonly relationshipCoverage?: RelationshipCoverage;
+  readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
+  readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
   readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
@@ -539,7 +544,8 @@ export class KunaSessionClient implements AnalysisClient {
           }),
         );
       if (
-        operation === "procedure_pseudo_code" ||
+        (operation === "procedure_pseudo_code" &&
+          parameters.analysis !== "independent_fresh") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
       )
@@ -695,14 +701,21 @@ export class KunaSessionClient implements AnalysisClient {
       },
       {
         ...(sourceDescriptor === undefined ? {} : { sourceDescriptor }),
+        ...(answer.pseudocodeAbsence === undefined
+          ? {}
+          : { pseudocodeAbsence: answer.pseudocodeAbsence }),
         // Kuna's identity is in the analysis profile; the raw result records
         // only where file-backed text came from.
         ...(source === null &&
+        answer.pseudocodeAbsence === undefined &&
         answer.referenceSource === undefined &&
         answer.stringSource === undefined
           ? {}
           : {
               rawResult: {
+                ...(answer.pseudocodeAbsence === undefined
+                  ? {}
+                  : { pseudocode_absence: answer.pseudocodeAbsence }),
                 ...(source === null
                   ? {}
                   : {
@@ -725,6 +738,15 @@ export class KunaSessionClient implements AnalysisClient {
         ...(answer.relationshipCoverage === undefined
           ? {}
           : { relationshipCoverage: answer.relationshipCoverage }),
+        ...(answer.requiresSourceEvidence === undefined
+          ? {}
+          : { requiresSourceEvidence: answer.requiresSourceEvidence }),
+        ...(answer.referenceCoverageGaps === undefined
+          ? {}
+          : { referenceCoverageGaps: answer.referenceCoverageGaps }),
+        ...(answer.referenceClassifications === undefined
+          ? {}
+          : { referenceClassifications: answer.referenceClassifications }),
         ...(answer.siblingUnavailability === undefined
           ? {}
           : { siblingUnavailability: answer.siblingUnavailability }),
@@ -836,6 +858,33 @@ export class KunaSessionClient implements AnalysisClient {
           limitations: classification,
         });
       case "procedure_pseudo_code": {
+        if (parameters.analysis === "independent_fresh") {
+          const signal =
+            options.signal === undefined
+              ? this.#session.signal
+              : AbortSignal.any([options.signal, this.#session.signal]);
+          const standalone = await this.#singleFunction(
+            operation,
+            selected.address,
+            installation,
+            signal,
+            true,
+          );
+          if (standalone === EXPORT_READY)
+            throw new Error(
+              "Independent decompilation unexpectedly yielded to project",
+            );
+          if (!standalone.ok) return standalone;
+          return ok({
+            result: standalone.value,
+            source: { kind: "single-function" },
+            locations,
+            limitations: [
+              "This is a fresh independent single-function decompile; it does not use the project export's whole-program prototypes.",
+              ...classification,
+            ],
+          });
+        }
         const pseudocode = await this.#pseudocode(
           operation,
           selected,
@@ -1005,11 +1054,59 @@ export class KunaSessionClient implements AnalysisClient {
         options.signal,
       );
       if (!references.ok) return references;
+      const coverageGaps = [
+        ...(references.value.walkCoverage !== null &&
+        references.value.walkCoverage.unwalked.length > 0
+          ? [
+              {
+                code: "unwalked-code",
+                scope: "observation" as const,
+                description:
+                  "Kuna reports unwalked code candidates whose outgoing references are not included. Their presence does not establish a reference to the selected target; the source observation identifies them.",
+              },
+            ]
+          : []),
+        ...(references.value.pointerCoverage === "none"
+          ? [
+              {
+                code: "pointer-relocations-unavailable",
+                scope: "image" as const,
+                description:
+                  "Kuna reports no pointer-relocation coverage for this image; stored pointers may still exist.",
+              },
+            ]
+          : []),
+      ];
       return ok({
         result: [...references.value.addresses],
         source: null,
         locations,
-        limitations,
+        limitations: [
+          ...limitations,
+          ...(references.value.pointerCoverage === null
+            ? []
+            : [
+                "Kuna pointer references come from relocation metadata. The reported metadata source does not establish successful or complete enumeration.",
+              ]),
+          ...coverageGaps.map(({ description }) => description),
+        ],
+        ...(coverageGaps.length === 0
+          ? {}
+          : { referenceCoverageGaps: coverageGaps }),
+        ...(references.value.pointers === null
+          ? {}
+          : {
+              referenceClassifications: references.value.pointers
+                .filter((pointer) => pointer.to_address === address)
+                .map((pointer) => ({
+                  sourceAddress: pointer.from_address,
+                  targetAddress: pointer.to_address,
+                  kind: "stored_pointer" as const,
+                  provenance: pointer.source,
+                  width: pointer.width,
+                })),
+            }),
+        requiresSourceEvidence: true,
         referenceSource: {
           kind: "kuna-xrefs",
           direction: "to",
@@ -1018,6 +1115,12 @@ export class KunaSessionClient implements AnalysisClient {
           bytes: references.value.bytes,
           examined_rows: references.value.rows,
           excluded_alias_rows: references.value.excludedAliasRows,
+          target_aliases: references.value.targetAliases.map(
+            ({ name, address }) => ({ name, address }),
+          ),
+          walk_coverage: references.value.walkCoverage,
+          pointer_coverage: references.value.pointerCoverage,
+          pointers: references.value.pointers,
         },
       });
     }
@@ -1251,7 +1354,14 @@ export class KunaSessionClient implements AnalysisClient {
           );
           if (!text.ok) return text;
           return ok({
-            ...text.value,
+            result: text.value.result,
+            limitations: text.value.limitations,
+            ...(text.value.pseudocodeAbsence === undefined
+              ? {}
+              : { pseudocodeAbsence: text.value.pseudocodeAbsence }),
+            ...(text.value.files === undefined
+              ? {}
+              : { files: text.value.files }),
             source: { kind: "project-export", project: reader.project },
           });
         } catch (cause: unknown) {
@@ -1431,10 +1541,13 @@ export class KunaSessionClient implements AnalysisClient {
     address: string,
     installation: KunaInstallation,
     signal: AbortSignal,
+    independent = false,
   ): Promise<SingleFunctionOutcome> {
     const prepared = await this.#commands.prepare();
     if (!prepared.ok) return prepared;
-    const admitted = await this.#admitSingleFunction(signal);
+    const admitted = independent
+      ? await this.#runSlots.acquire(signal)
+      : await this.#admitSingleFunction(signal);
     if (admitted === EXPORT_READY) return admitted;
     if (admitted === undefined)
       return err(
@@ -1581,7 +1694,7 @@ export class KunaSessionClient implements AnalysisClient {
         pseudocode:
           text === null
             ? unavailable(
-                pseudocode.value.limitations.at(-1) ??
+                pseudocode.value.unavailableReason ??
                   "Kuna did not supply pseudocode.",
               )
             : { available: true },
