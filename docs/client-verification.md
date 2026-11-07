@@ -79,9 +79,10 @@ Select the npm install's
 `node_modules/@qwen-code/qwen-code/cli-entry.js` with `REA_VERIFY_QWEN_COMMAND`,
 because `execFile` cannot launch the `qwen.cmd` shim directly. A selected `.js`,
 `.mjs` or `.cjs` entry point runs under the verifier's Node. Windows path checks
-use native separators; persisted output is read through Qwen's real shell tool
-with a shell-independent encoded Node payload. Windows receipts report process
-lineage as unavailable when the verifier has no retained native Job Object lease.
+use native separators; Qwen's real shell tool runs a generated Node readback
+script in the disposable workspace to inspect persisted output. Windows receipts
+report process lineage as unavailable when the verifier has no retained native Job
+Object lease.
 
 `verify:gemini-client` requires an installed Gemini CLI (verified with
 `@google/gemini-cli@0.63.0` on POSIX and native Windows); select it with
