@@ -94,7 +94,8 @@ const guardAt = (
   }
   return typeof before !== "object" &&
     sameJson(before, after) &&
-    !isStamp(before)
+    !isStamp(before) &&
+    (typeof before !== "string" || before.length <= context.chars)
     ? valueEqualsCheck(file, pointer, before)
     : undefined;
 };

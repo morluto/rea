@@ -12,6 +12,7 @@ import {
   batchListedFiles,
   controllerArgumentPieces,
   fetchHomeFolder,
+  LINUX_ARGUMENT_VECTOR_BYTES,
   LINUX_SINGLE_ARGUMENT_BYTES,
   runBuildController,
 } from "./BuildComputerController.js";
@@ -164,6 +165,33 @@ describe("controller arguments", () => {
       LINUX_SINGLE_ARGUMENT_BYTES,
     );
     expect(JSON.parse(argv.slice(5).join(""))).toEqual(payload);
+  });
+
+  it("refuses a request whose arguments together exceed Linux's command limit", async () => {
+    let called = false;
+    const payload = { prompt: "a".repeat(LINUX_ARGUMENT_VECTOR_BYTES) };
+    await expect(
+      runBuildController(
+        {
+          exec: () => {
+            called = true;
+            return Promise.resolve({
+              exit_code: 0,
+              stdout: "{}\n",
+              stderr: "",
+              truncated: false,
+              timed_out: false,
+            });
+          },
+          homeFiles: () => Promise.resolve(new Map()),
+          redacted: (text) => text,
+        },
+        "run",
+        payload,
+        { timeoutS: 1 },
+      ),
+    ).rejects.toThrow(/E2BIG/);
+    expect(called).toBe(false);
   });
 
   it("keeps a character split on a UTF-16 pair whole and joins the controller's real entry point", async () => {
