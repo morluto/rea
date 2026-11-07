@@ -8,7 +8,7 @@ Setup previews configuration changes and asks for approval before applying them.
 | Connect an agent                   | [Start setup](#start-setup), then [review changes](#review-setup-changes)                           |
 | Install a Claude Code/Codex plugin | [Agent plugins and marketplaces](#agent-plugins-and-marketplaces)                                   |
 | Diagnose one task                  | [Scoped readiness checks](#check-readiness-for-your-task)                                           |
-| Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), or [Kuna](kuna-provider.md) |
+| Configure an analysis engine       | [Hopper](#hopper), [Ghidra](#ghidra), the [IDA guide](ida-provider.md), the [angr guide](angr-provider.md), or [Kuna](kuna-provider.md) |
 | Update or remove REA               | [Maintenance](#diagnose-update-and-remove)                                                          |
 | Resolve a client-specific problem  | [Client configuration](client-configuration.md)                                                     |
 
@@ -381,7 +381,7 @@ Select the part you want to check:
 | Task                                | Readiness check                                                            |
 | ----------------------------------- | -------------------------------------------------------------------------- |
 | Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.             |
-| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
+| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`, `angr`) |
 | One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
 | Installed workflow instructions     | `rea doctor --skill --json`                                                |
 
@@ -696,9 +696,9 @@ Ubuntu 24.04+, Fedora 41+, Nobara 44+, Arch Linux, CachyOS, or Omarchy. The
 official Linux packages are x86_64-only, so setup does not offer Hopper on other
 Linux architectures; configure [Ghidra](#ghidra) there instead. REA itself runs on any
 Linux distribution with a recognized apt, dnf, or pacman package family, where
-an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra
-and IDA have their own provider-specific host requirements; Windows Ghidra uses
-the [experimental P0 boundary](windows-ghidra-p0.md).
+an existing Hopper launcher is selected through `HOPPER_LAUNCHER_PATH`. Ghidra,
+IDA, and angr have their own provider-specific host requirements; Windows Ghidra
+uses the [experimental P0 boundary](windows-ghidra-p0.md).
 
 Bazzite uses RPM packages, but REA does not install Hopper automatically on it.
 Setup skips the Hopper offer because Bazzite is outside the supported host list,

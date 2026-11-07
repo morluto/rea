@@ -66,6 +66,10 @@ import {
 import { GO_BINARY_PROVIDER_IDENTITY } from "../go/GoBinaryProviderIdentity.js";
 import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "../gpu/GpuCodeObjectsProviderIdentity.js";
 import {
+  ANGR_OPERATIONS,
+  ANGR_PROVIDER_IDENTITY,
+} from "../angr/AngrProviderMetadata.js";
+import {
   HOPPER_OPERATIONS,
   HOPPER_PROVIDER_IDENTITY,
 } from "../hopper/HopperProviderMetadata.js";
@@ -324,6 +328,9 @@ export const CAPABILITY_DECLARATIONS = {
   },
   ida: {
     providers: [providerBinding(IDA_PROVIDER_IDENTITY, IDA_OPERATIONS)],
+  },
+  angr: {
+    providers: [providerBinding(ANGR_PROVIDER_IDENTITY, ANGR_OPERATIONS)],
   },
   il2cppMetadata: {
     providers: [

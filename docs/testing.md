@@ -1191,6 +1191,43 @@ See [Optional NativeAOT Ghidra analysis](testing-lanes.md#optional-nativeaot-ghi
 
 See [IDA MCP adapter](testing-lanes.md#ida-mcp-adapter).
 
+## angr MCP adapter
+
+`npm run verify:angr -- --target /absolute/path/to/program --procedure main`
+uses the configured `REA_ANGR_PYTHON` interpreter or `REA_ANGR_MCP_CONFIG`
+registration. It installs no engine or Python package. The caller supplies the
+target; any ELF, PE, or thin Mach-O executable with a resolvable procedure name
+works.
+
+The lane invokes the production CLI dispatcher and connects the pinned MCP
+client SDK to the production REA server. It verifies function Evidence and
+CLI/MCP parity, inventory and search, pseudocode, instructions, callers and
+callees, data xrefs, malformed input, original-input preservation, and
+lifecycle cleanup: after `close_binary` the owned angr project is absent from
+the server's project inventory. It also exercises the knowledge-base edits:
+function annotation and name restore, a variable rename batch with one failing
+item, a variable retype with pseudocode readback, a prototype dry run, a
+comment clear, and the decompilation flavor round trip when the connected angr
+advertises the flavor tools. `--report` writes private local observations
+with mode `0600`; the console summary contains no target paths or upstream
+output.
+
+Adapter, composition, and conformance tests use a recording MCP fixture at the
+connection seam. They cover registration parsing, result decoding, target
+binding, missing upstream tools, cancellation draining, invalid selectors,
+output contracts, digest-based and path-based target identity, owned-process
+teardown when `close_project` fails versus attached retention, call-graph
+edges to unlisted functions, the function-versus-global naming rule,
+per-item edit outcomes, inline-comment rejection, call-graph invalidation after
+a rename, the configured default flavor, and flavor operations on an angr
+without flavor tools. They do not establish real angr
+operation. The initial real workflow used a Linux x64 editable angr checkout
+(`10.0.4.dev0`) with FastMCP 4.0.10 on an x86-64 ELF fixture, in headless
+stdio mode and in attached mode against a caller-started
+`python -m angr.mcp --transport http` loopback server. Other hosts, angr
+releases, and architectures remain unverified; see the
+[provider guide](angr-provider.md).
+
 ## Kuna lane
 
 See [Kuna lane](testing-lanes.md#kuna-lane).

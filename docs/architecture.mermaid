@@ -41,6 +41,8 @@ graph TD
         IDA_MCP["External ida-pro-mcp<br/>GUI proxy or database supervisor<br/>upstream installation and engine lifecycle"]
 
         KUNA["src/kuna/<br/>BYO Kuna decompiler, a deep analysis candidate<br/>discovery reads metadata only; version probe when a target opens"]
+        ANGR["src/angr/<br/>angr MCP contract adaptation<br/>owned stdio project or attached local HTTP server"]
+        ANGR_MCP["External angr.mcp<br/>bundled angr MCP server<br/>upstream installation and CFG/decompiler lifecycle"]
         AUX["src/artifacts/ + src/native/<br/>artifact inventory, bounded directory triage and extraction<br/>format readers and native capabilities"]
 
 
@@ -133,6 +135,10 @@ graph TD
     IDA --> IDA_MCP
     IDA --> CONTRACTS
     IDA --> DOMAIN
+    COMPOSITION --> ANGR
+    ANGR --> ANGR_MCP
+    ANGR --> CONTRACTS
+    ANGR --> DOMAIN
     SESSION --> AUX
     APP --> JS_RECON
     APP --> INSTALL

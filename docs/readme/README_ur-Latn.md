@@ -240,6 +240,7 @@ dekhein. REA in dono providers ko install ya update nahi karta.
 Native formats aur host support har provider ke liye alag ho sakte hain.
 [Hopper aur Ghidra setup](../installation.md#hopper),
 [IDA guide](../ida-provider.md) (optional native MCP bridge samet),
+[angr guide](../angr-provider.md),
 [Kuna decompiler guide](../kuna-provider.md) aur
 [experimental Windows Ghidra support](../windows-ghidra-p0.md) dekhein.
 Ghidra [16-bit DOS analysis](../ghidra-dos.md) bhi support karta hai.

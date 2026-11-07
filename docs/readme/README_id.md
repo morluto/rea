@@ -199,7 +199,7 @@ Untuk pemeriksaan biner native secara offline, REA juga mendukung GNU objdump da
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
-Format native dan dukungan sistem host berbeda-beda menurut penyedia. Lihat [penyiapan Hopper dan Ghidra](../installation.md#hopper), [panduan IDA](../ida-provider.md), [Kuna](../kuna-provider.md), dan [dukungan eksperimental Ghidra di Windows](../windows-ghidra-p0.md).
+Format native dan dukungan sistem host berbeda-beda menurut penyedia. Lihat [penyiapan Hopper dan Ghidra](../installation.md#hopper), [panduan IDA](../ida-provider.md), [panduan angr](../angr-provider.md), [Kuna](../kuna-provider.md), dan [dukungan eksperimental Ghidra di Windows](../windows-ghidra-p0.md).
 
 Ghidra juga mendukung [analisis DOS 16-bit](../ghidra-dos.md).
 

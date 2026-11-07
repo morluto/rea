@@ -1,0 +1,763 @@
+import { realpath } from "node:fs/promises";
+import { normalize } from "node:path";
+import { z } from "zod";
+import { ABORTED, waitForAbortable } from "../process/AbortablePromise.js";
+import {
+  createAnalysisExecution,
+  type AnalysisClient,
+  type AnalysisOperation,
+  type ExecutionOptions,
+} from "../application/AnalysisProvider.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+  AnalysisInputError,
+  AnalysisProtocolError,
+  AnalysisOutputError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
+import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import { err, ok, type Result } from "../domain/result.js";
+import { createEvidence } from "../domain/evidence.js";
+import {
+  providerRetryAction,
+  type ProviderOperationHealth,
+} from "../domain/providerOperationHealth.js";
+import type { AngrConfiguration } from "./AngrConfiguration.js";
+import {
+  AngrTransportError,
+  type AngrMcpConnection,
+} from "./AngrMcpConnection.js";
+import { parseAngrInput } from "./AngrInput.js";
+import type { RegexMatchingDeadline } from "../config/regexMatchingDeadline.js";
+import type { RegexWorkerHeapRequest } from "../config/regexWorkerHeapRequest.js";
+import {
+  AngrOperationRunner,
+  type AngrRawObservation,
+} from "./AngrOperationRunner.js";
+import {
+  ANGR_FLAVOR_TOOLS,
+  ANGR_LIMITATIONS,
+  ANGR_REQUIRED_TOOLS,
+  type AngrOperation,
+} from "./AngrProviderCapabilities.js";
+import {
+  ANGR_OPERATIONS,
+  ANGR_PROVIDER_IDENTITY,
+} from "./AngrProviderMetadata.js";
+import {
+  angrLoadOptions,
+  cfgStatsSchema,
+  closeProjectSchema,
+  projectListSchema,
+  flavorSchema,
+  loadBinarySchema,
+  type AngrCallGraph,
+  type AngrLoadedBinary,
+} from "./AngrProtocolValues.js";
+
+const operationSet: ReadonlySet<string> = new Set(ANGR_OPERATIONS);
+const isAngrOperation = (operation: string): operation is AngrOperation =>
+  operationSet.has(operation);
+const wasCancelled = (options: ExecutionOptions | undefined): boolean =>
+  options?.signal?.aborted === true;
+/** Compare host-local paths; Windows paths compare case-insensitively. */
+const sameHostPath = (left: string, right: string): boolean =>
+  process.platform === "win32"
+    ? normalize(left).toLowerCase() === normalize(right).toLowerCase()
+    : normalize(left) === normalize(right);
+
+/** A failed cleanup retains the upstream project and reports it for retry. */
+class AngrCleanupError extends ProviderAdapterError {
+  override readonly cleanupIncomplete = true;
+  constructor(resource: string, cause: unknown) {
+    super("angr", "close", {
+      cause,
+      diagnostics: {
+        reason:
+          "angr cleanup could not be verified; the upstream project or connection is retained for retry.",
+        failure_reason: cause instanceof Error ? cause.message : String(cause),
+        resource,
+      },
+    });
+    this.setCleanupResources([resource]);
+  }
+}
+
+/** Serial read-only session over one angr project loaded for the bound target. */
+export class AngrSessionClient implements AnalysisClient {
+  #tail: Promise<void> = Promise.resolve();
+  #startup: Promise<void> | undefined;
+  #closed = false;
+  #closing = false;
+  #closePromise: Promise<Result<null, AnalysisError>> | undefined;
+  #loaded: AngrLoadedBinary | undefined;
+  /** Retained as soon as the server reports it, so a failed startup can still close the project. */
+  #projectId: string | undefined;
+  #cfg: JsonValue = null;
+  #callGraph:
+    | Promise<{ graph: AngrCallGraph; observation: AngrRawObservation }>
+    | undefined;
+  #flavor: string | null = null;
+  #flavorToolsAvailable = false;
+  /** Session-wide limitations established at startup. */
+  readonly #limitations: string[] = [];
+  /** Replies received while loading and preparing the project, retained for startup failures. */
+  readonly #startupObservations: AngrRawObservation[] = [];
+  /** Set once a connection attempt began; close must then release it. */
+  #connectionOpened = false;
+  /** Tools the server advertised; set once the connection is established. */
+  #tools: ReadonlySet<string> | undefined;
+  /** Whether the registration's flavor has been applied to the project. */
+  #flavorApplied = false;
+  /** Set when startup failed; the session can never serve requests again. */
+  #startupFailure: string | undefined;
+  /** Requests currently dispatched to angr. */
+  #inFlight = 0;
+  /** Set once the server or project is observed gone; a reopen must replace this client. */
+  #lost:
+    | { readonly state: "exited" | "unreachable"; readonly reason: string }
+    | undefined;
+
+  constructor(
+    private readonly config: AngrConfiguration,
+    private readonly target: BinaryTarget,
+    private readonly connection: AngrMcpConnection,
+    private readonly profile?: AnalysisProfileCommitment,
+    private readonly regex: {
+      readonly deadline?: RegexMatchingDeadline | undefined;
+      readonly heapRequest?: RegexWorkerHeapRequest | undefined;
+    } = {},
+  ) {}
+
+  execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ) {
+    const call = this.#tail.then(async () => {
+      this.#inFlight += 1;
+      try {
+        return await this.#execute(operation, parameters, options);
+      } finally {
+        this.#inFlight -= 1;
+      }
+    });
+    this.#tail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    return call;
+  }
+
+  async executeIfReady(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ) {
+    if (this.#loaded === undefined || this.#closed || this.#closing)
+      return undefined;
+    const call = this.#tail.then(() => {
+      if (this.#loaded === undefined || this.#closed || this.#closing)
+        return undefined;
+      if (wasCancelled(options))
+        return err(new AnalysisCancelledError(operation));
+      return this.#execute(operation, parameters, options);
+    });
+    this.#tail = call.then(
+      () => undefined,
+      () => undefined,
+    );
+    const result = await waitForAbortable(call, options?.signal);
+    return result === ABORTED
+      ? err(new AnalysisCancelledError(operation))
+      : result;
+  }
+
+  async #execute(
+    operation: AnalysisOperation,
+    parameters: Readonly<Record<string, JsonValue>>,
+    options?: ExecutionOptions,
+  ) {
+    if (this.#closed || this.#closing)
+      return err(
+        new AnalysisProtocolError(
+          "angr session is closing or closed; reopen the target.",
+        ),
+      );
+    if (wasCancelled(options))
+      return err(new AnalysisCancelledError(operation));
+    if (operation !== "health" && !isAngrOperation(operation))
+      return err(
+        new AnalysisCapabilityUnavailableError(
+          "angr",
+          operation,
+          "This integration admits read-only static analysis operations only.",
+        ),
+      );
+    if (operation !== "health") {
+      const parsed = parseAngrInput(operation, parameters);
+      if (!parsed.ok) return parsed;
+      parameters = parsed.value;
+    }
+    // An explicit document must name the bound target: one session serves
+    // exactly one angr project, and a mismatch must not read or edit it.
+    const document = parameters.document;
+    if (
+      document !== undefined &&
+      (typeof document !== "string" ||
+        (!sameHostPath(document, this.target.path) &&
+          (this.target.sourcePath === undefined ||
+            !sameHostPath(document, this.target.sourcePath))))
+    )
+      return err(
+        new AnalysisInputError(operation, undefined, [
+          {
+            path: ["document"],
+            reason: "invalid_value",
+            expected: this.target.path,
+            message:
+              "angr document must be the REA-bound target; omit document or use its admitted path.",
+          },
+        ]),
+      );
+    if (this.#lost !== undefined)
+      return err(this.#lostError(operation, this.#lost.reason));
+    let runner: AngrOperationRunner | undefined;
+    try {
+      await this.#start(operation, options?.signal);
+      if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
+      if (operation === "health") return await this.#health(options);
+      if (!isAngrOperation(operation))
+        throw new AnalysisProtocolError(
+          "angr operation changed after validation.",
+        );
+      runner = this.#runner(options);
+      const result = await runner.run(operation, parameters);
+      if (wasCancelled(options)) throw new AnalysisCancelledError(operation);
+      return ok(
+        createAnalysisExecution(result, ANGR_PROVIDER_IDENTITY, {
+          rawResult: {
+            upstream: this.connection.serverInfo(),
+            project: jsonValueSchema.parse(this.#loaded ?? null),
+            decompilation_flavor:
+              this.config.mode === "attached" ? null : this.#flavor,
+            observations: jsonValueSchema.parse(runner.raw),
+          },
+          limitations: [
+            ...ANGR_LIMITATIONS,
+            ...this.#limitations,
+            ...new Set(runner.limitations),
+          ],
+          ...(runner.relationshipCoverage === undefined
+            ? {}
+            : { relationshipCoverage: runner.relationshipCoverage }),
+          locations: [
+            { kind: "artifact-path", path: this.target.path },
+            ...runner.locations,
+          ],
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
+        }),
+      );
+    } catch (cause: unknown) {
+      return this.#failure(operation, cause, options, { runner, parameters });
+    }
+  }
+
+  #runner(options: ExecutionOptions | undefined): AngrOperationRunner {
+    if (this.#loaded === undefined)
+      throw new AnalysisProtocolError("angr session has no loaded project.");
+    // Attached projects are shared, so refresh for each operation while
+    // allowing all graph consumers within that operation to share one load.
+    let operationCallGraph:
+      | Promise<{ graph: AngrCallGraph; observation: AngrRawObservation }>
+      | undefined;
+    return new AngrOperationRunner(this.connection, this.#loaded.project_id, {
+      signal: options?.signal,
+      regexDeadline: this.regex.deadline,
+      regexHeapRequest: this.regex.heapRequest,
+      selectorOrigin: options?.selectorOrigin,
+      callGraph: async (runner) => {
+        if (this.config.mode === "attached") {
+          operationCallGraph ??= runner
+            .loadCallGraph()
+            .catch((cause: unknown) => {
+              operationCallGraph = undefined;
+              throw cause;
+            });
+          return (await operationCallGraph).graph;
+        }
+        if (this.#callGraph === undefined) {
+          this.#callGraph = runner.loadCallGraph().catch((cause: unknown) => {
+            this.#callGraph = undefined;
+            throw cause;
+          });
+          const loaded = await this.#callGraph;
+          return loaded.graph;
+        }
+        // A cache hit replays the reply so this result's Evidence explains its relationships.
+        const cached = await this.#callGraph;
+        if (!runner.raw.some(({ tool }) => tool === "get_callgraph"))
+          runner.raw.push({ ...cached.observation, reused: true });
+        return cached.graph;
+      },
+      flavorToolsAvailable: this.#flavorToolsAvailable,
+      // Call-graph nodes carry function names, so any applied edit invalidates it.
+      onMutation: () => {
+        this.#callGraph = undefined;
+        operationCallGraph = undefined;
+      },
+      onFlavor: (flavor) => {
+        this.#flavor = flavor;
+      },
+    });
+  }
+
+  /**
+   * Answer from the server, not saved state: the owned process may have
+   * exited, or another client may have closed an attached project.
+   */
+  async #health(options: ExecutionOptions | undefined) {
+    const projectId = this.#projectId;
+    if (projectId !== undefined) {
+      const listed = projectListSchema.parse(
+        await this.connection.call("list_projects", {}),
+      );
+      if (wasCancelled(options)) throw new AnalysisCancelledError("health");
+      if (!listed.projects.some(({ project_id }) => project_id === projectId))
+        throw new AnalysisProtocolError(
+          `angr no longer holds project ${projectId}; another client may have closed it.`,
+          { diagnostics: { project_id: projectId, reason: "project_missing" } },
+        );
+    }
+    return ok(
+      createAnalysisExecution(
+        {
+          ready: this.#loaded !== undefined,
+          mode: this.config.mode,
+          project: jsonValueSchema.parse(this.#loaded ?? null),
+          cfg: this.#cfg,
+          decompilation_flavor:
+            this.config.mode === "attached" ? null : this.#flavor,
+          upstream: this.connection.serverInfo(),
+        },
+        ANGR_PROVIDER_IDENTITY,
+        {
+          limitations: ANGR_LIMITATIONS,
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
+        },
+      ),
+    );
+  }
+
+  /** Classify a failure that shows the server or project is gone. */
+  #observeLoss(cause: unknown, options: ExecutionOptions | undefined): void {
+    if (this.#lost !== undefined || this.#closing || wasCancelled(options))
+      return;
+    const projectMissing =
+      cause instanceof AnalysisError &&
+      (cause.diagnostics?.reason === "project_missing" ||
+        /Project not found|No project with ID/u.test(cause.message));
+    // Only a transport failure classified as a lost connection counts; a
+    // malformed reply or a timeout leaves the server and project usable.
+    const transportLost =
+      cause instanceof AngrTransportError && cause.connectionLost;
+    if (!projectMissing && !transportLost) return;
+    this.#lost = {
+      state:
+        transportLost && this.config.mode === "headless"
+          ? "exited"
+          : "unreachable",
+      reason:
+        cause instanceof Error ? cause.message : "angr connection was lost",
+    };
+  }
+
+  #lostError(operation: string, reason: string): AnalysisError {
+    return new ProviderAdapterError("angr", operation, {
+      diagnostics: {
+        reason: `The angr session is no longer usable: ${reason}`,
+        recovery:
+          "Reopen the target with open_binary; REA starts a new angr project for it.",
+      },
+    });
+  }
+
+  /** Observed operation health; a lost server or project makes reuse fail. */
+  operationHealthSnapshot(): ProviderOperationHealth | undefined {
+    if (this.#startup === undefined || this.#closed) return undefined;
+    // A failed startup is permanent for this client: a project may be loaded
+    // but CFG recovery or flavor setup never completed. Reopen must replace it.
+    if (this.#startupFailure !== undefined)
+      return {
+        state: "not_started",
+        stage: "launch",
+        retryAction: providerRetryAction("not_started", true),
+        exitCode: null,
+        requests: [],
+      };
+    if (this.#lost !== undefined)
+      return {
+        state: this.#lost.state,
+        stage: "connection",
+        retryAction: providerRetryAction(this.#lost.state),
+        exitCode: null,
+        requests: [],
+      };
+    if (this.#loaded === undefined) return undefined;
+    // Another client can close an attached project without any event reaching
+    // REA. Give no verdict, so a reopen runs the live health probe instead.
+    if (this.config.mode === "attached") return undefined;
+    return {
+      state: this.#inFlight > 0 ? "busy" : "idle",
+      stage: null,
+      retryAction: null,
+      exitCode: null,
+      requests: [],
+    };
+  }
+
+  /** Report an upstream request timeout against the REA operation that waited on it. */
+  #timeoutFor(
+    operation: string,
+    cause: AnalysisTimeoutError,
+  ): AnalysisTimeoutError {
+    if (cause.operation === operation) return cause;
+    return new AnalysisTimeoutError(operation, cause.timeoutMs, {
+      cause,
+      diagnostics: {
+        ...cause.diagnostics,
+        upstream_operation: cause.operation,
+      },
+      ...(cause.remediationAction === undefined
+        ? {}
+        : { remediationAction: cause.remediationAction }),
+    });
+  }
+
+  #failure(
+    operation: string,
+    cause: unknown,
+    options: ExecutionOptions | undefined,
+    context: {
+      readonly runner: AngrOperationRunner | undefined;
+      readonly parameters: Readonly<Record<string, JsonValue>>;
+    },
+  ) {
+    this.#observeLoss(cause, options);
+    if (cause instanceof AnalysisTimeoutError && !wasCancelled(options))
+      cause = this.#timeoutFor(operation, cause);
+    const { runner, parameters } = context;
+    let failure: AnalysisError;
+    if (
+      cause instanceof AnalysisError &&
+      (cause.partialObservation !== undefined ||
+        cause.cleanupIncomplete ||
+        cause.capturedOutput !== undefined)
+    )
+      failure = cause;
+    else if (wasCancelled(options))
+      failure = new AnalysisCancelledError(operation);
+    else if (cause instanceof AnalysisError) failure = cause;
+    else if (cause instanceof z.ZodError)
+      failure = new AnalysisOutputError(
+        operation,
+        `angr MCP returned malformed or unsupported producer data: ${cause.issues.map((issue) => `${issue.path.join(".") || "$"}: ${issue.message}`).join("; ")}`,
+        { cause },
+      );
+    else
+      failure = new ProviderAdapterError("angr", operation, {
+        cause,
+        diagnostics: {
+          reason:
+            cause instanceof Error ? cause.message : "Unknown upstream failure",
+          recovery:
+            "Check the configured angr interpreter or MCP registration and the selected target; see docs/angr-provider.md.",
+        },
+      });
+    // Before a runner exists, the completed startup replies are the only
+    // observations; after one exists, startup already succeeded.
+    const raw = runner === undefined ? this.#startupObservations : runner.raw;
+    if (raw.length > 0) {
+      const observations = jsonValueSchema.parse(raw);
+      failure.retainPartialObservation(
+        createEvidence(this.target, ANGR_PROVIDER_IDENTITY, {
+          predicateType: "analysis-observation",
+          operation,
+          parameters,
+          result: {
+            status: "partial",
+            failed_operation: operation,
+            observations,
+            project: jsonValueSchema.parse(this.#loaded ?? null),
+          },
+          rawResult: {
+            upstream: this.connection.serverInfo(),
+            observations,
+            project: jsonValueSchema.parse(this.#loaded ?? null),
+          },
+          confidence: "observed",
+          authority: "external-service",
+          ...(this.profile === undefined
+            ? {}
+            : { analysisProfile: this.profile }),
+          limitations: [
+            ...ANGR_LIMITATIONS,
+            ...this.#limitations,
+            ...new Set(runner?.limitations ?? []),
+            runner === undefined
+              ? "angr session startup failed after these completed upstream replies; the partial Evidence records what the server reported before the failure."
+              : "The requested angr operation failed after these completed upstream replies; the partial Evidence does not establish a complete result.",
+          ],
+          locations: [
+            { kind: "artifact-path", path: this.target.path },
+            ...(runner?.locations ?? []),
+          ],
+        }),
+      );
+    }
+    return err(failure);
+  }
+
+  #start(operation: string, signal: AbortSignal | undefined): Promise<void> {
+    this.#startup ??= this.#initialize(operation, signal).catch(
+      (cause: unknown) => {
+        // A cancelled startup is resumable; only a real failure is permanent.
+        if (cause instanceof AnalysisCancelledError) this.#startup = undefined;
+        else
+          this.#startupFailure =
+            cause instanceof Error ? cause.message : "angr startup failed";
+        throw cause;
+      },
+    );
+    return this.#startup;
+  }
+
+  /**
+   * Bring the session to a ready project, one step at a time. Each step runs
+   * only once and first checks for cancellation, so a cancelled startup stops
+   * after draining its current reply and a later request resumes from the
+   * first incomplete step, reusing the project that was already loaded.
+   */
+  async #initialize(operation: string, signal: AbortSignal | undefined) {
+    const step = () => {
+      if (signal?.aborted === true) throw new AnalysisCancelledError(operation);
+    };
+    if (this.#tools === undefined) {
+      this.connection.onClose?.(() => {
+        if (this.#closing || this.#closed || this.#lost !== undefined) return;
+        this.#lost = {
+          state: this.config.mode === "headless" ? "exited" : "unreachable",
+          reason: "the angr MCP connection closed unexpectedly",
+        };
+      });
+      step();
+      // Recorded before connecting: a stdio connect spawns the server even if
+      // the handshake then fails or the caller cancels.
+      this.#connectionOpened = true;
+      const tools = new Set(await this.connection.connect());
+      const missing = ANGR_REQUIRED_TOOLS.filter((name) => !tools.has(name));
+      if (missing.length > 0)
+        throw new AnalysisProtocolError(
+          `angr MCP server is missing tools: ${missing.join(", ")}. Install a current angr release with its MCP extra; see docs/angr-provider.md.`,
+        );
+      this.#tools = tools;
+    }
+    const tools = this.#tools;
+    if (this.#loaded === undefined) {
+      step();
+      const reply = await this.#loadBinary();
+      this.#projectId = z
+        .object({ project_id: z.string().min(1) })
+        .parse(reply).project_id;
+      const loaded = loadBinarySchema.parse(reply);
+      this.#loaded = loaded;
+      await this.#verifyLoadedTarget(loaded);
+    }
+    const projectId = this.#loaded.project_id;
+    if (this.#cfg === null) {
+      step();
+      const cfg = cfgStatsSchema.parse(
+        await this.#startupCall(
+          "get_cfg",
+          { project_id: projectId, normalize: true, data_references: true },
+          { timeoutMs: this.config.startupTimeoutMs },
+        ),
+      );
+      if (cfg.project_id !== projectId)
+        throw new AnalysisProtocolError(
+          "angr CFG recovery answered for a different project than the loaded target.",
+        );
+      this.#cfg = jsonValueSchema.parse(cfg);
+    }
+    this.#flavorToolsAvailable = ANGR_FLAVOR_TOOLS.every((name) =>
+      tools.has(name),
+    );
+    if (this.#flavorToolsAvailable && this.#flavor === null) {
+      step();
+      const current = flavorSchema.parse(
+        await this.#startupCall("get_decompilation_flavor", {
+          project_id: projectId,
+        }),
+      );
+      this.#flavor = current.flavor;
+    }
+    if (this.config.flavor !== undefined && !this.#flavorApplied) {
+      if (!this.#flavorToolsAvailable)
+        throw new AnalysisProtocolError(
+          `The angr registration selects flavor ${this.config.flavor}, but the connected server has no decompilation-flavor tools; upgrade angr or remove the flavor setting.`,
+        );
+      step();
+      const changed = flavorSchema.parse(
+        await this.#startupCall("set_decompilation_flavor", {
+          project_id: projectId,
+          flavor: this.config.flavor,
+        }),
+      );
+      this.#flavor = changed.flavor;
+      this.#flavorApplied = true;
+    }
+  }
+
+  /** Headered files load as-is; supported raw images carry REA's loader selection to angr. */
+  async #loadBinary(): Promise<JsonValue> {
+    const options = angrLoadOptions(this.target);
+    try {
+      return await this.#startupCall(
+        "load_binary",
+        {
+          binary_path: this.target.path,
+          auto_load_libs: this.config.autoLoadLibs,
+          ...options,
+        },
+        { timeoutMs: this.config.startupTimeoutMs },
+      );
+    } catch (cause: unknown) {
+      if (
+        Object.keys(options).length > 0 &&
+        cause instanceof AnalysisProtocolError &&
+        /Unexpected keyword argument/u.test(cause.message)
+      )
+        throw new AnalysisProtocolError(
+          `The connected angr MCP server does not accept loader options (${Object.keys(options).join(", ")}); upgrade angr to load ${this.target.format} targets.`,
+          { cause },
+        );
+      throw cause;
+    }
+  }
+
+  /** A startup call whose reply is retained so a later startup failure can explain itself. */
+  async #startupCall(
+    tool: string,
+    args: Readonly<Record<string, JsonValue>>,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<JsonValue> {
+    const result = await this.connection.call(tool, args, options);
+    this.#startupObservations.push({ tool, arguments: args, result });
+    return result;
+  }
+
+  /**
+   * A reported digest proves identity across filesystem views; without one,
+   * only a server sharing this host's filesystem can be checked, by path.
+   */
+  async #verifyLoadedTarget(loaded: AngrLoadedBinary): Promise<void> {
+    if (loaded.sha256 !== undefined) {
+      if (loaded.sha256.toLowerCase() !== this.target.sha256.toLowerCase())
+        throw new AnalysisProtocolError(
+          `angr loaded a file whose SHA-256 ${loaded.sha256} differs from the selected target ${this.target.path}.`,
+        );
+      return;
+    }
+    const [expected, reported] = await Promise.all([
+      realpath(this.target.path).catch(() => this.target.path),
+      realpath(loaded.binary_path).catch(() => loaded.binary_path),
+    ]);
+    if (expected !== reported)
+      throw new AnalysisProtocolError(
+        `angr loaded ${loaded.binary_path} instead of the selected target ${this.target.path}. This angr reports no file digest, so the server must share this host's filesystem; upgrade angr for digest-based verification.`,
+      );
+    this.#limitations.push(
+      "The connected angr reports no file digest; target identity was verified by path on this host only.",
+    );
+  }
+
+  async close(): Promise<Result<null, AnalysisError>> {
+    if (this.#closePromise !== undefined) return this.#closePromise;
+    const closing = this.#closeOnce();
+    const shared = closing.finally(() => {
+      if (this.#closePromise === shared) this.#closePromise = undefined;
+    });
+    this.#closePromise = shared;
+    return shared;
+  }
+
+  async #closeOnce(): Promise<Result<null, AnalysisError>> {
+    this.#closing = true;
+    await this.#tail;
+    if (this.#closed) return ok(null);
+    const resource =
+      this.#projectId === undefined
+        ? "angr MCP connection"
+        : `angr project ${this.#projectId}`;
+    try {
+      // Clean up whatever was started. A cancelled startup clears its promise
+      // so a later request can resume, but may already hold a connection and a
+      // loaded project; a failed one may have loaded the project first.
+      if (this.#connectionOpened) {
+        await this.#startup?.catch(() => undefined);
+        const transportClosed = await this.#closeProject();
+        if (!transportClosed) await this.connection.close();
+      }
+      this.#closed = true;
+      return ok(null);
+    } catch (cause: unknown) {
+      return err(new AngrCleanupError(resource, cause));
+    }
+  }
+
+  /** Closes the loaded project; true when the owned transport was ended to release it. */
+  async #closeProject(): Promise<boolean> {
+    const projectId = this.#projectId;
+    if (projectId === undefined) return false;
+    try {
+      const closed = closeProjectSchema.parse(
+        await this.connection.call("close_project", {
+          project_id: projectId,
+        }),
+      );
+      if (closed.project_id !== projectId)
+        throw new AnalysisProtocolError(
+          "angr closed a different project than the one this session loaded.",
+        );
+    } catch (cause: unknown) {
+      // A shared (attached) server keeps the project for a later retry, even
+      // behind a stdio proxy. An owned headless server holds it only in
+      // memory, so ending the process releases it.
+      if (this.config.mode === "attached") {
+        const detached = this.connection.detach?.();
+        if (detached === undefined || !detached.ok)
+          throw new AggregateError(
+            [cause, ...(detached === undefined ? [] : [detached.error])],
+            "angr project close failed and its retained transport could not be detached.",
+          );
+        throw cause;
+      }
+      await this.connection.close();
+      this.#loaded = undefined;
+      this.#projectId = undefined;
+      return true;
+    }
+    this.#loaded = undefined;
+    this.#projectId = undefined;
+    return false;
+  }
+}

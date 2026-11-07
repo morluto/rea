@@ -52,6 +52,10 @@ import {
 } from "../domain/evidenceRecordSummary.js";
 import { liveBinaryTargetSummaryVariants } from "../domain/liveBinaryTargetSummary.js";
 import { nativeFunctionAnnotationsSchema } from "../domain/native/nativeFunctionAnnotations.js";
+import {
+  nativeDecompilationEditsSchema,
+  nativeDecompilationFlavorSchema,
+} from "../domain/native/nativeDecompilationEdits.js";
 import { nativeLoadImageSchema } from "../domain/native/nativeLoadImage.js";
 import { nativeUiResultSchema } from "../domain/native/nativeUiObservation.js";
 import { nativeValueTraceSchema } from "../domain/native/nativeValueTrace.js";
@@ -148,6 +152,17 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
 export const officialOutputSchemas = {
   search_bytes: evidenceResultOf(byteSearchResultSchema),
   annotate_native_function: evidenceResultOf(nativeFunctionAnnotationsSchema),
+  rename_native_variables: evidenceResultOf(nativeDecompilationEditsSchema),
+  set_native_variable_types: evidenceResultOf(nativeDecompilationEditsSchema),
+  set_native_function_prototypes: evidenceResultOf(
+    nativeDecompilationEditsSchema,
+  ),
+  inspect_native_decompilation_flavor: evidenceResultOf(
+    nativeDecompilationFlavorSchema,
+  ),
+  set_native_decompilation_flavor: evidenceResultOf(
+    nativeDecompilationFlavorSchema,
+  ),
   inspect_native_load_image: analysisDetailOutputSchemaOf(
     nativeLoadImageSchema,
     nativeLoadImageSummaryViewResultSchema,

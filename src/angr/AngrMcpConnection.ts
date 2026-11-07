@@ -1,0 +1,271 @@
+import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
+import {
+  Client,
+  SdkError,
+  SdkErrorCode,
+  StreamableHTTPClientTransport,
+} from "@modelcontextprotocol/client";
+import {
+  DEFAULT_INHERITED_ENV_VARS,
+  StdioClientTransport,
+} from "@modelcontextprotocol/client/stdio";
+import { z } from "zod";
+import type { AngrConfiguration } from "./AngrConfiguration.js";
+import { jsonValueSchema, type JsonValue } from "../domain/jsonValue.js";
+import {
+  AnalysisProtocolError,
+  AnalysisTimeoutError,
+} from "../domain/analysisErrorCore.js";
+import { err, ok, type Result } from "../domain/result.js";
+import type { ChildProcess } from "node:child_process";
+import { detachOwnedProcessHandles } from "../process/OwnedProcessDetach.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
+import { ANGR_PROVIDER_IDENTITY } from "./AngrProviderMetadata.js";
+
+/** Injectable MCP boundary used by the provider and its conformance tests. */
+export interface AngrMcpConnection {
+  connect(): Promise<readonly string[]>;
+  call(
+    name: string,
+    args: Readonly<Record<string, JsonValue>>,
+    options?: { readonly timeoutMs?: number },
+  ): Promise<JsonValue>;
+  serverInfo(): JsonValue;
+  /** Unref an owned stdio child and its pipes while retaining the live connection for retry. */
+  detach?(): Result<null, ProviderAdapterError>;
+  /** Register a listener for the transport closing, including a server exit. */
+  onClose?(listener: () => void): void;
+  close(): Promise<void>;
+}
+
+/**
+ * A failure in the MCP transport, classified where it happens: only a closed
+ * or unreachable connection means the session is gone. A timeout or a
+ * server-side error reply leaves the server and its project usable.
+ */
+export class AngrTransportError extends Error {
+  constructor(
+    message: string,
+    readonly connectionLost: boolean,
+    options?: ErrorOptions,
+  ) {
+    super(message, options);
+    this.name = "AngrTransportError";
+  }
+}
+
+const LOST_CONNECTION_CODES: ReadonlySet<string> = new Set([
+  SdkErrorCode.ConnectionClosed,
+  SdkErrorCode.NotConnected,
+  SdkErrorCode.SendFailed,
+]);
+
+/** Whether an SDK or fetch failure shows the connection itself is gone. */
+export const isConnectionLoss = (cause: unknown): boolean =>
+  (cause instanceof SdkError && LOST_CONNECTION_CODES.has(cause.code)) ||
+  // An HTTP endpoint that stopped listening surfaces as a fetch failure.
+  (cause instanceof TypeError && /fetch failed/u.test(cause.message));
+
+/** Bound retained upstream error text so diagnostics stay caller-safe in size. */
+const UPSTREAM_REASON_LIMIT = 4_096;
+
+const toolResultSchema = z.object({
+  isError: z.boolean().optional(),
+  structuredContent: z.record(z.string(), z.unknown()).optional(),
+  content: z.array(
+    z.looseObject({ type: z.string(), text: z.string().optional() }),
+  ),
+});
+
+/** Decode FastMCP's structured result, unwrapping its scalar `result` envelope. */
+export const decodeAngrToolResult = (
+  input: unknown,
+  redact: (text: string) => string = (text) => text,
+): JsonValue => {
+  const result = toolResultSchema.parse(input);
+  const blocks = result.content.flatMap((block) =>
+    block.type === "text" && block.text !== undefined ? [block.text] : [],
+  );
+  if (result.isError === true) {
+    // The projection replaces the message, so the upstream reason travels as diagnostics.
+    // Redact before bounding so a credential cannot be split across the cut.
+    const reason = redact(blocks.join("\n")).slice(0, UPSTREAM_REASON_LIMIT);
+    throw new AnalysisProtocolError(`angr MCP tool failed: ${reason}`, {
+      diagnostics: { upstream_tool_error: reason },
+    });
+  }
+  if (result.structuredContent !== undefined) {
+    const value = result.structuredContent;
+    return jsonValueSchema.parse(
+      Object.keys(value).length === 1 && "result" in value
+        ? value.result
+        : value,
+    );
+  }
+  if (blocks.length !== 1)
+    throw new AnalysisProtocolError(
+      "angr MCP omitted a single structured or text result; unsupported content cannot establish an empty observation.",
+    );
+  try {
+    return jsonValueSchema.parse(JSON.parse(blocks[0] ?? ""));
+  } catch (cause: unknown) {
+    throw new AnalysisProtocolError("angr MCP returned malformed JSON text.", {
+      cause,
+    });
+  }
+};
+
+/** Remove configured transport credentials from text that may reach a caller. */
+export const redactAngrCredentials = (
+  text: string,
+  config: AngrConfiguration,
+): string => {
+  if (!("headers" in config)) return text;
+  let redacted = text;
+  for (const [name, value] of Object.entries(config.headers)) {
+    if (!/^(?:authorization|proxy-authorization|cookie)$/iu.test(name))
+      continue;
+    const credential = value.match(/^(?:Bearer|Basic)\s+([\s\S]+)$/iu)?.[1];
+    for (const secret of [value, credential])
+      if (secret !== undefined && secret.length > 0)
+        redacted = redacted
+          .split(secret)
+          .join("[redacted transport credential]");
+  }
+  return redacted;
+};
+
+/** Redact configured transport authentication values from SDK diagnostics only. */
+export const redactAngrTransportFailure = (
+  cause: unknown,
+  config: AngrConfiguration,
+): Error => {
+  const message =
+    cause instanceof Error
+      ? cause.message
+      : "Unknown angr MCP transport failure";
+  return new Error(redactAngrCredentials(message, config), { cause });
+};
+
+/** Create a standard SDK connection to an angr MCP registration. */
+export const createAngrMcpConnection = (
+  config: AngrConfiguration,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): AngrMcpConnection => {
+  const client = new Client({ name: "rea-angr-provider", version: "1" });
+  const closeListeners: (() => void)[] = [];
+  // The SDK reports a closed transport here, whether REA or the server ended it.
+  client.onclose = () => {
+    for (const listener of closeListeners) listener();
+  };
+  let stderrTail = "";
+  const transportFailure = (cause: unknown): never => {
+    const failure = redactAngrTransportFailure(cause, config);
+    const lost = isConnectionLoss(cause);
+    if (stderrTail.length === 0)
+      throw new AngrTransportError(failure.message, lost, { cause: failure });
+    const safeTail = redactAngrTransportFailure(
+      new Error(stderrTail),
+      config,
+    ).message;
+    throw new AngrTransportError(
+      `${failure.message}\nangr MCP stderr tail:\n${safeTail}`,
+      lost,
+      { cause: failure },
+    );
+  };
+  const transport =
+    "command" in config
+      ? new StdioClientTransport({
+          command: config.command,
+          args: config.args,
+          env: {
+            // The SDK always merges ambient defaults. Its string-only environment
+            // API requires empty values to suppress omitted caller-selected keys.
+            ...Object.fromEntries(
+              DEFAULT_INHERITED_ENV_VARS.map((key) => [key, ""]),
+            ),
+            ...Object.fromEntries(
+              Object.entries(snapshotEnvironment(environment)).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
+            ),
+            ...Object.fromEntries(
+              Object.entries(snapshotEnvironment(config.env)).filter(
+                (entry): entry is [string, string] => entry[1] !== undefined,
+              ),
+            ),
+          },
+          stderr: "pipe",
+        })
+      : new StreamableHTTPClientTransport(new URL(config.url), {
+          requestInit: { headers: config.headers, redirect: "error" },
+        });
+  // Keep only a bounded diagnostic tail for startup failures.
+  if (transport instanceof StdioClientTransport)
+    transport.stderr?.on("data", (chunk) => {
+      stderrTail = (stderrTail + chunk.toString("utf8")).slice(-16_384);
+    });
+  const detach = (): Result<null, ProviderAdapterError> => {
+    if (!(transport instanceof StdioClientTransport)) return ok(null);
+    // The pinned SDK transport owns this exact ChildProcess. Keep this private
+    // SDK representation isolated here; never reconstruct ownership from PID.
+    const child = (transport as unknown as { _process?: ChildProcess })
+      ._process;
+    if (child === undefined)
+      return err(
+        new ProviderAdapterError(ANGR_PROVIDER_IDENTITY.id, "cleanup", {
+          diagnostics: { reason: "owned stdio process handle is unavailable" },
+        }),
+      );
+    const detached = detachOwnedProcessHandles(child);
+    return detached.ok
+      ? ok(null)
+      : err(
+          new ProviderAdapterError(ANGR_PROVIDER_IDENTITY.id, "cleanup", {
+            cause: detached.error,
+            diagnostics: { reason: detached.error.message },
+          }),
+        );
+  };
+  return {
+    async connect() {
+      await client
+        .connect(transport, { timeout: config.timeoutMs })
+        .catch(transportFailure);
+      const catalog = await client
+        .listTools(undefined, { timeout: config.timeoutMs })
+        .catch(transportFailure);
+      return catalog.tools.map(({ name }) => name);
+    },
+    async call(name, args, options) {
+      const timeoutMs = options?.timeoutMs ?? config.timeoutMs;
+      return decodeAngrToolResult(
+        await client
+          .callTool({ name, arguments: args }, { timeout: timeoutMs })
+          .catch((cause: unknown) => {
+            // A deadline is a retryable timeout, not a broken provider; the
+            // connection and project stay usable.
+            if (
+              cause instanceof SdkError &&
+              cause.code === SdkErrorCode.RequestTimeout
+            )
+              throw new AnalysisTimeoutError(name, timeoutMs, {
+                cause,
+                diagnostics: { upstream_tool: name },
+                remediationAction:
+                  "Retry, or raise timeoutMs (startupTimeoutMs for load_binary and get_cfg) in the angr registration.",
+              });
+            return transportFailure(cause);
+          }),
+        (text) => redactAngrCredentials(text, config),
+      );
+    },
+    serverInfo: () => jsonValueSchema.parse(client.getServerVersion() ?? null),
+    onClose: (listener) => {
+      closeListeners.push(listener);
+    },
+    detach,
+    close: () => client.close().catch(transportFailure),
+  };
+};

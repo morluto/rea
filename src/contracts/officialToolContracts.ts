@@ -3,6 +3,12 @@ import { analysisDetailSchema } from "./analysisDetail.js";
 import { z } from "zod";
 import { jsonRecordSchema } from "../domain/jsonRecord.js";
 import { nativeFunctionAnnotationsInputSchema } from "../domain/native/nativeFunctionAnnotations.js";
+import {
+  renameNativeVariablesInputSchema,
+  setNativeDecompilationFlavorInputSchema,
+  setNativeFunctionPrototypesInputSchema,
+  setNativeVariableTypesInputSchema,
+} from "../domain/native/nativeDecompilationEdits.js";
 
 import { officialOutputSchemas } from "./toolOutputSchemaGroups.js";
 import {
@@ -21,7 +27,7 @@ import { HOPPER_MEMORY_TOOL_DEFINITIONS } from "./hopperMemoryContracts.js";
 import { nativeSearchInput } from "../domain/native/nativeSearch.js";
 
 const hopperRegexDeadline =
-  "Regex dialect depends on the provider: Ghidra uses Java Pattern; Kuna, IDA and Hopper use ECMAScript Unicode. See binary_session for selected-provider limits. Hopper regex mode uses a cancellable worker. The matching deadline is REA_REGEX_MATCHING_DEADLINE_MS (a positive decimal integer of milliseconds from 1 to 2147483647, default 5000). Unset keeps the default. A deadline failure names the effective milliseconds, source (default or setting), the default, and the maximum, and leaves the API usable. The worker old-generation request is REA_REGEX_WORKER_HEAP_REQUEST_MIB (a decimal integer of mebibytes from 7 to 16384, default 128). Unset keeps the default. A positive Node --max-old-space-size, including NODE_OPTIONS, overrides that request and is not limited by the setting's floor or maximum. A heap failure names the effective request, its source (default or setting), the default, the floor, and the maximum.";
+  "Regex dialect depends on the provider: Ghidra uses Java Pattern; Kuna, IDA, angr and Hopper use ECMAScript Unicode. See binary_session for selected-provider limits. Hopper regex mode uses a cancellable worker. The matching deadline is REA_REGEX_MATCHING_DEADLINE_MS (a positive decimal integer of milliseconds from 1 to 2147483647, default 5000). Unset keeps the default. A deadline failure names the effective milliseconds, source (default or setting), the default, and the maximum, and leaves the API usable. The worker old-generation request is REA_REGEX_WORKER_HEAP_REQUEST_MIB (a decimal integer of mebibytes from 7 to 16384, default 128). Unset keeps the default. A positive Node --max-old-space-size, including NODE_OPTIONS, overrides that request and is not limited by the setting's floor or maximum. A heap failure names the effective request, its source (default or setting), the default, the floor, and the maximum.";
 
 const official = <
   Name extends keyof typeof officialOutputSchemas,
@@ -52,6 +58,31 @@ export const OFFICIAL_TOOL_CONTRACTS = [
     "annotate_native_function",
     "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
+  ),
+  official(
+    "rename_native_variables",
+    "Rename decompilation variables (locals, arguments, and stack slots) in one batch, each identified by its procedure and current pseudocode name. Returns per-item readback with old and new names and resolved storage; failed items report their reason without discarding sibling edits. Renames persist across re-decompilation in the session analysis database only; original executable bytes remain unchanged. Providers without this capability are unsupported.",
+    renameNativeVariablesInputSchema,
+  ),
+  official(
+    "set_native_variable_types",
+    "Set C types on decompilation variables or globals in one batch. A variable is identified by its procedure and current pseudocode name; a global by its address. Retyping an argument rewrites the procedure prototype and re-decompiles it. Types are re-inferred once per affected procedure; pass redecompile to rebuild the syntax tree when a retype should change how an access renders. Per-item readback reports old and new types. Session analysis database only; providers without this capability are unsupported.",
+    setNativeVariableTypesInputSchema,
+  ),
+  official(
+    "set_native_function_prototypes",
+    "Replace procedure prototypes in one batch, either as a complete C signature or as a return type that keeps the argument list. A prototype change discards that procedure's cached decompilation; earlier variable renames and manual types are restored afterwards. Per-item readback reports old and new prototypes. Session analysis database only; providers without this capability are unsupported.",
+    setNativeFunctionPrototypesInputSchema,
+  ),
+  official(
+    "inspect_native_decompilation_flavor",
+    "Report the session-wide decompilation flavor that procedure_pseudo_code and analyze_function render in, the flavors the provider supports, and the provider's source-language detection as a hint. Read-only.",
+    z.strictObject({}),
+  ),
+  official(
+    "set_native_decompilation_flavor",
+    "Select the session-wide decompilation flavor for later pseudocode and dossier requests, such as pseudocode, rust, or go. Decompilation caches, prototypes, and variable edits are kept per flavor by the provider. Returns the previous and current flavor. Providers without this capability are unsupported.",
+    setNativeDecompilationFlavorInputSchema,
   ),
   official(
     "inspect_native_load_image",

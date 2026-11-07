@@ -7,13 +7,23 @@ import { fileURLToPath } from "node:url";
 import { inspectJadxProvider } from "./android/JadxDoctor.js";
 import { inspectSystemGhidraProvider } from "./ghidra/GhidraDoctor.js";
 import { inspectIdaRegistration } from "./ida/IdaDoctor.js";
+import { inspectAngrRegistration } from "./angr/AngrDoctor.js";
+import {
+  angrRequestBudgetMs,
+  readAngrConfiguration,
+} from "./angr/AngrConfiguration.js";
 import { inspectKunaProvider } from "./kuna/KunaDoctor.js";
 import { readIdaConfiguration } from "./ida/IdaConfiguration.js";
 import { selectLinuxPrivateDisplayStrategy } from "./hopper/LinuxPrivateDisplayProbe.js";
-import { ok } from "./domain/result.js";
+import { ok, type Result } from "./domain/result.js";
+import type { ConfigurationError } from "./domain/configurationErrors.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "./domain/providerCleanupError.js";
-import { AnalysisCleanupLeaseGroup } from "./artifacts/AnalysisCleanupLease.js";
+import {
+  AnalysisCleanupLease,
+  AnalysisCleanupLeaseGroup,
+} from "./artifacts/AnalysisCleanupLease.js";
+import { ArtifactResourceScope } from "./artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "./application/AnalysisProvider.js";
 import {
   inspectLinuxHopperPythonRuntime,
@@ -58,45 +68,64 @@ export const createSystemDoctorHost = (
       resourceScope,
       inspectionSignal,
     ) => {
-      if (analysisProvider !== "ida" && analysisProvider !== "auto")
-        return ok(undefined);
-      const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
-      if (path === undefined) return ok(undefined);
-      const registration = await readRegistration(
-        path,
-        resourceScope,
-        inspectionSignal,
-      );
-      if (registration.ok) return ok(registration.value.timeoutMs);
-      // An invalid IDA registration cannot be selected automatically. Keep it
-      // out of recommendations for another available provider, but surface the
-      // parser-owned error when IDA itself was explicitly selected.
-      return analysisProvider === "ida" ? registration : ok(undefined);
+      const budgets: number[] = [];
+      // An invalid registration cannot be selected automatically. Keep it out
+      // of recommendations for another available provider, but surface the
+      // parser-owned error when that provider itself was explicitly selected.
+      if (analysisProvider === "ida" || analysisProvider === "auto") {
+        const path = registrationEnvironment.REA_IDA_MCP_CONFIG;
+        if (path !== undefined) {
+          const registration = await readRegistration(
+            path,
+            resourceScope,
+            inspectionSignal,
+          );
+          if (registration.ok) budgets.push(registration.value.timeoutMs);
+          else if (analysisProvider === "ida") return registration;
+        }
+      }
+      if (analysisProvider === "angr" || analysisProvider === "auto") {
+        const angr = await readAngrBudget(
+          registrationEnvironment,
+          resourceScope,
+          inspectionSignal,
+        );
+        if (angr?.ok === true) budgets.push(angr.value);
+        else if (angr !== undefined && analysisProvider === "angr") return angr;
+      }
+      return ok(budgets.length === 0 ? undefined : Math.max(...budgets));
     },
-    providerInspections: async (resourceScope, inspectionSignal) => [
-      await inspectSystemGhidraProvider(
-        environment,
-        resourceScope,
-        inspectionSignal,
-      ),
-      await inspectIdaRegistration(
-        environment.REA_IDA_MCP_CONFIG,
-        resourceScope,
-        inspectionSignal,
-        environment.REA_IDA_MCP_CONFIG === undefined
-          ? undefined
-          : readRegistration(
-              environment.REA_IDA_MCP_CONFIG,
-              resourceScope,
-              inspectionSignal,
-            ),
-      ),
-      await inspectJadxProvider(environment, resourceScope, inspectionSignal),
-      await inspectKunaProvider(environment, process.platform, {
-        resourceScope,
-        signal: inspectionSignal,
-      }),
-    ],
+    // Spans every inspection; see withAngrRegistrationScope.
+    providerInspections: (resourceScope, inspectionSignal) =>
+      withAngrRegistrationScope(resourceScope, async (angrScope) => [
+        await inspectSystemGhidraProvider(
+          environment,
+          resourceScope,
+          inspectionSignal,
+        ),
+        await inspectIdaRegistration(
+          environment.REA_IDA_MCP_CONFIG,
+          resourceScope,
+          inspectionSignal,
+          environment.REA_IDA_MCP_CONFIG === undefined
+            ? undefined
+            : readRegistration(
+                environment.REA_IDA_MCP_CONFIG,
+                resourceScope,
+                inspectionSignal,
+              ),
+        ),
+        await inspectJadxProvider(environment, resourceScope, inspectionSignal),
+        await inspectAngrRegistration(
+          angrSources(environment),
+          angrScope,
+          inspectionSignal,
+        ),
+        await inspectKunaProvider(environment, process.platform, {
+          resourceScope,
+          signal: inspectionSignal,
+        }),
+      ]),
     linuxDemoRuntimeCheck: (resourceScope, inspectionSignal) =>
       inspectLinuxHopperDemoRuntime(
         environment,
@@ -245,4 +274,68 @@ const inspectLinuxHopperDemoRuntime = async (
       .filter((message) => message !== undefined)
       .join(" "),
   };
+};
+
+/** angr's request budget for a registration, or undefined when none is set. */
+const readAngrBudget = async (
+  environment: Readonly<NodeJS.ProcessEnv>,
+  resourceScope: RetainedResourceScope,
+  signal: AbortSignal,
+): Promise<Result<number, ConfigurationError> | undefined> => {
+  if (
+    environment.REA_ANGR_MCP_CONFIG === undefined &&
+    environment.REA_ANGR_PYTHON === undefined
+  )
+    return undefined;
+  const registration = await withAngrRegistrationScope(
+    resourceScope,
+    (angrScope) =>
+      readAngrConfiguration(angrSources(environment), {
+        resourceScope: angrScope,
+        signal,
+      }),
+  );
+  return registration.ok
+    ? ok(angrRequestBudgetMs(registration.value))
+    : registration;
+};
+
+const angrSources = (environment: Readonly<NodeJS.ProcessEnv>) => ({
+  mcpConfigPath: environment.REA_ANGR_MCP_CONFIG,
+  pythonPath: environment.REA_ANGR_PYTHON,
+});
+
+/**
+ * Give one operation's angr registration reads their own scope. A failed
+ * close retained directly in the doctor's scope would make the next nested
+ * run wait for its own caller, so it moves there only after the operation
+ * settles. Concurrent operations never share a scope.
+ */
+const withAngrRegistrationScope = async <T>(
+  parent: RetainedResourceScope,
+  operation: (scope: RetainedResourceScope) => Promise<T>,
+): Promise<T> => {
+  const resources = new ArtifactResourceScope();
+  try {
+    return await operation({
+      retain: (owner, resource) =>
+        resources.retain({
+          kind: "lease",
+          resource,
+          lease: AnalysisCleanupLease.forCloseOwner(owner, resource),
+        }),
+      run: (run) => resources.run(run),
+    });
+  } finally {
+    if (resources.hasPending)
+      parent.retain(
+        {
+          close: () => resources.close(),
+          get cleanupResources() {
+            return resources.cleanupResources;
+          },
+        },
+        "angr-registration",
+      );
+  }
 };
