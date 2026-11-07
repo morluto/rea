@@ -326,8 +326,12 @@ it("traces transformed operands through CLI and advertised MCP output", async ()
       },
     );
     expect(nested.status).not.toBe("found");
-    expect(nested.unknowns.map((unknown) => unknown.detail)).toContain(
-      "The dynamic call's return dependency on this argument is unknown.",
+    expect(nested.unknowns).toContainEqual(
+      expect.objectContaining({
+        reason: "dynamic-call",
+        family: "data-flow",
+        relation_kinds: ["influences"],
+      }),
     );
   } finally {
     await harness.close();

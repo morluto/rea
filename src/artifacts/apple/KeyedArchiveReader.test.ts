@@ -178,7 +178,9 @@ describe("keyed archive scalar projection", () => {
       }),
     );
     expect(graph.limitations).toContainEqual(
-      expect.stringContaining("sub-millisecond source records overlap"),
+      expect.stringMatching(
+        /1 date.*unknown timestamps.*sub.millisecond.*overlap/iu,
+      ),
     );
   });
 });
@@ -663,8 +665,8 @@ describe("binary keyed archive dates", () => {
       "2001-01-01T00:00:00.100Z",
     );
     expect(graph.limitations).toContain(unknownDateLimitation(1));
-    expect(graph.limitations.join("\n")).not.toContain(
-      "number metadata could not be completely observed",
+    expect(graph.limitations).not.toContainEqual(
+      expect.stringMatching(/number metadata.*could not.*observed/iu),
     );
     expect(Buffer.compare(submillisecond, original)).toBe(0);
     expect(createHash("sha256").update(submillisecond).digest("hex")).toBe(

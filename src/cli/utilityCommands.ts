@@ -1,6 +1,6 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField, cliIntegerArgument } from "./options.js";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
 import type { ReferenceSourcePolicy } from "../domain/referenceSourcePolicy.js";
@@ -46,15 +46,9 @@ export const registerUtilityCommands = (
   registerReferenceSourceCommand(cli, logger, environment);
 };
 
-/**
- * A native deadline option keeps the shared field's bounds but admits only
- * decimal argv text; Incur's Number() coercion would accept "0x10" or "1e3".
- */
+/** Decimal argv text; the shared deadline field owns the bounds and help. */
 const cliNativeDeadline = (field: typeof nativeUiDeadlineField) =>
-  cliIntegerArgument(1)
-    .pipe(field.unwrap())
-    .optional()
-    .describe(field.description ?? "");
+  cliDecimalField(field);
 
 // Decimal tokens only, for the same reason as cliNativeDeadline.
 const nativeUiScopeOptions = {
