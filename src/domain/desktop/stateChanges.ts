@@ -352,8 +352,11 @@ const compareViews = (
   }
 };
 
-/** How two zip views differ by name-addressed pointer, a member added or removed whole noted once, without its contents. */
-export const diffZipMembers = (
+/**
+ * How two views differ by name-addressed pointer, a member added or removed
+ * whole noted once, without its contents: an archive's entries, or an XML tree.
+ */
+export const diffNamedMembers = (
   before: JsonValue,
   after: JsonValue,
 ): DesktopStateDifference =>
