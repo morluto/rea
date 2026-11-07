@@ -286,7 +286,6 @@ it("retains completed bundle facts as bundle Evidence after cancellation", async
     total_analysis_timeout_ms: 1000,
   });
   const result = await analyzeWebBundle(browser, selected);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBe(failure);
   expect(result.error.cause).toBe(reason);
@@ -313,7 +312,6 @@ it("preserves a prior caller reason without admitting browser work", async () =>
     input,
     { signal: AbortSignal.abort(reason) },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled inventory");
   expect(result.error._tag).toBe("AnalysisCancelledError");
   expect(result.error.cause).toBe(reason);

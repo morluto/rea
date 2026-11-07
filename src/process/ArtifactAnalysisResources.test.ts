@@ -479,7 +479,6 @@ it.each([
         calls++;
         return ok("unexpected");
       }, AbortSignal.abort(reason));
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected cancelled admission");
       expect(result.error.cause).toBe(reason);
       expect(result.error.cleanupResources).toEqual([]);
