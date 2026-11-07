@@ -340,7 +340,7 @@ def _whole_text(check, entry):
         truncated = _zip_leaves_out(view, check["pointer"])
     if kind == "none":
         if truncated:
-            return _undecided(check)
+            return False, f"the view of {check['file']} is truncated, so what it leaves out is unknown ({check['pointer']})"
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
         return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
