@@ -9,10 +9,18 @@ import {
   validateResidualUnknownAddition,
   type EvidenceBundle,
 } from "../../domain/evidenceBundle.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  evidenceDisplayMetadataAgree,
+  type Evidence,
+} from "../../domain/evidence.js";
+import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import {
   createResidualUnknown,
@@ -107,7 +115,8 @@ export class EvidenceLedger {
       "record_evidence",
       new Map([[evidence.evidence_id, evidence]]),
     );
-    if (!admitted.ok) return admitted;
+    if (!admitted.ok)
+      return err(this.#exposeRefusedEvidence(admitted.error, evidence));
     this.#records.set(evidence.evidence_id, evidence);
     this.#commitAccounting(admitted.value);
     return ok("added");
@@ -154,7 +163,7 @@ export class EvidenceLedger {
         continue;
       }
       if (existing === evidence) continue;
-      if (!displayMetadataAgree(existing, evidence)) {
+      if (!evidenceDisplayMetadataAgree(existing, evidence)) {
         recordChanges.set(evidence.evidence_id, evidence);
         replacements.push({
           kind: "metadata",
@@ -362,12 +371,36 @@ export class EvidenceLedger {
       if (creationUnknown.revision_digest !== unknown.revision_digest)
         return err(new UnknownRegistryError("already-exists"));
       const checked = this.#appendIncremental([evidence]);
-      if (!checked.ok) return checked;
+      if (!checked.ok)
+        return err(this.#exposeRefusedEvidence(checked.error, evidence));
       return ok(null);
     }
     const checked = this.#appendIncremental([evidence, mutation], unknown);
-    if (!checked.ok) return checked;
+    if (!checked.ok)
+      return err(this.#exposeRefusedEvidence(checked.error, evidence));
     return ok(structuredClone(unknown));
+  }
+
+  /** Report authenticated completed Evidence without inferring membership from this attempt. */
+  #exposeRefusedEvidence(
+    error: AnalysisError,
+    evidence: Evidence,
+  ): AnalysisError {
+    if (
+      !(error instanceof AnalysisResourceConstraintError) ||
+      error.resource !== "capacity"
+    )
+      return error;
+    return error.retainPartialObservation(
+      freezeJsonSnapshot(
+        this.#records.has(evidence.evidence_id)
+          ? {
+              kind: "retained-evidence" as const,
+              evidence_id: evidence.evidence_id,
+            }
+          : { kind: "unretained-evidence" as const, evidence },
+      ),
+    );
   }
 
   /** Apply one approved full-state update using optimistic revision matching. */
@@ -693,8 +726,3 @@ const readLedgerEvidence = (
 
 const unknownRevisionKey = (unknown: ResidualUnknown): string =>
   `${unknown.unknown_id}:${String(unknown.revision)}`;
-
-const displayMetadataAgree = (left: Evidence, right: Evidence): boolean =>
-  left.subject?.name === right.subject?.name &&
-  left.subject?.local_path === right.subject?.local_path &&
-  left.caller_input_path === right.caller_input_path;

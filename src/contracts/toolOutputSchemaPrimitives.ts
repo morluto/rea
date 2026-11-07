@@ -1,5 +1,6 @@
 import { procedureInfoSchema } from "../domain/native/procedureInfo.js";
 import { z } from "zod";
+import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
 import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
@@ -65,6 +66,7 @@ const providerCapabilityFacts = {
     requires_root: z.boolean(),
   }),
   limitations: z.array(z.string()),
+  independent_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -100,6 +102,7 @@ const providerCapabilityGroupFacts = {
   operations: z.array(z.string().min(1)).min(1),
   effects: z.array(providerCapabilityFacts.effects.keyof()),
   limitations: z.array(z.string()),
+  independent_decompile: providerCapabilityFacts.independent_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -138,6 +141,9 @@ export const expandProviderCapabilities = (
       group.operations.map((operation) => ({
         ...providerCapability.parse({
           operation,
+          ...(group.independent_decompile === undefined
+            ? {}
+            : { independent_decompile: group.independent_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
@@ -565,6 +571,7 @@ export const sessionProviderFacts = z
           "auto-single-candidate",
         ]),
         analysis_profile: analysisProfileSchema,
+        release_verification: providerReleaseVerificationSchema.optional(),
       })
       .nullable(),
     client_features: z.object({

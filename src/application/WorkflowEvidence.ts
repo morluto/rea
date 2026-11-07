@@ -63,7 +63,7 @@ const DECOMPILE_ALL_LIMITATIONS: ComposedLimitationBudget = {
   perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
   maxDistinct: 8,
   retainedIn:
-    "each function's record in decompile-index.json keeps the caveats of the observations it used",
+    "decompile-index.json keeps the latest record for each function; decompile-journal.jsonl keeps each attempt and its caveats",
 };
 
 /** The caveat budget for a composed workflow, when it has one. */
@@ -204,6 +204,10 @@ export const executeComposedWorkflow = async (
   );
 };
 
+/** Scope of the exact-address reference lookups composed by trace_feature. */
+export const TRACE_FEATURE_REFERENCE_LIMITATION =
+  "Reference queries cover only each matched start address, not interior bytes of strings and procedures. Empty references and truncated: false do not establish complete reference coverage.";
+
 /** Build the shared Evidence record for a successful composed binary workflow. */
 export const createWorkflowEvidence = (input: {
   readonly target: BinaryTarget | undefined;
@@ -232,6 +236,9 @@ export const createWorkflowEvidence = (input: {
       : { evidenceLinks: input.upstreamEvidenceLinks }),
     limitations: [
       "Derived by an REA composed workflow.",
+      ...(input.operation === "trace_feature"
+        ? [TRACE_FEATURE_REFERENCE_LIMITATION]
+        : []),
       ...input.upstreamLimitations,
     ],
     ...(input.operation === "batch_decompile"

@@ -13,7 +13,15 @@ import {
 
 describe("mcp add discovery classification", () => {
   it("bypasses help and listing flags", () => {
-    for (const flag of ["--help", "-h", "--llms", "--llms-full"]) {
+    for (const flag of [
+      "--help",
+      "-h",
+      "--llms",
+      "--llms-full",
+      "--mcp",
+      "--update",
+      "--incur-update-check",
+    ]) {
       expect(classifyMcpAddDiscovery(new Set([flag]))).toBe("bypass");
     }
   });

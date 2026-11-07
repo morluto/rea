@@ -99,8 +99,10 @@ process.stdin.on("data", (chunk) => {
       expect(evidence.normalized_result).toMatchObject({
         output_invalid_utf8: true,
       });
-      expect(evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
 
       const status = await validateDebuggerStatusResponse(

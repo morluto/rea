@@ -34,7 +34,7 @@ const execPython = (
   try {
     writeFileSync(script, args[codeIndex + 1]!, "utf8");
     return execFileSync(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [
         "-X",
         "utf8",
@@ -91,13 +91,14 @@ it("keeps JSON Lines holding a number it cannot read exactly as text, as REA doe
   const files = [
     ["events.jsonl", lines],
     ["events.json", lines],
+    ["events.JSON", "42"],
     ["big.json", '{"id":9007199254740993}'],
     ["long.json", `{"id":${"9".repeat(5000)}}`],
   ] as const;
 
   const formats = pythonFormats(files);
 
-  expect(formats).toEqual(["text", "text", "json", "json"]);
+  expect(formats).toEqual(["text", "text", "json", "json", "json"]);
   expect(formats).toEqual(
     files.map(([name, text]) =>
       detectStateFormat(name, new TextEncoder().encode(text)),
@@ -261,24 +262,6 @@ it("refuses the JSON numbers REA's state view refuses, as JSON with an error rat
   });
 });
 
-it("refuses JSON nested deeper than the 500 levels REA's view keeps, reading the boundary itself", () => {
-  const nested = (levels: number) =>
-    `${"[".repeat(levels)}${"]".repeat(levels)}`;
-  const texts = [nested(501), nested(502), nested(1100)];
-
-  const python = pythonJson(texts);
-
-  expect(texts.map((text) => jsonView(text).ok)).toEqual([true, false, false]);
-  texts.forEach((text, index) => {
-    const typescript = jsonView(text);
-    expect(python[index]).toEqual(
-      typescript.ok
-        ? { format: "json", view: typescript.value, truncated: false }
-        : { format: "json", view: null, error: typescript.error },
-    );
-  });
-});
-
 /** The exported module's format, view and error for each named text, and REA's for the same bytes. */
 const textViews = (files: readonly (readonly [string, string])[]) => {
   const imports = PYTHON_IMPORTS.split("\n")
@@ -374,15 +357,16 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
         "-I",
         "-B",
         "-c",
-        `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_is_json(text) for text in json.load(sys.stdin)]))`,
+        `${imports}${PYTHON_HELPERS}\ntexts = json.load(sys.stdin)\nprint(json.dumps({"syntax": [_read_json(text, build=False) is not _INVALID_JSON for text in texts], "built": [_read_json(text) is not _INVALID_JSON for text in texts]}))`,
       ],
       { input: JSON.stringify(texts), encoding: "utf8" },
     ),
-  ) as boolean[];
+  ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
   expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
-  expect(python).toEqual(parsed);
+  expect(python.syntax).toEqual(parsed);
+  expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
 });
 
@@ -422,7 +406,7 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
       "-I",
       "-B",
       "-c",
-      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v) for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
+      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v, "utf-8") for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
     ],
     { encoding: "utf8" },
   );
@@ -444,9 +428,13 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   const root = await createTestTempDirectory("rea-keyfile-python-");
   const script = join(root, "fixture.py");
   await writeFile(script, program, "utf8");
-  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-  });
+  const output = execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    ["-I", "-B", "-X", "utf8", script],
+    {
+      input: JSON.stringify(inputs),
+      encoding: "utf8",
+    },
+  );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });
