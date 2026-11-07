@@ -18,6 +18,7 @@ import {
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { semanticEffectTiming } from "./javascriptSemanticMutationInitializers.js";
+import { semanticPropertyPathKeyMatches } from "./javascriptSemanticPropertyPaths.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
@@ -334,8 +335,35 @@ const rejectsStreamOptionsLiteral = (
     )
       return true;
   }
-  if (rejectsStreamEncoding(value, context)) return true;
+  if (
+    (readStream || streamEncodingValidatorUnmodified(node, context.state)) &&
+    rejectsStreamEncoding(value, context)
+  )
+    return true;
   return false;
+};
+
+/** Node's write-stream encoding validation consults the mutable Buffer predicate. */
+const streamEncodingValidatorUnmodified = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  const selected = ["global", "Buffer", "isEncoding"];
+  const changed = [
+    ...state.ambientWriteEffects,
+    ...state.ambientEscapeEffects,
+  ].some(
+    ({ path, node: effect }) =>
+      path.length <= selected.length &&
+      path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, selected[index]!),
+      ) &&
+      semanticEffectTiming(node, effect, state) !== "after",
+  );
+  return (
+    !changed &&
+    builtinModuleSlotUnmodified("buffer", ["Buffer", "isEncoding"], node, state)
+  );
 };
 
 /**

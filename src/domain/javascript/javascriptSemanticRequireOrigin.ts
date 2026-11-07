@@ -1633,6 +1633,7 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   "path/posix",
   "path/win32",
   "url",
+  "buffer",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
@@ -1648,6 +1649,15 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   const specifier = origin.specifier.replace(/^node:/u, "");
   if (!MUTABLE_BUILTIN_DEFAULTS.has(specifier)) return undefined;
   if (path[0] === "default") return { specifier, path: path.slice(1) };
+  // Named imports cannot replace their namespace slots, but their exported
+  // constructor objects still share identity with the CommonJS built-in.
+  if (
+    selected.length > 0 &&
+    ((specifier === "fs" &&
+      (path[0] === "ReadStream" || path[0] === "WriteStream")) ||
+      (specifier === "buffer" && path[0] === "Buffer"))
+  )
+    return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))
     return { specifier, path };
   return specifier === "fs" && path[0] === "promises"

@@ -515,6 +515,69 @@ it.each([
   ["ReadStream", "createReadStream"],
   ["WriteStream", "createWriteStream"],
 ] as const)(
+  "retains %s prototype effects through named imports",
+  (constructor, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    import fs, { ${constructor} } from "node:fs";
+    Object.defineProperty(${constructor}.prototype, "start", { get() { return 0; }, set(value) {} });
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+  },
+);
+
+it.each([
+  "Buffer.isEncoding = () => true",
+  "globalThis.Buffer.isEncoding = () => true",
+  "const { Buffer: B } = require('node:buffer'); B.isEncoding = () => true",
+  "import { Buffer as B } from 'node:buffer'; B.isEncoding = () => true",
+  "import * as b from 'node:buffer'; b.Buffer.isEncoding = () => true",
+])("retains write streams after validator mutation: %s", (setup) => {
+  const operations = analyzeJavaScriptSemantics(`
+    ${setup.startsWith("import") ? 'import fs from "node:fs";' : 'const fs = require("node:fs");'} ${setup};
+    const stream = fs.createWriteStream("input", { encoding: "nope" });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createWriteStream" }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it("keeps independent rejection and later or unrelated validator writes precise", () => {
+  for (const body of [
+    'fs.createWriteStream("input", { encoding: "nope" }); Buffer.isEncoding = () => true;',
+    'Buffer.other = 1; fs.createWriteStream("input", { encoding: "nope" });',
+    'Buffer.isEncoding = () => true; fs.createWriteStream("input", { start: -1, encoding: "nope" });',
+    'Buffer.isEncoding = () => true; fs.createReadStream("input", { encoding: "nope" });',
+  ]) {
+    const operations = analyzeJavaScriptSemantics(
+      `const fs = require("node:fs"); ${body}`,
+    ).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  }
+});
+
+it.each([
+  ["ReadStream", "createReadStream"],
+  ["WriteStream", "createWriteStream"],
+] as const)(
   "retains %s acquisition and release when its prototype intercepts start",
   (constructor, method) => {
     const operations = analyzeJavaScriptSemantics(`
