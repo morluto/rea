@@ -476,6 +476,7 @@ const applyLogicalRootRedaction = (
   observation: EvidenceObservationInput,
   mapping: LogicalPathRootMapping,
 ): AppliedLogicalPathRootOutcome => {
+  let outsideCount = 0;
   let effectiveTarget = target;
   if (target !== undefined) {
     const res = normalizeLogicalPath(target.path, mapping);
@@ -484,6 +485,8 @@ const applyLogicalRootRedaction = (
         ...target,
         path: res.path,
       };
+    } else if (res.kind === "outside-root") {
+      outsideCount += 1;
     } else if (res.kind === "invalid") {
       throw new Error(res.reason);
     }
@@ -492,9 +495,10 @@ const applyLogicalRootRedaction = (
   const {
     observation: effectiveObservation,
     mappedCount,
-    outsideCount,
+    outsideCount: obsOutsideCount,
   } = redactEvidenceObservationPaths(observation, mapping);
 
+  const totalOutsideCount = outsideCount + obsOutsideCount;
   const addedLimitations: string[] = [];
   const prefix = mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX;
   if (
@@ -505,7 +509,7 @@ const applyLogicalRootRedaction = (
       `Local filesystem paths under configured logical root were normalized to '${prefix}' before Evidence sealing.`,
     );
   }
-  if (outsideCount > 0) {
+  if (totalOutsideCount > 0) {
     addedLimitations.push(
       "logical-root redaction incomplete; host-local path retained.",
     );
@@ -580,9 +584,9 @@ const normalizeEvidenceObservation = (
     evidence_links: [...(effectiveObservation.evidenceLinks ?? [])],
   };
   const sharedResult =
-    typeof observation.result === "object" &&
-    observation.result !== null &&
-    isImmutableJsonSnapshot(observation.result);
+    typeof effectiveObservation.result === "object" &&
+    effectiveObservation.result !== null &&
+    isImmutableJsonSnapshot(effectiveObservation.result);
   const selectedSchema = sharedResult
     ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
     : evidenceSchema;

@@ -1,6 +1,15 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { isPathWithinRoot } from "./localPath.js";
-import type { JsonValue } from "./jsonValue.js";
+import { hasScheme } from "./artifactPathSyntax.js";
+import {
+  jsonObjectSchema,
+  jsonValueSchema,
+  type JsonValue,
+} from "./jsonValue.js";
+import {
+  freezeJsonSnapshot,
+  isImmutableJsonSnapshot,
+} from "./immutableJson.js";
 import type { EvidenceLocation, EvidenceObservationInput } from "./evidence.js";
 
 /** Policy configuration for opt-in logical path root redaction. */
@@ -29,7 +38,8 @@ export interface LogicalPathRootMapping {
 export type NormalizedLogicalPathResult =
   | { readonly kind: "mapped"; readonly path: string }
   | { readonly kind: "outside-root"; readonly path: string }
-  | { readonly kind: "invalid"; readonly reason: string };
+  | { readonly kind: "invalid"; readonly reason: string }
+  | { readonly kind: "unmodified"; readonly path: string };
 
 /** Default prefix used for canonical logical path redaction. */
 export const DEFAULT_LOGICAL_ROOT_PREFIX = "workspace://";
@@ -38,6 +48,16 @@ export const DEFAULT_LOGICAL_ROOT_PREFIX = "workspace://";
 const cleanLogicalPrefix = (prefix: string): string => {
   const normalized = prefix.replaceAll("\\", "/");
   return normalized.endsWith("/") ? normalized : `${normalized}/`;
+};
+
+/**
+ * Check if a string is a candidate local filesystem path (not a URL, relative label, or empty).
+ */
+const isFilesystemPathCandidate = (candidate: string): boolean => {
+  if (candidate === "" || hasScheme(candidate) || candidate.startsWith("//")) {
+    return false;
+  }
+  return isAbsolute(candidate);
 };
 
 /** Normalize local path against configured logical root. */
@@ -52,10 +72,13 @@ export const normalizeLogicalPath = (
     };
   }
 
+  // Preserve URLs, relative labels, and non-filesystem references verbatim
+  if (!isFilesystemPathCandidate(path)) {
+    return { kind: "unmodified", path };
+  }
+
   const rootCandidate = resolve(mapping.root);
-  const pathCandidate = isAbsolute(path)
-    ? resolve(path)
-    : resolve(rootCandidate, path);
+  const pathCandidate = resolve(path);
 
   const allowOutside =
     mapping.allowOutsideRoot === true || mapping.retainUnmappedPaths === true;
@@ -86,7 +109,6 @@ export const normalizeLogicalPath = (
 
 /**
  * Explicit path-bearing parameter keys across REA inspection tools.
- * We deliberately use an explicit typed allowlist rather than recursive string replacement.
  */
 const KNOWN_PATH_PARAMETER_KEYS = new Set([
   "path",
@@ -97,15 +119,18 @@ const KNOWN_PATH_PARAMETER_KEYS = new Set([
   "descriptor_set_path",
   "snapshot_path",
   "schema_path",
+  "output_directory",
 ]);
 
 /**
- * Explicit path-bearing fields in normalized_result.
+ * Explicit path-bearing fields in normalized_result and raw_result.
  */
 const KNOWN_RESULT_PATH_KEYS = new Set([
   "target_location",
   "capture_path",
   "source_path",
+  "output_directory",
+  "descriptor_set_path",
 ]);
 
 export interface RedactEvidenceObservationPathsOutcome {
@@ -113,6 +138,38 @@ export interface RedactEvidenceObservationPathsOutcome {
   readonly mappedCount: number;
   readonly outsideCount: number;
 }
+
+/** Recursively traverse and map known path fields in a validated JSON value. */
+const redactJsonStructurePaths = (
+  value: JsonValue,
+  mapString: (s: string) => string,
+  isPathKey: (key: string) => boolean,
+): JsonValue => {
+  if (typeof value !== "object" || value === null) {
+    return value;
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) =>
+      redactJsonStructurePaths(item, mapString, isPathKey),
+    );
+  }
+  let changed = false;
+  const result: Record<string, JsonValue> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (isPathKey(k) && typeof v === "string") {
+      const mapped = mapString(v);
+      if (mapped !== v) changed = true;
+      result[k] = mapped;
+    } else if (typeof v === "object" && v !== null) {
+      const nested = redactJsonStructurePaths(v, mapString, isPathKey);
+      if (nested !== v) changed = true;
+      result[k] = nested;
+    } else {
+      result[k] = v;
+    }
+  }
+  return changed ? result : value;
+};
 
 /**
  * Redacts known path-bearing fields in Evidence inputs using an explicit schema allowlist.
@@ -134,6 +191,9 @@ export const redactEvidenceObservationPaths = (
       outsideCount += 1;
       return res.path;
     }
+    if (res.kind === "unmodified") {
+      return res.path;
+    }
     throw new Error(res.reason);
   };
 
@@ -151,48 +211,39 @@ export const redactEvidenceObservationPaths = (
     });
   }
 
-  // Map known path parameters
+  // Validate parameters as true JSON before mapping
   let newParameters = observation.parameters;
   if (
     typeof observation.parameters === "object" &&
-    observation.parameters !== null &&
-    !Array.isArray(observation.parameters)
+    observation.parameters !== null
   ) {
-    let changed = false;
-    const cloned: Record<string, unknown> = {
-      ...(observation.parameters as Record<string, unknown>),
-    };
-    for (const [key, val] of Object.entries(cloned)) {
-      if (KNOWN_PATH_PARAMETER_KEYS.has(key) && typeof val === "string") {
-        cloned[key] = mapString(val);
-        changed = true;
-      }
-    }
-    if (changed) {
-      newParameters = cloned;
-    }
+    const validatedParams = jsonObjectSchema.parse(observation.parameters);
+    newParameters = redactJsonStructurePaths(validatedParams, mapString, (k) =>
+      KNOWN_PATH_PARAMETER_KEYS.has(k),
+    ) as Record<string, JsonValue>;
   }
 
-  // Map known path fields in result if object
+  // Validate and redact normalized_result
   let newResult = observation.result;
+  const isOriginalImmutable = isImmutableJsonSnapshot(observation.result);
+  if (typeof observation.result === "object" && observation.result !== null) {
+    const validatedResult = jsonValueSchema.parse(observation.result);
+    const redacted = redactJsonStructurePaths(validatedResult, mapString, (k) =>
+      KNOWN_RESULT_PATH_KEYS.has(k),
+    );
+    newResult = isOriginalImmutable ? freezeJsonSnapshot(redacted) : redacted;
+  }
+
+  // Validate and redact rawResult if present
+  let newRawResult = observation.rawResult;
   if (
-    typeof observation.result === "object" &&
-    observation.result !== null &&
-    !Array.isArray(observation.result)
+    typeof observation.rawResult === "object" &&
+    observation.rawResult !== null
   ) {
-    let changed = false;
-    const cloned: Record<string, JsonValue> = {
-      ...(observation.result as Record<string, JsonValue>),
-    };
-    for (const [key, val] of Object.entries(cloned)) {
-      if (KNOWN_RESULT_PATH_KEYS.has(key) && typeof val === "string") {
-        cloned[key] = mapString(val);
-        changed = true;
-      }
-    }
-    if (changed) {
-      newResult = cloned;
-    }
+    const validatedRaw = jsonValueSchema.parse(observation.rawResult);
+    newRawResult = redactJsonStructurePaths(validatedRaw, mapString, (k) =>
+      KNOWN_RESULT_PATH_KEYS.has(k),
+    );
   }
 
   return {
@@ -200,6 +251,7 @@ export const redactEvidenceObservationPaths = (
       ...observation,
       parameters: newParameters,
       result: newResult,
+      ...(newRawResult !== undefined ? { rawResult: newRawResult } : {}),
       ...(newLocations === undefined ? {} : { locations: newLocations }),
     },
     mappedCount,
