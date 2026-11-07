@@ -17,8 +17,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -217,7 +219,7 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -260,7 +262,7 @@ export const registerReverseEngineeringCommands = (
     args: z.object({}),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -309,7 +311,11 @@ export const registerReverseEngineeringCommands = (
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      asmArch: rizinInputSchema.shape.asm_arch,
+      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
+      asmCpu: rizinInputSchema.shape.asm_cpu,
+      baseAddress: rizinInputSchema.shape.base_address,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -318,6 +324,18 @@ export const registerReverseEngineeringCommands = (
             service.executeRizinCommand(
               {
                 ...args,
+                ...(options.asmArch === undefined
+                  ? {}
+                  : { asm_arch: options.asmArch }),
+                ...(options.asmBits === undefined
+                  ? {}
+                  : { asm_bits: options.asmBits }),
+                ...(options.asmCpu === undefined
+                  ? {}
+                  : { asm_cpu: options.asmCpu }),
+                ...(options.baseAddress === undefined
+                  ? {}
+                  : { base_address: options.baseAddress }),
                 ...(options.commandTimeoutMs === undefined
                   ? {}
                   : { command_timeout_ms: options.commandTimeoutMs }),
@@ -422,7 +440,9 @@ export const registerReverseEngineeringCommands = (
       inferiorTty: z
         .string()
         .min(1)
-        .describe("Caller-selected Linux TTY for inferior stdout and stderr."),
+        .describe(
+          "Caller-selected Linux TTY for inferior stdin, stdout and stderr.",
+        ),
       backend: z
         .string()
         .min(1)
