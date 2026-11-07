@@ -182,11 +182,16 @@ export const parsePeCertificates = (
       } catch (cause) {
         // An exhausted decoder allowance is not evidence of malformed DER;
         // the provider reports it as a fixed resource allowance.
+        // The cause keeps structured details such as a signedAttrs defect.
         if (
           cause instanceof PeCertificateAsn1Failure &&
           cause.exhausted === null
         )
-          fail(`PKCS#7 signedData is malformed: ${cause.message}`);
+          throw new ArtifactReaderFailure(
+            "format",
+            `PKCS#7 signedData is malformed: ${cause.message}`,
+            { cause },
+          );
         throw cause;
       }
     }

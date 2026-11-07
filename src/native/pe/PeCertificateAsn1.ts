@@ -32,11 +32,20 @@ export interface PeCertificateDecodeAllowance {
   readonly limit: number;
 }
 
+/** Why SignerInfo signedAttrs were refused, and the attribute type involved. */
+export interface PeSignedAttributeDefect {
+  readonly reason: "malformed" | "missing" | "repeated" | "invalid-value";
+  /** Dotted OID; null when a malformed attribute has no readable type. */
+  readonly attribute: string | null;
+}
+
 export class PeCertificateAsn1Failure extends Error {
   constructor(
     message: string,
     /** Set when a fixed decoder allowance, not malformed DER, refused the payload. */
     readonly exhausted: PeCertificateDecodeAllowance | null = null,
+    /** Set when SignerInfo signedAttrs break an RFC 5652 attribute rule. */
+    readonly signedAttribute: PeSignedAttributeDefect | null = null,
   ) {
     super(message);
     this.name = "PeCertificateAsn1Failure";
@@ -622,26 +631,50 @@ const REQUIRED_SIGNED_ATTRIBUTES = [
   ["1.2.840.113549.1.9.4", "message-digest", 0x04, "OCTET STRING"],
 ] as const;
 
+const signedAttributeFailure = (
+  defect: PeSignedAttributeDefect,
+  message: string,
+): never => {
+  throw new PeCertificateAsn1Failure(message, null, defect);
+};
+
+// signedAttrs is a SET OF Attribute. An element that is not
+// SEQUENCE { OBJECT IDENTIFIER, SET } is malformed DER even when its type is
+// optional, and Windows CryptMsg refuses that SignerInfo too. The values of
+// other attributes are not interpreted here.
 const requireSignedAttributes = (node: Asn1BerNode): void => {
   const found = new Map<string, Asn1BerNode>();
   for (const attribute of node.children) {
-    const fields = sequence(attribute, "SignerInfo signed attribute");
-    const [oid, values] = fields;
-    if (fields.length !== 2 || oid?.tag !== 0x06 || values?.tag !== 0x31)
-      return fail("SignerInfo signed attribute is missing its type or values.");
-    const type = decodeOid(oid.content);
+    const [oid, values] = attribute.tag === 0x30 ? attribute.children : [];
+    const type = oid?.tag === 0x06 ? decodeOid(oid.content) : null;
+    if (
+      type === null ||
+      values?.tag !== 0x31 ||
+      attribute.children.length !== 2
+    )
+      return signedAttributeFailure(
+        { reason: "malformed", attribute: type },
+        "SignerInfo signed attribute is missing its type or values.",
+      );
     const rule = REQUIRED_SIGNED_ATTRIBUTES.find(([id]) => id === type);
     if (rule === undefined) continue;
     if (found.has(type))
-      return fail(`SignerInfo signedAttrs repeats the ${rule[1]} attribute.`);
+      return signedAttributeFailure(
+        { reason: "repeated", attribute: type },
+        `SignerInfo signedAttrs repeats the ${rule[1]} attribute.`,
+      );
     found.set(type, values);
   }
   for (const [type, label, tag, typeName] of REQUIRED_SIGNED_ATTRIBUTES) {
     const values = found.get(type);
     if (values === undefined)
-      return fail(`SignerInfo signedAttrs lacks a ${label} attribute.`);
+      return signedAttributeFailure(
+        { reason: "missing", attribute: type },
+        `SignerInfo signedAttrs lacks a ${label} attribute.`,
+      );
     if (values.children.length !== 1 || values.children[0]?.tag !== tag)
-      return fail(
+      return signedAttributeFailure(
+        { reason: "invalid-value", attribute: type },
         `SignerInfo ${label} attribute does not hold one ${typeName} value.`,
       );
   }

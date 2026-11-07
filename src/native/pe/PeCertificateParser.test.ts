@@ -20,6 +20,7 @@ import {
   parseCertificate,
   PeCertificateAsn1Failure,
   readAsn1,
+  type PeSignedAttributeDefect,
 } from "./PeCertificateAsn1.js";
 import {
   parsePeCertificates,
@@ -484,32 +485,71 @@ it("requires content-type and message-digest signed attributes", () => {
         ),
       ),
     );
-  const cases: [Buffer[], RegExp][] = [
-    [[], /lacks a content-type/u],
-    [[messageDigest], /lacks a content-type/u],
-    [[contentType], /lacks a message-digest/u],
-    [[contentType, derSeq(attributeType(4))], /type or values/u],
-    [[contentType, messageDigest, contentType], /repeats the content-type/u],
+  const CONTENT_TYPE = "1.2.840.113549.1.9.3";
+  const MESSAGE_DIGEST = "1.2.840.113549.1.9.4";
+  const SIGNING_TIME = "1.2.840.113549.1.9.5";
+  const cases: [Buffer[], PeSignedAttributeDefect][] = [
+    [[], { reason: "missing", attribute: CONTENT_TYPE }],
+    [[messageDigest], { reason: "missing", attribute: CONTENT_TYPE }],
+    [[contentType], { reason: "missing", attribute: MESSAGE_DIGEST }],
+    [
+      [contentType, derSeq(attributeType(4))],
+      { reason: "malformed", attribute: MESSAGE_DIGEST },
+    ],
+    [
+      [contentType, messageDigest, contentType],
+      { reason: "repeated", attribute: CONTENT_TYPE },
+    ],
     [
       [contentType, derSeq(attributeType(4), derSet())],
-      /message-digest attribute does not hold one OCTET STRING/u,
+      { reason: "invalid-value", attribute: MESSAGE_DIGEST },
     ],
     [
       [contentType, derSeq(attributeType(4), derSet(digest, digest))],
-      /message-digest attribute does not hold one OCTET STRING/u,
+      { reason: "invalid-value", attribute: MESSAGE_DIGEST },
     ],
     [
       [derSeq(attributeType(3), derSet(digest)), messageDigest],
-      /content-type attribute does not hold one OBJECT IDENTIFIER/u,
+      { reason: "invalid-value", attribute: CONTENT_TYPE },
+    ],
+    // An optional attribute must still be SEQUENCE { OID, SET }. Windows
+    // CryptMsg also refuses the SignerInfo for each of these three.
+    [
+      [contentType, messageDigest, derSeq(attributeType(5))],
+      { reason: "malformed", attribute: SIGNING_TIME },
+    ],
+    [
+      [contentType, messageDigest, derSeq(derInt(5), derSet())],
+      { reason: "malformed", attribute: null },
+    ],
+    [
+      [
+        contentType,
+        messageDigest,
+        derSeq(attributeType(5), derSet(), derInt(1)),
+      ],
+      { reason: "malformed", attribute: SIGNING_TIME },
     ],
   ];
-  for (const [attributes, message] of cases)
-    expect(() => report(...attributes)).toThrow(message);
-  // Other signed attributes, such as signingTime, are not constrained here.
-  expect(
-    report(messageDigest, signingTime, contentType).entries[0]?.pkcs7
-      ?.signers[0]?.authenticated_attributes,
-  ).toBe(true);
+  for (const [attributes, signedAttribute] of cases)
+    expect(() => report(...attributes)).toThrow(
+      expect.objectContaining({
+        reason: "format",
+        cause: expect.objectContaining({ signedAttribute }),
+      }),
+    );
+  // The values of other attributes are not interpreted. CryptMsg reads
+  // these too: a signingTime, a signingTime holding an INTEGER, and an
+  // unknown attribute with an empty values SET.
+  for (const optional of [
+    signingTime,
+    derSeq(attributeType(5), derSet(derInt(7))),
+    derSeq(der(0x06, Buffer.from([0x2a, 0x03, 0x04])), derSet()),
+  ])
+    expect(
+      report(messageDigest, optional, contentType).entries[0]?.pkcs7?.signers[0]
+        ?.authenticated_attributes,
+    ).toBe(true);
 });
 
 it("keeps subjectKeyIdentifier bytes on the signer", () => {
