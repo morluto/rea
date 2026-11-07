@@ -6,12 +6,13 @@ import {
   mkdtemp,
   mkdir,
   readFile,
+  readdir,
   realpath,
   rm,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
@@ -37,12 +38,16 @@ import {
   buildPspFixture,
   assertPspLoadedImage,
   assertPspProbe,
+  PSP_VFPU_DECODE_CASES,
+  assertPspVfpuProbe,
 } from "../tests/conformance/ghidra/psp-fixture.mjs";
 import {
   requireMcpToolError,
   requireMcpOperationResult,
+  requireMcpOutput,
 } from "./lib/mcp-verifier-results.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { runOwnedCommand } from "../dist/process/OwnedCommand.js";
 
 // Optional cross-target lane. No tool acquisition and no target execution.
 const mode = process.argv[2];
@@ -88,6 +93,114 @@ const env = {
 };
 for (const setting of ["GHIDRA_HEADLESS_MAXMEM", "GHIDRA_MAXMEM"]) {
   if (process.env[setting] !== undefined) env[setting] = process.env[setting];
+}
+
+/** Observe an existing project, and verify REA never alters the caller's copy. */
+async function verifyExistingMipsProject(fixture, byteOrder) {
+  const projectDir = join(workspace, `${byteOrder}-existing-project`);
+  await mkdir(projectDir);
+  assert.ok(installation.analyzeHeadlessPath);
+  await runOwnedCommand(
+    {
+      command: installation.analyzeHeadlessPath,
+      arguments: [
+        projectDir,
+        "ExistingMips",
+        "-import",
+        fixture.path,
+        "-noanalysis",
+      ],
+      env,
+      runId: run.run_id,
+      expectedCommand: null,
+    },
+    { timeoutMs: 180000, diagnosticBytes: 1024 * 1024 },
+  );
+  const projectPath = join(projectDir, "ExistingMips.gpr");
+  const digestTree = async () => {
+    const paths = [projectPath];
+    const walk = async (dir) => {
+      for (const entry of await readdir(dir, { withFileTypes: true })) {
+        const path = join(dir, entry.name);
+        if (entry.isDirectory()) await walk(path);
+        else if (entry.isFile()) paths.push(path);
+      }
+    };
+    await walk(join(projectDir, "ExistingMips.rep"));
+    return Promise.all(
+      paths.sort().map(async (path) => [
+        relative(projectDir, path),
+        createHash("sha256")
+          .update(await readFile(path))
+          .digest("hex"),
+      ]),
+    );
+  };
+  const before = await digestTree();
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: {
+      ...env,
+      REA_GHIDRA_PROJECT_PATH: projectPath,
+      REA_GHIDRA_PROGRAM_NAME: basename(fixture.path),
+    },
+    stderr: "pipe",
+  });
+  const client = new Client({ name: "rea-existing-mips-proof", version: "1" });
+  try {
+    await client.connect(transport);
+    const opened = await client.callTool(
+      {
+        name: "open_binary",
+        arguments: { path: fixture.path, provider_id: "ghidra" },
+      },
+      { timeout: 180000 },
+    );
+    requireMcpOperationResult(opened, "open_binary");
+    const result = await client.callTool(
+      { name: "list_procedures", arguments: {} },
+      { timeout: 180000 },
+    );
+    const observation = parseEvidence(
+      requireMcpOutput(result, "list_procedures"),
+    );
+    assert.ok(Array.isArray(observation.normalized_result));
+    const parameters = observation.analysis_profile?.parameters;
+    assert.equal(parameters?.import_mode, "existing-project-private-copy-v1");
+    assert.equal(parameters?.mips_elf?.byte_order, byteOrder);
+    assert.equal(parameters?.mips_support_lane, undefined);
+    assert.deepEqual(parameters?.original_analysis, {
+      completeness: "unknown",
+      settings: "unknown",
+    });
+    requireMcpOperationResult(
+      await client.callTool({ name: "close_binary", arguments: {} }),
+      "close_binary",
+    );
+  } finally {
+    try {
+      await client.close();
+    } finally {
+      await transport.close();
+    }
+  }
+  assert.deepEqual(
+    await digestTree(),
+    before,
+    "REA changed the source project",
+  );
+  assert.equal(
+    createHash("sha256")
+      .update(await readFile(fixture.path))
+      .digest("hex"),
+    fixture.sha256,
+  );
+  return {
+    byte_order: byteOrder,
+    project_unchanged: true,
+    target_unchanged: true,
+  };
 }
 
 /**
@@ -320,6 +433,10 @@ try {
       );
     }
     assert.equal(resolved.value.sha256, fixture.sha256);
+    const existingProject =
+      !psp && floatAbi === "hard"
+        ? await verifyExistingMipsProject(fixture, byteOrder)
+        : undefined;
     const snapshotPath = join(
       workspace,
       `${byteOrder}-${floatAbi}.snapshot.json`,
@@ -426,6 +543,47 @@ try {
       });
       if (psp) assertPspProbe(move, branch);
       else assertMipsProbe(move, branch, byteOrder, probe);
+      let vfpuCoverage;
+      if (psp) {
+        const vfpuAddress = BigInt(independent.symbols.rea_psp_vfpu_probe);
+        const vfpuInstructions = [];
+        for (const { index } of PSP_VFPU_DECODE_CASES) {
+          vfpuInstructions.push(
+            await call("inspect_native_instruction", {
+              address: `0x${(vfpuAddress + 4n * BigInt(index)).toString(16)}`,
+            }),
+          );
+        }
+        assertPspVfpuProbe(vfpuInstructions);
+        const vfpuDossier = functionDossierSchema.parse(
+          await call("analyze_function", {
+            procedure: independent.symbols.rea_psp_vfpu_probe,
+            detail: "complete",
+          }),
+        );
+        assert.equal(BigInt(vfpuDossier.procedure.address), vfpuAddress);
+        const flow = vfpuDossier.native_value_flow;
+        const hasHighPcode = flow?.available === true;
+        vfpuCoverage = {
+          decoded_instructions: vfpuInstructions.length,
+          prefix_sites: 4,
+          vadd_sites: 3,
+          high_pcode: hasHighPcode ? "observed" : "unavailable",
+          opaque_high_pcode_operations: hasHighPcode
+            ? flow.operations.filter(({ opcode }) => opcode === "CALLOTHER")
+                .length
+            : null,
+          truncated: hasHighPcode ? flow.truncated : null,
+          unavailable_reason:
+            flow?.available === false
+              ? flow.reason
+              : hasHighPcode
+                ? null
+                : "Ghidra did not report a HighFunction value flow",
+          pseudocode_nonempty: vfpuDossier.pseudocode.trim().length > 0,
+          numeric_vector_semantics: "not_verified",
+        };
+      }
       const global = await call("read_bytes", {
         address: independent.symbols[`${prefix}_global`],
         length: 4,
@@ -682,6 +840,9 @@ try {
       }
       reports.push({
         ...fixture,
+        ...(existingProject === undefined
+          ? {}
+          : { existing_project: existingProject }),
         independent_reader: independent,
         effective_language: image.observations.language_id,
         effective_compiler_spec: image.observations.compiler_spec_id,
@@ -689,6 +850,9 @@ try {
           "independent ELF/ABI and symbols",
           "loaded Ghidra identity",
           "fixed instruction bytes and immediate",
+          ...(psp
+            ? ["VFPU prefix/vadd opcode decoding (not arithmetic equivalence)"]
+            : []),
           psp
             ? "Allegrex BITREV decoding and A-B-A target identity"
             : "conditional branch destination",
@@ -698,6 +862,7 @@ try {
             ? ["soft-float o32 parameter/return storage and caller constants"]
             : []),
         ],
+        ...(vfpuCoverage === undefined ? {} : { vfpu_decode: vfpuCoverage }),
         ...(softFloat === undefined ? {} : { soft_float: softFloat }),
         procedures: procedures.length,
         carved: carved ?? {

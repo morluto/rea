@@ -8,8 +8,11 @@ Extend a tool when intent and result contract match; add one for a distinct
 outcome or materially different authority. Public names and semantics remain
 provider-neutral, with exact coverage reported per provider.
 
-Keep the catalog complete; report capability/session availability instead of
-truncating schemas. Serialized bytes alone do not establish agent usability.
+Keep the discoverable inventory complete within the caller's selected scope;
+report capability/session availability independently of catalog visibility.
+An opt-in dynamic catalog must retain canonical named contracts and provide
+discovery and recovery for clients without refresh. Serialized bytes alone do
+not establish agent usability.
 
 ## Choose the tool shape
 
@@ -83,6 +86,13 @@ provider versions; a connected server can differ from the current checkout.
 Inspect the live CLI help or MCP descriptions and schemas alongside the owning
 contracts and documentation. Choose representative tasks and their nearest REA
 and native alternatives rather than counting upstream commands.
+
+For those tasks, inspect relevant rendered MCP prompts, guided workflows and
+packaged skill advice in the versions actually in use. Follow the suggested
+producer-to-consumer handoff against the live contracts, including source
+identity, session lifetime and available alternatives. Matching text between
+two renderers does not establish that their shared advice is correct or that an
+agent selected the workflow.
 
 Exercise the selected public workflows, including the steps before and after a
 tool call. Check task selection, input choices, returned facts and their source,

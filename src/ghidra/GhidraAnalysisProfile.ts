@@ -55,19 +55,21 @@ import {
 /** Shared analysis commitments for raw and header-selected imports. */
 const sharedAnalysisSemantics = {
   annotation_policy: "atomic-function-entry-metadata-v1",
+  byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
   load_image_observations: "source-mappings-entry-context-relocation-symbol-v3",
   function_body_evidence: "complete-inclusive-ranges-v1",
-  function_references: "complete-body-and-entry-reference-manager-v2",
+  function_references: "complete-body-and-entry-reference-manager-v3",
   call_relationship_coverage: "function-body-call-coverage-v5",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
+  data_type_observations: "bit-field-base-and-lookup-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",
   procedure_search: "primary-and-exact-entry-symbol-names-v1",
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
   instruction_status: "unlisted-address-without-decode-v1",
-  instruction_references: "exact-address-incoming-without-synthetic-entry-v2",
+  instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
 } as const;
 
@@ -474,11 +476,13 @@ export const existingGhidraAnalysisProfile = (
   target: BinaryTarget,
   provider: Parameters<typeof createAnalysisProfile>[0],
   project: JsonValue,
-) =>
-  createAnalysisProfile(provider, {
+) => {
+  const mipsElf = ghidraMipsProfileParameters(target).mips_elf;
+  return createAnalysisProfile(provider, {
     target_kind: target.kind,
     target_format: target.format,
     architecture: target.architecture ?? null,
+    ...(mipsElf === undefined ? {} : { mips_elf: mipsElf }),
     import_mode: "existing-project-private-copy-v1",
     ...sharedAnalysisSemantics,
     annotation_policy: "read-only-existing-project-v1",
@@ -487,3 +491,4 @@ export const existingGhidraAnalysisProfile = (
     no_return_repair: "disabled-existing-project",
     process_launch: "inspected-jvm-launch-support-v1",
   });
+};

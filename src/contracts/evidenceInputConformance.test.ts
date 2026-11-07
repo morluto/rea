@@ -230,6 +230,34 @@ describe("public Evidence input declarations", () => {
     expect(declarationIssues(schema)).toEqual([]);
   });
 
+  it("distinguishes replaceable inline Evidence from reference-only sources", () => {
+    for (const schema of [
+      evidenceInputSchema,
+      evidenceSourceInputSchema,
+      analysisViewSourceSchema,
+      z.array(evidenceInputSchema.optional()),
+    ])
+      expect(
+        getEvidenceInputContract(schema).hasEvidenceReferenceAlternative,
+      ).toBe(true);
+    for (const schema of [
+      retainedEvidenceReferenceSchema,
+      evidenceFileReferenceSchema,
+      exportEnvironmentBundleInputSchema.shape.source,
+      z.object({ address: z.string() }),
+    ])
+      expect(
+        getEvidenceInputContract(schema).hasEvidenceReferenceAlternative,
+      ).toBe(false);
+    // Reference guidance must not change the separately owned source parser.
+    expect(
+      getEvidenceInputContract(evidenceSourceInputSchema).hasEvidence,
+    ).toBe(false);
+    expect(getEvidenceInputContract(analysisViewSourceSchema).hasEvidence).toBe(
+      false,
+    );
+  });
+
   it("rejects skipping defaults above Evidence-bearing request unions", () => {
     const choice = z.union([
       z.strictObject({

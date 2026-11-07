@@ -2,6 +2,7 @@
 export class DecodedNdjsonLineBuffer {
   #buffer = "";
   #fragments: string[] = [];
+  #nextNewline = -1;
 
   /**
    * Consume a chunk and yield each complete, trimmed, nonblank line.
@@ -9,17 +10,18 @@ export class DecodedNdjsonLineBuffer {
    */
   *push(chunk: string): Generator<string> {
     this.#fragments.push(chunk);
-    if (!chunk.includes("\n")) return;
+    if (!chunk.includes("\n") && this.#nextNewline < 0) return;
     this.#buffer += this.#fragments.join("");
     this.#fragments = [];
 
-    let newline = this.#buffer.indexOf("\n");
-    while (newline >= 0) {
-      const encodedLine = this.#buffer.slice(0, newline);
-      this.#buffer = this.#buffer.slice(newline + 1);
+    if (this.#nextNewline < 0) this.#nextNewline = this.#buffer.indexOf("\n");
+    while (this.#nextNewline >= 0) {
+      const encodedLine = this.#buffer.slice(0, this.#nextNewline);
+      this.#buffer = this.#buffer.slice(this.#nextNewline + 1);
+      // Update before yielding: a consumer may stop with complete lines left.
+      this.#nextNewline = this.#buffer.indexOf("\n");
       const line = encodedLine.trim();
       if (line.length > 0) yield line;
-      newline = this.#buffer.indexOf("\n");
     }
   }
 
@@ -27,5 +29,6 @@ export class DecodedNdjsonLineBuffer {
   reset(): void {
     this.#buffer = "";
     this.#fragments = [];
+    this.#nextNewline = -1;
   }
 }
