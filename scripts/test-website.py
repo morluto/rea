@@ -22,7 +22,7 @@ from urllib.request import urlopen
 import xml.etree.ElementTree as ET
 
 import polib
-from website_i18n import Document, build_translations, checked_catalog, extract_catalogs, languages, prose_units, reading_pages, read_runtime
+from website_i18n import Document, build_translations, extract_catalogs, languages, prose_units, reading_pages, read_runtime
 
 
 ROOT = Path(__file__).resolve().parent.parent

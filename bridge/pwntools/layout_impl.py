@@ -6,10 +6,7 @@ user configuration initialization, debugger startup, or dependency installation.
 import base64
 import importlib.metadata
 import io
-import json
-import os
 from pathlib import Path
-import resource
 import sys
 
 PROFILE = "pwntools@4.15.0;pyelftools@0.33;unicorn@2.1.2"
