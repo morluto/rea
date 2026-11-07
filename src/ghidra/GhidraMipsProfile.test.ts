@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ok } from "../domain/result.js";
 import { parseConfig } from "../config/parseConfig.js";
 import type {
@@ -17,7 +16,10 @@ import {
   ghidraMipsProfileMismatchReason,
   ghidraMipsProfileParameters,
 } from "./GhidraMipsProfile.js";
-import { ghidraProfileInstallationHost as host } from "./GhidraInstallation.fixture.js";
+import {
+  ghidraProfileInstallationHost as host,
+  simulatedInstallDirectory,
+} from "./GhidraInstallation.fixture.js";
 import { GHIDRA_SESSION_CAPABILITIES } from "./GhidraSessionValues.js";
 import type { GhidraMipsSoftFloatReport } from "./GhidraMipsProfile.js";
 import {
@@ -45,7 +47,7 @@ const MIPS_LANGUAGE_DEFINITIONS = `<?xml version="1.0" encoding="UTF-8"?>
 `;
 
 const installedMipsConfig = async () => {
-  const installDir = await createTestTempDirectory("rea-ghidra-mips-");
+  const installDir = await simulatedInstallDirectory("rea-ghidra-mips-");
   const languages = join(installDir, "Ghidra/Processors/MIPS/data/languages");
   await mkdir(languages, { recursive: true });
   await writeFile(join(languages, "mips.ldefs"), MIPS_LANGUAGE_DEFINITIONS);
