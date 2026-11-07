@@ -9,7 +9,7 @@ import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
-import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
+import { RetainedCommandCleanup } from "../process/RetainedCommandCleanup.js";
 import {
   OwnedCommandFailure,
   runOwnedCommand,
@@ -28,9 +28,7 @@ const answerSchema = z.object({
 });
 
 interface Retained {
-  readonly folder: string;
-  readonly resources: readonly string[];
-  readonly stop: () => Promise<void>;
+  readonly owner: RetainedCommandCleanup;
   readonly failure: ProviderCleanupError;
 }
 
@@ -181,12 +179,9 @@ export class ScreenJudgeProcess {
             "Close the build computer to retry screenshot cleanup.",
         },
       );
-      this.#retained.add({
-        folder,
-        resources: [],
-        failure,
-        stop: async () => {},
-      });
+      const owner = new RetainedCommandCleanup(folder, undefined);
+      failure.bindCleanupResourceOwner(owner);
+      this.#retained.add({ owner, failure });
       throw failure;
     }
   }
@@ -195,18 +190,8 @@ export class ScreenJudgeProcess {
     folder: string,
     cause: unknown,
   ): ProviderCleanupError | undefined {
-    const owner =
-      cause instanceof OwnedCommandFailure ? cause.cleanupOwner : undefined;
-    const preparation =
-      cause instanceof OwnedCommandFailure
-        ? cause.preparationFailure
-        : cause instanceof DarwinProcessOwnershipInspectionError
-          ? cause
-          : undefined;
-    if (owner === undefined && preparation?.cleanupOwner === undefined)
-      return undefined;
-    let processStopped = owner === undefined;
-    let preparationClosed = preparation?.cleanupOwner === undefined;
+    const owner = new RetainedCommandCleanup(folder, cause);
+    if (!owner.hasProcess) return undefined;
     const completed = completedAnswer(cause);
     const original =
       cause instanceof OwnedCommandFailure && cause.reason === "cancelled"
@@ -216,12 +201,10 @@ export class ScreenJudgeProcess {
         : new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
             cause,
           });
-    const processResources =
-      cause instanceof OwnedCommandFailure ? cause.resources : [];
     const message = cause instanceof Error ? cause.message : String(cause);
     const failure = new ProviderCleanupError(
       AGENTENV_PROVIDER,
-      [...processResources, folder],
+      owner.cleanupResources,
       {
         reason:
           (cause instanceof OwnedCommandFailure
@@ -239,23 +222,8 @@ export class ScreenJudgeProcess {
         remediationAction: "Close the build computer to retry judge cleanup.",
       },
     );
-    this.#retained.add({
-      folder,
-      resources: processResources,
-      failure,
-      stop: async () => {
-        if (!processStopped && owner !== undefined) {
-          const result = await owner.stop();
-          if (result.status === "incomplete") throw new Error(result.reason);
-          owner.dispose();
-          processStopped = true;
-        }
-        if (!preparationClosed) {
-          await preparation?.cleanupOwner?.close();
-          preparationClosed = true;
-        }
-      },
-    });
+    failure.bindCleanupResourceOwner(owner);
+    this.#retained.add({ owner, failure });
     return failure;
   }
 
@@ -265,13 +233,12 @@ export class ScreenJudgeProcess {
     const resources: string[] = [];
     for (const item of this.#retained) {
       try {
-        await item.stop();
-        await rm(item.folder, { recursive: true, force: true });
+        await item.owner.close();
         this.#retained.delete(item);
         item.failure.resolveCleanup();
       } catch (cause: unknown) {
         failures.push(cause instanceof Error ? cause.message : String(cause));
-        resources.push(...item.resources, item.folder);
+        resources.push(...item.owner.cleanupResources);
       }
     }
     return failures.length === 0

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { chmod } from "node:fs/promises";
 import { dirname } from "node:path";
 import { expect, it, vi } from "vitest";
 
@@ -61,6 +62,20 @@ it("retains the screenshot and process owner after cancelled cleanup until retry
     resources: ["run", folder],
   });
   expect(existsSync(folder)).toBe(true);
+  if (process.platform !== "win32" && process.getuid?.() !== 0) {
+    await chmod(folder, 0o500);
+    try {
+      expect(await judge.close()).toMatchObject({
+        verified: false,
+        resources: [folder],
+      });
+      expect((failure as ProviderCleanupError).cleanupResources).toEqual([
+        folder,
+      ]);
+    } finally {
+      await chmod(folder, 0o700);
+    }
+  }
   expect(await judge.close()).toMatchObject({ verified: true });
   expect(existsSync(folder)).toBe(false);
   expect(stop).toHaveBeenCalledTimes(2);

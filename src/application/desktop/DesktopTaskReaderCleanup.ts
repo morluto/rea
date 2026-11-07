@@ -1,12 +1,10 @@
-import { rm } from "node:fs/promises";
-
 import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
-import { DarwinProcessOwnershipInspectionError } from "../../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
+import { RetainedCommandCleanup } from "../../process/RetainedCommandCleanup.js";
 import {
   processWorkerCleanup,
   type RetainedWorkerCleanup,
@@ -68,10 +66,11 @@ export const readerFailure = (
 class ReaderCleanup implements RetainedWorkerCleanup {
   #retry: Promise<void> | undefined;
   constructor(
-    readonly folder: string,
+    readonly owner: RetainedCommandCleanup,
     readonly failure: ProviderCleanupError,
-    readonly stop: () => Promise<void>,
-  ) {}
+  ) {
+    failure.bindCleanupResourceOwner(owner);
+  }
 
   retryRetainedCleanup(): Promise<void> {
     if (this.#retry !== undefined) return this.#retry;
@@ -87,8 +86,7 @@ class ReaderCleanup implements RetainedWorkerCleanup {
 
   async #release(): Promise<void> {
     try {
-      await this.stop();
-      await rm(this.folder, { recursive: true, force: true });
+      await this.owner.close();
       processWorkerCleanup.delete(this);
       this.failure.resolveCleanup();
     } catch (cause: unknown) {
@@ -107,27 +105,10 @@ export const retainReaderCleanup = (
   facts: ReaderFacts,
   folderFailure?: { readonly cause: unknown },
 ): ProviderCleanupError | undefined => {
-  const owner =
-    cause instanceof OwnedCommandFailure ? cause.cleanupOwner : undefined;
-  const preparation =
-    cause instanceof OwnedCommandFailure
-      ? cause.preparationFailure
-      : cause instanceof DarwinProcessOwnershipInspectionError
-        ? cause
-        : undefined;
-  if (
-    owner === undefined &&
-    preparation?.cleanupOwner === undefined &&
-    folderFailure === undefined
-  )
-    return undefined;
-  let stopped = owner === undefined;
-  let prepared = preparation?.cleanupOwner === undefined;
+  const owner = new RetainedCommandCleanup(folder, cause);
+  if (!owner.hasProcess && folderFailure === undefined) return undefined;
   const original = primaryFailure(cause);
-  const resources = [
-    ...(cause instanceof OwnedCommandFailure ? cause.resources : []),
-    folder,
-  ];
+  const resources = owner.cleanupResources;
   const problem =
     folderFailure?.cause ??
     (cause instanceof OwnedCommandFailure ? cause.cleanupFailure : undefined) ??
@@ -147,19 +128,6 @@ export const retainReaderCleanup = (
         "Retry cleanup in this REA process before starting another reader; if it exits first, inspect the reported local resources.",
     },
   );
-  processWorkerCleanup.add(
-    new ReaderCleanup(folder, failure, async () => {
-      if (!stopped && owner !== undefined) {
-        const result = await owner.stop();
-        if (result.status === "incomplete") throw new Error(result.reason);
-        owner.dispose();
-        stopped = true;
-      }
-      if (!prepared) {
-        await preparation?.cleanupOwner?.close();
-        prepared = true;
-      }
-    }),
-  );
+  processWorkerCleanup.add(new ReaderCleanup(owner, failure));
   return failure;
 };

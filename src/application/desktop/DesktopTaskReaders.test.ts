@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { chmod } from "node:fs/promises";
 import { expect, it, vi } from "vitest";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
@@ -88,6 +89,16 @@ it("retains a reader process and its files after cleanup fails and retries befor
     await expect(read()).rejects.toBe(error);
     expect(run).toHaveBeenCalledTimes(2);
     expect(existsSync(folder)).toBe(true);
+    if (process.platform !== "win32" && process.getuid?.() !== 0) {
+      await chmod(folder, 0o500);
+      try {
+        await expect(processWorkerCleanup.retry()).rejects.toBe(error);
+        expect(error.cleanupResources).toEqual([folder]);
+        expect(error.cleanupIncomplete).toBe(true);
+      } finally {
+        await chmod(folder, 0o700);
+      }
+    }
     await Promise.all([
       processWorkerCleanup.retry(),
       processWorkerCleanup.retry(),
