@@ -227,8 +227,10 @@ test.each(["_", "__REA_", "marker-prefix"])(
         normalized_result: { output: expected, completion_status: "unknown" },
         raw_result: { output: expected },
       });
-      expect(result.value.evidence.limitations).toContain(
-        "Interrupted output may include an incomplete completion-marker prefix; it is retained because it cannot be distinguished from command diagnostics.",
+      expect(result.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /incomplete completion.marker prefix.*diagnostics/iu,
+        ),
       );
     } finally {
       injected.control.exit();

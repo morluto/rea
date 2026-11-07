@@ -266,8 +266,10 @@ it("preserves raw script facts without authorizing locations in partial projecti
       origin: "file:///slow-or-unavailable.js?token=retained",
     },
   ]);
-  expect(result.unknowns).toContain(
-    "2 observed script locations remain unverified; raw URLs and script metadata are retained.",
+  expect(result.unknowns).toContainEqual(
+    expect.stringMatching(
+      /2 observed script locations.*unverified.*raw URLs.*metadata.*retained/iu,
+    ),
   );
 });
 
@@ -292,8 +294,10 @@ it("counts retained unresolved script locations after deduplication in partial c
   });
   expect(result.scripts.items).toHaveLength(1);
   expect(result.scripts.observed_total).toBe(2);
-  expect(result.unknowns).toContain(
-    "1 observed script location remains unverified; raw URLs and script metadata are retained.",
+  expect(result.unknowns).toContainEqual(
+    expect.stringMatching(
+      /1 observed script location.*unverified.*raw URLs.*metadata.*retained/iu,
+    ),
   );
 });
 

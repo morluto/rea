@@ -188,7 +188,11 @@ The complete field/type diagnostic is preserved when normalization fits the
 response budget, including request-specific rejected fields and reasons. Zod
 input issues retain their field paths and available type and range constraints.
 SDK diagnostic parts may be distributed between field issues and the main
-message so each retained explanation appears once.
+message so each retained explanation appears once. Known neighboring-tool
+argument-name mistakes (such as `address` instead of `procedure`, or `query`
+instead of `pattern`) provide targeted replacement guidance and the expected
+canonical property name without accepting unauthorized aliases or changing
+canonical Evidence parameters.
 If their conservative projection allowance is exhausted, the response states
 that field-level detail was omitted and retains the original SDK diagnostic.
 Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
@@ -314,6 +318,8 @@ Retained `xrefs` Evidence also supports `native-observation` address pages and
 default and does not accept `detail`; when its MCP response exceeds the budget,
 follow the returned continuation to page the retained result. These addresses
 remain untyped; paging does not add reference kinds or establish completeness.
+The page tells callers that any additional provider detail recorded in the parent
+requires retrieving or exporting the complete Evidence.
 
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with
@@ -574,15 +580,18 @@ after target content was read.
 
 ## Offline API contract declarations
 
-`inspect_api_contract` reads a local OpenAPI 3.0/3.1/3.2 JSON document without
-an active target or any requests to declared servers or references. Default
-summary delivery retains complete declaration Evidence; an optional
-`api-contract` view selects operations, unresolved Path Items or diagnostics in
-this call. Exact filters, field selection and paging share the retained
-`inspect_analysis_view` projector. Coverage describes inline paths only and
-never establishes runtime implementation or full specification conformance.
-See [offline API contracts](api-contracts.md) for identities, source pointers,
-resource bounds and CLI publication.
+`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
+GraphQL SDL (`format: "graphql-sdl"`) without an active target or network requests.
+OpenAPI inventories inline path operations and unresolved Path Items. GraphQL
+inventories type/field declarations; optional `operations_path` adds operation
+owners, aliases, SDL field bindings and explicit fragment-spread edges without
+expanding fragments. Unresolved bindings and unavailable models stay explicit.
+Default summaries retain complete Evidence; `api-contract` or `graphql-contract`
+views select facts immediately with exact filters, fields and paging. Retained
+`inspect_analysis_view` uses the same projector without reopening inputs.
+Coverage describes examined declarations and does not establish runtime behavior
+or full specification/operation validity. See [offline API contracts](api-contracts.md)
+for source identities, parser allowances, supported scope and CLI publication.
 
 ## Retained application Evidence inputs
 
@@ -1289,6 +1298,22 @@ Those raw observations are not recorded in the Evidence bundle. If the SDK
 suppresses the error reply after client cancellation, Evidence tools cannot
 recover them. An empty bundle does not prove that no partial work or side
 effect occurred; output receipts and cleanup observations remain distinct.
+If an authenticated Evidence record exceeds the investigation's retention
+allowance, the refusal carries it inline as
+`details.partial_observation: {kind: "unretained-evidence", evidence: ...}`
+when it fits the response budget. Its ID identifies the supplied content; it
+is not a retained-session reference. If authentication itself failed or lacked
+headroom, no authenticated Evidence is claimed. When the completed record does
+not fit the MCP response, the original retention error carries
+`details.partial_observation_omitted` with the response constraint if the
+remaining error fits; the observation remains unretained. Otherwise the usual
+oversized-error recovery applies.
+When an atomic derived-Evidence and Unknown write exceeds the allowance after
+authentication, the completed Evidence is returned the same way if absent from
+the investigation. If that exact Evidence was already present, the error
+instead carries `{kind: "retained-evidence", evidence_id: ...}` for the current
+session. The refused write adds neither a record nor an Unknown revision; a
+previously retained record or Unknown remains available.
 The broader retention decision is tracked in
 [#4276](https://github.com/morluto/rea/issues/4276).
 
@@ -1570,11 +1595,20 @@ cursor outside a procedure is represented as
 procedure resolution returns typed unreadable output; provider errors never
 become absence from their message text. `inspect_address_context` requires an explicit address and
 returns name, procedure, comment, inline-comment, and bookmark facets;
-unsupported facets are local `unavailable` outcomes. A facet whose input is
-rejected includes its canonical `error` projection, including any structured
-issues, alongside the other facet outcomes. Use `current_document`,
+unsupported facets are local `unavailable` outcomes. A facet rejected for
+invalid input or a resource constraint includes its canonical `error`
+projection, including structured issues or reported limits and recovery,
+alongside the other facet outcomes. Use `current_document`,
 `current_address`, and `current_procedure` for direct single-field lookups; use
 the aggregate tools when you need related context together.
+
+If unretained facet Evidence makes the context response exceed an MCP delivery
+limit, REA omits those partial records in estimated size order until the reply
+fits. Each affected facet identifies its unretained omission and the delivery
+constraint; other facets and partials remain in the response when they fit. The
+size estimate is used only for ordering and can omit more records than a perfect
+wire-size ordering would. If the remaining context still cannot fit, call the
+needed address operations individually and follow their delivery diagnostics.
 
 ## Integrity attribution and reconstruction claims
 
@@ -1894,7 +1928,13 @@ The default, `full`, retains the complete upfront advertisement. Restart the
 server to change profiles. See [client configuration](client-configuration.md#hotcold-catalogs).
 
 Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
-`get_evidence_bundle`, `inspect_analysis_view`, and the adapter's `discover_tools`.
+`get_evidence_bundle`, and the adapter's `discover_tools`.
+`inspect_analysis_view` is loaded on demand like other analysis tools. When a
+follow-up needs retained facts, include it in `discover_tools.names`; if the
+producer and follow-up are known together, load both in one batch. Producers
+that accept `view` can answer a selected first question without loading the
+cross-domain view contract. Complete output schemas and canonical result
+validation are preserved when each tool loads.
 An explicit tool-family scope can remove any of those domain tools.
 `discover_tools` searches canonical names and descriptions using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
@@ -1988,6 +2028,7 @@ bundle import/export; it does not include those view and settings tools.
 | Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
 | Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
 | Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Native analysis of a known function               | `session,enhanced,application`                            | open a binary, analyze a known function, page retained pseudocode, and export Evidence; add `direct` for focused procedure search or assembly                |
 | Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
 | Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
 | Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
@@ -2138,3 +2179,12 @@ skill and portable conformance projections in the `generated-docs` artifact.
 These outputs describe the exact source revision being built; they are not
 checked-in snapshots. For a running server, `binary_session` remains the
 authoritative source of catalog identity and tool availability.
+
+## Offline Playwright traces
+
+`inspect_playwright_trace` reads a local v10 trace ZIP and defaults to a retained
+summary. `playwright-trace` views select source-located action boundaries, console
+and network facts, resource references and diagnostics; long text has bounded
+previews and character pages. Import does not contact recorded URLs or use a
+browser. See [offline Playwright traces](./playwright-traces.md) for coverage,
+resource policies and the shared CLI workflow.
