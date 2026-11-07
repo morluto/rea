@@ -199,9 +199,16 @@ export const capturedHomePath = (
       const facts = change.after ?? change.before;
       if (facts?.type === "directory") directories.add(change.path);
     }
-  for (const path of recorded)
-    if (recorded.some((other) => other !== path && isWithinAny(other, [path])))
-      directories.add(path);
+  const known = new Set(recorded);
+  for (const path of known) {
+    let parent = path;
+    for (;;) {
+      const slash = parent.lastIndexOf("/");
+      if (slash <= 0) break;
+      parent = parent.slice(0, slash);
+      if (known.has(parent)) directories.add(parent);
+    }
+  }
   const isDirectory = (path: string) => directories.has(path);
   // The longest physical path wins, whether it is a selected link or a walked
   // settings folder. A broad selection of ~/settings must not hide
