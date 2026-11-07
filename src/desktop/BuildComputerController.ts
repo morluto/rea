@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { Buffer } from "node:buffer";
 
 import { z } from "zod";
 
@@ -12,8 +13,40 @@ const CONTROLLER = fileURLToPath(
 );
 /** The most file bytes one `data/get` brings back, so a large bundle arrives in several answers. */
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
+/**
+ * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
+ * One argument past this fails with E2BIG before the process starts.
+ */
+export const LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
 
 let source: Promise<string> | undefined;
+
+const isLowSurrogate = (text: string, index: number): boolean => {
+  const code = text.charCodeAt(index);
+  return code >= 0xdc00 && code <= 0xdfff;
+};
+
+/** Pieces of `text` that each fit in one Linux argument and join back to it. */
+export const controllerArgumentPieces = (text: string): readonly string[] => {
+  const pieces: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let low = start + 1;
+    let high = text.length;
+    while (low < high) {
+      const mid = Math.ceil((low + high) / 2);
+      const bytes = Buffer.byteLength(text.slice(start, mid));
+      if (bytes <= LINUX_SINGLE_ARGUMENT_BYTES) low = mid;
+      else high = mid - 1;
+    }
+    let end = low;
+    if (end < text.length && isLowSurrogate(text, end)) end -= 1;
+    if (end <= start) end = Math.min(text.length, start + 1);
+    pieces.push(text.slice(start, end));
+    start = end;
+  }
+  return pieces;
+};
 
 /** The computer routes REA's build controller uses, and the control token's redaction for what it reads. */
 export type ControlledComputer = Pick<
@@ -34,14 +67,19 @@ export const runBuildController = async (
 ): Promise<Readonly<Record<string, unknown>>> => {
   const { timeoutS, signal } = options;
   source ??= readFile(CONTROLLER, "utf8");
+  const script = await source;
+  if (Buffer.byteLength(script) > LINUX_SINGLE_ARGUMENT_BYTES)
+    throw new Error(
+      `REA's build controller source is ${String(Buffer.byteLength(script))} bytes, above the ${String(LINUX_SINGLE_ARGUMENT_BYTES)} bytes Linux passes as one argument.`,
+    );
   const result = await computer.exec(
     [
       "python3",
       "-I",
       "-c",
-      await source,
+      script,
       command,
-      JSON.stringify(argumentsJson),
+      ...controllerArgumentPieces(JSON.stringify(argumentsJson)),
     ],
     // The controller's own waits end first, so it can answer.
     timeoutS + 60,
