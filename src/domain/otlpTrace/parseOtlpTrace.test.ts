@@ -280,7 +280,56 @@ describe("parseOtlpTrace attributes", () => {
     expect(attributes.get("blob")).toMatchObject({
       value_kind: "bytes",
       bytes_length: 3,
+      bytes_base64: "AAEC",
     });
+  });
+
+  it("keeps equal-length byte values distinct", () => {
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            { key: "a", value: { bytesValue: "AAEC" } },
+            { key: "b", value: { bytesValue: "AQID" } },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((a) => [a.key, a]),
+    );
+    expect(attributes.get("a")).toMatchObject({
+      bytes_length: 3,
+      bytes_base64: "AAEC",
+    });
+    expect(attributes.get("b")).toMatchObject({
+      bytes_length: 3,
+      bytes_base64: "AQID",
+    });
+  });
+});
+
+describe("parseOtlpTrace damaged service names", () => {
+  it("keeps a service.name value the derived field cannot hold", () => {
+    // `service_name` only carries a string, so a damaged export would
+    // otherwise lose the recorded attribute with nothing left to say so.
+    const document = envelope([span({})]) as {
+      resourceSpans: { resource: { attributes: unknown[] } }[];
+    };
+    document.resourceSpans[0]!.resource.attributes = [
+      { key: "service.name", value: { boolValue: false } },
+    ];
+    const report = parse(document);
+    expect(report.resources[0]).toMatchObject({ service_name: null });
+    expect(
+      report.resources[0]!.attributes.map((attribute) => attribute.key),
+    ).toEqual(["service.name"]);
+  });
+
+  it("does not repeat a string service.name in the resource attributes", () => {
+    const report = parse(envelope([span({})]));
+    expect(report.resources[0]).toMatchObject({ service_name: "checkout" });
+    expect(report.resources[0]!.attributes).toEqual([]);
   });
 });
 

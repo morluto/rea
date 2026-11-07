@@ -49,6 +49,8 @@ export const otlpAttributeSchema = z.strictObject({
   int_value: z.string().nullable(),
   double_value: z.number().finite().nullable(),
   bytes_length: z.int().nonnegative().nullable(),
+  /** The recorded base64 payload, kept so equal-length values stay distinct. */
+  bytes_base64: z.string().nullable(),
   element_count: z.int().nonnegative().nullable(),
 });
 

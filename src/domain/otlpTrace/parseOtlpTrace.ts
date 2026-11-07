@@ -117,6 +117,7 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
     int_value: null,
     double_value: null,
     bytes_length: null,
+    bytes_base64: null,
     element_count: null,
   } as const;
   if (!isRecord(rawValue)) return { ...empty, value_kind: "empty" };
@@ -157,6 +158,7 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
           typeof value === "string"
             ? Buffer.from(value, "base64").length
             : null,
+        bytes_base64: typeof value === "string" ? value : null,
       };
     case "arrayValue":
       return {
@@ -342,8 +344,11 @@ const resourceAttributes = (
 ): { attributes: Attribute[]; dropped: number } => {
   if (!isRecord(resource) || !Array.isArray(resource.attributes))
     return { attributes: [], dropped: 0 };
+  // A service.name that carries a string is the one the resource summarises as
+  // `service_name`, so it is not repeated here. One that does not is evidence
+  // the derived field cannot hold, and dropping it would lose it entirely.
   const candidates = resource.attributes.filter(
-    (entry) => !isServiceName(entry),
+    (entry) => !isServiceName(entry) || !isStringServiceName(entry),
   );
   const retained = candidates.slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
   return {
@@ -351,6 +356,11 @@ const resourceAttributes = (
     dropped: candidates.length - retained.length,
   };
 };
+
+const isStringServiceName = (entry: Json): boolean =>
+  isRecord(entry) &&
+  isRecord(entry.value) &&
+  typeof entry.value.stringValue === "string";
 
 const resourceServiceName = (resource: Json): string | null => {
   if (!isRecord(resource) || !Array.isArray(resource.attributes)) return null;
