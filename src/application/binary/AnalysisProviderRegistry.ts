@@ -80,6 +80,7 @@ export interface AnalysisProviderBinding {
   readonly identity: ProviderIdentity & { readonly version: string };
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -831,6 +832,9 @@ const selectedResult = (
       identity: structuredClone(identity),
       selectionSource: source,
       profile: structuredClone(evaluated.profile),
+      ...(evaluated.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: evaluated.refreshAfterRetirement }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),
