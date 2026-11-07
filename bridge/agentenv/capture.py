@@ -238,6 +238,14 @@ def listing(arguments: dict) -> int:
     files, skipped = [], []
     for directory, folders, names in os.walk(os.path.abspath(arguments["root"])):
         folders.sort()
+        # os.walk reports directory symlinks in ``folders`` but does not follow
+        # them by default. Record and prune them so callers cannot mistake an
+        # omitted linked tree for a folder that contains only regular files.
+        for name in folders[:]:
+            path = os.path.join(directory, name)
+            if os.path.islink(path):
+                skipped.append(os.path.relpath(path, home))
+                folders.remove(name)
         for name in sorted(names):
             path = os.path.join(directory, name)
             relative = os.path.relpath(path, home)
