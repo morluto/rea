@@ -24,6 +24,8 @@ import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   runSolveHelper,
+  SolveCleanupError,
+  SolveCancelledError,
   type SolveReport,
 } from "../../desktop/AgentEnvSolveHelper.js";
 import {
@@ -238,15 +240,25 @@ export const measureBuildTask = async (
   signal: AbortSignal,
   progress: ProgressReporter = silentProgressReporter,
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
-  const digest = await taskDigest(request.bundle, request.task, signal);
-  if (!digest.ok) return digest;
-  // Refuse records REA could not keep before any solve is paid for.
-  const records = await readRecords(request.bundle, signal);
-  if (!records.ok) return records;
   const solves: SolveRecord[] = [];
+  const retainSolves = (failure: AnalysisError): AnalysisError => {
+    if (solves.length > 0)
+      failure.retainPartialObservation({
+        kind: "partial-task-measurement",
+        bundle: request.bundle,
+        task: request.task,
+        solves: [...solves],
+      });
+    return failure;
+  };
   let agentenv: string | null = null;
   let stopped: StopReason = "decided";
   try {
+    const digest = await taskDigest(request.bundle, request.task, signal);
+    if (!digest.ok) return digest;
+    // Refuse records REA could not keep before any solve is paid for.
+    const records = await readRecords(request.bundle, signal);
+    if (!records.ok) return records;
     for (;;) {
       const decision = nextSolve(solves, request.budget_usd);
       if (!decision.next) {
@@ -264,9 +276,11 @@ export const measureBuildTask = async (
       const report = await solver(request, signal);
       if (!("outcome" in report))
         return err(
-          refused(
-            `A solve of ${request.task} did not run: ${report.error}`,
-            "Fix what the error names, such as the model endpoint agentenv needs (LITELLM_BASE_URL and LITELLM_API_KEY where REA starts, or [model] in .agentenv/config.toml), and measure again.",
+          retainSolves(
+            refused(
+              `A solve of ${request.task} did not run: ${report.error}`,
+              "Fix what the error names, such as the model endpoint agentenv needs (LITELLM_BASE_URL and LITELLM_API_KEY where REA starts, or [model] in .agentenv/config.toml), and measure again.",
+            ),
           ),
         );
       agentenv = report.agentenv ?? agentenv;
@@ -290,9 +304,11 @@ export const measureBuildTask = async (
     );
     if (!file.ok)
       return err(
-        refused(
-          `${request.task} was measured, ${record.band} at ${String(record.passes)} of ${String(record.k)} for $${record.usd.toFixed(2)}, but not recorded: ${file.error.message}`,
-          "Repair the file the message names, then measure again or record this result by hand.",
+        retainSolves(
+          refused(
+            `${request.task} was measured, ${record.band} at ${String(record.passes)} of ${String(record.k)} for $${record.usd.toFixed(2)}, but not recorded: ${file.error.message}`,
+            "Repair the file the message names, then measure again or record this result by hand.",
+          ),
         ),
       );
     const { versions: _versions, ...reported } = record;
@@ -303,15 +319,25 @@ export const measureBuildTask = async (
       difficulty_file: file.value,
     });
   } catch (cause: unknown) {
-    if (cause instanceof AnalysisError) return err(cause);
-    return err(
-      signal.aborted
-        ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
-        : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
-            userMessage: `Measuring ${request.task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
-            cause,
-          }),
-    );
+    if (
+      (cause instanceof SolveCleanupError ||
+        cause instanceof SolveCancelledError) &&
+      cause.report !== undefined &&
+      "outcome" in cause.report
+    )
+      solves.push(solveRecord(cause.report));
+    const failure =
+      cause instanceof AnalysisError
+        ? cause
+        : signal.aborted
+          ? new AnalysisCancelledError(MEASURE, { cause: signal.reason })
+          : new ProviderAdapterError(AGENTENV_PROVIDER, MEASURE, {
+              userMessage: `Measuring ${request.task} failed after ${String(solves.length)} solve(s): ${errorText(cause)}`,
+              remediationAction:
+                "Check the bundle files and host I/O error, then retry or retain the completed solve results.",
+              cause,
+            });
+    return err(retainSolves(failure));
   }
 };
 

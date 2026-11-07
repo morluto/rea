@@ -85,6 +85,10 @@ describe("runSolveHelper", () => {
 
     const failure = await solved.catch((cause: unknown) => cause);
     expect(failure).toBeInstanceOf(ProviderCleanupError);
+    expect(failure).toMatchObject({
+      report: { outcome: "passed", turns: 3, usd: 0.1 },
+      diagnostics: { solve_report: { outcome: "passed", turns: 3, usd: 0.1 } },
+    });
     expect(retained).toHaveLength(1);
     expect(await retained[0]?.stop()).toMatchObject({
       status: "verified-cleanup",
@@ -92,3 +96,30 @@ describe("runSolveHelper", () => {
     retained[0]?.dispose();
   }, 30_000);
 });
+
+it("retains a completed report if cancellation arrives during final cleanup", async () => {
+  const runner = await fakeAgentEnvSolves([SOLVE]);
+  const controller = new AbortController();
+  const reason = { stage: "final cleanup" };
+  const failure = await runSolveHelper({
+    ...(await options(runner.environment)),
+    signal: controller.signal,
+    retainCleanup: () => undefined,
+    spawn: async (spawnOptions) => {
+      const owned = await spawnOwnedProviderProcess(spawnOptions);
+      return {
+        ...owned,
+        cleanup: async () => {
+          const result = await cleanupOwnedProcessGroup(owned.ownership);
+          controller.abort(reason);
+          return result;
+        },
+      };
+    },
+  }).catch((cause: unknown) => cause);
+  expect(failure).toMatchObject({
+    _tag: "AnalysisCancelledError",
+    cause: reason,
+    report: { outcome: "passed", turns: 3, usd: 0.1 },
+  });
+}, 30_000);

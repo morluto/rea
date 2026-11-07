@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 
 import { z } from "zod";
 
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { jsonValueSchema } from "../domain/jsonValue.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { readBoundedControlLines } from "../process/BoundedControlLines.js";
 import { cleanupOwnedProcessGroup } from "../process/ProcessOwnership.js";
@@ -56,6 +58,48 @@ const reportSchema = z.union([
 
 /** What the helper printed: how the solve ended, or why no solve ran. */
 export type SolveReport = z.infer<typeof reportSchema>;
+
+/** Failed cleanup retains both its owner and any report the helper completed. */
+export class SolveCleanupError extends ProviderCleanupError {
+  constructor(
+    readonly report: SolveReport | undefined,
+    resources: readonly string[],
+    diagnostics: Readonly<
+      Record<string, import("../domain/jsonValue.js").JsonValue>
+    >,
+    operation: string,
+  ) {
+    super(
+      AGENTENV_PROVIDER,
+      resources,
+      {
+        ...diagnostics,
+        ...(report === undefined
+          ? {}
+          : { solve_report: jsonValueSchema.parse(report) }),
+      },
+      {
+        operation,
+        remediationAction:
+          "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
+      },
+    );
+  }
+}
+
+/** A completed report remains available when cancellation arrives during teardown. */
+export class SolveCancelledError extends AnalysisCancelledError {
+  constructor(
+    readonly report: SolveReport,
+    operation: string,
+    reason: unknown,
+  ) {
+    super(operation, {
+      cause: reason,
+      diagnostics: { solve_report: jsonValueSchema.parse(report) },
+    });
+  }
+}
 
 const parseReport = (line: string): SolveReport => {
   try {
@@ -155,21 +199,19 @@ export const runSolveHelper = async (options: {
   }
   if (stopped.status === "incomplete") {
     options.retainCleanup(supervisor);
-    throw new ProviderCleanupError(
-      AGENTENV_PROVIDER,
+    throw new SolveCleanupError(
+      report,
       [`process group ${String(spawned.ownership.processGroupId)}`],
       {
         reason: stopped.reason,
         leader_pid: spawned.ownership.leaderPid,
         process_group_id: spawned.ownership.processGroupId,
       },
-      {
-        operation: options.operation,
-        remediationAction:
-          "Closing REA retries this cleanup; check that no agentenv run of the bundle is still up with docker ps.",
-      },
+      options.operation,
     );
   }
+  if (signal.aborted && report !== undefined)
+    throw new SolveCancelledError(report, options.operation, signal.reason);
   signal.throwIfAborted();
   const exit = supervisor.observedExit();
   return (

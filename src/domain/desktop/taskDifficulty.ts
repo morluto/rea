@@ -17,6 +17,14 @@ export type SolveRecord = {
   readonly instance_id: string | null;
 };
 
+/** Completed paid solves retained when measurement stops before publication. */
+export interface PartialTaskMeasurement {
+  readonly kind: "partial-task-measurement";
+  readonly bundle: string;
+  readonly task: string;
+  readonly solves: readonly SolveRecord[];
+}
+
 /** Where the finished solves place a task: kept in the band, or outside it either way. */
 export type Band = "in_band" | "too_easy" | "too_hard" | "undecided";
 
