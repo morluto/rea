@@ -77,6 +77,33 @@ export const seedModes = (
   );
 };
 
+/** Home paths of captured files and of settings directories, in either spelling. */
+const capturedLaunchPaths = (
+  capture: DesktopApplicationCapture,
+  files: ReadonlyMap<string, StatePath>,
+  homeOf: (path: string) => string | null,
+): ((path: string) => boolean) => {
+  const { home } = capture.host;
+  const captured = new Set<string>(files.keys());
+  const remember = (absolute: string) => {
+    if (!absolute.startsWith(`${home}/`)) return;
+    const relative = absolute.slice(home.length + 1);
+    captured.add(relative);
+    const spelled = homeOf(absolute);
+    if (spelled !== null) captured.add(spelled);
+  };
+  for (const entry of capture.application.state_directories)
+    remember(entry.path);
+  for (const directory of capture.state.state_directories ?? [])
+    remember(directory);
+  for (const selected of capture.state.selected_paths ?? []) {
+    remember(selected.path);
+    remember(selected.physical);
+  }
+  for (const file of files.values()) remember(file.path);
+  return (path) => captured.has(path);
+};
+
 /** The launch command, opening the seed's one document when the app takes files. */
 export const planLaunch = (
   capture: DesktopApplicationCapture,
@@ -106,6 +133,7 @@ export const planLaunch = (
       exec: application.desktop_entry?.exec ?? null,
       documents: [...seeds.keys()].filter(isDocument).sort(),
       isDocument,
+      isCaptured: capturedLaunchPaths(capture, files, homeOf),
       spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
     },
   );
