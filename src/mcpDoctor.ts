@@ -69,7 +69,6 @@ interface McpDoctorOptions {
   readonly args: readonly string[];
   readonly cwd: string;
   readonly environment: Readonly<Record<string, string | undefined>>;
-  readonly deadlineMs?: number;
 }
 
 interface InventoryComparison {
@@ -112,10 +111,7 @@ export const runProductionMcpDoctor = async (options: McpDoctorOptions) => {
       },
     };
   const expectation = doctorExpectationForEnvironment(options.environment);
-  const budget = appliedDoctorBudget(
-    parsedBudgets.value.doctor,
-    options.deadlineMs,
-  );
+  const budget = parsedBudgets.value.doctor;
   const budgetMs = budget.milliseconds;
   const deadline = performance.now() + budgetMs;
   const controller = new AbortController();
@@ -685,23 +681,3 @@ const doctorTransportDetail = (
     (cause instanceof SdkError && cause.code === SdkErrorCode.RequestTimeout);
   return timedOut ? `${message} ${mcpDoctorDeadlineRecovery(budget)}` : message;
 };
-
-/**
- * `deadlineMs` is a caller-selected applied deadline, used by tests. Omitted
- * means the budget resolved from `REA_MCP_DOCTOR_DEADLINE_MS`.
- */
-const appliedDoctorBudget = (
-  resolved: McpPhaseBudget,
-  deadlineMs: number | undefined,
-): McpPhaseBudget =>
-  deadlineMs === undefined
-    ? resolved
-    : {
-        ...resolved,
-        milliseconds: deadlineMs,
-        source:
-          deadlineMs === resolved.defaultMilliseconds &&
-          resolved.source === "default"
-            ? "default"
-            : "setting",
-      };
