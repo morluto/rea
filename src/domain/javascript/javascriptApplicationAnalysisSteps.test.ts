@@ -15,7 +15,6 @@ import {
 } from "./javascriptApplicationGraph.js";
 import {
   createJavaScriptSemanticGraph,
-  createImmutableJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   sealTransferredJavaScriptSemanticGraphSteps,
 } from "./javascriptSemanticGraph.js";
@@ -41,7 +40,7 @@ const ownedExample = () => {
       createImmutableJavaScriptApplicationGraphSteps(application),
     ),
     semantic_graph: complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     ),
   };
 };
@@ -179,7 +178,7 @@ describe("owned JavaScript graph validation", () => {
     ).toBe(false);
   });
 
-  it("keeps ordinary constructors mutable and clones inputs before sealing", () => {
+  it("keeps ordinary constructors mutable and seals independently owned inputs", () => {
     const input = example();
     const { graph_id: _applicationId, ...application } = input.graph;
     const { graph_id: _semanticId, ...semantic } = input.semantic_graph;
@@ -189,7 +188,9 @@ describe("owned JavaScript graph validation", () => {
     expect(Object.isFrozen(ordinarySemantic)).toBe(false);
     const applicationSteps =
       createImmutableJavaScriptApplicationGraphSteps(application);
-    const semanticSteps = createImmutableJavaScriptSemanticGraphSteps(semantic);
+    const semanticSteps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(semantic),
+    );
     application.limitations.push("Changed after factory input was cloned.");
     semantic.limitations.push("Changed after factory input was cloned.");
     expect(complete(applicationSteps)).toEqual(ordinaryApplication);
@@ -270,12 +271,16 @@ describe("owned JavaScript graph validation", () => {
     };
     const mutable = createJavaScriptSemanticGraph(semantic);
     const { graph_id: _mutableId, ...mutableInput } = mutable;
-    const steps = createImmutableJavaScriptSemanticGraphSteps(mutableInput);
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(mutableInput),
+    );
     expect(steps.next().done).toBe(false);
     steps.return(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(mutable)).toBe(false);
     const sealed = complete(
-      createImmutableJavaScriptSemanticGraphSteps(mutableInput),
+      sealTransferredJavaScriptSemanticGraphSteps(
+        structuredClone(mutableInput),
+      ),
     );
     expect(sealed).toEqual(mutable);
     expect(isValidatedImmutableJavaScriptSemanticGraph(sealed)).toBe(true);
@@ -301,7 +306,7 @@ describe("owned JavaScript result bindings", () => {
           ];
         }
         input.semantic_graph = complete(
-          createImmutableJavaScriptSemanticGraphSteps(semantic),
+          sealTransferredJavaScriptSemanticGraphSteps(semantic),
         );
       }
       expect(
@@ -332,7 +337,7 @@ describe("owned JavaScript result bindings", () => {
       ...semantic.nodes.slice(1),
     ];
     input.semantic_graph = complete(
-      createImmutableJavaScriptSemanticGraphSteps(semantic),
+      sealTransferredJavaScriptSemanticGraphSteps(semantic),
     );
     freezeJsonSnapshot(input);
     const steps = parseOwnedJavaScriptApplicationAnalysisSteps(input);

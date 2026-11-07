@@ -19,15 +19,15 @@ const README_FACT_FIXTURE_PATHS = [
   "docs/readme/README_ko.md",
   "docs/readme/README_ar.md",
   "website/locales/languages.json",
-  "docs/installation.md",
+  "docs/getting-started/installation.md",
   "AGENTS.md",
   ".github/pull_request_template.md",
 ] as const;
 
 const README_LINK_DRIFT_MUTATIONS = [
   [
-    "(../installation.md#supported-agents)",
-    "(../installation.md#missing-agents)",
+    "(../getting-started/installation.md#supported-agents)",
+    "(../getting-started/installation.md#missing-agents)",
   ],
   ["https://rea.tools/zh-CN/guides/", "https://rea.tools/zh-CN/missing/"],
   ["https://rea.tools/zh-CN/guides/", "https://rea.tools/zh-TW/guides/"],

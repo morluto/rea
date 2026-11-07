@@ -3,7 +3,7 @@
 This guide explains the runtime settings design for maintainers and developers:
 who owns each value, when an update takes effect, how providers enforce it, and
 how to extend the system. The public tool contract is in
-[MCP contracts](../mcp-contracts.md#editable-analysis-settings); recorded runtime
+[MCP contracts](../reference/mcp-contracts.md#editable-analysis-settings); recorded runtime
 checks and their limitations are in the
 [verification report](../verification/runtime-analysis-settings.md).
 
@@ -399,7 +399,7 @@ application points, and resulting behavior. Check that adapters deliver the
 canonical recovery guidance, with independent assertions for its underlying
 facts. Avoid freezing prose or deriving all expected values from the same
 registry used by the implementation; either can hide the wrong failure.
-See [test design](../testing.md#test-design-and-pruning) for the assertion policy.
+See [test design](../development/testing.md#test-design-and-pruning) for the assertion policy.
 
 Runtime checks cover atomic validation, stale writes, reset, runtime isolation,
 accepted-operation snapshots, and explicit argument precedence. Public MCP
