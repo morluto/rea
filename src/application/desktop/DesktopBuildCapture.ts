@@ -1,4 +1,7 @@
+import { z } from "zod";
+
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisCancelledError } from "../../domain/analysisErrorCore.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
 import { BUILD_PACKAGE_FILE } from "../../domain/desktop/appBuild.js";
 import {
@@ -18,6 +21,7 @@ import {
   controller,
   errorText,
   refused,
+  runRea,
   WORK,
   type Answer,
 } from "./DesktopBuildCommands.js";
@@ -39,6 +43,62 @@ const NOT_RUNNING = [
   "No capture is running on this computer.",
   "Start one with start_build_capture.",
 ] as const;
+
+const exportOptionsSchema = z.object({
+  options: z.object({ properties: z.record(z.string(), z.unknown()) }),
+});
+
+/** Check the installed runtime's advertised export contract before capturing the user's work. */
+const checkExportRuntime = async (
+  computer: ControlledComputer,
+  signal: AbortSignal,
+): Promise<Result<void, AnalysisError>> => {
+  try {
+    const path = `${WORK}/export-schema.json`;
+    const bytes = await runRea(
+      computer,
+      ["export-desktop-application", "--schema", "--json"],
+      { stdout: path, timeoutS: 30, signal },
+    );
+    const content = (await computer.homeFiles([path], bytes, signal)).get(path);
+    if (content === undefined)
+      return err(
+        adapterError(
+          START,
+          "The build computer did not return its REA export schema.",
+        ),
+      );
+    const schema = exportOptionsSchema.safeParse(
+      JSON.parse(content.toString("utf8")),
+    );
+    if (!schema.success)
+      return err(
+        adapterError(
+          START,
+          "The build computer's REA returned an invalid export schema.",
+        ),
+      );
+    if (!("syntheticSeed" in schema.data.options.properties))
+      return err(
+        refused(
+          START,
+          "The REA runtime in this build computer does not support synthetic seeds required by build export.",
+          "Pack a current REA with npm run pack:build-computer-runtime, set REA_BUILD_COMPUTER_REA_ARCHIVE to the new archive, and start a new build computer.",
+        ),
+      );
+    return ok(undefined);
+  } catch (cause: unknown) {
+    return err(
+      signal.aborted
+        ? new AnalysisCancelledError(START, { cause: signal.reason })
+        : adapterError(
+            START,
+            `Could not read the build computer's REA export schema: ${errorText(cause)}`,
+            cause,
+          ),
+    );
+  }
+};
 
 type CheckpointTaken = Omit<
   Extract<DesktopCaptureEvent, { kind: "checkpoint" }>,
@@ -154,6 +214,8 @@ export class DesktopBuildCapture {
       !(await this.#release(previous, signal))
     )
       return err(unreleasedError(START, previous, undefined));
+    const runtime = await checkExportRuntime(this.computer, signal);
+    if (!runtime.ok) return runtime;
     this.#count += 1;
     const run: CaptureRun = {
       folder: `${WORK}/captures/${String(this.#count)}`,

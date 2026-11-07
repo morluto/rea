@@ -99,6 +99,7 @@ export const runRea = async (
     readonly work: string;
     readonly stdout: string;
     readonly files?: Readonly<Record<string, string>>;
+    readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
 ): Promise<number> => {
@@ -111,9 +112,9 @@ export const runRea = async (
         argv: [...argv],
         stdout: options.stdout,
         files: { ...options.files },
-        timeout_s: 1800,
+        timeout_s: options.timeoutS ?? 1800,
       },
-      { timeoutS: 1800, signal: options.signal },
+      { timeoutS: options.timeoutS ?? 1800, signal: options.signal },
     ),
   );
   if (answer.exit_code === undefined || answer.stdout_bytes === undefined)
