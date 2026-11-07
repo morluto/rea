@@ -434,4 +434,28 @@ describe("capturedHomePath", () => {
     );
     expect(path(`${home}/settings/other.txt`)).toBe("settings/other.txt");
   });
+
+  it("does not treat a database log name as a directory of other files", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+          {
+            path: `${home}/.config/notes`,
+            physical: `${home}/settings/notes`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes/settings.ini`)).toBe(
+      ".config/notes/settings.ini",
+    );
+    expect(path(`${home}/settings/notes-journal/today.txt`)).toBe(
+      "settings/notes-journal/today.txt",
+    );
+  });
 });
