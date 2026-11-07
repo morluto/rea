@@ -80,6 +80,29 @@ const view = async (
 };
 
 describe("browser scenario analysis views", () => {
+  it.each([600, 700, 800, 999])(
+    "summarizes observed nonstandard response status %s",
+    async (status) => {
+      const capture = scenarioCaptureFixture();
+      capture.events.items = capture.events.items.map((event) =>
+        event.kind === "response" ? { ...event, status } : event,
+      );
+      expect(await view(capture, { kind: "summary" })).toMatchObject({
+        summary: {
+          network: {
+            by_status_class: [
+              {
+                status_class: `${Math.floor(status / 100)}xx`,
+                transactions: 7,
+              },
+              { status_class: "failed", transactions: 1 },
+            ],
+          },
+        },
+      });
+    },
+  );
+
   it("counts inherited Evidence limitations alongside capture-local caveats", async () => {
     const capture = scenarioCaptureFixture();
     expect(capture.limitations).toEqual([]);
