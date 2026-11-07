@@ -137,17 +137,7 @@ const inflateSection = (
     RUST_UNCOMPRESSED_BYTES,
     bytes.length * RUST_INFLATE_RATIO,
   );
-  let result: ReturnType<typeof nodeCodecResult>;
-  try {
-    result = nodeCodecResult(
-      inflateSync(bytes, {
-        info: true,
-        maxOutputLength: allocationMaximum,
-      }),
-    );
-  } catch (cause) {
-    throw inflateFailure(cause, allocationMaximum);
-  }
+  const result = decodeSection(bytes, allocationMaximum, peFileAlignment);
   const compressedBytes = result.consumedBytes;
   if (compressedBytes > RUST_SECTION_BYTES)
     throw new RustAuditableResourceFailure(
@@ -187,10 +177,57 @@ const inflateSection = (
   return { bytes: result.buffer, compressedBytes };
 };
 
+const isAllocationRefusal = (cause: unknown): boolean =>
+  cause instanceof Error &&
+  "code" in cause &&
+  String(cause.code) === "ERR_BUFFER_TOO_LARGE";
+
+/**
+ * Decode one section within a bounded allocation.
+ * The storage-based bound admits at most `storage * ratio` inflated bytes, which
+ * is never below the consumed-stream bound. A PE section padded to its file
+ * alignment therefore hits that guard on streams the ratio itself would refuse
+ * by a smaller margin, and the guard cannot name the consumed-stream limit
+ * because inflate reports only the ceiling it rejected. In that case decode once
+ * more inside the absolute ceiling so the post-decode check reports the limit
+ * that governs the stream rather than the padded storage.
+ */
+const decodeSection = (
+  bytes: Buffer,
+  allocationMaximum: number,
+  peFileAlignment: number | undefined,
+): ReturnType<typeof nodeCodecResult> => {
+  try {
+    return nodeCodecResult(
+      inflateSync(bytes, {
+        info: true,
+        maxOutputLength: allocationMaximum,
+      }),
+    );
+  } catch (cause) {
+    if (
+      !isAllocationRefusal(cause) ||
+      peFileAlignment === undefined ||
+      allocationMaximum >= RUST_UNCOMPRESSED_BYTES
+    )
+      throw inflateFailure(cause, allocationMaximum);
+    try {
+      return nodeCodecResult(
+        inflateSync(bytes, {
+          info: true,
+          maxOutputLength: RUST_UNCOMPRESSED_BYTES,
+        }),
+      );
+    } catch (retryCause) {
+      throw inflateFailure(retryCause, RUST_UNCOMPRESSED_BYTES);
+    }
+  }
+};
+
 const inflateFailure = (cause: unknown, maximum: number): Error => {
   const code =
     cause instanceof Error && "code" in cause ? String(cause.code) : "";
-  if (code === "ERR_BUFFER_TOO_LARGE")
+  if (isAllocationRefusal(cause))
     return new RustAuditableResourceFailure(
       { resource: "memory", reported_limits: { maximum_bytes: maximum } },
       "Inflated dependency JSON exceeds the size limit",

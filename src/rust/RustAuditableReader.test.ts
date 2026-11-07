@@ -2,11 +2,22 @@ import { deflateSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { rustAuditableMetadataSchema } from "../domain/rust/rustBinary.js";
 import {
+  RUST_INFLATE_RATIO,
   RUST_SECTION_BYTES,
+  RUST_UNCOMPRESSED_BYTES,
   readAuditableSection,
   RustAuditableFormatFailure,
   RustAuditableResourceFailure,
 } from "./RustAuditableReader.js";
+
+const paddedSection = (payload: Buffer, fileAlignment: number) => {
+  const compressed = deflateSync(payload, { level: 9 });
+  const stored = Buffer.alloc(
+    Math.ceil(compressed.length / fileAlignment) * fileAlignment,
+  );
+  compressed.copy(stored);
+  return { compressed, stored };
+};
 
 const section = (document: unknown) =>
   readAuditableSection(
@@ -223,6 +234,80 @@ it("stops an inflate that exceeds the section ratio", () => {
   expect(() =>
     readAuditableSection(".dep-v0", 0, Buffer.alloc(RUST_SECTION_BYTES + 1)),
   ).toThrow(/1 MiB/);
+});
+
+it("reports the consumed-stream limit when PE padding exceeds the storage bound", () => {
+  const fileAlignment = 512;
+  const payload = Buffer.from(
+    JSON.stringify({
+      packages: [{ name: "a".repeat(40_000), version: "1", source: "local" }],
+    }),
+  );
+  const { compressed, stored } = paddedSection(payload, fileAlignment);
+  // The padded storage admits less than the stream itself does, so the storage
+  // guard refuses first even though it is not the limit that governs the input.
+  expect(stored.length * RUST_INFLATE_RATIO).toBeLessThan(payload.length);
+  const expected = Math.min(
+    RUST_UNCOMPRESSED_BYTES,
+    compressed.length * RUST_INFLATE_RATIO,
+  );
+  const refusal = (bytes: Buffer, options?: { peFileAlignment: number }) => {
+    try {
+      readAuditableSection(".dep-v0", 0, bytes, options);
+    } catch (error) {
+      return error;
+    }
+    return undefined;
+  };
+  expect(refusal(stored, { peFileAlignment: fileAlignment })).toMatchObject({
+    constraint: {
+      resource: "memory",
+      reported_limits: { maximum_bytes: expected },
+    },
+  });
+  expect(refusal(compressed)).toMatchObject({
+    constraint: {
+      resource: "memory",
+      reported_limits: { maximum_bytes: expected },
+    },
+  });
+});
+
+it("caps a padded PE refusal at the absolute inflate ceiling", () => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      packages: [
+        {
+          name: "a".repeat(RUST_UNCOMPRESSED_BYTES + 1024),
+          version: "1",
+          source: "local",
+        },
+      ],
+    }),
+  );
+  const { stored } = paddedSection(payload, 512);
+  expect(() =>
+    readAuditableSection(".dep-v0", 0, stored, { peFileAlignment: 512 }),
+  ).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: RUST_UNCOMPRESSED_BYTES },
+      },
+    }),
+  );
+});
+
+it("accepts a padded PE section whose stream stays inside the ratio", () => {
+  const payload = Buffer.from(
+    JSON.stringify({
+      packages: [{ name: "sample", version: "0.1.0", source: "local" }],
+    }),
+  );
+  const { compressed, stored } = paddedSection(payload, 512);
+  expect(
+    readAuditableSection(".dep-v0", 0, stored, { peFileAlignment: 512 }),
+  ).toMatchObject({ compressed_bytes: compressed.length });
 });
 
 it("retains the compressed-stream limit for a PE section with padding", () => {

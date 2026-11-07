@@ -12,7 +12,11 @@ import {
 import { readRustBinaryImage } from "../../../src/rust/RustBinaryImage.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import { readGoBinaryImage } from "../../../src/go/GoBinaryImage.js";
-import { RustAuditableFormatFailure } from "../../../src/rust/RustAuditableReader.js";
+import {
+  RUST_INFLATE_RATIO,
+  RUST_UNCOMPRESSED_BYTES,
+  RustAuditableFormatFailure,
+} from "../../../src/rust/RustAuditableReader.js";
 
 const packages = [
   {
@@ -208,6 +212,29 @@ it("recognizes zero-virtual-size PE raw padding without accepting payload junk",
   unknownAlignment.writeUInt32LE(0, 188);
   expect(() => readRustBinaryImage(unknownAlignment)).toThrow(
     /bytes after the zlib stream/u,
+  );
+});
+
+it("reports the consumed-stream limit for a padded zero-virtual-size PE section", () => {
+  const entry = 264;
+  const payload = rustDependencyPayload({
+    packages: [{ name: "a".repeat(40_000), version: "1", source: "local" }],
+  });
+  const bytes = createRustImage({ format: "pe", payload });
+  bytes.writeUInt32LE(0, entry + 8); // VirtualSize unknown: storage decides.
+  bytes.writeUInt32LE(512, entry + 16);
+  bytes.writeUInt32LE(512, 188); // Optional-header FileAlignment.
+  const expected = Math.min(
+    RUST_UNCOMPRESSED_BYTES,
+    payload.length * RUST_INFLATE_RATIO,
+  );
+  expect(() => readRustBinaryImage(bytes)).toThrow(
+    expect.objectContaining({
+      constraint: {
+        resource: "memory",
+        reported_limits: { maximum_bytes: expected },
+      },
+    }),
   );
 });
 
