@@ -91,15 +91,19 @@ REA advertises canonical names such as `binary_session`. The MCP host decides
 how to expose them to its model: a name such as `mcp__rea__binary_session` is a
 client convention, not a prefix REA can enforce. Use the active client's tool
 listing and server association to find the operation. A valid registration or
-installed skill does not prove that those tools reached the model. Doctor reports
-live-server identity as unknown; query `binary_session` through the active client
-to observe the running server's identity.
+installed skill does not prove that those tools reached the model. Doctor's
+`registration:<client>` check verifies REA's registration payload and launcher
+path; it does not verify the tool names the host exposes or the host's
+permission rules. It reports live-server identity as unknown; query
+`binary_session` through the active client to observe the running server's
+identity.
 
-If a client or fork exposes several servers under the same prefix, a wildcard
-for that prefix does not isolate REA permissions. Inspect that client's actual
-tool names and approval rules before selecting a permission scope. REA setup
-does not repair a client's naming behavior or infer permission drift from an
-unfamiliar prefix. The unavailable fork reported in
+Confirm the names the client advertises for the `rea` server key, from its tool
+listing or UI, and allowlist exactly those names. Do not allowlist a
+product-wide pattern such as `mcp__claude__*` when the client pins one prefix
+for every MCP server: it grants permission to all of them, not REA. REA setup
+does not repair a client's naming behavior, detect forks, or infer permission
+drift from an unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
 
 ## Hot/cold catalogs
@@ -338,6 +342,11 @@ and Claude Code reports that autocompact is thrashing. To avoid this:
 
 The sizes above come from REA's own `tools/list`. A live Claude Code session
 against DeepSeek's API is unverified.
+
+Claude Code's documented convention names tools after the registered server key,
+such as `mcp__rea__binary_session`. A fork may expose a different prefix, and
+doctor cannot detect that. Check the names the client advertises before writing
+allowlist entries; see [client tool names and discovery](#client-tool-names-and-discovery).
 
 For a client whose stdio reader rejects the complete catalog frame, set
 `"REA_MCP_OUTPUT_SCHEMA_PROFILE": "compact"` to bound every advertised output
