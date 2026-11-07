@@ -1028,7 +1028,8 @@ listed in `omitted_fields`; diagnostics, remediation and all candidate
 capabilities remain available with `detail: "complete"`. The first version
 covers tools whose every required operation is declared by a deep provider;
 other tools, unknown names, and tools hidden by `REA_MCP_TOOL_FAMILIES` return
-an input error.
+an input error. Requirements, acceptance and scope are in the
+[operation-focused provider discovery specification](../specs/providers/operation-provider-discovery/spec.md).
 
 `get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
 Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,
