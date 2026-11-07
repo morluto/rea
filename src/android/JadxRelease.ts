@@ -13,8 +13,13 @@ export const JADX_BRIDGE_IDENTITY = Object.freeze({
   version: "10",
 });
 
-/** Remediation when `REA_JADX_MCP_JAR` is missing or not an absolute path. */
-export const JADX_JAR_CONFIGURATION_REMEDIATION = `Set REA_JADX_MCP_JAR to the absolute path of a caller-supplied jadx-headless-mcp ${JADX_RELEASE.version} JAR. REA does not download or install it.`;
+/**
+ * Remediation when `REA_JADX_MCP_JAR` is missing, not an absolute path, or not
+ * the audited release. It names the exact asset and digest because the upstream
+ * project has since renamed its JAR and package layout, so a search by project
+ * name alone finds incompatible artifacts.
+ */
+export const JADX_JAR_CONFIGURATION_REMEDIATION = `Set REA_JADX_MCP_JAR to the absolute path of a caller-supplied jadx-headless-mcp ${JADX_RELEASE.version} JAR: download ${JADX_RELEASE.url} and verify that its SHA-256 is ${JADX_RELEASE.sha256}. REA does not download or install it.`;
 
 /** Remediation when the selected Java runtime cannot satisfy the JADX bridge. */
 export const JADX_JAVA_RUNTIME_REMEDIATION =
