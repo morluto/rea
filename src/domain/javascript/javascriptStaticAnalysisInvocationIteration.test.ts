@@ -192,3 +192,35 @@ it("does not turn a mutated local callable into a loader candidate", () => {
   expect(result.electron.native_addon_bindings).toEqual([]);
   expect(result.parse_status).toBe("complete");
 });
+
+it.each(["fixture.cjs", "fixture.MJS"])(
+  "does not invent nested loader requests after an inner invocation member is replaced: %s",
+  (path) => {
+    const parse = (source: string) => {
+      const parsed = parseJavaScriptSource(source, path);
+      if (parsed === null) throw new Error("fixture did not parse");
+      return analyzeParsedJavaScriptStaticSource(source, parsed);
+    };
+    const changed = parse(
+      'require.call=custom;const addon=require.call.call(require,"./receiver.cjs","./actual.node");',
+    );
+    expect(
+      changed.references.every(
+        (ref) =>
+          ref.specifier !== "./actual.node" &&
+          ref.specifier !== "./receiver.cjs",
+      ),
+    ).toBe(true);
+    expect(changed.electron.native_addon_bindings).toEqual([]);
+    const intact = parse('require.call.call(require,null,"./actual.node");');
+    expect(intact.references).toContainEqual(
+      expect.objectContaining({
+        kind: "require",
+        specifier: "./actual.node",
+        ...(path.endsWith(".MJS")
+          ? { loader_authority: "candidate" }
+          : { loader: "commonjs-loader" }),
+      }),
+    );
+  },
+);

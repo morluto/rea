@@ -182,6 +182,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "upper-alias.MJS":
         'var module; const dep = require("./dep.cjs"); module.exports = dep;',
       "upper-var-export.MJS": "var exports; exports.name = 42;",
+      "nested-mutated.MJS":
+        'require.call=custom;require.call.call(require,"./receiver.cjs","./invented.node");',
+      "nested-mutated.cjs":
+        'require.call=custom;require.call.apply(require,["./receiver.cjs","./invented.node"]);',
       "upper-wrapper.CJS": source,
       "lower-module.mjs": source,
       "lower-wrapper.cjs": source,
@@ -198,6 +202,18 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     const result = await analyzeJavaScriptDirectory(surface, cli, root);
     expect(result.statistics.parse_failures).toBe(0);
     expectUnknownLoaderCandidates(result.graph);
+    for (const path of ["nested-mutated.MJS", "nested-mutated.cjs"]) {
+      expect(
+        result.graph.edges.some(
+          ({ properties, evidence }) =>
+            (properties.specifier === "./receiver.cjs" ||
+              properties.specifier === "./invented.node") &&
+            evidence.location.available &&
+            evidence.location.value.kind === "source-range" &&
+            evidence.location.value.source === path,
+        ),
+      ).toBe(false);
+    }
     const modules = result.graph.nodes
       .filter((node) => node.kind === "javascript-module")
       .flatMap((node) =>

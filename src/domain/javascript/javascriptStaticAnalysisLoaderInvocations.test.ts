@@ -494,3 +494,23 @@ it("retains unknown historical .js loader scope until a package manifest establi
       }),
     ]);
 });
+
+it.each(["main.cjs", "main.MJS"])(
+  "does not use an unproven invocation receiver as a dependency: %s",
+  (path) => {
+    for (const source of [
+      'require.call=custom;require.call("./receiver.cjs","./actual.cjs");',
+      'require.call=custom;require.call.call(require,"./receiver.cjs","./actual.cjs");',
+      'require.call=custom;require.call.apply(require,["./receiver.cjs","./actual.cjs"]);',
+    ]) {
+      const result = parseReferenceSourceImports(
+        path,
+        new TextEncoder().encode(source),
+        "JavaScript",
+      );
+      expect(
+        result.relationships.filter(({ kind }) => kind === "requires"),
+      ).toEqual([]);
+    }
+  },
+);

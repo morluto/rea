@@ -733,43 +733,40 @@ export const semanticRequireCallAt = (
       arguments: undefined,
       sourceRelative: false,
     };
-  const calleeMember = unwrapJavaScriptExpression(node.callee).node;
-  if (
-    index !== undefined &&
-    (t.isMemberExpression(calleeMember) ||
-      t.isOptionalMemberExpression(calleeMember))
-  ) {
-    const key = semanticStaticPropertyKey(
-      calleeMember.property,
-      calleeMember.computed,
-    );
-    if (
-      (key === "call" || key === "apply" || key === "resolve") &&
-      requireLoaderValueAt(
-        calleeMember.object,
-        node,
-        state,
-        factoryBindingIds,
-      ) !== "local"
+  if (index !== undefined) {
+    let member = callee;
+    while (
+      t.isMemberExpression(member) ||
+      t.isOptionalMemberExpression(member)
     ) {
-      const effects = index.effectsForReferenceAt(node, calleeMember.object, [
-        key,
-      ]);
+      const key = semanticStaticPropertyKey(member.property, member.computed);
       if (
-        !effects.memberEffectsIndexed ||
-        effects.effects.some(
-          ({ kind, timing }) =>
-            timing !== "after" &&
-            (kind === "member-write" || kind === "escape"),
+        (key === "call" || key === "apply" || key === "resolve") &&
+        requireLoaderValueAt(member.object, node, state, factoryBindingIds) !==
+          "local"
+      ) {
+        const effects = index.effectsForReferenceAt(node, member.object, [key]);
+        if (
+          !effects.memberEffectsIndexed ||
+          effects.effects.some(
+            ({ kind, timing }) =>
+              timing !== "after" &&
+              (kind === "member-write" || kind === "escape"),
+          )
         )
-      )
-        return {
-          operation: "load",
-          loader: "unknown",
-          arguments: node.arguments,
-          sourceRelative: false,
-          memberUnproven: true,
-        };
+          return {
+            operation: "load",
+            loader: "unknown",
+            // A changed call/apply member has no trustworthy argument mapping.
+            arguments:
+              member === callee && key === "resolve"
+                ? node.arguments
+                : undefined,
+            sourceRelative: false,
+            memberUnproven: true,
+          };
+      }
+      member = unwrapJavaScriptExpression(member.object).node;
     }
   }
   if (semanticModuleRequireCallAt(node, state))
