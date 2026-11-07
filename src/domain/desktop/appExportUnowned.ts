@@ -329,8 +329,9 @@ const LEVELDB_MARKER = /^(?:CURRENT|MANIFEST-\d+)$/u;
 /**
  * Which home files the seed leaves out: the app's logs in its own state
  * (application state, or under one of its state directories), and lock
- * files; never one of `kept`, such as a document or a selected path, nor a
- * log under one. A `*.log` in browser storage, under a `leveldb` folder, or
+ * files. A log under `kept` stays. A lock stays only when `selectedFiles`
+ * names that lock itself, not when a parent folder or its document role does.
+ * A `*.log` in browser storage, under a `leveldb` folder, or
  * numbered beside a LevelDB database's `CURRENT` or `MANIFEST-*` is the
  * database's own journal of saved writes, so it is seeded.
  */
@@ -338,6 +339,7 @@ export const leftOutFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   stateDirectories: readonly string[],
   kept: readonly string[],
+  selectedFiles: readonly string[] = [],
 ) => {
   const recorded = new Set(files.keys());
   const nameOf = (home: string) => home.split("/").at(-1) ?? "";
@@ -358,7 +360,8 @@ export const leftOutFiles = (
       stateDirectoryOf(home, stateDirectories) !== undefined);
   const isLeftOut = (home: string) =>
     isLeftOutLog(home) ||
-    (!kept.includes(home) && isLockFile(home, stateDirectories, recorded));
+    (isLockFile(home, stateDirectories, recorded) &&
+      !selectedFiles.includes(home));
   return { isLeftOut, isLeftOutLog };
 };
 

@@ -215,9 +215,12 @@ describe("isLockFile", () => {
     expect(underFolder.isLeftOut("Documents/.notes.lock")).toBe(false);
     expect(underFolder.isLeftOut("Documents/household.gsb")).toBe(false);
     expect(
-      leftOutFiles(files, [], ["Documents/.household.gsb.lock"]).isLeftOut(
-        "Documents/.household.gsb.lock",
-      ),
+      leftOutFiles(
+        files,
+        [],
+        ["Documents/.household.gsb.lock"],
+        ["Documents/.household.gsb.lock"],
+      ).isLeftOut("Documents/.household.gsb.lock"),
     ).toBe(false);
   });
 
