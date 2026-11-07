@@ -22,6 +22,7 @@ import {
   byteEntropySchema,
   computeBlockEntropy,
   entropyFromCounts,
+  wholeFileByteCounts,
   inspectByteEntropyInputSchema,
   mergeEntropyRuns,
   type ByteEntropy,
@@ -254,7 +255,7 @@ export class ByteEntropyService {
           // outside the selected window. Every admitted power-of-two block
           // size divides this buffer, so only the window's final block is short.
           const buffer = Buffer.alloc(65_536);
-          const counts = new Uint32Array(256);
+          const counts = wholeFileByteCounts();
           const hash = createHash("sha256");
           let position = 0;
           while (position < size) {
