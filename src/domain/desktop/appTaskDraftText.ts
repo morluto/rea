@@ -173,6 +173,31 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
 
 /** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
 const MAX_TAG_CLIMB = 3;
+/** A formatting run a later save may split, merge, or drop while keeping the paragraph. */
+const RUN_TAG = /^(?:a|b|c|em|i|span|strong|tspan|u)$/u;
+
+/** The tag a diff pointer's last step names, without a namespace prefix. */
+const tagOf = (pointer: string) =>
+  (
+    /\[name=(?<name>[^\][]+)/u.exec(pointer.split("/").at(-1) ?? "")?.groups
+      ?.name ?? ""
+  )
+    .split(":")
+    .at(-1) ?? "";
+
+/**
+ * Clean places for a text check, innermost first. A formatting run is left
+ * out when a paragraph or other element remains, so the check does not depend
+ * on a run a later save can drop.
+ */
+const withoutRuns = (
+  chain: readonly string[],
+  noisy: (element: string) => boolean,
+): string[] => {
+  const clean = chain.filter((element) => !noisy(element));
+  const content = clean.filter((element) => !RUN_TAG.test(tagOf(element)));
+  return content.length > 0 ? content : clean;
+};
 
 /** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
 const holdsNoisyText = (value: JsonValue | undefined): boolean => {
@@ -210,10 +235,30 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
   let named = current;
   while (!namedByAttribute(named)) {
     const parent = parentBelowRoot(named);
-    if (parent === undefined)
+    if (parent === undefined) {
+      const stopped = parentOf(named);
+      const chain = [...passed, named].filter(
+        (element, index, all) => all.indexOf(element) === index,
+      );
+      // A record directly under the document can still hold a save time. Leave a formatting run out when the paragraph remains.
+      if (
+        stopped !== undefined &&
+        holdsNoisyText(resolvePointer(ends.final, stopped))
+      ) {
+        const narrower = withoutRuns(chain, (element) =>
+          holdsNoisyText(resolvePointer(ends.final, element)),
+        );
+        if (narrower.length > 0)
+          return narrower.map((element) => ({
+            element,
+            pointer: element,
+            identifier: false,
+          }));
+      }
       return [current, ...[...passed.slice(1), named].slice(0, MAX_TAG_CLIMB)]
         .filter((element, index, all) => all.indexOf(element) === index)
         .map((element) => ({ element, pointer: element, identifier: false }));
+    }
     passed.push(named);
     named = parent;
   }
@@ -221,9 +266,12 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
     holdsNoisyText(resolvePointer(ends.final, element));
   // An ancestor whose text joins a timestamp fails a later save that only restamps it.
   if (noisy(named)) {
-    const narrower = [current, ...passed].filter(
-      (element, index, all) =>
-        all.indexOf(element) === index && element !== named && !noisy(element),
+    const narrower = withoutRuns(
+      [...passed].filter(
+        (element, index, all) =>
+          all.indexOf(element) === index && element !== named,
+      ),
+      noisy,
     );
     if (narrower.length > 0)
       return narrower.map((element) => ({

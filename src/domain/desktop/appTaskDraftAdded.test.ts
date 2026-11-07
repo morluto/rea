@@ -132,6 +132,22 @@ describe("draftTaskFiles for a named record that also holds a save time", () => 
       true,
     );
   });
+
+  it("checks the paragraph, which a later save keeps, when the new text sits in a run beside a save time", () => {
+    const box = (inner: string, modified: string) =>
+      `<doc><box name="target"><body><p>${inner}</p></body><modified>${modified}</modified></box></doc>`;
+    const before = box("<span>Old</span>", "2026-11-07T10:12:00Z");
+    const saved = box("<span>New</span>", "2026-11-07T10:12:00Z");
+    const unwrapped = box("New", "2026-11-08T09:00:00Z");
+    const file = xmlDraft(before, saved);
+
+    expect(file.suggested.map((check) => check.pointer)).toEqual([
+      "/root/children/[name=box]/children/[name=body]/children/[name=p]",
+    ]);
+    expect(passing(FILE, xml(unwrapped), file.suggested).every(Boolean)).toBe(
+      true,
+    );
+  });
 });
 
 describe("draftTaskFiles for a record only position names, removed whole", () => {
@@ -195,6 +211,26 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
       [false, false],
       [true, true],
     ]);
+  });
+
+  it("checks the name inside a nested field and leaves its save time out", () => {
+    const records = (extra: string) =>
+      `<records><record><field>Hannah</field></record>${extra}</records>`;
+    const added = `<record><details><name>Delphine</name><modified>2026-11-07T10:12:00Z</modified></details></record>`;
+    const before = records("");
+    const after = records(added);
+    const restamped = records(
+      added.replace("2026-11-07T10:12:00Z", "2026-11-08T09:00:00Z"),
+    );
+    const file = xmlDraft(before, after);
+    const values = file.suggested.flatMap((check) =>
+      check.kind === "text_contains" ? [check.value] : [],
+    );
+
+    expect(values).toEqual(["Delphine"]);
+    expect(passing(FILE, xml(restamped), file.suggested).every(Boolean)).toBe(
+      true,
+    );
   });
 
   it("suggests no check a cut view leaves undecided for a record only position names, added before the cut", () => {
