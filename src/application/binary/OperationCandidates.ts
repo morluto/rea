@@ -78,7 +78,11 @@ export const operationCandidates = (
     selected: candidate.selected,
     availability: providerStateSummary(candidate.availability),
     target_support: providerStateSummary(candidate.targetSupport),
-    declaration: candidateDeclaration(candidate.capabilities, requirements),
+    declaration: candidateDeclaration(
+      candidate.capabilities,
+      candidate.availability,
+      requirements,
+    ),
   }));
 
 /** Caller-visible requirement shape, so missing operations can be read in context. */
@@ -106,13 +110,14 @@ const requirementsView = (requirements: Requirements) =>
 
 const candidateDeclaration = (
   capabilities: readonly CapabilityDescriptor[],
+  readiness: AnalysisProviderCandidateStatus["availability"],
   requirements: ToolProviderRequirements,
 ) => {
   const descriptors = new Map<string, CapabilityDescriptor>(
     capabilities.map((descriptor) => [descriptor.operation, descriptor]),
   );
   const operations = requiredOperations(requirements).map((operation) =>
-    declarationOf(operation, descriptors.get(operation)),
+    declarationOf(operation, descriptors.get(operation), readiness),
   );
   const byOperation = new Map(
     operations.map((declaration) => [declaration.operation, declaration]),
@@ -182,13 +187,21 @@ const evaluate = (
   };
 };
 
+/**
+ * Some providers mark every declared operation unavailable with their own
+ * readiness rejection while they are not ready. That is the readiness fact
+ * already reported in availability, not a limit of the operation, so such an
+ * operation counts as declared. Any other unavailability, including an
+ * operation-specific limit without a code, stays unavailable.
+ */
 const declarationOf = (
   operation: string,
   descriptor: CapabilityDescriptor | undefined,
+  readiness: AnalysisProviderCandidateStatus["availability"],
 ): OperationDeclaration =>
   descriptor === undefined
     ? { operation, status: "not_declared" }
-    : descriptor.available
+    : descriptor.available || repeatsReadiness(descriptor, readiness)
       ? { operation, status: "available" }
       : {
           operation,
@@ -196,6 +209,14 @@ const declarationOf = (
           reason: descriptor.reason,
           availability_code: descriptor.availabilityCode ?? null,
         };
+
+const repeatsReadiness = (
+  descriptor: Extract<CapabilityDescriptor, { readonly available: false }>,
+  readiness: AnalysisProviderCandidateStatus["availability"],
+): boolean =>
+  readiness.status === "unavailable" &&
+  descriptor.availabilityCode !== undefined &&
+  descriptor.availabilityCode === readiness.code;
 
 const requiredOperations = (requirements: ToolProviderRequirements) => {
   const groups =

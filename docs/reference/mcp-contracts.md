@@ -1016,7 +1016,10 @@ in summary), `selected`, and `declaration`, the provider's static declaration
 of each required operation as `available`, `unavailable` with its reason, or
 `not_declared`, with `missing_operations` and per-mode status where relevant.
 None of these implies another: a declared operation on an unavailable provider,
-or `unknown` target support while no target is open, stays as reported. The
+or `unknown` target support while no target is open, stays as reported. An
+operation that a provider marks unavailable only with its own readiness
+rejection code counts as declared, because that readiness is already reported
+in `availability`; an operation-specific limit stays `unavailable`. The
 view does not select, open or switch a provider, retry the refused call, or
 change the session or Evidence. `tool_availability` keeps only the requested
 tool's entry. `analysis_provider_candidates` and other tools are omitted and

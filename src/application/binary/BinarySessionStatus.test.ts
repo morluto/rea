@@ -7,6 +7,7 @@ import type {
 } from "../AnalysisProvider.js";
 import { z } from "zod";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { ProviderRejectionCode } from "../../domain/providerSelection.js";
 import {
   analysisProviderCandidate,
   analysisProviderCandidateSummary,
@@ -80,9 +81,7 @@ type DescriptorOptions = {
   | {
       readonly available: false;
       readonly reason?: string;
-      readonly availabilityCode?:
-        | "architecture_unsupported"
-        | "unsupported_host";
+      readonly availabilityCode?: ProviderRejectionCode;
     }
 );
 
@@ -1385,4 +1384,86 @@ describe("binary session operation projection in a resource-only session", () =>
       expect(status).toMatchObject({ analysis_provider_candidates: [] });
     }
   });
+});
+
+describe("binary session operation declarations under provider readiness", () => {
+  const unready = (
+    provider: ProviderIdentity,
+    capabilities: readonly CapabilityDescriptor[],
+  ): AnalysisProviderCandidateStatus => ({
+    ...candidate(provider, capabilities),
+    availability: {
+      status: "unavailable",
+      code: "not_configured",
+      reason: "Set the provider configuration.",
+      remediation: "Configure the provider.",
+      diagnostics: {},
+    },
+    selected: false,
+  });
+  const declarationsOf = async (
+    candidates: readonly AnalysisProviderCandidateStatus[],
+  ) =>
+    operationStatusSchema
+      .parse(
+        await projectStatus([], candidates, {
+          detail: "operation",
+          operation: "search_strings",
+          deepOperations: ["search_strings"],
+        }),
+      )
+      .operation_candidates.map(({ provider, availability, declaration }) => [
+        provider.id,
+        availability.code,
+        declaration.operations,
+      ]);
+
+  it("does not report an unconfigured provider's declared operation as missing", async () => {
+    // The capability repeats the provider's own readiness code, as IDA and
+    // Kuna report while unconfigured.
+    const gated = descriptor(providerA, "search_strings", [], {
+      available: false,
+      reason: "Set the provider configuration.",
+      availabilityCode: "not_configured",
+    });
+    expect(await declarationsOf([unready(providerA, [gated])])).toEqual([
+      [
+        "provider-a",
+        "not_configured",
+        [{ operation: "search_strings", status: "available" }],
+      ],
+    ]);
+  });
+
+  it.each([
+    ["an operation-specific limitation", undefined, false],
+    ["a different rejection than the provider's", "runtime_unavailable", false],
+    ["the same code while the provider is ready", "not_configured", true],
+  ] as const)(
+    "keeps %s as an unavailable declaration",
+    async (_name, availabilityCode, providerReady) => {
+      const limited = descriptor(providerB, "search_strings", [], {
+        available: false,
+        reason: "Search is limited for Provider B.",
+        ...(availabilityCode === undefined ? {} : { availabilityCode }),
+      });
+      const status = providerReady
+        ? candidate(providerB, [limited])
+        : unready(providerB, [limited]);
+      expect(await declarationsOf([status])).toEqual([
+        [
+          "provider-b",
+          providerReady ? null : "not_configured",
+          [
+            {
+              operation: "search_strings",
+              status: "unavailable",
+              reason: "Search is limited for Provider B.",
+              availability_code: availabilityCode ?? null,
+            },
+          ],
+        ],
+      ]);
+    },
+  );
 });
