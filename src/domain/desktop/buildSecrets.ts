@@ -15,6 +15,8 @@ export const buildSecretHandleSchema = z
 const MIN_SECRET_CHARACTERS = 8;
 /** The most characters one secret holds, as one typed field takes. */
 export const MAX_SECRET_CHARACTERS = 1024;
+/** The most characters a setting's secret holds: a withheld file's bytes in base64. */
+export const MAX_SETTING_CHARACTERS = 64 * 1024;
 /** How much of a gzip file the scan decompresses to search inside it. */
 const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
 
@@ -27,13 +29,16 @@ export interface KnownSecret {
 /** What a result shows in place of a secret's value. */
 const secretPlaceholder = (handle: string): string => `<secret:${handle}>`;
 
-/** Why a secret file's text cannot be typed as a secret, or undefined when it can. */
-export const secretValueRefusal = (value: string): string | undefined => {
+/** Why a secret file's text cannot be used as a secret of at most `maxCharacters`, or undefined when it can. */
+export const secretValueRefusal = (
+  value: string,
+  maxCharacters = MAX_SECRET_CHARACTERS,
+): string | undefined => {
   const characters = [...value].length;
   if (characters < MIN_SECRET_CHARACTERS)
     return `it holds fewer than ${String(MIN_SECRET_CHARACTERS)} characters, too few for REA to tell it from ordinary text when it checks the bundle`;
-  if (characters > MAX_SECRET_CHARACTERS)
-    return `it holds more than ${String(MAX_SECRET_CHARACTERS)} characters`;
+  if (characters > maxCharacters)
+    return `it holds more than ${String(maxCharacters)} characters`;
   if (/\p{Cc}/u.test(value))
     return "it holds a control character, such as a line break inside it, which a keyboard does not type";
   return undefined;

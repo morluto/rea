@@ -51,7 +51,12 @@ const realCliOutputs = async (
   {
     exportRefused = false,
     extraContent = [],
-  }: { exportRefused?: boolean; extraContent?: readonly string[] } = {},
+    exportArgs = [],
+  }: {
+    exportRefused?: boolean;
+    extraContent?: readonly string[];
+    exportArgs?: readonly string[];
+  } = {},
 ) => {
   const capture = await writeCaptureFolder(
     install?.package === undefined
@@ -67,6 +72,7 @@ const realCliOutputs = async (
   const task = join(work, "task.json");
   await writeFile(task, JSON.stringify(BUILD_TASK));
   const bundle = join(work, "bundle");
+  const withheld = join(work, "withheld");
   const draft = await serveCli([
     "describe-desktop-application-task",
     capture,
@@ -88,6 +94,9 @@ const realCliOutputs = async (
       "--extra-package",
       name,
     ]),
+    ...exportArgs,
+    "--withheld-copy",
+    withheld,
     "--json",
   ]);
   // A refusal prints its error; the exit code alone does not tell them apart.
@@ -102,6 +111,7 @@ const realCliOutputs = async (
     draft: join(work, "draft.json"),
     export: join(work, "export.json"),
     bundle,
+    withheld,
   };
 };
 
@@ -116,7 +126,8 @@ const realCliOutputs = async (
  * `exportRefused` when its export refuses BUILD_TASK, and `extraContent` the
  * retained bytes it holds beyond the note's; `selected` is what it records
  * when given exactly the `--state-path` of `path`, under the home;
- * `serverEnv` adds to the REA server's environment.
+ * `serverEnv` adds to the REA server's environment, and `exportArgs` to the
+ * real export's arguments.
  */
 export const buildCaptureFakes = async (
   options: {
@@ -132,6 +143,7 @@ export const buildCaptureFakes = async (
       readonly recorded: DesktopApplicationCapture;
     };
     readonly serverEnv?: Readonly<Record<string, string>>;
+    readonly exportArgs?: readonly string[];
   } = {},
 ) => {
   const outputs = await realCliOutputs(options.install, options.recorded, {
@@ -141,6 +153,9 @@ export const buildCaptureFakes = async (
     ...(options.extraContent === undefined
       ? {}
       : { extraContent: options.extraContent }),
+    ...(options.exportArgs === undefined
+      ? {}
+      : { exportArgs: options.exportArgs }),
   });
   const rea = await fakeBuildComputerRea(outputs);
   const chosen = options.selected;

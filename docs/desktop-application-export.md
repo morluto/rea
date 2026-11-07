@@ -308,6 +308,39 @@ tell the two apart, so the flag is the caller's word. `export_build_environment`
 passes it, since the building agent makes the seed in the build computer. The
 Evidence records it as `synthetic_seed`.
 
+## Withheld sign-in state
+
+`--withhold-from <checkpoint> --withhold-to <checkpoint>` withholds every file
+under the owned paths that changed after the first checkpoint up to the
+second, as the capture recorded its changes; `--withhold-path <file>` adds a
+home-relative file, such as one written at first launch. The draft
+(`describe-desktop-application-task`) takes the same options, leaves those
+files out and lists them as `withheld_files`; the export refuses a check that
+names one. Each withheld file present at the seed is left out of
+`envs/<name>/seed/` and becomes a secret setting:
+
+- the class declares `Settings` with a `SecretStr` field per file, and
+  `WITHHELD`, each field's home path;
+- `env.toml` sets each field to `env:REA_<APP>_<FILE>`, so agentenv refuses
+  the deploy, naming the variable, until it is set;
+- at first boot, before keeping the initial state, the class writes each file
+  from its setting, the file's bytes in base64, mode `0600`, so `data/reset`
+  restores it, and `data/get` serves it neither as a part nor in the views;
+- the README names each variable, with
+  `export REA_<APP>_<FILE>="$(base64 -w0 < ~/<file>)"` from the receiver's
+  own signed-in copy of the app.
+
+A withheld file larger than 48 KiB is refused, since its base64 must fit one
+environment variable. `--withheld-copy <folder>` copies the withheld files,
+as captured, into a new or empty folder outside the bundle. The result lists
+them as `withheld_files`, each with its `setting`, `variable` and `handle`.
+
+`--consent <file>` ships the person's consents, a `consent.json` that
+`record_build_consent` records, as the bundle's own `consent.json`.
+`--seed-withheld` seeds the withheld files after all, refused unless that
+file holds a `seed_sign_in` consent; the result lists them as
+`consented_files`, and the README says they are there with consent.
+
 ## Host name and user
 
 A seed can hold the capture host's name and the user's: Geany saved its mail

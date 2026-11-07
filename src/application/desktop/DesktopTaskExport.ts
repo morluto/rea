@@ -50,7 +50,7 @@ const DRAFT =
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage" | "withheld"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
@@ -146,6 +146,8 @@ const targetProblem = (
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those. For the bundle to own it, capture again naming it with ${STATE_PATH_INPUTS}`;
+  if ((target.withheld ?? []).some(({ file }) => file === check.file))
+    return `names ${check.file}, which the bundle withholds from its seed as sign-in or licence state, and data/get never serves; check a file the bundle seeds`;
   // What the check compares and names; its field names, kind and id label it.
   const { id: _id, kind: _kind, ...fields } = check;
   for (const value of Object.values(fields).flatMap(valueStrings)) {

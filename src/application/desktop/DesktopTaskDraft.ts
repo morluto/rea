@@ -1,6 +1,11 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
 import { DRAFT_PROMPT } from "../../domain/desktop/appTask.js";
+import {
+  withheldFiles,
+  type WithholdSelection,
+} from "../../domain/desktop/appWithheld.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { draftTaskFiles } from "../../domain/desktop/appTaskDraft.js";
 import { draftNotes } from "../../domain/desktop/appTaskDraftNotes.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
@@ -41,11 +46,16 @@ const numbered = <Check extends object>(
     ...check,
   }));
 
+/** Which checkpoints a draft reads, and which files it leaves out as withheld sign-in state. */
+export type DraftSelection = CheckpointSelection & {
+  readonly withhold?: WithholdSelection | undefined;
+};
+
 const draft = async (
   folder: string,
   readers: DesktopStateReaders,
   signal: AbortSignal | undefined,
-  selection: CheckpointSelection,
+  selection: DraftSelection,
 ): Promise<Evidence> => {
   const { evidence, capture } = await readDesktopCapture(folder, signal);
   const stateEvidence = await inspectDesktopApplicationState(
@@ -59,10 +69,22 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, dconf, paths } = exportedStateFiles(capture, state);
+  const { files, dconf, paths, homePath } = exportedStateFiles(capture, state);
+  const withheld = withheldFiles(
+    capture.state.checkpoints,
+    homePath,
+    paths,
+    selection.withhold ?? {},
+  );
+  if (!withheld.ok)
+    throw new AnalysisInputError(OPERATION, {
+      userMessage: `REA cannot withhold the sign-in state: ${withheld.error}.`,
+      conformsToInputContract: true,
+    });
+  const held = new Set(withheld.value);
   const drafted = draftTaskFiles(
     files,
-    (home) => isWithinAny(home, paths),
+    (home) => isWithinAny(home, paths) && !held.has(home),
     ends,
   );
   const notes = draftNotes(files, {
@@ -108,6 +130,7 @@ const draft = async (
       drafted.flatMap((file) => file.guards),
     ),
     notes,
+    withheld_files: withheld.value,
   } as unknown as JsonValue;
   signal?.throwIfAborted();
   return createEvidence(undefined, DESKTOP_PROVIDER, {
@@ -133,7 +156,7 @@ export const draftDesktopApplicationTask = async (
   folder: string,
   readers: DesktopStateReaders,
   signal?: AbortSignal,
-  selection: CheckpointSelection = {},
+  selection: DraftSelection = {},
 ): Promise<Evidence | AnalysisError> => {
   try {
     return await draft(folder, readers, signal, selection);

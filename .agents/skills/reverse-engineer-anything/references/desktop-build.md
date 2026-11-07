@@ -46,18 +46,38 @@ default.
 Stop, say what you need and wait only for:
 
 - a licence the app or its installer asks someone to accept: never accept it
-  yourself; name it and where to read it, and go on only once the person
-  says they accept it;
+  on your own; name it and where to read it, and go on only once the person
+  says they accept it. Then record their words with `record_build_consent`,
+  kind `licence`, and accept it on their behalf;
 - credentials: ask the person to write each secret, and nothing else, in a
   file named after a handle you choose, such as `keepassxc-master`, in
   `~/.config/rea/build-secrets/` on this host (under `$XDG_CONFIG_HOME` when
   it is set), readable only by them (`chmod 600`), and wait until they say it
   is there; then type it with `type_secret` (see Drive the app). Never ask
   for a password or key in chat, and never read, list or print that folder;
-- a signed-in state in the seed: ask before seeding one;
+- a signed-in state in the seed: by default the export withholds it (see
+  Sign-in and licence state). Seed it only when the person says the bundle
+  may hold it: record their words with `record_build_consent`, kind
+  `seed_sign_in`, and export with `seed_sign_in: true`;
 - an install this flow cannot do, below.
 
 Decide everything else yourself and note it in the report.
+
+## Sign-in and licence state
+
+What an app writes when someone signs in or activates a licence is withheld
+from the seed: the bundle's receiver supplies their own. Mark
+`pre-sign-in` with `mark_build_checkpoint` just before the sign-in or
+activation and `post-sign-in` just after, both before `seed`: every file
+under the owned paths that changed between them is withheld, and the draft
+leaves it out. A file the app writes at first launch, such as a trial's
+licence file, changes before you can mark anything: name it in
+`export_build_environment`'s `withhold`. The export lists each withheld file
+in `withheld_files` with the environment variable a deploy reads it from and
+the handle of the secret REA keeps its bytes in; a check may not name one.
+When an export refuses a seed for a credential it found by its shape, such
+as a private key the app generated, withhold that file too, or seed it only
+with the person's consent as above.
 
 ## Choose the install
 
@@ -530,7 +550,10 @@ check between stages to steer the edit: a solving agent never sees the
 checks. Give every `check_build_task` the task exactly as exported.
 
 1. `start_build_computer` with
-   `{"source": {"kind": "bundle", "path": "<bundle>"}}`. The app starts
+   `{"source": {"kind": "bundle", "path": "<bundle>"}}`, adding
+   `"settings": {"<variable>": "<handle>"}` for each of the export's
+   `withheld_files`, or the deploy is refused for want of them, and agentenv
+   keeps that bundle's build failed, so start from a fresh copy of it. The app starts
    with the seed's files in place and opens the seed's document when the
    seed holds exactly one and the app takes a file. When the export's
    `limitations` say it opens no document, open it from the prompt's path,

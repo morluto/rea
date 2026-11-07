@@ -7,7 +7,9 @@ licence key or a sign-in types it through REA without seeing it. The person
 keeps the secret in a file on the build host; the agent names it by a handle;
 REA types its value into the build computer. No tool result, action log,
 witness record or exported bundle holds the value, and an export refuses a
-bundle that does.
+bundle that does. The sign-in or licence state the app writes is withheld
+from the bundle and supplied by whoever runs it, unless the person consents
+to seed it, and a credential REA finds by its shape never ships unasked.
 
 ## Requirements
 
@@ -50,6 +52,35 @@ bundle that does.
   the folder.
 - The skill asks the person for a secret's file instead of the secret, types
   it only into a masked field, and stops when an export finds a secret.
+- Withheld state: files under the owned paths that changed after checkpoint
+  `pre-sign-in` up to `post-sign-in`, by the capture's recorded changes, and
+  those `withhold` names, are withheld. With only one of the two checkpoints
+  the export is refused. The draft leaves them out and lists them as
+  `withheld_files`; a task check naming one is refused. Each one present at
+  the seed is left out of it and becomes a `SecretStr` field of the class's
+  `Settings`, which `env.toml`'s `[settings]` sets to `env:REA_<APP>_<FILE>`,
+  so a deploy without the variable is refused with its name. At first boot,
+  before `keep_initial`, the class writes each from its setting, the file's
+  bytes in base64, mode `0600`; `data/get` serves it neither as a part nor in
+  the views, and `data/reset` restores it. The README names each variable and
+  how to fill it. A file larger than 48 KiB is refused. The CLI copies the
+  withheld files to `--withheld-copy`, outside the bundle, and the build host
+  keeps each one's base64 as the secret `rea-<app>-<file>` (`0600`), named in
+  the export's `withheld_files`.
+- Witness: `start_build_computer` from a bundle takes `settings`, each
+  `REA_*` variable mapped to a handle, whose value, up to 64 Ki characters,
+  REA puts in the deploy's environment only.
+- Consent: `record_build_consent` keeps the person's words, kind `licence` or
+  `seed_sign_in`, with the computer, `source: "relayed"`. The export writes
+  every consent into the bundle's `consent.json`. `seed_sign_in: true` seeds
+  the withheld files instead, refused unless a `seed_sign_in` consent was
+  recorded; the CLI refuses `--seed-withheld` without one in `--consent`.
+- Credentials by shape: PEM private keys and base64 DER ones in PKCS#8 (RSA,
+  EC, Ed25519) or PKCS#1, URL user info, `sk-` keys, GitHub, AWS, Slack,
+  Google and Hugging Face tokens, and JWTs. Every build tool result shows each
+  as `<credential:<kind>>`, the draft included. The export refuses a bundle
+  whose seed holds one, also inside a gzip file, unless the file was seeded
+  with consent, naming each file and kind, never the value.
 
 ## Non-goals
 
@@ -59,6 +90,6 @@ bundle that does.
   app derives from a secret, such as a session token after a sign-in.
 - Keeping the secrets folder from the building agent's own shell on the same
   host; the client's permission rules do that.
-- Accepting a licence, recording consent, leaving an app's sign-in or licence
-  state out of the seed, and secrets a bundle's receiver supplies at run
-  time: those come next.
+- Asking the person through the client itself: the agent relays their
+  words, so a consent is only as true as the agent's relay.
+- Withholding state outside the owned paths, which the bundle never seeds.

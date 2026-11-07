@@ -17,6 +17,7 @@ import {
 } from "./appExport.js";
 import { INSTALL_SCRIPT, type ExportPackageFile } from "./appExportInstall.js";
 import { isArmoredKey } from "./aptRepositories.js";
+import { buildSecretHandleSchema } from "./buildSecrets.js";
 import { DEBIAN_PACKAGE_NAME } from "./debianPackageFile.js";
 
 /** The Node.js release the build layer runs REA with: the one REA pins. */
@@ -131,6 +132,15 @@ export const buildSourceSchema = z.discriminatedUnion("kind", [
     path: absoluteLocalPathStringSchema.describe(
       "An agentenv bundle folder whose tasks/smoke.json deploys one computer, such as an exported one.",
     ),
+    settings: z
+      .record(
+        z.string().regex(/^REA_[A-Z0-9_]{1,60}$/u),
+        buildSecretHandleSchema,
+      )
+      .optional()
+      .describe(
+        "Each environment variable a withheld file's setting reads, as the export's withheld_files names it, mapped to the handle of the secret holding its value; REA supplies the value to the deploy and no result shows it.",
+      ),
   }),
 ]);
 export type BuildSource = z.output<typeof buildSourceSchema>;

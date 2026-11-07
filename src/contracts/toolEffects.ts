@@ -790,6 +790,11 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     accessesNetwork: true,
     idempotent: false,
   }),
+  // Keeps the person's consent with the computer for the export to ship.
+  record_build_consent: effects({
+    mutatesSession: true,
+    idempotent: false,
+  }),
   close_build_computer: effects({
     mutatesSession: true,
     launchesProcess: true,

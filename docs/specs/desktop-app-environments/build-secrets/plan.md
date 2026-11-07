@@ -17,3 +17,13 @@
 6. Contract, skill, the build computer guide and this spec; unit tests for
    the spellings and the files, and MCP boundary tests for typing, the
    witness record and the export.
+7. Withheld state: `appWithheld.ts` finds the files and names their
+   settings; `DesktopExportWithheld.ts` leaves them out of the seed, reads
+   them for the copy, and checks the consent; the class, `env.toml` and the
+   README declare them; the draft and the task admission leave them out.
+8. Host: the capture passes the sign-in window, the files named and the
+   consents to the draft and the export, keeps the withheld files as
+   secrets, and supplies a bundle's settings at its start;
+   `record_build_consent` records the person's words.
+9. Credentials: `credentialPatterns.ts` finds and redacts them; the build
+   tools' results redact them and the export refuses a seed that holds one.

@@ -47,7 +47,11 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
-import { DesktopBuildSecrets, typeSecret } from "./DesktopBuildSecrets.js";
+import {
+  DesktopBuildSecrets,
+  settingsEnvironment,
+  typeSecret,
+} from "./DesktopBuildSecrets.js";
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
@@ -199,7 +203,10 @@ const liveComputer = (
       capture: new DesktopBuildCapture(
         computer,
         source.kind === "request" ? source : undefined,
-        () => secrets.all(),
+        {
+          all: () => secrets.all(),
+          keep: (handle, bytes) => secrets.keep(handle, bytes),
+        },
       ),
       witness: new DesktopBuildWitness(computer, actions, settle, {
         bundle: source.kind === "bundle" ? source.path : undefined,
@@ -304,12 +311,10 @@ export class DesktopBuildComputers {
     this.#shared = { settle, secrets: this.#secrets };
   }
 
-  /** Text with each secret typed on this server's computers replaced by its handle. */
-  readonly redactText = (text: string): string => this.#secrets.redact(text);
-
-  /** A JSON value with each secret typed on this server's computers replaced by its handle. */
-  readonly redactJson = (value: JsonValue): JsonValue =>
-    this.#secrets.redactJson(value);
+  /** How results show the secrets typed on this server's computers, and credentials by their shape. */
+  get redaction(): Pick<DesktopBuildSecrets, "redact" | "redactJson"> {
+    return this.#secrets;
+  }
 
   async start(
     input: {
@@ -357,11 +362,9 @@ export class DesktopBuildComputers {
     progress: ProgressReporter | undefined,
   ): ReturnType<DesktopBuildComputers["start"]> {
     const { source } = input;
-    const environment = await resolveBuildComputerEnvironment(
-      this.environment,
-      process.platform,
-      this.defaults,
-    );
+    const resolved = await this.#environment(source);
+    if (!resolved.ok) return resolved;
+    const environment = resolved.value;
     let target: {
       readonly bundle: string;
       readonly name: string;
@@ -503,26 +506,10 @@ export class DesktopBuildComputers {
     // A secret is logged by its handle; only the computer receives its value.
     const logged = held.actions.begin(action, call.tool, call.arguments);
     if (action === "type_secret") {
-      const typed = await typeSecret(
-        this.#secrets,
-        computer,
-        String(call.arguments.secret),
-        signal,
-      );
+      const handle = String(call.arguments.secret);
+      const typed = await typeSecret(this.#secrets, computer, handle, signal);
       logged.settle(typed.outcome);
-      return typed.result.ok
-        ? ok({
-            value: {
-              computer_id: id,
-              action,
-              action_index: logged.index,
-              result: typed.result.value,
-            },
-            content: [
-              { type: "text", text: `${String(typed.result.value.summary)}.` },
-            ],
-          })
-        : typed.result;
+      return typed.answer(id, logged.index);
     }
     let result: DriverResult;
     try {
@@ -553,6 +540,20 @@ export class DesktopBuildComputers {
       },
       content: result.content,
     });
+  }
+
+  /** The helper's environment: the build settings, then each variable a bundle's withheld settings read, from its secret. */
+  async #environment(
+    source: BuildSource,
+  ): Promise<Result<Readonly<NodeJS.ProcessEnv>, AnalysisError>> {
+    const settings = await settingsEnvironment(this.#secrets, source);
+    if (!settings.ok) return settings;
+    const environment = await resolveBuildComputerEnvironment(
+      this.environment,
+      process.platform,
+      this.defaults,
+    );
+    return ok({ ...environment, ...settings.value });
   }
 
   /** Bring a computer down; one whose teardown is not confirmed stays held so close can be retried. */

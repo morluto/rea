@@ -126,6 +126,18 @@ export class DesktopBuildSteps {
     );
   }
 
+  recordConsent(
+    input: Parameters<BuildComputerSteps["capture"]["recordConsent"]>[0] & {
+      readonly computer_id: string;
+    },
+    signal: AbortSignal,
+  ) {
+    const { computer_id: id, ...consent } = input;
+    return this.#on(id, "record_build_consent", signal, (steps) =>
+      Promise.resolve(ok(steps.capture.recordConsent(consent))),
+    );
+  }
+
   checkTask(
     input: Parameters<DesktopBuildWitness["check"]>[0] & {
       readonly computer_id: string;

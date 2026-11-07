@@ -69,7 +69,7 @@ const withHeartbeat = async <Value>(
 };
 
 /** How results show secrets typed on this server's build computers: by their handles. */
-type Redactor = Pick<DesktopBuildComputers, "redactText" | "redactJson">;
+type Redactor = DesktopBuildComputers["redaction"];
 
 /** A result with each typed secret's value replaced by its handle, in its text and structured content; images pass as they are. */
 const redacted = (
@@ -79,7 +79,7 @@ const redacted = (
   ...result,
   content: result.content.map((block) =>
     block.type === "text"
-      ? { ...block, text: redact.redactText(block.text) }
+      ? { ...block, text: redact.redact(block.text) }
       : block,
   ),
   ...(result.structuredContent === undefined
@@ -173,7 +173,7 @@ export const registerDesktopBuildTools = (
   server: EvidenceMcpServer,
   computers: Pick<
     DesktopBuildComputers,
-    "start" | "act" | "close" | "steps" | "redactText" | "redactJson"
+    "start" | "act" | "close" | "steps" | "redaction"
   >,
   logger: Logger,
 ): void => {
@@ -183,7 +183,7 @@ export const registerDesktopBuildTools = (
     server,
     logger,
     contract: toolContract(name),
-    redact: computers,
+    redact: computers.redaction,
   });
   const steps = new DesktopBuildSteps(computers);
   registerForwarded(tool("start_build_computer"), (input, context) =>
@@ -219,6 +219,9 @@ export const registerDesktopBuildTools = (
     withHeartbeat(context, "check_build_task", (progress) =>
       steps.checkTask(input, context.mcpReq.signal, progress),
     ),
+  );
+  registerPlain(tool("record_build_consent"), (input, context) =>
+    steps.recordConsent(input, context.mcpReq.signal),
   );
   registerPlain(tool("close_build_computer"), (input) =>
     computers.close(input.computer_id),

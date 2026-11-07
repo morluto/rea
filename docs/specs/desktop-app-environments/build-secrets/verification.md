@@ -52,10 +52,85 @@ password.
   either computer's `docker logs` or any file in either container. A probe
   file holding the password's hex and UTF-16 was found by the same scan.
 
+## Withheld state, consent and credentials
+
+### Tests
+
+- `src/domain/desktop/appWithheld.test.ts`: the owned files changed in the
+  window, and those named; a window missing a checkpoint or out of order; a
+  path outside the owned paths; settings, variables and handles, a long path
+  hashed and like paths kept apart.
+- `src/domain/desktop/credentialPatterns.test.ts`: KeePassXC's KeeShare key
+  shape with a made-up key, PEM, JWT, URL user info and tokens found and
+  redacted; ordinary settings, digests, ids and images not; a gzip file's
+  inside read.
+- `src/application/desktop/DesktopExportWithheld.test.ts`: a withheld file
+  left out of the seed, declared a secret setting from `env:`, copied aside
+  and named in the README; seeding it refused without a consent and done with
+  one, `consent.json` shipped; a check on it refused; the draft leaving out
+  the window's files.
+- `src/desktop/ExportedAppPython.test.ts`: `_write_withheld` writes the
+  decoded bytes `0600` and `_views` leaves the file out.
+- `tests/boundary/mcp/buildWithheldMcp.test.ts`: the named file's bytes kept
+  as a `0600` secret and supplied to a witness's deploy by handle, a variable
+  other than `REA_*` refused; consent recorded and required for
+  `seed_sign_in`, and the sign-in window passed to the draft and the export;
+  one sign-in checkpoint alone refused; a seed holding a key refused by file
+  and kind; the draft showing `<credential:private-key>`.
+
+Each of these failed against the code before the change.
+
+### KeePassXC on an arm64 build host
+
+- Build: `pre-sign-in` marked, a database created with its password typed by
+  handle and saved, `post-sign-in` marked, which acknowledged
+  `Documents/e-test.kdbx` among its changes, then `seed`, a setting changed
+  and `end`. The draft listed `withheld_files: ["Documents/e-test.kdbx"]`,
+  and showed the KeeShare key KeePassXC generated as
+  `<credential:private-key>`.
+- Export: refused with `seed_sign_in` and no consent. Without it, the seed
+  held only `keepassxc.ini`; `env.toml` set `documents_e_test_kdbx` to
+  `env:REA_KEEPASSXC_DOCUMENTS_E_TEST_KDBX`; agentenv's `_declare` read the
+  setting as a required `writeOnly` string; the README named the variable;
+  and the host kept the database's base64 as the `0600` secret
+  `rea-keepassxc-documents-e-test-kdbx`.
+- Deploy without the variable: refused at the probe with
+  `Unresolved env:REA_KEEPASSXC_DOCUMENTS_E_TEST_KDBX reference`.
+- Witness, from a copy of the bundle with `settings` naming that handle: the
+  computer wrote `Documents/e-test.kdbx`, mode `0600`, byte for byte the kept
+  file; the agent opened it and unlocked it with `type_secret`; seed, after
+  edit, near miss and after reset held, and the file was still there after
+  the reset.
+- Leaks: no host file of the run but the secret's own, 146 in all, held the
+  password in any spelling; neither bundle held the database's bytes; and
+  neither computer's logs nor files held the password.
+
+- The same build, export and witness ran again on the final code with a new
+  password: every stage held, and 124 host files, both bundles and both
+  computers held neither the password nor the database's bytes.
+
+### Typora 1.14.9 on an arm64 build host
+
+- Installed from `typora_1.14.9_arm64.deb` by URL and SHA-256, on its trial.
+  Its licence file was `~/.config/Typora/rXMW4iG3Bl`, hex of
+  `{"SLicense":""}`; it was `mAxvdiPNmi` on an amd64 host, so the name
+  differs by machine. Typora writes it at first launch, before any
+  checkpoint, so the export named it in `withhold`: it was left out of the
+  84-file seed, declared as `REA_TYPORA_CONFIG_TYPORA_RXMW4IG3BL`, and kept
+  as the secret `rea-typora-config-typora-rxmw4ig3bl`.
+- Booted from the bundle's image with a made-up licence in the setting, the
+  initial state the class keeps before the app starts held the made-up file,
+  mode `0600`; Typora then found no valid licence and wrote an empty one over
+  the live file, which `data/reset` would put back.
+- A witness through `start_build_computer` failed agentenv's first-boot
+  probe (`P4 a click in frame space hits its cell`), also for a bundle of the
+  same capture exported without withholding, so no stage ran.
+
 ## Limits of this verification
 
 - Only a masked field was used: a field that shows its text shows a typed
   secret in screenshots and in the recording.
-- The draft showed a private key KeePassXC generated and wrote to its
-  settings between `seed` and `end`; no handle names such a value, so
-  neither redaction nor the export's search knows it.
+- A deploy refused for want of a variable leaves agentenv's build of that
+  bundle failed; a later run needs `agent-env env build` or a fresh copy of
+  the bundle.
+- The person's consent was relayed in a test; no person was asked.

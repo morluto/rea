@@ -362,6 +362,36 @@ after a sign-in, are not found. The agent's own shell on the build host can
 read the folder, so a client that should never see a secret also denies its
 tools that folder, for example with Claude Code's permission rules.
 
+Every build tool's result also shows a credential REA finds by its shape,
+such as a PEM or base64 DER private key, a JWT or a cloud token, as
+`<credential:<kind>>`, the task draft included; and `export_build_environment`
+refuses a bundle whose seed holds one, naming the file and its kind, unless
+the person consented to seed it.
+
+### Sign-in and licence state
+
+What an app writes when someone signs in or activates a licence stays out of
+the bundle. Mark `pre-sign-in` just before the sign-in and `post-sign-in` just
+after: `stop_build_capture`'s draft leaves out the files under the owned
+paths that changed between them and lists them as `withheld_files`, and
+`export_build_environment` withholds them, with any its `withhold` names,
+as [the export](desktop-application-export.md#withheld-sign-in-state) does.
+With only one of the two checkpoints the export is refused. The export's
+`withheld_files` gives each file's environment variable and the handle of a
+secret file, `rea-<app>-<file>`, `0600`, in which REA keeps the file's bytes
+in base64; nothing else on the host holds them. To witness the bundle,
+`start_build_computer` takes `"settings": {"<variable>": "<handle>"}` beside
+the bundle's `path`; REA reads each secret, up to 64 Ki characters, and puts
+it in the deploy's environment only. A variable must start with `REA_`.
+
+`record_build_consent` keeps a consent the person gave, in their words, with
+the computer: kind `licence` for a licence they accepted, which the agent
+then accepts for them, or `seed_sign_in` for letting the bundle hold their
+signed-in state. The export ships every consent as the bundle's
+`consent.json`, and `seed_sign_in: true` seeds the withheld files instead,
+refused without a `seed_sign_in` consent. The agent relays the person's
+words; REA cannot tell a relayed consent from one the person typed.
+
 ## Close
 
 `close_build_computer` ends REA's MCP session and closes the helper's stdin,

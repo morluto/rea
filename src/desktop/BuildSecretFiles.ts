@@ -1,5 +1,12 @@
 import { constants, type Stats } from "node:fs";
-import { lstat, open, readdir, type FileHandle } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  open,
+  readdir,
+  type FileHandle,
+} from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
@@ -10,8 +17,8 @@ import {
 } from "../domain/desktop/buildSecrets.js";
 import { err, ok, type Result } from "../domain/result.js";
 
-/** The most bytes a secret file may hold: the longest secret in UTF-8 and a line break. */
-const MAX_FILE_BYTES = MAX_SECRET_CHARACTERS * 4 + 2;
+/** The most bytes a secret file of at most `characters` may hold: those in UTF-8 and a line break. */
+const maxFileBytes = (characters: number) => characters * 4 + 2;
 
 /** The folder of secret files on the build host: `rea/build-secrets` under the XDG config folder, or `~/.config`. */
 export const buildSecretsDirectory = (
@@ -50,7 +57,10 @@ const folderRefusal = async (
 export const readBuildSecretFile = async (
   directory: string,
   handle: string,
-  { searchOnly = false }: { readonly searchOnly?: boolean } = {},
+  {
+    searchOnly = false,
+    maxCharacters = MAX_SECRET_CHARACTERS,
+  }: { readonly searchOnly?: boolean; readonly maxCharacters?: number } = {},
 ): Promise<Result<string, string>> => {
   const path = join(directory, handle);
   if (!buildSecretHandleSchema.safeParse(handle).success)
@@ -83,7 +93,7 @@ export const readBuildSecretFile = async (
       return err(
         `${path} can be read by other users; make it readable only by its owner with chmod 600.`,
       );
-    if (stats.size > MAX_FILE_BYTES)
+    if (stats.size > maxFileBytes(maxCharacters))
       return err(`${path} is larger than one secret.`);
     const bytes = await file.readFile();
     let text: string;
@@ -93,7 +103,7 @@ export const readBuildSecretFile = async (
       return err(`${path} is not UTF-8 text.`);
     }
     const value = text.replace(/\r?\n$/u, "");
-    const refusal = secretValueRefusal(value);
+    const refusal = secretValueRefusal(value, maxCharacters);
     return refusal === undefined
       ? ok(value)
       : err(`The secret in ${path} cannot be typed: ${refusal}.`);
@@ -111,4 +121,30 @@ export const listBuildSecretHandles = async (
   return names
     .filter((name) => buildSecretHandleSchema.safeParse(name).success)
     .sort();
+};
+
+/** Write a secret file only its owner reads, in a folder only they enter, replacing one already there; never through a link. */
+export const writeBuildSecretFile = async (
+  directory: string,
+  handle: string,
+  value: string,
+): Promise<void> => {
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const refusal = await folderRefusal(directory);
+  if (refusal !== undefined) throw new Error(refusal);
+  const file = await open(
+    join(directory, handle),
+    constants.O_WRONLY |
+      constants.O_CREAT |
+      constants.O_TRUNC |
+      constants.O_NOFOLLOW,
+    0o600,
+  );
+  try {
+    await file.chmod(0o600);
+    await file.writeFile(value);
+  } finally {
+    await file.close();
+  }
+  await chmod(directory, 0o700);
 };

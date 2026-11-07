@@ -6,10 +6,16 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { counted } from "../../domain/desktop/appExportUnowned.js";
 import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+  type BuildConsent,
+} from "../../domain/desktop/appWithheld.js";
+import {
   redactSecrets,
   secretsIn,
   type KnownSecret,
 } from "../../domain/desktop/buildSecrets.js";
+import { credentialsInBytes } from "../../domain/desktop/credentialPatterns.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
@@ -44,14 +50,34 @@ const exportResultSchema = z.looseObject({
   unscrubbed_files: z.array(z.string()),
   limitations: z.array(z.string()),
   task: jsonValueSchema,
+  // An export from before withheld files were listed has none.
+  withheld_files: z
+    .array(
+      z.looseObject({
+        file: z.string(),
+        variable: z.string(),
+        handle: z.string(),
+      }),
+    )
+    .default([]),
+  consented_files: z.array(z.string()).default([]),
 });
 
-/** What the agent asks the export for: its task, the folder here and, optionally, the environment's name. */
+/** What the agent asks the export for: its task, the folder here, optionally the environment's name, files to withhold, and whether to seed withheld state with the person's consent. */
 export interface BuildExportRequest {
   readonly task: z.output<typeof desktopTaskSchema>;
   readonly directory: string;
   readonly name?: string | undefined;
+  readonly withhold?: readonly string[] | undefined;
+  readonly seed_sign_in?: boolean | undefined;
 }
+
+/** A withheld file as the export reports it: the variable a deploy reads and the handle of the secret file REA keeps its bytes in. */
+type WithheldReport = {
+  readonly file: string;
+  readonly variable: string;
+  readonly handle: string;
+};
 
 /** An exported bundle brought back to this host. */
 export type ExportedBuild = {
@@ -65,7 +91,49 @@ export type ExportedBuild = {
   readonly recompressed_files: string[];
   readonly unscrubbed_files: string[];
   readonly limitations: string[];
+  readonly withheld_files: WithheldReport[];
+  readonly consented_files: string[];
 };
+
+/** What the bundle may not hold: secrets by value, anywhere, and, in seed files the person did not consent to, credentials by shape. */
+interface BundleGuard {
+  readonly secrets: readonly KnownSecret[];
+  readonly seed: string;
+  readonly consented: ReadonlySet<string>;
+}
+
+/** Why a fetched file is held back: the secrets it holds and the credentials a seed file holds. */
+const heldBack = (
+  file: { readonly path: string; readonly bytes: Buffer },
+  guard: BundleGuard,
+) => {
+  const seeded = file.path.startsWith(guard.seed)
+    ? file.path.slice(guard.seed.length)
+    : undefined;
+  return {
+    handles: [
+      ...new Set([
+        ...secretsIn(Buffer.from(file.path), guard.secrets),
+        ...secretsIn(file.bytes, guard.secrets),
+      ]),
+    ],
+    credentials:
+      seeded === undefined || guard.consented.has(seeded)
+        ? []
+        : credentialsInBytes(file.bytes),
+  };
+};
+
+/** The refusal of seed files holding credentials found by their shape: each file and the kinds, never the values. */
+const credentialsRefusal = (
+  holding: readonly { readonly path: string; readonly credentials: string[] }[],
+  directory: string,
+) =>
+  refused(
+    EXPORT,
+    `The bundle's seed holds credentials REA finds by their shape: ${counted(holding.map(({ path, credentials }) => `${path} (${credentials.join(", ")})`))}, so REA wrote none of it to ${directory}.`,
+    "Withhold each such file with export_build_environment's withhold, so the deploy takes it from the environment, or, if the person consents to ship it, withhold it, record their consent with record_build_consent, kind seed_sign_in, and export with seed_sign_in.",
+  );
 
 /** The refusal of a bundle whose files hold secrets: each secret's handle and the files, the values in their names redacted. */
 const secretsRefusal = (
@@ -92,14 +160,15 @@ const writeBundle = async (
   bundle: string,
   {
     directory,
-    secrets,
-  }: { readonly directory: string; readonly secrets: readonly KnownSecret[] },
+    guard,
+  }: { readonly directory: string; readonly guard: BundleGuard },
   signal: AbortSignal,
 ): Promise<
   Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
 > => {
   let fetched = { files: 0, bytes: 0 };
-  const holding: { path: string; handles: string[] }[] = [];
+  const holding: { path: string; handles: string[]; credentials: string[] }[] =
+    [];
   const unclosed = await writeOutputTree(
     directory,
     async (tree) => {
@@ -108,15 +177,10 @@ const writeBundle = async (
         bundle,
         {
           file: async (file) => {
-            // A file holding a secret is kept back, and the bundle refused once all are read.
-            const handles = [
-              ...new Set([
-                ...secretsIn(Buffer.from(file.path), secrets),
-                ...secretsIn(file.bytes, secrets),
-              ]),
-            ];
-            if (handles.length > 0) {
-              holding.push({ path: file.path, handles });
+            // A file holding a secret or a credential is kept back, and the bundle refused once all are read.
+            const held = heldBack(file, guard);
+            if (held.handles.length > 0 || held.credentials.length > 0) {
+              holding.push({ path: file.path, ...held });
               return;
             }
             await tree.write(
@@ -129,7 +193,10 @@ const writeBundle = async (
         },
         signal,
       );
-      if (holding.length > 0) throw secretsRefusal(holding, secrets, directory);
+      const secret = holding.filter(({ handles }) => handles.length > 0);
+      if (secret.length > 0)
+        throw secretsRefusal(secret, guard.secrets, directory);
+      if (holding.length > 0) throw credentialsRefusal(holding, directory);
     },
     { operation: EXPORT, field: "directory" },
     signal,
@@ -145,6 +212,95 @@ const writeBundle = async (
       );
 };
 
+/** The export's arguments past the capture and the bundle: the task, the ends, the install, and withheld state with its consents. */
+const exportArguments = (
+  capture: {
+    readonly packageUrl?: string;
+    readonly extraPackages: readonly string[];
+    readonly signIn: boolean;
+    readonly consents: readonly BuildConsent[];
+  },
+  request: BuildExportRequest,
+  files: {
+    readonly task: string;
+    readonly consent: string;
+    readonly withheld: string;
+  },
+): string[] => [
+  "--task",
+  files.task,
+  ...ENDS,
+  // The building agent made the seed in this computer for the task.
+  "--synthetic-seed",
+  ...(request.name === undefined ? [] : ["--name", request.name]),
+  ...(capture.packageUrl === undefined
+    ? []
+    : ["--package-url", capture.packageUrl]),
+  ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
+  ...(capture.signIn
+    ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
+    : []),
+  ...(request.withhold ?? []).flatMap((path) => ["--withhold-path", path]),
+  ...(capture.consents.length === 0 ? [] : ["--consent", files.consent]),
+  ...(request.seed_sign_in === true ? ["--seed-withheld"] : []),
+  "--withheld-copy",
+  files.withheld,
+  "--json",
+];
+
+/** The consent records as `consent.json` holds them. */
+const consentFile = (consents: readonly BuildConsent[]): string =>
+  `${JSON.stringify({ consents }, null, 2)}\n`;
+
+/** Keep each withheld file's bytes as the secret its handle names, fetched from beside the bundle; none leaves REA otherwise. */
+const keepWithheld = async (
+  computer: ControlledComputer,
+  folder: string,
+  files: readonly WithheldReport[],
+  {
+    keep,
+    signal,
+  }: {
+    readonly keep: (handle: string, bytes: Buffer) => Promise<void>;
+    readonly signal: AbortSignal;
+  },
+): Promise<WithheldReport[]> => {
+  if (files.length === 0) return [];
+  const handles = new Map(files.map(({ file, handle }) => [file, handle]));
+  await fetchHomeFolder(
+    computer,
+    folder,
+    {
+      file: async ({ path, bytes }) => {
+        const handle = handles.get(path);
+        if (handle !== undefined) await keep(handle, bytes);
+      },
+    },
+    signal,
+  );
+  return files.map(({ file, variable, handle }) => ({
+    file,
+    variable,
+    handle,
+  }));
+};
+
+/** The stopped capture an export runs on, and what it holds back and records. */
+interface ExportCapture {
+  readonly folder: string;
+  readonly attempt: number;
+  /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
+  readonly packageUrl?: string;
+  /** The packages the request named beside the app, which the bundle installs beside it too. */
+  readonly extraPackages: readonly string[];
+  /** The secrets no bundle may hold, and where the withheld files' bytes are kept as secrets. */
+  readonly secrets: readonly KnownSecret[];
+  readonly keep: (handle: string, bytes: Buffer) => Promise<void>;
+  /** Whether both sign-in checkpoints were marked, and the consents the person gave. */
+  readonly signIn: boolean;
+  readonly consents: readonly BuildConsent[];
+}
+
 /**
  * Export a stopped capture in the computer with the agent's task, seeded at
  * `seed` and checked at `end`, into a new folder of the work folder, then
@@ -153,16 +309,7 @@ const writeBundle = async (
  */
 export const exportBuild = async (
   computer: ControlledComputer,
-  capture: {
-    readonly folder: string;
-    readonly attempt: number;
-    /** The URL a computer downloads the app's `.deb` from, when the capture says apt does not install it. */
-    readonly packageUrl?: string;
-    /** The packages the request named beside the app, which the bundle installs beside it too. */
-    readonly extraPackages: readonly string[];
-    /** The secrets no bundle may hold. */
-    readonly secrets: readonly KnownSecret[];
-  },
+  capture: ExportCapture,
   request: BuildExportRequest,
   signal: AbortSignal,
 ): Promise<Result<ExportedBuild, AnalysisError>> => {
@@ -170,6 +317,8 @@ export const exportBuild = async (
   const attempt = String(capture.attempt);
   const bundle = `${folder}/bundle-${attempt}`;
   const task = `${folder}/task-${attempt}.json`;
+  const consent = `${folder}/consent-${attempt}.json`;
+  const withheld = `${bundle}-withheld`;
   const stdout = `${folder}/export-${attempt}.json`;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   const taskBytes = Buffer.byteLength(JSON.stringify(taskFile));
@@ -188,21 +337,16 @@ export const exportBuild = async (
         "export-desktop-application",
         `${folder}/capture`,
         bundle,
-        "--task",
-        task,
-        ...ENDS,
-        // The building agent made the seed in this computer for the task.
-        "--synthetic-seed",
-        ...(request.name === undefined ? [] : ["--name", request.name]),
-        ...(capture.packageUrl === undefined
-          ? []
-          : ["--package-url", capture.packageUrl]),
-        ...capture.extraPackages.flatMap((name) => ["--extra-package", name]),
-        "--json",
+        ...exportArguments(capture, request, { task, consent, withheld }),
       ],
       {
         stdout,
-        files: { [task]: taskFile },
+        files: {
+          [task]: taskFile,
+          ...(capture.consents.length === 0
+            ? {}
+            : { [consent]: consentFile(capture.consents) }),
+        },
         signal,
       },
     );
@@ -222,10 +366,21 @@ export const exportBuild = async (
     const written = await writeBundle(
       computer,
       bundle,
-      { directory: request.directory, secrets: capture.secrets },
+      {
+        directory: request.directory,
+        guard: {
+          secrets: capture.secrets,
+          seed: `envs/${result.environment}/seed/`,
+          consented: new Set(result.consented_files),
+        },
+      },
       signal,
     );
     if (!written.ok) return written;
+    const kept = await keepWithheld(computer, withheld, result.withheld_files, {
+      keep: capture.keep,
+      signal,
+    });
     return ok({
       directory: request.directory,
       environment: result.environment,
@@ -237,6 +392,8 @@ export const exportBuild = async (
       recompressed_files: result.recompressed_files,
       unscrubbed_files: result.unscrubbed_files,
       limitations: result.limitations,
+      withheld_files: kept,
+      consented_files: result.consented_files,
     });
   } catch (cause: unknown) {
     return err(

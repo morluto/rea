@@ -6,6 +6,10 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
+import {
+  SIGN_IN_END,
+  SIGN_IN_START,
+} from "../../domain/desktop/appWithheld.js";
 import { draftNoteSchema } from "../../domain/desktop/appTaskDraftNotes.js";
 import { draftValueSchema } from "../../domain/desktop/appTaskDraftValues.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
@@ -42,6 +46,8 @@ const draftResultSchema = z.looseObject({
   }),
   guards: z.array(jsonObjectSchema).default([]),
   notes: z.array(draftNoteSchema).default([]),
+  // A draft from before withheld files were left out lists none.
+  withheld_files: z.array(z.string()).default([]),
 });
 
 /** A drafted file's value as the stop returns it. */
@@ -157,6 +163,8 @@ export type StoppedCapture = {
     readonly guards: Readonly<Record<string, JsonValue>>[];
     /** Why the draft has no files, or why a file's suggestions are thin. */
     readonly notes: DraftNote[];
+    /** Files the sign-in window changed, which the draft leaves out and the export withholds. */
+    readonly withheld_files: string[];
   } | null;
   readonly draft_refusal?: string;
 };
@@ -183,6 +191,9 @@ const draftTask = async (
       "describe-desktop-application-task",
       `${folder}/capture`,
       ...ENDS,
+      ...(checkpoints.has(SIGN_IN_START) && checkpoints.has(SIGN_IN_END)
+        ? ["--withhold-from", SIGN_IN_START, "--withhold-to", SIGN_IN_END]
+        : []),
       "--json",
     ],
     { stdout, signal },
@@ -209,6 +220,7 @@ const draftTask = async (
       },
       guards: draft.guards,
       notes: draft.notes.map(draftNote),
+      withheld_files: draft.withheld_files,
     },
   };
 };

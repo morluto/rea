@@ -548,6 +548,7 @@ export const startFakeComputer = async (
  */
 const FAKE_BUNDLE_MODULE = String.raw`
 import glob
+import hashlib
 import json
 import os
 import shutil
@@ -592,6 +593,9 @@ def run_bundle(root, *, tasks=(), keep=False, emulate=True, sandbox=None, on_pro
     previous = signal.signal(signal.SIGTERM, _interrupted)
     _note("runs.jsonl", {"root": str(root), "tasks": list(tasks), "keep": keep, "emulate": emulate,
                          "sandbox": sandbox})
+    _note("settings.jsonl", {name: hashlib.sha256(value.encode()).hexdigest() for name, value in os.environ.items()
+                             if name.startswith("REA_") and not name.startswith(("REA_AGENT_ENV", "REA_DOCKER",
+                                                                                 "REA_BUILD_COMPUTER"))})
     for path in glob.glob(os.path.join(root, "envs", "*", "*.py")):
         subprocess.run([sys.executable, "-c", DECLARE, os.path.dirname(path), os.path.basename(path)], check=True)
     shutil.copytree(root, os.path.join(STATE, "bundle"), dirs_exist_ok=True)

@@ -1,13 +1,19 @@
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import {
+  MAX_SETTING_CHARACTERS,
   redactSecrets,
   redactSecretsInJson,
   type KnownSecret,
 } from "../../domain/desktop/buildSecrets.js";
+import {
+  redactCredentials,
+  redactCredentialsInJson,
+} from "../../domain/desktop/credentialPatterns.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -19,6 +25,7 @@ import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
   listBuildSecretHandles,
   readBuildSecretFile,
+  writeBuildSecretFile,
 } from "../../desktop/BuildSecretFiles.js";
 
 const ACT = "act_on_build_computer";
@@ -29,24 +36,40 @@ export class DesktopBuildSecrets {
 
   constructor(readonly directory: string) {}
 
-  /** A handle's value, read afresh from its file; a refusal names the file, never its text. */
-  async resolve(handle: string): Promise<Result<string, string>> {
-    const read = await readBuildSecretFile(this.directory, handle);
+  /** A handle's value, read afresh from its file, a setting's up to a withheld file's size; a refusal names the file, never its text. */
+  async resolve(
+    handle: string,
+    use: "typed" | "setting" = "typed",
+  ): Promise<Result<string, string>> {
+    const read = await readBuildSecretFile(
+      this.directory,
+      handle,
+      use === "setting" ? { maxCharacters: MAX_SETTING_CHARACTERS } : {},
+    );
     if (read.ok) this.#typed.set(handle, read.value);
     return read;
+  }
+
+  /** Keep a withheld file's bytes, in base64, as the secret `handle` names, for a witness to supply. */
+  async keep(handle: string, bytes: Buffer): Promise<void> {
+    const value = bytes.toString("base64");
+    await writeBuildSecretFile(this.directory, handle, value);
+    this.#typed.set(handle, value);
   }
 
   #known(): KnownSecret[] {
     return [...this.#typed].map(([handle, value]) => ({ handle, value }));
   }
 
-  /** Text with each typed secret's value replaced by its handle. */
+  /** Text with each typed secret's value replaced by its handle, and each credential found by its shape by its kind. */
   readonly redact = (text: string): string =>
-    this.#typed.size === 0 ? text : redactSecrets(text, this.#known());
+    redactCredentials(
+      this.#typed.size === 0 ? text : redactSecrets(text, this.#known()),
+    );
 
-  /** A JSON value with each typed secret's value replaced by its handle. */
+  /** A JSON value redacted as `redact` redacts text. */
   readonly redactJson = (value: JsonValue): JsonValue =>
-    redactSecretsInJson(value, this.#known());
+    redactCredentialsInJson(redactSecretsInJson(value, this.#known()));
 
   /** Every secret no bundle may hold: those typed here, then each other one the folder holds now, readable by others or not. */
   async all(): Promise<KnownSecret[]> {
@@ -58,6 +81,7 @@ export class DesktopBuildSecrets {
         handle,
         file: await readBuildSecretFile(this.directory, handle, {
           searchOnly: true,
+          maxCharacters: MAX_SETTING_CHARACTERS,
         }),
       })),
     );
@@ -94,6 +118,17 @@ const delivered = (
   ),
 });
 
+/** What a typed secret's action answers: its place in the log and REA's own result, never the driver's words. */
+interface TypedSecret {
+  readonly value: {
+    readonly computer_id: string;
+    readonly action: "type_secret";
+    readonly action_index: number;
+    readonly result: Readonly<Record<string, JsonValue>>;
+  };
+  readonly content: DriverResult["content"];
+}
+
 /** Type the secret `handle` names into the focused field; neither the result nor a refusal carries its value or the computer's words. */
 export const typeSecret = async (
   secrets: DesktopBuildSecrets,
@@ -102,20 +137,25 @@ export const typeSecret = async (
   signal: AbortSignal,
 ): Promise<{
   readonly outcome: "applied" | "refused" | "failed";
-  readonly result: Result<Readonly<Record<string, JsonValue>>, AnalysisError>;
+  readonly answer: (
+    computerId: string,
+    actionIndex: number,
+  ) => Result<TypedSecret, AnalysisError>;
 }> => {
+  const refusal = (outcome: "refused" | "failed", error: AnalysisError) => ({
+    outcome,
+    answer: () => err(error),
+  });
   const value = await secrets.resolve(handle);
   if (!value.ok)
-    return {
-      outcome: "refused",
-      result: err(
-        new AnalysisInputError(ACT, {
-          userMessage: `REA did not type the secret ${handle}: ${value.error}`,
-          remediationAction: `Ask the person to write the secret, and nothing else, in ${secrets.directory}/${handle} on this host, readable only by them (chmod 600), then type it again. Never ask for the secret itself.`,
-          conformsToInputContract: true,
-        }),
-      ),
-    };
+    return refusal(
+      "refused",
+      new AnalysisInputError(ACT, {
+        userMessage: `REA did not type the secret ${handle}: ${value.error}`,
+        remediationAction: `Ask the person to write the secret, and nothing else, in ${secrets.directory}/${handle} on this host, readable only by them (chmod 600), then type it again. Never ask for the secret itself.`,
+        conformsToInputContract: true,
+      }),
+    );
   let answer: DriverResult;
   try {
     answer = await computer.callTool(
@@ -124,9 +164,44 @@ export const typeSecret = async (
       signal,
     );
   } catch {
-    return { outcome: "failed", result: err(notTyped(handle, signal)) };
+    return refusal("failed", notTyped(handle, signal));
   }
-  return answer.isError
-    ? { outcome: "refused", result: err(notTyped(handle, signal)) }
-    : { outcome: "applied", result: ok(delivered(handle, answer.structured)) };
+  if (answer.isError) return refusal("refused", notTyped(handle, signal));
+  const result = delivered(handle, answer.structured);
+  return {
+    outcome: "applied",
+    answer: (computerId, actionIndex) =>
+      ok({
+        value: {
+          computer_id: computerId,
+          action: "type_secret",
+          action_index: actionIndex,
+          result,
+        },
+        content: [{ type: "text", text: `${String(result.summary)}.` }],
+      }),
+  };
+};
+
+/** Each variable a bundle's withheld settings read, from the secret its handle names; refused, naming the variable, when one cannot be read. */
+export const settingsEnvironment = async (
+  secrets: DesktopBuildSecrets,
+  source: BuildSource,
+): Promise<Result<Record<string, string>, AnalysisError>> => {
+  const values: Record<string, string> = {};
+  const named = source.kind === "bundle" ? (source.settings ?? {}) : {};
+  for (const [variable, handle] of Object.entries(named)) {
+    const value = await secrets.resolve(handle, "setting");
+    if (!value.ok)
+      return err(
+        new AnalysisInputError("start_build_computer", {
+          userMessage: `REA cannot supply ${variable}: ${value.error}`,
+          remediationAction:
+            "Name the handle the export's withheld_files gives, or ask the person to write the value, the file's bytes in base64, in that secret's file.",
+          conformsToInputContract: true,
+        }),
+      );
+    values[variable] = value.value;
+  }
+  return ok(values);
 };

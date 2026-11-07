@@ -12,6 +12,7 @@ export const PYTHON_READY_CHECK = `
 
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
+import binascii
 import contextlib
 import copy
 import hashlib
@@ -33,6 +34,7 @@ from xml.parsers import expat
 from agentenv_protocol import add_data, get_data, reset_data
 from agentenv_protocol.computer import AptSource, ComputerAppEnvironment, Download, Launch, Packages, Ready, RunScript, computer_app, linux, ready_check
 from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, keep_initial, reset
+from agentenv_protocol.computer.dataplane import file_parts
 from agentenv_protocol.types import DataPart
 `;
 
@@ -450,8 +452,17 @@ def _view(path: Path) -> dict:
     return _bytes_view(path.name, data)
 
 
-def _views(home: Path, paths: list) -> dict:
-    """A view of every file under the app's paths, keyed by its home-relative path."""
+def _write_withheld(home: Path, settings, withheld: dict) -> None:
+    """Write each withheld file from its secret setting, its bytes in base64, readable by its owner alone."""
+    for name, relative in withheld.items():
+        target = home / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(binascii.a2b_base64(getattr(settings, name).get_secret_value(), strict_mode=True))
+        target.chmod(0o600)
+
+
+def _views(home: Path, paths: list, leaving_out=()) -> dict:
+    """A view of every file under the app's paths but those it leaves out, keyed by its home-relative path."""
     files = {}
     for owned in paths:
         root = home / owned
@@ -459,6 +470,8 @@ def _views(home: Path, paths: list) -> dict:
         for path in candidates:
             if path.is_file() and not path.is_symlink():
                 key = path.relative_to(home).as_posix()
+                if key in leaving_out:
+                    continue
                 try:
                     files[key] = _view(path)
                 except (OSError, ValueError, sqlite3.Error, RecursionError) as error:
@@ -475,6 +488,7 @@ const PYTHON_CONSTANTS = [
   "TEXT_SEEDS",
   "SEED_MODES",
   "WINDOW_CLASS",
+  "WITHHELD",
 ] as const;
 
 /** Names a Python source binds at its top level: imports, assignments, functions and classes. */
@@ -503,6 +517,23 @@ export const PYTHON_MODULE_NAMES: ReadonlySet<string> = new Set([
   ...boundNames(PYTHON_HELPERS),
   ...PYTHON_CONSTANTS,
 ]);
+
+/** The data hooks of an app whose withheld files no get serves: neither as parts nor in the views. */
+export const PYTHON_WITHHELD_DATA_HOOKS = `
+    @add_data
+    async def add_files(self, parts: list) -> None:
+        await add(parts, self.paths)
+
+    @get_data
+    async def get_files(self, write_namespace=None) -> list:
+        files = await file_parts(Path.home(), self.paths, write_namespace, list(WITHHELD.values()))
+        views = await in_thread(_views, Path.home(), self.paths, list(WITHHELD.values()))
+        return [*files, DataPart(data={"state": views})]
+
+    @reset_data
+    async def reset_files(self) -> None:
+        await reset(self.paths)
+`;
 
 /** The data hooks of an app that owns paths; `_views` reads files, so it runs in a thread. */
 export const PYTHON_DATA_HOOKS = `

@@ -51,7 +51,9 @@ The work lands as one PR per step:
     whole text across the runs an app splits a paragraph into.
 15. [Secrets typed unseen](build-secrets/spec.md): a password or key the
     person keeps in a file on the build host, typed by its handle, which no
-    result, log, record or exported bundle holds.
+    result, log, record or exported bundle holds; sign-in and licence state
+    withheld from the seed and supplied at run time, seeded only with the
+    person's recorded consent; and credentials found by their shape.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.
