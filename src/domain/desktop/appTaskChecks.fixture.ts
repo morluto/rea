@@ -911,6 +911,24 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
 ];
 
 /** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
