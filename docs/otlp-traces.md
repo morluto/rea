@@ -36,6 +36,12 @@ positions in the input. Event and link counts are reported without their payload
 - **Timing stays raw.** `duration_nano` is derived only when the recorded
   interval is non-negative; a reversed interval keeps both timestamps and adds an
   `invalid-time-interval` diagnostic. Clock domains and skew are not corrected.
+- **Unreadable integers stay recorded.** A timestamp outside uint64 or an
+  `intValue` outside int64 leaves the exact-value field null and keeps the
+  recorded JSON in `start_time_unix_nano_raw`, `end_time_unix_nano_raw` or
+  `int_value_raw`, so damage is never reported as an omitted value. That copy is
+  limited to 256 characters: a longer malformed decimal is not echoed, and the
+  `invalid-record` diagnostic is the only remaining trace of it.
 - **Attributes are bounded.** Scalar attribute values are preserved as recorded,
   including values whose keys resemble credentials. Array and key-value-list
   attributes report only their element count. Each span and resource retains at
