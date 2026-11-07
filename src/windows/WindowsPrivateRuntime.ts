@@ -63,7 +63,7 @@ export class WindowsRuntimeWriteTransientUnavailableError extends RuntimeControl
       "The Windows native artifact does not support transient private-runtime writes required by this source checkout.",
       {
         remediationAction:
-          "Matching package version alone is insufficient for a source checkout. Build the Windows native artifact from this exact source checkout using native/windows/README.md, or use the matching published release's source and artifact together. Repeating this request with the unchanged artifact will not succeed. Because REA caches native admission for the process lifetime, stop and restart the REA host after rebuilding or replacing the addon so the new control is advertised on the next admission.",
+          "Matching package version alone is insufficient for a source checkout. Build the Windows native artifact from this exact source checkout using native/windows/README.md, or use the matching published release's source and artifact together. Repeating this request with the unchanged artifact will not succeed. Because REA caches native admission for the process lifetime, stop and restart the REA host in this order: stop the host, rebuild or replace the addon, then start the host so the new control is advertised on the next admission.",
       },
     );
     this.name = "WindowsRuntimeWriteTransientUnavailableError";
