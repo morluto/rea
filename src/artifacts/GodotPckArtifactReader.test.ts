@@ -7,7 +7,7 @@ import {
   pckU64,
   type GodotPckMember,
 } from "../../tests/fixtures/godotPck.js";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { text } from "node:stream/consumers";
 import { once } from "node:events";
@@ -20,6 +20,8 @@ import { openRegularFile } from "../filesystem/RegularFile.js";
 
 import type { ArtifactEntry } from "./ArtifactReader.js";
 import { ArtifactEmbeddedFormatProbes } from "./ArtifactEmbeddedFormatProbes.js";
+import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
+import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import { GodotPckArtifactReader } from "./GodotPckArtifactReader.js";
 
 const writePck = async (bytes: Buffer): Promise<string> => {
@@ -244,7 +246,9 @@ describe("GodotPckArtifactReader", () => {
       });
     });
   });
+});
 
+describe("GodotPckArtifactReader format refusals", () => {
   it.each([
     [
       "a patch removal entry",
@@ -276,10 +280,102 @@ describe("GodotPckArtifactReader", () => {
       ]),
       "format",
     ],
+    [
+      "a triple-slash root-only path",
+      buildGodotPck(4, [{ path: "res:///", data: "" }]),
+      "format",
+    ],
+    [
+      "a multiple-slash root-only path",
+      buildGodotPck(4, [{ path: "res:////", data: "" }]),
+      "format",
+    ],
+    [
+      "a dot root-only path",
+      buildGodotPck(4, [{ path: "res://.", data: "" }]),
+      "format",
+    ],
+    [
+      "a combined dot-slash root-only path",
+      buildGodotPck(4, [{ path: "res://.//", data: "" }]),
+      "format",
+    ],
   ])("refuses %s", async (_, bytes, reason) => {
     await withReader(bytes, async (reader) => {
       await expect(list(reader)).rejects.toMatchObject({ reason });
     });
+  });
+});
+
+describe("GodotPckArtifactReader member paths and extraction", () => {
+  it("normalizes res:/// and res://./ member paths to safe relative paths", async () => {
+    const variedMembers: readonly GodotPckMember[] = [
+      { path: "res:///scenes/main.gd", data: "extends Node\n" },
+      { path: "res://./config.cfg", data: "[section]\nkey=1\n" },
+      { path: "res://.//settings.cfg", data: "[settings]\nready=true\n" },
+      { path: "res:///.//scripts/player.gd", data: "class_name Player\n" },
+      { path: "res://...", data: "ellipsis file\n" },
+      { path: "plain/resource.dat", data: "bytes" },
+    ];
+    await withReader(buildGodotPck(4, variedMembers), async (reader) => {
+      const entries = await list(reader);
+      expect(entries.map(({ sourcePath }) => sourcePath)).toEqual([
+        "res:///scenes/main.gd",
+        "res://./config.cfg",
+        "res://.//settings.cfg",
+        "res:///.//scripts/player.gd",
+        "res://...",
+        "plain/resource.dat",
+      ]);
+      expect(entries.map(({ path }) => path)).toEqual([
+        "scenes/main.gd",
+        "config.cfg",
+        "settings.cfg",
+        "scripts/player.gd",
+        "...",
+        "plain/resource.dat",
+      ]);
+    });
+  });
+
+  it("extracts Godot PCK members having res:/// and res://./ paths to disk", async () => {
+    const variedMembers: readonly GodotPckMember[] = [
+      { path: "res:///scenes/main.gd", data: "extends Node\n" },
+      { path: "res://./config.cfg", data: "[section]\nkey=1\n" },
+      { path: "res://...", data: "ellipsis file\n" },
+    ];
+    const pckPath = await writePck(buildGodotPck(4, variedMembers));
+    const outDir = join(
+      await createTestTempDirectory("rea-godot-out-"),
+      "extracted",
+    );
+    const scope = new ArtifactResourceScope();
+    try {
+      const extracted = await extractArtifact({
+        inputPath: pckPath,
+        inputFormat: "godot-pck",
+        outputRoot: outDir,
+        environment: {},
+        integrityPolicy: "fail",
+        resourceScope: scope,
+      });
+      expect(extracted.artifacts.map((a) => a.relative_path).sort()).toEqual([
+        "...",
+        "config.cfg",
+        "scenes/main.gd",
+      ]);
+      expect(await readFile(join(outDir, "scenes/main.gd"), "utf8")).toBe(
+        "extends Node\n",
+      );
+      expect(await readFile(join(outDir, "config.cfg"), "utf8")).toBe(
+        "[section]\nkey=1\n",
+      );
+      expect(await readFile(join(outDir, "..."), "utf8")).toBe(
+        "ellipsis file\n",
+      );
+    } finally {
+      await scope.close();
+    }
   });
 });
 

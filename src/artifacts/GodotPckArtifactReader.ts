@@ -132,9 +132,7 @@ export class GodotPckArtifactReader extends PositionalArtifactReader {
           );
       }
       const metadata = {
-        path: sourcePath.startsWith("res://")
-          ? sourcePath.slice(6)
-          : sourcePath,
+        path: normalizePckMemberPath(sourcePath),
         sourcePath,
         kind: "file" as const,
         declaredSize: Number(size),
@@ -246,6 +244,12 @@ const readGodotPckHeader = async (
   };
 };
 
+const isRootOnlyPckPath = (path: string): boolean => {
+  if (!path.startsWith("res:")) return false;
+  const segments = path.slice(4).split("/");
+  return segments.every((segment) => segment === "" || segment === ".");
+};
+
 const pckMemberPath = (raw: Buffer): string => {
   let end = raw.length;
   while (end > 0 && raw[end - 1] === 0) end--;
@@ -259,9 +263,19 @@ const pckMemberPath = (raw: Buffer): string => {
       { cause },
     );
   }
-  if (path.length === 0 || path === "res://" || path.includes("\0"))
+  if (path.length === 0 || isRootOnlyPckPath(path) || path.includes("\0"))
     throw formatFailure("empty or NUL-containing member path");
   return path;
+};
+
+const normalizePckMemberPath = (sourcePath: string): string => {
+  const stripped = sourcePath.startsWith("res://")
+    ? sourcePath.slice(6)
+    : sourcePath;
+  const normalized = stripped.replace(/^(?:\/|\.\/)+/u, "");
+  if (normalized.length === 0)
+    throw formatFailure(`empty member path: ${sourcePath}`);
+  return normalized;
 };
 
 /** One bounded read window; no whole-pack buffer or per-member source reopening. */
