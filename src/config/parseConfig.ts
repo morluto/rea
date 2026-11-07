@@ -119,6 +119,9 @@ export const parseConfig = (
     ...(env.REA_MCP_OUTPUT_SCHEMA_PROFILE === undefined
       ? {}
       : { mcpOutputSchemaProfile: env.REA_MCP_OUTPUT_SCHEMA_PROFILE }),
+    ...(env.REA_MCP_TOOL_CATALOG_PROFILE === undefined
+      ? {}
+      : { mcpToolCatalogProfile: env.REA_MCP_TOOL_CATALOG_PROFILE }),
     analysisProvider: env.REA_ANALYSIS_PROVIDER,
     ...(env.REA_IDA_MCP_CONFIG === undefined
       ? {}
@@ -134,6 +137,9 @@ export const parseConfig = (
           },
         }),
     ghidraInstallDir: env.GHIDRA_INSTALL_DIR,
+    ...(env.REA_GHIDRA_CHECKPOINT_DIR === undefined
+      ? {}
+      : { ghidraCheckpointDirectory: env.REA_GHIDRA_CHECKPOINT_DIR }),
     ghidraJavaHome: env.JAVA_HOME,
     ghidraStartupTimeoutMs: env.REA_GHIDRA_STARTUP_TIMEOUT_MS,
     ...(env.REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS === undefined

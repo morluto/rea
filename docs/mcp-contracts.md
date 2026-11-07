@@ -188,7 +188,11 @@ The complete field/type diagnostic is preserved when normalization fits the
 response budget, including request-specific rejected fields and reasons. Zod
 input issues retain their field paths and available type and range constraints.
 SDK diagnostic parts may be distributed between field issues and the main
-message so each retained explanation appears once.
+message so each retained explanation appears once. Known neighboring-tool
+argument-name mistakes (such as `address` instead of `procedure`, or `query`
+instead of `pattern`) provide targeted replacement guidance and the expected
+canonical property name without accepting unauthorized aliases or changing
+canonical Evidence parameters.
 If their conservative projection allowance is exhausted, the response states
 that field-level detail was omitted and retains the original SDK diagnostic.
 Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
@@ -572,6 +576,21 @@ that the response budget accounts for. It does not alter `content` or
 such as requiring approval for process-launching or device-mutating tools
 after target content was read.
 
+## Offline API contract declarations
+
+`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
+GraphQL SDL (`format: "graphql-sdl"`) without an active target or network requests.
+OpenAPI inventories inline path operations and unresolved Path Items. GraphQL
+inventories type/field declarations; optional `operations_path` adds operation
+owners, aliases, SDL field bindings and explicit fragment-spread edges without
+expanding fragments. Unresolved bindings and unavailable models stay explicit.
+Default summaries retain complete Evidence; `api-contract` or `graphql-contract`
+views select facts immediately with exact filters, fields and paging. Retained
+`inspect_analysis_view` uses the same projector without reopening inputs.
+Coverage describes examined declarations and does not establish runtime behavior
+or full specification/operation validity. See [offline API contracts](api-contracts.md)
+for source identities, parser allowances, supported scope and CLI publication.
+
 ## Retained application Evidence inputs
 
 `analyze_javascript_application`, `inspect_binary_layout`, `inspect_artifact`,
@@ -817,6 +836,7 @@ arrays and nested sources declared by the tool's input schema:
 | `match_native_functions`                                                                                    | `left`, `right`, `left_observations[]`, `right_observations[]`                                                        |
 | `trace_application_feature`, `trace_javascript_semantics`, `compare_source_to_bundle`                       | `application`; feature tracing also accepts `native_observations[]`                                                   |
 | `compare_application_versions`, `compare_javascript_export_shapes`                                          | `left`, `right`; version comparison also accepts both native-observation arrays                                       |
+| `compare_static_and_observed_endpoints`                                                                     | `application`, `capture`; summary retains the complete comparison for `endpoint-comparison` pages                     |
 | `reconcile_javascript_runtime`                                                                              | `static_layers[].analysis`, `runtime_observations[]`                                                                  |
 | `compare_managed_members`, `verify_managed_native_boundaries`, `import_managed_reconstruction`              | Comparison `left`/`right`; verification `managed_boundaries`/`native_observations[]`; reconstruction `static_members` |
 | `project_managed_application_graph`                                                                         | `managed_artifact`, `managed_members`, `managed_native_boundaries`                                                    |
@@ -886,13 +906,20 @@ parent for another invocation.
 
 ## Identity and discovery
 
+When an admitted `open_binary` attempt fails, its error details include
+`target_at_open_completion`: the selected binary target when that attempt
+settled, or `null` when none was selected. `provider_id_at_open_completion`
+names its bound deep provider, or `null` if none was bound. A later lifecycle
+operation can change either selection; call `binary_session` for current state. This field does
+not establish provider readiness or resource cleanup.
+
 `binary_session` reports the active package, server, SDK, and negotiated
 protocol details. `rea doctor` separately inspects supported JSON/TOML client
 registrations, reports their command vectors as aligned, stale, missing, or
 invalid, and keeps live-server state `unknown` unless the active connection
 supplies identity.
 
-`tools/list` returns the complete canonical tool inventory, including tools that
+By default, `tools/list` returns the complete canonical tool inventory, including tools that
 are currently unavailable. Opening or closing a target or observing a provider
 health transition leaves that catalog unchanged and does not emit
 `notifications/tools/list_changed`.
@@ -904,7 +931,7 @@ share status facts. `tool_availability.client_requirements` is the baseline for
 each group; a group's optional `client_requirements` replaces that baseline for
 the group's tools. Expand each group's `names` into one tool entry, carrying its
 availability, reason, remediation, default-mode status, modes, and client
-requirements. Compare the union of group names with `tools/list` when checking
+requirements. With the default full catalog, compare the union of group names with `tools/list` when checking
 that a client received the full catalog. An operation absent from all groups is
 missing from the complete inventory; it is not an implicit unavailable entry.
 
@@ -1592,6 +1619,26 @@ canonical `integrity_contradictions` records and marks application graph
 coverage partial when any mismatch is continued. Contradicted nested ASARs
 remain opaque.
 
+`extract_artifact` accepts optional `output_root` and `occurrence_ids` inputs.
+The CLI equivalents are `--output-root` and repeatable `--occurrence-id`.
+`output_root` is an absolute path on the REA host: its parent must exist and the
+root must not exist, even as an empty directory or a symbolic link. Omitting it
+keeps the fresh `rea-extracted-<uuid>` directory under Node's temporary directory
+(`TMPDIR` on POSIX). Successful output persists after the call and client close;
+the caller owns its later removal. A failed extraction rolls back only its own
+output and reports any cleanup failure.
+An output root inside the source directory, including a symlink alias, is refused.
+
+Obtain exact IDs from the active artifact's inventory. Omitting `occurrence_ids`
+extracts all regular entries exposed by the active reader. An explicit selection
+must be nonempty and unique; unknown IDs, directories, links, the root and nested
+archive members are rejected before output creation. Open the containing archive
+separately to extract its nested members. Selection is by occurrence, not content
+hash, so equal bytes at different paths remain independently selectable. Only
+selected files face destination name collisions; input path and integrity checks
+still cover the full inventory. The extraction manifest records exactly which
+occurrences were materialized and retains the source manifest identity.
+
 `extract_artifact` accepts the same policy in MCP and as `--integrity-policy`
 on `rea extract-artifact`. With `record-and-continue` it writes the observed
 bytes and returns the `integrity_contradictions` records for the extracted
@@ -1846,6 +1893,53 @@ check full-profile local-path rules. Compact MCP workflow tests verify canonical
 rejection of invalid inputs before provider work, independent of how much detail
 the selected advertisement retains.
 
+### Hot/cold catalog discovery
+
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` opts into per-connection loading for
+clients that refresh `tools/list` after `notifications/tools/list_changed`.
+The default, `full`, retains the complete upfront advertisement. Restart the
+server to change profiles. See [client configuration](client-configuration.md#hotcold-catalogs).
+
+Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
+`get_evidence_bundle`, and the adapter's `discover_tools`.
+`inspect_analysis_view` is loaded on demand like other analysis tools. When a
+follow-up needs retained facts, include it in `discover_tools.names`; if the
+producer and follow-up are known together, load both in one batch. Producers
+that accept `view` can answer a selected first question without loading the
+cross-domain view contract. Complete output schemas and canonical result
+validation are preserved when each tool loads.
+An explicit tool-family scope can remove any of those domain tools.
+`discover_tools` searches canonical names and descriptions using case-insensitive
+words, or accepts exact `names`. It loads the matching page and returns names
+and abbreviated descriptions with their configured input schemas, so the next
+call can use the returned arguments contract. Output schemas remain in
+`tools/list`. Search defaults to three results, allows up to
+20 per page, and returns `total_matches` and `next_offset`. Exact names preserve
+request order and reject unknown or excluded names before loading anything.
+Use fewer keywords when no result matches; search requires every word to match.
+Both reply representations must fit the configured response budget before any
+tools load. An oversized page returns a resource constraint; reduce `limit` or
+request fewer exact names and retry. Input schemas are retained in full within
+the selected input profile.
+
+Loaded definitions retain their original names, complete configured schemas,
+annotations, handlers and client approval rules. Loading does not execute an
+analysis, open a target, or initialize the deferred analysis runtime. A batch
+emits one list-change notification; repeating it emits none. Loaded tools remain
+available until the connection ends. There is no generic execution gateway.
+If a loaded tool does not appear in the client, enable client catalog refresh
+or reconnect using `REA_MCP_TOOL_CATALOG_PROFILE=full`.
+
+The catalog identity covers the complete in-scope inventory, the discovery
+contract and the hot/cold policy; its count includes `discover_tools`. It differs
+from full advertisement and remains stable as tools load. `rea mcp doctor`
+checks the profile's initial advertisement and identity. The domain inventory in
+`binary_session.tool_availability` continues to describe provider and target
+availability, independently of whether a definition is loaded. Load a listed
+cold tool before calling it. Provider health and target changes do not load,
+unload or remove definitions. The input/output schema profiles and explicit
+family exclusions continue to apply.
+
 ### Tool family advertising scope
 
 Agents pay context for every advertised tool schema, and clients that send
@@ -1907,6 +2001,7 @@ bundle import/export; it does not include those view and settings tools.
 | Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
 | Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
 | Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Native analysis of a known function               | `session,enhanced,application`                            | open a binary, analyze a known function, page retained pseudocode, and export Evidence; add `direct` for focused procedure search or assembly                |
 | Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
 | Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
 | Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
@@ -1932,14 +2027,19 @@ profile and the advertised form that profile produces. `full`, `compact`, and
 bounded schemas clients receive; `off` keeps the canonical output contracts in
 the digest while advertising nothing.
 
-Some stdio hosts reject a complete `tools/list` frame before they load any
-tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact` setting bounds every
-advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
+Some clients reject a complete `tools/list` frame or HTTP SSE event before
+they load any tools. The opt-in `REA_MCP_OUTPUT_SCHEMA_PROFILE=compact`
+setting bounds every advertised output schema to 4,096 bytes; `off` omits `outputSchema` entirely
 (the measured pi-web-ui failure and catalog breakdown are in
 [#2512](https://github.com/morluto/rea/issues/2512)). The default `full` profile
 is unchanged. Both settings keep the same named canonical tool contract for
 server-side result validation, and both still return complete
 `structuredContent` and text results.
+
+For the 1 MiB FastMCP SSE limit reported by Unsloth in
+[#9093](https://github.com/morluto/rea/issues/9093), see the
+[tested catalog configuration](client-configuration.md#fastmcp-and-unsloth-sse-catalog-limits).
+Hot/cold selection alone does not bound later catalog refreshes.
 
 `compact` keeps the complete validation structure when it fits the budget.
 Otherwise it advertises the root property shape, first-level reference-resolved
@@ -2052,3 +2152,12 @@ skill and portable conformance projections in the `generated-docs` artifact.
 These outputs describe the exact source revision being built; they are not
 checked-in snapshots. For a running server, `binary_session` remains the
 authoritative source of catalog identity and tool availability.
+
+## Offline Playwright traces
+
+`inspect_playwright_trace` reads a local v10 trace ZIP and defaults to a retained
+summary. `playwright-trace` views select source-located action boundaries, console
+and network facts, resource references and diagnostics; long text has bounded
+previews and character pages. Import does not contact recorded URLs or use a
+browser. See [offline Playwright traces](./playwright-traces.md) for coverage,
+resource policies and the shared CLI workflow.

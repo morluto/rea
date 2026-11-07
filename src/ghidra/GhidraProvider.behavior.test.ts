@@ -66,6 +66,7 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
+import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   GHIDRA_ANNOTATIONS_RETAINED,
@@ -338,8 +339,6 @@ describe("Ghidra provider", () => {
         },
       },
     });
-    const windows = provider(installationHost("win32"));
-    expect(windows.inspectTargetSupport(target).status).toBe("unsupported");
   });
   it("admits parsed Hexagon ELF targets through Ghidra profile selection and declines them on Windows", async () => {
     const parsed = parseExecutableHeader(elf(1, 1, 164), "x64");
@@ -761,6 +760,42 @@ describe("Ghidra platform support", () => {
       available: false,
       reason: "Windows Ghidra P0 does not admit database mutation.",
       availabilityCode: "unsupported_host",
+    });
+  });
+});
+
+describe("Ghidra Windows DOS admission", () => {
+  it("admits DOS MZ through the POSIX real-mode import but not explicit COM (#7121)", async () => {
+    const windows = provider(installationHost("win32"));
+    const target: BinaryTarget = {
+      path: "C:\\fixtures\\legacy.exe",
+      sha256: "a".repeat(64),
+      kind: "executable",
+      format: "dos-mz",
+      architecture: "x86",
+      availableArchitectures: ["x86"],
+    };
+    expect(windows.inspectTargetSupport(target)).toMatchObject({
+      status: "supported",
+      diagnostics: { host_platform: "win32", target_format: "dos-mz" },
+    });
+    expect(
+      windows.inspectTargetSupport({ ...target, format: "dos-com" }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
+    const resolved = await windows.resolveAnalysisProfile(target);
+    if (!resolved.ok) throw resolved.error;
+    expect(resolved.value).toMatchObject({
+      profile: {
+        parameters: {
+          loader: "MzLoader",
+          load_image_evidence: "independent-mz-mapping-relocations-v2",
+          language_id: "x86:LE:16:Real Mode",
+          load_segment: "0x1000",
+        },
+      },
     });
   });
 });
@@ -1810,7 +1845,10 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         seconds,
         existingProject,
       );
-      const recovery = ghidraDecompileTimeoutRecovery(seconds, existingProject);
+      const recovery = ghidraDecompileTimeoutRecovery(
+        seconds,
+        existingProject ? "existing-project" : "fresh-import",
+      );
       for (const projected of [continuing, invocation])
         expect(projected).toMatchObject({
           code: "provider_timeout",
@@ -4254,7 +4292,10 @@ describe("Ghidra startup deadline for a finished invocation", () => {
         "invocation",
       );
       const continuing = await ghidraTimedOut("start", elapsed, environment);
-      const guidance = ghidraStartupTimeoutGuidance(250, existingProject);
+      const guidance = ghidraStartupTimeoutGuidance(
+        250,
+        existingProject ? "existing-project" : "fresh-import",
+      );
       expect(invocation).toMatchObject({
         code: "provider_timeout",
         remediation: { action: guidance.remediationAction },
@@ -4302,7 +4343,7 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     }));
     const result = await (await createElfClient(ghidra)).execute("health", {});
     if (result.ok) throw new Error("Expected the composed startup failure");
-    const guidance = ghidraStartupTimeoutGuidance(250, false);
+    const guidance = ghidraStartupTimeoutGuidance(250, "fresh-import");
     const child = (lifetime: AnalysisCallerLifetime) =>
       projectAnalysisError(result.error, lifetime).details?.diagnostics;
     expect(projectAnalysisError(result.error, "invocation")).toMatchObject({
@@ -4332,6 +4373,7 @@ describe("Ghidra missing project program", () => {
   const startFailure = async (
     stdout: string,
     environment: Readonly<Record<string, string>> = {},
+    stderr = "",
   ) => {
     const root = await mkdtemp(join(tmpdir(), "rea-missing-program-"));
     onTestFinished(async () => {
@@ -4345,7 +4387,7 @@ describe("Ghidra missing project program", () => {
       {
         failure_kind: "start",
         exit_code: 1,
-        failure_output: failureOutput(stdout),
+        failure_output: failureOutput(stdout, stderr),
       },
     );
     const ghidra = provider(
@@ -4420,6 +4462,34 @@ describe("Ghidra missing project program", () => {
   it("keeps the generic start failure for unrelated launch output", async () => {
     const projected = await startFailure("ERROR Unable to lock project");
     expect(projected.code).toBe("execution_failure");
+  });
+
+  it("reports a denied java_home.save with its path and restricted-host remediation", async () => {
+    const path =
+      "C:\\Users\\a\\AppData\\Local\\Temp\\rea-provider-1\\config\\ghidra\\ghidra_12.1.4_PUBLIC\\java_home.save";
+    const projected = await startFailure(
+      "",
+      {},
+      `java.io.FileNotFoundException: ${path} (Access is denied)\n`,
+    );
+    expect(projected.code).toBe("execution_failure");
+    expect(projected.message).toContain(path);
+    expect(projected.message).toContain("Win32 error 5");
+    expect(projected.message).not.toMatch(/antivirus|DACL/iu);
+    expect(projected.remediation.action).toBe(
+      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    );
+  });
+
+  it("keeps the generic start failure for other denied paths", async () => {
+    const projected = await startFailure(
+      "",
+      {},
+      "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)\n",
+    );
+    expect(projected.remediation.action).not.toBe(
+      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    );
   });
 });
 
