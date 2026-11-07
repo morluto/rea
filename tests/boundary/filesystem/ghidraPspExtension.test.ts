@@ -138,6 +138,34 @@ async function installation() {
 describe.skipIf(process.platform === "win32")(
   "PSP installed-extension and profile boundary",
   () => {
+    it("refuses an otherwise supported custom PSP loader in stock checkpoint mode", async () => {
+      const f = await installation();
+      const checkpoints = new GhidraProvider(
+        {
+          ...f.config,
+          ghidraCheckpointDirectory: join(f.directory, "checkpoints"),
+        },
+        silentLogger,
+        {},
+        host,
+      );
+      try {
+        const supported = await f.provider.resolveAnalysisProfile(target);
+        if (!supported.ok) throw supported.error;
+        expect(supported.value.profile?.parameters.loader).toBe("PspElfLoader");
+        const refused = await checkpoints.resolveAnalysisProfile(target);
+        expect(refused).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "ConfigurationError",
+            settings: [{ setting: "REA_GHIDRA_CHECKPOINT_DIR" }],
+          },
+        });
+      } finally {
+        await checkpoints.closeOwnedResources();
+        await f.provider.closeOwnedResources();
+      }
+    });
     it("binds source interpretation and installed content, not mtimes or discovery order", async () => {
       const { provider, root } = await installation();
       expect(provider.inspectTargetSupport(target).status).toBe("supported");
