@@ -214,8 +214,8 @@ describe("call path reconstruction", () => {
     ).toBe(false);
     const unknown = run([observe("0x1000", ["0x2000"])]);
     expect(unknown.status).toBe("unknown");
-    expect(unknown.limitations).toContain(
-      "No analyze_function Evidence covers reachable function 0x2000",
+    expect(unknown.limitations).toContainEqual(
+      expect.stringMatching(/no analyze_function.*0x2000/iu),
     );
 
     const limitedEmpty = run([

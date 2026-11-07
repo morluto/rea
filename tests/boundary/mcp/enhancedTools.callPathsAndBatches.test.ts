@@ -125,7 +125,7 @@ describe("enhanced MCP graph caveats", () => {
     });
     expect(graph.structuredContent).toMatchObject({
       limitations: [
-        "Artifact identity is unavailable for this observation.",
+        expect.stringMatching(/artifact identity.*unavailable/iu),
         "Derived by an REA composed workflow.",
         `Fixture analysis provider (fixture 1) procedure_callees: ${caveat}`,
         `Fixture analysis provider (fixture 1) procedure_callees: ${leafCaveat}`,

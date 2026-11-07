@@ -864,6 +864,73 @@ describe("document-scoped snapshot admission", () => {
   });
 });
 
+it("retains producer-required xrefs without replaying a filesystem-writing query", () => {
+  const descriptor: CapabilityDescriptor = {
+    operation: "xrefs",
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    available: true,
+    reason: null,
+    effects: {
+      mutatesArtifact: false,
+      launchesProcess: true,
+      mayShowUi: false,
+      mayAccessNetwork: false,
+      mayWriteFilesystem: false,
+      changesPermissions: false,
+      requiresRoot: false,
+    },
+    limitations: [],
+  };
+  const xrefs = descriptor;
+  expect(
+    isSourceEvidenceRetainable("xrefs", xrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(isSnapshotCacheable("xrefs", xrefs, { address: "0x1000" })).toBe(
+    false,
+  );
+  expect(isSourceEvidenceRetainable("xrefs", xrefs, {})).toBe(false);
+  const writingXrefs = {
+    ...xrefs,
+    effects: { ...xrefs.effects, mayWriteFilesystem: true },
+  };
+  expect(
+    isSourceEvidenceRetainable("xrefs", writingXrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(true);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      {},
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      {
+        ...writingXrefs,
+        effects: { ...writingXrefs.effects, mutatesArtifact: true },
+      },
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSnapshotCacheable("xrefs", writingXrefs, {
+      address: "0x1000",
+      document: "fixture",
+    }),
+  ).toBe(false);
+});
+
 describe("analysis snapshot cache partitioning", () => {
   it.each<{
     operation: Exclude<AnalysisOperation, "health">;
@@ -986,7 +1053,9 @@ describe("analysis snapshot cache partitioning", () => {
     ).toMatchObject({
       provider: ANALYSIS_SNAPSHOT_PROVIDER,
       analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      limitations: [expect.stringContaining("local REA analysis snapshot")],
+      limitations: [
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+      ],
     });
     const changedProfile = createAnalysisProfile(ANALYSIS_SNAPSHOT_PROVIDER, {
       loader: "configured-override",
@@ -1490,13 +1559,43 @@ describe("executions that report truncated references", () => {
   });
 });
 
+it("does not replay references when the snapshot would lose their classifications", () => {
+  const cache = new AnalysisSnapshotCache();
+  const parameters = { address: "0x1000", document: "fixture" };
+  cache.record({
+    target: ANALYSIS_SNAPSHOT_TARGET,
+    profile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: "xrefs",
+    parameters,
+    execution: createAnalysisExecution(["0x2000"], ANALYSIS_SNAPSHOT_PROVIDER, {
+      referenceClassifications: [
+        {
+          sourceAddress: "0x2000",
+          targetAddress: "0x1000",
+          kind: "stored_pointer",
+          provenance: "relocation",
+          width: 8,
+        },
+      ],
+    }),
+  });
+  expect(
+    cache.lookup(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROFILE,
+      "xrefs",
+      parameters,
+    ),
+  ).toBeUndefined();
+});
+
 it("revises trace workflow profiles so earlier results are not replayed", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
 
   expect(
     workflowAnalysisProfile(profile, "trace_feature").parameters
       .workflow_revision,
-  ).toBe(4);
+  ).toBe(8);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),

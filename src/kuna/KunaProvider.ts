@@ -274,7 +274,12 @@ export class KunaProvider implements AnalysisProviderCandidate {
             edge_kind: "call",
             discovery: "body-classification-v1",
           },
-          xrefs: { command: "xrefs", direction: "to", exact_address: true },
+          xrefs: {
+            command: "xrefs",
+            direction: "to",
+            exact_address: true,
+            stored_pointers: true,
+          },
           strings: {
             command: "strings",
             encoding: "all",

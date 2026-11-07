@@ -85,7 +85,7 @@ it(
         isolation: "none",
       },
       limitations: expect.arrayContaining([
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ]),
       normalized_result: {
         targets: [{ target_id: "electron-page" }],
