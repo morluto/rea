@@ -95,19 +95,28 @@ transport.stderr?.on("data", (chunk) => {
 /** The profile a fixture's lane must commit, from independent declarations. */
 const expectedLane = (fixture) => {
   const soft = fixture.riscv.flags === 1;
+  const pie = fixture.riscv.type === 3;
   return {
-    lane: `elf${fixture.riscv.elfClass}-exec-le-${soft ? "soft" : "double"}-float-generic-v1`,
+    lane: `elf${fixture.riscv.elfClass}-${pie ? "pie" : "exec"}-le-${soft ? "soft" : "double"}-float-generic-v1`,
     callingConvention: soft ? "ilp32-prototype-v1" : undefined,
     riscvElf: {
       elf_class: fixture.riscv.elfClass,
       byte_order: "little",
-      type: 2,
+      type: pie ? 3 : 2,
       flags: fixture.riscv.flags,
       float_abi_double: !soft,
       ...(soft ? { float_abi: "soft", arch: fixture.riscv.isa.arch } : {}),
       rvc_declared: true,
       rve_declared: false,
       tso_declared: false,
+      ...(pie
+        ? {
+            has_interpreter: true,
+            load_model: "pie",
+            expected_default_image_base:
+              fixture.riscv.elfClass === 32 ? "0x10000" : "0x100000",
+          }
+        : {}),
     },
   };
 };
@@ -141,12 +150,15 @@ try {
   const fixtures = [
     await buildRiscvFixture(workspace, 32),
     await buildRiscvFixture(workspace, 64),
+    await buildRiscvFixture(workspace, 32, { pie: true }),
+    await buildRiscvFixture(workspace, 64, { pie: true }),
     typedSoft,
     await stripRiscvFixture(workspace, typedSoft),
   ];
   for (const fixture of fixtures) {
     const bits = fixture.riscv.elfClass;
     const soft = fixture.riscv.flags === 1;
+    const pie = fixture.riscv.type === 3;
     const stripped = fixture.stripped === true;
     const expected = expectedLane(fixture);
     const resolved = await parseBinaryTarget(fixture.path);
@@ -222,6 +234,17 @@ try {
       assert.equal(source.original_sha256, fixture.sha256);
       assert.equal(source.modified_sha256, fixture.sha256);
     }
+    const expectedBase = pie ? (bits === 32 ? 0x10000n : 0x100000n) : 0n;
+    if (pie) {
+      assert.equal(
+        image.observations.image_base,
+        `0x${expectedBase.toString(16)}`,
+      );
+    }
+    const addressFor = (name) => {
+      const symbolAddress = BigInt(fixture.symbols[name]);
+      return `0x${(pie ? expectedBase + symbolAddress : symbolAddress).toString(16)}`;
+    };
     const procedures = await call("list_procedures");
     const names = soft
       ? [
@@ -246,21 +269,21 @@ try {
       // A stripped image has no names; the typed twin's addresses locate it.
       const procedure = procedures.find((value) =>
         stripped
-          ? BigInt(value.address) === BigInt(fixture.symbols[name])
+          ? BigInt(value.address) === BigInt(addressFor(name))
           : value.value === name,
       );
       assert.ok(procedure, `${name} missing from Ghidra inventory`);
-      assert.equal(BigInt(procedure.address), BigInt(fixture.symbols[name]));
+      assert.equal(BigInt(procedure.address), BigInt(addressFor(name)));
     }
     const probe = await call("inspect_native_instruction", {
-      address: fixture.symbols.rea_riscv_probe,
+      address: addressFor("rea_riscv_probe"),
     });
     assert.equal(probe.status, "decoded");
     assert.equal(probe.architecture, expectedLanguage);
     assert.equal(probe.length, 4);
     assert.equal(probe.bytes, "13051501"); // addi a0, a0, 17
     const mapping = await call("address_to_file_offset", {
-      address: fixture.symbols.rea_riscv_probe,
+      address: addressFor("rea_riscv_probe"),
     });
     const sourceBytes = await readFile(fixture.path);
     assert.equal(
@@ -277,7 +300,7 @@ try {
         [4n, "f32200b0", /^csrr/iu],
       ]) {
         const instruction = await call("inspect_native_instruction", {
-          address: `0x${(BigInt(fixture.symbols.rea_riscv_isa_probe) + offset).toString(16)}`,
+          address: `0x${(BigInt(addressFor("rea_riscv_isa_probe")) + offset).toString(16)}`,
         });
         assert.equal(instruction.status, "decoded");
         assert.equal(instruction.bytes, bytes);
@@ -286,33 +309,30 @@ try {
       }
     }
     const global = await call("read_bytes", {
-      address: fixture.symbols.rea_riscv_global,
+      address: addressFor("rea_riscv_global"),
       length: 4,
     });
     assert.equal(global.bytes_hex, "07000000");
     const callees = await call("procedure_callees", {
-      procedure: fixture.symbols.rea_riscv_entry,
+      procedure: addressFor("rea_riscv_entry"),
     });
     for (const name of soft
       ? ["rea_riscv_abi_caller", "rea_riscv_isa_probe", "rea_riscv_probe"]
       : ["rea_riscv_leaf", "rea_riscv_probe"])
       assert.ok(
-        callees.some(
-          (address) => BigInt(address) === BigInt(fixture.symbols[name]),
-        ),
+        callees.some((address) => BigInt(address) === BigInt(addressFor(name))),
         `${name} missing from the entry's callees`,
       );
     const dossier = functionDossierSchema.parse(
       await call("analyze_function", {
-        procedure: fixture.symbols.rea_riscv_entry,
+        procedure: addressFor("rea_riscv_entry"),
         detail: "complete",
       }),
     );
     assert.ok(dossier.pseudocode.trim().length > 0);
     if (!stripped) {
       const floatCode = await call("procedure_pseudo_code", {
-        procedure:
-          fixture.symbols[soft ? "rea_riscv_abi_wide" : "rea_riscv_float"],
+        procedure: addressFor(soft ? "rea_riscv_abi_wide" : "rea_riscv_float"),
       });
       assert.ok(typeof floatCode === "string" && floatCode.trim().length > 0);
       assert.match(floatCode, /\bdouble\b/u);
@@ -322,12 +342,12 @@ try {
       const boundaries = {};
       for (const name of Object.keys(RISCV_ILP32_ABI))
         boundaries[name] = (
-          await call("inspect_native_api", { procedure: fixture.symbols[name] })
+          await call("inspect_native_api", { procedure: addressFor(name) })
         ).boundary;
       assertRiscvIlp32Storage(boundaries, { stripped });
       const caller = functionDossierSchema.parse(
         await call("analyze_function", {
-          procedure: fixture.symbols.rea_riscv_abi_caller,
+          procedure: addressFor("rea_riscv_abi_caller"),
           detail: "complete",
         }),
       );
@@ -351,7 +371,7 @@ try {
 
     const snapshotPath = join(
       workspace,
-      `${fixture.path.split("/").at(-1)}.snapshot.json`,
+      `${fixture.path.split(/[\/\\]/).at(-1)}.snapshot.json`,
     );
     const saved = await call("close_binary", { snapshot_path: snapshotPath });
     assert.ok(saved.evidence_records > 0);
@@ -388,7 +408,7 @@ try {
       ...(stripped ? [] : [["search", ["rea_riscv_", "--kind", "procedures"]]]),
       [
         "function",
-        [stripped ? fixture.symbols.rea_riscv_entry : "rea_riscv_entry"],
+        [stripped ? addressFor("rea_riscv_entry") : "rea_riscv_entry"],
       ],
     ]) {
       const cli = await execute(
@@ -420,90 +440,127 @@ try {
       }
     }
     const headers = [];
-    // Header-mutated copies test admission; they are not new compiler claims.
-    for (const [flags, outcome] of stripped
-      ? []
-      : soft
-        ? [
-            [0x3, "single-float ABI (ilp32f)"],
-            [0x80000001, "(0x80000000)"],
-          ]
-        : bits === 32
-          ? [
-              [0x1, "admitted"],
-              [0x80000005, "(0x80000000)"],
-            ]
-          : [
-              [0x1, "soft-float ABI (lp64)"],
-              [0x80000005, "(0x80000000)"],
-            ]) {
-      const mutatedPath = join(
-        workspace,
-        `rv${bits}${soft ? "-soft" : ""}-flags-${flags.toString(16)}.elf`,
-      );
-      const mutatedBytes = Buffer.from(sourceBytes);
-      mutatedBytes.writeUInt32LE(flags, bits === 32 ? 36 : 48);
-      await writeFile(mutatedPath, mutatedBytes);
+    if (pie) {
+      // Mutate program headers to clear PT_INTERP and verify shared library refusal.
+      const is64 = bits === 64;
+      const phoff = is64
+        ? Number(sourceBytes.readBigUInt64LE(32))
+        : sourceBytes.readUInt32LE(28);
+      const phentsize = sourceBytes.readUInt16LE(is64 ? 54 : 42);
+      const phnum = sourceBytes.readUInt16LE(is64 ? 56 : 44);
+      const sharedBytes = Buffer.from(sourceBytes);
+      for (let i = 0; i < phnum; i += 1) {
+        const offset = phoff + i * phentsize;
+        if (sharedBytes.readUInt32LE(offset) === 3) {
+          sharedBytes.writeUInt32LE(0, offset); // PT_NULL
+        }
+      }
+      const sharedPath = join(workspace, `rv${bits}-shared.so`);
+      await writeFile(sharedPath, sharedBytes);
       const reply = await client.callTool(
         {
           name: "open_binary",
-          arguments: { path: mutatedPath, provider_id: "ghidra" },
+          arguments: { path: sharedPath, provider_id: "ghidra" },
         },
-        { timeout: 240000 },
+        { timeout: 60000 },
       );
-      const cliArguments = [
-        entrypoint,
-        "function",
-        mutatedPath,
-        "rea_riscv_entry",
-        "--provider",
-        "ghidra",
-        "--json",
-      ];
-      const cliOptions = { env, timeout: 240000, maxBuffer: 16 * 1024 * 1024 };
-      if (outcome === "admitted") {
-        // The double-float image now declares ilp32: refused before, admitted
-        // now through the soft-float lane with the image's own ISA string.
-        assert.equal(
-          requireMcpLifecycleResult(reply, "open_binary").sha256,
-          createHash("sha256").update(mutatedBytes).digest("hex"),
-        );
-        requireMcpLifecycleResult(
-          await client.callTool(
-            { name: "close_binary", arguments: {} },
-            { timeout: 240000 },
-          ),
-          "close_binary",
-        );
-        const want = {
-          lane: "elf32-exec-le-soft-float-generic-v1",
-          callingConvention: "ilp32-prototype-v1",
-          riscvElf: {
-            ...expected.riscvElf,
-            flags,
-            float_abi_double: false,
-            float_abi: "soft",
-            arch: fixture.riscv.isa.arch,
-          },
-        };
-        const cli = await execute(process.execPath, cliArguments, cliOptions);
-        assertProfile(
-          parseEvidence(JSON.parse(cli.stdout)).analysis_profile,
-          want,
-        );
-        headers.push({ flags, outcome, lane: want.lane });
-        continue;
-      }
       const error = requireMcpToolError(reply);
-      assert.ok(JSON.stringify(error).includes(outcome), JSON.stringify(error));
-      await assert.rejects(
-        execute(process.execPath, cliArguments, cliOptions),
-        (cause) =>
-          Number.isInteger(cause.code) &&
-          cause.code !== 0 &&
-          `${cause.stdout}\n${cause.stderr}`.includes(outcome),
-      );
-      headers.push({ flags, outcome: "refused", reason: outcome });
+      const reason = "shared libraries without PT_INTERP";
+      assert.ok(JSON.stringify(error).includes(reason), JSON.stringify(error));
+      headers.push({ flags: "shared", outcome: "refused", reason });
+    } else {
+      // Header-mutated copies test admission; they are not new compiler claims.
+      for (const [flags, outcome] of stripped
+        ? []
+        : soft
+          ? [
+              [0x3, "single-float ABI (ilp32f)"],
+              [0x80000001, "(0x80000000)"],
+            ]
+          : bits === 32
+            ? [
+                [0x1, "admitted"],
+                [0x80000005, "(0x80000000)"],
+              ]
+            : [
+                [0x1, "soft-float ABI (lp64)"],
+                [0x80000005, "(0x80000000)"],
+              ]) {
+        const mutatedPath = join(
+          workspace,
+          `rv${bits}${soft ? "-soft" : ""}-flags-${flags.toString(16)}.elf`,
+        );
+        const mutatedBytes = Buffer.from(sourceBytes);
+        mutatedBytes.writeUInt32LE(flags, bits === 32 ? 36 : 48);
+        await writeFile(mutatedPath, mutatedBytes);
+        const reply = await client.callTool(
+          {
+            name: "open_binary",
+            arguments: { path: mutatedPath, provider_id: "ghidra" },
+          },
+          { timeout: 240000 },
+        );
+        const cliArguments = [
+          entrypoint,
+          "function",
+          mutatedPath,
+          "rea_riscv_entry",
+          "--provider",
+          "ghidra",
+          "--json",
+        ];
+        const cliOptions = {
+          env,
+          timeout: 240000,
+          maxBuffer: 16 * 1024 * 1024,
+        };
+        if (outcome === "admitted") {
+          // The double-float image now declares ilp32: refused before, admitted
+          // now through the soft-float lane with the image's own ISA string.
+          assert.equal(
+            requireMcpLifecycleResult(reply, "open_binary").sha256,
+            createHash("sha256").update(mutatedBytes).digest("hex"),
+          );
+          requireMcpLifecycleResult(
+            await client.callTool(
+              { name: "close_binary", arguments: {} },
+              { timeout: 240000 },
+            ),
+            "close_binary",
+          );
+          const want = {
+            lane: "elf32-exec-le-soft-float-generic-v1",
+            callingConvention: "ilp32-prototype-v1",
+            riscvElf: {
+              ...expected.riscvElf,
+              flags,
+              float_abi_double: false,
+              float_abi: "soft",
+              arch: fixture.riscv.isa.arch,
+            },
+          };
+          const cli = await execute(process.execPath, cliArguments, cliOptions);
+          assertProfile(
+            parseEvidence(JSON.parse(cli.stdout)).analysis_profile,
+            want,
+          );
+          headers.push({ flags, outcome, lane: want.lane });
+          continue;
+        }
+        const error = requireMcpToolError(reply);
+        assert.ok(
+          JSON.stringify(error).includes(outcome),
+          JSON.stringify(error),
+        );
+        await assert.rejects(
+          execute(process.execPath, cliArguments, cliOptions),
+          (cause) =>
+            Number.isInteger(cause.code) &&
+            cause.code !== 0 &&
+            `${cause.stdout}\n${cause.stderr}`.includes(outcome),
+        );
+        headers.push({ flags, outcome: "refused", reason: outcome });
+      }
     }
     assert.equal(
       createHash("sha256")

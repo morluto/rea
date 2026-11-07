@@ -15,9 +15,10 @@ supported. Existing PE, managed and Mach-O architecture sets are unchanged.
 Headerless inputs use the separate [raw-binary admission
 boundary](raw-binary.md); raw RISC-V images are not supported.
 
-The Ghidra lane admits little-endian `ET_EXEC` images with no `EF_RISCV_RVE`,
-`EF_RISCV_TSO`, or any bit outside `EF_RISCV_RVC | EF_RISCV_FLOAT_ABI`, in one
-of three lanes:
+The Ghidra lane admits little-endian `ET_EXEC` images and position-independent
+executables (`ET_DYN` with `PT_INTERP`) with no `EF_RISCV_RVE`, `EF_RISCV_TSO`,
+or any bit outside `EF_RISCV_RVC | EF_RISCV_FLOAT_ABI`, in one of the supported
+lanes:
 
 - ELF64 or ELF32 images that declare `EF_RISCV_FLOAT_ABI_DOUBLE` use Ghidra's
   stock double-float model unchanged. Their `.riscv.attributes` is not read for
@@ -33,24 +34,28 @@ that ISA.
 Provider selection returns the specific unsupported constraint rather than
 guessing a compatible profile:
 
-| Declaration                                                                | Outcome                                                                                                              |
-| -------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- |
-| Little-endian ELF64 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, double-float ABI                            | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1`                                |
-| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only     | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1` |
-| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                     |
-| ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                              |
-| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                       |
-| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                           |
-| `ET_REL`, `ET_DYN`, other `e_type`                                         | refused with the declared value                                                                                      |
-| `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                             |
-| `EF_RISCV_TSO`                                                             | refused; the total-store-order memory model is unverified here                                                       |
-| Reserved or newer `e_flags` bits                                           | refused with the offending bits named                                                                                |
+| Declaration                                                                | Outcome                                                                                                                         |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Little-endian ELF64 `ET_EXEC` or PIE (`ET_DYN`), double-float ABI          | admitted, `RISCV:LE:64:default` + `gcc`, lane `elf64-exec-le-double-float-generic-v1` or `elf64-pie-le-double-float-generic-v1` |
+| Little-endian ELF32 `ET_EXEC` or PIE (`ET_DYN`), double-float ABI          | admitted, `RISCV:LE:32:default` + `gcc`, lane `elf32-exec-le-double-float-generic-v1` or `elf32-pie-le-double-float-generic-v1` |
+| Little-endian ELF32 `ET_EXEC`, soft-float ABI, decoded extensions only     | admitted, `RISCV:LE:32:default` + `gcc` with the `__rea_ilp32` prototype, lane `elf32-exec-le-soft-float-generic-v1`            |
+| ELF32 soft-float ABI without `Tag_RISCV_arch`, or with any other extension | refused; the reason names the extensions outside the decoded set                                                                |
+| ELF32 single-float ABI (ilp32f)                                            | refused until its [written policy](#ilp32f) is implemented and verified                                                         |
+| ELF64 soft- or single-float ABI (lp64, lp64f), or the quad-float ABI       | refused; no verified calling-convention policy                                                                                  |
+| Big-endian                                                                 | refused; Ghidra 12.1.4 ships no big-endian RISC-V language                                                                      |
+| `ET_DYN` without `PT_INTERP` (shared library)                              | refused; shared libraries without PT_INTERP need separate load verification                                                     |
+| `ET_REL`, other `e_type`                                                   | refused with the declared value                                                                                                 |
+| `EF_RISCV_RVE`                                                             | refused; the embedded 16-register profile (x0–x15) needs its own processor specification                                        |
+| `EF_RISCV_TSO`                                                             | refused; the total-store-order memory model is unverified here                                                                  |
+| Reserved or newer `e_flags` bits                                           | refused with the offending bits named                                                                                           |
 
-`e_type` is the only load-shape declaration this lane reads. A fixed-address
-`ET_EXEC` declaration does **not** establish static linkage: `PT_INTERP` and
-dynamic dependencies are not inspected, and the session records that boundary as
-a limitation rather than inferring a load model.
+`e_type` and program headers decide the load model this lane reads. A
+fixed-address `ET_EXEC` declaration does **not** establish static linkage:
+dynamic dependencies are not inspected, and the session records that boundary
+as a limitation rather than inferring a load model. Position-independent
+executables (`ET_DYN` with `PT_INTERP`) are admitted using Ghidra's default
+analysis base (`0x10000` for RV32, `0x100000` for RV64); runtime load addresses
+and dynamic linker relocations are not executed or verified.
 
 ## Why the language is pinned
 
@@ -253,7 +258,10 @@ Those base strings are admitted. Builds that add `_zba_zbb_zbs`,
 The lane identity is one of the lane ids above, and `riscv_elf` retains
 `elf_class`, `byte_order`, `type`, and the raw `flags` alongside the read-only
 booleans `float_abi_double`, `rvc_declared`, `rve_declared`, and
-`tso_declared`. Soft-float profiles also retain `float_abi: soft`, the declared
+`tso_declared`. For PIE images, `riscv_elf` also records
+`has_interpreter: true`, `load_model: "pie"`, and the expected default image
+base (`expected_default_image_base: "0x10000"` for RV32, `"0x100000"` for RV64).
+Soft-float profiles also retain `float_abi: soft`, the declared
 `arch` string, and `riscv_calling_convention: ilp32-prototype-v1`. Those fields
 report declarations the header and attributes make, and the policy REA applied;
 none of them is evidence of the original compiler or of instruction

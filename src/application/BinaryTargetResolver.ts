@@ -1182,6 +1182,7 @@ const readElfMetadata = async (
       ...parsed.value,
       riscv: {
         ...parsed.value.riscv,
+        ...(ranges.value.hasInterpreter ? { hasInterpreter: true } : {}),
         isa: await readElfDeclarations(
           handle,
           bytes,
