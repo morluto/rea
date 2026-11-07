@@ -219,7 +219,9 @@ Identity has two levels:
 Neither level covers spellings: `0x08000000` and `0x8000000` are the same base,
 an omitted `vector_table_address` equals an explicit one at the base, and REA
 reports canonical addresses only. No result retains the spelling a caller used
-yet; the decision record describes that gap.
+yet; the
+[decision record](../adr/firmware/arm-m-profile-raw-loads.md#known-gap)
+describes that gap.
 
 These inputs leave a load without them exactly as REA loaded it before: its
 analysis profile, snapshot target and `raw-binary` load image are unchanged, so
@@ -229,72 +231,9 @@ snapshot of a load that uses them, because its analysis profile differs.
 
 ### Decision record
 
-This is decision D1 of the embedded-target work, raised in
-[#4246](https://github.com/morluto/rea/issues/4246).
-
-- **Choice.** `architecture_variant` naming the M profile, mapped as in the table
-  above; with it, a required `base_address` separate from the entry and an optional
-  `vector_table_address`; Reset read from the vector table when a variant and a
-  base are given without an entry; explicit odd entries refused; the `segments`
-  load image and versioned `raw_load` identity only for loads that are not
-  legacy-equivalent; an entry `role` that names its function, with its `basis`
-  recorded separately; coordinate identity from resolved values only, while
-  session and snapshot identity also cover the provenance that results report;
-  Ghidra's processor-defined labels not applied to variant loads.
-- **Alternatives.** A single `processor_variant: "cortex-m"` value
-  ([#4927](https://github.com/morluto/rea/pull/4927)) cannot select the v8-M
-  decoder. Folding ARMv8.1-M into `armv8-m.main` would use the same decoder but
-  drop the profile from identity, and splitting it out later would change
-  identity again. A language passthrough with a base (#4246, option C) exposes provider
-  language ids in a provider-neutral contract. Masking odd entries hides the
-  caller's value; refusing first keeps accepting them a later, additive change.
-  A `role` that records how the entry was chosen mixes provenance with what the
-  entry is. Naming the seeded function after its role, as CMSIS
-  `Reset_Handler`, would claim a symbol the image does not carry. Leaving the basis and the vector-table address out of session
-  identity would let a reused session report provenance or vector words that
-  the current request did not produce. Putting them or the entry address in
-  coordinate identity would make functions found from two entries of one image
-  incomparable. Ghidra's
-  default Cortex labels name every slot, reserved ones included, and at base
-  `0x0` the code after the table; the vector table is admission's to read. A
-  separate base for every raw family is a later, additive widening; it needs
-  base-separated cases in the 6502 and m68k lanes and on Windows Ghidra P0,
-  which admits raw 6502.
-- **Owner and consumers.** `src/domain/architectureVariant.ts` owns the
-  vocabulary; `GHIDRA_VARIANT_LANGUAGES` owns the Ghidra mapping, which
-  follows the GNU architecture names in Ghidra 12.1.4's `ARM.ldefs`, and
-  `GHIDRA_VARIANT_LIMITATIONS` the decoder limitations that every lane
-  reports for a variant; raw
-  admission owns the load, its legacy equivalence, the entry's role and basis,
-  and its `raw_load` identity; the Ghidra profile owns the coordinate context
-  and the label policy. Consumers are the CLI and MCP inputs, target summaries,
-  the Ghidra profile, launcher, bridge and load-image attestation, and
-  snapshots.
-- **Costs of change.** Code: renaming an input is an alias with a deprecation
-  period; remapping a variant or adding an M profile is one table row. Every
-  row is an ARM M profile, and the base requirement, Reset derivation and label
-  policy hold for all of them; a variant of another family would first make
-  those per-row properties of the table. Compatibility: the `segments`
-  shape and `raw_load` are permanent once released, so changes ship as
-  `version: 2`. Their variant and instruction-set values are closed sets, so a
-  version that predates a new value refuses the Evidence or snapshot instead of
-  misreading it. The `segments` and `entries` arrays hold one element today and
-  leave room for more; `vector_table` holds only the table address and the two
-  words read, under the `segments` version. Migration: sessions and snapshots of
-  loads that use these inputs are invalidated by any change to `raw_load`;
-  legacy loads are not affected. Verification: rerun
-  `npm run verify:ghidra:cortex-m`, which needs Ghidra 12.1.4, JDK 21 and LLVM
-  with Thumb targets.
-- **Known gap.** Results report the canonical `entry_point`, `base_address` and
-  `vector_table_address`; none retains the spelling the caller passed, as
-  legacy `entry_point` did not before these inputs. Direct CLI requests keep
-  the caller's path as Evidence `caller_input_path`, outside semantic identity.
-  Recording a load selection's spellings the same way would be a later change,
-  but not one older readers accept: the Evidence envelope is strict, so REA
-  versions without the new field refuse records that carry it. A caller that
-  needs its spelling keeps its own request: an MCP client already holds its
-  arguments, and a CLI caller can save its command beside the Evidence it
-  writes, together with its `evidence_id`.
+The [ARM M-profile raw load decision](../adr/firmware/arm-m-profile-raw-loads.md)
+records why these inputs take this shape, the rejected alternatives, the owners
+and consumers of each part, and the costs of a later change.
 
 ## NMOS 6502
 

@@ -7,3 +7,7 @@ feature specification.
 
 See [the authoring guide](../development/documentation.md#feature-lifecycle) for
 the distinction between specifications, roadmaps and isolated decisions.
+
+## Firmware
+
+- [ARM M-profile raw loads](firmware/arm-m-profile-raw-loads.md) (Proposed)
