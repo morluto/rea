@@ -853,14 +853,6 @@ const semanticGraphContainerSchema = javaScriptSemanticGraphInputSchema.extend({
   unknowns: arrayContainerSchema(semanticGraphShape.unknowns),
 });
 
-/** Clone input synchronously; commit, check and seal the owned graph in steps. */
-export const createImmutableJavaScriptSemanticGraphSteps = (
-  input: unknown,
-): Generator<void, JavaScriptSemanticGraph> =>
-  validateAndSealSemanticGraphSteps(
-    normalizeGraphInput(javaScriptSemanticGraphInputSchema.parse(input)),
-  );
-
 /**
  * Seal a graph whose input the caller transfers: the caller neither retains nor
  * mutates any part of it afterwards. Only the graph's own fields are validated

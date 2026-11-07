@@ -24,7 +24,7 @@ import {
   createJavaScriptSemanticGraphNode,
   createJavaScriptSemanticGraphRelation,
   createJavaScriptSemanticGraphUnknown,
-  createImmutableJavaScriptSemanticGraphSteps,
+  sealTransferredJavaScriptSemanticGraphSteps,
   isValidatedImmutableJavaScriptSemanticGraph,
   JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticGraphSchema,
@@ -744,7 +744,7 @@ const complete = <Value>(steps: Iterator<void, Value>): Value => {
   }
 };
 
-it("captures nested input before yielding and preserves the synchronous graph commitment", () => {
+it("preserves a transferred graph independent of the caller retained copy", () => {
   const input = semanticFixtureInput(true);
   const node = input.nodes[0];
   if (node === undefined) throw new Error("Expected fixture node");
@@ -754,7 +754,9 @@ it("captures nested input before yielding and preserves the synchronous graph co
   input.relations.reverse();
   input.coverage.families.reverse();
   const expected = createJavaScriptSemanticGraph(input);
-  const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+  const steps = sealTransferredJavaScriptSemanticGraphSteps(
+    structuredClone(input),
+  );
   expect(steps.next().done).toBe(false);
   nested.text = "Changed while the owned graph is being hashed.";
   nested.rows.push(4);
@@ -854,7 +856,9 @@ it.each(invalidGraphCases)(
     };
     const expected = issues(() => createJavaScriptSemanticGraph(input));
     expect(expected.map(({ message }) => message)).toContain(message);
-    const steps = createImmutableJavaScriptSemanticGraphSteps(input);
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(
+      structuredClone(input),
+    );
     expect(steps.next().done).toBe(false);
     expect(issues(() => complete(steps))).toEqual(expected);
   },
