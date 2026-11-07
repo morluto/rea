@@ -10,8 +10,12 @@ There is no environment override for loading an arbitrary native module.
 
 ## Build
 
-The artifact lane requires Linux, MinGW-w64 `x86_64-w64-mingw32-g++`,
-`x86_64-w64-mingw32-dlltool`, and `tar`. It never installs these commands.
+The artifact lane runs on Linux or Windows x64 and requires MinGW-w64
+`x86_64-w64-mingw32-g++` and `tar` on the build process's `PATH`. Linux also
+requires `x86_64-w64-mingw32-dlltool` on that `PATH`. Windows asks the selected
+compiler for its matching `dlltool` path; the returned executable must run.
+The compiler must report target `x86_64-w64-mingw32`.
+The build never installs these commands or changes the global `PATH`.
 Node-API headers are reused from the build cache or downloaded from the
 pinned official Node release with its published SHA-256 checked.
 
@@ -21,6 +25,11 @@ npm run verify:windows-native:artifact
 npm pack
 ```
 
+In PowerShell, use `npm.cmd` for these commands. A local Windows MinGW-w64
+toolchain can be added to that PowerShell process's `PATH`; WSL is not required.
+The Windows lane uses the same C++ sources, GNU delay-import library, compiler
+flags, verified Node headers, artifact validation and manifest producer as Linux.
+
 `build/` is ignored by Git. The npm file inventory includes only the addon and
 its manifest. Release CI builds both, and `prepublishOnly` rejects a missing,
 stale, mismatched, or wrong-architecture artifact. A development tarball built
@@ -28,12 +37,20 @@ without this lane reports Windows native controls as unavailable.
 
 ## Restore the artifact in a source checkout
 
-The source tree omits `native/windows/build/` from Git. To run Windows
-provider-backed workflows from a checkout without the MinGW build lane, extract
-the two files from the published `rea-agents` tarball whose version exactly
-matches the checkout's `package.json` version. Do not use `latest` or copy files
-from another REA version; the loader verifies the manifest version, ABI,
-architecture, and addon digest before it grants authority.
+The source tree omits `native/windows/build/` from Git. For a checkout of the
+corresponding published release, extract the two files from the published
+`rea-agents` tarball whose version exactly matches `package.json`. Do not use
+`latest` or files from another REA version. The loader verifies the manifest
+version, ABI, architecture, and addon digest before it grants authority.
+
+An unreleased source checkout can require new native operations while retaining
+the last release's package version and ABI. Matching those numbers alone does
+not establish capability compatibility. Build the artifact and manifest from
+that exact checkout for its new operations. Native inspection must affirm each
+required optional control; an older artifact may support other operations while
+refusing the new control. For example, JavaScript source staging requires
+`runtimeWriteTransient: true`. Do not replace it with immutable staging or
+path-based writes to suppress an incompatibility.
 
 From the checkout root, replace `<matching-version>` with the `version` in
 `package.json`:

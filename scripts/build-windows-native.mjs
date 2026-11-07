@@ -4,7 +4,7 @@ import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
 
@@ -41,11 +41,31 @@ const run = (command, args) => {
     );
   return result.stdout;
 };
-if (process.platform !== "linux")
+if (
+  process.platform !== "linux" &&
+  !(process.platform === "win32" && process.arch === "x64")
+)
   throw new Error(
-    "The Windows x64 artifact build lane currently requires Linux and MinGW-w64.",
+    "The Windows x64 artifact build lane requires Linux or Windows x64 and MinGW-w64 on PATH.",
   );
 run(compiler, ["--version"]);
+if (run(compiler, ["-dumpmachine"]).trim() !== "x86_64-w64-mingw32")
+  throw new Error(
+    "The Windows native compiler must target x86_64-w64-mingw32.",
+  );
+// Native Windows distributions can expose an unprefixed dlltool. Ask the
+// selected compiler for its matching binutils rather than guessing a filename.
+const dlltool =
+  process.platform === "win32"
+    ? run(compiler, ["-print-prog-name=dlltool"]).trim()
+    : "x86_64-w64-mingw32-dlltool";
+if (dlltool.length === 0)
+  throw new Error("The Windows native compiler did not identify its dlltool.");
+if (process.platform === "win32" && !isAbsolute(dlltool))
+  throw new Error(
+    "The Windows native compiler must identify its dlltool by absolute path; install the matching GNU binutils with that compiler.",
+  );
+run(dlltool, ["--version"]);
 await mkdir(cache, { recursive: true });
 await mkdir(output, { recursive: true });
 const exists = async (path) =>
@@ -119,7 +139,7 @@ await writeFile(
   definition,
   `LIBRARY node.exe\nEXPORTS\n${symbols.join("\n")}\n`,
 );
-run("x86_64-w64-mingw32-dlltool", ["-d", definition, "-y", library]);
+run(dlltool, ["-d", definition, "-y", library]);
 run(compiler, [
   "-std=c++17",
   "-O2",

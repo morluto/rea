@@ -1,21 +1,37 @@
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import {
+  RuntimeControlUnavailableError,
+  runtimeControlCapabilityError,
+} from "../process/RuntimeControlUnavailableError.js";
 
 const nativeCall = vi.hoisted(() => vi.fn());
+const nativeInspection = vi.hoisted(() => ({
+  runtimeWriteTransient: true as boolean | undefined,
+}));
 
 vi.mock("./WindowsNativeLoader.js", async (importOriginal) => {
   const actual =
     await importOriginal<typeof import("./WindowsNativeLoader.js")>();
   return {
     ...actual,
-    requireWindowsNativeAuthority: () => ({ call: nativeCall }),
+    requireWindowsNativeAuthority: () => ({
+      call: nativeCall,
+      inspection: nativeInspection,
+    }),
   };
 });
 
 import {
   WindowsPrivateRuntime,
+  WindowsRuntimeWriteTransientUnavailableError,
   WindowsSnapshotCancelledError,
   windowsPrivateRuntime,
 } from "./WindowsPrivateRuntime.js";
+
+beforeEach(() => {
+  nativeCall.mockReset();
+  nativeInspection.runtimeWriteTransient = true;
+});
 
 const observation = {
   requestedPath: "C:\\rea-private",
@@ -163,6 +179,64 @@ const admittedFile = {
 };
 
 describe("Windows private runtime transient write", () => {
+  it.each([undefined, false])(
+    "refuses missing/nonaffirmative transient-write support before native dispatch: %j",
+    async (runtimeWriteTransient) => {
+      nativeInspection.runtimeWriteTransient = runtimeWriteTransient;
+      const operations: string[] = [];
+      nativeCall.mockImplementation((operation: string) => {
+        operations.push(operation);
+        if (operation === "runtime_create") return observation;
+        return null;
+      });
+      const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+      try {
+        let cause: unknown;
+        try {
+          runtime.writeTransientFile("job.source", "source-bytes");
+        } catch (error: unknown) {
+          cause = error;
+        }
+        expect(cause).toBeInstanceOf(
+          WindowsRuntimeWriteTransientUnavailableError,
+        );
+        expect(cause).toBeInstanceOf(RuntimeControlUnavailableError);
+        expect(cause).toMatchObject({
+          code: "windows-native-control-unavailable",
+          control: "runtime-write-transient",
+          retryable: false,
+          remediationAction: expect.stringContaining(
+            "Matching package version alone is insufficient",
+          ),
+        });
+        if (!(cause instanceof RuntimeControlUnavailableError)) throw cause;
+        expect(
+          runtimeControlCapabilityError(
+            "javascript-static",
+            "analyze_javascript_application",
+            cause,
+          ),
+        ).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          retryable: false,
+          remediationAction: expect.stringContaining(
+            "Build the Windows native artifact from this exact source checkout",
+          ),
+        });
+        expect(operations).toEqual(["runtime_create"]);
+        // Earlier artifacts retain their durable descriptor/cleanup controls.
+        runtime.writeFile("descriptor.json", "fixture");
+        expect(operations).toEqual(["runtime_create", "runtime_write"]);
+      } finally {
+        await runtime.close();
+      }
+      expect(operations).toEqual([
+        "runtime_create",
+        "runtime_write",
+        "runtime_close",
+      ]);
+    },
+  );
   it("writes through runtime_write_transient and never retains via runtime_write", async () => {
     const operations: string[] = [];
     nativeCall.mockImplementation((operation: string) => {

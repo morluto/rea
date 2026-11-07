@@ -276,8 +276,8 @@ artifacts, those controls are unavailable even after a successful runtime
 build.
 
 Follow the [Windows native build guide](native/windows/README.md#build) before
-running those workflows from source. The artifact build requires Linux,
-MinGW-w64, and `tar`; the build script does not run on Windows. See that guide
+running those workflows from source. The artifact build requires Linux or
+Windows x64, MinGW-w64, and `tar`. See that guide
 for the build and artifact-verification commands and the separate real Windows
 verification prerequisites. Keep the generated addon and manifest uncommitted.
 
