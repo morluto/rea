@@ -1,3 +1,4 @@
+import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
 
@@ -12,6 +13,7 @@ export const PYTHON_READY_CHECK = `
 
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
+from array import array
 import contextlib
 import copy
 import hashlib
@@ -57,11 +59,6 @@ MAX_PARSED_BYTES = 4 * 1024 * 1024
 PARSED_TOO_LARGE = "larger than the 4 MiB limit for JSON and key file views"
 MAX_JSON_VIEW_DEPTH = 500
 JSON_TOO_DEEP = f"nested deeper than the {MAX_JSON_VIEW_DEPTH} levels a JSON view keeps"
-#: A JSON token after any whitespace, by group: an opening, a closing, a comma, a colon, a string's quote, or a number
-#: or literal. Strings are read by json's scanner, since a pattern repeating per escape holds memory for each.
-JSON_TOKEN = re.compile(r'[ \t\n\r]*(?:([\[{])|([\]}])|(,)|(:)|(")|(-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?'
-                        r"|true|false|null))")
-JSON_SPACE = re.compile(r"[ \t\n\r]*")
 
 
 def _respelled(text: str, home: Path) -> str:
@@ -254,176 +251,7 @@ def _keyfile(text: str) -> dict:
 
 ${PYTHON_XML_READER}
 
-class _Inexact(Exception):
-    """A JSON number that REA's state view refuses, since reading it would change it."""
-
-
-def _digits(text: str) -> str:
-    return re.split(r"[eE]", text.lstrip("-"))[0].replace(".", "").strip("0") or "0"
-
-
-def _js_string(value: float) -> str:
-    """How JavaScript's String() writes a finite double: an integer below 1e21 in full, any other in shortest form."""
-    return str(int(value)) if value.is_integer() and abs(value) < 1e21 else repr(value)
-
-
-def _safe_number(text: str) -> bool:
-    """lossless-json's isSafeNumber: an integer spelling within 2^53, or a float spelling that keeps its digits."""
-    if re.fullmatch(r"-?[0-9]+", text):
-        return len(text.lstrip("-")) <= 16 and abs(int(text)) <= MAX_SAFE_INTEGER
-    value = float(text)
-    if not math.isfinite(value):
-        return False
-    written = _js_string(value)
-    return written == text or _digits(written) == _digits(text)
-
-
-def _exact_number(text: str):
-    """A JSON number read only when reading it changes nothing, as REA's state view rules: its spelling and its
-    written-back form both safe, and not -0."""
-    value = float(text)
-    if (not _safe_number(text) or not math.isfinite(value) or not _safe_number(_js_string(value))
-            or (value == 0 and math.copysign(1, value) < 0)):
-        raise _Inexact(text)
-    return int(text) if re.fullmatch(r"-?[0-9]+", text) else value
-
-
-_INEXACT = object()
-_LEVEL_END = object()
-_INVALID_JSON = object()
-_TOO_DEEP = object()
-JSON_ATOMS = {"true": True, "false": False, "null": None}
-
-
-def _number_or_mark(spelling: str):
-    """A JSON number read exactly, or a mark for one REA's state view refuses."""
-    try:
-        return _exact_number(spelling)
-    except _Inexact:
-        return _INEXACT
-
-
-def _holds_inexact(value) -> bool:
-    """Whether a parsed JSON value still holds a marked number once duplicate keys kept their last value; one
-    iterator per nesting level, so no child list is copied."""
-    levels = [iter((value,))]
-    while levels:
-        item = next(levels[-1], _LEVEL_END)
-        if item is _LEVEL_END:
-            levels.pop()
-        elif item is _INEXACT:
-            return True
-        elif isinstance(item, dict):
-            levels.append(iter(item.values()))
-        elif isinstance(item, list):
-            levels.append(iter(item))
-    return False
-
-
-def _deeper_than(root, limit: int) -> bool:
-    """Whether a parsed JSON value nests deeper than a limit, as REA checks it: a value's depth is the number of
-    iterators open above it, one per nesting level, so no child list is copied."""
-    levels = [iter((root,))]
-    while levels:
-        item = next(levels[-1], _LEVEL_END)
-        if item is _LEVEL_END:
-            levels.pop()
-        elif len(levels) - 1 > limit:
-            return True
-        elif isinstance(item, dict):
-            levels.append(iter(item.values()))
-        elif isinstance(item, list):
-            levels.append(iter(item))
-    return False
-
-
-def _read_json(text: str, build: bool = True):
-    """One JSON value, or _INVALID_JSON, read without recursion so duplicate keys settle before depth is checked.
-    Descendants past the view's depth are represented by _TOO_DEEP, not allocated. If a later duplicate replaces
-    them, the retained value can still read. With build=False, only syntax is checked."""
-    containers, expect, empty, at = bytearray(), "value", False, 0
-    values, keys, root = [], [], _INVALID_JSON
-
-    def keep(value) -> None:
-        nonlocal root
-        # One witness is enough to refuse a nonempty container at the depth boundary.
-        if values and len(containers) > MAX_JSON_VIEW_DEPTH and values[-1]:
-            return
-        if not values:
-            root = value
-        elif containers[-1] == ord("["):
-            values[-1].append(value)
-        else:
-            values[-1][keys[-1]] = value
-
-    while True:
-        token = JSON_TOKEN.match(text, at)
-        if token is None:
-            break
-        kind, at, depth = token.lastindex, token.end(), len(containers)
-        if kind == 5:
-            try:
-                value, at = json.decoder.scanstring(text, at)
-            except ValueError:
-                return _INVALID_JSON
-        if kind == 1 and expect == "value":
-            if build and depth <= MAX_JSON_VIEW_DEPTH:
-                value = [] if text[at - 1] == "[" else {}
-                keep(value)
-                values.append(value)
-                keys.append(None)
-            elif build and depth == MAX_JSON_VIEW_DEPTH + 1:
-                keep(_TOO_DEEP)
-            containers.append(ord(text[at - 1]))
-            expect, empty = ("value" if text[at - 1] == "[" else "key"), True
-        # A closing bracket's code is its opening's plus two.
-        elif kind == 2 and (expect == "after" or empty) and containers and containers[-1] == ord(text[at - 1]) - 2:
-            containers.pop()
-            if build and depth <= MAX_JSON_VIEW_DEPTH + 1:
-                values.pop()
-                keys.pop()
-            expect, empty = "after", False
-        elif kind == 3 and expect == "after" and containers:
-            expect = "value" if containers[-1] == ord("[") else "key"
-        elif kind == 4 and expect == "colon":
-            expect = "value"
-        elif kind >= 5 and (expect == "value" or (kind == 5 and expect == "key")):
-            if build and depth <= MAX_JSON_VIEW_DEPTH + 1:
-                if expect == "key":
-                    keys[-1] = value
-                else:
-                    if depth > MAX_JSON_VIEW_DEPTH:
-                        value = _TOO_DEEP
-                    elif kind == 6:
-                        value = JSON_ATOMS.get(token[6], _INVALID_JSON)
-                        if value is _INVALID_JSON:
-                            value = _number_or_mark(token[6])
-                    keep(value)
-            expect, empty = ("colon" if expect == "key" else "after"), False
-        else:
-            return _INVALID_JSON
-    if expect != "after" or containers or JSON_SPACE.fullmatch(text, at) is None:
-        return _INVALID_JSON
-    return root if build else True
-
-
-def _json_view(text: str, size: int):
-    """A JSON text's format and view, or why it has none, as REA reads it; None when it is not JSON. Text over the
-    parsed-view limit is told apart without building its value."""
-    if size > MAX_PARSED_BYTES:
-        valid = _read_json(text, build=False) is not _INVALID_JSON
-        return {"format": "json", "view": None, "error": PARSED_TOO_LARGE} if valid else None
-    # The whole text must parse, and duplicate keys settle, before an inexact number makes it JSON with an error.
-    view = _read_json(text)
-    if view is _INVALID_JSON:
-        return None
-    if _holds_inexact(view):
-        return {"format": "json", "view": None,
-                "error": "a number in it cannot be read exactly, such as an integer above 2^53"}
-    if _deeper_than(view, MAX_JSON_VIEW_DEPTH):
-        return {"format": "json", "view": None, "error": JSON_TOO_DEEP}
-    return {"format": "json", "view": view, "truncated": False}
-
+${PYTHON_JSON_READER}
 
 def _text_view(name: str, text: str, size: int) -> dict:
     """The format REA's state view detects for decoded text of size bytes, and its view; a JSON or key file over the
