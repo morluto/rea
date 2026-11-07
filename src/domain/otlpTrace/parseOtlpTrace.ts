@@ -24,20 +24,33 @@ type Json = unknown;
 const isRecord = (value: Json): value is Record<string, Json> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/**
- * A recorded value a reader could not convert. Keeping it lets a damaged
- * 64-bit integer stay distinguishable from an omitted one, but the copy is
- * bounded: a malformed value can be arbitrarily long inside the file
- * allowance, and echoing it per attribute would multiply that allowance.
- */
-const RAW_VALUE_MAX_CHARS = 256;
+interface RawCapture {
+  readonly pointer: string;
+  readonly lossyNumber?: (holder: object, key: string) => boolean;
+  problem?: string;
+}
 
-const retainedRaw = (value: Json): JsonValue | null => {
+/** Preserve a rejected value, or refuse the inventory if Evidence cannot hold it. */
+const retainedRaw = (
+  value: Json,
+  capture: RawCapture,
+  context: "attribute" | "timestamp",
+): JsonValue | null => {
+  const issue = jsonValueValidationIssue(
+    context === "attribute"
+      ? { spans: [{ attributes: [{ int_value_raw: value }] }] }
+      : { spans: [{ start_time_unix_nano_raw: value }] },
+  );
+  if (issue !== undefined) {
+    capture.problem ??= `Rejected value at ${capture.pointer} cannot fit in Evidence: ${issue}`;
+    return null;
+  }
   const parsed = jsonValueSchema.safeParse(value);
-  if (!parsed.success) return null;
-  return JSON.stringify(parsed.data).length > RAW_VALUE_MAX_CHARS
-    ? null
-    : parsed.data;
+  if (!parsed.success) {
+    capture.problem ??= `Rejected value at ${capture.pointer} cannot be represented as JSON in Evidence.`;
+    return null;
+  }
+  return parsed.data;
 };
 
 /** OTLP JSON encodes 64-bit integers as decimal strings. */
@@ -50,8 +63,11 @@ const INT64_MIN = -(1n << 63n);
 const INT64_MAX_DIGITS = 20;
 
 const readUInt64 = (value: Json): string | null => {
-  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value)) {
-    if (value.length > INT64_MAX_DIGITS) return null;
+  if (
+    typeof value === "string" &&
+    value.length <= INT64_MAX_DIGITS &&
+    /^(0|[1-9][0-9]*)$/u.test(value)
+  ) {
     const parsed = BigInt(value);
     return parsed <= UINT64_MAX ? parsed.toString() : null;
   }
@@ -62,7 +78,11 @@ const readUInt64 = (value: Json): string | null => {
 
 /** OTLP intValue is a signed 64-bit integer. */
 const readInt64 = (value: Json): string | null => {
-  if (typeof value === "string" && /^-?(0|[1-9][0-9]*)$/u.test(value)) {
+  if (
+    typeof value === "string" &&
+    value.length <= INT64_MAX_DIGITS + 1 &&
+    /^-?(0|[1-9][0-9]*)$/u.test(value)
+  ) {
     const digits = value.startsWith("-") ? value.slice(1) : value;
     if (digits.length > INT64_MAX_DIGITS) return null;
     const parsed = BigInt(value);
@@ -129,7 +149,11 @@ const statusCode = (value: Json): OtlpSpan["status_code"] => {
 
 type Attribute = OtlpSpan["attributes"][number];
 
-const readAttribute = (key: string, rawValue: Json): Attribute => {
+const readAttribute = (
+  key: string,
+  rawValue: Json,
+  capture: RawCapture,
+): Attribute => {
   const empty = {
     key,
     string_value: null,
@@ -158,6 +182,10 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
         bool_value: typeof value === "boolean" ? value : null,
       };
     case "intValue": {
+      if (capture.lossyNumber?.(rawValue, kind) === true) {
+        capture.problem ??= `The numeric intValue at ${capture.pointer} cannot be verified exactly within the numeric limits; use the verified source file.`;
+        return { ...empty, value_kind: "int" };
+      }
       const parsed = readInt64(value);
       return {
         ...empty,
@@ -165,7 +193,8 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
         int_value: parsed,
         // An int64 the inventory cannot read is still evidence the export
         // recorded; a null alone would read as an omitted value.
-        int_value_raw: parsed === null ? retainedRaw(value) : null,
+        int_value_raw:
+          parsed === null ? retainedRaw(value, capture, "attribute") : null,
       };
     }
     case "doubleValue":
@@ -230,11 +259,17 @@ type ParsedSpan =
 
 const parseSpan = (
   record: Record<string, Json>,
-  pointer: string,
-  resourceIndex: number,
-  scopeIndex: number,
-  budget: { spans: number },
+  context: {
+    readonly pointer: string;
+    readonly resourceIndex: number;
+    readonly scopeIndex: number;
+    readonly budget: { spans: number };
+    readonly lossyNumber:
+      | ((holder: object, key: string) => boolean)
+      | undefined;
+  },
 ): ParsedSpan => {
+  const { pointer, resourceIndex, scopeIndex, budget, lossyNumber } = context;
   const traceId = readHexId(record.traceId, 16);
   const spanId = readHexId(record.spanId, 8);
   if (traceId === null || spanId === null)
@@ -294,19 +329,35 @@ const parseSpan = (
       pointer,
       message: `Span ${spanId} at ${pointer} records a parentSpanId that is not an 8-byte span id; the damaged link is reported as unreadable rather than as an absent parent.`,
     });
+  if (
+    lossyNumber?.(record, "startTimeUnixNano") === true ||
+    lossyNumber?.(record, "endTimeUnixNano") === true
+  )
+    return {
+      ok: false,
+      problems: [],
+      fatalProblem: `A numeric timestamp at ${pointer} cannot be verified exactly within the numeric limits; use the verified source file.`,
+    };
   const startTime = readUInt64(record.startTimeUnixNano);
   const endTime = readUInt64(record.endTimeUnixNano);
+  const capture: RawCapture = {
+    pointer,
+    ...(lossyNumber === undefined ? {} : { lossyNumber }),
+  };
   // A timestamp the inventory cannot read is kept as recorded so callers can
   // tell a damaged value from an omitted one and still recover the original.
   const startTimeRaw =
     startTime === null && record.startTimeUnixNano !== undefined
-      ? retainedRaw(record.startTimeUnixNano)
+      ? retainedRaw(record.startTimeUnixNano, capture, "timestamp")
       : null;
   const endTimeRaw =
     endTime === null && record.endTimeUnixNano !== undefined
-      ? retainedRaw(record.endTimeUnixNano)
+      ? retainedRaw(record.endTimeUnixNano, capture, "timestamp")
       : null;
-  if (startTimeRaw !== null || endTimeRaw !== null)
+  if (
+    (startTime === null && record.startTimeUnixNano !== undefined) ||
+    (endTime === null && record.endTimeUnixNano !== undefined)
+  )
     problems.push({
       code: "invalid-record",
       pointer,
@@ -329,7 +380,9 @@ const parseSpan = (
   const retained = rawAttributes
     .filter((entry) => isRecord(entry) && typeof entry.key === "string")
     .slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
-  const attributes = spanAttributes(retained);
+  const attributes = spanAttributes(retained, capture);
+  if (capture.problem !== undefined)
+    return { ok: false, problems: [], fatalProblem: capture.problem };
   const attributesDropped =
     rawAttributes.filter(
       (entry) => isRecord(entry) && typeof entry.key === "string",
@@ -369,11 +422,14 @@ const parseSpan = (
   return { ok: true, span, problems, attributesDropped };
 };
 
-const spanAttributes = (rawAttributes: readonly Json[]): Attribute[] => {
+const spanAttributes = (
+  rawAttributes: readonly Json[],
+  capture: RawCapture,
+): Attribute[] => {
   const parsed: Attribute[] = [];
   for (const entry of rawAttributes) {
     if (!isRecord(entry) || typeof entry.key !== "string") continue;
-    parsed.push(readAttribute(entry.key, entry.value));
+    parsed.push(readAttribute(entry.key, entry.value, capture));
   }
   return parsed;
 };
@@ -384,6 +440,7 @@ const isServiceName = (entry: Json): boolean =>
 /** Retain one bounded set of attributes for each inventoried resource. */
 const resourceAttributes = (
   resource: Json,
+  capture: RawCapture,
 ): { attributes: Attribute[]; dropped: number } => {
   if (!isRecord(resource) || !Array.isArray(resource.attributes))
     return { attributes: [], dropped: 0 };
@@ -395,7 +452,7 @@ const resourceAttributes = (
   );
   const retained = candidates.slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
   return {
-    attributes: spanAttributes(retained),
+    attributes: spanAttributes(retained, capture),
     dropped: candidates.length - retained.length,
   };
 };
@@ -443,6 +500,7 @@ const walkResourceSpans = (
   envelope: unknown,
   budget: { spans: number },
   problems: ProblemCollector,
+  lossyNumber?: (holder: object, key: string) => boolean,
 ): { walked: Walked; unsupported: boolean; problem?: string } => {
   const walked: Walked = {
     spans: [],
@@ -470,8 +528,14 @@ const walkResourceSpans = (
     }
     let resourceRef: number | undefined;
     const serviceName = resourceServiceName(resourceSpans.resource);
+    const capture: RawCapture = {
+      pointer: `/resourceSpans/${resourceIndex}/resource/attributes`,
+      ...(lossyNumber === undefined ? {} : { lossyNumber }),
+    };
     const { attributes: resourceFacts, dropped: resourceDropped } =
-      resourceAttributes(resourceSpans.resource);
+      resourceAttributes(resourceSpans.resource, capture);
+    if (capture.problem !== undefined)
+      return { walked, unsupported: false, problem: capture.problem };
     if (resourceDropped > 0) walked.resourceAttributesTruncated = true;
     // OTLP omits an empty repeated field, so a missing scopeSpans is an empty
     // collection rather than damage; only a present non-array value is.
@@ -525,13 +589,13 @@ const walkResourceSpans = (
           }));
           continue;
         }
-        const parsed = parseSpan(
-          record,
+        const parsed = parseSpan(record, {
           pointer,
-          resourceRef ?? walked.resources.length,
-          scopeRef ?? walked.scopes.length,
+          resourceIndex: resourceRef ?? walked.resources.length,
+          scopeIndex: scopeRef ?? walked.scopes.length,
           budget,
-        );
+          lossyNumber,
+        });
         if (!parsed.ok) {
           if (parsed.fatalProblem !== undefined)
             return { walked, unsupported: false, problem: parsed.fatalProblem };
@@ -586,6 +650,7 @@ const LIMITATIONS = [
 export const parseOtlpTrace = (
   document: unknown,
   artifact: OtlpTraceArtifact,
+  options?: { readonly lossyNumber?: (holder: object, key: string) => boolean },
 ): { ok: true; value: OtlpTrace } | { ok: false; problem: string } => {
   const budget = { spans: 0 };
   const problems = new ProblemCollector();
@@ -593,6 +658,7 @@ export const parseOtlpTrace = (
     document,
     budget,
     problems,
+    options?.lossyNumber,
   );
   if (unsupported)
     return {

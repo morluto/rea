@@ -273,3 +273,87 @@ cliTest(
     });
   },
 );
+
+cliTest(
+  "retains the verified source when a numeric timestamp would be rounded",
+  async ({ cli }) => {
+    const input =
+      '{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"11111111111111111111111111111111","spanId":"2222222222222222","startTimeUnixNano":9223372036854775808}]}]}]}';
+    const path = join(
+      await createTestTempDirectory("rea-otlp-number-cli-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const partial = {
+      kind: "file-snapshot-hash",
+      path,
+      sha256: createHash("sha256").update(input).digest("hex"),
+      bytes: Buffer.byteLength(input),
+    };
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    expect(
+      parseMcpToolError(await call("inspect_otlp_trace", { path })).error,
+    ).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
+    const result = await cli.run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { partial_observation: partial },
+    });
+  },
+);
+
+cliTest(
+  "preserves long rejected decimal strings through CLI and MCP",
+  async ({ cli }) => {
+    const raw = "9".repeat(1024);
+    const input = JSON.stringify({
+      resourceSpans: [
+        {
+          scopeSpans: [
+            {
+              spans: [
+                {
+                  traceId: "1".repeat(32),
+                  spanId: "2".repeat(16),
+                  startTimeUnixNano: raw,
+                  attributes: [{ key: "count", value: { intValue: raw } }],
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+    const path = join(
+      await createTestTempDirectory("rea-otlp-long-value-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const mcp = parseEvidence(
+      (await call("inspect_otlp_trace", { path })).structuredContent,
+    );
+    const report = otlpTraceSchema.parse(mcp.normalized_result);
+    expect(report.spans[0]).toMatchObject({
+      start_time_unix_nano_raw: raw,
+      attributes: [{ int_value_raw: raw }],
+    });
+    const result = await cli.run({
+      arguments: ["inspect-otlp-trace", path, "--json"],
+    });
+    expect(result.exitCode).toBe(0);
+    expect(parseEvidence(result.json).normalized_result).toEqual(
+      mcp.normalized_result,
+    );
+  },
+);

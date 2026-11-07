@@ -39,9 +39,13 @@ positions in the input. Event and link counts are reported without their payload
 - **Unreadable integers stay recorded.** A timestamp outside uint64 or an
   `intValue` outside int64 leaves the exact-value field null and keeps the
   recorded JSON in `start_time_unix_nano_raw`, `end_time_unix_nano_raw` or
-  `int_value_raw`, so damage is never reported as an omitted value. That copy is
-  limited to 256 characters: a longer malformed decimal is not echoed, and the
-  `invalid-record` diagnostic is the only remaining trace of it.
+  `int_value_raw`, so damage is never reported as an omitted value. If a rejected
+  value cannot be represented within the Evidence JSON depth limit, the import
+  fails with the completed file identity instead of dropping that value. A
+  numeric 64-bit field whose JSON number cannot be admitted exactly is also
+  refused with the file identity, rather than returning a rounded value. Numeric
+  spellings longer than 256 characters are refused before exactness checking;
+  recorded decimal strings are preserved within the file-size allowance.
 - **Attributes are bounded.** Scalar attribute values are preserved as recorded,
   including values whose keys resemble credentials. Array and key-value-list
   attributes report only their element count. Each span and resource retains at

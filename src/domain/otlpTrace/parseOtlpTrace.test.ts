@@ -423,12 +423,12 @@ describe("parseOtlpTrace 64-bit bounds", () => {
       int_value: null,
       int_value_raw: "-9223372036854775809",
     });
-    // A value past the raw copy's allowance is not echoed, so one malformed
-    // decimal cannot multiply the file allowance into the result.
-    expect(parsed.end_time_unix_nano_raw).toBeNull();
+    // The resource and scope facts are retained once, so each rejected value
+    // is preserved rather than silently replaced by null at 256 characters.
+    expect(parsed.end_time_unix_nano_raw).toBe("1" + tooLong);
     expect(attributes.get("huge")).toMatchObject({
       int_value: null,
-      int_value_raw: null,
+      int_value_raw: "-" + tooLong,
     });
     expect(
       report.diagnostics.filter((d) => d.code === "invalid-record"),
@@ -441,6 +441,17 @@ describe("parseOtlpTrace 64-bit bounds", () => {
     expect(parsed.start_time_unix_nano_raw).toBeNull();
     expect(parsed.end_time_unix_nano_raw).toBeNull();
     expect(parsed.attributes.map((a) => a.int_value_raw)).toEqual([]);
+  });
+
+  it("distinguishes an explicitly invalid null timestamp from an omitted one", () => {
+    const invalid = parse(envelope([span({ startTimeUnixNano: null })]));
+    expect(invalid.diagnostics.map((entry) => entry.code)).toContain(
+      "invalid-record",
+    );
+    const omitted = parse(envelope([span({ startTimeUnixNano: undefined })]));
+    expect(omitted.diagnostics.map((entry) => entry.code)).not.toContain(
+      "invalid-record",
+    );
   });
 });
 
