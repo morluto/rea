@@ -21,6 +21,7 @@ import {
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import {
   WARC_ARCHIVE_OPERATION as operation,
   WARC_ARCHIVE_PROVIDER,
@@ -89,6 +90,11 @@ const readFailure = (
       return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
         cause,
       });
+    if (isSelectedRegularFileError(cause))
+      return inputFailure(
+        `Selected archive could not be read (${cause.code}): ${input.path}`,
+        cause,
+      );
   }
   return new ArtifactOperationError(
     operation,

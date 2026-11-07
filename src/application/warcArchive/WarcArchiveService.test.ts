@@ -5,6 +5,7 @@ import { gzipSync } from "node:zlib";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { warcArchiveSchema } from "../../domain/warcArchive/warcArchive.js";
 import { inspectWarcArchiveEvidence } from "./WarcArchiveService.js";
 
@@ -107,6 +108,33 @@ it("rejects a relative path before reading anything", async () => {
       resources,
     );
     expect(result.ok).toBe(false);
+  } finally {
+    await resources.close();
+  }
+});
+
+it("reports the selected path and cause when the archive cannot be resolved", async () => {
+  const root = await createTestTempDirectory("rea-warc-missing-");
+  const blocker = join(root, "file");
+  await writeFile(blocker, "x");
+  const resources = new ArtifactResourceScope();
+  try {
+    for (const [path, code] of [
+      [join(root, "missing.warc"), "ENOENT"],
+      [join(blocker, "child.warc"), "ENOTDIR"],
+    ] as const) {
+      const result = await inspectWarcArchiveEvidence({ path }, resources);
+      expect(result.ok).toBe(false);
+      if (result.ok || !(result.error instanceof AnalysisInputError))
+        throw new Error("Expected input refusal");
+      expect(result.error.issues).toEqual([
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: `Selected archive could not be read (${code}): ${path}`,
+        },
+      ]);
+    }
   } finally {
     await resources.close();
   }
