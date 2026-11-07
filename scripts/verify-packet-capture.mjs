@@ -183,7 +183,11 @@ await withVerifierCleanup(async () => {
         )
       ).stdout,
     );
-    assert.deepEqual(parseEvidence(cli), evidence);
+    const { caller_input_path: callerInputPath, ...cliShared } =
+      parseEvidence(cli);
+    assert.equal(callerInputPath, input.path);
+    assert.equal(Object.hasOwn(evidence, "caller_input_path"), false);
+    assert.deepEqual(cliShared, evidence);
     const bundle = requireMcpEvidenceBundle(
       await client.callTool({
         name: "get_evidence_bundle",

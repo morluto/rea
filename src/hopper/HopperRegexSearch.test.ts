@@ -61,6 +61,7 @@ it.each(["search_strings", "search_procedures"] as const)(
       selected,
       { ...selected, value: "matched alternative" },
     ];
+    const originalSource = structuredClone(source);
     const callTool = vi
       .spyOn(HopperClient.prototype, "callTool")
       .mockResolvedValue(ok(source));
@@ -83,12 +84,12 @@ it.each(["search_strings", "search_procedures"] as const)(
         case_sensitive: true,
       });
       expect(result.ok).toBe(true);
-      if (result.ok) expect(result.value.result).toEqual([selected]);
+      if (result.ok) expect(result.value.result).toEqual([originalSource[1]]);
       expect(callTool).toHaveBeenCalledOnce();
       expect(callTool.mock.calls[0]?.[0]).toBe(
         operation === "search_strings" ? "list_strings" : "list_procedures",
       );
-      expect(source[1]).toEqual(selected);
+      expect(source).toEqual(originalSource);
     } finally {
       await client.close();
       callTool.mockRestore();

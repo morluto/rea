@@ -121,4 +121,25 @@ describe("Vite preload dependency recovery", () => {
         .map(({ specifier }) => specifier),
     ).toEqual(["./first.js", null]);
   });
+
+  it("marks build-output paths apart from importer-relative module URLs", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const __vite__mapDeps = (indexes, map = __vite__mapDeps, dependencies =
+        (map.f || (map.f = ["assets/lazy.js", "./near.js", "https://cdn.example/x.js", "/abs.js"]))) =>
+        indexes.map((index) => dependencies[index]);
+      __vite__mapDeps([0, 1, 2, 3]);
+    `);
+
+    expect(
+      analysis.references
+        .filter(({ kind }) => kind === "dynamic-import")
+        .map(({ specifier }) => specifier)
+        .sort(),
+    ).toEqual([
+      "./near.js",
+      "/abs.js",
+      "https://cdn.example/x.js",
+      "vite-output:assets/lazy.js",
+    ]);
+  });
 });

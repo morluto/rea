@@ -154,6 +154,41 @@ describe("Windows CommonJS request classification", () => {
   });
 });
 
+describe("relative ESM URL separators", () => {
+  it.each([
+    ["./dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["../shared\\dep.mjs", "resolved", "shared/dep.mjs"],
+    ["./unused\\..\\dir\\dep.mjs", "resolved", "app/dir/dep.mjs"],
+    ["./..\\..\\outside.mjs", "rejected", null],
+    ["./dir%5cdep.mjs", "rejected", null],
+    ["./dir%2fdep.mjs", "rejected", null],
+    ["./dir\\dep%00.mjs", "rejected", null],
+    [".\\dir\\dep.mjs", "rejected", null],
+  ] as const)(
+    "resolves %s with module URL rules",
+    (declaredPath, status, target) => {
+      expect(
+        resolve({
+          declaredPath,
+          sourcePath: "app/main.mjs",
+          context: "module-specifier",
+          moduleKind: "import",
+          files: fileMap([
+            file("app/main.mjs", "root"),
+            file("app/dir/dep.mjs", "root"),
+            file("shared/dep.mjs", "root"),
+            file("outside.mjs", "root"),
+          ]),
+        }),
+      ).toMatchObject({
+        declared_path: declaredPath,
+        resolution_status: status,
+        resolved_path: target,
+      });
+    },
+  );
+});
+
 describe("literal POSIX inventory base segments", () => {
   it("validates the final URL after a parent reference removes the encoded base segment", () => {
     expect(
@@ -4458,4 +4493,29 @@ describe("package metadata at archive module boundaries", () => {
       }
     },
   );
+});
+
+it("distinguishes an unobserved bare package from builtins and blocked aliases", () => {
+  const files = aliasFiles({
+    "package.json": JSON.stringify({
+      imports: { "#blocked": null, "#builtin": "node:path" },
+    }),
+    "main.js": "",
+  });
+  const resolveName = (declaredPath: string) =>
+    resolve({
+      declaredPath,
+      sourcePath: "main.js",
+      context: "module-specifier",
+      moduleKind: "require",
+      files,
+    });
+  expect(resolveName("outside-package")).toMatchObject({
+    resolution_status: "external",
+    unexamined_module_imports: true,
+  });
+  for (const name of ["node:path", "electron", "#blocked", "#builtin"])
+    expect(resolveName(name), name).not.toHaveProperty(
+      "unexamined_module_imports",
+    );
 });

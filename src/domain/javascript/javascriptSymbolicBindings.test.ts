@@ -368,13 +368,31 @@ it("shares completed factory control flow across repeated loads within one analy
     },
   });
   expect(results).toHaveLength(64);
-  expect(
-    results.every((result) =>
-      symbolicVariants(result).every(
-        (variant, index) => variant === symbolicVariants(results[0]!)[index],
+  const variants = symbolicVariants(results[0]!);
+  expect(variants).toHaveLength(2);
+  expect(variants).toEqual(
+    expect.arrayContaining(
+      [true, false].map((positive) =>
+        expect.objectContaining({
+          kind: "namespace",
+          conditions: expect.arrayContaining([
+            {
+              node: expect.objectContaining({
+                type: "Identifier",
+                name: "flag",
+              }),
+              positive,
+            },
+          ]),
+        }),
       ),
     ),
-  ).toBe(true);
+  );
+  for (const result of results) {
+    const actual = symbolicVariants(result);
+    expect(actual).toHaveLength(variants.length);
+    actual.forEach((variant, index) => expect(variant).toBe(variants[index]));
+  }
   expect(
     evaluated.mock.calls.filter(([node]) =>
       t.isIdentifier(node, { name: "flag" }),
@@ -631,6 +649,7 @@ it("propagates branch guards through object properties and function calls", () =
     inspect(direct.action);
     inspect(called.action);
   `);
+  expect(inspected).toHaveLength(2);
   for (const value of inspected) {
     const functions = symbolicVariants(value).filter(
       (candidate) => candidate.kind === "function",
@@ -934,4 +953,81 @@ it("keeps a possibly repeated factory's native descriptor value unknown", () => 
     function load(id){const m={exports:{}};modules[id](m,m.exports,load);return m.exports;}load(2);
   })();`);
   expect(value.kind).toBe("unknown");
+});
+
+it("bounds recursion when spreading a self-recursive call result and querying properties", () => {
+  const { resolver, values } = inspectFixture(
+    `function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }
+     inspect(f({}));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const sc = bindings.property(obj, "sc");
+      const c = bindings.property(obj, "c");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(sc.kind).toBe("unknown");
+      expect(c.kind).toBe("unknown");
+      expect(members).toContain("c");
+      expect(unknownMembers).toBeGreaterThan(0);
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("evaluates finite recursion across returned closures and object arguments to literal results", () => {
+  const closureResult = inspectOne(`
+    function make(flag) { return function step() { return flag ? { next: make(false)() } : { value: "end" }; }; }
+    inspect(make(true)().next.value);
+  `);
+  expect(closureResult).toMatchObject({ kind: "literal", value: "end" });
+
+  const stepResult = inspectOne(`
+    function f(step) { return step ? { next: f(step.next) } : { value: "end" }; }
+    inspect(f({ next: { next: null } }).next.next.value);
+  `);
+  expect(stepResult).toMatchObject({ kind: "literal", value: "end" });
+});
+
+it("bounds recursion with fresh arguments while preserving own stable members", () => {
+  const { resolver, values } = inspectFixture(
+    `function grow(value) { return { ...grow({ value }), stable: 1 }; }
+     inspect(grow(null));`,
+    (bindings, node) => {
+      const obj = bindings.evaluate(node.arguments[0]);
+      const stable = bindings.property(obj, "stable");
+      const members = bindings.members(obj);
+      const unknownMembers = bindings.unknownMembers(obj);
+      expect(stable).toMatchObject({ kind: "literal", value: 1 });
+      expect(members).toContain("stable");
+      expect(unknownMembers).toBeGreaterThan(0);
+      // A bounded recursive read must restore depth for a later independent read.
+      expect(bindings.property(obj, "stable")).toMatchObject({
+        kind: "literal",
+        value: 1,
+      });
+      return obj;
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("keeps repeated cached queries within an independent depth budget", () => {
+  const { resolver, values } = inspectFixture(
+    'const shared = { value: "end" }; inspect(shared);',
+    (bindings, node) => {
+      for (let index = 0; index < 256; index += 1) {
+        const value = bindings.property(
+          bindings.evaluate(node.arguments[0]),
+          "value",
+        );
+        expect(value).toMatchObject({ kind: "literal", value: "end" });
+      }
+      return bindings.evaluate(node.arguments[0]);
+    },
+  );
+  expect(values).toHaveLength(1);
+  expect(resolver.truncated).toBe(false);
 });

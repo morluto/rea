@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
@@ -12,12 +13,9 @@ import { supportedClients } from "../../../src/application/SupportedClients.js";
 import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { PRODUCT_IDENTITY } from "../../../src/identity.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import {
-  clearClientLocationEnvironment,
-  NPX_REGISTRATION_COMMAND,
-} from "../../fixtures/clientEnvironment.js";
+import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = NPX_REGISTRATION_COMMAND;
+const command = currentClientRegistrationCommand();
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -98,7 +96,7 @@ describe("Qwen Code client lifecycle", () => {
       model: { name: "qwen3-coder-plus" },
       mcpServers: {
         other: { command: "other-server" },
-        rea: { command: "npx", args: command.slice(1) },
+        rea: { command: command[0], args: command.slice(1) },
       },
     });
     expect(await configureClientConfiguration(client, {}, command)).toEqual({
@@ -116,12 +114,12 @@ describe("Qwen Code client lifecycle", () => {
     expect(removedText).toContain("// Keep this note.");
   });
 
-  it("reports a package-runner registration as aligned", async () => {
+  it("reports the selected installation as aligned", async () => {
     const { home, client } = await qwenClient();
     expect(
       (await configureClientConfiguration(client, {}, command)).status,
     ).toBe("configured");
-    const entry = resolve("scripts/rea.mjs");
+    const entry = command[1];
     const status = (
       await readClientRegistrationStatuses(home, entry, { environment: {} })
     ).find(({ client: name }) => name === "qwen_code");
@@ -167,11 +165,9 @@ describe("Qwen Code profile setup", () => {
       });
       expect(
         (
-          await readClientRegistrationStatuses(
-            home,
-            resolve("scripts/rea.mjs"),
-            { environment },
-          )
+          await readClientRegistrationStatuses(home, command[1], {
+            environment,
+          })
         ).find(({ client: name }) => name === "qwen_code"),
       ).toMatchObject({ state: "aligned" });
       const uninstall = systemUninstallHost(home, undefined, environment);

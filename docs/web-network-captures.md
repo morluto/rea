@@ -72,7 +72,15 @@ are rejected before materialization. Prototype-named members such as
 `__proto__` are preserved as ordinary own JSON members without prototype
 mutation. Original capture files remain unchanged.
 REA owns specific schema corrections because pinned upstream schemas omit
-object types and use the unrecognized `min` keyword. Following
+object types and use the unrecognized `min` keyword. The pinned schema also
+checks `request.url` as an RFC 3986 `uri`, while HAR 1.2 defines it only as the
+absolute request URL. REA additionally admits a URL that WHATWG URL
+serialization reproduces unchanged, which is how browsers record and send it,
+for example with an unescaped `|` or `{` in the query. Every URL the RFC 3986
+check accepts stays admitted, even when WHATWG would rewrite it, such as an
+uppercase host. Spellings that fail the RFC 3986 check and that WHATWG would
+rewrite, such as a backslash authority, a tab or a space, still fail.
+Following
 [HAR 1.2](https://github.com/ahmadnassri/har-spec/blob/81adb2fcf845e81ff3de728cf6829a0e6ad63e95/versions/1.2.md#timings),
 `timings` must be an object with nonnegative `send`, `wait` and `receive`;
 optional `blocked`, `dns`, `connect` and `ssl` may be absent, `-1`, or
@@ -89,9 +97,13 @@ it does not invent an empty string or body bytes.
 The observed Playwright 1.58.2 profile can report a bracketed IPv6
 `serverIPAddress`, forwarded from Chromium's `remoteIPAddress` through
 [Playwright's HAR tracer](https://github.com/microsoft/playwright/blob/v1.58.2/packages/playwright-core/src/server/har/harTracer.ts).
+Chromium DevTools exports (declared as `WebInspector` `537.36`, the frozen
+AppleWebKit version in Chromium's user agent) report the same bracketed form:
+[its HAR writer](https://github.com/ChromeDevTools/devtools-frontend/blob/63739e8ec45ca01b9e4be9b8b05946acdadd8f1f/front_end/models/har/Log.ts)
+strips the port but not the brackets.
 REA preserves the original spelling in reported Evidence and removes brackets
-only from its validation copy, only for this declared producer and a valid IPv6
-literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
+only from its validation copy, only for these declared producers and a valid
+IPv6 literal. Invalid addresses, bracketed IPv4, ports and zone identifiers remain
 validation failures. Producer declarations do not authenticate origin.
 
 Native mitmproxy decoding requires a caller-supplied **mitmdump 12.2.3 on
@@ -463,6 +475,109 @@ parent envelope, capture and examined records are deduplicated onto the view.
 Portable captures must retain unique ordinals within their declared total;
 caller-selected subsets can preserve any requested ordinal order.
 
+## Compare static JavaScript endpoints with HAR
+
+`compare_static_and_observed_endpoints` answers which supplied static network
+references correspond to captured request groups. Supply `application` from
+`analyze_javascript_application` and `capture` from `inspect_web_network_capture`
+with HAR format. Both accept inline Evidence or exact retained references.
+For normal MCP investigations, request producer summaries, then pass their
+`parent_evidence_id` values; large inline graphs can exceed transport admission.
+Existing Evidence bundles can instead be loaded with `import_evidence_bundle`.
+
+```json
+{
+  "application": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<application-digest>"
+  },
+  "capture": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<capture-digest>"
+  },
+  "origin": "https://api.example.test"
+}
+```
+
+MCP defaults to a summary with source identities, counts, source coverage and
+the complete comparison's `parent_evidence_id`. Select `detail: "complete"` for
+all facts. An optional `view` can return a selected `endpoint-comparison` page
+in this initial call and takes precedence over `detail`; it uses the same
+projector as later retained queries. This answers a selected question without
+an extra call or requiring the client's generic view-output schema preparation.
+To read another page, call `inspect_analysis_view` on the retained parent:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<comparison-digest>"
+  },
+  "view": {
+    "kind": "endpoint-comparison",
+    "collection": "static-endpoints",
+    "statuses": ["unknown"],
+    "fields": ["path", "status", "reason"],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Collections are `static-endpoints`, `observed-groups` and `matches`. Exact
+`endpoint_ids` or `group_ids` select batches where applicable. Fields are
+collection-specific; row identities always remain. Empty filters select none.
+Pages classify the complete source pair before filtering, and page exhaustion
+never upgrades source coverage. Observed-group pages omit potentially large
+`record_ordinals` by default; explicitly select that field when needed.
+
+Each static network **observation** is matched, not observed in this capture,
+or unknown. Each unmatched observed group is reported separately. Match rows
+link stable endpoint/group identities, identify `exact` or inferred
+`template-compatible` basis, and name one `supporting_record_ordinal`. An exact
+witness identifies a real whole path within the group; other group members can
+have different literal paths. Segment-value combinations are never evidence
+that a whole path occurred. Group templates use the existing API-surface owner.
+
+`origin` is a caller assertion for root-relative targets, never a captured base
+URL. Without it those targets remain unknown. Candidate values, unconfirmed
+static observations, unresolved
+expressions, non-URL GraphQL/tRPC operation names, non-HTTP targets and spellings
+requiring URL normalization remain unknown. Known method spellings and the
+EventSource/sendBeacon API definitions constrain matching; unavailable methods
+stay null and multiple possible methods remain ambiguous. Fetch options and
+XHR method arguments are not recovered by this comparison.
+If multiple observed methods prevent pairing, those groups also stay unknown
+unless another static observation establishes a match; they do not count as
+observed-without-static-match.
+
+Not-observed requires an exercised origin, every parent record retained, and
+no excluded request lines. It never means hidden, unused or inaccessible.
+Source-specific limitations remain accessible on the linked source Evidence;
+the comparison reports their counts without copying unrelated source text.
+Query strings, fragments, headers and bodies are not projected. Sensitive-parent
+refusals are the same as API-surface. Sources, grouping, whole-path witnesses
+and derived rows share its 96 MiB representation allowance. No URL is contacted,
+and this workflow does not reopen targets or rerun static analysis.
+
+CLI uses the same comparison and standard Evidence publication. Put
+`application`, `capture` and optional `origin` in the input JSON; delivery uses
+flags. Complete detail is the CLI default. A summary requires a bundle so all
+facts and their source closure survive process exit:
+
+```bash
+rea compare-static-and-observed-endpoints /evidence/compare-input.json \
+  --detail summary --evidence_output /evidence/comparison.json --json
+```
+
+Add `--view '{"kind":"endpoint-comparison","collection":"static-endpoints","statuses":["not-observed-in-capture"],"fields":["path","status","reason"]}'`
+to return that selection immediately. CLI views require summary detail and a
+bundle, preserving complete Evidence after exit.
+
+CLI input can use retained IDs with `--evidence-bundle`. Later
+`inspect-analysis-view` calls can use an `evidence-file` source pointing at the
+saved bundle and the summary's complete parent ID.
+
 ## Environment manifest
 
 Pass retained HAR Evidence to `inspect_analysis_view` with
@@ -689,7 +804,8 @@ with a `value` or `absent: true`), and serving replays calls matching them and
 calls asking for fields the checked lines do not show.
 Otherwise the tool is a recorded view
 with reason `envelope-varies`, `fields-differ` or `list-differs`; the other
-reasons are `query-body` (a query `POST`, or one the capture shows only reading), `no-init-recording`,
+reasons are `query-body` (a query `POST`, or one the capture shows only reading),
+`method-replay` (a safe `HEAD`, `OPTIONS` or `TRACE` call), `no-init-recording`,
 `body-unusable`, `no-identity` (an item read without a proved identity),
 `path-varies` (another read under more than one path, as a template with a
 parameter before its end), `query-varies` (another read of one path under
@@ -739,7 +855,9 @@ one-element array member) that a later item read of a type first shows (served
 only with the path values its recorded call sent, unless it creates into the
 type's own collection, whose path has no parameters, and a `path` rule stores
 each of its path values), and otherwise `none` with reason `no-state-target`. A plan is built from the tool's first successful call: its
-request body must be a usable JSON object (as response bodies are usable), and
+request body must be a usable JSON object (as response bodies are usable), or
+absent for an item action (a scenario request is absent when Playwright exposed
+no body and it names no `Content-Type`, which the bodies browsers send carry), and
 the written entity must show in that call's response or in a later read before
 the next write. Each field of a created entity gets the first rule that
 explains it: generated `identity` (a sequence, UUID or token, by the recorded
@@ -779,15 +897,19 @@ with the entity leaves out a field only later reads showed, which no initial
 entity holds, when the entity does not hold it, as Vikunja's reads of tasks it
 did not create show no `subscription`. A `reference` is an object
 holding fields of the
-entity a sent member names, as the state holds it (a parent beside `parentId`):
+entity a sent member names, as the state holds it (a parent beside `parentId`),
+or a list of them, one per id a sent list names, in its order (`many`, tags
+beside `tagIds`):
 the member is accepted with any value, serving looks the entity up and refuses a
 call naming one the environment does not hold or holds in more than one
 collection, and the field is absent, from the entity and the create's answer,
 when the call does not send the member. An id naming entities of one type in
 several collections teaches no reference. Each later create widens its plan
 when, explained on its own, it agrees with it: both calls show the same fields
-but for a reference whose member a call without it did not send (one an earlier
-create added stays), every field both rule they rule alike (an echo one showed
+but for a reference whose member a call without it did not send, or sent as
+`null` or `[]` and stored so (one an earlier create added stays, and a call may
+send the member empty as that create did; one leaving it out stores no such field
+when the create the plan observes showed none), every field both rule they rule alike (an echo one showed
 sorted stays sorted, unless a call stored its strings out of order as sent),
 and a field neither rules holds one value, unless the later call's rule for it
 spells the earlier calls' value too: a `composed` or `template` string, or a
@@ -797,7 +919,14 @@ clocks and own members, and a count only the later call shows starts at the
 first object's value; a later create's made object must hold clocks its own
 request stamped, in the rule's format. Members either call sent are accepted, only those every call sent are
 required, and an echoed member a call left out takes the value that call stored
-(`body.defaults`). A member a create sent empty (`""`, `null`, `false`, `[]` or
+(`body.defaults`). A member one call sent and stored as sent, and another left
+out and the application numbered one past the others, takes the value a call
+sends, else that number (a `sequence` with `sent`), whichever call came first,
+unless a call that left it out stored a fixed value (its `body.defaults`) or
+the number a later call was given is not above every value an earlier create
+sent in the sequence's scope (the type, or the later call's collection); an empty value a call sent is not applied to a call that leaves it out;
+a later call that sends it must have stored what it sent, and the next number
+follows the largest value any call took, a deleted entity's included. A member a create sent empty (`""`, `null`, `false`, `[]` or
 `{}`), as a form sends a field left as it was, is not required: a call that
 leaves it out is applied as sending that value (`body.blank`), unless a call
 that left it out showed a default, which it then keeps. A call may send it as any
@@ -860,13 +989,28 @@ is unchanged) must be a clock, a nested clock, an increment, a slug, a fresh `un
 value, a `stamp` of the acting user, a value `derived` from the one member it
 stores nowhere, a `reference` to the entity a sent member names (kept by a call that names the entity the field already repeats), a `composed` string whose parts read members it stored as sent
 or fields it left as they were and spell the value before the call too, or for
-an item action a `set` of a scalar to the value it showed, or the plan is
+an item action a `set` of a scalar to the value it showed (a `toggle` once a
+later call flips back the boolean an earlier one set, when no call found it set
+already), or, for a `PUT`, a
+member it left out that the application cleared to an empty value, which calls
+that leave it out then store (`body.defaults`) as long as every call that left
+it out stored that value (a call naming a `reference` field's entity by its
+member does not leave the field out), or the plan is
 `unexplained-change`; an increment, slug, stamp, derived
-value or set must hold for every call of the tool, and an action is served
-only once a call found what it sets already set. A write is served only
+value, set or toggle must hold for every call of the tool, and an action is
+served only once a call found what it sets already set, or flipped back what it
+toggles. A write is served only
 with the query its first call sent, which serving applies to a call that
-leaves a parameter out and the catalog advertises as required. Every member the first call sent is required, except by `PATCH` and
-`POST` updates and members a create sent empty.
+leaves a parameter out and the catalog advertises as required. Every member every call sent is required, except by `PATCH` and
+`POST` updates and members a create sent empty. The state holds an update's
+clock as the first read of the entity after it spells the same instant at a
+coarser precision in the same zone and separator: replay and serving store every
+update's clocks in the spelling of the read the plan keeps as
+`observation.read`, so a later update whose read spells them otherwise
+contradicts the plan, while answers keep the update's own; a create's clocks
+stay as answered. A `PUT` default must agree with what every call that left the
+member out stored, as its answer shows it or, where the answer leaves it out,
+the read after the call.
 
 A read on a line `query` answers is checked against the query evaluated over
 the replayed state. It covers the collection only when every parameter sorts or
@@ -899,7 +1043,10 @@ contradicted it; otherwise its `reason` is the first of its build reason
 (`no-call`, `body-unusable`, `no-observation`, `unexplained-change`),
 `contradicted` (with `contradicted_by`), `side-effect`, `unconfirmed` and `incomplete-entities` (an update or delete that answers with the entity, when no initial entity holds every field its recorded answer shows but those only later reads showed, counting for an update the fields its rules write, so it could answer only for entities the environment created). An otherwise served plan whose learned rules generate clock values is withheld with `unknown-clock` when no global clock start is established; its learned rules and confirming reads remain retained.
 `checked_record_ordinals` lists the confirming reads, `insert` places created
-entities (sorted by a field the collection's recorded order shows, else last),
+entities (sorted by a field the collection's recorded order shows, else last;
+a create a whole listing in collection order placed last is placed again by a
+field a later such listing shows it sorted by and no earlier one ruled out, the
+type's id field last),
 and `write_clock` is the end of the last timed record, to the next second, when
 all request completions are known; otherwise it is null. An
 update that writes the field its type's creates are sorted by moves its entity

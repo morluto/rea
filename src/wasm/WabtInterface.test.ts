@@ -217,11 +217,19 @@ it("rejects unfinished nested comments rather than projecting a truncated interf
     "(module (type (func (param (; unfinished ) i32))))",
     "(module) (; outer (; inner ;) still open",
   ])
-    expect(() => parseWabtWat(source)).toThrow("Incomplete WABT WAT comment");
+    expect(() => parseWabtWat(source)).toThrow(
+      expect.objectContaining({
+        _tag: "WabtAdmissionError",
+        code: "incomplete_comment",
+      }),
+    );
 });
 
 it("rejects a second module after a CR-terminated line comment", () => {
   expect(() => parseWabtWat("(module) ;; comment\r(module)")).toThrow(
-    "Unexpected second WABT WAT module",
+    expect.objectContaining({
+      _tag: "WabtAdmissionError",
+      code: "unexpected_second_module",
+    }),
   );
 });

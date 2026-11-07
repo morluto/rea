@@ -20,6 +20,7 @@ import type { ElectronObservationPort } from "../../../src/application/javascrip
 import { analyzeJavaScriptApplication } from "../../support/javascriptApplicationScope.js";
 import { CdpElectronProvider } from "../../../src/browser/CdpElectronProvider.js";
 import { createServer } from "../../../src/server/createServer.js";
+import { INLINE_EVIDENCE_MCP_ENVIRONMENT } from "../../../scripts/lib/mcp-verification-environment.mjs";
 import { observed } from "../../fixtures/analysisExecution.js";
 import {
   startFakeCdpBrowser,
@@ -313,6 +314,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
     { kind: "session", session },
     {
       electronObservation: new CdpElectronProvider(),
+      environment: { ...process.env, ...INLINE_EVIDENCE_MCP_ENVIRONMENT },
       availabilityPolicy: () => ({
         processCaptureEnabled: false,
         investigationInputRoots: 1,
@@ -398,12 +400,12 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
   expect(inspected.isError).not.toBe(true);
   expect(inspected.structuredContent).toMatchObject({
     normalized_result: {
-      target: { file_path: expect.stringMatching(/[\\/]index\.html$/u) },
+      target: { file_path: join(root, "index.html") },
       scripts: {
         items: [
           expect.objectContaining({
             frame_id: "frame-main",
-            file_path: expect.stringMatching(/[\\/]app\.js$/u),
+            file_path: join(root, "app.js"),
             cdp_hash: null,
             length: null,
             is_module: null,
@@ -414,7 +416,7 @@ it("exposes endpoint-scoped Electron discovery and inspection as Evidence", asyn
         expect.objectContaining({
           target_id: "electron-worker",
           opener_target_id: "electron-page",
-          file_path: expect.stringMatching(/[\\/]worker\.js$/u),
+          file_path: join(root, "worker.js"),
         }),
       ],
     },
@@ -682,7 +684,7 @@ it("exposes the target-free static JavaScript application workflow", async () =>
     })
     .parse(analyzed.structuredContent);
   expect(projected.normalized_result).toMatchObject({
-    input_path: expect.stringMatching(/rea-electron-static-mcp-/u),
+    input_path: root,
     summary: {
       browser_windows: 3,
       context_bridge_apis: 2,

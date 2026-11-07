@@ -73,9 +73,7 @@ export const cliOutputValueRejection = (
   }
   if (
     (flag === "--token-limit" || flag === "--token-offset") &&
-    (!Number.isSafeInteger(Number(value)) ||
-      Number(value) < 0 ||
-      value.trim() === "")
+    (!/^[0-9]+$/u.test(value) || !Number.isSafeInteger(Number(value)))
   )
     return `Invalid value for ${flag}: "${value}". Expected a nonnegative safe integer.`;
   return undefined;
@@ -97,7 +95,7 @@ export type CliOutputArgumentValidation =
 interface CliOutputControls {
   readonly filterOutput: string | undefined;
   readonly columns: readonly string[] | undefined;
-  readonly format: string;
+  readonly format: CliOutputFormat;
   /** Whether `--json` or `--format` selected the format, rather than the default. */
   readonly formatExplicit: boolean;
   readonly fullOutput: boolean;
@@ -120,7 +118,7 @@ export interface ParsedCliOutputArguments extends CliOutputControls {
 export const parseCliOutputArguments = (
   arguments_: readonly string[],
 ): ParsedCliOutputArguments => {
-  let format: string = "toon";
+  let format: CliOutputFormat = "toon";
   let rootVersion = false;
   let versionEligible = true;
   let formatExplicit = false;
@@ -198,7 +196,7 @@ export const parseCliOutputArguments = (
       if (value) {
         const rejection = cliOutputValueRejection(argument, value);
         if (rejection !== undefined) invalidValue ??= rejection;
-        else {
+        else if (isCliOutputFormat(value)) {
           format = value;
           formatExplicit = true;
         }
