@@ -63,16 +63,25 @@ export function readComparisonResult(
       try {
         const { left, right } = comparisonSourceEvidenceSides(evidence);
         const sourceId = left[0];
-        if (
-          left.length !== 1 ||
-          right.length !== 1 ||
-          sourceId !== right[0] ||
-          sourceId === undefined ||
-          !evidence.evidence_links.includes(sourceId) ||
-          parsed.value.dimensions.some(({ evidence_links }) =>
-            evidence_links.some((id) => id !== sourceId),
-          )
-        )
+        const sameSource =
+          left.length === 1 &&
+          right.length === 1 &&
+          sourceId === right[0] &&
+          sourceId !== undefined &&
+          evidence.evidence_links.includes(sourceId) &&
+          parsed.value.dimensions.every(({ evidence_links }) =>
+            evidence_links.every((id) => id === sourceId),
+          );
+        const impossibleChange =
+          parsed.value.left_subject_sha256 !==
+            parsed.value.right_subject_sha256 ||
+          parsed.value.dimensions.some(
+            (dimension) =>
+              dimension.status === "changed" ||
+              (dimension.status === "unchanged" &&
+                dimension.left_digest !== dimension.right_digest),
+          );
+        if (!sameSource || impossibleChange)
           return err(
             new EvidenceIntegrityError(
               "Same-Evidence function comparison must cite the same source on both sides",
