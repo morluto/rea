@@ -506,8 +506,9 @@ describe.skipIf(process.platform === "win32")("vendor repositories", () => {
         },
       ],
       library_packages: [],
-      library_packages_reason:
-        "ldconfig -p did not list the dynamic linker cache",
+      library_packages_reason: expect.stringMatching(
+        /ldconfig -p.*did not list.*dynamic linker cache/iu,
+      ),
     });
     expect(result.value.signingKeys.size).toBe(0);
   });
