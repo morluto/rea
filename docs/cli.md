@@ -743,7 +743,8 @@ Migration: replace `rea compare-bundles` with `rea compare`; the former command
 has been removed. The MCP tool remains `compare_bundles`.
 
 `rea evidence-import` performs process-local bundle authentication and
-validation, reporting record and unknown counts. It does not retain records in a
+validation, reporting record and Unknown-revision counts. `unknowns_added`
+counts revisions, not distinct Unknown IDs. It does not retain records in a
 separate or background MCP server process. To retain records across calls in an
 active MCP session, use the MCP tool `import_evidence_bundle` in that session.
 
