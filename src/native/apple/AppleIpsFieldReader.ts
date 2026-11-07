@@ -164,10 +164,13 @@ export class FieldReader {
   }
 
   /** An array element is always recorded, so `null` there is a mismatch too. */
-  row(value: LosslessJson, path: string): Members {
-    if (value.kind === "object") return value.members;
+  row(
+    value: LosslessJson,
+    path: string,
+  ): { members: Members; unlisted: readonly string[] } {
+    if (value.kind === "object") return value;
     this.mismatch(path, "object", value);
-    return {};
+    return { members: {}, unlisted: [] };
   }
 
   array(
