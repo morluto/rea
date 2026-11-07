@@ -4,9 +4,8 @@ import { join, parse, relative } from "node:path";
 import { onTestFinished } from "vitest";
 import { normalizeTestTemporaryPrefix } from "../../scripts/lib/test-temporary-ownership.mjs";
 import { removeTestWorkspace } from "../../tests/support/workspace/workspaceFixture.js";
-import { ok as javaProbeOk } from "../domain/result.js";
+import { ok as javaProbeOk, err } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
-import { err } from "../domain/result.js";
 import type { GhidraJavaProbeFailure } from "./GhidraJavaProbe.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 

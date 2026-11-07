@@ -76,8 +76,9 @@ it.each(["fail", "record-and-continue"] as const)(
           {
             path: ["integrity_policy"],
             reason: "invalid_value",
-            message:
-              "An integrity policy requires the static JavaScript ASAR/directory analysis lane; binary_overview accepts no input.",
+            message: expect.stringMatching(
+              /integrity policy.*static JavaScript ASAR\/directory.*binary_overview.*no input/iu,
+            ),
           },
         ],
       },

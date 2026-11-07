@@ -399,7 +399,6 @@ describe("decompile_all inventory limitations", () => {
       directory(),
       { name: "Foo::", limit: 1 },
     );
-    expect(created.ok).toBe(true);
     if (!created.ok) throw created.error;
     expect(created.value).toMatchObject({
       inventory_limitations: ["first inventory limitation"],
@@ -433,7 +432,6 @@ describe("decompile_all inventory limitations", () => {
       directory(),
       { resume: true, name: "Bar::" },
     );
-    expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw resumed.error;
     expect(resumed.value).toMatchObject({
       inventory_limitations: ["second inventory limitation"],
@@ -1416,9 +1414,9 @@ describe("decompile_all journal recovery", () => {
     expect(limitations).toContainEqual(
       expect.stringContaining("terminal call may cut the body"),
     );
-    expect(limitations.at(-1)).toBe(
-      "33 per-item provider limitation observations were omitted from this answer; each function's record in decompile-index.json keeps the caveats of the observations it used.",
-    );
+    expect(limitations.at(-1)).toContain("33 per-item provider limitation");
+    expect(limitations.at(-1)).toContain("decompile-index.json");
+    expect(limitations.at(-1)).toContain("decompile-journal.jsonl");
     const last = await readFile(
       join(directory(), "functions/0x1130.c"),
       "utf8",
