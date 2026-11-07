@@ -19,7 +19,7 @@ import { err, ok } from "./domain/result.js";
 import { AnalysisError } from "./domain/analysisErrorBase.js";
 import { AnalysisCancelledError } from "./domain/analysisErrorCore.js";
 import { createDoctorHostFixture } from "./application/Doctor.fixture.js";
-import { runDoctorOwned } from "./application/Doctor.js";
+import { runDoctor, runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
@@ -634,6 +634,7 @@ test("does not fill a registration's unresolvable expression from the terminal",
       "        args: [mcp]",
       "        env:",
       "          GHIDRA_INSTALL_DIR: !!js caller.ghidra",
+      "          REA_JADX_MCP_JAR: /opt/jadx.jar",
       "",
     ].join("\n"),
     { flag: "w" },
@@ -644,9 +645,12 @@ test("does not fill a registration's unresolvable expression from the terminal",
   });
   try {
     const inspections = await host.providerInspections?.(["dsh"]);
-    expect(inspections?.find(({ id }) => id === "ghidra")?.configured).toBe(
-      false,
-    );
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: null,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
   } finally {
     await host.close?.();
   }
@@ -757,6 +761,81 @@ test("retries a retained registration-file close after a failed retry", async ()
     expect(close).toHaveBeenCalledTimes(2);
   } finally {
     read.mockRestore();
+    await host.close?.();
+  }
+});
+
+test("does not use terminal readiness when a selected registration is malformed", async () => {
+  const home = await createTestTempDirectory(
+    "rea-doctor-malformed-registration-",
+  );
+  await mkdir(join(home, ".config/opencode"), { recursive: true });
+  await writeFile(join(home, ".config/opencode/opencode.json"), "not JSON");
+  const host = createSystemDoctorHost({
+    HOME: home,
+    GHIDRA_INSTALL_DIR: "/opt/ghidra",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["opencode"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: null,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+    const report = await runDoctor(undefined, host, {
+      clients: ["opencode"],
+      providers: ["ghidra"],
+    });
+    expect(report.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "ghidra",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
+    expect(report.scope_checks).not.toContainEqual(
+      expect.objectContaining({
+        name: "provider:ghidra",
+        classification: "missing_analysis_engine",
+      }),
+    );
+  } finally {
+    await host.close?.();
+  }
+});
+
+test("keeps a known provider configuration when only its Java setting is unresolved", async () => {
+  const home = await createTestTempDirectory("rea-dsh-doctor-partial-");
+  await mkdir(join(home, ".dsh"), { recursive: true });
+  await writeFile(
+    join(home, ".dsh/cordis.patch.yml"),
+    [
+      "- insert:",
+      "    - id: rea-mcp",
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      "      config:",
+      "        serverName: rea",
+      "        transport: stdio",
+      "        command: rea",
+      "        args: [mcp]",
+      "        env:",
+      "          GHIDRA_INSTALL_DIR: /opt/ghidra",
+      "          JAVA_HOME: !!js caller.java",
+      "",
+    ].join("\n"),
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    JAVA_HOME: "/terminal/java",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["dsh"]);
+    expect(inspections?.find(({ id }) => id === "ghidra")).toMatchObject({
+      configured: true,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+  } finally {
     await host.close?.();
   }
 });

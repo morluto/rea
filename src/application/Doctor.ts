@@ -100,8 +100,10 @@ export interface DoctorProviderCheck {
 /** Read-only provider inspection supplied by an outer composition adapter. */
 export interface DoctorProviderInspection {
   readonly id: string;
-  readonly configured: boolean;
-  readonly available: boolean;
+  /** Null means the selected client's setting could not be determined. */
+  readonly configured: boolean | null;
+  /** Null means readiness cannot be established for the selected client. */
+  readonly available: boolean | null;
   readonly providerVersion: string | null;
   /** Validated discoveries used as registration defaults. Setup preserves
    * caller-selected configuration separately from these readiness facts. */
@@ -370,9 +372,8 @@ const providerSettingSelections = (
 ];
 
 /**
- * A healthy provider check describes this terminal, not the server a client
- * starts. Report what the registration's file leaves out without gating health:
- * the client may still pass the setting on, which doctor cannot observe.
+ * Report what the registration's file leaves out without gating health:
+ * doctor cannot observe the environment the client actually passes on.
  */
 const registrationEnvironmentChecks = (
   registrations: readonly ClientRegistrationStatus[],
@@ -388,7 +389,7 @@ const registrationEnvironmentChecks = (
         ok: true,
         classification: "unknown" as const,
         detail: [
-          `Provider checks used this terminal's environment; what the server ${client} starts receives is unknown.`,
+          `The effective environment is unverified: what the server ${client} starts receives is unknown.`,
           ...(unrecorded.length === 0
             ? []
             : [`Its registration does not record ${unrecorded.join(", ")}.`]),

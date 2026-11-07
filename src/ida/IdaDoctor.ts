@@ -11,6 +11,9 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { inspectIdaWorkspaceReadiness } from "./IdaWorkspaceReadiness.js";
 import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
 
+/** Client settings consulted by this readiness probe. */
+export const IDA_DOCTOR_SETTINGS = ["REA_IDA_MCP_CONFIG"] as const;
+
 /** Check the registration without launching IDA, and retain only the configuration file reference. */
 export const inspectIdaRegistration = async (
   path: string | undefined,
