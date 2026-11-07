@@ -104,7 +104,7 @@ it("binds region observations to exact bytes and preserves provider-reported unc
   );
   expect(normalized.engine).toMatchObject({
     name: "binwalk",
-    version: "3.1.0",
+    version: "4.0.0",
     executable_path: fixture.commands.binwalk,
   });
   expect(normalized.regions[0]).toMatchObject({
@@ -974,23 +974,23 @@ it("retains an uncertain worker's workspace and blocks later launches", async ()
 });
 
 it("accepts another build on the verified release line and reports it", async () => {
-  const fixture = await firmwareFixture("normal", "binwalk 3.1.2");
+  const fixture = await firmwareFixture("normal", "binwalk-ng 4.0.2");
   const result = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
   });
   if (!result.ok) throw result.error;
-  expect(result.value.provider.version).toBe("3.1.2");
+  expect(result.value.provider.version).toBe("4.0.2");
   expect(result.value.limitations.join("\n")).toContain(
-    "verified against 3.1.0",
+    "verified against 4.0.0",
   );
   expect(result.value.normalized_result).toMatchObject({
-    engine: { version: "3.1.2" },
+    engine: { version: "4.0.2" },
   });
   await assertFirmwareCleanup(fixture.launches);
 });
 
 it("names the accepted release line when the banner is another line", async () => {
-  const fixture = await firmwareFixture("normal", "binwalk 3.2.0");
+  const fixture = await firmwareFixture("normal", "binwalk-ng 4.1.0");
   const result = await fixture.service.execute("inspect_firmware_regions", {
     path: fixture.path,
   });
@@ -998,7 +998,7 @@ it("names the accepted release line when the banner is another line", async () =
     ok: false,
     error: {
       _tag: "AnalysisCapabilityUnavailableError",
-      reason: expect.stringContaining("Binwalk 3.1.x"),
+      reason: expect.stringContaining("Binwalk 4.0.x"),
     },
   });
   await assertFirmwareCleanup(fixture.launches);

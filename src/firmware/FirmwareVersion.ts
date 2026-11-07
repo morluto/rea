@@ -35,13 +35,16 @@ export type FirmwareVersionAdmission =
 
 /**
  * Classify a `--version` banner against the audited release line.
- * Binwalk prints `binwalk <version>`; Unblob prints the version alone.
+ * Each engine declares its banner prefix; Unblob prints the version alone.
  */
 export const admitFirmwareVersion = (
   engine: FirmwareEngineName,
   banner: string,
 ): FirmwareVersionAdmission => {
-  const token = versionToken(engine, banner);
+  const { versionPrefix } = FIRMWARE_TOOL_REQUIREMENTS[engine];
+  const token = banner.startsWith(versionPrefix)
+    ? banner.slice(versionPrefix.length)
+    : undefined;
   const parsed = token === undefined ? undefined : parseToken(token);
   const verified = FIRMWARE_TOOL_REQUIREMENTS[engine];
   const accepted = `accepted releases are ${verified.requirement}`;
@@ -62,22 +65,4 @@ export const admitFirmwareVersion = (
     version: parsed.token,
     limitation: `This session uses ${verified.name} ${parsed.token}. The report parser is verified against ${verified.version}; other ${verified.line} builds are accepted and the observed version is reported.`,
   };
-};
-
-const versionToken = (
-  engine: FirmwareEngineName,
-  banner: string,
-): string | undefined => {
-  switch (engine) {
-    case "binwalk":
-      return banner.startsWith("binwalk ")
-        ? banner.slice("binwalk ".length)
-        : undefined;
-    case "unblob":
-      return banner;
-    default: {
-      const unreachable: never = engine;
-      return unreachable;
-    }
-  }
 };

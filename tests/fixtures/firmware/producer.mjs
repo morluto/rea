@@ -24,7 +24,7 @@ if (args.includes("--version")) {
       : banner !== undefined && banner.length > 0
         ? banner
         : engine === "binwalk"
-          ? "binwalk 3.1.0"
+          ? "binwalk-ng 4.0.0"
           : "26.6.4",
   );
 } else if (mode === "stall") {
