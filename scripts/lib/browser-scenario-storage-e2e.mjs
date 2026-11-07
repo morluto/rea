@@ -176,6 +176,7 @@ export const startStorageSite = async () => {
   port = server.address().port;
   return {
     origin: `http://127.0.0.1:${port}`,
+    listenerAddress: server.address().address,
     close: async () => {
       server.close();
       // Chrome can leave speculative TCP connections without an HTTP request;

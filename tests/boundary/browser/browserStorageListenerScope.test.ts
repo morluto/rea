@@ -8,8 +8,8 @@ const hasNonLoopbackIpv4 = Object.values(networkInterfaces())
   .flatMap((entries) => entries ?? [])
   .some((entry) => entry.family === "IPv4" && !entry.internal);
 
-processTest.skipIf(!hasNonLoopbackIpv4)(
-  "storage fixture serves localhost and refuses this host's non-loopback interface",
+processTest.skipIf(process.platform !== "win32" && !hasNonLoopbackIpv4)(
+  "storage fixture binds to IPv4 loopback and serves localhost",
   async ({ processes }) => {
     const result = await processes.run(
       process.execPath,
@@ -29,7 +29,10 @@ processTest.skipIf(!hasNonLoopbackIpv4)(
     expect(result.exitCode, result.stderr).toBe(0);
     expect(result.stderr).toBe("");
     expect(result.stdout).toBe(
-      "storage: localhost served; non-loopback connection refused\n" +
+      "storage: IPv4 loopback binding verified; localhost served\n" +
+        (process.platform === "win32"
+          ? ""
+          : "storage: non-loopback connection refused\n") +
         "storage: target routing, invalid-target recovery and physical close passed\n",
     );
   },

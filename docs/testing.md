@@ -56,6 +56,11 @@ semantics. Compare failures against the base revision, or run the suite on
 Linux or WSL, before attributing them to a change. See `CONTRIBUTING.md` →
 Windows source checkouts.
 
+The storage fixture listener check verifies the actual IPv4 loopback binding
+and localhost HTTP access on Windows. Its additional non-loopback refusal probe
+runs on Unix: Windows firewalls may drop self-connects rather than return
+`ECONNREFUSED`, so a timeout does not establish listener scope.
+
 The CI documentation lane runs both `docs:check` and `docs:build` when the
 existing change classifier selects documentation or its producing inputs.
 Generated facts and rendered page links have separate checks. VitePress does not
