@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { stating } from "../../tests/support/statingFacts.js";
 import {
   ARCHITECTURE_VARIANT_NAMES,
   ARCHITECTURE_VARIANTS,
@@ -38,7 +39,7 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)("architecture variant %s", (name) => {
           ? undefined
           : {
               field: "architecture_variant",
-              message: `architecture_variant ${name} requires architecture ${row.architecture}`,
+              message: stating(name, row.architecture),
             },
       );
     },
@@ -60,8 +61,7 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)("architecture variant %s", (name) => {
     ])
       expect(rawBinarySelectionError(unbased)).toEqual({
         field: "base_address",
-        message:
-          "architecture_variant requires base_address, the address of file offset 0",
+        message: stating("architecture_variant", "base_address"),
       });
   });
 });

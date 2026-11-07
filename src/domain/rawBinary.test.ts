@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
+import { stating } from "../../tests/support/statingFacts.js";
 import { executableFormatHintSchema } from "./dosCom.js";
 import {
   admitRawBinary,
@@ -270,7 +271,7 @@ describe("raw-binary selection pairing", () => {
   it("requires architecture and entry with format=raw-binary", () => {
     expect(rawBinarySelectionError({ format: "raw-binary" })).toEqual({
       field: "architecture",
-      message: "format=raw-binary requires architecture and entry_point",
+      message: stating("format=raw-binary", "architecture", "entry_point"),
     });
     expect(
       rawBinarySelectionError({
@@ -285,13 +286,13 @@ describe("raw-binary selection pairing", () => {
       rawBinarySelectionError({ architecture: "arm", entryPoint: "0x1" }),
     ).toEqual({
       field: "architecture",
-      message: "architecture and entry_point apply only with format=raw-binary",
+      message: stating("architecture", "format=raw-binary"),
     });
     expect(
       rawBinarySelectionError({ format: "dos-com", entryPoint: "0x1" }),
     ).toEqual({
       field: "entry_point",
-      message: "architecture and entry_point apply only with format=raw-binary",
+      message: stating("entry_point", "format=raw-binary"),
     });
   });
 });
@@ -417,7 +418,7 @@ describe("raw-binary base address admission", () => {
       ).toEqual({
         ok: false,
         error: {
-          reason: "base_address applies only with architecture_variant",
+          reason: stating("base_address", "architecture_variant"),
           constraint: "load_selection_rejected",
           field: "base_address",
         },
@@ -463,7 +464,7 @@ describe("raw-binary base address admission", () => {
       ).toEqual({
         ok: false,
         error: {
-          reason: `raw-binary entry_point ${entryPoint} must lie inside the image mapped at 0x8000000..0x8000007`,
+          reason: stating(entryPoint, "0x8000000..0x8000007"),
           constraint: "load_selection_rejected",
           field: "entry_point",
         },
@@ -482,8 +483,7 @@ describe("raw-binary base address admission", () => {
     ).toMatchObject({
       ok: false,
       error: {
-        reason:
-          "raw-binary mapping from 0xfffffff0 must fit in the arm address width",
+        reason: stating("0xfffffff0", "arm"),
         field: "base_address",
       },
     });
@@ -500,7 +500,7 @@ describe("raw-binary base address admission", () => {
     ).toEqual({
       ok: false,
       error: {
-        reason: "base_address must be a hexadecimal address of the form 0x…",
+        reason: stating("base_address", "0x…"),
         constraint: "load_selection_rejected",
         field: "base_address",
       },
@@ -516,7 +516,7 @@ describe("raw-binary base address admission", () => {
     ).toEqual({
       ok: false,
       error: {
-        reason: "raw-binary arm entry_point 0x80001c5 must be 4-byte aligned",
+        reason: stating("arm", "entry_point", "0x80001c5", "4"),
         constraint: "load_selection_rejected",
         field: "entry_point",
         diagnostics: {
@@ -591,14 +591,13 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          reason: `raw-binary ${variant} entry_point 0x80001c5 is a Thumb interworking address with bit 0 set; its code address is 0x80001c4`,
+          reason: stating(variant, "entry_point", "0x80001c5", "0x80001c4"),
           constraint: "load_selection_rejected",
           diagnostics: {
             entry_point: "0x080001c5",
             code_address: "0x80001c4",
             isa_mode: isaMode,
-            suggestion:
-              "Omit entry_point to read Reset from the vector table, or pass code_address as entry_point.",
+            suggestion: stating("entry_point", "code_address"),
           },
         },
       });
@@ -617,8 +616,7 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
       ).toMatchObject({
         ok: false,
         error: {
-          reason:
-            "vector_table_address locates Reset only when entry_point is omitted",
+          reason: stating("vector_table_address", "entry_point"),
         },
       });
     });
@@ -668,8 +666,12 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
       ).toEqual({
         ok: false,
         error: {
-          reason:
-            "raw-binary vector table at 0x8000040 must be 128-byte aligned, as VTOR requires; it is at base_address unless vector_table_address is given",
+          reason: stating(
+            "0x8000040",
+            "128",
+            "base_address",
+            "vector_table_address",
+          ),
           constraint: "load_selection_rejected",
           field: "base_address",
         },
@@ -698,11 +700,12 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
     });
 
     it.each([
-      [0x080001c4, "is even"],
-      [0x090001c5, "outside the image mapped at 0x8000000..0x80001ff"],
-      [0x07ffff01, "outside the image mapped at 0x8000000..0x80001ff"],
-      [0x08000005, "inside the vector-table words read at 0x8000000"],
-    ])("refuses Reset word %i", (reset, reason) => {
+      // The Reset slot, then each code address and where it falls.
+      [0x080001c4, ["0x8000004"]],
+      [0x090001c5, ["0x90001c4", "0x8000000..0x80001ff"]],
+      [0x07ffff01, ["0x7ffff00", "0x8000000..0x80001ff"]],
+      [0x08000005, ["0x8000004", "0x8000000"]],
+    ] as const)("refuses Reset word %i", (reset, facts) => {
       const result = derived({
         baseAddress: "0x8000000",
         fileBytes: 0x200,
@@ -710,7 +713,7 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
       expect(result).toMatchObject({
         ok: false,
         error: {
-          reason: expect.stringContaining(reason),
+          reason: stating(...facts),
           constraint: "load_selection_rejected",
           diagnostics: {
             vector_table_address: "0x8000000",
@@ -724,16 +727,17 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
     });
 
     it.each([
-      ["0x8000002", 0x200, "must be 128-byte aligned, as VTOR requires"],
+      // The table, then the VTOR alignment, the mapped image or the Reset slot.
+      ["0x8000002", 0x200, ["0x8000002", "128"]],
       // Naming the Reset slot instead of the table would read NMI as Reset.
-      ["0x8000004", 0x200, "must be 128-byte aligned, as VTOR requires"],
-      ["0x8000200", 0x200, "must lie inside the image mapped at"],
-      ["0x7ffff80", 0x200, "must lie inside the image mapped at"],
-      ["0x8000180", 0x184, "file ends before the Reset vector at 0x8000184"],
-      [undefined, 4, "file ends before the Reset vector at 0x8000004"],
-    ])(
+      ["0x8000004", 0x200, ["0x8000004", "128"]],
+      ["0x8000200", 0x200, ["0x8000200", "0x8000000..0x80001ff"]],
+      ["0x7ffff80", 0x200, ["0x7ffff80", "0x8000000..0x80001ff"]],
+      ["0x8000180", 0x184, ["0x8000180", "0x8000184"]],
+      [undefined, 4, ["0x8000000", "0x8000004"]],
+    ] as const)(
       "refuses vector table %s in a %i-byte image",
-      (vectorTableAddress, fileBytes, reason) => {
+      (vectorTableAddress, fileBytes, facts) => {
         const result = admitRawBinary({
           architecture,
           architectureVariant: variant,
@@ -745,7 +749,7 @@ describe.each(ARCHITECTURE_VARIANT_NAMES)(
         expect(result).toMatchObject({
           ok: false,
           error: {
-            reason: expect.stringContaining(reason),
+            reason: stating(...facts),
             constraint: "load_selection_rejected",
           },
         });
@@ -771,7 +775,7 @@ describe("raw-binary variant pairing at admission", () => {
     ).toMatchObject({
       ok: false,
       error: {
-        reason: "architecture_variant armv7-m requires architecture arm",
+        reason: stating("armv7-m", "arm"),
         field: "architecture_variant",
       },
     });
@@ -785,7 +789,7 @@ describe("raw-binary variant pairing at admission", () => {
     ).toMatchObject({
       ok: false,
       error: {
-        reason: `architecture_variant must be one of ${ARCHITECTURE_VARIANT_NAMES.join(", ")}`,
+        reason: stating("architecture_variant", ...ARCHITECTURE_VARIANT_NAMES),
         field: "architecture_variant",
       },
     });
@@ -793,22 +797,22 @@ describe("raw-binary variant pairing at admission", () => {
   it.each([
     [
       { architectureVariant: "armv7-m" },
-      "architecture_variant requires base_address, the address of file offset 0",
+      ["architecture_variant", "base_address"],
       "base_address",
     ],
     [
       { baseAddress: "0x8000000" },
-      "base_address applies only with architecture_variant",
+      ["base_address", "architecture_variant"],
       "base_address",
     ],
     [
       { vectorTableAddress: "0x8000000" },
-      "entry_point may be omitted only with architecture_variant and base_address; Reset is then read from the vector table",
+      ["entry_point", "architecture_variant", "base_address"],
       "entry_point",
     ],
   ] as const)(
     "requires a variant and a base to omit the entry: %j",
-    (selection, reason, field) => {
+    (selection, facts, field) => {
       expect(
         admitRawBinary({
           architecture: "arm",
@@ -818,7 +822,11 @@ describe("raw-binary variant pairing at admission", () => {
         }),
       ).toEqual({
         ok: false,
-        error: { reason, constraint: "load_selection_rejected", field },
+        error: {
+          reason: stating(...facts),
+          constraint: "load_selection_rejected",
+          field,
+        },
       });
     },
   );
