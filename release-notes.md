@@ -682,6 +682,7 @@
 * **managed:** surface capacity limits in member comparison ([fbe7532](https://github.com/morluto/rea/commit/fbe7532fabb78de46bd00db845c1147b5325ad22)), closes [#9021](https://github.com/morluto/rea/issues/9021)
 * **managed:** unify metadata row and coded-index ownership ([416f16e](https://github.com/morluto/rea/commit/416f16e2ede8b31ec3bbb8d02efbf8c62074c8aa))
 * **managed:** unify native module identity matching ([f59fc19](https://github.com/morluto/rea/commit/f59fc19d2170c9fc1800cdd5ed9954731167840b))
+* **mcp:** advertise absolute paths for tools that reject relative inputs ([#9179](https://github.com/morluto/rea/issues/9179)) ([562779b](https://github.com/morluto/rea/commit/562779bd71458fc53d60247d026730d52cd9b66e))
 * **mcp:** advertise reduced array elements with Gemini-compatible item types ([#7107](https://github.com/morluto/rea/issues/7107)) ([58a5275](https://github.com/morluto/rea/commit/58a5275aa2247b961cb249ccbe4a98adbb706934)), closes [#5201](https://github.com/morluto/rea/issues/5201)
 * **mcp:** advertise standard route path schemas ([76eecf7](https://github.com/morluto/rea/commit/76eecf7fa175023b7315f40bc7582baea401c2e2))
 * **mcp:** align retained view handoff guidance ([#7926](https://github.com/morluto/rea/issues/7926)) ([31c028f](https://github.com/morluto/rea/commit/31c028f4962e1f2a3a6fdd45406b5010ed5cf01d))
