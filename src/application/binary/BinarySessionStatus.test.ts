@@ -1282,3 +1282,64 @@ describe("binary session composed operation projection", () => {
     expect(discovered).toBe(false);
   });
 });
+
+describe("binary session direct composed operation projection", () => {
+  it("uses the modes that decide a direct composed tool's availability", async () => {
+    const capabilities = [
+      descriptor(providerA, "current_address", []),
+      descriptor(providerA, "resolve_containing_procedure", []),
+    ];
+    const view = operationStatusSchema.parse(
+      await projectStatus(capabilities, [candidate(providerA, capabilities)], {
+        detail: "operation",
+        operation: "get_navigation_context",
+        deepOperations: [
+          "current_document",
+          "current_address",
+          "resolve_containing_procedure",
+        ],
+      }),
+    );
+    expect(view.operation_requirements).toEqual({
+      kind: "modes",
+      default_mode: "current_selection",
+      modes: [
+        {
+          name: "current_selection",
+          requirements: [
+            "current_document",
+            "current_address",
+            "resolve_containing_procedure",
+          ],
+        },
+        {
+          name: "explicit_document",
+          requirements: ["current_address", "resolve_containing_procedure"],
+        },
+      ],
+    });
+    expect(view.operation_candidates[0]?.declaration).toMatchObject({
+      status: "available",
+      missing_operations: ["current_document"],
+      default_mode_available: false,
+      modes: [
+        {
+          name: "current_selection",
+          status: "unavailable",
+          missing_operations: ["current_document"],
+        },
+        { name: "explicit_document", status: "available" },
+      ],
+    });
+    // The same composition decides the tool's reported availability.
+    const availability = buildCapabilityInventory(
+      await projectStatus(capabilities, []),
+      { processCaptureEnabled: false },
+    ).find(({ name }) => name === "get_navigation_context");
+    expect(availability?.modes?.map(({ name }) => name)).toEqual([
+      "current_selection",
+      "explicit_document",
+    ]);
+    expect(availability?.default_mode_available).toBe(false);
+  });
+});
