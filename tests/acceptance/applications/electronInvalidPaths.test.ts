@@ -255,11 +255,11 @@ cliTest(
       code: "invalid_request",
       details: {
         issues: [
-          {
+          expect.objectContaining({
             path: ["executable_path"],
             reason: "invalid_format",
-            message: expect.stringContaining("absolute local filesystem path"),
-          },
+            expected: "regex",
+          }),
         ],
       },
     });

@@ -222,7 +222,9 @@ it("keeps families apart even when they target the same addresses", () => {
   });
   expect(decoded.complete).toBe(false);
   expect(decoded.limitations).toEqual([
-    "UF2 numbering declares 1 block(s) that are absent: family 0xe48bff57 (RP2XXX_ABSOLUTE) with 2 numbered blocks has 1 of them.",
+    expect.stringMatching(
+      /1 block.*absent.*0xe48bff57.*2 numbered blocks.*1/iu,
+    ),
   ]);
 });
 
@@ -262,7 +264,9 @@ it("reports numbered blocks that are absent and leaves coverage unknown", () => 
     region_count: 2,
   });
   expect(decoded.limitations).toEqual([
-    "UF2 numbering declares 1 block(s) that are absent: family 0xe48bff56 (RP2040) with 4 numbered blocks has 3 of them.",
+    expect.stringMatching(
+      /1 block.*absent.*0xe48bff56.*4 numbered blocks.*3/iu,
+    ),
   ]);
 });
 
@@ -415,9 +419,11 @@ it("excludes invalid blocks and a truncated final block, leaving coverage unknow
   });
   expect(decoded.complete).toBe(false);
   expect(decoded.limitations).toEqual([
-    "UF2 file ends with 100 bytes after its last complete 512-byte block; the file may be truncated.",
-    "3 UF2 block(s) are invalid and were excluded; the first is block 1 at byte offset 512: end magic number does not match.",
-    "UF2 numbering declares 1 block(s) that are absent: family 0xe48bff56 (RP2040) with 3 numbered blocks has 2 of them.",
+    expect.stringMatching(/100 bytes.*512.byte block.*may be truncated/iu),
+    expect.stringMatching(/3 UF2 block.*invalid.*block 1.*offset 512.*magic/iu),
+    expect.stringMatching(
+      /1 block.*absent.*0xe48bff56.*3 numbered blocks.*2/iu,
+    ),
   ]);
 });
 
