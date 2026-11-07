@@ -1,13 +1,20 @@
 import type { JsonValue } from "../jsonValue.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import {
+  ARCHIVE,
+  escapeToken,
+  innermost,
+  namedSuggestions,
+  XML_FILE,
+} from "./appTaskDraftNamed.js";
+import {
   versionAt,
   type DesktopStatePath,
   type StateEnds,
 } from "./desktopState.js";
-import { diffStateViews, diffZipMembers } from "./stateChanges.js";
-import { locatePointer, pairMembers, resolvePointer } from "./viewPointer.js";
-import { entryWithoutView, zipArrayLeavesOut, zipEntryAt } from "./zipView.js";
+import { countTaskRows } from "./appTaskChecks.js";
+import { diffStateViews, sqliteRowIdentity } from "./stateChanges.js";
+import { resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
 type Suggestion = DesktopTaskCheckInput;
@@ -16,6 +23,14 @@ type Suggestion = DesktopTaskCheckInput;
 const MAX_SUGGESTIONS = 10;
 const MAX_ITEMS = 200;
 const MAX_CHARS = 2000;
+/** The most text checks a file gets, and the longest text one compares. */
+const LIMIT = { suggestions: MAX_SUGGESTIONS, chars: MAX_CHARS };
+
+/** The views at a file's two ends. */
+const versions = (baseline: Version, final: Version) => ({
+  baseline: baseline.view,
+  final: final.view,
+});
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -103,9 +118,6 @@ const textSuggestions = (
   return suggestions;
 };
 
-const escapeToken = (token: string) =>
-  token.replaceAll("~", "~0").replaceAll("/", "~1");
-
 /** `group/key` entries of key file views as JSON pointers into the view. */
 const keyPointers = (
   views: readonly (JsonValue | null)[],
@@ -123,148 +135,20 @@ const keyPointers = (
     ),
   );
 
-/** Pointers without a listed descendant: a container listed with its members is suggested through them. */
-const innermost = (pointers: readonly string[]): readonly string[] =>
-  pointers.filter(
-    (pointer) => !pointers.some((other) => other.startsWith(`${pointer}/`)),
-  );
-
-/**
- * The entry a pointer into a zip view goes into, when it has a view and both
- * evaluators read it alike: JSON, a key file or XML. A binary or unread
- * entry also holds a `null` view, which is no JSON `null`.
- */
-const readableEntry = (view: JsonValue | null, pointer: string) => {
-  const entry = zipEntryAt(view, pointer);
-  return typeof entry === "object" &&
-    entryWithoutView(entry) === undefined &&
-    (entry.format === "json" ||
-      entry.format === "keyfile" ||
-      entry.format === "xml")
-    ? entry
-    : undefined;
-};
-
-/**
- * Where checks for a pointer the diff lists start: the view of an entry it
- * names whole, or its root element for XML; the pointer itself inside that;
- * undefined for an entry neither evaluator reads alike, or the entry's fields.
- */
-const checkRoot = (
-  view: JsonValue | null,
-  pointer: string,
-): string | undefined => {
-  const entry = readableEntry(view, pointer);
-  const [entryPointer] = /^\/entries\/[^/]+/u.exec(pointer) ?? [];
-  if (entry === undefined || entryPointer === undefined) return undefined;
-  const inner = pointer.slice(entryPointer.length).split("/").slice(1);
-  const root = entry.format === "xml" ? ["view", "root"] : ["view"];
-  const prefix = (short: readonly string[], long: readonly string[]) =>
-    short.length <= long.length &&
-    short.every((part, index) => long[index] === part);
-  if (prefix(inner, root)) return `${entryPointer}/${root.join("/")}`;
-  return prefix(root, inner) ? pointer : undefined;
-};
-
-/** Whether a check at a pointer is decided by name: no object or array reached by position, no array searched that the view may cut. */
-const byName = (view: JsonValue | null, pointer: string) => {
-  const located = locatePointer(view, pointer);
-  return (
-    located.kind !== "unresolved" &&
-    located.byPosition.length === 0 &&
-    !located.searched.some((array) => zipArrayLeavesOut(view, array))
-  );
-};
-
-/** An element of REA's XML view, by its tag name, or undefined for any other value. */
-const elementName = (value: JsonValue | undefined): string | undefined =>
-  isRecord(value) &&
-  typeof value.name === "string" &&
-  isRecord(value.attributes) &&
-  Array.isArray(value.children)
-    ? value.name
-    : undefined;
-
-/**
- * Checks on the entries of an archive, by the selectors its diff names
- * members with: elements added or removed whole first, as the likeliest
- * record of what the user did, then values changed, added and removed. A
- * JSON value or an entry added whole is checked through its members.
- */
-const zipSuggestions = (
-  file: string,
-  baseline: Version,
-  final: Version,
-): Suggestion[] => {
-  const change = diffZipMembers(baseline.view, final.view);
-  const elements: Suggestion[] = [];
-  const values: Suggestion[] = [];
-  const equals = (pointer: string, value: JsonValue | undefined) => {
-    if (
-      values.length < MAX_SUGGESTIONS &&
-      value !== undefined &&
-      !(isRecord(value) && Object.keys(value).length > 0) &&
-      !isTimestamp(value) &&
-      byName(final.view, pointer)
-    )
-      values.push({ kind: "value_equals", file, pointer, value });
-  };
-  const added = (pointer: string, value: JsonValue | undefined): void => {
-    if (elements.length >= MAX_SUGGESTIONS && values.length >= MAX_SUGGESTIONS)
-      return;
-    const name = elementName(value);
-    if (name !== undefined) {
-      if (
-        elements.length < MAX_SUGGESTIONS &&
-        byName(final.view, `${pointer}/name`)
-      )
-        elements.push({
-          kind: "value_equals",
-          file,
-          pointer: `${pointer}/name`,
-          value: name,
-        });
-    } else if (Array.isArray(value) && value.length > 0) {
-      const { keys } = pairMembers(value, []).newer;
-      value.forEach((item, index) =>
-        added(`${pointer}/${escapeToken(keys[index] ?? String(index))}`, item),
-      );
-    } else if (isRecord(value) && Object.keys(value).length > 0)
-      for (const [key, item] of Object.entries(value))
-        added(`${pointer}/${escapeToken(key)}`, item);
-    // A scalar, or an empty array or object, is checked as it is.
-    else equals(pointer, value);
-  };
-  for (const pointer of change.added) {
-    const root = checkRoot(final.view, pointer);
-    if (root !== undefined) added(root, resolvePointer(final.view, root));
-  }
-  for (const pointer of innermost(change.changed))
-    if (checkRoot(final.view, pointer) === pointer)
-      equals(pointer, resolvePointer(final.view, pointer));
-  // An absence is checked only where the entry still has a view to lack it in.
-  for (const pointer of change.removed)
-    if (
-      checkRoot(baseline.view, pointer) === pointer &&
-      checkRoot(final.view, pointer) === pointer &&
-      byName(baseline.view, pointer) &&
-      byName(final.view, pointer)
-    )
-      (elementName(resolvePointer(baseline.view, pointer)) === undefined
-        ? values
-        : elements
-      ).push({ kind: "value_absent", file, pointer });
-  return [...elements, ...values];
-};
-
 const valueSuggestions = (
   file: string,
   baseline: Version,
   final: Version,
 ): Suggestion[] => {
   const format = final.format;
-  if (format === "zip") return zipSuggestions(file, baseline, final);
-  if (format !== "json" && format !== "xml" && format !== "keyfile") return [];
+  if (format === "zip" || format === "xml")
+    return namedSuggestions(
+      file,
+      versions(baseline, final),
+      format === "zip" ? ARCHIVE : XML_FILE,
+      LIMIT,
+    );
+  if (format !== "json" && format !== "keyfile") return [];
   const change = diffStateViews(format, baseline.view, final.view);
   const pointers = keyPointers([baseline.view, final.view]);
   const pointer = (entry: string) =>
@@ -330,6 +214,58 @@ const rowWhere = (
     }),
   );
 
+/** Match uniquely keyed rows separately from multiset row conditions. */
+const keyedRows = (table: TableView) =>
+  new Map(
+    table.rows.flatMap((row) => {
+      const identity = sqliteRowIdentity(table.columns, table.key, row);
+      return identity.keyed ? [[identity.value, row] as const] : [];
+    }),
+  );
+
+/** The predicates a task can express after volatile values are omitted. */
+const rowConditions = (table: TableView) => {
+  const conditions = new Map<string, Record<string, JsonValue>>();
+  for (const row of table.rows) {
+    if (sqliteRowIdentity(table.columns, table.key, row).keyed) continue;
+    const where = rowWhere(table, row, () => true);
+    if (Object.keys(where).length === 0) continue;
+    conditions.set(JSON.stringify(where), where);
+  }
+  return conditions;
+};
+
+const unkeyedRowSuggestions = (
+  file: string,
+  table: string,
+  baseline: TableView,
+  final: TableView,
+): Suggestion[] => {
+  const conditions = new Map([
+    ...rowConditions(final),
+    ...rowConditions(baseline),
+  ]);
+  const suggestions: Suggestion[] = [];
+  for (const where of conditions.values()) {
+    const previous = countTaskRows(baseline.columns, baseline.rows, where);
+    const count = countTaskRows(final.columns, final.rows, where);
+    if (previous === count) continue;
+    if (count === 0)
+      suggestions.push({ kind: "row_absent", file, table, where });
+    else if (previous === 0)
+      suggestions.push({ kind: "row_present", file, table, where });
+    else
+      suggestions.push({
+        kind: "row_count",
+        file,
+        table,
+        where,
+        equals: count,
+      });
+  }
+  return suggestions;
+};
+
 const rowSuggestions = (
   file: string,
   baseline: Version,
@@ -347,28 +283,15 @@ const rowSuggestions = (
   };
   for (const [name, table] of tableViews(final)) {
     const old = before.get(name) ?? { ...table, rows: [] };
-    const identity = (view: TableView, row: readonly JsonValue[]) =>
-      JSON.stringify(
-        view.key.length === 0
-          ? row
-          : view.key.map((column) => row[view.columns.indexOf(column)] ?? null),
-      );
-    const oldRows = new Map(old.rows.map((row) => [identity(old, row), row]));
-    const newRows = new Map(
-      table.rows.map((row) => [identity(table, row), row]),
-    );
-    const keyed = (column: string) => table.key.includes(column);
+    const oldRows = keyedRows(old);
+    const newRows = keyedRows(table);
     for (const [id, row] of newRows) {
       const previous = oldRows.get(id);
       if (previous === undefined)
         push(
           "row_present",
           name,
-          rowWhere(
-            table,
-            row,
-            (column) => table.key.length === 0 || !keyed(column),
-          ),
+          rowWhere(table, row, (column) => !table.key.includes(column)),
         );
       else if (JSON.stringify(previous) !== JSON.stringify(row))
         push(
@@ -378,7 +301,7 @@ const rowSuggestions = (
             table,
             row,
             (column) =>
-              keyed(column) ||
+              table.key.includes(column) ||
               JSON.stringify(row[table.columns.indexOf(column)]) !==
                 JSON.stringify(previous[old.columns.indexOf(column)]),
           ),
@@ -389,12 +312,9 @@ const rowSuggestions = (
         push(
           "row_absent",
           name,
-          rowWhere(
-            old,
-            row,
-            (column) => old.key.length === 0 || old.key.includes(column),
-          ),
+          rowWhere(old, row, (column) => old.key.includes(column)),
         );
+    suggestions.push(...unkeyedRowSuggestions(file, name, old, table));
     if (old.rows.length !== table.rows.length)
       suggestions.push({
         kind: "row_count",
