@@ -21,6 +21,7 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
+import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -248,8 +249,85 @@ export const rejectsEventListener = (
   return true;
 };
 
+/** Check whether prototype or module writes may have changed Node's listener methods. */
+const hasInheritedListenerMethodOverride = (
+  state: JavaScriptSemanticAnalysisState,
+  target: "child_process" | "events",
+): boolean => {
+  for (const binding of state.bindingsById.values()) {
+    if (binding.memberWrites.length === 0) continue;
+    const provenance = evaluateSemanticProvenance(binding, state);
+    if (provenance.status !== "module") continue;
+    for (const origin of provenance.origins) {
+      const specifier = origin.specifier.replace(/^node:/u, "");
+      if (target === "child_process" && specifier === "child_process") {
+        const isClass = origin.importedPath[0] === "ChildProcess";
+        if (
+          isClass ||
+          binding.memberWrites.some(({ path }) =>
+            path.some(
+              (segment) =>
+                segment === "prototype" || segment === "ChildProcess",
+            ),
+          )
+        )
+          return true;
+      }
+      if (
+        (target === "events" || target === "child_process") &&
+        specifier === "events"
+      ) {
+        const isClass = origin.importedPath[0] === "EventEmitter";
+        if (
+          isClass ||
+          binding.memberWrites.some(({ path }) =>
+            path.some(
+              (segment) =>
+                segment === "prototype" || segment === "EventEmitter",
+            ),
+          )
+        )
+          return true;
+      }
+    }
+  }
+  for (const [specifier, effects] of state.requiredModuleEffects.entries()) {
+    const raw = specifier.replace(/^node:/u, "");
+    if (target === "child_process" && raw === "child_process") {
+      if (
+        effects.some(
+          ({ kind, path }) =>
+            kind === "write" &&
+            path.some(
+              (segment) =>
+                segment === "prototype" || segment === "ChildProcess",
+            ),
+        )
+      )
+        return true;
+    }
+    if (
+      (target === "events" || target === "child_process") &&
+      raw === "events"
+    ) {
+      if (
+        effects.some(
+          ({ kind, path }) =>
+            kind === "write" &&
+            path.some(
+              (segment) =>
+                segment === "prototype" || segment === "EventEmitter",
+            ),
+        )
+      )
+        return true;
+    }
+  }
+  return false;
+};
+
 /** Identify stable Node-owned emitter instances without inferring generic APIs. */
-const isProvenNodeEmitter = (
+export const isProvenNodeEmitter = (
   receiver: t.Expression | t.Super,
   call: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
@@ -270,8 +348,12 @@ const isProvenNodeEmitter = (
   if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
     return false;
   const initial = unwrapJavaScriptExpression(initializers[0].node).node;
-  if (t.isCallExpression(initial) || t.isOptionalCallExpression(initial))
-    return builtinChildProcessMethod(initial.callee, state) !== null;
+  if (t.isCallExpression(initial) || t.isOptionalCallExpression(initial)) {
+    return (
+      builtinChildProcessMethod(initial.callee, state) !== null &&
+      !hasInheritedListenerMethodOverride(state, "child_process")
+    );
+  }
   if (!t.isNewExpression(initial)) return false;
   const constructor = initial.callee;
   if (!t.isIdentifier(constructor)) return false;
@@ -288,7 +370,7 @@ const isProvenNodeEmitter = (
     return false;
   return (
     builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
-    "EventEmitter"
+      "EventEmitter" && !hasInheritedListenerMethodOverride(state, "events")
   );
 };
 

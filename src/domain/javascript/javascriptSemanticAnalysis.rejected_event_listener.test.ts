@@ -38,6 +38,60 @@ it("does not emit generic listener candidates for a rejected Node child listener
 });
 
 it.each([
+  `ChildProcess.prototype.off = function (event) { return this.removeAllListeners(event); };`,
+  `cp.ChildProcess.prototype.off = function (event) { return this.removeAllListeners(event); };`,
+])(
+  "retains a candidate when ChildProcess prototype is modified: %s",
+  (mutation) => {
+    const operations = analyzeJavaScriptSemantics(`
+    import * as cp from "node:child_process";
+    import { spawn, ChildProcess } from "node:child_process";
+    ${mutation}
+    const child = spawn("worker");
+    child.off("exit");
+  `).eventOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "remove",
+          method: "off",
+          eventName: "exit",
+        }),
+      ]),
+    );
+  },
+);
+
+it("retains an uncertain child listener interaction when child.on is overridden", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on = function (event) { return this.addListener(event, () => {}); };
+    child.on("exit");
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it.each([
   `e.off = function () {};`,
   `EventEmitter.prototype.off = function () {};`,
 ])("retains a candidate when emitter behavior is modified: %s", (mutation) => {

@@ -30,7 +30,10 @@ import {
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { rejectsEventListener } from "./javascriptSemanticAsyncEffects.js";
+import {
+  isProvenNodeEmitter,
+  rejectsEventListener,
+} from "./javascriptSemanticAsyncEffects.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -218,7 +221,11 @@ const childInteraction = (
   if (classification === null) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener = node.arguments[1];
-  if (kind === "listener" && rejectsEventListener(listener, state)) return null;
+  let rejectedNodeListener = false;
+  if (kind === "listener" && rejectsEventListener(listener, state)) {
+    if (isProvenNodeEmitter(member.object, node, state)) return null;
+    rejectedNodeListener = true;
+  }
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
@@ -240,7 +247,7 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: complete ? "complete" : "partial",
+    resolution: complete && !rejectedNodeListener ? "complete" : "partial",
   };
 };
 
