@@ -52,7 +52,8 @@ export const pairRecordsById = (
     .filter(
       (field) =>
         ID_FIELD.test(field) &&
-        !/[=[\]]/u.test(field) &&
+        // `[@attr]` and `[>child]` are selector marks, not a JSON field's name.
+        !/^[@>]|[=[\]]/u.test(field) &&
         namesEach(newer, field) &&
         namesEach(older, field),
     )

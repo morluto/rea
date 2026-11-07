@@ -252,4 +252,15 @@ describe("jsonCounts over many edited records", () => {
 
     expect(paired?.newer.keys).toEqual(["[uid=a]", "[uid=b]"]);
   });
+
+  it("does not pair records through a field whose name is a selector mark", () => {
+    const records = (name: string) => [
+      { "@record_id": "one", name },
+      { "@record_id": "two", name: "Lin" },
+    ];
+
+    expect(
+      pairRecordsById(records("Ada Lane"), records("Ada")),
+    ).toBeUndefined();
+  });
 });
