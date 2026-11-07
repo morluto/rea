@@ -5,7 +5,10 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { evidenceResultOf } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailOutputSchemaOf } from "./analysisDetail.js";
 import { toolContractMetadata } from "./toolEffects.js";
-import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
+import {
+  FRIDA_REMOTE_ADDRESS_CHARSET,
+  isValidFridaRemoteAddress,
+} from "../domain/fridaRemoteAddress.js";
 import {
   fridaSessionObservationSchema,
   fridaSessionStatusInputSchema,
@@ -21,9 +24,19 @@ export const FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION =
   "Remote keepalive interval in seconds";
 
 const remoteConnection = z.strictObject({
-  address: z.string().min(1).max(2048).refine(isValidFridaRemoteAddress, {
-    message: "Expected a Frida host address, optionally followed by a port",
-  }),
+  address: z
+    .string()
+    .min(1)
+    .max(2048)
+    // Advertised so a schema-driven caller cannot build a request the handler
+    // rejects. The predicate still owns the URL-level rules.
+    .regex(
+      FRIDA_REMOTE_ADDRESS_CHARSET,
+      "Expected a Frida host address, optionally followed by a port",
+    )
+    .refine(isValidFridaRemoteAddress, {
+      message: "Expected a Frida host address, optionally followed by a port",
+    }),
   token: z.string().min(1).optional(),
   certificate: z.string().min(1).optional(),
   origin: z.string().min(1).optional(),
