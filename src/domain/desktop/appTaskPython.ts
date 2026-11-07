@@ -255,7 +255,7 @@ def _whole_text(check, entry):
         truncated = _zip_leaves_out(view, check["pointer"])
     if kind == "none":
         if truncated:
-            return _undecided(check)
+            return False, f"the view of {check['file']} is truncated, so what it leaves out is unknown ({check['pointer']})"
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     # Only an element has attributes of its own and of its descendants to join.
     attribute = check.get("text_attribute")
