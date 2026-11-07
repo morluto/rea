@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { seedWording } from "../../../src/domain/desktop/appExport.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   BUILD_REQUEST as REQUEST,
   BUILD_TASK as TASK,
@@ -169,8 +171,21 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       "seed",
       "--end-checkpoint",
       "end",
+      // The agent made the seed in the computer, so the README need not keep it local.
+      "--synthetic-seed",
     ]),
   ]);
+  expect(
+    parseEvidence(JSON.parse(await readFile(outputs.export, "utf8")))
+      .parameters,
+  ).toMatchObject({ synthetic_seed: true });
+  expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+    seedWording({
+      name: exported.environment,
+      seedCheckpoint: "seed",
+      syntheticSeed: true,
+    }).notice,
+  );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
