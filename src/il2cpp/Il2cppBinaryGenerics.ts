@@ -49,11 +49,13 @@ export interface Il2cppGenericMethodLink {
  * Distance from CodeRegistration's start to codeGenModulesCount, with the
  * genericMethodTable row size each layout implies (Il2CppDumper's
  * Il2CppCodeRegistration): 27.0 = 96, 27.1/27.2/29 = 104
- * (genericAdjustorThunks), 29.1/31 = 120 (unresolved call pointers). Header
- * versions do not separate these minor versions, so every listed layout is
- * tried and exactly one must agree with the tables. Version 24 is left out:
- * its type-definition container offset and generic class layout are unchecked
- * against a real build. Version 39 container records are not decoded.
+ * (genericAdjustorThunks), 29.1/31 = 120 (unresolved call pointers).
+ * Version 24 retains customAttributeCount/customAttributeGenerators:
+ * 24.2 = 96, 24.3/24.4 = 112 (Windows Runtime factories), 24.5 = 120
+ * (genericAdjustorThunks). Header versions do not separate these minor versions,
+ * so every listed layout is tried and exactly one must agree with the tables.
+ * Earlier 24.x metadata layouts remain outside the metadata reader's admission;
+ * version 39 container records are not decoded.
  */
 const CODE_REGISTRATION_LAYOUTS: Readonly<
   Record<
@@ -61,6 +63,11 @@ const CODE_REGISTRATION_LAYOUTS: Readonly<
     readonly { readonly modules: number; readonly stride: 12 | 16 }[]
   >
 > = {
+  24: [
+    { modules: 96, stride: 12 },
+    { modules: 112, stride: 12 },
+    { modules: 120, stride: 16 },
+  ],
   27: [
     { modules: 96, stride: 12 },
     { modules: 104, stride: 16 },
