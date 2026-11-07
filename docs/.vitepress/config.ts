@@ -61,6 +61,7 @@ export default defineConfig({
           { text: "Environment reference", link: "/agent-environments" },
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
+          { text: "Deno compile executables", link: "/deno-standalone" },
           { text: "Process capture", link: "/process-capture" },
           {
             text: "Desktop application capture",

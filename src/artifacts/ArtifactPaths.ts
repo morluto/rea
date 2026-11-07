@@ -93,7 +93,11 @@ export const normalizeArtifactPath = (input: string): string => {
 
 /** Reject prefix collisions and optionally bound the allocated path tree. */
 export class ArtifactPathRegistry {
-  readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
+  readonly #root: PathTrieNode = {
+    kind: undefined,
+    occupied: false,
+    children: new Map(),
+  };
   #nodeCount = 0;
 
   constructor(
@@ -111,6 +115,22 @@ export class ArtifactPathRegistry {
   /** Account for distinct prefixes without claiming file/directory validity. */
   reservePath(path: string): void {
     this.#visit(path);
+  }
+
+  /**
+   * Whether `path` equals an occupied file, sits under one, or is a prefix of
+   * one. This does not insert nodes or consume the path budget.
+   */
+  conflicts(path: string): boolean {
+    const parts = path.split("/");
+    let node = this.#root;
+    for (const part of parts) {
+      if (node.occupied && node.kind !== "directory") return true;
+      const child = node.children.get(part);
+      if (child === undefined) return false;
+      node = child;
+    }
+    return node.occupied || node.kind !== undefined || node.children.size > 0;
   }
 
   #visit(path: string, kind?: DestinationEntryKind): void {
@@ -150,7 +170,7 @@ export class ArtifactPathRegistry {
         );
       let child = node.children.get(part);
       if (child === undefined) {
-        child = { kind: undefined, children: new Map() };
+        child = { kind: undefined, occupied: false, children: new Map() };
         node.children.set(part, child);
         if (this.budget !== undefined) this.#nodeCount++;
       }
@@ -168,12 +188,15 @@ export class ArtifactPathRegistry {
           );
       }
     }
+    if (kind === "directory") node.occupied = false;
+    else node.occupied = true;
     if (kind !== undefined) node.kind = kind;
   }
 }
 
 interface PathTrieNode {
   kind: DestinationEntryKind | undefined;
+  occupied: boolean;
   readonly children: Map<string, PathTrieNode>;
 }
 

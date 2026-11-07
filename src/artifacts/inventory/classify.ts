@@ -362,6 +362,9 @@ const classifyRootFormat = async (
     const bun = await embeddedProbes.bunStandalone();
     if (bun.status === "present")
       return { kind: "bun-standalone", source, probe: bun };
+    const deno = await embeddedProbes.denoStandalone();
+    if (deno.status === "present")
+      return { kind: "deno-standalone", source, probe: deno };
     const packaged = await embeddedProbes.pyInstaller();
     abortIfNeeded(signal);
     if (format !== "mach-o-universal") {
