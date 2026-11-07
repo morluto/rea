@@ -24,8 +24,8 @@ import {
   KUNA_VERSION_PROBE_REMEDIATION,
 } from "./KunaRelease.js";
 
-/** Settings a registration may carry; only those the caller set explicitly. */
-const REGISTRATION_SETTINGS = [
+/** Client settings consulted by this readiness probe. */
+export const KUNA_DOCTOR_SETTINGS = [
   "REA_KUNA_COMMAND",
   "REA_KUNA_CACHE_DIR",
   "REA_KUNA_CACHE_MAX_BYTES",
@@ -147,7 +147,7 @@ export const inspectKunaProvider = async (
     available: cache.ok,
     providerVersion: value.version,
     registrationEnvironment: Object.fromEntries(
-      REGISTRATION_SETTINGS.flatMap((name) => {
+      KUNA_DOCTOR_SETTINGS.flatMap((name) => {
         const setting = environment[name];
         return setting === undefined ? [] : [[name, setting]];
       }),
