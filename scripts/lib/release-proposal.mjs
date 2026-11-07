@@ -13,6 +13,15 @@ const patch = fileURLToPath(
   new URL("../../patches/release-please+17.3.0.patch", import.meta.url),
 );
 
+export function describeReleaseProposalError(error) {
+  if (!(error instanceof Error)) return String(error);
+  const description = error.message || error.name || "Unknown error";
+  const status = error.status;
+  return Number.isInteger(status) && status >= 400 && status <= 599
+    ? `${description} (HTTP ${status})`
+    : description;
+}
+
 export async function applyReleasePleasePatch(
   directory = dirname(require.resolve("release-please/package.json")),
 ) {
