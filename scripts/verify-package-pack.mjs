@@ -220,23 +220,30 @@ export async function verifyPackagePack({ root, workspace, commands }) {
   for (const path of [
     ".claude-plugin/plugin.json",
     ".codex-plugin/plugin.json",
+    ".cursor-plugin/plugin.json",
   ]) {
     const manifest = JSON.parse(
       (await commands.exec("tar", ["-xOf", tarball, `package/${path}`])).stdout,
     );
-    const serverConfig = path.startsWith(".codex")
-      ? JSON.parse(
-          (
-            await commands.exec("tar", [
-              "-xOf",
-              tarball,
-              "package/.codex-plugin/mcp.json",
-            ])
-          ).stdout,
-        )
-      : manifest;
+    const externalServerPath = path.startsWith(".codex")
+      ? ".codex-plugin/mcp.json"
+      : path.startsWith(".cursor")
+        ? ".cursor-plugin/mcp.json"
+        : undefined;
+    const serverConfig =
+      externalServerPath !== undefined
+        ? JSON.parse(
+            (
+              await commands.exec("tar", [
+                "-xOf",
+                tarball,
+                `package/${externalServerPath}`,
+              ])
+            ).stdout,
+          )
+        : manifest;
     const expectedArgs = [
-      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
+      `${path.startsWith(".claude") ? "${CLAUDE_PLUGIN_ROOT}/" : path.startsWith(".cursor") ? "${CURSOR_PLUGIN_ROOT}/" : "./"}scripts/plugin-mcp-launcher.mjs`,
       packedManifest.version,
     ];
     if (
@@ -246,7 +253,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
         ? manifest.mcpServers !== "./.codex-plugin/mcp.json" ||
           serverConfig.mcpServers?.rea?.cwd !== "." ||
           serverConfig.mcpServers?.rea?.startup_timeout_sec !== 30
-        : false) ||
+        : path.startsWith(".cursor")
+          ? manifest.mcpServers !== "./.cursor-plugin/mcp.json"
+          : false) ||
       serverConfig.mcpServers?.rea?.command !== "node" ||
       JSON.stringify(serverConfig.mcpServers?.rea?.args) !==
         JSON.stringify(expectedArgs)
@@ -256,7 +265,9 @@ export async function verifyPackagePack({ root, workspace, commands }) {
       );
     const icons = path.startsWith(".codex")
       ? [manifest.interface?.logo, manifest.interface?.composerIcon]
-      : [manifest.icon];
+      : path.startsWith(".cursor")
+        ? [manifest.logo]
+        : [manifest.icon];
     for (const icon of icons)
       if (
         icon !== "./assets/rea-plugin.png" ||

@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rea": {
+      "command": "node",
+      "args": [
+        "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+        "6.8.0"
+      ]
+    }
+  }
+}

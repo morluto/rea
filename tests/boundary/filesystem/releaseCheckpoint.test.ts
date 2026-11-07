@@ -22,6 +22,7 @@ const verifier = fileURLToPath(
 const pluginManifestPaths = [
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
+  ".cursor-plugin/plugin.json",
 ] as const;
 
 const pluginManifest = (version: string, launch = version) => ({
@@ -62,6 +63,21 @@ async function metadata(
       mcpServers: "./.codex-plugin/mcp.json",
     },
     ".codex-plugin/mcp.json": codexServerConfig(version),
+    ".cursor-plugin/plugin.json": {
+      version,
+      mcpServers: "./.cursor-plugin/mcp.json",
+    },
+    ".cursor-plugin/mcp.json": {
+      mcpServers: {
+        rea: {
+          command: "node",
+          args: [
+            "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+            version,
+          ],
+        },
+      },
+    },
     "package.json": { name: "rea-agents", version },
     "package-lock.json": { version, packages: { "": { version } } },
     ".release-please-manifest.json": { ".": version },
@@ -606,7 +622,9 @@ it.each(
     manifest:
       path === ".codex-plugin/plugin.json"
         ? { version: "5.1.0", mcpServers: "./.codex-plugin/mcp.json" }
-        : pluginManifest("5.1.0"),
+        : path === ".cursor-plugin/plugin.json"
+          ? { version: "5.1.0", mcpServers: "./.cursor-plugin/mcp.json" }
+          : pluginManifest("5.1.0"),
     failure: "declares 5.1.0; release branch requires 6.0.0",
   })),
 )("rejects a plugin $stale in $path", async ({ path, manifest, failure }) => {
@@ -629,6 +647,20 @@ it.each([
   {
     path: ".codex-plugin/mcp.json",
     manifest: codexServerConfig("6.0.0", "5.1.0"),
+  },
+  {
+    path: ".cursor-plugin/mcp.json",
+    manifest: {
+      mcpServers: {
+        rea: {
+          command: "node",
+          args: [
+            "${CURSOR_PLUGIN_ROOT}/scripts/plugin-mcp-launcher.mjs",
+            "5.1.0",
+          ],
+        },
+      },
+    },
   },
 ])("reads the release pin from $path", async ({ path, manifest }) => {
   const f = await fixture();

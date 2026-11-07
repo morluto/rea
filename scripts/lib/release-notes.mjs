@@ -370,6 +370,8 @@ export function verifyReleaseNotes(raw, text, body) {
 }
 
 const VERSION_ONLY_PLUGIN_METADATA = new Set([
+  ".cursor-plugin/plugin.json",
+  ".cursor-plugin/mcp.json",
   ".claude-plugin/plugin.json",
   ".codex-plugin/plugin.json",
   ".codex-plugin/mcp.json",

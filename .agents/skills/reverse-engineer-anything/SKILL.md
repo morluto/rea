@@ -17,7 +17,7 @@ readiness or provider commands.
 
 Installing this skill supplies instructions; it does not register the REA MCP
 server, install analysis engines, or add tools to an already-running agent.
-The exception is a Claude Code or Codex plugin install: the plugin bundles
+The exception is a Claude Code, Codex or Cursor plugin install: the plugin bundles
 this skill and registers its own `rea` server, outside the state that
 `rea setup` and `rea doctor` manage.
 
