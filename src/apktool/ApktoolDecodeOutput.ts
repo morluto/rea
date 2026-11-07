@@ -10,6 +10,7 @@ import {
 
 /** Project only the Apktool metadata fields REA publishes. */
 export interface ApktoolMetadata {
+  readonly packageName: string | null;
   readonly versionName: string | null;
   readonly versionCode: string | null;
   readonly minSdkVersion: string | null;
@@ -50,6 +51,13 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   if (!isMap(document.contents))
     throw new TypeError("apktool.yml root must be an Apktool metadata mapping");
   return {
+    packageName: resolvePackageName(
+      yamlScalar(document, ["packageInfo", "cur_package"], yml),
+      yamlScalar(document, ["packageInfo", "orig_package"], yml),
+      yamlScalar(document, ["packageInfo", "renameManifestPackage"], yml),
+      yamlScalar(document, ["renameManifestPackage"], yml),
+      yamlScalar(document, ["resourcesInfo", "packageName"], yml),
+    ),
     versionName: yamlScalar(document, ["versionInfo", "versionName"], yml),
     versionCode: yamlScalar(document, ["versionInfo", "versionCode"], yml),
     minSdkVersion: yamlScalar(document, ["sdkInfo", "minSdkVersion"], yml),
@@ -61,13 +69,41 @@ export const parseApktoolYml = (yml: string): ApktoolMetadata => {
   };
 };
 
-/** Fields written by VersionInfo.write and SdkInfo.write in Apktool 3. */
-const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
-  ["versionInfo.versionName", "versionName"],
-  ["versionInfo.versionCode", "versionCode"],
-  ["sdkInfo.minSdkVersion", "minSdkVersion"],
-  ["sdkInfo.targetSdkVersion", "targetSdkVersion"],
+const apktool3Sections = new Set([
+  "versionInfo",
+  "sdkInfo",
+  "packageInfo",
+  "resourcesInfo",
 ]);
+
+const apktool3ScalarPaths = new Set([
+  "versionInfo.versionName",
+  "versionInfo.versionCode",
+  "sdkInfo.minSdkVersion",
+  "sdkInfo.targetSdkVersion",
+  "packageInfo.cur_package",
+  "packageInfo.orig_package",
+  "packageInfo.renameManifestPackage",
+  "resourcesInfo.packageName",
+]);
+
+const resolvePackageName = (
+  ...candidates: readonly (string | null | undefined)[]
+): string | null => {
+  for (const candidate of candidates) {
+    if (
+      candidate !== undefined &&
+      candidate !== null &&
+      candidate !== "" &&
+      candidate !== "''" &&
+      candidate !== '""' &&
+      candidate !== "null" &&
+      candidate !== "~"
+    )
+      return candidate;
+  }
+  return null;
+};
 
 /**
  * Apktool 3.0.3 YamlWriter, like the 2.9.0 writer it descends from, writes
@@ -76,7 +112,8 @@ const apktool3Fields = new Map<string, keyof ApktoolMetadata>([
  * reinterpret an empty string or literal `null`.
  */
 const parseApktool3Metadata = (source: string): ApktoolMetadata => {
-  const values = new Map<keyof ApktoolMetadata, string>();
+  const parsedFields = new Map<string, string>();
+  const seenPaths = new Set<string>();
   const sections = new Set<string>();
   let section: string | undefined;
   for (const line of source.split(/\r\n?|\n/u)) {
@@ -90,7 +127,7 @@ const parseApktool3Metadata = (source: string): ApktoolMetadata => {
         sections.add(section);
         continue;
       }
-      if (section !== "versionInfo" && section !== "sdkInfo") continue;
+      if (section === undefined || !apktool3Sections.has(section)) continue;
       if (line.slice(separator + 1).trim() !== "" || sections.has(section))
         throw new TypeError(`apktool.yml has an invalid ${section} mapping`);
       sections.add(section);
@@ -99,18 +136,27 @@ const parseApktool3Metadata = (source: string): ApktoolMetadata => {
     const record = /^  ([^ :]+):(?: (.*))?$/su.exec(line);
     if (record === null) continue;
     const path = `${section ?? ""}.${record[1] ?? ""}`;
-    const field = apktool3Fields.get(path);
-    if (field === undefined) continue;
-    if (values.has(field))
+    if (!apktool3ScalarPaths.has(path)) continue;
+    if (seenPaths.has(path))
       throw new TypeError(`apktool.yml has a duplicate ${path} field`);
+    seenPaths.add(path);
     const value = record[2] ?? "";
-    values.set(field, field === "versionCode" ? value : apktool3String(value));
+    parsedFields.set(
+      path,
+      path === "versionInfo.versionCode" ? value : apktool3String(value),
+    );
   }
   return {
-    versionName: values.get("versionName") ?? null,
-    versionCode: values.get("versionCode") ?? null,
-    minSdkVersion: values.get("minSdkVersion") ?? null,
-    targetSdkVersion: values.get("targetSdkVersion") ?? null,
+    packageName: resolvePackageName(
+      parsedFields.get("packageInfo.cur_package"),
+      parsedFields.get("packageInfo.orig_package"),
+      parsedFields.get("packageInfo.renameManifestPackage"),
+      parsedFields.get("resourcesInfo.packageName"),
+    ),
+    versionName: parsedFields.get("versionInfo.versionName") ?? null,
+    versionCode: parsedFields.get("versionInfo.versionCode") ?? null,
+    minSdkVersion: parsedFields.get("sdkInfo.minSdkVersion") ?? null,
+    targetSdkVersion: parsedFields.get("sdkInfo.targetSdkVersion") ?? null,
   };
 };
 

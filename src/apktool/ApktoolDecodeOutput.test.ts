@@ -33,9 +33,10 @@ const REAL_YML = [
   "",
 ].join("\n");
 
-describe("parseApktoolYml", () => {
+describe("parseApktoolYml Apktool 2 facts", () => {
   it("projects version and SDK facts from a real apktool.yml", () => {
     expect(parseApktoolYml(REAL_YML)).toEqual({
+      packageName: null,
       versionName: "1.2.3",
       versionCode: "7",
       minSdkVersion: "24",
@@ -49,6 +50,7 @@ describe("parseApktoolYml", () => {
         '!!brut.androlib.meta.MetaInfo\nversionInfo:\n  versionName: "2.0.0"\n  versionCode: 45\n',
       ),
     ).toEqual({
+      packageName: null,
       versionName: "2.0.0",
       versionCode: "45",
       minSdkVersion: null,
@@ -74,6 +76,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "01.2.3",
       versionCode: "045",
       minSdkVersion: "24",
@@ -92,6 +95,7 @@ describe("parseApktoolYml", () => {
         ].join("\n"),
       ),
     ).toEqual({
+      packageName: null,
       versionName: "null",
       versionCode: "0045",
       minSdkVersion: null,
@@ -101,6 +105,7 @@ describe("parseApktoolYml", () => {
 
   it("reports null facts for unrelated YAML", () => {
     expect(parseApktoolYml("version: 2.7.0\n")).toEqual({
+      packageName: null,
       versionName: null,
       versionCode: null,
       minSdkVersion: null,
@@ -108,6 +113,101 @@ describe("parseApktoolYml", () => {
     });
   });
 
+  it("keeps Apktool 2 quoted and plain YAML semantics", () => {
+    expect(
+      parseApktoolYml(
+        String.raw`version: 2.7.0
+versionInfo:
+  versionName: 'literal \n #beta'
+  versionCode: 0045
+sdkInfo:
+  minSdkVersion: null
+  targetSdkVersion: 35 # comment
+`,
+      ),
+    ).toEqual({
+      packageName: null,
+      versionName: String.raw`literal \n #beta`,
+      versionCode: "0045",
+      minSdkVersion: null,
+      targetSdkVersion: "35",
+    });
+  });
+});
+
+describe("parseApktoolYml Apktool 2 package identity", () => {
+  it("projects package identity from packageInfo when present", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: org.rea.modern",
+          "  orig_package: org.rea.modern",
+          "versionInfo:",
+          "  versionName: 1.0.0",
+          "  versionCode: 1",
+          "",
+        ].join("\n"),
+      ),
+    ).toEqual({
+      packageName: "org.rea.modern",
+      versionName: "1.0.0",
+      versionCode: "1",
+      minSdkVersion: null,
+      targetSdkVersion: null,
+    });
+  });
+
+  it("prefers cur_package over orig_package and renameManifestPackage", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: org.rea.renamed",
+          "  orig_package: org.rea.original",
+          "  renameManifestPackage: org.rea.target",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.renamed",
+    });
+  });
+
+  it("treats empty package fields as omitted and falls through to null", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: ''",
+          "  orig_package: 'org.rea.fallback'",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.fallback",
+    });
+
+    expect(
+      parseApktoolYml(
+        [
+          "!!brut.androlib.meta.MetaInfo",
+          "packageInfo:",
+          "  cur_package: ''",
+          "  orig_package: ''",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: null,
+    });
+  });
+});
+
+describe("parseApktoolYml Apktool 3 string escapes", () => {
   // Source-derived fixtures from Apktool 3.0.3 VersionInfo.write and
   // YamlStringEscapeUtils at 18b5e99cb56ff9451e8aa55b065dcf5bbd616975.
   it.each([
@@ -132,6 +232,7 @@ describe("parseApktoolYml", () => {
           `version: 3.0.3\nversionInfo:\n  versionCode: 7\n  versionName: ${source}\nsdkInfo:\n  minSdkVersion: 24\n  targetSdkVersion: 35\n`,
         ),
       ).toEqual({
+        packageName: null,
         versionName: expected,
         versionCode: "7",
         minSdkVersion: "24",
@@ -139,33 +240,112 @@ describe("parseApktoolYml", () => {
       });
     },
   );
+});
 
-  it("keeps Apktool 2 quoted and plain YAML semantics", () => {
+describe("parseApktoolYml Apktool 3 package identity", () => {
+  it("projects package identity from packageInfo when present", () => {
     expect(
       parseApktoolYml(
-        String.raw`version: 2.7.0
-versionInfo:
-  versionName: 'literal \n #beta'
-  versionCode: 0045
-sdkInfo:
-  minSdkVersion: null
-  targetSdkVersion: 35 # comment
-`,
+        [
+          "version: 3.0.3",
+          "packageInfo:",
+          "  cur_package: org.rea.modern3",
+          "  orig_package: org.rea.modern3",
+          "versionInfo:",
+          "  versionName: 1.0.0",
+          "  versionCode: 1",
+          "",
+        ].join("\n"),
       ),
     ).toEqual({
-      versionName: String.raw`literal \n #beta`,
-      versionCode: "0045",
+      packageName: "org.rea.modern3",
+      versionName: "1.0.0",
+      versionCode: "1",
       minSdkVersion: null,
-      targetSdkVersion: "35",
+      targetSdkVersion: null,
     });
   });
 
+  it("projects package identity from resourcesInfo when present", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "version: 3.0.3",
+          "resourcesInfo:",
+          "  packageName: org.rea.resources",
+          "versionInfo:",
+          "  versionName: 1.0.0",
+          "  versionCode: 1",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.resources",
+    });
+  });
+
+  it("prefers cur_package over orig_package and renameManifestPackage", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "version: 3.0.3",
+          "packageInfo:",
+          "  cur_package: org.rea.renamed3",
+          "  orig_package: org.rea.original3",
+          "  renameManifestPackage: org.rea.target3",
+          "resourcesInfo:",
+          "  packageName: org.rea.targetres",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.renamed3",
+    });
+  });
+
+  it("treats empty or null package fields as omitted and falls through", () => {
+    expect(
+      parseApktoolYml(
+        [
+          "version: 3.0.3",
+          "packageInfo:",
+          "  cur_package: ''",
+          "  orig_package: org.rea.fallback3",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: "org.rea.fallback3",
+    });
+
+    expect(
+      parseApktoolYml(
+        [
+          "version: 3.0.3",
+          "packageInfo:",
+          "  cur_package: null",
+          "  orig_package: ~",
+          "  renameManifestPackage: ''",
+          "",
+        ].join("\n"),
+      ),
+    ).toMatchObject({
+      packageName: null,
+    });
+  });
+});
+
+describe("parseApktoolYml Apktool 3 structure and diagnostics", () => {
   it("keeps Apktool 3 field ownership across nested decoys and CRLF", () => {
     expect(
       parseApktoolYml(
         [
           "version: 3.0.3",
           "versionName: root decoy",
+          "packageInfo:",
+          "  custom:",
+          "    cur_package: nested decoy",
+          "  cur_package: org.rea.modern3",
           "versionInfo:",
           "  custom:",
           "    versionName: nested decoy",
@@ -175,7 +355,10 @@ sdkInfo:
           "",
         ].join("\r\n"),
       ),
-    ).toMatchObject({ versionName: "1.0 #beta" });
+    ).toMatchObject({
+      packageName: "org.rea.modern3",
+      versionName: "1.0 #beta",
+    });
   });
 
   it.each([
@@ -185,6 +368,15 @@ sdkInfo:
     String.raw`versionInfo:
   versionName: invalid\uZZZZ
 `,
+    "packageInfo:\n  cur_package: one\n  cur_package: two\n",
+    "packageInfo:\n  cur_package: one\npackageInfo:\n  cur_package: two\n",
+    "packageInfo: decoy\n",
+    String.raw`packageInfo:
+  cur_package: invalid\uZZZZ
+`,
+    'packageInfo:\n  cur_package: "unclosed\n',
+    "resourcesInfo:\n  packageName: one\nresourcesInfo:\n  packageName: two\n",
+    "resourcesInfo:\n  packageName: one\n  packageName: two\n",
   ])("rejects ambiguous or malformed Apktool 3 fields", (fields) => {
     expect(() => parseApktoolYml(`version: 3.0.3\n${fields}`)).toThrow();
   });
