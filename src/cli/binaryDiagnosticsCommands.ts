@@ -390,11 +390,18 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      maxFileBytes: inspectWindowsShortcutInputSchema.shape.max_file_bytes,
-      maxIdListItems: inspectWindowsShortcutInputSchema.shape.max_id_list_items,
-      maxExtraDataBlocks:
+      maxFileBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_file_bytes,
+      ),
+      maxIdListItems: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_id_list_items,
+      ),
+      maxExtraDataBlocks: cliDecimalField(
         inspectWindowsShortcutInputSchema.shape.max_extra_data_blocks,
-      maxStringBytes: inspectWindowsShortcutInputSchema.shape.max_string_bytes,
+      ),
+      maxStringBytes: cliDecimalField(
+        inspectWindowsShortcutInputSchema.shape.max_string_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
