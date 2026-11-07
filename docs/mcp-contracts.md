@@ -2167,6 +2167,7 @@ resource policies and the shared CLI workflow.
 span identity, parent links, timestamps, status, service and scope facts. Import
 does not contact a collector or observability backend, fetch linked resources or
 run the recorded application; protobuf exports are not supported. A parent the
-export does not contain is reported as an orphan rather than inferred, and
-credential-carrying attribute values are redacted by default. See
+export does not contain is reported as an orphan rather than inferred. Resource
+and scope facts are retained once and spans reference them by index. Recorded
+scalar attribute values are preserved. See
 [offline OTLP traces](./otlp-traces.md) for coverage and resource policies.

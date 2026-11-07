@@ -72,6 +72,15 @@ cliTest(
       (await call("inspect_otlp_trace", { path: fixture.path }))
         .structuredContent,
     );
+    const { call: callFull } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "full",
+    });
+    const full = parseEvidence(
+      (await callFull("inspect_otlp_trace", { path: fixture.path }))
+        .structuredContent,
+    );
+    expect(full.normalized_result).toEqual(parent.normalized_result);
     const report = otlpTraceSchema.parse(parent.normalized_result);
     expect(report.artifact.path).toBe(fixture.path);
     expect(report.summary).toMatchObject({
@@ -81,7 +90,6 @@ cliTest(
       error_status: 1,
       with_parent: 1,
       distinct_services: 1,
-      redacted_attributes: 1,
     });
     expect(report.spans[1]).toMatchObject({
       span_id: "4".repeat(16),
@@ -95,7 +103,15 @@ cliTest(
       parent_span_id: "2".repeat(16),
       duration_nano: "1500",
       status_code: "error",
-      service_name: "gateway",
+      resource_index: 0,
+      scope_index: 0,
+    });
+    expect(report.spans[0]?.attributes[0]?.string_value).toBe("Bearer t");
+    expect(report.resources[0]?.service_name).toBe("gateway");
+    expect(report.scopes[0]).toMatchObject({
+      name: "net.peer",
+      version: "0.9",
+      resource_index: 0,
     });
     expect(report.source_coverage).toMatchObject({
       live_collector: "not-contacted",

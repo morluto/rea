@@ -44,7 +44,6 @@ export const otlpAttributeSchema = z.strictObject({
     "key-value-list",
     "empty",
   ]),
-  redacted: z.boolean(),
   string_value: z.string().nullable(),
   bool_value: z.boolean().nullable(),
   int_value: z.string().nullable(),
@@ -76,11 +75,9 @@ export const otlpSpanSchema = z.strictObject({
   duration_nano: z.string().nullable(),
   status_code: z.enum(["unset", "ok", "error", "unknown-code"]),
   status_message: z.string().nullable(),
-  service_name: z.string().nullable(),
-  /** Bounded resource attributes beyond `service.name`, redacted the same way. */
-  resource_attributes: z.array(otlpAttributeSchema),
-  scope_name: z.string().nullable(),
-  scope_version: z.string().nullable(),
+  /** Indexes identify the recorded resource and scope group in this inventory. */
+  resource_index: z.int().nonnegative(),
+  scope_index: z.int().nonnegative(),
   attributes: z.array(otlpAttributeSchema),
   event_count: z.int().nonnegative(),
   link_count: z.int().nonnegative(),
@@ -106,10 +103,27 @@ export const otlpDiagnosticSchema = z.strictObject({
   message: z.string(),
 });
 
+export const otlpResourceSchema = z.strictObject({
+  source_pointer: z.string(),
+  service_name: z.string().nullable(),
+  attributes: z.array(otlpAttributeSchema),
+});
+export type OtlpResource = z.output<typeof otlpResourceSchema>;
+
+export const otlpScopeSchema = z.strictObject({
+  source_pointer: z.string(),
+  resource_index: z.int().nonnegative(),
+  name: z.string().nullable(),
+  version: z.string().nullable(),
+});
+export type OtlpScope = z.output<typeof otlpScopeSchema>;
+
 export const otlpTraceSchema = z.strictObject({
   trace_import_id: prefixedDigestSchema("otlp_trace"),
   format: z.literal("otlp-json"),
   artifact: otlpTraceArtifactSchema,
+  resources: z.array(otlpResourceSchema),
+  scopes: z.array(otlpScopeSchema),
   spans: z.array(otlpSpanSchema),
   /** Parent identifiers that no recorded span declares. */
   orphan_span_ids: z.array(z.string()),
@@ -123,7 +137,6 @@ export const otlpTraceSchema = z.strictObject({
     with_parent: z.int().nonnegative(),
     distinct_traces: z.int().nonnegative(),
     distinct_services: z.int().nonnegative(),
-    redacted_attributes: z.int().nonnegative(),
     diagnostics: z.int().nonnegative(),
   }),
   source_coverage: z.strictObject({

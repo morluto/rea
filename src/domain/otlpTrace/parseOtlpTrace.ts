@@ -3,6 +3,8 @@ import { jsonValueSchema } from "../jsonValue.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   OtlpDiagnostic,
+  OtlpResource,
+  OtlpScope,
   OtlpSpan,
   OtlpTrace,
   OtlpTraceArtifact,
@@ -12,31 +14,6 @@ import {
   OTLP_TRACE_MAX_DIAGNOSTICS,
   OTLP_TRACE_MAX_SPANS,
 } from "./otlpTrace.js";
-
-/**
- * Attribute keys whose values are credentials by kind rather than by name.
- * A name alone never proves secrecy elsewhere in REA, so this list is limited
- * to keys that carry a bearer token or shared secret under the OTLP semantic
- * conventions.
- */
-const REDACTED_ATTRIBUTE_KEYS = new Set([
-  "authorization",
-  "proxy-authorization",
-  "cookie",
-  "set-cookie",
-  "http.request.header.authorization",
-  "http.request.header.cookie",
-  "http.request.header.proxy-authorization",
-  "http.response.header.set-cookie",
-  "rpc.metadata.authorization",
-]);
-
-const SENSITIVE_KEY_PATTERN =
-  /(^|\.)(api[-_]?key|access[-_]?token|refresh[-_]?token|session[-_]?token|client[-_]?secret|password|passwd|secret|bearer)$/iu;
-
-const redactKey = (key: string): boolean =>
-  REDACTED_ATTRIBUTE_KEYS.has(key.toLowerCase()) ||
-  SENSITIVE_KEY_PATTERN.test(key);
 
 type Json = unknown;
 
@@ -115,14 +92,9 @@ const statusCode = (value: Json): OtlpSpan["status_code"] => {
 
 type Attribute = OtlpSpan["attributes"][number];
 
-const readAttribute = (
-  key: string,
-  rawValue: Json,
-): { attribute: Attribute; redacted: boolean } => {
-  const redacted = redactKey(key);
+const readAttribute = (key: string, rawValue: Json): Attribute => {
   const empty = {
     key,
-    redacted,
     string_value: null,
     bool_value: null,
     int_value: null,
@@ -130,92 +102,65 @@ const readAttribute = (
     bytes_length: null,
     element_count: null,
   } as const;
-  if (redacted)
-    return {
-      attribute: { ...empty, value_kind: "string", string_value: null },
-      redacted: true,
-    };
-  if (!isRecord(rawValue))
-    return { attribute: { ...empty, value_kind: "empty" }, redacted: false };
+  if (!isRecord(rawValue)) return { ...empty, value_kind: "empty" };
   const kind = Object.keys(rawValue)[0];
   const value = kind === undefined ? undefined : rawValue[kind];
   switch (kind) {
     case "stringValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "string",
-          string_value: typeof value === "string" ? value : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "string",
+        string_value: typeof value === "string" ? value : null,
       };
     case "boolValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "bool",
-          bool_value: typeof value === "boolean" ? value : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "bool",
+        bool_value: typeof value === "boolean" ? value : null,
       };
     case "intValue": {
       return {
-        attribute: {
-          ...empty,
-          value_kind: "int",
-          int_value: readInt64(value),
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "int",
+        int_value: readInt64(value),
       };
     }
     case "doubleValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "double",
-          double_value:
-            typeof value === "number" && Number.isFinite(value) ? value : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "double",
+        double_value:
+          typeof value === "number" && Number.isFinite(value) ? value : null,
       };
     case "bytesValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "bytes",
-          bytes_length:
-            typeof value === "string"
-              ? Buffer.from(value, "base64").length
-              : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "bytes",
+        bytes_length:
+          typeof value === "string"
+            ? Buffer.from(value, "base64").length
+            : null,
       };
     case "arrayValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "array",
-          element_count:
-            isRecord(value) && Array.isArray(value.values)
-              ? value.values.length
-              : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "array",
+        element_count:
+          isRecord(value) && Array.isArray(value.values)
+            ? value.values.length
+            : null,
       };
     case "kvlistValue":
       return {
-        attribute: {
-          ...empty,
-          value_kind: "key-value-list",
-          element_count:
-            isRecord(value) && Array.isArray(value.values)
-              ? value.values.length
-              : null,
-        },
-        redacted: false,
+        ...empty,
+        value_kind: "key-value-list",
+        element_count:
+          isRecord(value) && Array.isArray(value.values)
+            ? value.values.length
+            : null,
       };
     default:
-      return { attribute: { ...empty, value_kind: "empty" }, redacted: false };
+      return { ...empty, value_kind: "empty" };
   }
 };
 
@@ -226,7 +171,7 @@ type Problem = {
 };
 
 type ParsedSpan =
-  | { ok: false; problems: readonly Problem[] }
+  | { ok: false; problems: readonly Problem[]; limitReached?: boolean }
   | {
       ok: true;
       span: OtlpSpan;
@@ -237,9 +182,8 @@ type ParsedSpan =
 const parseSpan = (
   record: Record<string, Json>,
   pointer: string,
-  serviceName: string | null,
-  resourceFacts: readonly Attribute[],
-  scope: { name: string | null; version: string | null },
+  resourceIndex: number,
+  scopeIndex: number,
   budget: { spans: number },
 ): ParsedSpan => {
   const traceId = readHexId(record.traceId, 16);
@@ -255,13 +199,19 @@ const parseSpan = (
       ],
     };
   budget.spans += 1;
-  const problems: Problem[] = [];
   if (budget.spans > OTLP_TRACE_MAX_SPANS)
-    problems.push({
-      code: "span-limit-exceeded",
-      pointer,
-      message: `Span at ${pointer} exceeds the ${OTLP_TRACE_MAX_SPANS}-span allowance and was not inventoried.`,
-    });
+    return {
+      ok: false,
+      limitReached: true,
+      problems: [
+        {
+          code: "span-limit-exceeded",
+          pointer,
+          message: `Span at ${pointer} exceeds the ${OTLP_TRACE_MAX_SPANS}-span allowance and was not inventoried.`,
+        },
+      ],
+    };
+  const problems: Problem[] = [];
   const parentSpanId = readHexId(record.parentSpanId, 8);
   // An empty parentSpanId is the OTLP zero value, which declares no parent.
   const parentRecorded =
@@ -328,10 +278,8 @@ const parseSpan = (
       typeof status?.message === "string" && status.message.length > 0
         ? status.message
         : null,
-    service_name: serviceName,
-    resource_attributes: [...resourceFacts],
-    scope_name: scope.name,
-    scope_version: scope.version,
+    resource_index: resourceIndex,
+    scope_index: scopeIndex,
     attributes,
     event_count: Array.isArray(record.events) ? record.events.length : 0,
     link_count: Array.isArray(record.links) ? record.links.length : 0,
@@ -344,7 +292,7 @@ const spanAttributes = (rawAttributes: readonly Json[]): Attribute[] => {
   const parsed: Attribute[] = [];
   for (const entry of rawAttributes) {
     if (!isRecord(entry) || typeof entry.key !== "string") continue;
-    parsed.push(readAttribute(entry.key, entry.value).attribute);
+    parsed.push(readAttribute(entry.key, entry.value));
   }
   return parsed;
 };
@@ -352,7 +300,7 @@ const spanAttributes = (rawAttributes: readonly Json[]): Attribute[] => {
 const isServiceName = (entry: Json): boolean =>
   isRecord(entry) && entry.key === "service.name";
 
-/** Bounded to the per-span allowance so one resource cannot expand every span. */
+/** Retain one bounded set of attributes for each inventoried resource. */
 const resourceAttributes = (
   resource: Json,
 ): { attributes: Attribute[]; dropped: number } => {
@@ -394,7 +342,8 @@ class ProblemCollector {
 
 type Walked = {
   spans: OtlpSpan[];
-  redactedAttributes: number;
+  resources: OtlpResource[];
+  scopes: OtlpScope[];
   droppedRecords: number;
   spansTruncated: boolean;
   attributesTruncated: boolean;
@@ -408,7 +357,8 @@ const walkResourceSpans = (
 ): { walked: Walked; unsupported: boolean } => {
   const walked: Walked = {
     spans: [],
-    redactedAttributes: 0,
+    resources: [],
+    scopes: [],
     droppedRecords: 0,
     spansTruncated: false,
     attributesTruncated: false,
@@ -429,6 +379,7 @@ const walkResourceSpans = (
       }));
       continue;
     }
+    let resourceRef: number | undefined;
     const serviceName = resourceServiceName(resourceSpans.resource);
     const { attributes: resourceFacts, dropped: resourceDropped } =
       resourceAttributes(resourceSpans.resource);
@@ -473,6 +424,7 @@ const walkResourceSpans = (
         }));
         continue;
       }
+      let scopeRef: number | undefined;
       for (const [spanIndex, record] of scopeSpans.spans.entries()) {
         const pointer = `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/spans/${spanIndex}`;
         if (!isRecord(record)) {
@@ -486,26 +438,33 @@ const walkResourceSpans = (
         const parsed = parseSpan(
           record,
           pointer,
-          serviceName,
-          resourceFacts,
-          scope,
+          resourceRef ?? walked.resources.length,
+          scopeRef ?? walked.scopes.length,
           budget,
         );
         if (!parsed.ok) {
+          if (parsed.limitReached) walked.spansTruncated = true;
           walked.droppedRecords += 1;
           for (const problem of parsed.problems) problems.add(() => problem);
           continue;
         }
-        if (budget.spans > OTLP_TRACE_MAX_SPANS) {
-          walked.spansTruncated = true;
-          for (const problem of parsed.problems) problems.add(() => problem);
-          continue;
+        if (resourceRef === undefined) {
+          resourceRef = walked.resources.length;
+          walked.resources.push({
+            source_pointer: `/resourceSpans/${resourceIndex}`,
+            service_name: serviceName,
+            attributes: resourceFacts,
+          });
+        }
+        if (scopeRef === undefined) {
+          scopeRef = walked.scopes.length;
+          walked.scopes.push({
+            source_pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}`,
+            resource_index: resourceRef,
+            ...scope,
+          });
         }
         walked.spans.push(parsed.span);
-        walked.redactedAttributes += [
-          ...parsed.span.attributes,
-          ...parsed.span.resource_attributes,
-        ].filter((attribute) => attribute.redacted).length;
         if (parsed.attributesDropped > 0) walked.attributesTruncated = true;
         for (const problem of parsed.problems) problems.add(() => problem);
       }
@@ -648,6 +607,8 @@ export const parseOtlpTrace = (
       ]).replace(/^/, "otlp_trace_"),
       format: "otlp-json",
       artifact,
+      resources: walked.resources,
+      scopes: walked.scopes,
       spans: walked.spans,
       orphan_span_ids: [...orphanParents.values()].sort(),
       roots,
@@ -669,11 +630,10 @@ export const parseOtlpTrace = (
         distinct_traces: new Set(walked.spans.map((span) => span.trace_id))
           .size,
         distinct_services: new Set(
-          walked.spans
-            .map((span) => span.service_name)
+          walked.resources
+            .map((resource) => resource.service_name)
             .filter((name): name is string => name !== null),
         ).size,
-        redacted_attributes: walked.redactedAttributes,
         diagnostics: diagnostics.length,
       },
       source_coverage: {
@@ -703,7 +663,7 @@ export const parseOtlpTrace = (
           : []),
         ...(walked.resourceAttributesTruncated
           ? [
-              `Some resources declare more than ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN} attributes beyond service.name; the excess is dropped rather than repeated on every span of that resource.`,
+              `Some resources declare more than ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN} attributes beyond service.name; the excess is dropped from that resource's inventory.`,
             ]
           : []),
       ],

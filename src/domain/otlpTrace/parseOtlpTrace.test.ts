@@ -87,7 +87,7 @@ describe("parseOtlpTrace", () => {
     );
   });
 
-  it("keeps resource attributes other than service.name and redacts them too", () => {
+  it("keeps resource attributes other than service.name with their source values", () => {
     const report = parse({
       resourceSpans: [
         {
@@ -102,15 +102,17 @@ describe("parseOtlpTrace", () => {
         },
       ],
     });
-    const resource = report.spans[0]!.resource_attributes;
+    const resource =
+      report.resources[report.spans[0]!.resource_index]!.attributes;
     expect(resource.map((entry) => entry.key)).toEqual([
       "deployment.environment",
       "client_secret",
     ]);
     expect(resource[0]).toMatchObject({ string_value: "prod" });
-    expect(resource[1]).toMatchObject({ redacted: true, string_value: null });
-    expect(report.summary.redacted_attributes).toBe(1);
-    expect(report.spans[0]!.service_name).toBe("gateway");
+    expect(resource[1]).toMatchObject({ string_value: "svc-secret" });
+    expect(
+      report.resources[report.spans[0]!.resource_index]!.service_name,
+    ).toBe("gateway");
   });
 
   it("reports a parent cycle without deriving order from it", () => {
@@ -183,7 +185,14 @@ describe("parseOtlpTrace identifiers", () => {
       distinct_services: 1,
     });
     expect(report.roots).toEqual(["0".repeat(15) + "1"]);
+    expect(report.resources[0]).toMatchObject({ service_name: "checkout" });
+    expect(report.scopes[0]).toMatchObject({
+      resource_index: 0,
+      name: "lib",
+      version: "1.2",
+    });
     const child = report.spans[1];
+    expect(child).toMatchObject({ resource_index: 0, scope_index: 0 });
     expect(child).toMatchObject({
       span_id: "0".repeat(15) + "2",
       parent_span_id: "0".repeat(15) + "1",
@@ -191,9 +200,6 @@ describe("parseOtlpTrace identifiers", () => {
       kind: "client",
       status_code: "error",
       status_message: "declined",
-      service_name: "checkout",
-      scope_name: "lib",
-      scope_version: "1.2",
       duration_nano: "400000000",
       event_count: 1,
       link_count: 1,
@@ -219,7 +225,7 @@ describe("parseOtlpTrace identifiers", () => {
 });
 
 describe("parseOtlpTrace attributes", () => {
-  it("redacts credential-carrying attribute values and counts only element kinds", () => {
+  it("preserves caller-supplied scalar attributes and counts nested kinds", () => {
     const report = parse(
       envelope([
         span({
@@ -246,11 +252,11 @@ describe("parseOtlpTrace attributes", () => {
       report.spans[0]!.attributes.map((entry) => [entry.key, entry]),
     );
     expect(attributes.get("authorization")).toMatchObject({
-      redacted: true,
-      string_value: null,
+      string_value: "Bearer secret",
     });
-    expect(attributes.get("api_key")).toMatchObject({ redacted: true });
-    expect(report.summary.redacted_attributes).toBe(2);
+    expect(attributes.get("api_key")).toMatchObject({
+      string_value: "also-secret",
+    });
     expect(attributes.get("http.method")).toMatchObject({
       value_kind: "string",
       string_value: "POST",
@@ -310,7 +316,7 @@ describe("parseOtlpTrace defaults and signed integers", () => {
 });
 
 describe("parseOtlpTrace credential headers", () => {
-  it("redacts the semantic-convention cookie and proxy-authorization headers", () => {
+  it("preserves recorded cookie and proxy-authorization attribute values", () => {
     const report = parse(
       envelope([
         span({
@@ -331,13 +337,11 @@ describe("parseOtlpTrace credential headers", () => {
       report.spans[0]!.attributes.map((entry) => [entry.key, entry]),
     );
     expect(attributes.get("http.response.header.set-cookie")).toMatchObject({
-      redacted: true,
-      string_value: null,
+      string_value: "session=abc",
     });
     expect(
       attributes.get("http.request.header.proxy-authorization"),
-    ).toMatchObject({ redacted: true, string_value: null });
-    expect(report.summary.redacted_attributes).toBe(2);
+    ).toMatchObject({ string_value: "Basic dXNlcg==" });
   });
 });
 
@@ -485,7 +489,9 @@ describe("parseOtlpTrace resource attribute bound", () => {
         },
       ],
     });
-    expect(report.spans[0]!.resource_attributes).toHaveLength(128);
+    expect(
+      report.resources[report.spans[0]!.resource_index]!.attributes,
+    ).toHaveLength(128);
     expect(report.limitations.join(" ")).toContain(
       "Some resources declare more than 128 attributes",
     );
@@ -547,6 +553,90 @@ describe("parseOtlpTrace OTLP empty defaults", () => {
     );
     expect(report.diagnostics.map((entry) => entry.code)).toContain("cycle");
   });
+});
+
+it("stores shared resource and scope facts once while preserving span associations", () => {
+  const longValue = "shared-value-".repeat(200);
+  const spans = Array.from({ length: 200 }, (_, index) =>
+    span({ spanId: (index + 1).toString(16).padStart(16, "0") }),
+  );
+  const report = parse({
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [
+            { key: "service.name", value: { stringValue: "checkout" } },
+            { key: "detail", value: { stringValue: longValue } },
+          ],
+        },
+        scopeSpans: [{ scope: { name: longValue, version: "v1" }, spans }],
+      },
+      {
+        resource: {
+          attributes: [
+            { key: "service.name", value: { stringValue: "billing" } },
+          ],
+        },
+        scopeSpans: [
+          {
+            scope: { name: "other", version: "v2" },
+            spans: [span({ traceId: "b".repeat(32) })],
+          },
+        ],
+      },
+    ],
+  });
+  expect(report.resources).toHaveLength(2);
+  expect(report.scopes).toHaveLength(2);
+  expect(report.resources[0]?.attributes[0]?.string_value).toBe(longValue);
+  expect(report.scopes[0]?.name).toBe(longValue);
+  expect(report.spans[199]).toMatchObject({
+    resource_index: 0,
+    scope_index: 0,
+  });
+  expect(report.spans[200]).toMatchObject({
+    resource_index: 1,
+    scope_index: 1,
+  });
+  expect(JSON.stringify(report).length).toBeLessThan(200_000);
+});
+
+it("keeps separate scopes attached to the same resource", () => {
+  const report = parse({
+    resourceSpans: [
+      {
+        resource: {
+          attributes: [{ key: "service.name", value: { stringValue: "same" } }],
+        },
+        scopeSpans: [
+          {
+            scope: { name: "first" },
+            spans: [span({ spanId: "1".repeat(16) })],
+          },
+          {
+            scope: { name: "second" },
+            spans: [span({ spanId: "2".repeat(16) })],
+          },
+        ],
+      },
+    ],
+  });
+  expect(report.resources).toHaveLength(1);
+  expect(
+    report.scopes.map(({ resource_index, name }) => [resource_index, name]),
+  ).toEqual([
+    [0, "first"],
+    [0, "second"],
+  ]);
+  expect(
+    report.spans.map(({ resource_index, scope_index }) => [
+      resource_index,
+      scope_index,
+    ]),
+  ).toEqual([
+    [0, 0],
+    [0, 1],
+  ]);
 });
 
 describe("parseOtlpTrace diagnostic bound", () => {

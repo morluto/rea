@@ -18,9 +18,10 @@ selecting one fails as an input-format error rather than being guessed at.
 
 Each recorded span keeps its trace, span and parent identifiers, name, kind,
 status, start and end timestamps as exact 64-bit decimal strings, the
-instrumentation-scope name and version, the resource's `service.name` and other
-resource attributes, and its own attributes. Event and link counts are reported
-without their payloads.
+its own attributes, and indexes into the `resources` and `scopes` arrays. Each
+resource stores `service.name` and resource attributes once; each scope stores
+its name, version, and resource index. Group source pointers preserve their
+positions in the input. Event and link counts are reported without their payloads.
 
 - **Identity is recorded, not reconstructed.** A parent identifier the export
   does not contain is reported in `orphan_span_ids` with a `missing-parent`
@@ -35,13 +36,11 @@ without their payloads.
 - **Timing stays raw.** `duration_nano` is derived only when the recorded
   interval is non-negative; a reversed interval keeps both timestamps and adds an
   `invalid-time-interval` diagnostic. Clock domains and skew are not corrected.
-- **Attributes are bounded and redacted.** Credential-carrying keys such as
-  `authorization`, `cookie`, `api_key` or `*_token` are redacted by default and
-  counted in `summary.redacted_attributes`. Array and key-value-list attributes
-  report only their element count, so a nested structure cannot expand the
-  result. Each span retains at most 128 of its own attributes and at most 128
-  resource attributes; the dropped count appears in an `attribute-limit-exceeded`
-  diagnostic rather than a silent truncation.
+- **Attributes are bounded.** Scalar attribute values are preserved as recorded,
+  including values whose keys resemble credentials. Array and key-value-list
+  attributes report only their element count. Each span and resource retains at
+  most 128 attributes; omissions are reported in diagnostics or limitations.
+  Resource and scope groups are retained when at least one span is inventoried.
 
 ## Coverage
 
