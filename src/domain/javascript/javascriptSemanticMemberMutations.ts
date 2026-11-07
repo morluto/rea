@@ -16,7 +16,6 @@ import {
   semanticOriginalGlobalProcessAt,
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
-  semanticRequireOrigin,
   semanticRequireOriginCandidate,
   semanticRequireLoaderAt,
   hasSemanticCreateRequireFactoryOrigin,
@@ -484,6 +483,7 @@ export function* collectSemanticMemberMutationsSteps(
     path: PropertyPath,
     effect: ValueEffect,
     node: t.Node | undefined,
+    loaderAuthority?: "candidate",
   ): void => {
     const identity = semanticRequireExportsIdentity(specifier, path);
     let effectPath = identity.path;
@@ -509,6 +509,7 @@ export function* collectSemanticMemberMutationsSteps(
       "required",
       identity.specifier,
       effect,
+      loaderAuthority,
       effectPath,
       node?.start,
       node?.end,
@@ -517,7 +518,12 @@ export function* collectSemanticMemberMutationsSteps(
     recordedRequiredEffects.add(key);
     recordedEffectCount += 1;
     const effects = state.requiredModuleEffects.get(identity.specifier) ?? [];
-    effects.push({ path: effectPath, node, kind: effect });
+    effects.push({
+      path: effectPath,
+      node,
+      kind: effect,
+      ...(loaderAuthority === undefined ? {} : { loaderAuthority }),
+    });
     state.requiredModuleEffects.set(identity.specifier, effects);
   };
   // Traversal states that differ only in coverage fields a record never
@@ -867,13 +873,14 @@ export function* collectSemanticMemberMutationsSteps(
       )
         continue;
       const expression = unwrapJavaScriptExpression(current.node).node;
-      const required = semanticRequireOrigin(expression, state);
+      const required = semanticRequireOriginCandidate(expression, state, true);
       if (required !== undefined) {
         recordRequiredEffect(
           required.origin.specifier,
           [...required.origin.importedPath, ...current.path],
           effect,
           mutation,
+          required.origin.loaderAuthority,
         );
         continue;
       }
@@ -1157,6 +1164,7 @@ export function* collectSemanticMemberMutationsSteps(
                 shared.path,
                 effect,
                 mutation,
+                origin.loaderAuthority,
               );
           }
           const receiverInitializers = [

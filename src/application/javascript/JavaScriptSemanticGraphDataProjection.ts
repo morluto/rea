@@ -9,7 +9,10 @@ import {
   addSemanticGraphRelation,
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import { unknownSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  candidateBuiltinSemanticEvidence,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
 import {
   projectSemanticResultBindings,
   type SemanticFlowProjectionContext,
@@ -39,7 +42,18 @@ export const projectSemanticConfiguration = (
       target,
       relation: configurationRelation(operation),
       resolution:
-        operation.resolution === "complete" ? "resolved" : "candidate",
+        operation.builtinAuthority !== "candidate" &&
+        operation.resolution === "complete"
+          ? "resolved"
+          : "candidate",
+      ...(operation.builtinAuthority === "candidate"
+        ? {
+            evidence: candidateBuiltinSemanticEvidence(
+              context.file,
+              operation.location,
+            ),
+          }
+        : {}),
     });
     if (operation.kind === "default" && operation.sourceConfigId !== null)
       addSemanticGraphRelation(context.state, {
@@ -47,7 +61,18 @@ export const projectSemanticConfiguration = (
         target: config,
         relation: "overrides",
         resolution:
-          operation.resolution === "complete" ? "resolved" : "candidate",
+          operation.builtinAuthority !== "candidate" &&
+          operation.resolution === "complete"
+            ? "resolved"
+            : "candidate",
+        ...(operation.builtinAuthority === "candidate"
+          ? {
+              evidence: candidateBuiltinSemanticEvidence(
+                context.file,
+                operation.location,
+              ),
+            }
+          : {}),
       });
     if (operation.resolution !== "complete")
       addDataUnknown({
@@ -89,7 +114,18 @@ const addConfigurationNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
+    ...(operation.builtinAuthority === "candidate"
+      ? {
+          evidence: candidateBuiltinSemanticEvidence(
+            context.file,
+            operation.location,
+          ),
+        }
+      : {}),
     properties: {
+      ...(operation.builtinAuthority === "candidate"
+        ? { builtin_authority: "candidate" }
+        : {}),
       key: operation.key,
       source_kind: operation.kind,
       value: operation.value,
@@ -163,7 +199,18 @@ const addRequestNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
+    ...(operation.builtinAuthority === "candidate"
+      ? {
+          evidence: candidateBuiltinSemanticEvidence(
+            context.file,
+            operation.location,
+          ),
+        }
+      : {}),
     properties: {
+      ...(operation.builtinAuthority === "candidate"
+        ? { builtin_authority: "candidate" }
+        : {}),
       endpoint: operation.endpoint,
       method: operation.method,
       operation_kind: operation.kind,
@@ -180,12 +227,27 @@ const projectRequestConstruction = (
     source: callSite,
     target: request,
     relation: "constructs-request",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    resolution:
+      operation.builtinAuthority !== "candidate" &&
+      operation.resolution === "complete"
+        ? "resolved"
+        : "candidate",
+    ...(operation.builtinAuthority === "candidate"
+      ? {
+          evidence: candidateBuiltinSemanticEvidence(
+            context.file,
+            operation.location,
+          ),
+        }
+      : {}),
   });
   projectSemanticResultBindings(
     context,
     request,
     operation.projectedResultBindings,
+    operation.builtinAuthority === "candidate"
+      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
+      : undefined,
   );
   for (const field of operation.fields)
     addSemanticGraphRelation(context.state, {
@@ -195,7 +257,19 @@ const projectRequestConstruction = (
           : context.bindingNodes.get(field.sourceBindingId),
       target: request,
       relation: "supplies-request-field",
-      resolution: field.sourceBindingId === null ? "candidate" : "resolved",
+      resolution:
+        operation.builtinAuthority === "candidate" ||
+        field.sourceBindingId === null
+          ? "candidate"
+          : "resolved",
+      ...(operation.builtinAuthority === "candidate"
+        ? {
+            evidence: candidateBuiltinSemanticEvidence(
+              context.file,
+              operation.location,
+            ),
+          }
+        : {}),
       properties: { field: field.name },
     });
 };
@@ -209,7 +283,19 @@ const projectResponseConsumer = (
     source: response,
     target: context.callSiteAt(operation.location),
     relation: "consumed-by",
-    resolution: operation.resolution === "complete" ? "resolved" : "candidate",
+    resolution:
+      operation.builtinAuthority !== "candidate" &&
+      operation.resolution === "complete"
+        ? "resolved"
+        : "candidate",
+    ...(operation.builtinAuthority === "candidate"
+      ? {
+          evidence: candidateBuiltinSemanticEvidence(
+            context.file,
+            operation.location,
+          ),
+        }
+      : {}),
     properties: { method: operation.method },
   });
 };

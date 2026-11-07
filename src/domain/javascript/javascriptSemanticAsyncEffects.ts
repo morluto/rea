@@ -24,7 +24,7 @@ import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.j
 import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinDataEffectIdentity,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
@@ -92,6 +92,7 @@ interface AsyncEffectAnalysis {
 }
 
 interface TimerCandidate {
+  readonly builtinAuthority?: "candidate";
   readonly node: t.CallExpression | t.OptionalCallExpression;
   readonly method: JavaScriptSemanticTimerOperation["method"];
   readonly kind: JavaScriptSemanticTimerOperation["kind"];
@@ -316,10 +317,15 @@ const emitterIdentity = (
 const nodeBuiltinTimerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null =>
-  admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+): JavaScriptSemanticTimerOperation["method"] | null => {
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  return admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+};
 
 /**
  * A schedule imported from Node's `timers` module requires a function in
@@ -370,8 +376,9 @@ const schedulesWithNonFunctionCallback = (
 
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;
-  const method = timerMethod(node.callee, state);
-  if (method === null) return;
+  const identity = timerMethod(node.callee, state);
+  if (identity === null) return;
+  const { method, builtinAuthority } = identity;
   if (
     TIMER_SCHEDULE_METHODS.some((candidate) => candidate === method) &&
     nodeBuiltinTimerMethod(node.callee, state) !== null &&
@@ -421,6 +428,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
   output.push({
     node,
     method,
+    ...(builtinAuthority === undefined ? {} : { builtinAuthority }),
     kind,
     ownerCallableId,
     handleBindingId:
@@ -467,6 +475,10 @@ const resolveTimers = (
       candidate.handleRead !== null &&
       candidate.handleRead.origins.length !== linked.length;
     return {
+      ...(candidate.builtinAuthority === "candidate" ||
+      linked.some((item) => item.builtinAuthority === "candidate")
+        ? { builtinAuthority: "candidate" as const }
+        : {}),
       timerId: timerId(candidate),
       kind: candidate.kind,
       method: candidate.method,
@@ -499,7 +511,10 @@ const resolveTimers = (
 const timerMethod = (
   callee: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticTimerOperation["method"] | null => {
+): {
+  readonly method: JavaScriptSemanticTimerOperation["method"];
+  readonly builtinAuthority?: "candidate";
+} | null => {
   if (t.isIdentifier(callee)) {
     const binding = resolveSemanticBindingState(state, callee, callee.name);
     if (binding === undefined) {
@@ -508,12 +523,24 @@ const timerMethod = (
       return semanticResolutionBlocked(state, callee, callee.name) ||
         !isUnmodifiedGlobalReference(callee, state, callee.name)
         ? null
-        : method;
+        : { method };
     }
   }
-  return admittedTimerMethod(
-    builtinDataEffectMethod(callee, state, ["timers", "node:timers"]) ?? "",
+  const identity = builtinDataEffectIdentity(callee, state, [
+    "timers",
+    "node:timers",
+  ]);
+  const method = admittedTimerMethod(
+    identity?.path.length === 1 ? (identity.path[0] ?? "") : "",
   );
+  return method === null
+    ? null
+    : {
+        method,
+        ...(identity?.builtinAuthority === undefined
+          ? {}
+          : { builtinAuthority: identity.builtinAuthority }),
+      };
 };
 const admittedTimerMethod = (
   value: string,

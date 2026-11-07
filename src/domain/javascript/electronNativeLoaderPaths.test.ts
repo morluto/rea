@@ -152,3 +152,28 @@ describe("native addon loader provenance", () => {
     },
   );
 });
+
+it.each(["call", "apply"])(
+  "does not prove native bindings through a replaced require.%s",
+  (method) => {
+    const argument =
+      method === "call" ? 'null,"./addon.node"' : 'null,["./addon.node"]';
+    const replaced = analyzeCommonJsStaticFixture(
+      `require.${method}=custom;const addon=require.${method}(${argument});`,
+    );
+    expect(replaced.electron.native_addon_bindings).toEqual([]);
+    const intact = analyzeCommonJsStaticFixture(
+      `require.other=custom;const addon=require.${method}(${argument});`,
+    );
+    expect(intact.electron.native_addon_bindings).toMatchObject([
+      { specifier: "./addon.node", binding_kind: "require" },
+    ]);
+  },
+);
+
+it("does not prove native bindings through a replaced aliased loader member", () => {
+  const analysis = analyzeCommonJsStaticFixture(
+    'const load=require;load.call=custom;const addon=load.call(null,"./addon.node");',
+  );
+  expect(analysis.electron.native_addon_bindings).toEqual([]);
+});

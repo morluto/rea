@@ -82,6 +82,7 @@ export interface JavaScriptSemanticReferenceEffectsAtSite {
 
 export interface JavaScriptSemanticRequiredModuleEffect extends JavaScriptSemanticMemberEffect {
   readonly kind: "write" | "escape";
+  readonly loaderAuthority?: "candidate";
 }
 
 export interface JavaScriptSemanticBindingState {

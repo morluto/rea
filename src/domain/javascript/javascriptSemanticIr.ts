@@ -266,6 +266,7 @@ export interface JavaScriptSemanticEventOperation {
 
 /** One timer scheduling or cancellation candidate. */
 export interface JavaScriptSemanticTimerOperation {
+  readonly builtinAuthority?: "candidate";
   readonly timerId: string;
   readonly kind: "schedule" | "cancel";
   readonly method:
@@ -286,6 +287,7 @@ export interface JavaScriptSemanticTimerOperation {
 
 /** One explicit asynchronous node:child_process creation candidate. */
 export interface JavaScriptSemanticChildProcessSpawn {
+  readonly builtinAuthority?: "candidate";
   readonly processId: string;
   readonly method: "spawn" | "exec" | "execFile" | "fork";
   readonly location: JavaScriptSourceRange;
@@ -301,6 +303,7 @@ export interface JavaScriptSemanticChildProcessSpawn {
 
 /** One exit/error listener or signal operation linked to child candidates. */
 export interface JavaScriptSemanticChildProcessInteraction {
+  readonly builtinAuthority?: "candidate";
   readonly interactionId: string;
   readonly kind: "listener" | "signal";
   readonly method: "on" | "once" | "addListener" | "kill";
@@ -316,6 +319,7 @@ export interface JavaScriptSemanticChildProcessInteraction {
 
 /** One environment, argv, file, or default configuration source. */
 export interface JavaScriptSemanticConfigurationOperation {
+  readonly builtinAuthority?: "candidate";
   readonly configId: string;
   readonly kind: "environment" | "argv" | "file" | "default";
   readonly location: JavaScriptSourceRange;
@@ -330,6 +334,7 @@ export interface JavaScriptSemanticConfigurationOperation {
 
 /** One request construction or response-consumer candidate. */
 export interface JavaScriptSemanticRequestOperation {
+  readonly builtinAuthority?: "candidate";
   readonly requestId: string;
   readonly kind: "request" | "response-consumer";
   readonly method:
@@ -374,6 +379,7 @@ export interface JavaScriptSemanticBoundaryOperation {
 
 /** One explicit built-in resource acquisition or release candidate. */
 export interface JavaScriptSemanticResourceOperation {
+  readonly builtinAuthority?: "candidate";
   readonly resourceId: string;
   readonly kind: "acquire" | "release";
   readonly method:

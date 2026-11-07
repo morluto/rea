@@ -87,10 +87,23 @@ export const inspectCall = (
       bindings,
       accumulator.factoryRequireBindingIds,
     ) !== "local";
+  const invocationMember =
+    (t.isMemberExpression(node.callee) ||
+      t.isOptionalMemberExpression(node.callee)) &&
+    ["call", "apply"].includes(
+      semanticStaticPropertyKey(node.callee.property, node.callee.computed) ??
+        "",
+    );
   const deferredModuleRequire =
     semanticModuleRequireReceiver(node) !== undefined ||
     semanticModuleRequireCallAt(node, bindings, false) ||
-    deferredRequireResolve;
+    deferredRequireResolve ||
+    (invocationMember &&
+      semanticRequireCallAt(
+        node,
+        bindings,
+        accumulator.factoryRequireBindingIds,
+      ) !== undefined);
   if (deferredModuleRequire) accumulator.pendingModuleRequireCalls.push(node);
   const requireCall = deferredModuleRequire
     ? null
@@ -292,7 +305,7 @@ const requireCallSpecifier = (
   node: JavaScriptCallLike,
   bindings: JavaScriptSemanticAnalysisState,
   context: FindingContext,
-  resolveMemberChanged = false,
+  index?: JavaScriptBindingIndex,
 ): {
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
@@ -304,22 +317,20 @@ const requireCallSpecifier = (
     node,
     bindings,
     context.accumulator.factoryRequireBindingIds,
+    index,
   );
   if (call === undefined || call.loader === "local") return null;
-  if (
-    resolveMemberChanged ||
-    call.loader === "unknown" ||
-    !call.sourceRelative
-  ) {
+  if (call.loader === "unknown" || !call.sourceRelative) {
     context.accumulator.unknownFindings += 1;
-    const candidate = resolveMemberChanged
+    const candidate = call.memberUnproven
       ? undefined
-      : semanticCandidateRequireSpecifier(node, bindings);
+      : call.loaderAuthority === "candidate"
+        ? (argumentValue(call.arguments?.[0]) ?? undefined)
+        : semanticCandidateRequireSpecifier(node, bindings);
     return {
       specifier: candidate,
-      operation: resolveMemberChanged
-        ? "load"
-        : candidate !== undefined && isRequireResolveCall(node)
+      operation:
+        candidate !== undefined && isRequireResolveCall(node)
           ? "resolve"
           : call.operation,
       ...(candidate === undefined
@@ -349,23 +360,7 @@ export const finishModuleRequireCalls = (
   index: JavaScriptBindingIndex,
 ): void => {
   for (const node of context.accumulator.pendingModuleRequireCalls) {
-    const resolveMemberChanged =
-      isRequireResolveCall(node) &&
-      (t.isMemberExpression(node.callee) ||
-        t.isOptionalMemberExpression(node.callee)) &&
-      index
-        .effectsForReferenceAt(node, node.callee.object, ["resolve"])
-        .effects.some(
-          ({ kind, timing }) =>
-            timing !== "after" &&
-            (kind === "member-write" || kind === "escape"),
-        );
-    const call = requireCallSpecifier(
-      node,
-      index.bindings,
-      context,
-      resolveMemberChanged,
-    );
+    const call = requireCallSpecifier(node, index.bindings, context, index);
     if (call !== null)
       addReference(context, {
         node,
