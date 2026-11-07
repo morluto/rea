@@ -43,6 +43,7 @@ import {
 import { assertJavaScriptAnalysisActive } from "./JavaScriptAnalysisControl.js";
 import { htmlArtifactReferences } from "../../domain/javascript/htmlArtifactReferences.js";
 import type { JavaScriptSourceAnalysisPort } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import type { JavaScriptTimeoutPolicyName } from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import type { JavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -83,6 +84,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   preloadPaths: ReadonlySet<string> = new Set(),
   /** Discovery gaps that may leave a declared preload in its package scope. */
   preloadLimitations: readonly string[] = [],
+  timeoutPolicy: JavaScriptTimeoutPolicyName = "stop",
 ): Promise<{
   readonly analysis: JavaScriptArtifactAnalysis;
   readonly interruption: AnalysisError | null;
@@ -214,11 +216,13 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         if (facts.javascript.parse_status === "failed")
           state.parseFailures += 1;
       }
-      if (
-        error !== null &&
-        (!(error instanceof AnalysisResourceConstraintError) ||
-          error.reportedLimits?.parent_result_budget_exhausted === true)
-      ) {
+      const canContinueAfterFailure =
+        (error instanceof AnalysisResourceConstraintError &&
+          error.reportedLimits?.parent_result_budget_exhausted !== true) ||
+        (error instanceof AnalysisTimeoutError &&
+          timeoutPolicy === "record-and-continue" &&
+          !isSignalAborted(signal));
+      if (error !== null && !canContinueAfterFailure) {
         interruption = error;
         break;
       }
@@ -378,6 +382,9 @@ const classifyUnavailableSource = (
   projection.recordUnavailableFile(file, reason, null, "incomplete-module");
   return true;
 };
+
+const isSignalAborted = (signal?: AbortSignal): boolean =>
+  signal?.aborted === true;
 
 const emptyArtifactAnalysis = (): MutableArtifactAnalysis => ({
   jsonDocuments: new JavaScriptJsonDocuments(),

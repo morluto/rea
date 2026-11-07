@@ -336,7 +336,11 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: z
+        .string()
+        .describe(
+          "ASAR, extracted application directory, or JavaScript source file path",
+        ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -364,6 +368,9 @@ const registerJavaScriptApplicationCommand = (
                   args.path === "" ? args.path : absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
+                ...(options.timeoutPolicy === undefined
+                  ? {}
+                  : { timeout_policy: options.timeoutPolicy }),
                 ...(options.maxSemanticNodes === undefined
                   ? {}
                   : { max_semantic_nodes: options.maxSemanticNodes }),

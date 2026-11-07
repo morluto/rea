@@ -29,6 +29,7 @@ import {
   type AnalyzeJavaScriptApplicationInput,
   type ElectronBoundarySummary,
 } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { isJavaScriptSourcePath } from "../../domain/javascript/javascriptArtifactFiles.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -58,7 +59,7 @@ import {
 export interface JavaScriptArtifactReconstructionResult {
   readonly route_inventory?: JavaScriptRouteInventory;
   readonly input_path: string;
-  readonly format: "asar" | "directory";
+  readonly format: "asar" | "directory" | "file";
   readonly root_artifact_sha256: string;
   readonly inventory_manifest_id: string;
   readonly inventory_graph_sha256: string;
@@ -119,10 +120,11 @@ export const reconstructJavaScriptArtifact = async (
       undefined,
       selectedPath,
     );
-    if (snapshot.manifest.root_format !== format)
+    const expectedRootFormat = format === "file" ? "javascript-bundle" : format;
+    if (snapshot.manifest.root_format !== expectedRootFormat)
       throw new ArtifactReaderFailure(
         "format",
-        `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
+        `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${expectedRootFormat}`,
       );
     const reader = createReader(
       path,
@@ -191,11 +193,13 @@ export const reconstructJavaScriptArtifact = async (
           overrides?.["javascript.analysis_timeout_ms"] ??
           JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
       };
+      const timeoutPolicy = input.timeout_policy ?? "stop";
       const preloads = await discoverJavaScriptPreloadPaths(
         files,
         sourceLimits,
         scope,
         signal,
+        timeoutPolicy,
       );
       const worker = await createJavaScriptSourceAnalysis(
         sourceLimits,
@@ -239,6 +243,7 @@ export const reconstructJavaScriptArtifact = async (
           },
           preloads.paths,
           preloads.limitations,
+          timeoutPolicy,
         );
       } finally {
         try {
@@ -507,31 +512,37 @@ const resolveFormat = (
   metadata: Stats,
   input: AnalyzeJavaScriptApplicationInput,
   selectedPath: string,
-): "asar" | "directory" => {
+): "asar" | "directory" | "file" => {
+  const classificationName = artifactNameForClassification(selectedPath, path);
   const observed = metadata.isDirectory()
     ? "directory"
-    : metadata.isFile() &&
-        artifactNameForClassification(selectedPath, path)
-          .toLowerCase()
-          .endsWith(".asar")
+    : metadata.isFile() && classificationName.toLowerCase().endsWith(".asar")
       ? "asar"
-      : undefined;
+      : metadata.isFile() && isJavaScriptSourcePath(classificationName)
+        ? "file"
+        : undefined;
   if (observed === undefined)
     throw new AnalysisUnsupportedTargetError(
       OPERATION,
       input.input_path,
-      "JavaScript application analysis accepts only a directory or an .asar file",
+      "JavaScript application analysis accepts only a directory, an .asar file, or a JavaScript source file",
       {
         remediationAction:
-          "Select an extracted application directory, an app bundle, or an .asar file such as Contents/Resources/app.asar.",
+          "Select an extracted application directory, an app bundle, an .asar file such as Contents/Resources/app.asar, or a JavaScript/TypeScript source file.",
       },
     );
+  const observedLabel =
+    observed === "asar"
+      ? "an .asar file"
+      : observed === "file"
+        ? "a JavaScript source file"
+        : "a directory";
   if (input.format !== "auto" && input.format !== observed)
     throw new AnalysisInputError(OPERATION, undefined, [
       {
         path: ["format"],
         reason: "invalid_value",
-        message: `Requested ${input.format} input, but the selected input is ${observed === "asar" ? "an .asar file" : "a directory"}: ${input.input_path}`,
+        message: `Requested ${input.format} input, but the selected input is ${observedLabel}: ${input.input_path}`,
         expected: ["auto", observed],
       },
     ]);

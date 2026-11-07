@@ -28,8 +28,9 @@ not establish loaded-script coverage; see [Electron observation](electron-observ
    but a source capture provides the strongest byte identity.
 3. Pass the resulting Evidence records to `reconcile_javascript_runtime`.
    Browser URLs normally need an explicit URL-prefix mapping. Extracted
-   Electron and V8 Inspector file locations are mapped automatically when runtime files remain
-   beneath the analyzed input root; relocated files, ASAR projections, caches,
+   Electron and V8 Inspector file locations are mapped automatically when runtime files match
+   an analyzed single-file input or remain beneath an analyzed directory root; relocated files,
+   sibling files outside a single-file input, ASAR projections, caches,
    and asset roots need explicit mappings.
 
 The MCP input has this shape; the `analysis` and `runtime_observations` values
