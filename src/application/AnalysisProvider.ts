@@ -9,6 +9,7 @@ import type { NativeToolName } from "../contracts/native/nativeToolContracts.js"
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
@@ -97,6 +98,11 @@ export interface AnalysisExecution extends AnalysisObservation {
     readonly provenance: string;
     readonly width: number;
   }[];
+  /**
+   * Sibling operations known to be unavailable at the provider level when this
+   * operation answered from a standalone or fallback path.
+   */
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 interface CreateAnalysisExecutionOptions {
@@ -110,6 +116,7 @@ interface CreateAnalysisExecutionOptions {
   readonly requiresSourceEvidence?: true;
   readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
   readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
@@ -177,6 +184,9 @@ export function createAnalysisExecution(
     ...(options.referenceClassifications === undefined
       ? {}
       : { referenceClassifications: options.referenceClassifications }),
+    ...(options.siblingUnavailability === undefined
+      ? {}
+      : { siblingUnavailability: options.siblingUnavailability }),
     locations: [...(options.locations ?? [])],
     ...(options.sourceEvidence === undefined
       ? {}
@@ -267,6 +277,8 @@ export interface ProviderIdentity {
 /** Typed analysis profile resolved before provider startup; null means unresolved. */
 export interface AnalysisProfileResolution {
   readonly profile: AnalysisProfileCommitment | null;
+  /** Closing a client can publish state that invalidates a previewed profile. */
+  readonly refreshAfterRetirement?: true;
   /** Keep provider-private facts bound to this selection without Evidence serialization. */
   readonly createClient?: AnalysisProviderBoundClientFactory;
 }

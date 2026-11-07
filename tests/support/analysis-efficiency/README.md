@@ -1,5 +1,10 @@
 # Analysis verification test support
 
+The maintained `catalog-eval.py` entrypoint (`npm run eval:mcp-catalog`) uses the
+real local Codex CLI and the retained resource/agent runners. See
+[MCP catalog evaluation](../../../docs/mcp-catalog-evaluation.md) for its matrix,
+observed-token accounting, isolation and completed-task limits.
+
 These files support the existing comparison, independent-oracle, receipt and
 cleanup regressions. The TypeScript consumers live in `tests/boundary/`,
 `tests/evaluation/` and `tests/conformance/`; `npm run test:python` discovers
@@ -17,7 +22,7 @@ belong to documentation. Their numerical sections are produced and checked by:
 node tests/support/analysis-efficiency/mcp-integer-report.mjs --check
 ```
 
-The full experiment suite was retired. For historical reproduction, use the
+The former broad experiment suite was retired. For historical reproduction, use the
 recorded runtime and producer revisions; the [archived source tree](https://github.com/morluto/rea/tree/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency)
 preserves the former layout. Current deterministic checks do not requalify
 those historical measurements.
