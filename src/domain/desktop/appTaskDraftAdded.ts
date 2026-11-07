@@ -221,9 +221,13 @@ export const attributeChecks = (
  * between them. `Delphine` and `Moreau` around a save time stay two checks;
  * joining them would look for text the file never contains.
  */
-const keptFieldPieces = (node: JsonValue): string[] => {
-  if (typeof node === "string") return isStamp(node) ? [] : [node];
+const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? []
+      : [node];
   if (!isXmlElement(node)) return [];
+  const inBookkeeping = bookkeeping || isBookkeeping(node);
   const pieces: string[] = [];
   let run = "";
   const flush = () => {
@@ -232,7 +236,8 @@ const keptFieldPieces = (node: JsonValue): string[] => {
   };
   for (const child of node.children) {
     if (typeof child === "string") {
-      if (isStamp(child)) flush();
+      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+        flush();
       else run += child;
       continue;
     }
@@ -241,7 +246,7 @@ const keptFieldPieces = (node: JsonValue): string[] => {
       flush();
       continue;
     }
-    const nested = keptFieldPieces(child);
+    const nested = keptFieldPieces(child, inBookkeeping);
     if (nested.length !== 1) {
       flush();
       pieces.push(...nested);
@@ -254,11 +259,16 @@ const keptFieldPieces = (node: JsonValue): string[] => {
 };
 
 /** An element's text with save-time leaves removed, in document order. */
-const plainText = (node: JsonValue | null): string => {
-  if (typeof node === "string") return isStamp(node) ? "" : node;
+const plainText = (node: JsonValue | null, bookkeeping = false): string => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? ""
+      : node;
   if (!isXmlElement(node)) return "";
   if (isStamp(elementText(node))) return "";
-  return node.children.map((child) => plainText(child)).join("");
+  return node.children
+    .map((child) => plainText(child, bookkeeping || isBookkeeping(node)))
+    .join("");
 };
 
 /** The nearest ancestor both ends hold that a check names without a step by position. */

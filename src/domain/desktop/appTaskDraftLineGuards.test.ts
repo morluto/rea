@@ -25,6 +25,20 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
+  it("keeps phone numbers but counts a stable prefix before a named creation time", () => {
+    const phone = 'topic TEXT="Call 2025550123"';
+    const timed = 'topic TEXT="Water filter" CREATED="1793955250671"';
+    const file = drafted(lines(), lines(phone, timed));
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "lines_present", lines: [phone] }),
+        expect.objectContaining({
+          kind: "line_count",
+          contains: 'topic TEXT="Water filter" CREATED="',
+        }),
+      ]),
+    );
+  });
   it("counts the lines holding a new line's text up to its first generated value, rather than the line whole, which another save would not repeat", () => {
     const file = drafted(
       lines(),

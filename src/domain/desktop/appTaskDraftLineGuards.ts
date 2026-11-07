@@ -1,5 +1,5 @@
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { isVolatileValue } from "./appTaskDraftNoise.js";
+import { isBookkeepingName, isVolatileValue } from "./appTaskDraftNoise.js";
 import type { FileNote } from "./appTaskDraftFileNotes.js";
 
 /** Lines a text file's guard names, and how far from the added line it looks for them when it has no like sibling. */
@@ -104,8 +104,16 @@ const TOKEN = /[\p{L}\d_-]+/gu;
 
 /** Where a line's first value the app generates starts: a UUID, an epoch time, or an id such as Freeplane's `ID_329023692`; -1 when it holds none. */
 const volatileAt = (line: string): number => {
-  for (const { 0: token, index } of line.matchAll(TOKEN))
-    if (isVolatileValue(token) || /^\p{L}+_\d{6,}$/u.test(token)) return index;
+  for (const { 0: token, index } of line.matchAll(TOKEN)) {
+    const key = /([\p{L}_][\p{L}\d_.:-]*)\s*=\s*["']?$/u.exec(
+      line.slice(0, index),
+    )?.[1];
+    if (
+      isVolatileValue(token, key !== undefined && isBookkeepingName(key)) ||
+      /^\p{L}+_\d{6,}$/u.test(token)
+    )
+      return index;
+  }
   return -1;
 };
 
