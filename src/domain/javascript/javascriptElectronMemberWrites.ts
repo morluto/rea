@@ -24,6 +24,39 @@ export const ELECTRON_REFERENCE_KINDS: ReadonlySet<string> = new Set([
 export const ELECTRON_MODULE =
   /^electron(?:\/(?:common|main|renderer|utility))?$/u;
 
+type ModuleReference = {
+  readonly value: {
+    readonly kind: string;
+    readonly loader?: string;
+    readonly operation: "load" | "resolve";
+    readonly specifier: string | null;
+  };
+};
+
+/** Whether any loaded package reference imports or requires Electron. */
+export const referencesElectronModule = (
+  references: readonly ModuleReference[],
+): boolean =>
+  references.some(
+    ({ value }) =>
+      value.operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      value.loader !== "factory-loader" &&
+      value.specifier !== null &&
+      ELECTRON_MODULE.test(value.specifier),
+  );
+
+/** Whether any static import or require leaves its module name unresolved. */
+export const referencesUnresolvedModule = (
+  references: readonly ModuleReference[],
+): boolean =>
+  references.some(
+    ({ value }) =>
+      value.operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      value.specifier === null,
+  );
+
 /**
  * Electron's CommonJS exports define no `default` member, so a leading
  * `default` segment can only denote the module object itself, as an ES module

@@ -13,7 +13,7 @@ import {
   type SymbolicValue,
 } from "./javascriptSymbolicValues.js";
 
-const resolverFor = (source: string) => {
+const resolverFor = (source: string, indexMemberMutationFacts?: () => void) => {
   const parsed = parseJavaScriptSource(source);
   if (parsed === null) throw new Error("symbolic source fixture did not parse");
   const state = completeSemanticSteps(
@@ -21,7 +21,12 @@ const resolverFor = (source: string) => {
   );
   return {
     parsed,
-    resolver: new JavaScriptSymbolicBindings(state, parsed.program),
+    resolver: new JavaScriptSymbolicBindings(
+      state,
+      parsed.program,
+      undefined,
+      indexMemberMutationFacts,
+    ),
   };
 };
 
@@ -32,8 +37,9 @@ const inspectFixture = (
     resolver: JavaScriptSymbolicBindings,
     node: t.CallExpression,
   ) => SymbolicValue = (resolver, node) => resolver.evaluate(node.arguments[0]),
+  indexMemberMutationFacts?: () => void,
 ) => {
-  const { parsed, resolver } = resolverFor(source);
+  const { parsed, resolver } = resolverFor(source, indexMemberMutationFacts);
   const values: SymbolicValue[] = [];
   traverseJavaScriptAst(parsed.program, {
     enter: (node) => {
@@ -48,6 +54,26 @@ const inspectFixture = (
   return { parsed, resolver, values };
 };
 
+it("requests member-mutation facts only for a late initializer proof", () => {
+  const indexMemberMutationFacts = vi.fn();
+  inspectFixture(
+    `function run() { inspect(format("value")); }
+    var format = value => value;
+    run();`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).toHaveBeenCalledOnce();
+
+  indexMemberMutationFacts.mockClear();
+  inspectFixture(
+    `const value = "ready"; inspect(value);`,
+    undefined,
+    indexMemberMutationFacts,
+  );
+  expect(indexMemberMutationFacts).not.toHaveBeenCalled();
+});
+
 const inspectedValues = (source: string): SymbolicValue[] =>
   inspectFixture(source).values;
 
@@ -58,6 +84,54 @@ const inspectOne = (source: string): SymbolicValue => {
   if (value === undefined) throw new Error("inspect call result missing");
   return value;
 };
+
+it("bounds a late loader proof across 15,000 aliases", () => {
+  const aliases = Array.from({ length: 15_000 }, (_, index) =>
+    index === 0 ? "var a0 = require;" : `var a${index} = a${index - 1};`,
+  ).join("\n");
+  const { resolver, values } = inspectFixture(`
+    function run() { inspect(load); }
+    ${aliases}
+    var load = a14999;
+  `);
+
+  expect(values).toEqual([expect.objectContaining({ kind: "unknown" })]);
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
+
+it("bounds a late loader proof across 15,000 expression nodes", () => {
+  // Build the accepted AST directly so this tests the resolver's depth bound
+  // independently of the source parser's own stack capacity.
+  let initializer: t.Expression = t.identifier("value0");
+  for (let index = 1; index < 15_000; index += 1)
+    initializer = t.binaryExpression(
+      "+",
+      initializer,
+      t.identifier(`value${index}`),
+    );
+  const read = t.identifier("load");
+  const program = t.program([
+    t.functionDeclaration(
+      t.identifier("run"),
+      [],
+      t.blockStatement([
+        t.expressionStatement(
+          t.callExpression(t.identifier("inspect"), [read]),
+        ),
+      ]),
+    ),
+    t.variableDeclaration("var", [
+      t.variableDeclarator(t.identifier("load"), initializer),
+    ]),
+  ]);
+  const state = completeSemanticSteps(indexJavaScriptBindingsSteps(program));
+  const resolver = new JavaScriptSymbolicBindings(state, program);
+
+  expect(resolver.evaluate(read)).toMatchObject({ kind: "unknown" });
+  expect(resolver.unresolvedLoader).toBe(true);
+  expect(resolver.truncated).toBe(true);
+});
 
 it("substitutes numeric modules, named exports and captured wrapper arguments", () => {
   const { resolver, values } = inspectFixture(`(() => {
