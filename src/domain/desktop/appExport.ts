@@ -182,6 +182,22 @@ export const capturedHomePath = (
     })
     .sort((left, right) => right.physical.length - left.physical.length);
   const selections = [...(capture.state.selected_paths ?? [])];
+  const recorded = [
+    ...(capture.state.content_roots ?? []),
+    ...(capture.state.state_directories ?? []),
+    ...logical.map((entry) => entry.path),
+    ...selections.flatMap(({ path, physical }) => [path, physical]),
+  ];
+  const directories = new Set<string>();
+  for (const checkpoint of capture.state.checkpoints ?? [])
+    for (const change of checkpoint.changes) {
+      const facts = change.after ?? change.before;
+      if (facts?.type === "directory") directories.add(change.path);
+    }
+  for (const path of recorded)
+    if (recorded.some((other) => other !== path && isWithinAny(other, [path])))
+      directories.add(path);
+  const isDirectory = (path: string) => directories.has(path);
   // The longest physical path wins, whether it is a selected link or a walked
   // settings folder. A broad selection of ~/settings must not hide
   // ~/.config/notes when that folder was walked at ~/settings/notes.
@@ -207,9 +223,11 @@ export const capturedHomePath = (
       if (!path.endsWith(suffix)) continue;
       const database = path.slice(0, -suffix.length);
       const base = spell(database);
-      // An explicit mapping counts even when it keeps the database's own name
-      // or the file sits outside the home. A plain relative path does not.
+      // A directory selected under a renamed folder is not a database. A file
+      // with an explicit mapping is, even when that mapping keeps its name or
+      // the file sits outside the home.
       if (
+        isDirectory(database) ||
         base === undefined ||
         base.specificity === 0 ||
         (own !== undefined && base.specificity <= own.specificity)
