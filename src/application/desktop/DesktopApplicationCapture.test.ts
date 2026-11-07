@@ -5,6 +5,7 @@ import {
   mkdir,
   readdir,
   readFile,
+  symlink,
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
@@ -167,6 +168,26 @@ describe("captureDesktopApplication refusals", () => {
       ),
     ).toContain("is not empty");
   });
+
+  it.skipIf(process.platform === "win32")(
+    "refuses a directory symlink as xprop before creating capture output",
+    async () => {
+      const { root, environment } = await fixture();
+      const xprop = join(root, "not-xprop");
+      await symlink(root, xprop);
+      const output = join(root, "out");
+
+      const refused = await captureDesktopApplication(
+        request(output),
+        host({ ...environment, REA_XPROP_COMMAND: xprop }),
+      );
+
+      expect(refused).toMatchObject({
+        details: { reason: "executable_missing" },
+      });
+      await expect(readdir(output)).rejects.toMatchObject({ code: "ENOENT" });
+    },
+  );
 
   it("refuses a window manager that does not publish its client list", async () => {
     const { root, environment } = await fixture();
