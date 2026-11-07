@@ -262,26 +262,30 @@ describe("parseEvtxArchive", () => {
     expect(archive.source_coverage.status).toBe("partial");
   });
 
-  it("stops at max_records and says so", () => {
-    const archive = parsed(
-      evtx([chunk(0, [record(1), record(2), record(3)])]),
-      { maxRecords: 2 },
-    );
-    expect(archive.events).toHaveLength(2);
-    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
-      "record-limit-reached",
-    );
-    expect(archive.source_coverage.status).toBe("partial");
-  });
+  describe("chunk boundaries", () => {
+    it("stops at max_records and says so", () => {
+      const archive = parsed(
+        evtx([chunk(0, [record(1), record(2), record(3)])]),
+        { maxRecords: 2 },
+      );
+      expect(archive.events).toHaveLength(2);
+      expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+        "record-limit-reached",
+      );
+      expect(archive.source_coverage.status).toBe("partial");
+    });
 
-  it("accepts an empty log as an empty inventory", () => {
-    const archive = parsed(evtx([chunk(0, [])]));
-    expect(archive.events).toEqual([]);
-    expect(archive.chunks).toHaveLength(1);
-    expect(archive.diagnostics).toEqual([]);
-    expect(archive.source_coverage.status).toBe("complete-within-scope");
+    it("accepts an empty log as an empty inventory", () => {
+      const archive = parsed(evtx([chunk(0, [])]));
+      expect(archive.events).toEqual([]);
+      expect(archive.chunks).toHaveLength(1);
+      expect(archive.diagnostics).toEqual([]);
+      expect(archive.source_coverage.status).toBe("complete-within-scope");
+    });
   });
+});
 
+describe("parseEvtxArchive chunk headers", () => {
   it("evaluates the chunk header checksum", () => {
     // An intact chunk is `matched`, not `mismatched`: EVTX signs the header
     // with CRC32 over 0x00..0x77 and 0x80..0x1ff, so the stored value is
