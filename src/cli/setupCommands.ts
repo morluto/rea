@@ -9,6 +9,7 @@ import {
 } from "../application/SetupTypes.js";
 import { isUninstallFailure } from "../application/UninstallFailure.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import {
   mcpToolFamiliesSchema,
   toolFamiliesConstraint,
@@ -117,7 +118,9 @@ const registerDoctorCommand = (
   cli.command(CLI_COMMANDS.doctor, {
     description: "Check whether REA is ready",
     options: z.object({
-      target: z.string().optional().describe("Optional app path to check"),
+      target: localPathStringSchema
+        .optional()
+        .describe("Optional app path to check"),
       client: z
         .array(supportedClientSchema)
         .default([])
