@@ -304,7 +304,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A JSON file
+bounded chunks no further than a byte past its declared size. For Zip64, the
+module follows the
+locator, validates the full end-record length and skips opaque extensible
+data before passing the bounded directory to `zipfile`. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 or nested more than 500 levels deep, gets an `error` instead of a view, as in
 REA, while text that is not one JSON

@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { crc32 } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
+import { ZipReader, Uint8ArrayReader, TextWriter } from "@zip.js/zip.js";
 
 import { readZipView } from "../../../src/application/desktop/DesktopZipView.js";
 import type { DesktopTaskCheck } from "../../../src/domain/desktop/appTask.js";
@@ -273,6 +274,94 @@ describe("zip directories in the exported module", () => {
     expect(await sameView(archive)).toMatchObject({
       entries: [{ name: "a.txt" }, { name }],
       entry_count: 2,
+    });
+  });
+
+  it.for([
+    { name: "deferred", sentinels: true, shadow: false },
+    { name: "classic", sentinels: false, shadow: false },
+    { name: "deferred shadow", sentinels: true, shadow: true },
+    { name: "classic shadow", sentinels: false, shadow: true },
+  ])(
+    "reads the located Zip64 extensible record ($name)",
+    async ({ sentinels, shadow }) => {
+      const payload = Buffer.alloc(shadow ? 88 : 1, 0);
+      if (shadow) payload.writeUInt32LE(0x06064b50, payload.length - 56);
+      const extension = Buffer.alloc(6 + payload.length);
+      extension.writeUInt16LE(0xcafe, 0);
+      extension.writeUInt32LE(payload.length, 2);
+      extension.set(payload, 6);
+      const archive = withZip64End(
+        zipArchive([
+          { name: "settings.json", data: '{"zoom":1}\n', method: 0 },
+        ]),
+        sentinels,
+        extension,
+      );
+      // The unwrapped library reads this valid frame, independently of our
+      // bounded directory rewrite and the exported standard-library reader.
+      const reader = new ZipReader(new Uint8ArrayReader(archive), {
+        useWebWorkers: false,
+      });
+      try {
+        const entries = await reader.getEntries();
+        expect(entries.map((entry) => entry.filename)).toEqual([
+          "settings.json",
+        ]);
+        const entry = entries[0];
+        if (entry === undefined || entry.directory)
+          throw new Error("The control archive must contain one file");
+        expect(
+          await entry.getData(new TextWriter(), {
+            checkSignature: true,
+          }),
+        ).toBe('{"zoom":1}\n');
+      } finally {
+        await reader.close();
+      }
+      const read = await readZipView(archive);
+      const [python] = await pythonFileViews(saved([archive]));
+      const view = {
+        entries: [
+          {
+            name: "settings.json",
+            format: "json",
+            view: { zoom: 1 },
+            view_error: null,
+          },
+        ],
+        entry_count: 1,
+        truncated: false,
+      };
+      expect.soft(read).toMatchObject({ ok: true, value: view });
+      expect
+        .soft(python)
+        .toMatchObject({ format: "zip", view, truncated: false });
+    },
+  );
+
+  it("rejects a Zip64 frame size that does not reach its locator", async () => {
+    const bytes = withZip64End(zipArchive([{ name: "a.txt", data: "a" }]));
+    const record = bytes.length - 22 - 20 - 56;
+    for (const size of [43n, 45n, 0xffffffffffffffffn]) {
+      const malformed = Buffer.from(bytes);
+      malformed.writeBigUInt64LE(size, record + 4);
+      expect(await readZipView(malformed)).toEqual({
+        ok: false,
+        error: "not a readable zip archive",
+      });
+      expect(await pythonFileViews(saved([malformed]))).toMatchObject([
+        { format: "zip", view: null, error: "not a readable zip archive" },
+      ]);
+    }
+  });
+
+  it("keeps the fixed-record fallback when the declared Zip64 pointer is unusable", async () => {
+    const archive = withZip64End(zipArchive([{ name: "a.txt", data: "a" }]));
+    archive.writeBigUInt64LE(0xffffffffffffffffn, archive.length - 22 - 20 + 8);
+    expect(await sameView(archive)).toMatchObject({
+      entry_count: 1,
+      entries: [{ name: "a.txt" }],
     });
   });
 

@@ -178,7 +178,10 @@ has a `view_error` instead of a view: it is not read. The view lists at most
 1,000 entries; `entry_count` counts them all, and `truncated` is true when some
 are not listed. REA reads the central directory itself, a record at a time,
 through the Zip64 end record whenever a Zip64 locator precedes the end record,
-as Python's `zipfile` does, and hands the zip reader only the records it lists,
+following the locator's offset and checking the record's declared length,
+including any opaque extensible data. The existing fixed-record fallback
+supports prepended archives whose locator uses an unadjusted offset. REA
+hands the zip reader only the records it lists,
 so an archive of hundreds of thousands of entries costs no more to read
 than one of a thousand. An archive whose central directory cannot be read has a
 `view_error` of its own.

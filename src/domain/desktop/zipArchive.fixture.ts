@@ -143,20 +143,25 @@ export const emptyEntriesArchive = (count: number): Buffer => {
  * and a classic one that defers to them, or with `sentinels` false keeps its
  * own counts, size and offset, as a writer may when they fit.
  */
-export const withZip64End = (archive: Buffer, sentinels = true): Buffer => {
+export const withZip64End = (
+  archive: Buffer,
+  sentinels = true,
+  extension: Uint8Array = new Uint8Array(),
+): Buffer => {
   const end = archive.length - 22;
   const entries = archive.readUInt16LE(end + 10);
   const size = archive.readUInt32LE(end + 12);
   const offset = archive.readUInt32LE(end + 16);
-  const record = Buffer.alloc(56);
+  const record = Buffer.alloc(56 + extension.length);
   record.writeUInt32LE(0x06064b50, 0);
-  record.writeBigUInt64LE(44n, 4);
+  record.writeBigUInt64LE(BigInt(44 + extension.length), 4);
   record.writeUInt16LE(45, 12);
   record.writeUInt16LE(45, 14);
   record.writeBigUInt64LE(BigInt(entries), 24);
   record.writeBigUInt64LE(BigInt(entries), 32);
   record.writeBigUInt64LE(BigInt(size), 40);
   record.writeBigUInt64LE(BigInt(offset), 48);
+  record.set(extension, 56);
   const locator = Buffer.alloc(20);
   locator.writeUInt32LE(0x07064b50, 0);
   locator.writeBigUInt64LE(BigInt(end), 8);
