@@ -885,7 +885,13 @@ describe("draftTaskFiles for decimals", () => {
       "437.<span>8</span>",
     ])
       expect(passes(same)).toEqual([true]);
+    expect(passes("\n437.80000000000001\n")).toEqual([true]);
     expect(passes("437.89")).toEqual([false]);
+    const padded = xmlDraft(cell("1"), cell("\n437.80000000000001\n"));
+    expect(padded.suggested).toMatchObject([
+      { kind: "value_equals", value: 437.8, tolerance: 0.001 },
+    ]);
+    expect(passing(FILE, xml(cell("437.8")), padded.suggested)).toEqual([true]);
     expect(passes("four hundred")).toEqual([false]);
   });
 

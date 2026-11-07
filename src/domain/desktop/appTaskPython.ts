@@ -175,7 +175,8 @@ def _xml_text(entry, view, pointer: str, found) -> bool:
 def _near(at: str, found, expected, tolerance, join: bool):
     """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
     joined only when join says the view is XML."""
-    number = _number(_element_text(found) if join else found)
+    read = _element_text(found) if join else found
+    number = _number(read.strip() if isinstance(read, str) else read)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"

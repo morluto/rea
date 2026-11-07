@@ -230,7 +230,8 @@ const nearVerdict = (
   tolerance: number,
   join: boolean,
 ): Verdict => {
-  const number = numberOf(join ? elementText(found) : found);
+  const read = join ? elementText(found) : found;
+  const number = numberOf(typeof read === "string" ? read.trim() : read);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);
