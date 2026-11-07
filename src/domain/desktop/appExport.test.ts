@@ -474,4 +474,26 @@ describe("capturedHomePath", () => {
       "settings/notes-journal/today.txt",
     );
   });
+
+  it("moves a walked state database's logs with the database", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: {
+        state_directories: [{ path: `${home}/.notes-state.db` }],
+      },
+      state: {
+        state_directories: [`${home}/settings/notes.db`],
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes.db`)).toBe(".notes-state.db");
+    expect(path(`${home}/settings/notes.db-wal`)).toBe(".notes-state.db-wal");
+    expect(path(`${home}/settings/notes.db-journal`)).toBe(
+      ".notes-state.db-journal",
+    );
+  });
 });
