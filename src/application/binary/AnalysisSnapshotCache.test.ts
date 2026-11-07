@@ -7,7 +7,8 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER,
   ANALYSIS_SNAPSHOT_TARGET,
 } from "../../domain/analysisSnapshot.fixture.js";
-import { createEvidence } from "../../domain/evidence.js";
+import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
+import { createAnalysisExecutionEvidence } from "../../domain/analysisObservation.js";
 import {
   createEvidenceBundle,
   evidenceBundleForTarget,
@@ -1302,6 +1303,154 @@ it("declines source-bearing snapshot entries while replaying omitted and empty s
     ).toBe("source-free observation");
   }
   expect(cache.entries()).toHaveLength(2);
+});
+
+it("replays source-bearing entries only when their complete retained closure exists", () => {
+  const target = ANALYSIS_SNAPSHOT_TARGET;
+  const profile = ANALYSIS_SNAPSHOT_PROFILE;
+  const leaf = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "leaf",
+      parameters: {},
+      result: "leaf observation",
+    }),
+  );
+  const source = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "source",
+      parameters: {},
+      result: "source observation",
+      evidenceLinks: [leaf.evidence_id],
+    }),
+  );
+  const parameters = { address: "0x1000", document: "fixture" };
+  const execution = createAnalysisExecution(
+    "parent observation",
+    ANALYSIS_SNAPSHOT_PROVIDER,
+    {
+      subject: target,
+      analysisProfile: profile,
+      sourceEvidence: [source],
+    },
+  );
+  const parent = immutableEvidence(
+    createAnalysisExecutionEvidence(
+      "procedure_info",
+      parameters,
+      execution,
+      "observed",
+    ),
+  );
+  const complete = new Map(
+    [parent, source, leaf].map((record) => [record.evidence_id, record]),
+  );
+  const input = {
+    target,
+    profile,
+    operation: "procedure_info" as const,
+    parameters,
+    execution: { ...execution, evidenceId: parent.evidence_id },
+  };
+  const missingLeaf = new AnalysisSnapshotCache();
+  missingLeaf.record(input, (id) =>
+    id === leaf.evidence_id ? undefined : complete.get(id),
+  );
+  expect(
+    missingLeaf.lookup(target, profile, "procedure_info", parameters),
+  ).toBeUndefined();
+  const cache = new AnalysisSnapshotCache();
+  cache.record(input, (id) => complete.get(id));
+  expect(
+    cache
+      .lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+  if (source.subject === null) throw new Error("Expected source subject");
+  const ledger = new EvidenceLedger();
+  for (const record of [parent, source, leaf])
+    expect(ledger.record(record).ok).toBe(true);
+  const movedSource = {
+    ...source,
+    subject: {
+      ...source.subject,
+      local_path: "/relocated/source",
+      name: "source",
+    },
+  };
+  const replacement = ledger.import(createEvidenceBundle([movedSource]));
+  if (!replacement.ok) throw replacement.error;
+  cache.refreshEvidenceMetadata(replacement.value.replacements);
+  expect(
+    cache.lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.[0]?.subject?.local_path,
+  ).toBe("/relocated/source");
+  const exported = cache.export(target, profile, ledger.export());
+  if (!exported.ok) throw exported.error;
+  const imported = new AnalysisSnapshotCache();
+  imported.stage(exported.value);
+  expect(
+    imported
+      .lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+  expect(
+    imported.lookup(target, profile, "procedure_info", parameters)
+      ?.sourceEvidence?.[0]?.subject?.local_path,
+  ).toBe("/relocated/source");
+  const pruned = parseAnalysisSnapshot({
+    ...exported.value,
+    evidence_bundle: createEvidenceBundle([parent, movedSource]),
+  });
+  const incomplete = new AnalysisSnapshotCache();
+  incomplete.stage(pruned);
+  const partial = new Map(
+    [parent, movedSource].map((record) => [record.evidence_id, record]),
+  );
+  expect(
+    incomplete.lookup(target, profile, "procedure_info", parameters, (id) =>
+      partial.get(id),
+    ),
+  ).toBeUndefined();
+  partial.set(leaf.evidence_id, leaf);
+  expect(
+    incomplete
+      .lookup(target, profile, "procedure_info", parameters, (id) =>
+        partial.get(id),
+      )
+      ?.sourceEvidence?.map((record) => record.evidence_id),
+  ).toEqual([source.evidence_id, parent.evidence_id]);
+
+  const otherSource = immutableEvidence(
+    createEvidence(target, ANALYSIS_SNAPSHOT_PROVIDER, {
+      operation: "other_source",
+      parameters: {},
+      result: "different source",
+    }),
+  );
+  const otherParent = immutableEvidence(
+    createAnalysisExecutionEvidence(
+      "procedure_info",
+      parameters,
+      { ...execution, sourceEvidence: [otherSource] },
+      "observed",
+    ),
+  );
+  const records = [parent, movedSource, leaf, otherParent, otherSource];
+  const ambiguous = new AnalysisSnapshotCache();
+  ambiguous.stage(
+    parseAnalysisSnapshot({
+      ...exported.value,
+      evidence_bundle: createEvidenceBundle(records),
+    }),
+  );
+  const allRecords = new Map(
+    records.map((record) => [record.evidence_id, record]),
+  );
+  expect(
+    ambiguous.lookup(target, profile, "procedure_info", parameters, (id) =>
+      allRecords.get(id),
+    ),
+  ).toBeUndefined();
 });
 
 describe("executions that report truncated references", () => {
