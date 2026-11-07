@@ -255,13 +255,6 @@ export const publishCliAnalysisEvidence = async (
   result: AnalysisResultWithSources<Evidence, JsonValue>,
   input: CliEvidenceDelivery,
 ): Promise<JsonValue> => {
-  input = {
-    ...input,
-    sourceEvidence: [
-      ...(input.sourceEvidence ?? []),
-      ...(result.sourceEvidence ?? []),
-    ],
-  };
   const { operation, signal, detail, evidenceOutput } = input;
   // Failure reporting uses the same captured sources as publication. A trace
   // carries them on the result, while other commands pass them on the input.

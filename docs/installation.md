@@ -1449,6 +1449,13 @@ and analysis into a private temporary project with `-noanalysis`. Normal close
 saves metadata changes; unchanged queries do not rewrite the checkpoint.
 The target executable is never executed by this workflow.
 
+For agents, `open_binary` advertises this startup setting. After selecting Ghidra,
+the default `binary_session` summary reports enabled or ephemeral mode in the
+provider's `capabilities[].shared_limitations`. Successful native results state
+whether initial analysis was created or a verified packed Program was restored.
+No separate save/restore tool or runtime analysis-setting update is required;
+enabling checkpoint mode requires the startup environment and an MCP restart.
+
 Storage is separated by target SHA-256 and analysis-profile identity, including
 the supported Ghidra version. Identical executable bytes at another path can
 reuse the Program. One live REA session holds the checkpoint's socket lease;

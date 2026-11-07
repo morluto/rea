@@ -24,7 +24,7 @@ if (!installation || !process.env.JAVA_HOME)
 const commands = await createVerifierCommands();
 let root;
 let commandsClosed = false;
-await withVerifierCleanup(async () => {
+const targetHash = await withVerifierCleanup(async () => {
   root = await mkdtemp(join(tmpdir(), "rea-function-bundle-"));
   const target = join(root, "fixture");
   const projectDir = join(root, "project");
@@ -171,9 +171,7 @@ public class SetHistory extends GhidraScript {
   );
   assert.equal(hash(await readFile(target)), targetHash);
   assert.deepEqual(await tree(projectDir), before);
-  process.stdout.write(
-    `PASS Ghidra function bundles: complete, summary, no-overwrite; target and project unchanged (${targetHash})\n`,
-  );
+  return targetHash;
 }, [
   async () => {
     await commands.close();
@@ -184,3 +182,6 @@ public class SetHistory extends GhidraScript {
       await rm(root, { recursive: true, force: true });
   },
 ]);
+process.stdout.write(
+  `PASS Ghidra function bundles: complete, summary, no-overwrite; target and project unchanged (${targetHash})\n`,
+);

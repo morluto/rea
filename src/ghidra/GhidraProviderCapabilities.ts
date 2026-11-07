@@ -22,7 +22,7 @@ const providerOperations = Object.freeze([
 /** Health limitations shared by every Ghidra-backed capability. */
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "The imported Program and temporary project are ephemeral and deleted on close. Annotation operations edit session database metadata; original executable bytes are never written.",
+  "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
   "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
 ]);
 
@@ -50,8 +50,8 @@ export const ghidraHealthLimitations = (
       ]
     : source === "owned-checkpoint"
       ? [
-          "Opt-in Ghidra checkpoints retain the last successfully saved owned Program, including its names, comments and types. Restoring a checkpoint skips auto-analysis; its analysis is retained state, not a fresh discovery.",
-          "REA saves initial completed analysis and saves metadata changes on normal close. A failed save retains the live session for retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "Ghidra Program checkpoint mode is enabled (REA_GHIDRA_CHECKPOINT_DIR). Opening the same target/profile automatically restores saved analysis, names, comments and types; no separate save or restore tool is needed. Restored analysis is retained state, not a fresh discovery.",
+          "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
       : healthLimitations;

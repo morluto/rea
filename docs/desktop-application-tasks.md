@@ -301,9 +301,13 @@ capture host's name and user removed, and at the end checkpoint, the
 captured end state. Those are the capture's first and last checkpoints unless
 `--seed-checkpoint` and `--end-checkpoint` name others.
 It refuses a task whose every check passes on the seed, and a check that fails
-on the end state, with that check's reason. A capture yields one task, so the
-option is taken once. The result's `task` names the task, its number of checks
-and those that fail on the seed. A refused task writes no bundle.
+on the end state, with that check's reason. Only a failure on what the seed's
+view shows counts: a task whose checks fail on the seed only because a view
+could not be read or may have left out what they look for, such as a line past
+the 5,000 a text view keeps, is refused, naming each failure. A capture yields
+one task, so the option is taken once. The result's `task` names the task, its
+number of checks and those that fail on what the seed shows. A refused task
+writes no bundle.
 
 The bundle then holds, besides the app and `tasks/smoke.json`:
 
