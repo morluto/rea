@@ -83,10 +83,6 @@ const isRecord = (
 ): value is Record<string, JsonValue> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
-/** The value at a list's pointer, where an empty one is the whole view, as for a file whose top level is the array. */
-const listAt = (view: JsonValue | null, list: string) =>
-  list === "" ? view : resolvePointer(view, list);
-
 /** The array a member pointer sits in, when its parent is one in a view. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
@@ -191,7 +187,7 @@ export const jsonCounts = (
   const tried = new Set<string>();
   for (const pointer of change.changed) {
     const segments = pointer.split("/");
-    for (let index = segments.length - 1; index > 1; index -= 1) {
+    for (let index = segments.length - 1; index > 0; index -= 1) {
       const list = segments.slice(0, index).join("/");
       const counted = { list };
       if (tried.has(list)) continue;
@@ -243,7 +239,7 @@ const addedRecordOf = (
   const segments = pointer.split("/");
   for (let index = segments.length - 1; index >= 1; index -= 1) {
     const list = segments.slice(0, index).join("/");
-    const items = listAt(ends.final, list);
+    const items = resolvePointer(ends.final, list);
     const member = segments[index] ?? "";
     const record = resolvePointer(ends.final, `${list}/${member}`);
     if (!Array.isArray(items) || !isRecord(record)) continue;
@@ -253,7 +249,7 @@ const addedRecordOf = (
       item !== record &&
       isRecord(item) &&
       (kind === undefined || item[kind.key] === kind.value);
-    const older = listAt(ends.baseline, list);
+    const older = resolvePointer(ends.baseline, list);
     return {
       list,
       member,
@@ -346,7 +342,7 @@ export const recordGuards = (
     const known = pairings.get(list);
     if (known !== undefined) return known;
     const [newer = [], older = []] = [ends.final, ends.baseline].map((view) => {
-      const items = listAt(view, list);
+      const items = resolvePointer(view, list);
       return Array.isArray(items) ? items : [];
     });
     const pairing = pairMembers(newer, older);

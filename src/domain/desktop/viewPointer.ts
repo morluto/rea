@@ -189,6 +189,8 @@ export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
 ): Located => {
+  if (pointer === "")
+    return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };

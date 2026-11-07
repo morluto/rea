@@ -394,13 +394,8 @@ const memberVerdict = (
   const { matching, pointer } = check;
   const read = viewOf(check, entry, undefined);
   if ("passed" in read) return read;
-  // The empty pointer names the whole view, as a JSON file whose top level is an array.
   const located: Located =
-    entry === undefined
-      ? NOTHING
-      : pointer === ""
-        ? { kind: "value", value: read.view, searched: [], byPosition: [] }
-        : locatePointer(read.view, pointer);
+    entry === undefined ? NOTHING : locatePointer(read.view, pointer);
   const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -432,8 +427,7 @@ const tableOf = (
   check: Check<"row_present" | "row_absent" | "row_count">,
   view: JsonValue | null,
 ):
-  | { columns: JsonValue[]; rows: JsonValue[]; truncated: boolean }
-  | Verdict => {
+  { columns: JsonValue[]; rows: JsonValue[]; truncated: boolean } | Verdict => {
   const sqlite = isRecord(view) ? view : {};
   const tables = isRecord(sqlite.tables) ? sqlite.tables : {};
   const table = Object.hasOwn(tables, check.table)
