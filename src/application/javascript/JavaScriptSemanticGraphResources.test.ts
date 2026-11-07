@@ -407,6 +407,50 @@ it("does not promote transformed return expressions to resolved aliases", () => 
   expect(strict.status).toBe("partial");
 });
 
+it("attaches unknown listener frontiers to affected child process nodes", () => {
+  const graph = graphFor(`
+      import { spawn } from "node:child_process";
+      function run(args) {
+        const child = spawn("worker", []);
+        child.on(...args);
+      }
+    `);
+  const childNode = graph.nodes.find(
+    ({ kind, properties }) =>
+      kind === "child-process" && properties.method === "spawn",
+  );
+  if (childNode === undefined) throw new Error("Expected child-process node");
+
+  expect(
+    graph.relations.some(({ relation }) =>
+      ["listens-exit", "listens-error"].includes(relation),
+    ),
+  ).toBe(false);
+
+  const childUnknown = graph.unknowns.find(
+    (unknown) =>
+      unknown.node_id === childNode.node_id &&
+      unknown.family === "child-process" &&
+      unknown.detail.includes("event name remains unresolved"),
+  );
+  expect(childUnknown).toBeDefined();
+  expect(childUnknown?.relation_kinds).toEqual(
+    expect.arrayContaining(["listens-exit", "listens-error"]),
+  );
+
+  const forward = queryJavaScriptSemanticGraph(
+    graph,
+    javaScriptSemanticQueryInputSchema.parse({
+      seed: { kind: "semantic-node", node_id: childNode.node_id },
+      direction: "forward-influence",
+      allowed_relations: ["listens-exit", "listens-error"],
+    }),
+  );
+  expect(forward.unknowns.some((u) => u.node_id === childNode.node_id)).toBe(
+    true,
+  );
+});
+
 it("uses unavailable evidence when no source produced semantic IR", () => {
   const graph = createJavaScriptSemanticGraphProjection().finish(SHA256, {
     graph_id: GRAPH_ID,

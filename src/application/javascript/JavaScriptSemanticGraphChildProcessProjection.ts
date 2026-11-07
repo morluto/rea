@@ -164,6 +164,16 @@ const projectInteraction = (
       detail: `Static child ${interaction.method} event name remains unresolved.`,
       candidateNodeIds: children.map(({ node_id: identifier }) => identifier),
     });
+    for (const child of children)
+      addChildUnknown({
+        context,
+        node: child,
+        location: interaction.location,
+        relationKinds: ["listens-exit", "listens-error"],
+        reason: "unknown-value",
+        detail: `Static child ${interaction.method} event name remains unresolved.`,
+        candidateNodeIds: effect === null ? [] : [effect.node_id],
+      });
     return;
   }
   const relation =
