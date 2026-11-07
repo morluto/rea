@@ -108,9 +108,11 @@ it.each([
     // A valid selected load reaches the second stat during hash finalization.
     const resolved = await parseBinaryTarget(path, {
       signal: controller.signal,
-      formatHint: "raw-binary",
-      architecture: "x86",
-      entryPoint: "0x1000",
+      loadSelection: {
+        format: "raw-binary",
+        architecture: "x86",
+        entryPoint: "0x1000",
+      },
     });
     expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("cancelled target was admitted");

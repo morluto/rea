@@ -62,7 +62,7 @@ const dolTarget = async (bytes: Buffer): Promise<DolTarget> => {
   await writeFile(join(directory, "game.dol"), bytes);
   const parsed = await parseBinaryTarget("game.dol", {
     cwd: directory,
-    formatHint: "gamecube-dol",
+    loadSelection: { format: "gamecube-dol" },
   });
   if (!parsed.ok) throw parsed.error;
   if (parsed.value.format !== "gamecube-dol")

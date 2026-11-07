@@ -33,7 +33,10 @@ cliTest(
     expect(missing.exitCode).toBe(1);
     expect(missing.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining("architecture") },
+      details: {
+        reason: expect.stringContaining("architecture"),
+        field: "architecture",
+      },
     });
   },
 );
@@ -96,7 +99,46 @@ cliTest.for([
     expect(result.exitCode).toBe(1);
     expect(result.json).toMatchObject({
       code: "invalid_request",
-      details: { reason: expect.stringContaining(reason) },
+      details: {
+        reason: expect.stringContaining(reason),
+        field: "entry_point",
+      },
+    });
+  },
+);
+
+cliTest(
+  "names base_address when an architecture variant omits it",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-raw-cli-variant-base-");
+    const path = join(root, "flash.bin");
+    await writeFile(path, Buffer.alloc(0x200));
+    const result = await cli.run({
+      arguments: [
+        "inspect",
+        path,
+        "--target-format",
+        "raw-binary",
+        "--architecture",
+        "arm",
+        "--architecture-variant",
+        "armv7-m",
+        "--entry-point",
+        "0x8000000",
+        "--provider",
+        "ghidra",
+        "--json",
+      ],
+      environment: { HOME: root, XDG_CONFIG_HOME: root, XDG_CACHE_HOME: root },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: {
+        constraint: "load_selection_rejected",
+        field: "base_address",
+        reason: expect.stringContaining("requires base_address"),
+      },
     });
   },
 );
