@@ -19,7 +19,12 @@ import { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.
 
 import { launcherIdentityFailure } from "./ProcessOwnershipIdentity.js";
 import { descendantsOf, liveProcesses } from "./ProcessOwnershipProcessTree.js";
-import { execFileOutput } from "./ExecFileOutput.js";
+import {
+  execFileOutput,
+  execFileOutputFailure,
+  HOST_SPAWN_CAPACITY_CODES,
+  spawnCapacityExhausted,
+} from "./ExecFileOutput.js";
 import {
   createDarwinProcessRunTokenReader,
   type DarwinProcessReaderCompiler,
@@ -1434,17 +1439,38 @@ export const createSystemProcessOwnershipHost = (
       );
     }
   };
+  const safeListProcesses = async (signal?: AbortSignal) => {
+    try {
+      return await listProcesses(signal);
+    } catch (cause: unknown) {
+      if (isExpectedAbort(cause, signal)) throw cause;
+      const failure = execFileOutputFailure(cause);
+      if (
+        spawnCapacityExhausted(failure) ||
+        (typeof cause === "object" &&
+          cause !== null &&
+          typeof Reflect.get(cause, "code") === "string" &&
+          HOST_SPAWN_CAPACITY_CODES.has(Reflect.get(cause, "code") as string))
+      )
+        throw cause;
+      if (platform === "linux")
+        throw new LinuxOwnedProcessPrerequisiteError(cause);
+      throw new ProcessAdmissionError("baseline_unavailable", undefined, {
+        cause,
+      });
+    }
+  };
   const captureBaseline = async (
     signal?: AbortSignal,
   ): Promise<ProcessOwnershipBaseline> => {
     if (platform !== "linux" && darwinTokens === undefined) return [];
-    const processes = liveProcesses(await listProcesses(signal));
+    const processes = liveProcesses(await safeListProcesses(signal));
     let identities = await processIdentities(processes, signal);
     const unreadable = processes.filter(
       ({ pid }) => identities.get(pid)?.state !== "readable",
     );
     if (unreadable.length > 0) {
-      const stillLive = liveProcesses(await listProcesses(signal)).filter(
+      const stillLive = liveProcesses(await safeListProcesses(signal)).filter(
         ({ pid }) => unreadable.some((entry) => entry.pid === pid),
       );
       const retried = await processIdentities(stillLive, signal);
@@ -1452,7 +1478,7 @@ export const createSystemProcessOwnershipHost = (
       const unresolved = stillLive.filter(
         ({ pid }) => identities.get(pid)?.state !== "readable",
       );
-      const liveAfterRetry = liveProcesses(await listProcesses(signal));
+      const liveAfterRetry = liveProcesses(await safeListProcesses(signal));
       const stillUnresolved = unresolved.filter(({ pid }) =>
         liveAfterRetry.some((entry) => entry.pid === pid),
       );
@@ -1475,14 +1501,9 @@ export const createSystemProcessOwnershipHost = (
     prepare: async (signal) => {
       await darwinTokens?.prepare(signal);
       if (platform === "linux") {
-        try {
-          const processes = await listProcesses(signal);
-          if (!processes.some(({ pid }) => pid === process.pid))
-            throw new ProcessAdmissionError("current_process_unreported");
-        } catch (cause: unknown) {
-          if (isExpectedAbort(cause, signal)) throw cause;
-          throw new LinuxOwnedProcessPrerequisiteError(cause);
-        }
+        const processes = await safeListProcesses(signal);
+        if (!processes.some(({ pid }) => pid === process.pid))
+          throw new ProcessAdmissionError("current_process_unreported");
       }
     },
     listProcesses,
@@ -1661,6 +1682,10 @@ export const signalProcessWithStartIdentity = async (
   }
 };
 
+/** Actionable remediation when Linux `ps` is missing or incompatible. */
+export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
+  "Install your distribution's procps or procps-ng package, or put a procps-compatible ps on REA's PATH, then retry.";
+
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
   constructor(cause: unknown) {
@@ -1668,9 +1693,35 @@ export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavai
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
+      remediationAction: LINUX_PROCESS_OWNERSHIP_REMEDIATION,
     });
   }
 }
+
+/** Actionable remediation for Darwin process ownership inspection preparation failure. */
+export const DARWIN_PROCESS_OWNERSHIP_REMEDIATION =
+  "Check the selected Xcode or Command Line Tools and Swift compiler configuration, then restart REA and retry.";
+
+/** Actionable recovery guidance for process ownership admission failures. */
+export const processOwnershipAdmissionRecovery = (
+  code: string,
+  platform: NodeJS.Platform = systemProcessOwnershipHost.platform ??
+    process.platform,
+): string => {
+  if (code === "identity_snapshot_unavailable")
+    return platform === "darwin"
+      ? "Check host process churn and ensure REA has permission to inspect process identities, then retry once process state settles."
+      : "Check host process churn and ensure REA has permission to inspect /proc entries for running processes, then retry once process state settles.";
+  if (code === "current_process_unreported")
+    return platform === "darwin"
+      ? "Ensure the host process table reports the running REA process under ps, then retry."
+      : "Ensure the host process table reports the running REA process under /proc or ps, then retry.";
+  if (code === "baseline_unavailable")
+    return platform === "darwin"
+      ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+      : "Ensure process ownership inspection is supported on the host platform before launching captured children.";
+  return "Verify host process ownership inspection prerequisites before retrying.";
+};
 
 /** Prepare native token inspection before REA launches a captured child. */
 export const prepareProcessOwnershipInspection = async (
