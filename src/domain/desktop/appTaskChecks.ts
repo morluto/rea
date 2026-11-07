@@ -201,14 +201,33 @@ const lineVerdict = (
   );
 };
 
-/** A value compared within a tolerance: numbers, and numeral strings, by their difference. */
+/**
+ * Whether `value` is an XML element whose joined text is the number: an XML
+ * file, or an XML entry inside a zip. A JSON object with the same shape is
+ * the value itself, not a cell.
+ */
+const joinsElementText = (
+  format: string | null | undefined,
+  view: JsonValue | null,
+  pointer: string,
+  value: JsonValue,
+): boolean => {
+  if (!isXmlElement(value)) return false;
+  if (format === "xml") return true;
+  if (format !== "zip") return false;
+  const entry = zipEntryAt(view, pointer);
+  return typeof entry === "object" && entry.format === "xml";
+};
+
+/** A value compared within a tolerance: numbers, and numeral strings, by their difference. An XML element's text is joined only when `join` says the view is XML. */
 const nearVerdict = (
   at: string,
   found: JsonValue,
   expected: number,
   tolerance: number,
+  join: boolean,
 ): Verdict => {
-  const number = numberOf(isXmlElement(found) ? elementText(found) : found);
+  const number = numberOf(join ? elementText(found) : found);
   const within = `within ${shown(tolerance)} of ${shown(expected)}`;
   if (number === undefined)
     return fail(`${at} is ${shown(found)}, not a number`);
@@ -280,8 +299,17 @@ const valueVerdict = (
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
     if (located.kind === "none") return noValue(at, located, truncated);
-    if (check.tolerance !== undefined && typeof check.value === "number")
-      return nearVerdict(at, located.value, check.value, check.tolerance);
+    if (check.tolerance !== undefined && typeof check.value === "number") {
+      // A cut element's kept runs can join into a number the file never held.
+      const join = joinsElementText(
+        entry?.format,
+        read.view,
+        check.pointer,
+        located.value,
+      );
+      if (join && truncated) return undecided(check.file);
+      return nearVerdict(at, located.value, check.value, check.tolerance, join);
+    }
     return sameJson(located.value, check.value)
       ? pass(`${at} is ${shown(check.value)}`)
       : fail(`${at} is ${shown(located.value)}, not ${shown(check.value)}`);
