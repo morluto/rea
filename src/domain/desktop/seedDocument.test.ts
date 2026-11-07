@@ -127,6 +127,20 @@ describe("openSeedDocument", () => {
       argv: ["editor", `${HOME}/Documents/report.md`],
       opens: { kind: "captured" },
     });
+    expect(
+      openSeedDocument(["editor", "--config=settings/notes"], {
+        ...AT_HOME,
+        exec: "editor",
+        documents: [],
+        spell: (path) =>
+          path === "settings/notes" || path.startsWith("settings/notes/")
+            ? `.config/notes${path.slice("settings/notes".length)}`
+            : path,
+      }),
+    ).toEqual({
+      argv: ["editor", `--config=${HOME}/.config/notes`],
+      opens: { kind: "empty" },
+    });
   });
 
   it("leaves a command that already names a document alone, absolute or from its working directory", () => {
