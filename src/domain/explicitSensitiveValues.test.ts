@@ -20,3 +20,25 @@ it("does not guess sensitivity or treat empty declarations as matches", () => {
     "API_SECRET ordinary evidence",
   );
 });
+
+it("redacts the declared literal with [REDACTED] and preserves surrounding text", () => {
+  expect(redactExplicitText("my secret here", ["secret"])).toBe(
+    "my [REDACTED] here",
+  );
+});
+
+it("falls back to … when [REDACTED] would contain a declared literal", () => {
+  expect(redactExplicitText("a RED b", ["RED"])).toBe("a … b");
+});
+
+it("falls back to empty replacement when both [REDACTED] and … contain a literal", () => {
+  expect(redactExplicitText("xEy…z", ["E", "…"])).toBe("xyz");
+});
+
+it("fails closed to empty output when redaction re-forms a declared literal", () => {
+  expect(redactExplicitText("seDcret", ["secret", "D", "…"])).toBe("");
+});
+
+it("replaces the longest declared literal first so overlaps resolve correctly", () => {
+  expect(redactExplicitText("xtablex", ["able", "table"])).toBe("x[REDACTED]x");
+});
