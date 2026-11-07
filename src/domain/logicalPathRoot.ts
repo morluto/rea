@@ -54,7 +54,7 @@ const cleanLogicalPrefix = (prefix: string): string => {
  * Check if a string is a candidate local filesystem path (not a URL, relative label, or empty).
  */
 const isFilesystemPathCandidate = (candidate: string): boolean => {
-  if (candidate === "" || hasScheme(candidate) || candidate.startsWith("//")) {
+  if (candidate === "" || hasScheme(candidate)) {
     return false;
   }
   return isAbsolute(candidate);
@@ -159,13 +159,28 @@ const redactJsonStructurePaths = (
     if (isPathKey(k) && typeof v === "string") {
       const mapped = mapString(v);
       if (mapped !== v) changed = true;
-      result[k] = mapped;
+      Object.defineProperty(result, k, {
+        value: mapped,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     } else if (typeof v === "object" && v !== null) {
       const nested = redactJsonStructurePaths(v, mapString, isPathKey);
       if (nested !== v) changed = true;
-      result[k] = nested;
+      Object.defineProperty(result, k, {
+        value: nested,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     } else {
-      result[k] = v;
+      Object.defineProperty(result, k, {
+        value: v,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
   }
   return changed ? result : value;

@@ -121,3 +121,44 @@ describe("normalizeLogicalPath", () => {
     expect(outcome.mappedCount).toBe(3);
   });
 });
+
+it.skipIf(process.platform === "win32")(
+  "treats a double-slash path in a filesystem field as a local path",
+  () => {
+    expect(
+      normalizeLogicalPath("//home/alice/project/app.bin", {
+        root: "/home/alice/project",
+      }),
+    ).toEqual({ kind: "mapped", path: "workspace://app.bin" });
+    expect(
+      normalizeLogicalPath("//home/other/app.bin", {
+        root: "/home/alice/project",
+      }).kind,
+    ).toBe("invalid");
+  },
+);
+
+it("retains own __proto__ JSON members when mapping a sibling path", () => {
+  const parameters = JSON.parse(
+    '{"__proto__":{"keep":true},"path":"/home/alice/project/app.bin"}',
+  );
+  const result = JSON.parse(
+    '{"__proto__":false,"target_location":"/home/alice/project/app.bin"}',
+  );
+  const mapped = redactEvidenceObservationPaths(
+    { operation: "inspect", parameters, result },
+    { root: "/home/alice/project" },
+  );
+  expect(mapped.observation.parameters).toEqual(
+    JSON.parse('{"__proto__":{"keep":true},"path":"workspace://app.bin"}'),
+  );
+  expect(mapped.observation.result).toEqual(
+    JSON.parse('{"__proto__":false,"target_location":"workspace://app.bin"}'),
+  );
+  expect(
+    Object.hasOwn(mapped.observation.parameters as object, "__proto__"),
+  ).toBe(true);
+  expect(Object.hasOwn(mapped.observation.result as object, "__proto__")).toBe(
+    true,
+  );
+});

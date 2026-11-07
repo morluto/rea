@@ -9,6 +9,7 @@ import {
 } from "./binaryTargetTypes.js";
 import {
   createEvidence,
+  createImmutableEvidenceSteps,
   evidenceSchema,
   parseEvidence,
   immutableEvidence,
@@ -1072,4 +1073,52 @@ describe("issue #9196: opt-in logical path root redaction", () => {
     expect(evidence.limitations).toEqual([]);
     expect(parseEvidence(evidence)).toEqual(evidence);
   });
+});
+
+it.skipIf(process.platform === "win32")(
+  "maps double-slash filesystem subjects and artifact locations",
+  () => {
+    const path = "//tmp/redaction-root/file";
+    const evidence = createEvidence(
+      { path, sha256: "a".repeat(64), format: "file" },
+      PROVIDER,
+      {
+        operation: "inspect",
+        parameters: { path },
+        result: {},
+        locations: [{ kind: "artifact-path", path }],
+      },
+      { logicalRoot: { root: "/tmp/redaction-root" } },
+    );
+    expect(evidence.subject?.local_path).toBe("workspace://file");
+    expect(evidence.parameters.path).toBe("workspace://file");
+    expect(evidence.locations).toEqual([
+      { kind: "artifact-path", path: "workspace://file" },
+    ]);
+    expect(parseEvidence(evidence).evidence_id).toBe(evidence.evidence_id);
+  },
+);
+
+it("maps a sealed result and retains outside-root subject disclosure", () => {
+  const result = freezeJsonSnapshot({
+    target_location: "/tmp/redaction-root/file",
+  });
+  const steps = createImmutableEvidenceSteps(
+    { path: "/outside/file", sha256: "a".repeat(64), format: "file" },
+    PROVIDER,
+    { operation: "inspect", parameters: {}, result },
+    { logicalRoot: { root: "/tmp/redaction-root", allowOutsideRoot: true } },
+  );
+  let current = steps.next();
+  while (!current.done) current = steps.next();
+  expect(current.value.normalized_result).toEqual({
+    target_location: "workspace://file",
+  });
+  expect(current.value.subject?.local_path).toBe("/outside/file");
+  expect(current.value.limitations).toContain(
+    "logical-root redaction incomplete; host-local path retained.",
+  );
+  expect(parseEvidence(current.value).evidence_id).toBe(
+    current.value.evidence_id,
+  );
 });
