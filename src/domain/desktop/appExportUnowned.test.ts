@@ -213,6 +213,13 @@ describe("isLockFile", () => {
 
     expect(underFolder.isLeftOut("Documents/.household.gsb.lock")).toBe(true);
     expect(underFolder.isLeftOut("Documents/.notes.lock")).toBe(false);
+    const homeFiles = new Map([
+      ["Cargo.lock", file("document")],
+      ["poedit.lock", file("application_state")],
+    ]);
+    const home = leftOutFiles(homeFiles, [], []);
+    expect(home.isLeftOut("Cargo.lock")).toBe(false);
+    expect(home.isLeftOut("poedit.lock")).toBe(true);
     expect(underFolder.isLeftOut("Documents/household.gsb")).toBe(false);
     expect(
       leftOutFiles(
