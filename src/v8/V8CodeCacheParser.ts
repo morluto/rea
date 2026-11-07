@@ -126,14 +126,17 @@ export const parseV8CodeCache = (
     }
     runStart = -1;
   };
-  for (const [index, byte] of payload.entries()) {
-    if (isPrintable(byte)) {
+  // Indexed reads over the payload view: `payload.entries()` allocates a two-element
+  // array per byte, which dominated this scan on large caches.
+  const payloadLength = payload.length;
+  for (let index = 0; index < payloadLength; index += 1) {
+    if (isPrintable(payload[index]!)) {
       if (runStart < 0) runStart = index;
     } else {
       flush(index);
     }
   }
-  flush(payload.length);
+  flush(payloadLength);
 
   return {
     artifact,
