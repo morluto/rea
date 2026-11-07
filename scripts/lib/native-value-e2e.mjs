@@ -17,6 +17,7 @@ import {
   requireMcpOutput,
 } from "./mcp-verifier-results.mjs";
 import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
+import { verifyLegacyValueScopeSnapshot } from "./ghidra-value-scope-snapshot-e2e.mjs";
 import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
@@ -213,6 +214,14 @@ async function verifyNativeValueAdapters(
       procedure,
       globalAddress,
     );
+    assert.ok(
+      mcpGraph.limitations.some(
+        (value) =>
+          value.includes("analyze_function") &&
+          value.includes("LOAD and STORE") &&
+          value.includes("address varnodes"),
+      ),
+    );
     assert.deepEqual(mcpEvidence.normalized_result, mcpGraph);
     assert.deepEqual(mcpGraph, cliGraph);
     const warmReply = await client.callTool(
@@ -242,6 +251,26 @@ async function verifyNativeValueAdapters(
     );
     assert.equal(functionEvidence.operation, "analyze_function");
     assert.equal(functionEvidence.provider.id, "ghidra");
+    const flow = functionEvidence.normalized_result.native_value_flow;
+    assert.equal(flow.available, true);
+    const identifiesEffectScope = (value) =>
+      value.includes("LOAD and STORE") && value.includes("address varnodes");
+    assert.ok(flow.limitations.some(identifiesEffectScope));
+    const effectsView = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: {
+        source: {
+          kind: "retained-evidence",
+          evidence_id: functionEvidence.evidence_id,
+        },
+        view: { kind: "native", facet: "value_flow_effects" },
+      },
+    });
+    assert.notEqual(effectsView.isError, true, JSON.stringify(effectsView));
+    const effectsPage = requireMcpOutput(effectsView, "inspect_analysis_view");
+    assert.ok(
+      effectsPage.normalized_result.limitations.some(identifiesEffectScope),
+    );
     assert.deepEqual(
       functionEvidence.normalized_result.facet_availability,
       Object.fromEntries(
@@ -267,6 +296,12 @@ async function verifyNativeValueAdapters(
       functionEvidence.analysis_profile,
     );
     assert.deepEqual(functionProfile, upstreamProfile);
+    await verifyLegacyValueScopeSnapshot(client, {
+      target,
+      procedure,
+      observed: functionEvidence,
+      env,
+    });
     const comparisonEvidence = await compareRetainedFunctionEvidence(
       client,
       functionEvidence,

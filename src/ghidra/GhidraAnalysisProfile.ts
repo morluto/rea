@@ -61,6 +61,7 @@ const sharedAnalysisSemantics = {
   function_references: "complete-body-and-entry-reference-manager-v3",
   call_relationship_coverage: "function-body-call-coverage-v5",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+  value_flow_effect_scope: "pcode-load-store-explicit-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
   data_type_observations: "bit-field-base-and-lookup-v1",
   location_resolution: "explicit-address-exact-entry-symbol-first-v3",

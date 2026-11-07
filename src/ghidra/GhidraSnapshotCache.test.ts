@@ -308,6 +308,11 @@ describe("Ghidra relationship coverage replay", () => {
 describe("Ghidra snapshot profile admission", () => {
   it.each([
     {
+      parameter: "value_flow_effect_scope",
+      current: "pcode-load-store-explicit-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "data_type_observations",
       current: "bit-field-base-and-lookup-v1",
       legacy: undefined,

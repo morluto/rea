@@ -565,6 +565,53 @@ describe("native value failed-callee traversal", () => {
   });
 });
 
+it("preserves and deduplicates source value-flow limitations across analyzed functions", async () => {
+  const base = functionDossierSchema.parse(ghidraFunctionDossier());
+  const caller = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x1000",
+      name: "caller",
+      operations: [node("call", "0x1000", "CALL")],
+      parameters: [],
+    }),
+  );
+  const callee = functionDossierSchema.parse(
+    nativeFlowDossier(base, {
+      address: "0x2000",
+      name: "callee",
+      operations: [],
+      parameters: [],
+    }),
+  );
+  if (
+    !caller.native_value_flow?.available ||
+    !callee.native_value_flow?.available
+  )
+    throw new Error("Expected available fixture value flow");
+  caller.native_value_flow.limitations = ["Shared provider caveat."];
+  callee.native_value_flow.limitations = [
+    "Shared provider caveat.",
+    "Callee-specific caveat.",
+  ];
+  const result = await traceNativeValues(
+    callBindingAnalysis({
+      callerAddress: "0x1000",
+      calleeAddress: "0x2000",
+      caller,
+      callee,
+    }),
+    { procedure: "0x1000", max_functions: 2 },
+  );
+  if (!result.ok) throw result.error;
+  const limitations = nativeValueTraceSchema.parse(result.value).limitations;
+  expect(limitations).toContain(
+    "Fixture (fixture 1) analyze_function: Callee-specific caveat.",
+  );
+  expect(
+    limitations.filter((item) => item.includes("Shared provider caveat.")),
+  ).toEqual(["Fixture (fixture 1) analyze_function: Shared provider caveat."]);
+});
+
 describe("native value call-binding fan-out", () => {
   it("retains limitations embedded in resolved call-target results", async () => {
     const callerAddress = "0x1000";
