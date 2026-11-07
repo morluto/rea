@@ -127,6 +127,7 @@ it.each([
       executable_path: "/tools/wasm2wat",
       tool: "wasm2wat",
       expected_version: "1.0.42" as const,
+      accepted_releases: "WABT ^1.0.42 (verified with 1.0.42)",
     };
     const failure = wabtFailure(cause, "configuration", "/selected.wasm", {
       commandTimeoutMs: 1234,

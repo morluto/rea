@@ -4,6 +4,15 @@ import { createHash } from "node:crypto";
 import type { EvidenceSubjectTarget } from "../evidence.js";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+/** Release banners of the admitted WABT range, owned here so this schema stays pure. */
+const WABT_ACCEPTED_MINOR = 42;
+const WABT_SOURCE_COMMIT = "ff0ef7e0009402740c805a9744c09b05be063e48";
+const wabtReleaseBanner = z
+  .string()
+  .regex(/^1\.0\.\d+$/u)
+  .refine((release) => Number(release.split(".")[2]) >= WABT_ACCEPTED_MINOR, {
+    message: `Expected one admitted WABT banner (^1.0.${String(WABT_ACCEPTED_MINOR)})`,
+  });
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
 const artifact = z.strictObject({
@@ -73,8 +82,8 @@ export const wasmArtifactSchema = z
     }),
     tool_profile: z.strictObject({
       source: z.literal("https://github.com/WebAssembly/wabt"),
-      release: z.literal("1.0.42"),
-      source_commit: z.literal("ff0ef7e0009402740c805a9744c09b05be063e48"),
+      release: wabtReleaseBanner,
+      source_commit: z.literal(WABT_SOURCE_COMMIT),
       commands: z
         .array(
           z.strictObject({
@@ -139,6 +148,7 @@ export const wasmArtifactSchema = z
       value.tool_profile.commands[0]?.arguments.includes(
         "--ignore-custom-section-errors",
       );
+    const releaseVersion = value.tool_profile.release;
     for (const [index, command] of value.tool_profile.commands.entries()) {
       const expected = ["wasm-validate", "wasm-objdump", "wasm2wat"][index];
       const argumentsExpected =
@@ -149,7 +159,7 @@ export const wasmArtifactSchema = z
             : ["--enable-all", "module.wasm"];
       if (
         command.tool !== expected ||
-        command.version_banner.trim() !== "1.0.42" ||
+        command.version_banner.trim() !== releaseVersion ||
         JSON.stringify(command.arguments) !== JSON.stringify(argumentsExpected)
       )
         context.addIssue({

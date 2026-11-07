@@ -1,7 +1,8 @@
 # Offline WebAssembly artifacts
 
 `inspect_wasm_artifact` / `inspect-wasm-artifact` inspects explicitly selected
-local WASM bytes using caller-supplied WABT 1.0.42. No active binary target is
+local WASM bytes using caller-supplied WABT 1.0.x (verified with 1.0.42). No
+active binary target is
 required. REA does not install tools or fetch artifacts and does not execute WASM.
 
 `open_binary` is not the WASM inspection route. A recognized WASM v1 header
@@ -28,11 +29,17 @@ been exercised on macOS arm64; other hosts require their own verification.
 
 Configuration failures do not establish anything about the selected WASM bytes.
 For a rejected version probe, `details.diagnostics` identifies the executable,
-tool, expected version and configuration key; `details.captured_output` preserves
+tool, verified version, accepted release range and configuration key;
+`details.captured_output` preserves
 its actual stdout and stderr, including empty banners or warnings. Fix the
 reported directory, executable access or release rather than changing the module
-or repeating an unchanged call. All three tools must report 1.0.42 on stdout with
-empty stderr. For CLI calls, set the environment before the next invocation. For
+or repeating an unchanged call. All three tools must report the same release on
+stdout with empty stderr, and that release must fall within the accepted range
+(`^1.0.42`, verified with 1.0.42). A release above 1.0.42 in that range is
+admitted: the observed banner becomes `tool_profile.release` and the
+`provider.version`, and the report states that only 1.0.42 was verified. Managed
+downloads stay pinned to 1.0.42. For CLI calls, set the environment before the
+next invocation. For
 MCP, change the server's launch environment and restart/reconnect that server;
 exporting a variable in a different shell does not update a running server.
 REA never installs tools or relaxes version admission to recover.
