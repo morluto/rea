@@ -1,5 +1,5 @@
 import { expect, it } from "vitest";
-import { writeFile, unlink } from "node:fs/promises";
+import { writeFile, symlink, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { deflateSync } from "node:zlib";
@@ -1430,3 +1430,45 @@ it("does not interpret non-AMD ELF flags as AMD processor declarations through M
   expect(report.kernels).toEqual([]);
   expect(report.coverage.payloads).toBe("partial");
 });
+
+cliTest(
+  "names the resolved target for a single symlink instead of reporting ELOOP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-gpu-symlink-");
+    const real = join(root, "real.cubin");
+    await writeFile(real, cudaFixture("zstd"));
+    const single = join(root, "one-link.cubin");
+    await symlink(real, single);
+
+    const result = await runFileCli(cli, {
+      arguments: ["inspect-gpu-code-objects", single, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      retryable: false,
+      remediation: {
+        action: `Retry with the resolved regular file path ${real}. The selected symlink is not admitted; the retry will validate the target again.`,
+      },
+      details: {
+        path: single,
+        reason: `Selected path is a symbolic link to ${real}; symlinks are not followed`,
+      },
+    });
+    expect(JSON.stringify(result.json)).not.toContain("too many");
+
+    const resolved = await runFileCli(cli, {
+      arguments: [
+        "inspect-gpu-code-objects",
+        real,
+        "--analysis",
+        "kernels",
+        "--detail",
+        "complete",
+        "--json",
+      ],
+    });
+    expect(resolved.exitCode, resolved.stderr).toBe(0);
+  },
+);

@@ -1,17 +1,30 @@
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { RegularFileSymlinkRefusalError } from "../filesystem/RegularFile.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
+
+/** Retry with the resolved regular file after a selected symlink is rejected. */
+export const resolvedRegularFileRemediation = (resolvedPath: string): string =>
+  `Retry with the resolved regular file path ${resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`;
 
 /** Offer the verified regular-file target after a selected symlink is rejected. */
 export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
   cause.reason === "path" && cause.resolvedPath !== undefined
     ? {
-        remediationAction: `Retry with the resolved regular file path ${cause.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
+        remediationAction: resolvedRegularFileRemediation(cause.resolvedPath),
         conformsToInputContract: true,
       }
+    : {};
+
+/** Offer the same retry when a symlink refusal names its resolved target. */
+export const regularFileSymlinkRecovery = (
+  cause: RegularFileSymlinkRefusalError,
+) =>
+  cause.kind === "single" && cause.resolvedPath !== undefined
+    ? { remediationAction: resolvedRegularFileRemediation(cause.resolvedPath) }
     : {};
 
 const artifactCleanupFailure = (

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, symlink, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../../src/contracts/model/modelToolContracts.js";
@@ -1313,5 +1313,63 @@ cliTest(
       },
     });
     expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
+);
+
+cliTest(
+  "names the resolved target for a single symlink and keeps a loop distinct",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-model-symlink-");
+    const real = join(root, "real.gguf");
+    await writeFile(real, ggufFixture().bytes);
+    const single = join(root, "one-link.gguf");
+    await symlink(real, single);
+    const loopA = join(root, "loop-a.gguf");
+    const loopB = join(root, "loop-b.gguf");
+    await symlink("loop-b.gguf", loopA);
+    await symlink("loop-a.gguf", loopB);
+
+    const singleResult = await cli.run({
+      arguments: ["inspect-model-artifact", single, "--json"],
+    });
+    expect(singleResult.exitCode).toBe(1);
+    expect(singleResult.json).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      retryable: false,
+      remediation: {
+        action: `Retry with the resolved regular file path ${real}. The selected symlink is not admitted; the retry will validate the target again.`,
+      },
+      details: {
+        path: single,
+        reason: `Selected path is a symbolic link to ${real}; symlinks are not followed`,
+      },
+    });
+    expect(JSON.stringify(singleResult.json)).not.toContain("too many");
+
+    const loopResult = await cli.run({
+      arguments: ["inspect-model-artifact", loopA, "--json"],
+    });
+    expect(loopResult.exitCode).toBe(1);
+    expect(loopResult.json).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      details: {
+        path: loopA,
+        reason: `Selected path is a symbolic link chain that does not resolve: ${loopA}`,
+      },
+    });
+    expect(JSON.stringify(loopResult.json)).not.toContain(
+      `symbolic link to ${real}`,
+    );
+
+    const resolved = await cli.run({
+      arguments: ["inspect-model-artifact", real, "--json"],
+    });
+    expect(resolved.exitCode, resolved.stderr).toBe(0);
+    expect(
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(resolved.json)
+        .normalized_result.format,
+    ).toBe("gguf");
   },
 );

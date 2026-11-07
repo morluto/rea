@@ -1,7 +1,14 @@
 import { constants } from "node:fs";
 import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
-import { lstat, open, stat, type FileHandle } from "node:fs/promises";
+import {
+  lstat,
+  open,
+  readlink,
+  realpath,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 
 import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
@@ -61,6 +68,53 @@ export class RegularFileChangedError extends Error {
   ) {
     super(`Selected input changed while being read: ${path}`, options);
     this.name = "RegularFileChangedError";
+  }
+}
+
+/** How a refused symlink relates to the regular file it names. */
+export type RegularFileSymlinkRefusalKind =
+  | "single"
+  | "non-regular-target"
+  | "loop"
+  | "dangling";
+
+/**
+ * A symlink refused while opening a regular file, with the resolution outcome
+ * the raw `ELOOP` errno hides: a single link names its resolved target, while
+ * a loop or a dangling link is a distinct reason. The code stays `ELOOP` so
+ * existing selected-path classification is unchanged.
+ */
+export class RegularFileSymlinkRefusalError extends Error {
+  readonly code = "ELOOP";
+  readonly path: string;
+  readonly kind: RegularFileSymlinkRefusalKind;
+  readonly resolvedPath: string | undefined;
+  readonly linkTarget: string | undefined;
+
+  constructor(
+    path: string,
+    kind: RegularFileSymlinkRefusalKind,
+    options?: {
+      readonly resolvedPath?: string | undefined;
+      readonly linkTarget?: string | undefined;
+    },
+  ) {
+    super(
+      kind === "single"
+        ? `Selected path is a symbolic link to ${String(options?.resolvedPath)}; symlinks are not followed`
+        : kind === "non-regular-target"
+          ? `Selected path is a symbolic link to ${String(options?.resolvedPath)}, which is not a regular file; symlinks are not followed`
+          : kind === "loop"
+            ? `Selected path is a symbolic link chain that does not resolve: ${path}`
+            : options?.linkTarget === undefined
+              ? `Selected path is a dangling symbolic link: ${path}`
+              : `Selected path is a dangling symbolic link to ${options.linkTarget}: ${path}`,
+    );
+    this.name = "RegularFileSymlinkRefusalError";
+    this.path = path;
+    this.kind = kind;
+    this.resolvedPath = options?.resolvedPath;
+    this.linkTarget = options?.linkTarget;
   }
 }
 
@@ -124,6 +178,8 @@ export const openRegularFile = async (
       (constants.O_NOCTTY ?? 0) |
       (options.symlinks === "reject" ? (constants.O_NOFOLLOW ?? 0) : 0),
   ).catch(async (cause: unknown) => {
+    const symlink = await symlinkRefusal(path, cause);
+    if (symlink !== undefined) throw symlink;
     const nonRegular = await nonRegularOpenFailure(
       path,
       options.symlinks,
@@ -177,6 +233,41 @@ export const openRegularFile = async (
     }
     throw cause;
   }
+};
+
+/**
+ * An `ELOOP` open refusal names no target: distinguish a single symlink from
+ * a loop or a dangling link with one `lstat`, then resolve the link. A loop
+ * in a parent component makes even `lstat` fail, so the raw errno is kept.
+ */
+const symlinkRefusal = async (
+  path: string,
+  cause: unknown,
+): Promise<RegularFileSymlinkRefusalError | undefined> => {
+  if (!(cause instanceof Error) || Reflect.get(cause, "code") !== "ELOOP")
+    return undefined;
+  const named = await lstat(path).catch(() => undefined);
+  if (named === undefined || !named.isSymbolicLink()) return undefined;
+  const resolved = await realpath(path).catch((error: unknown) => error);
+  if (resolved instanceof Error) {
+    if (Reflect.get(resolved, "code") === "ELOOP")
+      return new RegularFileSymlinkRefusalError(path, "loop");
+    if (Reflect.get(resolved, "code") === "ENOENT") {
+      const linkTarget = await readlink(path).catch(() => undefined);
+      return new RegularFileSymlinkRefusalError(path, "dangling", {
+        linkTarget,
+      });
+    }
+    return undefined;
+  }
+  if (typeof resolved !== "string") return undefined;
+  const target = await lstat(resolved).catch(() => undefined);
+  if (target === undefined) return undefined;
+  return new RegularFileSymlinkRefusalError(
+    path,
+    target.isFile() ? "single" : "non-regular-target",
+    { resolvedPath: resolved },
+  );
 };
 
 /**

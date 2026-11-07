@@ -1,15 +1,17 @@
 import type { BigIntStats, Stats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 
 import {
+  isSelectedRegularFileError,
   NonRegularFileReadError,
   openRegularFile,
   RegularFileAdmissionFailure,
   RegularFileOperationCancelled,
+  RegularFileSymlinkRefusalError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -166,4 +168,106 @@ it("preserves the non-regular admission failure when cancellation arrives during
       signal: controller.signal,
     }),
   ).rejects.toBeInstanceOf(NonRegularFileReadError);
+});
+
+/** Run one admission against the real filesystem despite the mocked `open`. */
+const openRealFile = async (path: string) => {
+  const { open } =
+    await vi.importActual<typeof import("node:fs/promises")>(
+      "node:fs/promises",
+    );
+  mockOpen.mockImplementationOnce(async (...args: Parameters<typeof open>) =>
+    open(...args),
+  );
+  return openRegularFile(path, { symlinks: "reject" });
+};
+
+it("names the resolved regular file for a single selected symlink", async () => {
+  const root = await createTestTempDirectory("rea-admission-symlink-");
+  const real = join(root, "real.bin");
+  await writeFile(real, "regular file bytes");
+  const link = join(root, "one-link.bin");
+  await symlink(real, link);
+
+  const cause = await openRealFile(link).catch((failure: unknown) => failure);
+  expect(cause).toBeInstanceOf(RegularFileSymlinkRefusalError);
+  if (!(cause instanceof RegularFileSymlinkRefusalError))
+    throw new Error("Expected a typed symlink refusal");
+  expect(cause.kind).toBe("single");
+  expect(cause.code).toBe("ELOOP");
+  expect(cause.resolvedPath).toBe(real);
+  expect(cause.message).toBe(
+    `Selected path is a symbolic link to ${real}; symlinks are not followed`,
+  );
+  expect(cause.message).not.toContain("too many");
+  // The category-defining classification is unchanged.
+  expect(isSelectedRegularFileError(cause)).toBe(true);
+});
+
+it("distinguishes a genuine symlink loop from a single link", async () => {
+  const root = await createTestTempDirectory("rea-admission-loop-");
+  await symlink("loop-b.bin", join(root, "loop-a.bin"));
+  await symlink("loop-a.bin", join(root, "loop-b.bin"));
+
+  const cause = await openRealFile(join(root, "loop-a.bin")).catch(
+    (failure: unknown) => failure,
+  );
+  expect(cause).toBeInstanceOf(RegularFileSymlinkRefusalError);
+  if (!(cause instanceof RegularFileSymlinkRefusalError))
+    throw new Error("Expected a typed symlink refusal");
+  expect(cause.kind).toBe("loop");
+  expect(cause.code).toBe("ELOOP");
+  expect(cause.resolvedPath).toBeUndefined();
+  expect(cause.message).toBe(
+    `Selected path is a symbolic link chain that does not resolve: ${join(root, "loop-a.bin")}`,
+  );
+  expect(isSelectedRegularFileError(cause)).toBe(true);
+});
+
+it("names the missing target of a dangling symlink", async () => {
+  const root = await createTestTempDirectory("rea-admission-dangling-");
+  const missing = join(root, "no-such-file.bin");
+  const link = join(root, "dangling.bin");
+  await symlink(missing, link);
+
+  const cause = await openRealFile(link).catch((failure: unknown) => failure);
+  expect(cause).toBeInstanceOf(RegularFileSymlinkRefusalError);
+  if (!(cause instanceof RegularFileSymlinkRefusalError))
+    throw new Error("Expected a typed symlink refusal");
+  expect(cause.kind).toBe("dangling");
+  expect(cause.code).toBe("ELOOP");
+  expect(cause.linkTarget).toBe(missing);
+  expect(cause.message).toContain("dangling symbolic link");
+  expect(cause.message).not.toContain("too many");
+  expect(isSelectedRegularFileError(cause)).toBe(true);
+});
+
+it("names the resolved target when a symlink points at a directory", async () => {
+  const root = await createTestTempDirectory("rea-admission-link-dir-");
+  const directory = join(root, "real-dir");
+  await mkdir(directory);
+  const link = join(root, "link-dir");
+  await symlink(directory, link);
+
+  const cause = await openRealFile(link).catch((failure: unknown) => failure);
+  expect(cause).toBeInstanceOf(RegularFileSymlinkRefusalError);
+  if (!(cause instanceof RegularFileSymlinkRefusalError))
+    throw new Error("Expected a typed symlink refusal");
+  expect(cause.kind).toBe("non-regular-target");
+  expect(cause.resolvedPath).toBe(directory);
+  expect(cause.message).toContain("which is not a regular file");
+  expect(isSelectedRegularFileError(cause)).toBe(true);
+});
+
+it("keeps the raw errno when a loop sits in a parent component", async () => {
+  const root = await createTestTempDirectory("rea-admission-parent-loop-");
+  await symlink("loop-b", join(root, "loop-a"));
+  await symlink("loop-a", join(root, "loop-b"));
+
+  const cause = await openRealFile(join(root, "loop-a", "file.bin")).catch(
+    (failure: unknown) => failure,
+  );
+  expect(cause).not.toBeInstanceOf(RegularFileSymlinkRefusalError);
+  expect(cause).toMatchObject({ code: "ELOOP" });
+  expect(isSelectedRegularFileError(cause)).toBe(true);
 });
