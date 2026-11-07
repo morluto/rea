@@ -413,6 +413,23 @@ run the same owned-process cleanup path. Settlement reports whether the
 sampled process group quiesced or whether cleanup was needed or unverifiable;
 sampling cannot prove that every short-lived or detached descendant was seen.
 
+### PTY hangup and descendant observations
+
+On Linux and macOS, process capture starts the target as the session leader
+of its capture pseudo-terminal (PTY). When that session leader exits, terminal
+hangup can deliver `SIGHUP` to processes still in the PTY's foreground
+process group, including children of the target that remain in that group.
+Those children may exit before the next process sample, even if REA did not
+request or perform process cleanup.
+
+A `quiesced` settlement with `cleanup_outcome: "not_required"` therefore
+does not prove that the target created no children, nor that descendants would
+have survived in a different terminal/session arrangement. The hangup is a
+terminal/session side effect, not an REA-issued cleanup signal. For
+background-worker behavior, compare with an appropriate directly launched or
+differently supervised run and keep this observation limit visible when
+interpreting capture Evidence.
+
 ### Finalization interval
 
 By default a deadline sends `SIGKILL` at once. Set `finalization_ms` to give the
