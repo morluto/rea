@@ -13,9 +13,11 @@ import type {
   ProcessDiagnosticBudget,
   ProviderProcessStopResult,
   SpawnedOwnedProviderProcess,
+  PreparedOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
   ProviderProcessSupervisor,
+  prepareOwnedProviderProcess,
   spawnOwnedProviderProcess,
 } from "./ProviderProcess.js";
 import {
@@ -107,10 +109,30 @@ interface OwnedCommandLimits {
 export const prepareOwnedCommand = async (
   signal?: AbortSignal,
 ): Promise<void> => {
-  if (systemProcessOwnershipHost.platform !== "darwin") return;
+  await prepareDarwinCommandOwnership(signal);
+};
+
+/** Prepare the launch baseline with the same cancellation and cleanup conversion. */
+export const prepareOwnedCommandLaunch = (
+  spawn: OwnedProviderProcessSpawnOptions,
+  signal?: AbortSignal,
+): Promise<PreparedOwnedProviderProcess | undefined> =>
+  prepareDarwinCommandOwnership(signal, spawn);
+
+const prepareDarwinCommandOwnership = async (
+  signal?: AbortSignal,
+  spawn?: OwnedProviderProcessSpawnOptions,
+): Promise<PreparedOwnedProviderProcess | undefined> => {
+  if (systemProcessOwnershipHost.platform !== "darwin") return undefined;
   try {
     signal?.throwIfAborted();
+    if (spawn !== undefined)
+      return await prepareOwnedProviderProcess({
+        ...spawn,
+        ...(signal === undefined ? {} : { signal }),
+      });
     await prepareProcessOwnershipInspection(signal);
+    return undefined;
   } catch (cause: unknown) {
     throwCommandPreparationFailure(
       cause,

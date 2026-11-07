@@ -311,17 +311,8 @@ export const spawnOwnedProviderProcess = async (
       );
     captureBaseline = prepared.captureBaseline;
   } else {
-    await prepareProcessOwnershipInspection(options.signal);
-    options.signal?.throwIfAborted();
-    if (sweepTokenOwnedProcesses) {
-      const capture = systemProcessOwnershipHost.captureBaseline;
-      if (capture === undefined)
-        throw new Error(
-          "Process ownership baseline is unavailable on this host",
-        );
-      captureBaseline = await capture(options.signal);
-      options.signal?.throwIfAborted();
-    }
+    captureBaseline = (await prepareOwnedProviderProcess(options))
+      .captureBaseline;
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
   const environment = {

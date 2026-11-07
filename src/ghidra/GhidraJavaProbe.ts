@@ -12,11 +12,11 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
   prepareOwnedCommand,
+  prepareOwnedCommandLaunch,
 } from "../process/OwnedCommand.js";
-import {
-  prepareOwnedProviderProcess,
-  type OwnedProviderProcessSpawnOptions,
-  type ProviderProcessSnapshot,
+import type {
+  OwnedProviderProcessSpawnOptions,
+  ProviderProcessSnapshot,
 } from "../process/ProviderProcess.js";
 import { boundedUtf8Text } from "../process/boundedUtf8Text.js";
 import { constants, accessSync, statSync } from "node:fs";
@@ -173,13 +173,8 @@ const observeGhidraJava = async (
     };
     const preparedOwnership =
       options.launcher === undefined
-        ? await prepareOwnedProviderProcess({
-            ...spawn,
-            ...(options.signal === undefined ? {} : { signal: options.signal }),
-          })
-        : undefined;
-    if (options.launcher !== undefined)
-      await prepareOwnedCommand(options.signal);
+        ? await prepareOwnedCommandLaunch(spawn, options.signal)
+        : (await prepareOwnedCommand(options.signal), undefined);
     await runOwnedCommand(
       {
         ...spawn,

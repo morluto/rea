@@ -1,4 +1,5 @@
-import { describe, expect, it, afterEach } from "vitest";
+import { describe, expect, it, afterEach, vi } from "vitest";
+import { systemProcessOwnershipHost } from "../process/ProcessOwnershipObservation.js";
 import { probeGhidraJava, parseGhidraJavaOutput } from "./GhidraJavaProbe.js";
 import { createInspectionResources } from "../../tests/fixtures/inspectionResources.js";
 let resources = createInspectionResources();
@@ -166,3 +167,36 @@ it.each([
     }),
   ).toMatchObject({ ok: true, value: { version, major } });
 });
+
+it.skipIf(process.platform !== "darwin")(
+  "preserves the caller reason when Java ownership baseline preparation is cancelled",
+  async () => {
+    const reason = { cancelled: "baseline" };
+    const controller = new AbortController();
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue();
+    const capture = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockImplementation(async () => {
+        controller.abort(reason);
+        throw reason;
+      });
+    try {
+      const result = await probeGhidraJava(
+        "/unused/java",
+        {},
+        { resourceOwner: resources.owner, signal: controller.signal },
+      );
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("Expected cancellation");
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cause: reason,
+      });
+    } finally {
+      prepare.mockRestore();
+      capture.mockRestore();
+    }
+  },
+);
