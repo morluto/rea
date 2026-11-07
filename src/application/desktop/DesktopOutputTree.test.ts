@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   chmod,
   mkdir,
@@ -28,6 +29,12 @@ const CONTEXT = {
 const REFUSAL = {
   operation: "check_build_task",
   field: "directory",
+};
+
+const WITNESS = Buffer.from("ok");
+const WITNESS_INTEGRITY = {
+  bytes: WITNESS.length,
+  sha256: createHash("sha256").update(WITNESS).digest("hex"),
 };
 
 const expectRefusedError = (error: unknown): void => {
@@ -92,11 +99,14 @@ describe("DesktopOutputTree", () => {
     const fresh = join(root, "fresh", "out");
     const checked = await checkOutputTreeDestination(fresh, CONTEXT);
     expect(checked.ok).toBe(true);
-    const bytes = Buffer.from("ok");
     const release = await writeOutputTree(
       fresh,
       async (tree) => {
-        await tree.write("witness.json", Readable.from([bytes]));
+        await tree.write(
+          "witness.json",
+          Readable.from([WITNESS]),
+          WITNESS_INTEGRITY,
+        );
       },
       REFUSAL,
       undefined,
@@ -146,11 +156,14 @@ describe("DesktopOutputTree", () => {
 
       const checked = await checkOutputTreeDestination(destination, CONTEXT);
       expect(checked.ok).toBe(true);
-      const bytes = Buffer.from("ok");
       const release = await writeOutputTree(
         destination,
         async (tree) => {
-          await tree.write("witness.json", Readable.from([bytes]));
+          await tree.write(
+            "witness.json",
+            Readable.from([WITNESS]),
+            WITNESS_INTEGRITY,
+          );
         },
         REFUSAL,
         undefined,
