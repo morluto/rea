@@ -1,4 +1,4 @@
-import { createHash, generateKeyPairSync } from "node:crypto";
+import { createHash, generateKeyPairSync, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -87,6 +87,53 @@ const lines = (base64: string, separator: string) =>
 const utf16be = (text: string) => Buffer.from(text, "utf16le").swap16();
 
 describe("credential patterns", () => {
+  it("scans a large base64 payload without exhausting the stack", () => {
+    expect(credentialsIn(`image=${"A".repeat(16_777_216)}`)).toEqual([]);
+    expect(
+      credentialsIn(`image=${randomBytes(12_582_912).toString("base64")}`),
+    ).toEqual([]);
+  });
+
+  it("redacts an unpadded DER key without removing a following setting", () => {
+    const { privateKey } = generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { type: "pkcs8", format: "der" },
+      publicKeyEncoding: { type: "spki", format: "der" },
+    });
+    const key = privateKey.toString("base64").replace(/=+$/u, "");
+    expect(redactCredentials(`key=${key}\nnext=1\n`)).toBe(
+      "key=<credential:private-key>\nnext=1\n",
+    );
+  });
+
+  it("redacts multiple adjacent unpadded keys without removing their separator", () => {
+    const key = generateKeyPairSync("ed25519", {
+      privateKeyEncoding: { type: "pkcs8", format: "der" },
+      publicKeyEncoding: { type: "spki", format: "der" },
+    })
+      .privateKey.toString("base64")
+      .replace(/=+$/u, "");
+    expect(redactCredentials(`${key}\n${key}\n`)).toBe(
+      "<credential:private-key>\n<credential:private-key>\n",
+    );
+  });
+
+  it("preserves surrounding settings for padded and wrapped private keys", () => {
+    for (const { name, der, isPublic } of generatedKeys()) {
+      if (isPublic === true) continue;
+      const key = der.toString("base64");
+      for (const encoded of [
+        key,
+        key.replace(/=+$/u, ""),
+        lines(key, "\n"),
+        lines(key, "\\n"),
+      ])
+        expect(
+          redactCredentials(`before=1\nkey=${encoded}\nnext=1\n`),
+          `${name} length=${encoded.length} breaks=${encoded.includes("\n")} escapes=${encoded.includes("\\n")}`,
+        ).toBe("before=1\nkey=<credential:private-key>\nnext=1\n");
+    }
+  });
+
   it("finds the private key KeePassXC generates into its settings, and replaces it with its kind", () => {
     expect(credentialsIn(KEEPASSXC_INI)).toEqual(["private-key"]);
     const redacted = redactCredentials(KEEPASSXC_INI);

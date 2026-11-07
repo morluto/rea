@@ -102,29 +102,68 @@ export const holdsDerPrivateKey = (bytes: Uint8Array): boolean => {
   return false;
 };
 
-/** Runs of base64 long enough to hold a key, line breaks and escaped ones inside them included. */
-const BASE64_RUN =
-  /[A-Za-z0-9+/](?:[A-Za-z0-9+/]|\r?\n|\\n|\\r\\n){59,}={0,2}/gu;
 const LINE_BREAKS = /\r?\n|\\n|\\r\\n/gu;
 /** The fewest base64 characters a private key takes: an X25519 or Ed25519 key's 48 bytes. */
 const MIN_KEY_CHARACTERS = 60;
 /** How many characters from a key's start are decoded to read its first elements. */
 const HEADER_CHARACTERS = 64;
 
+const isBase64Character = (character: string): boolean => {
+  const code = character.charCodeAt(0);
+  return (
+    (code >= 65 && code <= 90) ||
+    (code >= 97 && code <= 122) ||
+    (code >= 48 && code <= 57) ||
+    code === 43 ||
+    code === 47
+  );
+};
+
+/** Scan iteratively so a large encoded asset does not consume the regex stack. */
+function* base64Runs(
+  text: string,
+): Generator<{ start: number; value: string }> {
+  let cursor = 0;
+  while (cursor < text.length) {
+    if (!isBase64Character(text[cursor] ?? "")) {
+      cursor += 1;
+      continue;
+    }
+    const start = cursor++;
+    while (cursor < text.length) {
+      if (isBase64Character(text[cursor] ?? "")) cursor += 1;
+      else if (text.startsWith("\\r\\n", cursor)) cursor += 4;
+      else if (
+        text.startsWith("\\n", cursor) ||
+        text.startsWith("\r\n", cursor)
+      )
+        cursor += 2;
+      else if (text[cursor] === "\n") cursor += 1;
+      else break;
+    }
+    for (let padding = 0; padding < 2 && text[cursor] === "="; padding++)
+      cursor += 1;
+    yield { start, value: text.slice(start, cursor) };
+  }
+}
+
 /** Where in `run` its `count`th base64 character is. */
 const runIndex = (run: string, count: number): number => {
   let seen = 0;
-  for (let index = 0; index < run.length; index += 1)
-    if (/[A-Za-z0-9+/]/u.test(run[index] ?? "") && (seen += 1) > count)
+  for (let index = 0; index < run.length; index += 1) {
+    if (run.startsWith("\\r\\n", index)) index += 3;
+    else if (run.startsWith("\\n", index)) index += 1;
+    else if (isBase64Character(run[index] ?? "") && (seen += 1) > count)
       return index;
+  }
   return run.length;
 };
 
-/** Where text holds a private key as base64 DER: from the key's first character to the end of its run. */
+/** Where text holds a private key as base64 DER, bounded by its declared DER length when complete. */
 export const derKeySpans = (text: string): [number, number][] => {
   const spans: [number, number][] = [];
-  for (const run of text.matchAll(BASE64_RUN)) {
-    const compact = run[0].replace(LINE_BREAKS, "");
+  for (const run of base64Runs(text)) {
+    const compact = run.value.replace(LINE_BREAKS, "").replace(/=+$/u, "");
     for (
       let at = compact.indexOf("M");
       at !== -1 && compact.length - at >= MIN_KEY_CHARACTERS;
@@ -135,11 +174,17 @@ export const derKeySpans = (text: string): [number, number][] => {
         "base64",
       );
       if (isPrivateKeyAt(header, 0, false)) {
-        spans.push([
-          run.index + runIndex(run[0], at),
-          run.index + run[0].length,
-        ]);
-        break;
+        const outer = elementAt(header, 0);
+        if (outer === undefined) continue;
+        const characters = Math.min(
+          Math.ceil((outer.end * 8) / 6),
+          compact.length - at,
+        );
+        const from = runIndex(run.value, at);
+        let to = runIndex(run.value, at + characters - 1) + 1;
+        while (to < run.value.length && run.value[to] === "=") to += 1;
+        spans.push([run.start + from, run.start + to]);
+        at += characters - 1;
       }
     }
   }
