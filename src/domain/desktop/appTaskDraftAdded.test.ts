@@ -6,6 +6,22 @@ import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
+it("does not include a sibling generated UUID when a record field changes", () => {
+  const before =
+    '<doc><record id="one"><value>Old text</value><session>123e4567-e89b-12d3-a456-426614174000</session></record></doc>';
+  const after = before.replace("Old text", "New text");
+  const later = after.replace(
+    "123e4567-e89b-12d3-a456-426614174000",
+    "123e4567-e89b-12d3-a456-426614174001",
+  );
+  const checks = xmlDraft(before, after).suggested;
+  expect(checks.length).toBeGreaterThan(0);
+  expect(JSON.stringify(checks)).not.toContain(
+    "123e4567-e89b-12d3-a456-426614174000",
+  );
+  expect(passing(FILE, xml(later), checks).every(Boolean)).toBe(true);
+});
+
 it("keeps a nested phone number that resembles an epoch timestamp", () => {
   const before =
     '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact></doc>';

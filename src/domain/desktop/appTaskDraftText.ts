@@ -183,8 +183,7 @@ export const holdsNoisyText = (
   if (typeof value === "string") {
     const text = value.trim();
     return (
-      text.length > 0 &&
-      (isStamp(text) || (bookkeeping && isVolatileValue(text, true)))
+      text.length > 0 && (isStamp(text) || isVolatileValue(text, bookkeeping))
     );
   }
   return (
