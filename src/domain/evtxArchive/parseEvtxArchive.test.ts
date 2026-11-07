@@ -64,7 +64,9 @@ const chunk = (
   number: number,
   records: readonly Buffer[],
   /** 0x08 is a record number, so a realistic chunk states its first record's id. */
-  statedFirstRecordNumber = records[0] !== undefined ? readRecordId(records[0]) : number,
+  statedFirstRecordNumber = records[0] !== undefined
+    ? readRecordId(records[0])
+    : number,
 ): Buffer => {
   const bytes = Buffer.alloc(CHUNK_BYTES);
   bytes.write("ElfChnk\u0000", 0, "latin1");
@@ -158,7 +160,9 @@ describe("parseEvtxArchive", () => {
     // Intact chunks whose first record is not 1 — a wrapped or mid-stream
     // export. The header field is a record number, so it must neither rename
     // the chunk nor raise a mismatch against the physical position.
-    const archive = parsed(evtx([chunk(37, [record(37)]), chunk(38, [record(38)])]));
+    const archive = parsed(
+      evtx([chunk(37, [record(37)]), chunk(38, [record(38)])]),
+    );
     expect(archive.chunks.map((entry) => entry.chunk_number)).toEqual([0, 1]);
     expect(archive.events.map((event) => event.chunk_number)).toEqual([0, 1]);
     expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(

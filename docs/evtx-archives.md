@@ -9,9 +9,9 @@ Log service, boots the source system, or executes event-provided content.
 Records are reported in file order. For each record the inventory keeps the
 chunk it was found in, its byte offset inside that 64 KiB chunk, the
 `EventRecordID` its header states, the `SystemTime` its header states, and the
-byte extent the record declares. Each chunk reports its stated number, the
-event numbers and timestamps of its first and last record, and whether its
-header checksum matched.
+byte extent the record declares. Each chunk reports its position in the file
+as `chunk_number`, the event numbers and timestamps of its first and last
+record, and whether its header checksum matched.
 
 The channel, provider, event ID, level, `EventData` values and user identifiers
 live inside the embedded event XML, which this version does not decode: they
@@ -26,8 +26,14 @@ resolved.
 `record_checksums` is always `not-verified` and `network` is always
 `not-contacted`. `status` is `complete-within-scope` only when every chunk was
 read without any diagnostic; a limit, a truncated record, an undecodable chunk
-or a chunk whose stated number disagrees with its position makes it `partial`
-and each cause appears in `diagnostics`.
+or a chunk whose first record number disagrees with the id that record states
+makes it `partial` and each cause appears in `diagnostics`.
+
+A chunk is numbered by its physical position in the file, never by a value
+stored in the chunk. The header field at `0x08` is the first event record
+number, not a chunk sequence number, so an intact log whose chunks do not start
+at record 1 is not renamed; a disagreement between that field and the first
+record's own id is reported separately as `first-record-number-mismatch`.
 
 A wrapped log leaves stale bytes after its last record. Those bytes are not
 reported as a truncation, and they do not discard the events the chunk did
