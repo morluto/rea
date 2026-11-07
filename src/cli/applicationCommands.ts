@@ -42,7 +42,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.traceApplicationFeature,
     operation: "trace_application_feature",
-    inputSchema: traceApplicationFeatureRequestSchema,
+    documentationSchema: traceApplicationFeatureRequestSchema,
     description:
       "Trace a typed seed through authenticated application Evidence JSON",
     workflow: async (input, lookup, signal) => {
@@ -57,7 +57,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.traceJavaScriptSemantics,
     operation: "trace_javascript_semantics",
-    inputSchema: traceJavaScriptSemanticsRequestSchema,
+    documentationSchema: traceJavaScriptSemanticsRequestSchema,
     description:
       "Trace bounded static semantic relations through authenticated application Evidence",
     workflow: async (input, lookup, signal) => {
@@ -74,7 +74,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.compareApplicationVersions,
     operation: "compare_application_versions",
-    inputSchema: compareApplicationVersionsRequestSchema,
+    documentationSchema: compareApplicationVersionsRequestSchema,
     description:
       "Compare two authenticated JavaScript Application Graph versions",
     workflow: async (input, lookup, signal) => {
@@ -95,7 +95,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.compareJavaScriptExportShapes,
     operation: "compare_javascript_export_shapes",
-    inputSchema: compareJavaScriptExportShapesRequestSchema,
+    documentationSchema: compareJavaScriptExportShapesRequestSchema,
     description:
       "Compare exact static JavaScript export return shapes without execution",
     workflow: async (input, lookup, signal) => {
@@ -114,7 +114,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectAndroidApplicationGraph,
     operation: "project_android_application_graph",
-    inputSchema: applicationInventoryProjectionInputSchema,
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated APK inventory Evidence into an Android application graph",
     workflow: async (input, lookup, signal) => {
@@ -131,7 +131,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectAppleApplicationGraph,
     operation: "project_apple_application_graph",
-    inputSchema: applicationInventoryProjectionInputSchema,
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
     workflow: async (input, lookup, signal) => {
@@ -146,7 +146,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectHarmonyApplicationGraph,
     operation: "project_harmony_application_graph",
-    inputSchema: applicationInventoryProjectionInputSchema,
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
     workflow: async (input, lookup, signal) => {
@@ -170,7 +170,7 @@ const registerObligationLedgerCommand = (
     name: CLI_COMMANDS.buildReconstructionObligationLedger,
     description:
       "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
-    inputSchema: reconstructionObligationLedgerInputSchema,
+    documentationSchema: reconstructionObligationLedgerInputSchema,
     workflow: async (input) => {
       const { buildReconstructionObligationLedgerEvidence } =
         await import("../application/ReconstructionObligationLedgerService.js");
@@ -184,7 +184,7 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     logger,
     name: CLI_COMMANDS.evaluateReconstructionCoverage,
     description: "Evaluate inline fail-closed reconstruction coverage",
-    inputSchema: reconstructionCoverageEvaluationInputSchema,
+    documentationSchema: reconstructionCoverageEvaluationInputSchema,
     workflow: async (input) => {
       const { evaluateReconstructionCoverage } =
         await import("../application/ReconstructionCoverageService.js");
@@ -197,7 +197,8 @@ interface JsonCommandOptions {
   readonly logger: Logger;
   readonly name: string;
   readonly description: string;
-  readonly inputSchema: z.ZodType;
+  /** Describes decoded input for --schema; the workflow owns validation. */
+  readonly documentationSchema: z.ZodType;
   readonly workflow: (
     input: unknown,
   ) => Promise<
@@ -211,13 +212,13 @@ const registerJsonCommand = ({
   logger,
   name,
   description,
-  inputSchema,
+  documentationSchema,
   workflow,
 }: JsonCommandOptions): void => {
   cli.command(name, {
     description,
     args: z.object({
-      inputJson: jsonInputArgument(name, inputSchema).describe(
+      inputJson: jsonInputArgument(name, documentationSchema).describe(
         "Inline workflow JSON or JSON file path",
       ),
     }),
@@ -243,14 +244,15 @@ const registerEvidenceJsonCommand = ({
   name,
   operation,
   description,
-  inputSchema,
+  documentationSchema,
   workflow,
 }: {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly name: string;
   readonly operation: string;
-  readonly inputSchema: z.ZodType;
+  /** Describes decoded input for --schema; the workflow owns validation. */
+  readonly documentationSchema: z.ZodType;
   readonly description: string;
   readonly workflow: (
     input: unknown,
@@ -261,7 +263,7 @@ const registerEvidenceJsonCommand = ({
   cli.command(name, {
     description,
     args: z.object({
-      inputJson: jsonInputArgument(name, inputSchema).describe(
+      inputJson: jsonInputArgument(name, documentationSchema).describe(
         "Inline workflow JSON or JSON file path",
       ),
     }),
