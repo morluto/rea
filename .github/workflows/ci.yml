@@ -869,6 +869,14 @@ jobs:
         with:
           save: "true"
       - run: npm ci
+      # Exercise the supported native Windows source-build path before the
+      # cross-built artifact is downloaded for the existing conformance lane.
+      - name: Build and verify native controls on Windows
+        run: |
+          npm run build:windows-native
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run verify:windows-native:artifact
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Typecheck with the official Windows compiler
         env:
           GOMAXPROCS: "2"
