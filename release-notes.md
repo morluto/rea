@@ -963,6 +963,7 @@
 * **test:** restrict storage fixture to loopback ([#8582](https://github.com/morluto/rea/issues/8582)) ([6d60db1](https://github.com/morluto/rea/commit/6d60db19510896559214094cecfcc262b76e8a33))
 * **tests:** remove duplicate MCP test imports ([50d731d](https://github.com/morluto/rea/commit/50d731d45615f30f50752de64513af0cea6d8312))
 * **test:** wait for valid debugger fixture PIDs ([#9208](https://github.com/morluto/rea/issues/9208)) ([57fc2d4](https://github.com/morluto/rea/commit/57fc2d4617c303dc527cd1bc69ba428972d9baa6))
+* **trace:** disclose address-only reference scope ([#8575](https://github.com/morluto/rea/issues/8575)) ([cc58263](https://github.com/morluto/rea/commit/cc58263ee06ccf5f63eba5ee49b865138f2c4b58))
 * unify executable format ownership across artifact readers ([7adfcc4](https://github.com/morluto/rea/commit/7adfcc4467b2871712a19f73431d8298b6dfa177))
 * **uninstall:** preserve caller-selected Kuna caches during purge ([#7921](https://github.com/morluto/rea/issues/7921)) ([c1df51c](https://github.com/morluto/rea/commit/c1df51c7cbc23f29f917c2196b3941ea0a3c4bfc))
 * **uninstall:** preserve inactive ZCode fallback servers ([3dcb40d](https://github.com/morluto/rea/commit/3dcb40dc262449bbfcd60c23bf1cd5d870a00c73))
