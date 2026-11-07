@@ -78,7 +78,9 @@ it.each([
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: recorded,
     },
@@ -310,7 +312,9 @@ it("keeps empty observed text and JSON keys distinct from omitted fields", () =>
   expect(parsed.coverage.type_mismatches).toEqual([
     {
       path: "body.usedImages[0].uuid",
-      expected: "32 hexadecimal UUID digits with optional canonical hyphens",
+      expected: expect.stringMatching(
+        /32 hexadecimal UUID digits.*optional.*hyphens/iu,
+      ),
       observed: "malformed UUID string",
       recorded_value: "",
     },

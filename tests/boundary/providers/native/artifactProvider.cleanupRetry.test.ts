@@ -86,7 +86,6 @@ it("retains a failed reader close, blocks new work, and retries the same reader"
   expect(closeOwners[2]).toBe(closeOwners[1]);
 
   const incompleteClose = await client.close();
-  expect(incompleteClose.ok).toBe(false);
   if (incompleteClose.ok) throw new Error("Expected reader cleanup failure");
   expect(incompleteClose.error).toBeInstanceOf(ProviderCleanupError);
   expect(closeOwners).toHaveLength(4);

@@ -68,7 +68,7 @@ export const exportEvidenceBundleInputSchema = z.strictObject({
 export const SESSION_TOOL_CONTRACTS = [
   session(
     "open_binary",
-    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. For editable Ghidra persistence across processes, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory in the startup environment (stock ELF/PE/Mach-O on Linux/macOS; restart MCP). Opens and normal close then restore/save automatically; no separate persistence tool or runtime setting update is needed. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports error.details.selection_at_failure, target_at_open_completion, and provider_id_at_open_completion. The target summary and provider id are the selected binary and bound provider when that attempt settled, or null when absent. Later calls can change the selection, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
+    "Open a local executable, application bundle, archive, JavaScript, source map, plist, or analysis database after validation. format=dos-com explicitly interprets 1..65280 headerless bytes as a DOS COM analysis image. format=raw-binary interprets headerless bytes with a required architecture and entry_point; file offset 0 maps at that address. Omission preserves header-based detection. provider_id selects one deep provider or deterministic auto selection; the binding remains stable until close or an explicit switch, with no failure fallback. Reopening the same target and profile retains its active database and metadata edits. Changing target or provider can retire the active Ghidra database and discard its ephemeral edits, including before a later provider call fails; retained investigation records are historical and do not restore those edits. For editable Ghidra persistence across processes, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory in the startup environment (stock ELF/PE/Mach-O on Linux/macOS; restart MCP). Opens and normal close then restore/save automatically; no separate persistence tool or runtime setting update is needed. An optional analysis snapshot is imported atomically and must match the binary identity, concrete provider, and canonical analysis profile exactly; importing into a session with metadata mutations requires closing and reopening it first. Switching targets preserves investigation records. A failed admitted open reports error.details.selection_at_failure, target_at_open_completion, and provider_id_at_open_completion. The target summary and provider id are the selected binary and bound provider when that attempt settled, or null when absent. Later calls can change the selection, so use binary_session for current state. Call close_binary to release engine resources; reset_investigation explicitly clears investigation records.",
     openBinaryInputSchema,
   ),
   session(
@@ -123,7 +123,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "compare_functions",
-    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. Authenticated same-artifact entry coordinates establish correspondence independently of renamed labels; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
+    "Compare two explicit analyze_function Evidence records or exact retained session references across identity, exact provider text, calls, references, strings, and address-normalized CFG topology. The same authenticated Evidence record or compatible same-artifact entry coordinates establish correspondence independently of symbol origin; metadata and text changes remain separate. Missing or provider-incompatible facets remain truncated or unknown; every conclusion cites both Evidence sets.",
     functionComparisonInputSchema,
   ),
   session(
@@ -158,12 +158,12 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "record_unknown",
-    "Create one deterministic residual unknown and immutable mutation evidence. Validates all evidence and relationship references, and rejects duplicate stable identity.",
+    "Create one deterministic residual unknown and immutable mutation evidence. Its scope is the active binary analysis target digest, or null without an active target; supporting Evidence does not select the scope. Scope contributes to stable identity. Validates all evidence and relationship references, and rejects duplicate stable identity.",
     recordUnknownInputSchema,
   ),
   session(
     "update_unknown",
-    "Append one immutable full-state revision and mutation evidence. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
+    "Append one immutable full-state revision and mutation evidence. The unknown retains its original scope; the mutation Evidence subject is the active binary analysis target, or null without one, and can differ from that scope. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
     updateUnknownInputSchema,
   ),
   session(
@@ -173,7 +173,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "get_evidence_bundle",
-    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
+    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. For supported parent operations, use a discovered evidence_id with a compatible inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
     getEvidenceBundleInputSchema,
   ),
   {
@@ -187,7 +187,7 @@ export const SESSION_TOOL_CONTRACTS = [
   {
     ...session(
       "inspect_address_context",
-      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input retains its canonical error and issues alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
+      "Inspect one explicit reproducible address for its analyzed name, containing procedure, regular and inline comments, and matching bookmarks. Each unsupported facet returns a typed unavailable outcome. A facet rejected for invalid input or a resource constraint retains its canonical error and recovery alongside any successful facets. Use xrefs, assembly, or pseudocode for those deeper views.",
       addressContextInputSchema,
     ),
     requiresActiveTarget: true,

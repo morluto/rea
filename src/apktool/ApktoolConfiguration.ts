@@ -420,7 +420,7 @@ const interpretApktoolVersion = (
     throw new ApktoolConfigurationFailure(
       "unsupported_version",
       `The selected Apktool version ${identity.version} is older than the supported minimum 2.7.0`,
-      `Use Apktool 2.7.0 or newer; see docs/apktool-resource-analysis.md.`,
+      `Use Apktool 2.7.0 or newer; see docs/guides/android/apktool-resource-analysis.md.`,
       {
         selected_command: selection.command,
         command_source: selection.commandSource,

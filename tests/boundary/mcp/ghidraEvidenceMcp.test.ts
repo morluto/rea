@@ -196,7 +196,7 @@ it("retains terminal-call qualifications across function views and snapshot repl
       expect(replay.value.result, name).toEqual(value);
       expect(replay.value.limitations, name).toContain(limitation);
       expect(replay.value.limitations, name).toContainEqual(
-        expect.stringContaining("Loaded from a local REA analysis snapshot"),
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
       );
     }
     expect(harness.calls).toEqual([...values.keys()]);
@@ -663,7 +663,7 @@ describe("Ghidra MCP evidence parity", () => {
         provider: { id: "ghidra", version: "12.1.4" },
         normalized_result: expect.stringContaining("return 42"),
         limitations: expect.arrayContaining([
-          expect.stringContaining("not text-equivalent to Hopper"),
+          expect.stringMatching(/not text.equivalent to Hopper/iu),
         ]),
       });
 
@@ -695,15 +695,12 @@ describe("Ghidra MCP evidence parity", () => {
               kind: { available: true, provenance: "ghidra-reference-manager" },
             },
           ],
-          limitations: expect.arrayContaining([
-            expect.stringContaining("indirect flows without target addresses"),
-            expect.stringContaining(
-              "not original source or Hopper-equivalent text",
-            ),
-          ]),
+          limitations: functionDossierSchema.parse(ghidraFunctionDossier())
+            .limitations,
         },
         limitations: expect.arrayContaining([
           expect.stringContaining("default auto-analysis complete"),
+          expect.stringMatching(/original executable bytes.*unchanged/iu),
         ]),
       });
       // Every source-declared limitation must survive the MCP projection;
@@ -711,6 +708,14 @@ describe("Ghidra MCP evidence parity", () => {
       for (const limitation of limitationsFor("analyze_function")) {
         expect(analyzed.limitations).toContain(limitation);
       }
+      expect(
+        functionDossierSchema.parse(analyzed.normalized_result).limitations,
+      ).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(/indirect flows without target addresses/iu),
+          expect.stringMatching(/not original source.*Hopper.equivalent/iu),
+        ]),
+      );
       const directAnalyzed = await new EnhancedTools(session).execute(
         "analyze_function",
         { procedure: "fixture_main" },
