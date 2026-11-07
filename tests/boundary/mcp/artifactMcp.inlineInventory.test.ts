@@ -267,13 +267,25 @@ const assertPortableRoundtrip = async (
   });
   if (closed.isError)
     throw new Error(JSON.stringify(parseMcpToolError(closed)));
-  const missing = await client.callTool({
+  const summaryRequest = {
     name: "inspect_analysis_view",
     arguments: {
       source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
       view: { kind: "summary" },
     },
+  } as const;
+  const retained = await client.callTool(summaryRequest);
+  if (retained.isError)
+    throw new Error(JSON.stringify(parseMcpToolError(retained)));
+  expect(parseEvidence(retained.structuredContent).normalized_result).toEqual(
+    originalView,
+  );
+  const reset = await client.callTool({
+    name: "reset_investigation",
+    arguments: {},
   });
+  if (reset.isError) throw new Error(JSON.stringify(parseMcpToolError(reset)));
+  const missing = await client.callTool(summaryRequest);
   expect(parseMcpToolError(missing)).toMatchObject({
     error: { details: { reason: "missing" } },
   });
@@ -283,13 +295,7 @@ const assertPortableRoundtrip = async (
   });
   if (imported.isError)
     throw new Error(JSON.stringify(parseMcpToolError(imported)));
-  const restored = await client.callTool({
-    name: "inspect_analysis_view",
-    arguments: {
-      source: { kind: "retained-evidence", evidence_id: parent.evidence_id },
-      view: { kind: "summary" },
-    },
-  });
+  const restored = await client.callTool(summaryRequest);
   if (restored.isError)
     throw new Error(JSON.stringify(parseMcpToolError(restored)));
   expect(parseEvidence(restored.structuredContent).normalized_result).toEqual(

@@ -1,7 +1,7 @@
 import { goBinarySchema } from "../../../src/domain/go/goBinary.js";
 import type { Client } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
-import { writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
@@ -127,6 +127,12 @@ mcpTest(
       const snapshot = await readAnalysisSnapshot(snapshotPath);
       if (!snapshot.ok) throw snapshot.error;
       expect(snapshot.value.evidence_bundle.records).toContainEqual(evidence);
+      expect(session.evidenceById(evidence.evidence_id)).toEqual(evidence);
+      const reset = await client.callTool({
+        name: "reset_investigation",
+        arguments: {},
+      });
+      expect(reset.isError, JSON.stringify(reset.content)).not.toBe(true);
       expect(session.evidenceById(evidence.evidence_id)).toBeUndefined();
     }, [
       () => release.resolve(),
@@ -174,6 +180,69 @@ for (const expectedErrno of ["ELOOP", "ENAMETOOLONG"] as const) {
       expect(diagnostic.error.details).toMatchObject({
         issues: [{ message: expect.stringContaining(path) }],
       });
+    },
+  );
+}
+
+goMcpTest.skipIf(process.platform === "win32")(
+  "suggests a resolved regular file after rejecting a selected symlink",
+  async ({ go: { client } }) => {
+    const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+    const original = join(root, "original.elf");
+    const selected = join(root, "selected");
+    await writeFile(original, createGoBinaryFixture().bytes);
+    await symlink(original, selected);
+
+    const rejected = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: selected },
+    });
+    const diagnostic = parseMcpToolError(rejected).error;
+    expect(diagnostic).toMatchObject({
+      code: "invalid_request",
+      details: {
+        issues: [{ path: ["path"], reason: "invalid_format" }],
+      },
+      remediation: { action: expect.stringContaining(original) },
+    });
+    expect(diagnostic).not.toHaveProperty("recovery");
+
+    const retried = await client.callTool({
+      name: "inspect_go_binary",
+      arguments: { path: original },
+    });
+    expect(retried.isError).not.toBe(true);
+  },
+);
+
+for (const targetKind of ["dangling", "directory"] as const) {
+  goMcpTest.skipIf(process.platform === "win32")(
+    `keeps a ${targetKind} symlink rejection without a resolved-file hint`,
+    async ({ go: { client } }) => {
+      const root = await createTestTempDirectory("rea-go-mcp-symlink-");
+      const target = join(root, "target");
+      const selected = join(root, "selected");
+      if (targetKind === "directory") await mkdir(target);
+      await symlink(target, selected);
+
+      const rejected = await client.callTool({
+        name: "inspect_go_binary",
+        arguments: { path: selected },
+      });
+      const diagnostic = parseMcpToolError(rejected).error;
+      expect(diagnostic).toMatchObject({
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["path"],
+              reason: "invalid_format",
+              message: expect.stringContaining(selected),
+            },
+          ],
+        },
+      });
+      expect(diagnostic.remediation.action).not.toContain(target);
     },
   );
 }

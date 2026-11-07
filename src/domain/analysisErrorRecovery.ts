@@ -31,6 +31,11 @@ export interface AnalysisCleanupRetry {
   readonly operation: "close_binary";
 }
 
+/** The retained owner's same-connection retry, also exposed in session status. */
+export const analysisCleanupRetrySchema = z
+  .object({ operation: z.literal("close_binary") })
+  .strict();
+
 export const cleanupRetryRecovery = (
   retry: AnalysisCleanupRetry,
 ): AnalysisErrorRecovery => ({
@@ -40,7 +45,7 @@ export const cleanupRetryRecovery = (
 
 /** Retry advice is conditional; it never promises release or process exit. */
 export const cleanupRetryRemediation = (retry: AnalysisCleanupRetry): string =>
-  `This connection retains that cleanup. Keep it open; after the reported condition settles or is resolved, call ${retry.operation} without snapshot_path and check its result. That call retries the retained cleanup without rerunning the failed analysis, clears session records like any ${retry.operation}, and can report cleanup_incomplete again.`;
+  `This connection retains that cleanup. Keep it open; after the reported condition settles or is resolved, call ${retry.operation} without snapshot_path and check its result. That call retries the retained cleanup without rerunning the failed analysis, preserves investigation Evidence and Unknown history, and can report cleanup_incomplete again.`;
 
 export const analysisErrorRecoverySchema: z.ZodType<AnalysisErrorRecovery> =
   z.discriminatedUnion("kind", [

@@ -461,7 +461,7 @@ export const regexMatchingDeadlineError = (
   new AnalysisResourceConstraintError(
     operation,
     "cpu",
-    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)} The service remains available.`,
+    `Regex matching exceeded its supervised deadline of ${String(deadline.deadlineMs)} ms (source ${deadline.source}). ${regexMatchingDeadlineRecovery(deadline)}`,
     {
       matching_deadline_ms: deadline.deadlineMs,
       matching_deadline_source: deadline.source,
@@ -472,7 +472,12 @@ export const regexMatchingDeadlineError = (
         deadline.deadlineMs,
         deadline.source,
       ),
-      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry.`,
+      // A one-shot invocation has ended its session before the caller retries.
+      continuingCallerGuidance: {
+        userMessage: "The service remains available.",
+        remediationAction: `${regexMatchingDeadlineRecovery(deadline)} Simplify the ECMAScript Unicode regex or use literal mode, then retry in the same session.`,
+      },
     },
   );
 
@@ -547,7 +552,6 @@ export const matchRegexValues = async (input: {
   readonly caseSensitive: boolean;
   readonly values: readonly string[];
   readonly signal?: AbortSignal | undefined;
-  readonly invalidPattern?: (reason: string) => AnalysisError;
   /** Resolved deadline. Omitted means the 5000 ms default, not ambient `process.env`. */
   readonly deadline?: RegexMatchingDeadline | undefined;
   /** Resolved heap request. Omitted means the 128 MiB default, not ambient `process.env`. */
@@ -618,20 +622,21 @@ export const matchRegexValues = async (input: {
         if (reply.data.status === "invalid_pattern")
           return finish(
             err(
-              input.invalidPattern?.(reply.data.reason) ??
-                new AnalysisInputError(
-                  input.operation,
+              new AnalysisInputError(
+                input.operation,
+                {
+                  userMessage: `Invalid regex pattern: ${reply.data.reason}`,
+                  remediationAction:
+                    "Correct the pattern using the reported regex syntax error, or select mode literal to search for the text literally, then retry.",
+                },
+                [
                   {
-                    userMessage: `Invalid regex pattern: ${reply.data.reason}`,
+                    path: ["pattern"],
+                    reason: "invalid_format",
+                    message: reply.data.reason,
                   },
-                  [
-                    {
-                      path: ["pattern"],
-                      reason: "invalid_format",
-                      message: "Supply a valid regular expression.",
-                    },
-                  ],
-                ),
+                ],
+              ),
             ),
           );
         if (

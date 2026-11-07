@@ -20,6 +20,8 @@
 
 **[Сайт](https://rea.tools/ru/) · [Руководства](https://rea.tools/ru/guides/) · [Примеры](https://rea.tools/ru/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Присоединяйтесь к сообществу REA в Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Быстрый старт](#быстрый-старт) · [Как работает REA](#как-работает-rea) · [Что можно анализировать](#что-можно-анализировать) · [Примеры](#примеры) · [Создание RL-окружений](#build-rl-environments) · [Частые вопросы](#частые-вопросы) · [Документация](#документация)
 
 <code>npx rea-agents setup</code>
@@ -158,6 +160,7 @@ REA требует Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) или 26+ (>=26.1
 | PE certificates                     | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                               | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                    |
 | PE imports                          | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                 | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                              |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                            | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                               |
+| Binary hardening                    | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                        | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                              |
 | Linux kernel modules                | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                     |
 | Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                                     | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                          |
 | Apple IPS crashes                   | .ips metadata, threads, images, registers and crash classes                                                                | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                              |

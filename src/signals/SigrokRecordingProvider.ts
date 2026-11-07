@@ -1,3 +1,4 @@
+import { SIGROK_PROVIDER_IDENTITY } from "./SigrokProviderIdentity.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { artifactFileCancellationCause } from "../artifacts/ArtifactFileOperation.js";
 import {
@@ -68,16 +69,27 @@ import { PrivateRuntimeRoot } from "../process/PrivateRuntimeRoot.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
 
 const OPERATION = "decode_signal_recording";
-export const SIGROK_PROVIDER_IDENTITY = {
-  id: "sigrok-recording",
-  name: "REA sigrok recording adapter",
-  version: "sigrok-cli@0.7.2",
-} as const;
+
 type Launcher = NonNullable<Parameters<typeof runOwnedCommand>[2]>["launcher"];
 
 /** Signal decoding runs only on Linux; discovery and execution share this check. */
 export const sigrokHostSupported = (platform: NodeJS.Platform): boolean =>
   platform === "linux";
+
+/**
+ * A nonzero version probe ran under the resource limiter, so the status is not
+ * attributed to sigrok-cli alone.
+ */
+class ResourceLimitedVersionProbeFailure extends Error {
+  readonly statusOwner = "limiter-or-tool" as const;
+
+  constructor() {
+    super(
+      "The resource-limited sigrok-cli --version probe failed; the status may come from the limiter or from sigrok-cli, so inspect both selected installations and the captured output.",
+    );
+    this.name = "ResourceLimitedVersionProbeFailure";
+  }
+}
 
 /** Decode selected recordings only, retaining cleanup ownership across failures. */
 export class SigrokRecordingProvider implements SignalRecordingPort {
@@ -273,10 +285,9 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
             { capturedOutput, userMessage: rejection.message },
             [rejection],
           );
+        // The probe runs under the limiter, so either program may own the status.
         if (output.exitCode !== 0 && phase === "configuration")
-          throw new Error(
-            "The selected sigrok-cli installation failed its --version probe; inspect its captured output.",
-          );
+          throw new ResourceLimitedVersionProbeFailure();
         if (output.exitCode !== 0)
           throw new ProviderAdapterError(
             SIGROK_PROVIDER_IDENTITY.id,
@@ -531,6 +542,13 @@ export class SigrokRecordingProvider implements SignalRecordingPort {
           ...(observedOutput === undefined
             ? {}
             : { capturedOutput: observedOutput }),
+          ...(cause instanceof ResourceLimitedVersionProbeFailure
+            ? {
+                diagnostics: {
+                  version_probe_status_owner: cause.statusOwner,
+                },
+              }
+            : {}),
           userMessage: `${reason} On Linux, configure sigrok-cli 0.7.2 through REA_SIGROK_COMMAND and util-linux prlimit through REA_SIGROK_PRLIMIT_COMMAND (default /usr/bin/prlimit).`,
         },
       );
