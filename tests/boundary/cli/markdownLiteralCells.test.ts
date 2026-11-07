@@ -97,6 +97,18 @@ cliTest(
       "trailing  ": "trailing  ",
       "\tleading tab": "trailing tab\t",
       " mixed\t ": " mixed\t ",
+      "\u00a0name": "\u00a0value\u00a0",
+      name: "value",
+      "\u202fname": "\u202fvalue\u202f",
+      "\u2003name": "\u2003value\u2003",
+      "\u2028name": "\u2028value\u2028",
+      "\u2029name": "\u2029value\u2029",
+      "\ufeffname": "\ufeffvalue\ufeff",
+      "\u00a0": "\u00a0",
+      "\u202f\u2003": "\u202f\u2003",
+      " \t\u00a0mixed\u2003\t ": " \t\u00a0mixed\u2003\t ",
+      "internal\u00a0name": "internal\u00a0value",
+      "&#160;name": "&#160;value",
       " ": " ",
       "   ": "   ",
       "": "",
@@ -169,6 +181,49 @@ cliTest(
     expect(
       renderedCells(renderer.render(renderCliDocument(result, "md", false))),
     ).toEqual(expectedCells);
+  },
+);
+
+cliTest(
+  "renders long internal Unicode whitespace within the CLI deadline",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-markdown-long-whitespace-");
+    const path = join(root, "bundle.json");
+    const literal = `left${"\u00a0\u202f\u2003".repeat(80_000)}right`;
+    const record = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "ordinary-json",
+        parameters: {},
+        result: { rows: [{ [literal]: literal }] },
+      },
+    );
+    const saved = JSON.stringify(createEvidenceBundle([record]));
+    await writeFile(path, saved);
+    // The parent enforces this deadline even if the CLI is stuck in a regexp.
+    const markdown = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, detail: "complete" }),
+        "--filter-output",
+        "records.0.normalized_result",
+        "--format",
+        "md",
+        "--full-output",
+      ],
+      timeoutMs: 20_000,
+    });
+    expect(markdown.exitCode, markdown.stderr).toBe(0);
+    const renderer = await createMarkdownRenderer(root, { linkify: false });
+    // Full output also includes metadata tables; check the Evidence column.
+    const column = tableColumnByHeader(
+      renderer.render(markdown.stdout),
+      literal,
+    );
+    expect(column).toHaveLength(1);
+    expect(column[0] === literal).toBe(true);
+    expect(await readFile(path, "utf8")).toBe(saved);
   },
 );
 
@@ -325,6 +380,8 @@ cliTest(
       list: [literal],
       bullet: "- literal",
       numbered: "1. literal",
+      numberedBare: "1.",
+      parenBare: "1)",
       rule: "---",
       indented: "    literal\n- next\n# heading",
       nested: { value: 1 },
@@ -365,6 +422,8 @@ cliTest(
       expect(text(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
+      expect(html).toContain("<p>1.</p>");
+      expect(html).toContain("<p>1)</p>");
       expect(html).not.toMatch(/<(?:strong|em|ul|ol|li|T|pre|hr)(?:\s|>)/u);
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");

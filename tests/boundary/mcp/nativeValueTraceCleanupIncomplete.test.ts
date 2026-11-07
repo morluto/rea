@@ -159,10 +159,15 @@ describe("trace_native_values after a validated seed", () => {
     "keeps an ordinary failure from $read as a located unknown and continues",
     async ({ read, stop, ordinaryReads }) => {
       const operation = read.split(":")[0] ?? "";
-      const { port, reads } = failingDiamond({
-        [read]: childFailure(operation, false),
-      });
-      const client = await connect(port);
+      // A completed trace cites source Evidence, so continuation needs a
+      // session that can retain it. A fixed adapter still refuses that result.
+      const { port, reads } = failingDiamond(
+        {
+          [read]: childFailure(operation, false),
+        },
+        { sessionSubject: true },
+      );
+      const { client } = await openSession(port);
 
       const response = await client.callTool(trace);
 

@@ -220,6 +220,8 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
   readonly _tag = "AnalysisCapabilityUnavailableError";
   override readonly userMessage: string | undefined;
   readonly remediationAction: string | undefined;
+  readonly siblingOperations: readonly string[] | undefined;
+  readonly siblingReasons: Readonly<Record<string, string>> | undefined;
   /** Incomplete cleanup must settle before the operation can be retried. */
   readonly retryable: boolean;
 
@@ -230,6 +232,8 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
     options?: AnalysisErrorOptions & {
       readonly userMessage?: string;
       readonly remediationAction?: string;
+      readonly siblingOperations?: readonly string[];
+      readonly siblingReasons?: Readonly<Record<string, string>>;
       readonly retryable?: boolean;
     },
   ) {
@@ -239,6 +243,8 @@ export class AnalysisCapabilityUnavailableError extends AnalysisError {
     );
     this.userMessage = options?.userMessage;
     this.remediationAction = options?.remediationAction;
+    this.siblingOperations = options?.siblingOperations;
+    this.siblingReasons = options?.siblingReasons;
     this.retryable = options?.retryable === true && !this.cleanupIncomplete;
   }
 }
