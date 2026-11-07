@@ -855,6 +855,39 @@ it("groups readiness repairs exactly and drops one replaced by a runtime observa
   ]);
 });
 
+it("keeps independent decompilation and value flow in distinct capability groups", async () => {
+  const status = await projectStatus(
+    [
+      {
+        ...descriptor(providerA, "procedure_pseudo_code", []),
+        independentDecompile: true,
+      },
+      {
+        ...descriptor(providerA, "analyze_function", []),
+        nativeValueFlow: { status: "supported" as const },
+      },
+      descriptor(providerA, "xrefs", []),
+    ],
+    [],
+  );
+  const projected = z
+    .object({ capabilities: sessionProviderFacts.shape.capabilities })
+    .parse(status);
+  const capabilities = expandProviderCapabilities(projected.capabilities);
+  expect(
+    capabilities.find((item) => item.operation === "procedure_pseudo_code"),
+  ).toMatchObject({ independent_decompile: true });
+  expect(
+    capabilities.find((item) => item.operation === "analyze_function"),
+  ).toMatchObject({ native_value_flow: { status: "supported" } });
+  expect(
+    capabilities.find((item) => item.operation === "xrefs"),
+  ).not.toHaveProperty("independent_decompile");
+  expect(
+    capabilities.find((item) => item.operation === "xrefs"),
+  ).not.toHaveProperty("native_value_flow");
+});
+
 it.each([
   { detail: "summary", supported: true },
   { detail: "complete", supported: true },

@@ -418,6 +418,7 @@ export const providerCapabilitySets = (
         effects,
         limitations,
         descriptor.nativeValueFlow ?? null,
+        descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
         status.availability_code,
@@ -433,6 +434,9 @@ export const providerCapabilitySets = (
           ...(descriptor.nativeValueFlow === undefined
             ? {}
             : { native_value_flow: descriptor.nativeValueFlow }),
+          ...(descriptor.independentDecompile === undefined
+            ? {}
+            : { independent_decompile: descriptor.independentDecompile }),
           ...status,
         });
       else group.operations.push(descriptor.operation);
