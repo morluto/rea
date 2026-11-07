@@ -1,5 +1,6 @@
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import {
   access,
   chmod,
@@ -214,11 +215,53 @@ const homeFileParts = async (home: string, paths: readonly string[]) => {
 /** The most of a command's stdout the computer's computer-exec answers with. */
 const EXEC_STDOUT_BYTES = 1024 * 1024;
 
+/** Process groups a computer's commands started, so closing the computer can stop them. */
+interface ExecSessions {
+  readonly running: Set<ChildProcess>;
+  readonly detached: Set<number>;
+}
+
+/** Child processes of `pid`, which a new session keeps after the parent exits. */
+const noteChildren = (sessions: ExecSessions, pid: number | undefined) => {
+  if (pid === undefined) return;
+  try {
+    const text = readFileSync(
+      `/proc/${String(pid)}/task/${String(pid)}/children`,
+      "utf8",
+    );
+    for (const id of text.trim().split(/\s+/u)) {
+      const child = Number(id);
+      if (Number.isSafeInteger(child) && child > 0)
+        sessions.detached.add(child);
+    }
+  } catch {
+    // The process has exited, or this host does not expose /proc.
+  }
+};
+
+/** Stop commands this computer started, including captures detached into their own session. */
+const stopExecSessions = (sessions: ExecSessions) => {
+  for (const child of sessions.running) noteChildren(sessions, child.pid);
+  for (const child of sessions.running) child.kill("SIGTERM");
+  for (const pid of sessions.detached) {
+    try {
+      process.kill(-pid, "SIGTERM");
+    } catch {
+      try {
+        process.kill(pid, "SIGTERM");
+      } catch {
+        // The capture already exited.
+      }
+    }
+  }
+};
+
 /** Run one computer-exec command on this host as the computer would: in the home, its stdin closed, its stdout cut at the cap. */
 const runExec = (
   exec: NonNullable<FakeComputerOptions["exec"]>,
   token: string,
   argv: readonly string[],
+  sessions: ExecSessions,
 ) =>
   new Promise<Record<string, unknown>>((resolve, reject) => {
     const [command = "", ...rest] = argv;
@@ -233,13 +276,23 @@ const runExec = (
       },
       stdio: ["ignore", "pipe", "pipe"],
     });
+    sessions.running.add(child);
     const stdout: Buffer[] = [];
     let stderr = "";
     child.stdout.on("data", (chunk: Buffer) => stdout.push(chunk));
     child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
     child.once("error", reject);
     child.once("close", (code) => {
+      noteChildren(sessions, child.pid);
       const output = Buffer.concat(stdout);
+      for (const match of output
+        .toString("utf8")
+        .matchAll(/"pid":\s*(\d+)/gu)) {
+        const capture = Number(match[1]);
+        if (Number.isSafeInteger(capture) && capture > 0)
+          sessions.detached.add(capture);
+      }
+      sessions.running.delete(child);
       resolve({
         exit_code: code,
         stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
@@ -301,8 +354,9 @@ const execRoute = async (
   exec: NonNullable<FakeComputerOptions["exec"]>,
   token: string,
   argv: readonly string[],
+  sessions: ExecSessions,
 ) => {
-  const answer = await runExec(exec, token, argv);
+  const answer = await runExec(exec, token, argv, sessions);
   const { dropReplies } = exec;
   if (dropReplies === undefined || dropReplies[0] !== argv[4]) return answer;
   dropReplies.shift();
@@ -315,6 +369,7 @@ const buildRoute = async (
   token: string,
   path: string,
   parsed: unknown,
+  sessions: ExecSessions,
 ): Promise<unknown> => {
   const { app, exec } = options;
   const request = parsed as {
@@ -336,7 +391,7 @@ const buildRoute = async (
   if (path === "/agentenv/ext/computer-ready/status") return relaunching(app);
   if (exec === undefined) return undefined;
   if (path === "/agentenv/ext/computer-exec/run")
-    return execRoute(exec, token, request.argv ?? []);
+    return execRoute(exec, token, request.argv ?? [], sessions);
   const paths = request.params?.paths ?? [];
   // Recordings keep the canned segment; other paths are the home's files.
   if (
@@ -452,6 +507,7 @@ export const startFakeComputer = async (
     polls: 0,
     lostStarts: options.lostRecordingStarts ?? 0,
   };
+  const sessions: ExecSessions = { running: new Set(), detached: new Set() };
   const refusals = new Map<string, string>();
   const lostReplies = new Set<string>();
   const { mcp, transport } = await startFakeDriver(calls, refusals, options);
@@ -493,7 +549,7 @@ export const startFakeComputer = async (
       }
       const parsed: unknown = body.length === 0 ? {} : JSON.parse(String(body));
       const answer =
-        (await buildRoute(options, token, url.pathname, parsed)) ??
+        (await buildRoute(options, token, url.pathname, parsed, sessions)) ??
         frameworkRoute(state, url.pathname, parsed);
       if (answer === LOST) response.destroy();
       else sendJson(response, 200, answer);
@@ -513,6 +569,7 @@ export const startFakeComputer = async (
     refuseNext: (name, message) => refusals.set(name, message),
     loseNext: (name) => lostReplies.add(name),
     close: async () => {
+      stopExecSessions(sessions);
       await mcp.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

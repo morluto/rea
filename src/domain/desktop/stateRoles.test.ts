@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   isApplicationDconfGroup,
+  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -151,6 +152,18 @@ describe("stateReasons for state directories", () => {
     expect(reasons("/home/ada/.config/GIMPshop/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.config/other/GIMP/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.Config/gimp/sessionrc")).toEqual([]);
+  });
+});
+
+describe("sqliteSidecarRoots", () => {
+  it("names the write-ahead log and journal of a selected database, and not a log selected on its own", () => {
+    const database = "/home/ada/Documents/books.db";
+    const wal = `${database}-wal`;
+    const journal = `${database}-journal`;
+    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
+      new Set([wal, journal]),
+    );
+    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
   });
 });
 
