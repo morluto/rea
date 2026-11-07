@@ -1,4 +1,6 @@
 import { beforeAll, expect, it } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import type { AnySchema } from "ajv";
 import { z } from "zod";
 
 import { createCli } from "../../../src/cli.js";
@@ -199,6 +201,7 @@ const advertisedInput = (stdout: string): InputJsonSchema => {
 };
 
 it("advertises the parsed document for every JSON-input command", async () => {
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(jsonInputCommands(cli).sort()).toEqual(
     documents.map(({ command }) => command).sort(),
   );
@@ -206,10 +209,47 @@ it("advertises the parsed document for every JSON-input command", async () => {
     const served = await serve([command, "--schema", "--json"]);
     expect(served.exitCode, served.stdout).toBe(0);
     const inputJson = advertisedInput(served.stdout);
+    expect(inputJson.contentSchema, command).toBeDefined();
     expect(inputJson.contentSchema, command).toEqual(
       jsonInputContentSchema(schema),
     );
     expect(inputJson.contentSchema, command).not.toEqual({});
+    expect(
+      () => ajv.compile(inputJson.contentSchema as AnySchema),
+      command,
+    ).not.toThrow();
+  }
+});
+
+it("validates representative parsed documents with the advertised schema", async () => {
+  const input = advertisedInput(
+    (
+      await serve([
+        CLI_COMMANDS.evaluateReconstructionCoverage,
+        "--schema",
+        "--json",
+      ])
+    ).stdout,
+  );
+  const validate = new Ajv2020({
+    strict: false,
+    validateFormats: false,
+  }).compile(input.contentSchema as AnySchema);
+  const accepted = { coverage: { arbitrary: true }, boundary_id: "main" };
+  const rejected = [
+    { coverage: {}, boundary_id: "" },
+    { coverage: {} },
+    { coverage: {}, boundary_id: "main", extra: true },
+  ];
+  expect(reconstructionCoverageRequestSchema.safeParse(accepted).success).toBe(
+    true,
+  );
+  expect(validate(accepted)).toBe(true);
+  for (const document of rejected) {
+    expect(
+      reconstructionCoverageRequestSchema.safeParse(document).success,
+    ).toBe(false);
+    expect(validate(document)).toBe(false);
   }
 });
 
