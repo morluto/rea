@@ -18,6 +18,7 @@ import {
   jsonValueSchema,
   jsonValueValidationIssue,
   jsonValueValidationSteps,
+  MAX_JSON_DEPTH,
   type JsonValue,
 } from "./jsonValue.js";
 import {
@@ -32,6 +33,9 @@ import {
   relationshipCoverageSchema,
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
+
+/** One record envelope around independently bounded JSON payloads. */
+export const MAX_EVIDENCE_JSON_DEPTH = MAX_JSON_DEPTH + 1;
 
 /** Predicate shared by ordinary provider analysis observations. */
 export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";

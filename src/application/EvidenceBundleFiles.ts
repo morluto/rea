@@ -11,6 +11,7 @@ import {
   safeParseImmutableEvidenceBundle,
   safeParseEvidenceBundle,
   isImmutableEvidenceBundle,
+  MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
   type EvidenceBundle,
 } from "../domain/evidenceBundle.js";
 import {
@@ -236,7 +237,10 @@ export const writeEvidenceBundle = async (
       }),
     );
   if (!isImmutableEvidenceBundle(bundle)) {
-    const issue = jsonValueValidationIssue(bundle);
+    const issue = jsonValueValidationIssue(
+      bundle,
+      MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
+    );
     if (issue !== undefined)
       return err(
         new EvidenceIntegrityError("Evidence checkpoint is not ordinary JSON", {

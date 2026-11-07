@@ -9,6 +9,7 @@ import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { EvidenceLedger } from "./EvidenceLedger.js";
+import { MAX_JSON_DEPTH, type JsonValue } from "../../domain/jsonValue.js";
 
 const TARGET: BinaryTarget = {
   path: "/tmp/fixture",
@@ -91,6 +92,43 @@ it("replaces auxiliary caller spelling on duplicate import and ignores record ke
   });
   expect(ledger.get(first.evidence_id)?.caller_input_paths).toBeUndefined();
 });
+
+it.each(["record", "import"] as const)(
+  "authenticates ceiling-depth mutable Evidence through %s",
+  (operation) => {
+    let result: JsonValue = "leaf";
+    for (let depth = 0; depth < MAX_JSON_DEPTH; depth++) result = { result };
+    const evidence = createEvidence(TARGET, PROVIDER, {
+      operation: "health",
+      parameters: {},
+      result,
+    });
+    expect(Object.isFrozen(evidence)).toBe(false);
+    const ledger = new EvidenceLedger();
+    const admitted =
+      operation === "record"
+        ? ledger.record(evidence)
+        : ledger.import(createEvidenceBundle([evidence]));
+    if (!admitted.ok) throw admitted.error;
+    expect(ledger.statistics().evidenceRecords).toBe(1);
+    expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
+      JSON.stringify(evidence),
+    );
+    const overDeep = {
+      ...evidence,
+      normalized_result: { result: evidence.normalized_result },
+    };
+    const rejected =
+      operation === "record"
+        ? ledger.record(overDeep)
+        : ledger.import(createEvidenceBundle([overDeep]));
+    expect(rejected).toMatchObject({
+      ok: false,
+      error: { _tag: "EvidenceIntegrityError" },
+    });
+    expect(ledger.statistics().evidenceRecords).toBe(1);
+  },
+);
 
 describe("evidence ledger recording", () => {
   it("deduplicates and atomically imports bundles", () => {
