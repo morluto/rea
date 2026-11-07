@@ -1840,7 +1840,10 @@ describe("Ghidra decompile deadline for a finished invocation", () => {
         seconds,
         existingProject,
       );
-      const recovery = ghidraDecompileTimeoutRecovery(seconds, existingProject);
+      const recovery = ghidraDecompileTimeoutRecovery(
+        seconds,
+        existingProject ? "existing-project" : "fresh-import",
+      );
       for (const projected of [continuing, invocation])
         expect(projected).toMatchObject({
           code: "provider_timeout",
@@ -4284,7 +4287,10 @@ describe("Ghidra startup deadline for a finished invocation", () => {
         "invocation",
       );
       const continuing = await ghidraTimedOut("start", elapsed, environment);
-      const guidance = ghidraStartupTimeoutGuidance(250, existingProject);
+      const guidance = ghidraStartupTimeoutGuidance(
+        250,
+        existingProject ? "existing-project" : "fresh-import",
+      );
       expect(invocation).toMatchObject({
         code: "provider_timeout",
         remediation: { action: guidance.remediationAction },
@@ -4332,7 +4338,7 @@ describe("Ghidra startup deadline for a finished invocation", () => {
     }));
     const result = await (await createElfClient(ghidra)).execute("health", {});
     if (result.ok) throw new Error("Expected the composed startup failure");
-    const guidance = ghidraStartupTimeoutGuidance(250, false);
+    const guidance = ghidraStartupTimeoutGuidance(250, "fresh-import");
     const child = (lifetime: AnalysisCallerLifetime) =>
       projectAnalysisError(result.error, lifetime).details?.diagnostics;
     expect(projectAnalysisError(result.error, "invocation")).toMatchObject({
