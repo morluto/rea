@@ -456,4 +456,25 @@ describe("capturedHomePath", () => {
     expect(path(`${home}/data/app.db-wal`)).toBe(".config/app.db-wal");
     expect(path(`${home}/data/app.db-journal`)).toBe(".config/app.db-journal");
   });
+
+  it("keeps a walked settings folder when a broader directory was also selected", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: {
+        state_directories: [{ path: `${home}/.config/notes` }],
+      },
+      state: {
+        state_directories: [`${home}/settings/notes`],
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/notes/settings.ini`)).toBe(
+      ".config/notes/settings.ini",
+    );
+    expect(path(`${home}/settings/other.txt`)).toBe("settings/other.txt");
+  });
 });
