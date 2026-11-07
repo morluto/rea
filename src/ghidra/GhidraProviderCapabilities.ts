@@ -28,22 +28,33 @@ export const healthLimitations = Object.freeze([
 
 /** Additional limitations applied to the experimental Windows x64 P0 boundary. */
 export const windowsP0Limitations = Object.freeze([
-  "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
+  "Windows Ghidra P0 accepts native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, DOS MZ images, and explicitly selected raw 6502 images; managed, hostile, sensitive, and mutable-path targets are unsupported.",
   "The Windows bridge uses authenticated IPv4 loopback because Node path-based IPC does not expose Java AF_UNIX sockets; the endpoint file contains no bearer token.",
   "Windows sessions require the matching packaged Windows x64 native addon, local NTFS targets and runtimes, and Windows 10 or later. Native handles enforce path admission, private DACLs, and Job Object ownership automatically.",
 ]);
 
+export type GhidraSessionSource =
+  | "fresh-import"
+  | "existing-project"
+  | "owned-checkpoint";
+
 /** Existing databases have their own unknown analysis history; reopening does not complete it. */
 export const ghidraHealthLimitations = (
-  existingProject = false,
+  source: GhidraSessionSource = "fresh-import",
 ): readonly string[] =>
-  existingProject
+  source === "existing-project"
     ? [
         "This session opens a caller-selected existing Ghidra project through a private copy, without import, auto-analysis or repair scripts. Original analysis completeness and settings are unknown.",
         "The original project is never opened by Ghidra or modified. The private copy is read-only to bridge operations and deleted on close; original executable bytes are never written.",
         "The analysis profile records the selected project content fingerprint and program name. The imported program SHA-256 must match the admitted target; the project may contain caller annotations or earlier edits, which are not fresh REA discoveries.",
       ]
-    : healthLimitations;
+    : source === "owned-checkpoint"
+      ? [
+          "Opt-in Ghidra checkpoints retain the last successfully saved owned Program, including its names, comments and types. Restoring a checkpoint skips auto-analysis; its analysis is retained state, not a fresh discovery.",
+          "REA saves initial completed analysis and saves metadata changes on normal close. A failed save retains the live session for retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
+        ]
+      : healthLimitations;
 
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
@@ -82,10 +93,10 @@ export const ghidraEmptyInstructionOutgoingLimitation =
 /** Limitation text for one admitted operation, including the common base. */
 export const limitationsFor = (
   operation: string,
-  existingProject = false,
+  source: GhidraSessionSource = "fresh-import",
 ): readonly string[] => {
   const common = [
-    ...ghidraHealthLimitations(existingProject),
+    ...ghidraHealthLimitations(source),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
@@ -101,7 +112,9 @@ export const limitationsFor = (
         ...common,
         "Names use Ghidra USER_DEFINED source. Name writes accept a leaf name or a fully qualified name within the existing namespace; readback uses the fully qualified name and can be reused without adding namespace prefixes. Edits retain the current namespace; other namespace-like text remains literal leaf-name text. Regular comments map to PRE and inline comments to EOL at the exact function entry. Changes commit together after readback and refreshed analysis; failure rolls them all back.",
         "Annotation text rejects NUL and unpaired Unicode surrogates before mutation, with the field and UTF-16 index in the error. Supported Unicode and line endings are preserved.",
-        "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
+        source === "owned-checkpoint"
+          ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save. CLI returns the updated dossier before cleanup."
+          : "Metadata edits invalidate immutable analysis snapshots and are discarded on close. CLI returns the updated dossier before session cleanup; this is not a saved Ghidra project.",
       ];
     case "set_address_name":
     case "set_addresses_names":
@@ -111,7 +124,9 @@ export const limitationsFor = (
         operation === "set_address_name"
           ? "A name held by another address in the destination namespace is not moved; a false result reports its reason in raw_result.failures."
           : "set_addresses_names decides every address from the names held before the batch: addresses requesting one destination name, or a name another selected address holds, are rejected rather than ordered. Others apply in their own transactions. raw_result.failures gives each failure's reason; raw_result.conflicts lists each contested name once with its requesting and holding addresses.",
-        "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
+        source === "owned-checkpoint"
+          ? "Metadata edits invalidate immutable analysis snapshots. Normal close saves edits to the owned checkpoint; cancellation or process failure can lose edits after the last successful save."
+          : "Metadata edits invalidate immutable analysis snapshots and are discarded on close; this is not a saved Ghidra project.",
       ];
     case "inspect_native_load_image":
       return [...common, ghidraLoadImageVerificationNote()];
@@ -241,6 +256,13 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
   }),
 );
 
+/** Preserve operation-specific caveats while describing the opted-in lifecycle. */
+export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
+  CAPABILITIES.map((capability) => ({
+    ...capability,
+    limitations: limitationsFor(capability.operation, "owned-checkpoint"),
+  }));
+
 /** The selected database mode is not part of Windows P0 authority. */
 export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
   "An existing Ghidra project cannot be opened on the Windows launch path.";
@@ -258,7 +280,7 @@ export const existingProjectCapabilities = (
       capability.operation === "binary_overview"
         ? "read_binary_inventory_summary"
         : capability.operation,
-      true,
+      "existing-project",
     );
     if (platform === "win32")
       return {

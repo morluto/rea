@@ -24,8 +24,8 @@ the registration uses them. Clearing either makes startup fail without resolving
 another package from the client's project. Restore the same installation before
 repairing it; an unidentified registration remains untouched. See
 [installation and recovery](installation.md#package-runners-and-global-installation).
-Setup does not copy your ambient environment into client
-settings. To refresh an older registration, preview
+Setup forwards supported, explicitly selected REA settings into client
+configuration, but does not copy unrelated ambient environment values. To refresh an older registration, preview
 `rea setup --client <client-id> --skill=false --dry-run`, then run the same command
 without `--dry-run` and approve the displayed changes. Setup preserves unrelated
 settings, backs up changed configuration and leaves an aligned registration
@@ -48,6 +48,31 @@ launcher; see [verification scope](client-verification.md#launch-environment-ver
 `rea doctor` has the same limit for provider checks, and reports a provider setting
 the registration's file does not carry as a
 [non-blocking unknown](installation.md#check-readiness-for-your-task).
+
+## Setting launch variables in PowerShell
+
+Shell examples that prefix a command with `REA_MCP_INPUT_SCHEMA_PROFILE=compact`
+use POSIX shell syntax. In PowerShell, set the process environment before
+launching REA:
+
+```powershell
+$env:REA_MCP_INPUT_SCHEMA_PROFILE = "compact"
+rea mcp doctor --json
+```
+
+The assignment applies to the current PowerShell process and commands it launches.
+Restore the previous value when finished, or use
+`Remove-Item Env:REA_MCP_INPUT_SCHEMA_PROFILE` if it was previously unset. It does
+not update an already running MCP server or desktop client.
+
+To select this profile for an agent, set `REA_MCP_INPUT_SCHEMA_PROFILE` in that
+client's existing REA registration `env` object (`environment` for OpenCode) and
+restart the client, preserving its other settings. A successful terminal doctor run does not verify the client's
+launch environment. See [launch-environment verification](client-verification.md#launch-environment-verification)
+and the client-specific instructions below. REA setup forwards supported selections,
+including `REA_MCP_INPUT_SCHEMA_PROFILE`, from its environment into the registration;
+it does not copy unrelated environment values. Restoring the shell's previous
+value does not undo a selection already saved by setup.
 
 ## Runtime settings and client deadlines
 
@@ -76,6 +101,79 @@ tool names and approval rules before selecting a permission scope. REA setup
 does not repair a client's naming behavior or infer permission drift from an
 unfamiliar prefix. The unavailable fork reported in
 [#5512](https://github.com/morluto/rea/issues/5512) has not been reverified.
+
+## Hot/cold catalogs
+
+For a client that supports MCP catalog refresh, set
+`REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
+the connection. REA then advertises a small initial catalog and loads other
+named tools through `discover_tools`. Setup preserves this explicit setting.
+See the [discovery contract](mcp-contracts.md#hotcold-catalog-discovery) for
+pagination, identity and family-scope semantics.
+
+Analysis tools, including `inspect_analysis_view`, load on demand. For example,
+load `inspect_api_contract` and supply its `view` to answer an initial OpenAPI
+or GraphQL question directly. When later questions need retained facts, load
+`inspect_analysis_view` and use the complete `parent_evidence_id`; source files
+need not be reopened. If both tools are needed from the start, request both
+names in one `discover_tools` batch to avoid another catalog refresh. The same
+pattern applies to selected Playwright trace and endpoint-comparison results.
+This defers unused schema delivery and client validator preparation; it does
+not reduce parsing work, alter Evidence or shorten requested facts. Clients
+without catalog refresh should keep the default `full` profile.
+
+Codex CLI 0.165.0 requires its experimental `mcp_tool_list_changed` feature for
+this workflow. Merge these entries into the existing `~/.codex/config.toml`
+without replacing other feature or REA settings:
+
+```toml
+[features]
+mcp_tool_list_changed = true
+
+[mcp_servers.rea.env]
+REA_MCP_TOOL_CATALOG_PROFILE = "hot-cold"
+```
+
+The server setting alone does not enable client refresh. If a successful
+discovery call is followed by a missing tool, check the client's refresh feature
+and tool allow/deny lists. Clients without refresh should use the default
+`REA_MCP_TOOL_CATALOG_PROFILE=full`; reconnect after changing it. The
+[FastMCP HTTP trial](#fastmcp-and-unsloth-sse-catalog-limits) below covers
+explicit refreshes; other clients' automatic refresh remains unverified.
+
+## FastMCP and Unsloth SSE catalog limits
+
+If an HTTP client reports `Server-sent event exceeded the 1048576 byte limit`
+during `tools/list`, merge these settings into the **REA server process's**
+environment, then reconnect:
+
+```text
+REA_MCP_INPUT_SCHEMA_PROFILE=compact
+REA_MCP_OUTPUT_SCHEMA_PROFILE=compact
+REA_MCP_TOOL_CATALOG_PROFILE=full
+```
+
+This advertises all tools without requiring catalog refresh. Compact output
+schemas widen client-side validation; REA still validates complete results
+against the canonical contracts. See [output schemas](mcp-contracts.md#output-schemas).
+
+On main `3e0599a94`, a real FastMCP 4.1.6 / Python MCP 2.3.0 HTTP client with
+the default 1 MiB SSE event limit rejected the 4,108,975-byte full catalog.
+The settings above delivered all 240 tools in 611,305 bytes and a
+`binary_session` call succeeded. These are measured SSE response sizes for
+that catalog, not a size guarantee for future catalogs or other profiles.
+
+For a client that refreshes tools, combine `hot-cold` with the compact schema
+settings to reduce initial context further: the same trial delivered six
+initial tools in 33,903 bytes, then explicitly refreshed through 34 loaded
+tools. Hot/cold alone later exceeded the SSE limit during refresh. Follow
+the [refresh requirements](#hotcold-catalogs).
+
+The Unsloth report [#9093](https://github.com/morluto/rea/issues/9093) fails at
+catalog delivery; the Unsloth application itself was not exercised in this
+trial. Schema compaction does not bound analysis results. Continue to use
+summary/detail selection and tool-specific paging for larger results; client
+receive limits and full Evidence access still apply.
 
 ## Fiddler Everywhere alongside REA
 
@@ -130,7 +228,7 @@ in the file the installed app reads:
 
 - Without Claude Desktop's MSIX package storage, setup uses
   `%APPDATA%\Claude\claude_desktop_config.json`.
-- The MSIX build (package family `Claude_pzs8sxrjxfjjc`, installed under
+- The legacy MSIX storage layout (package family `Claude_pzs8sxrjxfjjc`, installed under
   `C:\Program Files\WindowsApps\Claude_<version>_x64__pzs8sxrjxfjjc`)
   virtualizes AppData writes. Once it has saved its configuration, it reads
   the package-private copy
@@ -139,6 +237,11 @@ in the file the installed app reads:
   private copy when it exists. Before the package has saved one, they use the
   `%APPDATA%` file it still reads; with neither file, setup creates the
   private copy.
+- If `%LOCALAPPDATA%\Claude-Data\claude_pzs8sxrjxfjjc` exists, setup, doctor
+  and uninstall report an unresolved location. Migrated MSIX installations
+  have been observed reading `claude_desktop_config.json` in this directory.
+  Quit Claude Desktop and verify its active configuration before registering
+  manually. See [#8968](https://github.com/morluto/rea/issues/8968).
 - If `%LOCALAPPDATA%\Packages` holds a `Claude_<publisher ID>` package from
   another publisher, an `AnthropicPBC.Claude_<publisher ID>` package, or cannot
   be read, REA cannot establish which file Claude
@@ -277,7 +380,7 @@ This headroom is a practical default, not a guarantee for every analysis
 duration. Setup preserves positive timeout values already in the `rea` entry.
 
 Setup also forwards explicitly selected input/output schema profiles,
-`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, provider paths and supported Ghidra, JADX and Kuna
+`REA_MCP_MAX_RESPONSE_BYTES`, `REA_MCP_MAX_INPUT_ELEMENTS`, the Windows ChangeTime settle settings `REA_WINDOWS_CHANGE_TIME_DRIFT_MS`, `REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS`, and `REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS`, provider paths and supported Ghidra, JADX and Kuna
 settings. It also forwards explicit executable and resource selections for ADB,
 apktool, packet capture, GDB/Rizin/objdump, Cutter, WABT, Wakaru, firmware and
 signal tools, browser inspection, and pwntools/pwndbg. This includes their
@@ -615,6 +718,18 @@ The user-level MCP paths follow the editor's VS Code layout. Trae's official
 documentation describes the raw JSON editor without specifying those paths;
 loading this registration in Trae remains unverified.
 
+## CodeBuddy
+
+For CodeBuddy, setup writes `mcpServers.rea` into the global
+`~/.codebuddy/mcp.json` (a standard `mcpServers` JSON file at the user home
+root on every platform). Entries carry `command`, `args`, and `env`; stdio is
+the default transport. CodeBuddy discovers personal skills from
+`~/.codebuddy/skills`, so setup installs its skill copy there.
+
+The global MCP path is a plain JSON file; setup preserves every other server
+and top-level key when it upserts `rea`. Loading this registration, the
+bundled skill, and real REA tool calls through CodeBuddy are verified.
+
 ## WorkBuddy
 
 For [WorkBuddy](https://www.workbuddy.cn/docs/workbuddy/From-Beginner-to-Expert-Guide/Function-Description/MCP-Guide), setup writes `mcpServers.rea` into the
@@ -732,6 +847,103 @@ using the installed Harness and a local model fixture. This establishes the
 Harness integration, with live DeepSeek API compatibility remaining unverified.
 See the [Harness MCP guide](https://github.com/deepseek-ai/deepseek-harness/blob/639ed015397290b3745d163aafe02ffee4aa3f84/packages/mcp/mcp-client/README.md)
 for its native configuration contract.
+
+<a id="llamacpp"></a>
+
+## llama.cpp
+
+Use REA from llama.cpp's local Web UI through `llama-server`'s native stdio
+MCP support. REA supplies the analysis tools; llama.cpp runs your chosen model.
+It is not a replacement for a native analysis provider such as Ghidra or Hopper.
+
+Install REA in a persistent location so the configuration below can use a stable
+entrypoint. For a project-local installation, run this in your chosen directory:
+
+```bash
+npm install --save-exact rea-agents
+```
+
+Or install it globally:
+
+```bash
+npm install --global rea-agents
+```
+
+See [package runners and global installation](installation.md#package-runners-and-global-installation)
+for runtime requirements and installation options. Running `npx rea-agents setup`
+alone does not create either installation; do not use its temporary package-cache path.
+Use a llama.cpp build whose `llama-server --help` lists
+`--mcp-servers-config`; older builds without that option cannot use this route.
+The configuration below uses an already installed REA package, so tool discovery
+does not depend on downloading an npm package during server startup.
+
+Save a JSON file, for example `rea-mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "rea": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/rea-agents/scripts/rea.mjs", "mcp"],
+      "timeout_ms": 450000
+    }
+  }
+}
+```
+
+Replace both paths with your installation's actual paths. For a project-local npm
+installation, run `npm root` in that project; the script is under
+`$(npm root)/rea-agents/scripts/rea.mjs`. For a global installation, use
+`$(npm root -g)/rea-agents/scripts/rea.mjs` instead. Write the resulting absolute
+paths as JSON strings; llama-server does not expand shell expressions there.
+On Windows, use forward slashes, such as `"C:/Program Files/nodejs/node.exe"`,
+or double each backslash, as in `"C:\\Program Files\\nodejs\\node.exe"`.
+Apply this to both `command` and the script path in `args`. Single backslashes
+can make the JSON invalid or change the path through escape sequences.
+`node -p "JSON.stringify(process.execPath)"` prints your current Node.js executable
+as a quoted, escaped JSON string that can be used as the `command` value.
+Use the version supported by REA. Preserve any other
+servers if you are adding REA to an existing configuration. `timeout_ms` is
+llama.cpp's per-tool-call timeout, including cold engine startup. The example
+allows REA's default 330-second Ghidra startup budget plus 120 seconds for the
+operation. Increase it if you configure a longer provider allowance or need more
+operation time; see [provider deadlines](mcp-contracts.md#ghidra-first-query-deadlines-and-recovery).
+
+Start the server with your own tool-capable GGUF model:
+
+```bash
+llama-server -m /absolute/path/to/model.gguf \
+  --host 127.0.0.1 --port 8080 --parallel 1 --ctx-size 16384 \
+  --mcp-servers-config /absolute/path/to/rea-mcp.json
+```
+
+Open `http://127.0.0.1:8080`. REA tools appear with a `rea_` prefix, such as
+`rea_analyze_javascript_application`. Select only the tools needed for the
+conversation in the Web UI's tool settings: discovery of REA's complete catalog
+does not mean that its schemas and results fit the selected model's context.
+Choose a context size your model and machine support. For a first check, enable
+`rea_analyze_javascript_application` and ask it to inspect a small JavaScript
+directory you own. This task needs no native analysis engine. Inspect the
+returned Evidence and limitations rather than relying only on the model's summary.
+
+If the model prints a proposed call as ordinary text, REA has not been called.
+Check the selected model and its chat template against llama.cpp's function-calling
+guidance. A working MCP connection does not establish reliable tool selection by
+every model.
+
+`--tools all` is not needed; it enables llama.cpp's separate built-in tools.
+`--ui-mcp-proxy` is also not needed for this server-side stdio connection.
+REA's setup wizard does not register llama.cpp automatically; pass the JSON
+file to llama-server explicitly and restart it after changes.
+
+The MCP child runs with llama-server's permissions. Loopback binding does not
+sandbox it or make every REA operation read-only. Enable only trusted commands,
+keep the server local, and select targets and operations you are authorized to use.
+
+See llama.cpp's [MCP server configuration](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md#mcp-servers)
+and [function-calling guidance](https://github.com/ggml-org/llama.cpp/blob/master/docs/function-calling.md).
+The [verification record](client-verification.md#llamacpp) distinguishes connection
+checks from model behavior and lists the tested versions.
 
 ## Other client settings
 

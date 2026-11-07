@@ -475,6 +475,109 @@ parent envelope, capture and examined records are deduplicated onto the view.
 Portable captures must retain unique ordinals within their declared total;
 caller-selected subsets can preserve any requested ordinal order.
 
+## Compare static JavaScript endpoints with HAR
+
+`compare_static_and_observed_endpoints` answers which supplied static network
+references correspond to captured request groups. Supply `application` from
+`analyze_javascript_application` and `capture` from `inspect_web_network_capture`
+with HAR format. Both accept inline Evidence or exact retained references.
+For normal MCP investigations, request producer summaries, then pass their
+`parent_evidence_id` values; large inline graphs can exceed transport admission.
+Existing Evidence bundles can instead be loaded with `import_evidence_bundle`.
+
+```json
+{
+  "application": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<application-digest>"
+  },
+  "capture": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<capture-digest>"
+  },
+  "origin": "https://api.example.test"
+}
+```
+
+MCP defaults to a summary with source identities, counts, source coverage and
+the complete comparison's `parent_evidence_id`. Select `detail: "complete"` for
+all facts. An optional `view` can return a selected `endpoint-comparison` page
+in this initial call and takes precedence over `detail`; it uses the same
+projector as later retained queries. This answers a selected question without
+an extra call or requiring the client's generic view-output schema preparation.
+To read another page, call `inspect_analysis_view` on the retained parent:
+
+```json
+{
+  "source": {
+    "kind": "retained-evidence",
+    "evidence_id": "ev_<comparison-digest>"
+  },
+  "view": {
+    "kind": "endpoint-comparison",
+    "collection": "static-endpoints",
+    "statuses": ["unknown"],
+    "fields": ["path", "status", "reason"],
+    "offset": 0,
+    "limit": 32
+  }
+}
+```
+
+Collections are `static-endpoints`, `observed-groups` and `matches`. Exact
+`endpoint_ids` or `group_ids` select batches where applicable. Fields are
+collection-specific; row identities always remain. Empty filters select none.
+Pages classify the complete source pair before filtering, and page exhaustion
+never upgrades source coverage. Observed-group pages omit potentially large
+`record_ordinals` by default; explicitly select that field when needed.
+
+Each static network **observation** is matched, not observed in this capture,
+or unknown. Each unmatched observed group is reported separately. Match rows
+link stable endpoint/group identities, identify `exact` or inferred
+`template-compatible` basis, and name one `supporting_record_ordinal`. An exact
+witness identifies a real whole path within the group; other group members can
+have different literal paths. Segment-value combinations are never evidence
+that a whole path occurred. Group templates use the existing API-surface owner.
+
+`origin` is a caller assertion for root-relative targets, never a captured base
+URL. Without it those targets remain unknown. Candidate values, unconfirmed
+static observations, unresolved
+expressions, non-URL GraphQL/tRPC operation names, non-HTTP targets and spellings
+requiring URL normalization remain unknown. Known method spellings and the
+EventSource/sendBeacon API definitions constrain matching; unavailable methods
+stay null and multiple possible methods remain ambiguous. Fetch options and
+XHR method arguments are not recovered by this comparison.
+If multiple observed methods prevent pairing, those groups also stay unknown
+unless another static observation establishes a match; they do not count as
+observed-without-static-match.
+
+Not-observed requires an exercised origin, every parent record retained, and
+no excluded request lines. It never means hidden, unused or inaccessible.
+Source-specific limitations remain accessible on the linked source Evidence;
+the comparison reports their counts without copying unrelated source text.
+Query strings, fragments, headers and bodies are not projected. Sensitive-parent
+refusals are the same as API-surface. Sources, grouping, whole-path witnesses
+and derived rows share its 96 MiB representation allowance. No URL is contacted,
+and this workflow does not reopen targets or rerun static analysis.
+
+CLI uses the same comparison and standard Evidence publication. Put
+`application`, `capture` and optional `origin` in the input JSON; delivery uses
+flags. Complete detail is the CLI default. A summary requires a bundle so all
+facts and their source closure survive process exit:
+
+```bash
+rea compare-static-and-observed-endpoints /evidence/compare-input.json \
+  --detail summary --evidence_output /evidence/comparison.json --json
+```
+
+Add `--view '{"kind":"endpoint-comparison","collection":"static-endpoints","statuses":["not-observed-in-capture"],"fields":["path","status","reason"]}'`
+to return that selection immediately. CLI views require summary detail and a
+bundle, preserving complete Evidence after exit.
+
+CLI input can use retained IDs with `--evidence-bundle`. Later
+`inspect-analysis-view` calls can use an `evidence-file` source pointing at the
+saved bundle and the summary's complete parent ID.
+
 ## Environment manifest
 
 Pass retained HAR Evidence to `inspect_analysis_view` with
