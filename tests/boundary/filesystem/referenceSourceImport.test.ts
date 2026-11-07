@@ -7,6 +7,7 @@ import {
   realpath,
   rm,
   symlink,
+  truncate,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -32,6 +33,10 @@ import { createHistoricalSourceManifest } from "../../../src/domain/referenceSou
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { RegularFileCleanupFailure } from "../../../src/filesystem/OwnedRegularFile.js";
+import {
+  REFERENCE_SOURCE_MAX_BYTES,
+  REFERENCE_SOURCE_METADATA_MAX_BYTES,
+} from "../../../src/reference/ReferenceSourceLimits.js";
 
 const fixture = async (parent: string, name: string): Promise<string> => {
   const root = join(parent, name);
@@ -61,6 +66,59 @@ const importTree = (
   });
 
 describe("reference source import projections", () => {
+  it("rejects a sparse source file before reading it", async () => {
+    const root = await createTestTempDirectory("rea-reference-source-limit-");
+    const path = join(root, "large.js");
+    await writeFile(path, "");
+    await truncate(path, REFERENCE_SOURCE_MAX_BYTES + 1);
+
+    const result = await importTree(root);
+
+    if (result.ok) throw new Error("Oversized source import succeeded");
+    expect(result.error).toMatchObject({
+      code: "limit",
+      partial: {
+        bytesRead: 0,
+        entries: [{ path: "large.js", code: "limit" }],
+      },
+    });
+  });
+
+  it("stops when several files exceed the retained source budget", async () => {
+    const root = await createTestTempDirectory("rea-reference-total-limit-");
+    for (const name of ["a.js", "b.js"]) {
+      const path = join(root, name);
+      await writeFile(path, "");
+      await truncate(path, REFERENCE_SOURCE_MAX_BYTES / 2 + 1);
+    }
+
+    const result = await importTree(root);
+
+    if (result.ok) throw new Error("Oversized source tree was accepted");
+    expect(result.error).toMatchObject({
+      code: "limit",
+      partial: { bytesRead: REFERENCE_SOURCE_MAX_BYTES / 2 + 1 },
+    });
+    expect(result.error.partial?.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ status: "failed", code: "limit" }),
+      ]),
+    );
+  });
+
+  it("rejects an oversized ignore policy before parsing it", async () => {
+    const root = await createTestTempDirectory("rea-reference-ignore-limit-");
+    const path = join(root, ".gitignore");
+    await writeFile(path, "");
+    await truncate(path, REFERENCE_SOURCE_METADATA_MAX_BYTES + 1);
+
+    const result = await importTree(root);
+
+    if (result.ok) throw new Error("Oversized ignore policy was accepted");
+    expect(result.error.code).toBe("limit");
+    expect(result.error.message).toContain(".gitignore");
+  });
+
   it.skipIf(process.platform === "win32")(
     "imports the physical source selected through a symlink and ..",
     async () => {

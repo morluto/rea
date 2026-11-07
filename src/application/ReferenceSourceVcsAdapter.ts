@@ -6,8 +6,15 @@ import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.j
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFile, retryRegularFileCleanup } from "./RegularFileRead.js";
-import { referenceSourceResourceFailure } from "../reference/ReferenceSourceReaderErrors.js";
+import {
+  failure,
+  referenceSourceResourceFailure,
+} from "../reference/ReferenceSourceReaderErrors.js";
 import type { ReferenceSourceReaderError } from "../reference/ReferenceSourceReaderTypes.js";
+import {
+  REFERENCE_SOURCE_METADATA_MAX_BYTES,
+  ReferenceSourceMetadataLimitError,
+} from "../reference/ReferenceSourceLimits.js";
 
 export type ReferenceSourceVcsInfo =
   | {
@@ -33,6 +40,8 @@ export const readReferenceSourceVcs = async (
       try {
         return ok(await resolveSourceVcs(root, resources, signal));
       } catch (cause: unknown) {
+        if (cause instanceof ReferenceSourceMetadataLimitError)
+          return err({ ...failure("limit", cause.message), cause });
         if (cause instanceof ArtifactReaderFailure) throw cause;
         return ok(unknownVcs());
       }
@@ -60,7 +69,13 @@ const resolveSourceVcs = async (
   const cleanupFailures: ArtifactReaderFailure[] = [];
   const readMetadataBytes = async (path: string): Promise<Buffer> => {
     try {
-      return await readRegularFile(path, { signal });
+      return await readRegularFile(path, {
+        signal,
+        admit: (state) => {
+          if (state.size > REFERENCE_SOURCE_METADATA_MAX_BYTES)
+            throw new ReferenceSourceMetadataLimitError(path);
+        },
+      });
     } catch (cause: unknown) {
       if (signal?.aborted === true && cause === signal.reason) throw cause;
       if (!(cause instanceof RegularFileCleanupFailure)) throw cause;

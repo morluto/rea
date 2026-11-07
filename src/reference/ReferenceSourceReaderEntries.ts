@@ -21,6 +21,7 @@ import {
 import { isPathWithinRoot } from "../domain/localPath.js";
 import { pathFromRoot } from "./ReferenceSourceReaderPaths.js";
 import { readStableFile } from "./ReferenceSourceReaderFile.js";
+import { REFERENCE_SOURCE_MAX_BYTES } from "./ReferenceSourceLimits.js";
 import { decodeDirectoryEntryName } from "../filesystem/decodeDirectoryEntryName.js";
 import {
   isAborted,
@@ -345,6 +346,13 @@ const processFileEntry = async (
   path: string,
   metadata: BigIntStats,
 ): Promise<ReferenceSourceResult<undefined>> => {
+  if (metadata.size > BigInt(REFERENCE_SOURCE_MAX_BYTES - state.bytesRead)) {
+    const message = `Reference source exceeds the ${String(REFERENCE_SOURCE_MAX_BYTES)}-byte retained source budget at ${path}`;
+    state.entries.push(
+      entryFailure(path, "file", "limit", message, safeSize(metadata.size)),
+    );
+    return err(failure("limit", message));
+  }
   const result = await readStableFile({
     resources: state.resources,
     root: state.root,
