@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { relationshipCoverageLimitations } from "./relationshipCoverage.js";
+import {
+  combineRelationshipDiscovery,
+  relationshipCoverageLimitations,
+  type RelationshipDiscoveryStatus,
+} from "./relationshipCoverage.js";
 import {
   callPathInputSchema,
   callPathResultSchema,
@@ -79,6 +83,7 @@ interface SearchState {
    */
   readonly explored: CallPathResult["explored"];
   readonly exhaustive: boolean;
+  readonly discovery: RelationshipDiscoveryStatus;
   readonly limitations: readonly string[];
 }
 
@@ -126,7 +131,16 @@ export const buildCallPath = (input: unknown): CallPathResult => {
     evidence_links: uniqueEvidence(snapshots.values()),
     limitations: [...new Set(limitations)].sort(compareUnicodeCodePoints),
   };
-  const searchScope = { exhaustive };
+  const searchScope = {
+    exhaustive,
+    graph: "supplied_evidence" as const,
+    discovery: search.discovery,
+    observed_status: found
+      ? ("found" as const)
+      : exhaustive
+        ? ("not_found" as const)
+        : ("unknown" as const),
+  };
   if (found)
     return callPathResultSchema.parse({
       ...resultContext,
@@ -137,7 +151,8 @@ export const buildCallPath = (input: unknown): CallPathResult => {
     });
   return callPathResultSchema.parse({
     ...resultContext,
-    status: exhaustive ? "not_found" : "unknown",
+    status:
+      exhaustive && search.discovery === "complete" ? "not_found" : "unknown",
     shortest_hops: null,
     search_scope: searchScope,
     paths: [],
@@ -259,6 +274,7 @@ const inspectSearch = ({
   const queue = [start];
   const limitations: string[] = [];
   let incompleteExpandedCoverage = false;
+  let discovery: RelationshipDiscoveryStatus = "complete";
   let expandedEdges = 0;
   let depthReached = 0;
   for (let index = 0; index < queue.length; index += 1) {
@@ -282,6 +298,16 @@ const inspectSearch = ({
       // cannot add a path to the goal, so its dossier limits are contextual
       // but do not make the searched start-to-goal closure incomplete.
       if (node === goal) continue;
+      const discoveryFact = coverage?.discovery?.callees;
+      if (
+        discoveryFact !== undefined &&
+        discoveryFact.status !== "complete" &&
+        discoveryFact.reason !== undefined
+      )
+        limitations.push(
+          `Call discovery for ${node} is ${discoveryFact.status}: ${discoveryFact.reason}`,
+        );
+      discovery = combineRelationshipDiscovery(discovery, coverage, "callees");
       if (snapshot.unresolvedCallCaveats.length > 0)
         incompleteExpandedCoverage = true;
       const callees = snapshot.dossier.facet_availability?.callees;
@@ -306,6 +332,7 @@ const inspectSearch = ({
       continue;
     }
     if (snapshot === undefined) {
+      discovery = combineRelationshipDiscovery(discovery, null, "callees");
       limitations.push(
         `No analyze_function Evidence covers reachable function ${node}`,
       );
@@ -331,6 +358,7 @@ const inspectSearch = ({
       depth_reached: depthReached,
     },
     exhaustive: !incompleteExpandedCoverage,
+    discovery,
     limitations,
   };
 };

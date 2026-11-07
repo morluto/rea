@@ -108,6 +108,13 @@ export const binarySessionStatus = async ({
             provider: providerSummary(route.binding.identity),
             selection_source: route.binding.selectionSource,
             analysis_profile: structuredClone(route.binding.profile),
+            ...(route.binding.releaseVerification === undefined
+              ? {}
+              : {
+                  release_verification: structuredClone(
+                    route.binding.releaseVerification,
+                  ),
+                }),
           };
   const analysisProviderCandidates =
     bundleResourceRoot !== undefined
@@ -417,6 +424,8 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.nativeValueFlow ?? null,
+        descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
         status.availability_code,
@@ -429,6 +438,12 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.nativeValueFlow === undefined
+            ? {}
+            : { native_value_flow: descriptor.nativeValueFlow }),
+          ...(descriptor.independentDecompile === undefined
+            ? {}
+            : { independent_decompile: descriptor.independentDecompile }),
           ...status,
         });
       else group.operations.push(descriptor.operation);

@@ -10,8 +10,8 @@ import {
 import { dirname, join } from "node:path";
 import { expect, it } from "vitest";
 
-import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import {
+  currentClientRegistrationCommand,
   classifyClientRegistrationCommand,
   registrationRuntimePath,
 } from "../../../src/application/ClientRegistrationIdentity.js";
