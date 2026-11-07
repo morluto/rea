@@ -291,6 +291,7 @@ def _exact_number(text: str):
 _INEXACT = object()
 _LEVEL_END = object()
 _INVALID_JSON = object()
+_TOO_DEEP = object()
 JSON_ATOMS = {"true": True, "false": False, "null": None}
 
 
@@ -338,12 +339,16 @@ def _deeper_than(root, limit: int) -> bool:
 
 def _read_json(text: str, build: bool = True):
     """One JSON value, or _INVALID_JSON, read without recursion so duplicate keys settle before depth is checked.
-    With build=False, only syntax is checked: one byte per open container and one decoded string at a time."""
+    Descendants past the view's depth are represented by _TOO_DEEP, not allocated. If a later duplicate replaces
+    them, the retained value can still read. With build=False, only syntax is checked."""
     containers, expect, empty, at = bytearray(), "value", False, 0
     values, keys, root = [], [], _INVALID_JSON
 
     def keep(value) -> None:
         nonlocal root
+        # One witness is enough to refuse a nonempty container at the depth boundary.
+        if values and len(containers) > MAX_JSON_VIEW_DEPTH and values[-1]:
+            return
         if not values:
             root = value
         elif containers[-1] == ord("["):
@@ -355,24 +360,26 @@ def _read_json(text: str, build: bool = True):
         token = JSON_TOKEN.match(text, at)
         if token is None:
             break
-        kind, at = token.lastindex, token.end()
+        kind, at, depth = token.lastindex, token.end(), len(containers)
         if kind == 5:
             try:
                 value, at = json.decoder.scanstring(text, at)
             except ValueError:
                 return _INVALID_JSON
         if kind == 1 and expect == "value":
-            if build:
+            if build and depth <= MAX_JSON_VIEW_DEPTH:
                 value = [] if text[at - 1] == "[" else {}
                 keep(value)
                 values.append(value)
                 keys.append(None)
+            elif build and depth == MAX_JSON_VIEW_DEPTH + 1:
+                keep(_TOO_DEEP)
             containers.append(ord(text[at - 1]))
             expect, empty = ("value" if text[at - 1] == "[" else "key"), True
         # A closing bracket's code is its opening's plus two.
         elif kind == 2 and (expect == "after" or empty) and containers and containers[-1] == ord(text[at - 1]) - 2:
             containers.pop()
-            if build:
+            if build and depth <= MAX_JSON_VIEW_DEPTH + 1:
                 values.pop()
                 keys.pop()
             expect, empty = "after", False
@@ -381,11 +388,13 @@ def _read_json(text: str, build: bool = True):
         elif kind == 4 and expect == "colon":
             expect = "value"
         elif kind >= 5 and (expect == "value" or (kind == 5 and expect == "key")):
-            if build:
+            if build and depth <= MAX_JSON_VIEW_DEPTH + 1:
                 if expect == "key":
                     keys[-1] = value
                 else:
-                    if kind == 6:
+                    if depth > MAX_JSON_VIEW_DEPTH:
+                        value = _TOO_DEEP
+                    elif kind == 6:
                         value = JSON_ATOMS.get(token[6], _INVALID_JSON)
                         if value is _INVALID_JSON:
                             value = _number_or_mark(token[6])
