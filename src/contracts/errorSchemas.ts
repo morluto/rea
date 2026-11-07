@@ -36,6 +36,10 @@ const generic = <Code extends string>(code: Code) =>
 
 /** The canonical invalid-input projection, also used for facet-local refusals. */
 export const analysisInputErrorProjectionSchema = generic("invalid_request");
+/** The canonical resource refusal, including its reported limits and recovery. */
+export const analysisResourceErrorProjectionSchema = generic(
+  "resource_constraint",
+);
 
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
@@ -47,7 +51,7 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("unsupported_target"),
   generic("provider_unavailable"),
   generic("provider_timeout"),
-  generic("resource_constraint"),
+  analysisResourceErrorProjectionSchema,
   generic("cancelled"),
   z
     .object({

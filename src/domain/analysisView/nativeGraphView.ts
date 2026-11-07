@@ -18,8 +18,10 @@ const referenceCoverage = (
     source.diagnostics === undefined
       ? {}
       : { diagnostic_ids: source.diagnostics.map(intern) };
+  const discovery =
+    source.discovery === undefined ? {} : { discovery: source.discovery };
   if (source.status === "complete")
-    return { status: "complete", ...diagnostic };
+    return { status: "complete", ...diagnostic, ...discovery };
   const directions =
     source.limited_directions === undefined
       ? {}
@@ -30,12 +32,14 @@ const referenceCoverage = (
         limitation_ids: source.limitations.map(intern),
         ...directions,
         ...diagnostic,
+        ...discovery,
       }
     : {
         status: "unknown",
         reason_id: intern(source.reason),
         ...directions,
         ...diagnostic,
+        ...discovery,
       };
 };
 

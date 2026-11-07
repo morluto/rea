@@ -10,7 +10,7 @@
 **Ai găsit o funcționalitate care îți place? Înțelege cum funcționează, până la nivel de cod binar.**
 
 [![Versiunea npm](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![Catalogul uneltelor MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![Catalogul uneltelor MCP](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Cerințe Node.js](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#ce-poți-analiza)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![Licența MIT](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -73,7 +73,7 @@ Programul de configurare înregistrează REA în agentul tău și instalează in
 Pe Linux, pornirea Ghidra, JADX și a uneltelor pentru firmware, precum și analiza
 statică JavaScript/Electron necesită un `ps` compatibil cu procps în `PATH`-ul REA,
 pentru a verifica dacă procesele îi aparțin. Pașii de remediere sunt în
-`docs/installation.md`, la secțiunea „Linux owned-process prerequisite”.
+`docs/getting-started/installation.md`, la secțiunea „Linux owned-process prerequisite”.
 
 ### Configurează agentul
 
@@ -88,8 +88,8 @@ serverul MCP REA și instrucțiunile corespunzătoare pentru fluxul de lucru,
 creând copii de siguranță ale configurației existente. Repornește apoi agentul.
 
 Programul de configurare acceptă Claude Code, Codex, Cursor, Gemini CLI, Grok Build și
-[alți agenți](../installation.md#supported-agents). Consultă
-[instalarea și configurarea](../installation.md) pentru configurarea motoarelor
+[alți agenți](../getting-started/installation.md#supported-agents). Consultă
+[instalarea și configurarea](../getting-started/installation.md) pentru configurarea motoarelor
 de analiză și înregistrarea manuală a serverului MCP.
 
 MCP folosește implicit scheme de intrare compacte, pentru a reduce spațiul ocupat
@@ -128,7 +128,7 @@ rea --help
 ```
 
 Pentru analiza nativă, configurează mai întâi un motor de analiză. Consultă
-[ghidul CLI și Evidence](../cli.md) pentru comenzile de analiză nativă,
+[ghidul CLI și Evidence](../getting-started/cli.md) pentru comenzile de analiză nativă,
 selectarea motorului, instantanee și utilizarea în scripturi.
 
 ### Actualizează REA
@@ -186,45 +186,45 @@ testa o implementare. Comenzile CLI folosesc aceleași fluxuri de lucru.
 REA necesită Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) sau 26.12.1+, plus npm.
 Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 
-| Țintă                               | Ce returnează REA                                                                                                             | Cerințe și ghid                                                                                                                        |
-| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Aplicații desktop instalate         | Componente de execuție candidate, fișiere auxiliare, indicii despre componente și următoarele verificări                      | Inspectare integrată a directoarelor și antetelor, cu limite de resurse; [aplicații desktop](../desktop-applications.md)               |
-| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra, IDA sau Kuna; [analiză nativă](../native-investigation.md)                                                             |
-| Structura ELF, offline              | Secțiuni, segmente, simboluri și relocări originale, precum și indicii statice despre mecanismele de protecție                | pwntools furnizat de utilizator, pe Linux x64; [diagnosticarea binarelor](../binary-diagnostics.md)                                    |
-| Fișiere binare Go                   | Versiunea compilatorului încorporată în fișier, modulele, înlocuirile și setările de compilare                                | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; nu necesită instalarea Go                            |
-| Obiecte de cod GPU                  | Ținte CUDA/HIP, parametri și resurse selectate ale kernelurilor GPU, textul PTX păstrat                                       | Inspectare statică integrată a fișierelor ELF/PE/fatbin/CUBIN/PTX; [obiecte de cod GPU](../gpu-code-objects.md)                        |
-| Fișiere de model                    | Metadate GGUF / safetensors, declarații de tensori și totaluri calculate din acestea                                          | Inspectare integrată a antetelor; opțional, hash al întregului fișier; [fișiere de model](../model-artifacts.md)                       |
-| Metadate IL2CPP                     | Imagini de ansambluri din global-metadata.dat al Unity, nume de tipuri și metode și intervale de indici                       | Decodare statică integrată a versiunilor 24, 27, 29, 31 și 39; nu necesită Unity                                                       |
-| Godot PCK                           | Inventarul și extragerea arhivei, informații originale din antet și director și identificatori ai conținutului selectat       | Suport static integrat pentru formatele 2, 3 și 4; nu necesită Godot                                                                   |
-| Fișiere binare Rust                 | Nume, versiuni, surse și relații de dependență ale pachetelor crate încorporate prin cargo-auditable                          | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; [binare Rust](../rust-binaries.md)                   |
-| Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                  |
-| Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                         |
-| Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                             |
-| Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                     |
-| Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                              |
-| Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                |
-| Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                       |
-| Fișiere WASM                        | Validare, secțiuni, forme WAT exacte ale importurilor și exporturilor și cod WAT decodat                                      | WABT 1.0.42 furnizat de utilizator; `inspect_wasm_artifact`                                                                            |
-| Bytecode EVM                        | Selectori de apel, poziții în octeți, argumente și mutabilitate deduse                                                        | Fișier local în format brut sau hexazecimal, pe Linux x64; [ghid EVM offline](../evm-bytecode.md)                                      |
-| Baze de date SQLite                 | Tabele, coloane, indecși, vizualizări, declanșatoare și rânduri selectate din tabele obișnuite                                | Instantaneu local al bazei de date/WAL; Node.js 24.x >=24.15 sau 26+, cu limite SQLite native                                          |
-| Erori fatale Linux înregistrate     | Note brute, registrele și semnalele fiecărui fir înregistrat și, opțional, corespondențe candidate pentru mapările de memorie | pwntools furnizat de utilizator, pe Linux x64; opțional GDB/pwndbg; [erori fatale înregistrate](../recorded-crashes.md)                |
-| JavaScript / Electron               | Module, importuri, hărți de cod sursă, rute, IPC și relații cu extensiile native                                              | Node.js și npm; pe Linux: `ps` compatibil cu procps; [analiza aplicațiilor](../javascript-application-workflows.md)                    |
-| Site-uri web                        | Structura paginilor, scripturi, observații de rețea și capturi de ecran solicitate                                            | Un browser din familia Chrome; [analiză în browser](../browser-observation.md)                                                         |
-| Capturi de rețea salvate            | Cereri, răspunsuri, conținuturi expuse ale mesajelor și pozițiile lor în sursă                                                | HAR sau SAZ din Fiddler Everywhere; mitmdump pe Linux pentru formatul nativ mitmproxy; [ghidul capturilor](../web-network-captures.md) |
-| Ansambluri .NET                     | Metadate, instrucțiuni CIL, dependențe native declarate și comparații între compilări                                         | Fără cerințe suplimentare (doar analiză statică); [ghidul codului gestionat](../managed-code-analysis.md)                              |
-| APK-uri Android                     | Declarații din manifest, clase, metode decompilate și referințe                                                               | JADX fără interfață grafică și un JDK complet, pe Linux/macOS/Windows x64; [ghidul Android](../android-analysis.md)                    |
-| Semnături APK                       | Semnatari v1/v2/v3/v3.1, amprente ale certificatelor, rotația cheilor și consistența internă a hash-urilor                    | Fără cerințe suplimentare (doar analiză statică); `inspect_apk_signature`                                                              |
-| Dispozitive Android                 | Dispozitive, pachete, procese, jurnale, dumpuri, capturi de ecran și transferuri de APK-uri și fișiere                        | adb furnizat de utilizator (emulator sau dispozitiv fizic); [ghidul ADB](../adb-device-analysis.md)                                    |
-| Proiecte JEB                        | Unități de proiect analizate prin motor, hash-uri ale artefactelor și pseudocod pentru tipuri și metode                       | Un client JEB pornit de utilizator, care oferă un server MCP și este selectat prin REA_JEB_MCP_URL; [ghidul JEB](../jeb-analysis.md)   |
-| Resurse Android                     | Manifest decodat, tabele de șiruri de caractere, localizări și informații despre versiune                                     | Program de lansare Apktool furnizat de utilizator; [ghidul resurselor](../apktool-resource-analysis.md)                                |
-| Aplicații Flutter                   | Hash-ul instantaneului Dart, hash-uri ale bibliotecilor pentru fiecare ABI și proveniența compilării motorului                | Fără cerințe suplimentare (parsare statică a APK-ului); [ghidul Flutter](../flutter-analysis.md)                                       |
-| Firmware                            | Regiuni, rezultate ale extragerii și transferul către analiza nativă                                                          | Binwalk / Unblob pe Linux; [ghidul firmware](../firmware-analysis.md)                                                                  |
-| Pachete de rețea înregistrate       | Câmpuri selectate, valori repetate, filtre și reguli decode-as                                                                | Linux: TShark 4.x + prlimit; [ghidul capturilor](../packet-captures.md)                                                                |
-| Rezumate ale traficului de rețea    | Puncte terminale, DNS, TLS SNI, distribuția protocoalelor și cereri HTTP                                                      | tshark și capinfos furnizate de utilizator (verificate pe Linux); [ghidul pcap](../pcap-analysis.md)                                   |
-| Semnale logice înregistrate         | Adnotări ale decodorului, intervale de eșantioane și date de diagnostic                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [înregistrări de semnale](../signal-recordings.md)                                                  |
-| Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../javascript-artifact-reconstruction.md), [aplicații Apple](../apple-application-analysis.md)     |
-| Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../process-capture.md)                                                            |
-| Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                   |
+| Țintă                               | Ce returnează REA                                                                                                             | Cerințe și ghid                                                                                                                                                   |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Aplicații desktop instalate         | Componente de execuție candidate, fișiere auxiliare, indicii despre componente și următoarele verificări                      | Inspectare integrată a directoarelor și antetelor, cu limite de resurse; [aplicații desktop](../desktop-applications.md)                                          |
+| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra, IDA sau Kuna; [analiză nativă](../guides/native/native-investigation.md)                                                                          |
+| Structura ELF, offline              | Secțiuni, segmente, simboluri și relocări originale, precum și indicii statice despre mecanismele de protecție                | pwntools furnizat de utilizator, pe Linux x64; [diagnosticarea binarelor](../guides/native/binary-diagnostics.md)                                                 |
+| Fișiere binare Go                   | Versiunea compilatorului încorporată în fișier, modulele, înlocuirile și setările de compilare                                | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; nu necesită instalarea Go                                                       |
+| Obiecte de cod GPU                  | Ținte CUDA/HIP, parametri și resurse selectate ale kernelurilor GPU, textul PTX păstrat                                       | Inspectare statică integrată a fișierelor ELF/PE/fatbin/CUBIN/PTX; [obiecte de cod GPU](../gpu-code-objects.md)                                                   |
+| Fișiere de model                    | Metadate GGUF / safetensors, declarații de tensori și totaluri calculate din acestea                                          | Inspectare integrată a antetelor; opțional, hash al întregului fișier; [fișiere de model](../model-artifacts.md)                                                  |
+| Metadate IL2CPP                     | Imagini de ansambluri din global-metadata.dat al Unity, nume de tipuri și metode și intervale de indici                       | Decodare statică integrată a versiunilor 24, 27, 29, 31 și 39; nu necesită Unity                                                                                  |
+| Godot PCK                           | Inventarul și extragerea arhivei, informații originale din antet și director și identificatori ai conținutului selectat       | Suport static integrat pentru formatele 2, 3 și 4; nu necesită Godot                                                                                              |
+| Fișiere binare Rust                 | Nume, versiuni, surse și relații de dependență ale pachetelor crate încorporate prin cargo-auditable                          | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; [binare Rust](../rust-binaries.md)                                              |
+| Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                                             |
+| Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                                                    |
+| Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                                                        |
+| Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                                                |
+| Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
+| Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                                           |
+| Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                                                  |
+| Fișiere WASM                        | Validare, secțiuni, forme WAT exacte ale importurilor și exporturilor și cod WAT decodat                                      | WABT 1.0.42 furnizat de utilizator; `inspect_wasm_artifact`                                                                                                       |
+| Bytecode EVM                        | Selectori de apel, poziții în octeți, argumente și mutabilitate deduse                                                        | Fișier local în format brut sau hexazecimal, pe Linux x64; [ghid EVM offline](../guides/evm/evm-bytecode.md)                                                      |
+| Baze de date SQLite                 | Tabele, coloane, indecși, vizualizări, declanșatoare și rânduri selectate din tabele obișnuite                                | Instantaneu local al bazei de date/WAL; Node.js 24.x >=24.15 sau 26+, cu limite SQLite native                                                                     |
+| Erori fatale Linux înregistrate     | Note brute, registrele și semnalele fiecărui fir înregistrat și, opțional, corespondențe candidate pentru mapările de memorie | pwntools furnizat de utilizator, pe Linux x64; opțional GDB/pwndbg; [erori fatale înregistrate](../guides/native/recorded-crashes.md)                             |
+| JavaScript / Electron               | Module, importuri, hărți de cod sursă, rute, IPC și relații cu extensiile native                                              | Node.js și npm; pe Linux: `ps` compatibil cu procps; [analiza aplicațiilor](../guides/javascript/javascript-application-workflows.md)                             |
+| Site-uri web                        | Structura paginilor, scripturi, observații de rețea și capturi de ecran solicitate                                            | Un browser din familia Chrome; [analiză în browser](../guides/web/browser-observation.md)                                                                         |
+| Capturi de rețea salvate            | Cereri, răspunsuri, conținuturi expuse ale mesajelor și pozițiile lor în sursă                                                | HAR sau SAZ din Fiddler Everywhere; mitmdump pe Linux pentru formatul nativ mitmproxy; [ghidul capturilor](../guides/web/web-network-captures.md)                 |
+| Ansambluri .NET                     | Metadate, instrucțiuni CIL, dependențe native declarate și comparații între compilări                                         | Fără cerințe suplimentare (doar analiză statică); [ghidul codului gestionat](../guides/managed/managed-code-analysis.md)                                          |
+| APK-uri Android                     | Declarații din manifest, clase, metode decompilate și referințe                                                               | JADX fără interfață grafică și un JDK complet, pe Linux/macOS/Windows x64; [ghidul Android](../guides/android/android-analysis.md)                                |
+| Semnături APK                       | Semnatari v1/v2/v3/v3.1, amprente ale certificatelor, rotația cheilor și consistența internă a hash-urilor                    | Fără cerințe suplimentare (doar analiză statică); `inspect_apk_signature`                                                                                         |
+| Dispozitive Android                 | Dispozitive, pachete, procese, jurnale, dumpuri, capturi de ecran și transferuri de APK-uri și fișiere                        | adb furnizat de utilizator (emulator sau dispozitiv fizic); [ghidul ADB](../guides/android/adb-device-analysis.md)                                                |
+| Proiecte JEB                        | Unități de proiect analizate prin motor, hash-uri ale artefactelor și pseudocod pentru tipuri și metode                       | Un client JEB pornit de utilizator, care oferă un server MCP și este selectat prin REA_JEB_MCP_URL; [ghidul JEB](../providers/jeb-analysis.md)                    |
+| Resurse Android                     | Manifest decodat, tabele de șiruri de caractere, localizări și informații despre versiune                                     | Program de lansare Apktool furnizat de utilizator; [ghidul resurselor](../guides/android/apktool-resource-analysis.md)                                            |
+| Aplicații Flutter                   | Hash-ul instantaneului Dart, hash-uri ale bibliotecilor pentru fiecare ABI și proveniența compilării motorului                | Fără cerințe suplimentare (parsare statică a APK-ului); [ghidul Flutter](../guides/android/flutter-analysis.md)                                                   |
+| Firmware                            | Regiuni, rezultate ale extragerii și transferul către analiza nativă                                                          | Binwalk / Unblob pe Linux; [ghidul firmware](../guides/firmware/firmware-analysis.md)                                                                             |
+| Pachete de rețea înregistrate       | Câmpuri selectate, valori repetate, filtre și reguli decode-as                                                                | Linux: TShark 4.x + prlimit; [ghidul capturilor](../guides/data/packet-captures.md)                                                                               |
+| Rezumate ale traficului de rețea    | Puncte terminale, DNS, TLS SNI, distribuția protocoalelor și cereri HTTP                                                      | tshark și capinfos furnizate de utilizator (verificate pe Linux); [ghidul pcap](../guides/data/pcap-analysis.md)                                                  |
+| Semnale logice înregistrate         | Adnotări ale decodorului, intervale de eșantioane și date de diagnostic                                                       | Linux: sigrok-cli 0.7.2 + prlimit; [înregistrări de semnale](../guides/signals/signal-recordings.md)                                                              |
+| Pachete și resurse                  | Inventare de fișiere, hash-uri, fișiere plist, structura pachetelor de aplicație Apple și resurse extrase                     | [Ghidul artefactelor și JavaScript](../guides/javascript/javascript-artifact-reconstruction.md), [aplicații Apple](../guides/apple/apple-application-analysis.md) |
+| Comportamentul proceselor           | Ieșirea în terminal, interacțiuni, observații despre terminarea proceselor și sistemul de fișiere și comparații între rulări  | Linux/macOS cu un PTY nativ; [capturarea proceselor](../guides/runtime/process-capture.md)                                                                        |
+| Executabile PyInstaller             | Membri CArchive, versiunea Python, scripturi de intrare și bytecode extras                                                    | Fără cerințe suplimentare (doar analiză statică); [aplicații Python împachetate](../python-packaged-applications.md)                                              |
 
 Inspectarea statică JavaScript și .NET citește fișierele furnizate fără a rula
 aplicația. Capturarea în timpul execuției rulează ținta selectată sau interacționează
@@ -239,15 +239,15 @@ instalează și nu actualizează niciunul dintre aceste două instrumente.
 <a id="choosing-a-deep-analysis-provider"></a>
 
 Formatele native și platformele acceptate diferă în funcție de motorul de analiză.
-Consultă [configurarea Hopper și Ghidra](../installation.md#hopper),
-[ghidul IDA](../ida-provider.md) (inclusiv o componentă opțională de legătură MCP nativă),
+Consultă [configurarea Hopper și Ghidra](../getting-started/installation.md#hopper),
+[ghidul IDA](../providers/ida-provider.md) (inclusiv o componentă opțională de legătură MCP nativă),
 [ghidul decompilatorului Kuna](../kuna-provider.md) și
-[suportul experimental Ghidra pe Windows](../windows-ghidra-p0.md).
-Ghidra acceptă și [analiza DOS pe 16 biți](../ghidra-dos.md).
+[suportul experimental Ghidra pe Windows](../providers/windows-ghidra-p0.md).
+Ghidra acceptă și [analiza DOS pe 16 biți](../providers/ghidra-dos.md).
 Pentru binare mari, mărește timpul maxim de pornire al motorului cu
 `REA_GHIDRA_STARTUP_TIMEOUT_MS` sau `REA_HOPPER_STARTUP_TIMEOUT_MS`.
-Pentru selectarea motorului, consultă [ghidul CLI](../cli.md#choose-a-provider).
-Verifică [disponibilitatea în versiunile publicate](../installation.md#released-package-and-main)
+Pentru selectarea motorului, consultă [ghidul CLI](../getting-started/cli.md#choose-a-provider).
+Verifică [disponibilitatea în versiunile publicate](../getting-started/installation.md#released-package-and-main)
 pentru funcționalitățile adăugate după cea mai recentă versiune npm.
 
 ## Studii de caz
@@ -339,8 +339,8 @@ REA exportă un mediu executabil cu un test de bază care verifică pornirea și
 <summary><strong>Ce agenți pot folosi REA?</strong></summary>
 
 Orice agent care acceptă servere MCP locale. Programul de configurare pregătește
-[agenții acceptați](../installation.md#supported-agents); pentru ceilalți clienți
-poți folosi [înregistrarea manuală MCP](../installation.md#mcp-registry).
+[agenții acceptați](../getting-started/installation.md#supported-agents); pentru ceilalți clienți
+poți folosi [înregistrarea manuală MCP](../getting-started/installation.md#mcp-registry).
 
 </details>
 
@@ -350,7 +350,7 @@ poți folosi [înregistrarea manuală MCP](../installation.md#mcp-registry).
 Analiza nativă aprofundată folosește unul dintre aceste instrumente. Inspectarea
 statică JavaScript și .NET funcționează fără un motor de analiză nativă.
 Programul de configurare poate instala Hopper după aprobare; pentru Ghidra, IDA și Kuna
-folosește instalările existente. Consultă [configurarea motoarelor de analiză](../installation.md#hopper).
+folosește instalările existente. Consultă [configurarea motoarelor de analiză](../getting-started/installation.md#hopper).
 
 </details>
 
@@ -361,7 +361,7 @@ REA pornește Hopper când o operație are nevoie de el. Pe macOS, un dialog afi
 la prima pornire îți poate cere să alegi modul demonstrativ sau să activezi licența.
 Finalizează acel pas în aceeași sesiune de utilizator înainte de prima operație
 CLI/MCP sau de prima sarcină nesupravegheată. Deschide Hopper manual dacă este nevoie.
-Consultă [pornirea Hopper și depanarea](../installation.md#launcher-paths-and-troubleshooting).
+Consultă [pornirea Hopper și depanarea](../getting-started/installation.md#launcher-paths-and-troubleshooting).
 
 </details>
 
@@ -370,7 +370,7 @@ Consultă [pornirea Hopper și depanarea](../installation.md#launcher-paths-and-
 
 Skill-ul oferă agentului instrucțiuni de investigare. Folosește `npx rea-agents setup`
 pentru a înregistra serverul MCP REA și a instala instrucțiunile corespunzătoare,
-apoi repornește agentul. Consultă [instalarea doar a skill-ului](../installation.md#skill-only-installation).
+apoi repornește agentul. Consultă [instalarea doar a skill-ului](../getting-started/installation.md#skill-only-installation).
 
 </details>
 
@@ -421,12 +421,12 @@ tipul țintei analizate, pașii de reproducere și mesajele de eroare.
 Începe cu [ghidurile practice](https://rea.tools/guides/) de pe site.
 Pentru opțiunile exacte, cerințele preliminare și contractele rezultatelor:
 
-- [Instalare și configurare](../installation.md): înregistrarea agenților, configurarea motoarelor de analiză, actualizări și dezinstalare.
-- [Verificarea pregătirii și depanare](../installation.md#check-readiness-for-your-task): diagnosticarea unui agent sau motor de analiză.
-- [CLI și Evidence](../cli.md): comenzi, selectarea motorului, instantanee, import/export și coduri de ieșire.
-- [Contracte MCP](../mcp-contracts.md) și [prompturi pentru agenți](../mcp-prompts.md): rezultatele uneltelor, sesiuni și investigații ghidate.
-- [Catalogul uneltelor](../mcp-contracts.md#generated-catalog): inventarul generat al uneltelor, motoarelor de analiză și comenzilor CLI.
-- [Plan de dezvoltare](../roadmap.md): lucrări planificate și urmărirea progresului funcționalităților.
+- [Instalare și configurare](../getting-started/installation.md): înregistrarea agenților, configurarea motoarelor de analiză, actualizări și dezinstalare.
+- [Verificarea pregătirii și depanare](../getting-started/installation.md#check-readiness-for-your-task): diagnosticarea unui agent sau motor de analiză.
+- [CLI și Evidence](../getting-started/cli.md): comenzi, selectarea motorului, instantanee, import/export și coduri de ieșire.
+- [Contracte MCP](../reference/mcp-contracts.md) și [prompturi pentru agenți](../getting-started/mcp-prompts.md): rezultatele uneltelor, sesiuni și investigații ghidate.
+- [Catalogul uneltelor](../reference/mcp-contracts.md#generated-catalog): inventarul generat al uneltelor, motoarelor de analiză și comenzilor CLI.
+- [Plan de dezvoltare](../development/roadmap.md): lucrări planificate și urmărirea progresului funcționalităților.
 
 Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
@@ -465,8 +465,8 @@ pentru a raporta o eroare sau a propune o funcționalitate ori
 codul sau documentația.
 
 Consultă [CONTRIBUTING.md](../../CONTRIBUTING.md) pentru pregătirea mediului de dezvoltare
-și verificări, [ghidul de testare](../testing.md) pentru categoriile de verificări
-și [diagrama arhitecturii](../architecture.mermaid) pentru anumite straturi și
+și verificări, [ghidul de testare](../development/testing.md) pentru categoriile de verificări
+și [diagrama arhitecturii](../architecture/architecture.mermaid) pentru anumite straturi și
 relații de dependență.
 
 ## Licență
