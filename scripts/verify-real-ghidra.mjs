@@ -1,5 +1,7 @@
 #!/usr/bin/env node
 
+import { verifyProjectCoverage } from "./verify-real-ghidra-project-coverage.mjs";
+
 import { execFile } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -322,22 +324,7 @@ try {
     customPath === undefined ? null : await verifyTarget(customPath, "custom");
   const projectCoverage =
     !crossFormat && !aarch64JumpTableOnly && process.platform !== "win32"
-      ? JSON.parse(
-          (
-            await exec(
-              process.execPath,
-              [
-                fileURLToPath(
-                  new URL(
-                    "./verify-real-ghidra-project-coverage.mjs",
-                    import.meta.url,
-                  ),
-                ),
-              ],
-              { timeout: 300000, maxBuffer: 16 * 1024 * 1024 },
-            )
-          ).stdout,
-        )
+      ? await verifyProjectCoverage(verifierRun)
       : null;
   report = {
     ok: true,
