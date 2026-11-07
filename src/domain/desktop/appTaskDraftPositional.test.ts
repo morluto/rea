@@ -374,7 +374,7 @@ describe("a container in a list named for its tag", () => {
     const file = xmlDraft(book("376.9"), book("418.65"));
 
     expect(file.suggested.map(pointerOf)).toEqual([
-      "/root/children/[name=Sheets]/children/[name=Sheet][>Name=Budget]/children/[name=Cells]/children/[name=Cell][@Col=3]/children/0",
+      "/root/children/[name=Sheets]/children/[name=Sheet][>Name=Budget]/children/[name=Cells]/children/[name=Cell][@Col=3]",
     ]);
     const another = book("418.65", "<Sheet><Name>Notes</Name><Cells/></Sheet>");
     expect(passing(FILE, xml(another), file.suggested)).toEqual([true]);
