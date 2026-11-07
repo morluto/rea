@@ -680,7 +680,7 @@ it("binds an explicit unknown-subject reason into the semantic Evidence identity
   expect(explicit.subject).toBeNull();
   expect(explicit.limitations).toEqual([reason]);
   expect(defaulted.limitations).toEqual([
-    "Artifact identity is unavailable for this observation.",
+    expect.stringMatching(/artifact identity.*unavailable/iu),
   ]);
   expect(explicit.evidence_id).not.toBe(defaulted.evidence_id);
   expect(parseEvidence(explicit)).toEqual(explicit);

@@ -138,7 +138,7 @@ export const exportBuild = async (
       ),
     );
   try {
-    const bytes = await runRea(
+    const { stdoutBytes: bytes } = await runRea(
       computer,
       [
         "export-desktop-application",

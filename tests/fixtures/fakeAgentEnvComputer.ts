@@ -378,7 +378,14 @@ const execRoute = async (
 ) => {
   const answer = await runExec(exec, token, argv, sessions);
   const { dropReplies } = exec;
-  if (dropReplies === undefined || dropReplies[0] !== argv[4]) return answer;
+  const requested = dropReplies?.[0];
+  const [command, operation] = requested?.split(":") ?? [];
+  if (
+    command !== argv[4] ||
+    (operation !== undefined && !argv[5]?.includes(`\"${operation}\"`))
+  )
+    return answer;
+  if (dropReplies === undefined) return answer;
   dropReplies.shift();
   return LOST;
 };
