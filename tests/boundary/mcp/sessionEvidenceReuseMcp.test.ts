@@ -13,7 +13,7 @@ import {
 } from "../../../src/domain/evidence.js";
 import { ok } from "../../../src/domain/result.js";
 import { createImmutableEvidenceBundle } from "../../../src/domain/evidenceBundle.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../../src/contracts/officialToolContracts.js";
 import { silentLogger } from "../../../src/logger.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import {
@@ -100,7 +100,11 @@ it.each(["normal", "copied", "parameters", "forged", "source"] as const)(
       session.recordEvidence.bind(session),
       createToolResultDelivery(undefined),
     );
-    registerEvidenceTools(server, [toolContract("xrefs")], {
+    const contract = OFFICIAL_TOOL_CONTRACTS.find(
+      ({ name }) => name === "xrefs",
+    );
+    if (contract === undefined) throw new Error("Missing xrefs contract");
+    registerEvidenceTools(server, [contract], {
       logger: silentLogger,
       activeTarget: () => session.activeTarget(),
       recordEvidence: session.recordEvidence.bind(session),

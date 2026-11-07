@@ -319,8 +319,16 @@ it("keeps the stopped trace and source-publication failure together", async () =
     reasons: ["cleanup_incomplete"],
   });
   expect(partial.evidence_links).toContain(source.evidence_id);
-  expect(JSON.stringify(error.details?.secondary_failures)).toContain(
-    "Provider source Evidence requires an explicit retention owner",
+  expect(error.details?.secondary_failures).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        code: "capability_unavailable",
+        details: expect.objectContaining({
+          provider_id: "rea",
+          operation: "trace_native_values",
+        }),
+      }),
+    ]),
   );
 });
 
