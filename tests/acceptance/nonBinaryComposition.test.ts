@@ -241,14 +241,35 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response)).toEqual({ error: result.json });
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "recover_javascript_sources",
-          issues: [{ path: [field], reason: "invalid_format" }],
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: field === "path" ? "path" : "outputDirectory",
+            message: "must be an absolute local filesystem path",
+          }),
+        ],
+      });
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: {
+            operation: "recover_javascript_sources",
+            issues: [
+              {
+                path: [field],
+                reason: "invalid_format",
+                expected: "regex",
+                message: "must be an absolute local filesystem path",
+              },
+            ],
+          },
         },
       });
+      expect(JSON.stringify(result.json)).not.toContain("REA_WAKARU_COMMAND");
+      expect(JSON.stringify(parseMcpToolError(response))).not.toContain(
+        "REA_WAKARU_COMMAND",
+      );
     }
   },
 );

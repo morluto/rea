@@ -3,42 +3,39 @@ import { Ajv2020 } from "ajv/dist/2020.js";
 import type { AnySchema } from "ajv";
 import { expect, it } from "vitest";
 
-import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
+import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
-const TOOLS = [
-  "inspect_apple_ips",
-  "inspect_elf_notes",
-  "inspect_kernel_module",
-  "inspect_byte_entropy",
-  "export_web_scripts",
-  "recover_javascript_sources",
-] as const;
+const CONTRACTS = [
+  ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
+  ...WEB_SCRIPT_TOOL_CONTRACTS,
+  ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+];
+
+const PATH_FIELDS = {
+  inspect_apple_ips: ["path"],
+  inspect_elf_notes: ["path"],
+  inspect_kernel_module: ["path"],
+  inspect_byte_entropy: ["path"],
+  export_web_scripts: ["capture_path", "output_directory"],
+  recover_javascript_sources: ["path", "output_directory", "additional_paths"],
+} as const;
 
 const absoluteFile =
   process.platform === "win32" ? "C:\\sample.bin" : "/tmp/sample.bin";
 const absoluteDirectory = process.platform === "win32" ? "C:\\out" : "/tmp/out";
 
-const relativeInput = (
-  name: (typeof TOOLS)[number],
-): Record<string, unknown> => {
-  if (name === "export_web_scripts")
-    return {
-      capture_path: "sample.bin",
-      output_directory: absoluteDirectory,
-    };
-  if (name === "recover_javascript_sources")
-    return {
-      path: "sample.bin",
-      output_directory: absoluteDirectory,
-      additional_paths: ["sample.bin"],
-    };
-  return { path: "sample.bin" };
+const contractFor = (name: keyof typeof PATH_FIELDS) => {
+  const contract = CONTRACTS.find((candidate) => candidate.name === name);
+  if (contract === undefined) throw new Error(`Missing contract ${name}`);
+  return contract;
 };
 
-const absoluteInput = (
-  name: (typeof TOOLS)[number],
+const validInput = (
+  name: keyof typeof PATH_FIELDS,
 ): Record<string, unknown> => {
   if (name === "export_web_scripts")
     return {
@@ -54,43 +51,67 @@ const absoluteInput = (
   return { path: absoluteFile };
 };
 
-it("rejects a relative sample.bin on tools/list for absolute path tools", async () => {
+const withRelativeField = (
+  name: keyof typeof PATH_FIELDS,
+  field: string,
+): Record<string, unknown> => ({
+  ...validInput(name),
+  [field]: field === "additional_paths" ? ["sample.bin"] : "sample.bin",
+});
+
+it("rejects one relative path field at a time on tools/list", async () => {
   const server = new RequestTrackingMcpServer({
     name: "absolute-path-schema",
     version: "1",
   });
-  for (const name of TOOLS) {
-    const contract = toolContract(name);
+  for (const name of Object.keys(PATH_FIELDS) as (keyof typeof PATH_FIELDS)[]) {
+    const contract = contractFor(name);
     server.registerTool(
       contract.name,
       toolRegistrationOptions(contract),
-      () => ({
-        content: [],
-      }),
+      () => ({ content: [] }),
     );
   }
   const client = new Client({ name: "absolute-path-client", version: "1" });
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const checked: string[] = [];
   try {
     await server.connect(serverTransport);
     await client.connect(clientTransport);
     const listed = await client.listTools();
-    for (const name of TOOLS) {
+    for (const name of Object.keys(
+      PATH_FIELDS,
+    ) as (keyof typeof PATH_FIELDS)[]) {
       const schema = listed.tools.find(
         (tool) => tool.name === name,
       )?.inputSchema;
       expect(schema, name).toBeDefined();
-      if (schema === undefined) continue;
+      if (schema === undefined) throw new Error(`Missing schema ${name}`);
       const validate = ajv.compile(schema as AnySchema);
-      expect(validate(relativeInput(name)), name).toBe(false);
-      expect(validate(absoluteInput(name)), `${name} ${ajv.errorsText()}`).toBe(
-        true,
-      );
+      expect(validate(validInput(name)), `${name} valid`).toBe(true);
+      for (const field of PATH_FIELDS[name]) {
+        expect(
+          validate(withRelativeField(name, field)),
+          `${name}.${field}`,
+        ).toBe(false);
+        checked.push(`${name}.${field}`);
+      }
     }
   } finally {
     await client.close();
     await server.close();
   }
+  expect(checked).toEqual([
+    "inspect_apple_ips.path",
+    "inspect_elf_notes.path",
+    "inspect_kernel_module.path",
+    "inspect_byte_entropy.path",
+    "export_web_scripts.capture_path",
+    "export_web_scripts.output_directory",
+    "recover_javascript_sources.path",
+    "recover_javascript_sources.output_directory",
+    "recover_javascript_sources.additional_paths",
+  ]);
 });

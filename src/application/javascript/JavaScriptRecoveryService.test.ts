@@ -154,7 +154,14 @@ describe("JavaScript recovery workflow", () => {
     expect(invoked).toBe(false);
     if (result.ok) throw new Error("expected invalid path");
     expect(result.error).toMatchObject({
-      issues: [{ path: ["additional_paths"], reason: "invalid_format" }],
+      issues: [
+        {
+          path: ["additional_paths", 0],
+          reason: "invalid_format",
+          expected: "regex",
+          message: "must be an absolute local filesystem path",
+        },
+      ],
     });
   });
 });
