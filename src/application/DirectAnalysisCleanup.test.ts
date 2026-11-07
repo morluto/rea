@@ -16,7 +16,8 @@ it("keeps a one-shot observation without inventing pending cleanup after a compl
     ok({ value: 1 }),
     completed(),
   ) as { code: string; details: Record<string, unknown> };
-  expect(projected.code).not.toBe("cleanup_incomplete");
+  expect(projected.code).toBe("execution_failure");
+  expect(projected.details).toMatchObject({ operation: "diagnostic_export" });
   expect(projected.details).not.toHaveProperty("cleanup");
   expect(projected.details.partial_observation).toEqual({ value: 1 });
 });

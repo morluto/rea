@@ -1065,7 +1065,7 @@ export class GhidraClient {
     this.#runId = this.#options.runId ?? randomUUID();
     if (this.#options.diagnosticsDir !== undefined) {
       try {
-        this.#diagnosticExport = new GhidraDiagnosticExport(
+        this.#diagnosticExport = await GhidraDiagnosticExport.create(
           this.#options.diagnosticsDir,
           this.#token,
           {
@@ -1073,6 +1073,7 @@ export class GhidraClient {
             target_sha256: this.#options.targetSha256,
             profile_digest: this.#options.profileDigest,
           },
+          this.#fileResources,
         );
       } catch (cause: unknown) {
         return this.#startupFailure(
@@ -1084,7 +1085,9 @@ export class GhidraClient {
         );
       }
     }
+    if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     this.#memoryCgroupBaseline = await this.#readMemoryCgroup();
+    if (deadline.signal.aborted) return this.#startupInterrupted(deadline);
     const launched = await this.#options.launcher
       .launch(
         {

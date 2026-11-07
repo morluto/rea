@@ -1,27 +1,42 @@
 import {
-  closeSync,
   mkdtempSync,
-  openSync,
   renameSync,
   rmSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
+import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 
 /** Redacts an exact ASCII credential even when it crosses input chunks. */
 class RedactedFile {
-  readonly #fd: number;
   readonly #token: Buffer;
   #tail = Buffer.alloc(0);
-  constructor(path: string, token: string) {
-    this.#fd = openSync(path, "wx", 0o600);
+  private constructor(
+    private readonly handle: FileHandle,
+    token: string,
+    private readonly resources: ArtifactResourceScope,
+    private readonly path: string,
+  ) {
     this.#token = Buffer.from(token);
+  }
+  static async create(
+    path: string,
+    token: string,
+    resources: ArtifactResourceScope,
+  ): Promise<RedactedFile> {
+    return new RedactedFile(
+      await open(path, "wx", 0o600),
+      token,
+      resources,
+      path,
+    );
   }
   #write(bytes: Buffer): void {
     let offset = 0;
-    while (offset < bytes.length) offset += writeSync(this.#fd, bytes, offset);
+    while (offset < bytes.length)
+      offset += writeSync(this.handle.fd, bytes, offset);
   }
   write(chunk: Buffer): void {
     let input = Buffer.concat([this.#tail, chunk]);
@@ -37,7 +52,8 @@ class RedactedFile {
     this.#write(input.subarray(0, safe));
     this.#tail = Buffer.from(input.subarray(safe));
   }
-  close(complete: boolean): void {
+  async close(complete: boolean): Promise<void> {
+    let writeFailure: { readonly cause: unknown } | undefined;
     try {
       let tail = this.#tail;
       if (!complete) {
@@ -58,9 +74,23 @@ class RedactedFile {
         }
       }
       this.#write(tail);
-    } finally {
-      closeSync(this.#fd);
+    } catch (cause) {
+      writeFailure = { cause };
     }
+    const closed = await this.resources.release({
+      kind: "lease",
+      resource: `Ghidra diagnostic output ${this.path}`,
+      lease: { release: () => this.handle.close() },
+    });
+    if (closed.kind === "failed") {
+      if (writeFailure !== undefined)
+        throw new AggregateError(
+          [writeFailure.cause, closed.cause],
+          `Diagnostic output write failed: ${String(writeFailure.cause)}; close failed: ${String(closed.cause)}`,
+        );
+      throw closed.cause;
+    }
+    if (writeFailure !== undefined) throw writeFailure.cause;
   }
 }
 
@@ -80,37 +110,63 @@ export class GhidraDiagnosticExport {
   };
   readonly #streams: Record<"stdout" | "stderr", RedactedFile>;
   readonly #errors: Partial<Record<"stdout" | "stderr", string>> = {};
-  constructor(
+  #finalizing = false;
+  private constructor(
+    path: string,
+    token: string,
+    identity: { run_id: string; target_sha256: string; profile_digest: string },
+    private readonly resources: ArtifactResourceScope,
+    streams: Record<"stdout" | "stderr", RedactedFile>,
+  ) {
+    this.path = path;
+    this.#token = token;
+    this.#identity = identity;
+    this.#streams = streams;
+  }
+
+  static async create(
     root: string,
     token: string,
     identity: { run_id: string; target_sha256: string; profile_digest: string },
-  ) {
-    this.path = mkdtempSync(join(root, "rea-ghidra-"));
-    this.#token = token;
-    this.#identity = identity;
+    resources: ArtifactResourceScope,
+  ): Promise<GhidraDiagnosticExport> {
+    const path = mkdtempSync(join(root, "rea-ghidra-"));
     let stdout: RedactedFile | undefined;
     try {
-      stdout = new RedactedFile(join(this.path, "stdout.log"), token);
-      this.#streams = {
+      stdout = await RedactedFile.create(
+        join(path, "stdout.log"),
+        token,
+        resources,
+      );
+      const stderr = await RedactedFile.create(
+        join(path, "stderr.log"),
+        token,
+        resources,
+      );
+      return new GhidraDiagnosticExport(path, token, identity, resources, {
         stdout,
-        stderr: new RedactedFile(join(this.path, "stderr.log"), token),
-      };
+        stderr,
+      });
     } catch (cause) {
       try {
-        stdout?.close(false);
+        await stdout?.close(false);
       } catch {
-        /* preserve allocation failure */
+        /* Resource scope retains an unclosed handle. */
       }
       try {
-        rmSync(this.path, { recursive: true });
+        rmSync(path, { recursive: true });
       } catch {
-        /* preserve allocation failure */
+        resources.retain({
+          kind: "lease",
+          resource: `Ghidra diagnostic export directory ${path}`,
+          lease: { release: () => rm(path, { recursive: true, force: true }) },
+        });
       }
       throw cause;
     }
   }
   write(stream: "stdout" | "stderr", chunk: Buffer): void {
-    if (this.#errors[stream] !== undefined) return;
+    if (this.#finalizing || this.#errors[stream] !== undefined) return;
     try {
       this.#streams[stream].write(chunk);
     } catch (cause) {
@@ -121,10 +177,11 @@ export class GhidraDiagnosticExport {
     paths: { ghidraLogPath: string; scriptLogPath: string } | undefined,
     complete: boolean,
   ): Promise<void> {
+    this.#finalizing = true;
     const files: Record<string, FileStatus> = {};
     for (const stream of ["stdout", "stderr"] as const) {
       try {
-        this.#streams[stream].close(
+        await this.#streams[stream].close(
           complete && this.#errors[stream] === undefined,
         );
       } catch (cause) {
@@ -148,7 +205,11 @@ export class GhidraDiagnosticExport {
       let output: RedactedFile | undefined;
       try {
         input = await open(source, "r");
-        output = new RedactedFile(join(this.path, `${name}.log`), this.#token);
+        output = await RedactedFile.create(
+          join(this.path, `${name}.log`),
+          this.#token,
+          this.resources,
+        );
         // Each await yields the event loop between 64 KiB chunks.
         // ponytail: writes stay synchronous (one chunk each); a queued async
         // writer only if a slow destination is observed.
@@ -159,12 +220,13 @@ export class GhidraDiagnosticExport {
           0
         )
           output.write(chunk.subarray(0, count));
-        output.close(true);
+        const finished = output;
         output = undefined;
+        await finished.close(true);
         files[name] = { status: "captured" };
       } catch (cause) {
         try {
-          output?.close(false);
+          await output?.close(false);
         } catch {
           /* preserve original error */
         }
@@ -175,12 +237,23 @@ export class GhidraDiagnosticExport {
           ? { status: "unavailable" }
           : { status: "error", reason: String(cause) };
       } finally {
-        // ponytail: a failed close is reported, not retried; a read-only
-        // descriptor close failing is rare and a retry rarely recovers it.
-        try {
-          await input?.close();
-        } catch (cause) {
-          files[name] = { status: "error", reason: String(cause) };
+        if (input !== undefined) {
+          const handle = input;
+          const cleanup = await this.resources.release({
+            kind: "lease",
+            resource: `Ghidra diagnostic source log ${source}`,
+            lease: { release: () => handle.close() },
+          });
+          if (cleanup.kind === "failed") {
+            const prior = files[name];
+            files[name] = {
+              status: "error",
+              reason:
+                prior?.status === "error"
+                  ? `${prior.reason}; source close: ${String(cleanup.cause)}`
+                  : String(cleanup.cause),
+            };
+          }
         }
       }
     }
