@@ -742,6 +742,11 @@ rea compare left.json right.json --record_pairs '[{"left_evidence_id":"ev_<left-
 Migration: replace `rea compare-bundles` with `rea compare`; the former command
 has been removed. The MCP tool remains `compare_bundles`.
 
+`rea evidence-import` performs process-local bundle authentication and
+validation, reporting record and unknown counts. It does not retain records in a
+separate or background MCP server process. To retain records across calls in an
+active MCP session, use the MCP tool `import_evidence_bundle` in that session.
+
 `rea compare` compares records by Evidence identity and explicit pairs. It does
 not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
