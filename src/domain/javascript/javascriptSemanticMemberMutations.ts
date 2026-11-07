@@ -87,6 +87,7 @@ import {
   childNodes,
 } from "./javascriptSemanticTraversal.js";
 import {
+  javaScriptComputedDefinitionKey,
   semanticStaticPropertyKey,
   semanticWriteSiteTarget,
   semanticWriteSiteReadsFirst,
@@ -261,6 +262,25 @@ const accessorOperands = new WeakMap<
   readonly AccessorEffectOperand[]
 >();
 
+/** Members whose computed keys a definition evaluates and converts immediately. */
+const computedDefinitionMembers = (node: t.Function | t.Class): t.Node[] => {
+  if (t.isObjectMethod(node))
+    return javaScriptComputedDefinitionKey(node, node.key) ? [node] : [];
+  if (!t.isClass(node)) return [];
+  return node.body.body.filter(
+    (member) =>
+      "key" in member && javaScriptComputedDefinitionKey(member, member.key),
+  );
+};
+
+/** Expressions a definition runs immediately; deferred bodies and class-receiver initializers stay out. */
+const definitionTimeExpressions = (node: t.Function | t.Class): t.Node[] => [
+  ...(t.isClass(node) && node.superClass != null ? [node.superClass] : []),
+  ...computedDefinitionMembers(node).flatMap((member) =>
+    "key" in member ? [member.key] : [],
+  ),
+];
+
 /** Collect invocation operands once; receiver interpretation belongs to the getter owner. */
 const accessorEffectOperands = (
   method: t.Function,
@@ -274,8 +294,17 @@ const accessorEffectOperands = (
   const writeOnly = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const { node, parent } = pending.pop()!;
-    // Defining a nested callable does not invoke it.
-    if (t.isFunction(node) || t.isClass(node)) continue;
+    // Defining a nested callable does not invoke it, but the definition itself
+    // evaluates heritage and computed keys against the enclosing receiver.
+    if (t.isFunction(node) || t.isClass(node)) {
+      // Defining a computed member also converts its key to a property name.
+      for (const member of computedDefinitionMembers(node))
+        for (const operand of semanticCoercionOperands(member))
+          operands.push({ kind: "escape", node: operand });
+      for (const child of definitionTimeExpressions(node).reverse())
+        pending.push({ node: child, parent: node });
+      continue;
+    }
     const write = semanticWriteSiteTarget(node);
     if (write !== null) {
       for (const target of semanticWriteTargets(write)) {
