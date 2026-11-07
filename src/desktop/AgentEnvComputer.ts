@@ -5,6 +5,7 @@ import { getHeapStatistics } from "node:v8";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/client";
 import { z } from "zod";
 
+import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { jsonObjectSchema, type JsonValue } from "../domain/jsonValue.js";
 import { StructuredContentMcpClient } from "../providers/StructuredContentMcpClient.js";
 import { validateMcpHttpResponse } from "../providers/Utf8McpResponse.js";
@@ -26,10 +27,43 @@ const ENVELOPE_BYTES = 64 * 1024;
 /** An exec answer: two streams of at most 1 MiB each, which JSON escaping can grow sixfold. */
 const EXEC_RESPONSE_BYTES = 16 * 1024 * 1024;
 /** The base64 answer for `bytes` of files, with each file's envelope. */
-const dataAnswerBytes = (bytes: number, files: number) =>
+export const guestFileAnswerBytes = (bytes: number, files: number): number =>
   Math.ceil(bytes / 3) * 4 + ENVELOPE_BYTES * Math.max(files, 1);
 /** The most REA reads into memory for one answer of unknown size: a quarter of the V8 heap, as for recordings. */
 const heapQuarter = () => Math.floor(getHeapStatistics().heap_size_limit / 4);
+/** Where the data/get answer ceiling comes from. The guest's reported size does not change it. */
+export const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
+
+/** The host ceiling for one data/get answer, including base64 expansion and each file's envelope. */
+export const guestFileAnswerCeiling = (): number => heapQuarter();
+
+/**
+ * Refuse a data/get whose base64 answer would exceed the host ceiling. The
+ * computer's reported size is not the ceiling: a larger report is refused
+ * before the answer is read.
+ */
+export const guestFileAnswerRefusal = (
+  fileBytes: number,
+  files: number,
+  answerCeiling: number,
+): AnalysisResourceConstraintError | undefined => {
+  const answerBytes = guestFileAnswerBytes(fileBytes, files);
+  if (answerBytes <= answerCeiling) return undefined;
+  const remediation = `This data/get answer is limited to ${String(answerCeiling)} bytes, one quarter of this process's V8 heap (source ${GUEST_FILE_ANSWER_SOURCE}; the allowed answer is at most that quarter). The computer reported ${String(fileBytes)} file bytes across ${String(files)} paths, which expand to ${String(answerBytes)} bytes once each file is base64 and its envelope is counted. The reported size does not raise the ceiling. Restart REA with a larger Node --max-old-space-size so this heap quarter covers the answer.`;
+  return new AnalysisResourceConstraintError(
+    "data/get",
+    "memory",
+    remediation,
+    {
+      guest_file_bytes: fileBytes,
+      file_count: files,
+      answer_bytes: answerBytes,
+      answer_ceiling_bytes: answerCeiling,
+      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+    },
+    { remediationAction: remediation, retryable: false },
+  );
+};
 
 const readinessSchema = z.object({
   ready: z.boolean(),
@@ -410,6 +444,9 @@ export class AgentEnvComputer {
     bytes: number,
     signal?: AbortSignal,
   ): Promise<ReadonlyMap<string, Buffer>> {
+    const ceiling = guestFileAnswerCeiling();
+    const refusal = guestFileAnswerRefusal(bytes, paths.length, ceiling);
+    if (refusal !== undefined) throw refusal;
     const answer = dataGetSchema.parse(
       await this.#request(
         "/agentenv",
@@ -417,7 +454,7 @@ export class AgentEnvComputer {
         signal,
         {
           limit: {
-            bytes: dataAnswerBytes(bytes, paths.length),
+            bytes: guestFileAnswerBytes(bytes, paths.length),
             what: `The computer's answer for ${paths.join(", ")}`,
           },
         },
