@@ -266,6 +266,23 @@ it("follows a selected instance through an instance getter", () => {
   ).toBe("unknown");
 });
 
+it("follows a long alias chain to a destructured instance during getter widening", () => {
+  const aliases = ["const a0 = { selected: new Child() };"];
+  for (let index = 1; index <= 100; index++)
+    aliases.push(`const a${String(index)} = a${String(index - 1)};`);
+  expect(
+    resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      ${aliases.join("\n")}
+      const { selected } = a100;
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+  ).toBe("unknown");
+});
+
 it("considers a replacement before delayed instance-field evaluation", () => {
   expect(
     resultValue(`
