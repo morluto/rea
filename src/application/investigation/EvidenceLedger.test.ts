@@ -39,6 +39,7 @@ it("accepts and replaces caller path metadata for the same semantic record", () 
       replacements: [
         { kind: "metadata", previous: original, current: selected },
       ],
+      committed: [selected],
     },
   });
   expect(ledger.get(original.evidence_id)?.caller_input_path).toBe(
@@ -119,6 +120,7 @@ describe("evidence ledger recording", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
     expect(ledger.export().records).toEqual([evidence]);
@@ -142,6 +144,7 @@ describe("evidence ledger recording", () => {
             current: relocatedBundleRecord,
           },
         ],
+        committed: [relocatedBundleRecord],
       },
     });
     expect(ledger.get(evidence.evidence_id)).toEqual(relocatedBundleRecord);
@@ -155,6 +158,7 @@ describe("evidence ledger recording", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
     const conflictingBundle = createEvidenceBundle([
@@ -193,6 +197,7 @@ describe("evidence ledger recording", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
     ledger.clear();
@@ -282,6 +287,7 @@ describe("evidence ledger metadata imports", () => {
             current: relocatedMutation,
           },
         ],
+        committed: [relocatedMutation],
       },
     });
     expect(ledger.get(mutation.evidence_id)).toEqual(relocatedMutation);
@@ -292,6 +298,7 @@ describe("evidence ledger metadata imports", () => {
         unknownsAdded: 0,
         changed: false,
         replacements: [],
+        committed: [],
       },
     });
   });
