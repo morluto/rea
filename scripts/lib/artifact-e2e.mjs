@@ -109,8 +109,9 @@ export async function artifactCliEvidence(
   command,
   target,
   arguments_ = [],
-  { timeoutMs = 60000 } = {},
+  { timeoutMs = 60000, signal } = {},
 ) {
+  signal?.throwIfAborted();
   const { stdout } = await promisify(execFile)(
     process.execPath,
     [
@@ -120,7 +121,12 @@ export async function artifactCliEvidence(
       ...arguments_,
       "--json",
     ],
-    { env: environment(), timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024 },
+    {
+      env: environment(),
+      timeout: timeoutMs,
+      maxBuffer: 16 * 1024 * 1024,
+      signal,
+    },
   );
   const evidence = JSON.parse(stdout);
   assert.equal(evidence.error, undefined, stdout);
@@ -128,7 +134,13 @@ export async function artifactCliEvidence(
   return evidence;
 }
 
-const withOpenedArtifactMcp = async (target, openTool, verify) => {
+const withOpenedArtifactMcp = async (
+  target,
+  openTool,
+  verify,
+  options = {},
+) => {
+  options.signal?.throwIfAborted();
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [fileURLToPath(new URL("../rea.mjs", import.meta.url)), "mcp"],
@@ -136,28 +148,42 @@ const withOpenedArtifactMcp = async (target, openTool, verify) => {
     stderr: "pipe",
   });
   const client = new Client({ name: "artifact-real-e2e", version: "1" });
-  return withVerifierCleanup(async () => {
-    await client.connect(transport);
-    const opened = await artifactMcpCall(client, {
-      name: openTool,
-      arguments: { path: target },
-    });
-    assert.notEqual(opened.isError, true, JSON.stringify(opened));
-    if (openTool === "open_bundle_resources")
-      assert.equal(opened.structuredContent?.result?.caller_path, target);
-    await verify(client);
-  }, [
-    () => {
-      toolBindings.delete(client);
-    },
-    () => client.close(),
-    () => transport.close(),
-  ]);
+  const abortTransport = () => {
+    void client.close();
+    void transport.close();
+  };
+  options.signal?.addEventListener("abort", abortTransport, { once: true });
+  try {
+    return await withVerifierCleanup(async () => {
+      await client.connect(transport);
+      options.signal?.throwIfAborted();
+      const opened = await artifactMcpCall(
+        client,
+        {
+          name: openTool,
+          arguments: { path: target },
+        },
+        { signal: options.signal },
+      );
+      assert.notEqual(opened.isError, true, JSON.stringify(opened));
+      if (openTool === "open_bundle_resources")
+        assert.equal(opened.structuredContent?.result?.caller_path, target);
+      await verify(client);
+    }, [
+      () => {
+        toolBindings.delete(client);
+      },
+      () => client.close(),
+      () => transport.close(),
+    ]);
+  } finally {
+    options.signal?.removeEventListener("abort", abortTransport);
+  }
 };
 
 /** Run a real stdio MCP subprocess with an explicitly opened binary target. */
-export async function withArtifactMcp(target, verify) {
-  return withOpenedArtifactMcp(target, "open_binary", verify);
+export async function withArtifactMcp(target, verify, options = {}) {
+  return withOpenedArtifactMcp(target, "open_binary", verify, options);
 }
 
 /** Run a real stdio MCP subprocess with an explicitly opened bundle resource root. */
@@ -166,11 +192,20 @@ export async function withBundleResourcesMcp(target, verify) {
 }
 
 /** Require a successful structured MCP tool result rather than its text rendering. */
-export async function artifactMcpResult(client, name, arguments_ = {}) {
-  const result = await artifactMcpCall(client, {
-    name,
-    arguments: arguments_,
-  });
+export async function artifactMcpResult(
+  client,
+  name,
+  arguments_ = {},
+  options = {},
+) {
+  const result = await artifactMcpCall(
+    client,
+    {
+      name,
+      arguments: arguments_,
+    },
+    options,
+  );
   assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.ok(
     result.structuredContent?.normalized_result,

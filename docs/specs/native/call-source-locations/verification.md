@@ -30,11 +30,14 @@ interactive stepping, Delphi compatibility or a GDB provider.
 ## Unmeasured costs and outstanding execution
 
 Repeated source paths expand event, caller-frame and breakpoint-location payloads.
+`nativeCallObservation.test.ts` measures that growth as UTF-8 JSON bytes: three
+copies of one location grow by three times the difference between the
+`source_location` object and `null`. That byte delta is not a token count.
 Equivalent before/after completed workflows have not been measured for agent tokens,
 elapsed time, CPU time or peak process-family memory, for either cold or warm runs.
-No byte count is presented as a token or performance measurement. Representative
-measurements remain outstanding before integration; they were not executed under
-the current instruction to skip tests and provider workloads.
+The first compiler probe is only `fpc -iV` with a 30s deadline. Darwin ownership-helper
+compilation uses `REA_SWIFTC_COMPILE_TIMEOUT_MS`, default 120s, inside the later
+180s `observe-native-calls` run.
 
 The current caller-frame equality checks, marker-derived source lines, forced
 compiler timeout termination and Unicode source-path budget case remain unverified

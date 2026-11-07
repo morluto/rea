@@ -89,7 +89,34 @@ it.skipIf(process.platform !== "darwin")(
         ),
       ).toEqual([]);
     } finally {
-      verifier.kill("SIGKILL");
+      if (verifier.exitCode === null && verifier.signalCode === null) {
+        verifier.kill("SIGTERM");
+        await new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            verifier.kill("SIGKILL");
+            resolve(undefined);
+          }, 1_000);
+          verifier.once("close", () => {
+            clearTimeout(timer);
+            resolve(undefined);
+          });
+        });
+      }
+      try {
+        const recorded = (await readFile(pidFile, "utf8"))
+          .trim()
+          .split(/\s+/u)
+          .map(Number);
+        for (const pid of recorded) {
+          try {
+            process.kill(pid, "SIGKILL");
+          } catch {
+            // The owned compiler group already exited.
+          }
+        }
+      } catch (cause: unknown) {
+        if ((cause as NodeJS.ErrnoException).code !== "ENOENT") throw cause;
+      }
       await rm(root, { recursive: true, force: true });
     }
   },

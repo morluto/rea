@@ -591,3 +591,24 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     reason: "cancelled",
   });
 });
+
+it("grows repeated source-location JSON by the location object, not by a token estimate", () => {
+  const path = "/not-acquired/é space/fixture.pas";
+  const located = {
+    ...LOCATION,
+    source_location: { file_path: path, line: 23, column: null },
+  };
+  const absent = { ...located, source_location: null };
+  const copies = 3;
+  const withPath = Buffer.byteLength(
+    JSON.stringify(Array.from({ length: copies }, () => located)),
+  );
+  const withoutPath = Buffer.byteLength(
+    JSON.stringify(Array.from({ length: copies }, () => absent)),
+  );
+  const perCopy =
+    Buffer.byteLength(JSON.stringify(located.source_location)) -
+    Buffer.byteLength("null");
+  expect(withPath - withoutPath).toBe(copies * perCopy);
+  expect(perCopy).toBeGreaterThan(Buffer.byteLength(path));
+});

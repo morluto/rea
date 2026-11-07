@@ -134,14 +134,26 @@ try {
     "observe-native-calls",
     binary,
     [JSON.stringify(input)],
-    { timeoutMs: 180_000 },
+    { timeoutMs: 180_000, signal: cancellation.signal },
   );
+  cancellation.signal.throwIfAborted();
   inspect(cli);
-  await withArtifactMcp(binary, async (client) => {
-    const mcp = await artifactMcpResult(client, "observe_native_calls", input);
-    inspect(mcp);
-    assert.deepEqual(stable(mcp), stable(cli));
-  });
+  await withArtifactMcp(
+    binary,
+    async (client) => {
+      const mcp = await artifactMcpResult(
+        client,
+        "observe_native_calls",
+        input,
+        { signal: cancellation.signal },
+      );
+      cancellation.signal.throwIfAborted();
+      inspect(mcp);
+      assert.deepEqual(stable(mcp), stable(cli));
+    },
+    { signal: cancellation.signal },
+  );
+  cancellation.signal.throwIfAborted();
   console.log(
     JSON.stringify({
       ok: true,
