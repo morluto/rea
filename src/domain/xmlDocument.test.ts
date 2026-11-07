@@ -1,5 +1,9 @@
 import { expect, it } from "vitest";
-import { parseXmlDocument } from "./xmlDocument.js";
+import {
+  declaredDocumentType,
+  isWellFormedXml,
+  parseXmlDocument,
+} from "./xmlDocument.js";
 
 it.each([
   '<root attr="�">😀 � &amp; &#xFFFD;</root>',
@@ -93,6 +97,99 @@ it("applies the consumer's explicit DTD policy", () => {
   expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected unsupported DTD");
   expect(parsed.error.reason).toBe("doctype");
+});
+
+it.each([
+  "<!DOCTYPE root><root/>",
+  '<!DOCTYPE root SYSTEM "root[1].dtd"><root/>',
+  "<!DOCTYPE root PUBLIC '-//A//DTD B//EN' 'http://example.test/b.dtd'><root/>",
+])(
+  "reads a DOCTYPE without an internal subset when only that is allowed: %j",
+  (source) => {
+    const parsed = parseXmlDocument(source, {
+      doctype: "external",
+      lineEndings: "normalize",
+    });
+    if (!parsed.ok) throw parsed.error;
+    expect(parsed.value.documentElement?.tagName).toBe("root");
+  },
+);
+
+it.each([
+  "<!DOCTYPE root []><root/>",
+  '<!DOCTYPE root SYSTEM "a.dtd" [<!ENTITY e "x">]><root/>',
+  '<!DOCTYPE root PUBLIC "-//A//EN" "a]b.dtd" [ ]><root/>',
+])(
+  "refuses an internal subset when only an external DTD is allowed: %j",
+  (source) => {
+    expect(
+      parseXmlDocument(source, {
+        doctype: "external",
+        lineEndings: "normalize",
+      }),
+    ).toMatchObject({ ok: false, error: { reason: "internal-subset" } });
+  },
+);
+
+it.each([
+  ['<!DOCTYPE root PUBLIC "-//A//DTD B//EN" "b.dtd"><root/>', true],
+  ['<!DOCTYPE root SYSTEM "root[1].dtd"><root/>', true],
+  ["<!DOCTYPE root\n><root/>", true],
+  ["<!DOCTYPE root []><root/>", false],
+  ['<!DOCTYPE root SYSTEM "a.dtd"><root>&e;</root>', false],
+  ['<!DOCTYPE root PUBLIC "{bad}" "b.dtd"><root/>', false],
+  ['<!DOCTYPE root PUBLIC "-//A//EN"><root/>', false],
+  ["<!DOCTYPE root SYSTEM><root/>", false],
+  ['<!DOCTYPE root SYSTEM "a.dtd" junk><root/>', false],
+  ["<!DOCTYPEroot><root/>", false],
+])(
+  "tells XML by the syntax pass alone as the DOM parse does under the external policy: %j",
+  (source, xml) => {
+    expect(isWellFormedXml(source, { doctype: "external" })).toBe(xml);
+    expect(
+      parseXmlDocument(source, {
+        doctype: "external",
+        lineEndings: "normalize",
+      }).ok,
+    ).toBe(xml);
+  },
+);
+
+it("reports a document type's name and identifiers as declared, the public one normalized", () => {
+  const read = (source: string) => {
+    const parsed = parseXmlDocument(source, {
+      doctype: "external",
+      lineEndings: "normalize",
+    });
+    if (!parsed.ok) throw parsed.error;
+    return declaredDocumentType(parsed.value);
+  };
+
+  expect(
+    read(
+      '<!DOCTYPE abiword PUBLIC "  -//ABISOURCE//DTD\r\n AWML 1.0 Strict//EN " "http://www.abisource.com/awml.dtd"><abiword/>',
+    ),
+  ).toEqual({
+    name: "abiword",
+    publicId: "-//ABISOURCE//DTD AWML 1.0 Strict//EN",
+    systemId: "http://www.abisource.com/awml.dtd",
+  });
+  expect(read("<!DOCTYPE a SYSTEM 'x  y'><a/>")).toEqual({
+    name: "a",
+    publicId: null,
+    systemId: "x  y",
+  });
+  expect(read('<!DOCTYPE a PUBLIC "" ""><a/>')).toEqual({
+    name: "a",
+    publicId: "",
+    systemId: "",
+  });
+  expect(read("<!DOCTYPE a><a/>")).toEqual({
+    name: "a",
+    publicId: null,
+    systemId: null,
+  });
+  expect(read("<a/>")).toBeUndefined();
 });
 
 it("applies XML line-ending normalization only when the consumer selects it", () => {

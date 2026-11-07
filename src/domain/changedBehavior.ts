@@ -115,7 +115,8 @@ export const changedBehaviorResultSchema = z
 
 export type ChangedBehaviorResult = z.infer<typeof changedBehaviorResultSchema>;
 type Finding = z.infer<typeof findingSchema>;
-type RuntimeStatus = z.infer<typeof processCaptureComparisonSchema>["status"];
+type ProcessComparison = z.infer<typeof processCaptureComparisonSchema>;
+type RuntimeStatus = ProcessComparison["status"];
 
 /** Find observed runtime changes and separately report static change candidates. */
 interface FoundChangedBehavior {
@@ -146,7 +147,11 @@ export const findChangedBehavior = (input: unknown): FoundChangedBehavior => {
   const findings = evidence.flatMap(findingsFor).sort(compareFindings);
   const runtimeStatuses = evidence.flatMap((comparison) =>
     comparison.operation === "compare_process_captures"
-      ? [comparison.result.status]
+      ? [
+          unprovenEqualityReason(comparison.result) === undefined
+            ? comparison.result.status
+            : "unknown",
+        ]
       : [],
   );
   const links = uniqueSorted(
@@ -243,7 +248,7 @@ const processFindings = (
     ["filesystem", result.filesystem, "resource"],
     ["process", result.process, "runtime"],
   ] as const;
-  return dimensions.flatMap(([dimension, status, scope]) =>
+  const findings = dimensions.flatMap(([dimension, status, scope]) =>
     status === "unchanged"
       ? []
       : [
@@ -254,12 +259,36 @@ const processFindings = (
             status,
             classification: isChange(status)
               ? "observed_change"
-              : "unresolved_branch",
+              : status === "contradiction"
+                ? "contradiction"
+                : "unresolved_branch",
             limitations: result.limitations,
           }),
         ],
   );
+  const reason = unprovenEqualityReason(result);
+  return reason === undefined
+    ? findings
+    : [
+        ...findings,
+        makeFinding({
+          evidence,
+          dimension: "first_divergence",
+          scope: "runtime",
+          status: "unknown",
+          classification: "unresolved_branch",
+          limitations: [...result.limitations, reason],
+        }),
+      ];
 };
+
+/** Unchanged dimensions do not establish equality while divergence stays unknown. */
+const unprovenEqualityReason = (
+  result: ProcessComparison,
+): string | undefined =>
+  result.status === "unchanged" && result.first_divergence.status === "unknown"
+    ? result.first_divergence.reason
+    : undefined;
 
 const functionFindings = (
   comparison: Extract<
@@ -356,7 +385,8 @@ const behaviorStatus = (
 ): ChangedBehaviorResult["behavior_status"] => {
   if (statuses.length === 0) return "unknown";
   if (statuses.includes("truncated")) return "truncated";
-  if (statuses.includes("unknown")) return "unknown";
+  if (statuses.includes("unknown") || statuses.includes("contradiction"))
+    return "unknown";
   return statuses.some(isChange) ? "observed_changed" : "observed_unchanged";
 };
 
