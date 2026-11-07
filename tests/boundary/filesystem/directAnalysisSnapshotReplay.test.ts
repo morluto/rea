@@ -131,6 +131,19 @@ const expectWorkflowQuestionsRetained = (
   );
 };
 
+const expectSourceSnapshotRetained = (snapshot: AnalysisSnapshot) => {
+  expect(snapshot.entries).toHaveLength(1);
+  const parent = snapshot.evidence_bundle.records.find(
+    (record) => record.operation === "list_strings",
+  );
+  expect(parent?.evidence_links).toHaveLength(1);
+  expect(snapshot.evidence_bundle.records).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ evidence_id: parent?.evidence_links[0] }),
+    ]),
+  );
+};
+
 interface SnapshotProviderTrace {
   readonly starts: string[];
   readonly queries: Array<{
@@ -145,6 +158,7 @@ interface SnapshotProviderOptions {
   readonly identity?: ProviderIdentity;
   readonly supportedOperations?: readonly CapabilityDescriptor["operation"][];
   readonly limitations?: readonly string[];
+  readonly sourceEvidence?: boolean;
 }
 
 const makeProvider = (
@@ -181,7 +195,7 @@ const makeProvider = (
       trace.resolutions.push(profile.digest);
       return ok({ profile });
     },
-    createClient: () => {
+    createClient: (target) => {
       trace.starts.push("start");
       return {
         execute: async (operation, parameters) => {
@@ -242,6 +256,17 @@ const makeProvider = (
               analysisProfile: profile,
               rawResult: result,
               limitations: options.limitations ?? [],
+              ...(options.sourceEvidence
+                ? {
+                    sourceEvidence: [
+                      createEvidence(target, profile.provider, {
+                        operation: "health",
+                        parameters: {},
+                        result: "fixture source",
+                      }),
+                    ],
+                  }
+                : {}),
             }),
           );
         },
@@ -550,13 +575,18 @@ const withEarlierHistoricalEvidence = (
 };
 
 describe("snapshot output cleanup lifecycle", () => {
-  it.each(["cleanup", "cancelled"] as const)(
-    "preserves the committed snapshot receipt after %s finalization and retry",
-    async (failureKind) => {
+  it.each([
+    { failureKind: "cleanup", sourceEvidence: false },
+    { failureKind: "cancelled", sourceEvidence: false },
+    { failureKind: "cleanup", sourceEvidence: true },
+    { failureKind: "cancelled", sourceEvidence: true },
+  ] as const)(
+    "preserves a committed snapshot after $failureKind finalization with source=$sourceEvidence",
+    async ({ failureKind, sourceEvidence }) => {
       const fixture = await createSnapshotReplayFixture(
         "rea-snapshot-close-failure-",
       );
-      const provider = fixture.createProvider();
+      const provider = fixture.createProvider({ sourceEvidence });
       const failure =
         failureKind === "cleanup"
           ? new ProviderCleanupError(
@@ -587,7 +617,9 @@ describe("snapshot output cleanup lifecycle", () => {
       try {
         const opened = await session.open(fixture.path);
         if (!opened.ok) throw opened.error;
-        const analyzed = await session.execute("list_segments", {});
+        const analyzed = sourceEvidence
+          ? await session.execute("list_strings", { document: "fixture" })
+          : await session.execute("list_segments", {});
         if (!analyzed.ok) throw analyzed.error;
         const closed = await session.closeWithSnapshot(
           fixture.snapshotPath,
@@ -598,6 +630,7 @@ describe("snapshot output cleanup lifecycle", () => {
         const committed = await readFile(fixture.snapshotPath);
         const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
         if (!snapshot.ok) throw snapshot.error;
+        if (sourceEvidence) expectSourceSnapshotRetained(snapshot.value);
         const receipt = {
           path: fixture.snapshotPath,
           bytes: committed.byteLength,
@@ -1572,7 +1605,7 @@ const expectReaderBindingMismatch = (
   expect(projectAnalysisError(error).details).toMatchObject({
     binding_mismatch: {
       provider: {
-        snapshot: { version: "apple-metadata-reader-older" },
+        snapshot: { version: "apple-metadata-reader-2" },
         selected: { version: selectedVersion },
       },
       profile_digest: { snapshot: snapshotDigest },
@@ -1610,12 +1643,13 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   if (!opened.ok) throw opened.error;
   const readerIdentity = APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider;
   const wrongReader = structuredClone(snapshot);
+  // Reader v2 could discard owners when their adopted-protocol list was unreadable.
   const otherReaderProfile = createAnalysisProfile(
-    { ...readerIdentity, version: "apple-metadata-reader-older" },
+    { ...readerIdentity, version: "apple-metadata-reader-2" },
     {
       operation: "inspect_native_dispatch_metadata",
       reader: "apple-dispatch-metadata",
-      revision: 0,
+      revision: 2,
     },
   );
   wrongReader.binding = {
@@ -1834,6 +1868,66 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     provider,
     saved.value,
   );
+});
+
+it("replays source-bearing direct analysis only while snapshot source Evidence is present", async () => {
+  const fixture = await createSnapshotReplayFixture(
+    "rea-direct-source-replay-",
+  );
+  const provider = fixture.createProvider({
+    supportedOperations: ["procedure_pseudo_code"],
+    sourceEvidence: true,
+  });
+  const dependencies = fixture.dependencies(provider);
+  const parameters = { procedure: "0x1000", document: "fixture" };
+  const options = { snapshotPath: fixture.snapshotPath };
+  const run = () =>
+    runDirectAnalysis(
+      dependencies,
+      fixture.path,
+      "procedure_pseudo_code",
+      parameters,
+      options,
+    ).then(projectCliAnalysisResult);
+  const first = parseEvidence(await run());
+  expect(first.evidence_links).toHaveLength(1);
+  const saved = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!saved.ok) throw saved.error;
+  expect(saved.value.entries).toHaveLength(1);
+  const sourceId = first.evidence_links[0];
+  expect(
+    saved.value.evidence_bundle.records.some(
+      (record) => record.evidence_id === sourceId,
+    ),
+  ).toBe(true);
+  const initialStarts = fixture.starts.length;
+  expect(parseEvidence(await run()).evidence_links).toEqual(
+    first.evidence_links,
+  );
+  expect(fixture.starts).toHaveLength(initialStarts);
+
+  const withoutSource = {
+    ...saved.value,
+    evidence_bundle: createEvidenceBundle(
+      saved.value.evidence_bundle.records.filter(
+        (record) => record.evidence_id !== sourceId,
+      ),
+    ),
+  };
+  const written = await withArtifactResourceScope((resources) =>
+    writeAnalysisSnapshot(withoutSource, fixture.snapshotPath, true, resources),
+  );
+  if (!written.ok) throw written.error;
+  const refreshed = parseEvidence(await run());
+  expect(fixture.starts).toHaveLength(initialStarts + 1);
+  expect(refreshed.evidence_links).toEqual(first.evidence_links);
+  const repaired = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!repaired.ok) throw repaired.error;
+  expect(
+    repaired.value.evidence_bundle.records.some(
+      (record) => record.evidence_id === sourceId,
+    ),
+  ).toBe(true);
 });
 
 it("runs decompile export against the provider after loading a pseudocode snapshot", async () => {
