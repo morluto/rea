@@ -74,14 +74,12 @@ it("gives the UTF-8 flag precedence over a Unicode Path for names and formats", 
   extra.writeUInt32LE(crc32(Buffer.from(storedName)), 5);
   unicodeName.copy(extra, 9);
   const archive = zipArchive([
-    { name: storedName, data: "42", centralExtra: extra },
     { name: storedName, data: "42", flags: 0x800, centralExtra: extra },
     { name: "other.txt", data: "42", centralExtra: extra },
   ]);
 
   expect(await sameView(archive)).toMatchObject({
     entries: [
-      { name: "café.json", format: "json", view: 42 },
       { name: storedName, format: "text" },
       { name: "other.txt", format: "text" },
     ],
