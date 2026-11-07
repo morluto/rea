@@ -124,6 +124,9 @@ The rules both evaluators follow:
   archive entry; another format fails.
 - Equality is JSON equality: numbers by value, never a boolean for a number,
   objects by their keys whatever their order, arrays in order.
+  Plain numbers use the same binary64 comparison in REA and the exported
+  verifier. SQLite integers outside the safe range retain their exact tagged
+  string form; those tags are compared as data, without rounding.
 - Pointers follow RFC 6901 (`~1` for `/`, `~0` for `~`) and must start with
   `/`; on an array a segment may be a selector, below. Key files read as
   `{"groups": {"GROUP": {"KEY": "VALUE"}}}`, so a setting is
@@ -135,6 +138,8 @@ The rules both evaluators follow:
   numeral such as `"5.0000000000000000"`, at most `tolerance` from `value`.
   `tolerance: 0` compares numerically, so `"1.2500"` equals `1.25`. Anything
   else fails as not a number.
+  The difference and tolerance comparison use the same binary64 arithmetic
+  in both evaluators, including when JSON writes a number without a decimal point.
 - `contains` matches a line that holds it anywhere, case and all. Checks take
   no regular expressions: a pattern run on what the agent wrote could stall
   the verifier, and JavaScript and Python read some patterns differently.
