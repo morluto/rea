@@ -1620,3 +1620,28 @@ describe("analysis error projection: composed failures for a caller lifetime", (
     });
   });
 });
+
+it("emits a producer-provided remediation action for input failures", () => {
+  const projected = projectAnalysisError(
+    new AnalysisInputError(
+      "procedure_pseudo_code",
+      {
+        remediationAction:
+          "Choose an observed procedure with CLI rea search <path> . --kind procedures --mode regex --provider ghidra --json or MCP list_procedures.",
+      },
+      [{ path: [], reason: "invalid_value", message: "Unknown name" }],
+    ),
+  );
+
+  expect(projected).toMatchObject({
+    recovery: {
+      kind: "inspect_input_contract",
+      operation: "procedure_pseudo_code",
+    },
+    remediation: {
+      action: expect.stringContaining("--kind procedures"),
+    },
+  });
+  expect(projected.remediation.action).toContain("list_procedures");
+  expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
+});
