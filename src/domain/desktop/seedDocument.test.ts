@@ -163,11 +163,19 @@ describe("openSeedDocument", () => {
 
 describe("openSeedDocument settings spelling", () => {
   it("respells a separate --config directory and an equals option", () => {
+    const settings = (path: string) =>
+      path === "settings/geany" ||
+      path === ".config/geany" ||
+      path === "settings/notes" ||
+      path.startsWith("settings/notes/") ||
+      path === ".config/notes" ||
+      path.startsWith(".config/notes/");
     expect(
       openSeedDocument(["geany", "--config", "settings/geany"], {
         ...AT_HOME,
         exec: "geany",
         documents: [],
+        isCaptured: settings,
         spell: (path) => (path === "settings/geany" ? ".config/geany" : path),
       }),
     ).toEqual({
@@ -179,6 +187,7 @@ describe("openSeedDocument settings spelling", () => {
         ...AT_HOME,
         exec: "editor",
         documents: [],
+        isCaptured: settings,
         spell: (path) =>
           path === "settings/notes" || path.startsWith("settings/notes/")
             ? `.config/notes${path.slice("settings/notes".length)}`
@@ -187,6 +196,25 @@ describe("openSeedDocument settings spelling", () => {
     ).toEqual({
       argv: ["editor", `--config=${HOME}/.config/notes`],
       opens: { kind: "empty" },
+    });
+  });
+
+  it("leaves a numeric option unchanged when the working directory moves", () => {
+    expect(
+      openSeedDocument(["geany", "--line=10"], {
+        ...AT_HOME,
+        workingDirectory: `${HOME}/work`,
+        launchDirectory: `${HOME}/Work`,
+        exec: "geany %F",
+        documents: poster,
+        spell: (path) =>
+          path === "work" || path.startsWith("work/")
+            ? `Work${path.slice("work".length)}`
+            : path,
+      }),
+    ).toEqual({
+      argv: ["geany", "--line=10", `${HOME}/Documents/poster.svg`],
+      opens: { kind: "seed", document: "Documents/poster.svg" },
     });
   });
 

@@ -43,6 +43,8 @@ export const openSeedDocument = (
     readonly spell?: (homePath: string) => string;
     /** Where the process starts when that directory's spelling moved. */
     readonly launchDirectory?: string;
+    /** A home path the capture holds as a file or a settings directory. */
+    readonly isCaptured?: (homePath: string) => boolean;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
@@ -54,9 +56,19 @@ export const openSeedDocument = (
     argv: argvSpelled,
     opens: { kind: "none", reason } as const,
   });
-  const absoluteSeed = (path: string) => {
+  const namesCaptured = (path: string) => {
     const seedPath = spelled(path);
-    // A relative argument was resolved in the captured directory. Once that
+    return (
+      facts.isDocument(path) ||
+      facts.isDocument(seedPath) ||
+      facts.isCaptured?.(path) === true ||
+      facts.isCaptured?.(seedPath) === true
+    );
+  };
+  const absoluteSeed = (path: string) => {
+    if (!namesCaptured(path)) return undefined;
+    const seedPath = spelled(path);
+    // A relative file was resolved in the captured directory. Once that
     // directory moves, the same relative word would name a different file.
     return seedPath === path && !directoryMoved
       ? undefined
