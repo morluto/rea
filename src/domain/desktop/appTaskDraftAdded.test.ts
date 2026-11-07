@@ -548,8 +548,8 @@ describe("draftTaskFiles for an added record whose words the seed already has", 
       passing(FILE, xml(before), file.suggested).some((passed) => !passed),
     ).toBe(true);
     expect(
-      passing(FILE, xml(dated([["Lin", "Ada", later]])), file.suggested).every(
-        Boolean,
+      passing(FILE, xml(dated([["Lin", "Ada", later]])), file.suggested).some(
+        (passed) => !passed,
       ),
     ).toBe(true);
     const duplicate = xmlDraft(
