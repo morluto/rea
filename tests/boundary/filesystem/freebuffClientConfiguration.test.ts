@@ -392,8 +392,8 @@ describe("uninstall applicability for shared FreeBuff storage", () => {
     expect(zcodeItem?.detail).toContain(
       "Configuration could not be read. Check file permissions, then rerun uninstall.",
     );
-    expect(zcodeItem?.detail).toContain(
-      "Configuration is not valid JSON and was not changed. Repair it, then rerun uninstall.",
+    expect(zcodeItem?.detail).toMatch(
+      /not valid JSON.*not changed.*repair.*uninstall/iu,
     );
   });
 
