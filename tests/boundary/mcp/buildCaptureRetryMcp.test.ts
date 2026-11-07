@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -200,6 +201,23 @@ it("releases a capture whose start was cancelled after launch, so another start 
     computer_id: id,
   });
   expect(again.structuredContent).toMatchObject({ package_lists: 1 });
+}, 60_000);
+
+it("stops a detached capture when the computer closes", async () => {
+  const { rea, client, computer } = await fakes();
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const running = () =>
+    execFileSync("ps", ["-eo", "args="], { encoding: "utf8" })
+      .split("\n")
+      .filter(
+        (line) =>
+          line.includes(rea.home) &&
+          line.includes("capture-desktop-application"),
+      );
+  expect(running().length).toBeGreaterThan(0);
+  await computer.close();
+  expect(running()).toEqual([]);
 }, 60_000);
 
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {

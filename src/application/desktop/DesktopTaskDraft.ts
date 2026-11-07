@@ -65,12 +65,23 @@ const draft = async (
     (home) => isWithinAny(home, paths),
     ends,
   );
+  const covered = (index: number) => {
+    const point = capture.state.checkpoints[index];
+    return (
+      point !== undefined &&
+      !point.truncated &&
+      point.unreadable_directories === 0 &&
+      (point.unchecked_paths ?? 0) === 0 &&
+      point.unconfirmed_changes === 0
+    );
+  };
   const notes = draftNotes(files, {
     drafted,
     owned: paths,
     dconf,
     ends,
     checkpoints,
+    observed: covered(ends.seed) && covered(ends.end),
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {

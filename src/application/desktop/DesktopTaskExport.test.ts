@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
+import { shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
@@ -407,5 +408,16 @@ describe("draftDesktopApplicationTask", () => {
       prompt: "Write down that I need milk.",
     });
     expect(exported).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("shippedSeedCheckView", () => {
+  const captured = { format: "binary" as const, view: null };
+  const shipped = { format: "text" as const, view: { text: "shipped" } };
+
+  it("treats a file the bundle omits as absent and keeps a shipped non-text file", () => {
+    expect(shippedSeedCheckView(false, undefined, captured)).toBeUndefined();
+    expect(shippedSeedCheckView(true, undefined, captured)).toBe(captured);
+    expect(shippedSeedCheckView(true, shipped, captured)).toBe(shipped);
   });
 });
