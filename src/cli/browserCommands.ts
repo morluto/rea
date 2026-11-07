@@ -36,6 +36,7 @@ import {
 } from "../cliObservationOptions.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { cliProgress } from "./cliProgress.js";
 
 /** Register CLI equivalents of the passive browser MCP tools. */
 export const registerBrowserCommands = (
@@ -287,7 +288,11 @@ const registerObservationSession = (
               ),
             );
           return await finishAnalysisCommand(
-            () => observeWebSession(provider, parsed.data, { signal }),
+            () =>
+              observeWebSession(provider, parsed.data, {
+                signal,
+                progress: cliProgress,
+              }),
             {
               close: async () => {
                 await provider.close?.();

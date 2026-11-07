@@ -13,16 +13,9 @@ import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { cliDecimalField } from "./options.js";
 import type { Logger } from "pino";
-import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
-
-/** CLI progress exposes the actual armed point on stderr without corrupting JSON results. */
-const runtimeProgress: ProgressReporter = {
-  report: async (update) => {
-    process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
-  },
-};
+import { cliProgress } from "./cliProgress.js";
 
 /** Register public equivalents of the two modular website runtime tools. */
 export const registerWebRuntimeCommands = (
@@ -60,7 +53,7 @@ export const registerWebRuntimeCommands = (
                   observation_ms: options.observationMs,
                   ...selectedCommandTimeout(options.commandTimeoutMs),
                 },
-                { progress: runtimeProgress, signal },
+                { progress: cliProgress, signal },
               ),
             {
               close: async () => {

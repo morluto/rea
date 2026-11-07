@@ -11,6 +11,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import { cliProgress } from "./cliProgress.js";
 
 const OPERATION = "analyze_javascript_application";
 
@@ -107,12 +108,9 @@ export const runCliJavaScriptApplicationAnalysis = async (
 ): Promise<JsonValue> => {
   const { analyzeJavaScriptApplication } =
     await import("../application/javascript/JavaScriptApplicationService.js");
-  const progress = createProgressReporter(
-    async (update) => {
-      process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);
-    },
-    { minimumIntervalMs: 0 },
-  );
+  const progress = createProgressReporter(cliProgress.report, {
+    minimumIntervalMs: 0,
+  });
   const resources = host.scope();
   const result = await analyzeJavaScriptApplication(input, resources, {
     environment,
