@@ -102,6 +102,7 @@
 * **evidence:** read selected complete records without the whole bundle ([#8528](https://github.com/morluto/rea/issues/8528)) ([eb39a07](https://github.com/morluto/rea/commit/eb39a07966168ae61685cc8b5cf798c8fc6f9436))
 * **ghidra:** admit DOS MZ targets on Windows P0 ([#7144](https://github.com/morluto/rea/issues/7144)) ([1cc979c](https://github.com/morluto/rea/commit/1cc979c1046947f41be817803e73846ff5c244ab))
 * **ghidra:** admit RISC-V ilp32 ELF with a derived calling convention ([#8229](https://github.com/morluto/rea/issues/8229)) ([e669365](https://github.com/morluto/rea/commit/e669365c3b57cf49b4158334fa0a42efb117c320))
+* **ghidra:** checkpoint owned Programs across sessions ([c07ab4b](https://github.com/morluto/rea/commit/c07ab4b994b017170b27b07b2c0361aeb44fc53f))
 * **ghidra:** reuse existing projects through verified copies ([#7236](https://github.com/morluto/rea/issues/7236)) ([1944751](https://github.com/morluto/rea/commit/19447516a4bdbc9437d112ebd3f12a5fd062db83))
 * **guidance:** distinguish focused matches from broad parent sections ([#8305](https://github.com/morluto/rea/issues/8305)) ([41e7333](https://github.com/morluto/rea/commit/41e7333cb5e0a755b7fd07d6dd6e7148a38a5658))
 * **guidance:** search installed workflow sections ([#6996](https://github.com/morluto/rea/issues/6996)) ([c88e1b0](https://github.com/morluto/rea/commit/c88e1b0b4355a29ef6ab5c88d393a3bfbcfc1d22))
