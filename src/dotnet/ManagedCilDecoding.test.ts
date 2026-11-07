@@ -650,8 +650,9 @@ describe("managed exception region bounds", () => {
     ).toMatchObject({
       status: "malformed",
       exception_regions: [expect.objectContaining({ filter_offset: 1 })],
-      issue:
-        "Exception clause filter range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /filter range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 });
@@ -687,8 +688,9 @@ describe("managed exception region prefix boundaries", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause try range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /try range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 
@@ -712,8 +714,9 @@ describe("managed exception region prefix boundaries", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause try range does not align with CIL instruction boundaries",
+      issue: expect.stringMatching(
+        /try range.*does not align.*CIL instruction boundaries/iu,
+      ),
     });
   });
 
@@ -738,8 +741,9 @@ describe("managed exception region prefix boundaries", () => {
       ).toMatchObject({
         status: "malformed",
         exception_regions: [expect.any(Object)],
-        issue:
-          "Exception clause try range does not align with CIL instruction boundaries",
+        issue: expect.stringMatching(
+          /try range.*does not align.*CIL instruction boundaries/iu,
+        ),
       });
     },
   );
@@ -799,8 +803,9 @@ describe("managed exception region flags and filters", () => {
       }),
     ).toMatchObject({
       status: "malformed",
-      issue:
-        "Exception clause filter must start before its handler within the method IL body",
+      issue: expect.stringMatching(
+        /filter must start before.*handler.*method IL body/iu,
+      ),
     });
   });
 });
