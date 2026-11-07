@@ -11,7 +11,12 @@ export class UpdateCommandProgress {
   #pendingWrites = 0;
   #closed = false;
   readonly #onDestinationError = (cause: Error): void => {
-    this.#sink.destroy(cause);
+    this.#failDestination(cause);
+  };
+  readonly #onDestinationClose = (): void => {
+    this.#failDestination(
+      new Error("progress destination closed before collection completed"),
+    );
   };
 
   constructor(private readonly destination: Writable) {
@@ -38,6 +43,8 @@ export class UpdateCommandProgress {
       },
     );
     destination.on("error", this.#onDestinationError);
+    destination.on("close", this.#onDestinationClose);
+    if (destination.destroyed) this.#onDestinationClose();
   }
 
   pipe(stream: Readable): void {
@@ -62,7 +69,16 @@ export class UpdateCommandProgress {
     }
   }
   #releaseDestination(): void {
-    if (this.#closed && this.#pendingWrites === 0)
+    if (this.#closed && this.#pendingWrites === 0) {
       this.destination.off("error", this.#onDestinationError);
+      this.destination.off("close", this.#onDestinationClose);
+    }
+  }
+
+  #failDestination(cause: Error): void {
+    // physical closure can precede a borrowed writer's acknowledgement. fail our
+    // sink to release backpressure, retaining listeners until late writes settle.
+    if (!this.#sink.destroyed && !this.#sink.writableFinished)
+      this.#sink.destroy(cause);
   }
 }

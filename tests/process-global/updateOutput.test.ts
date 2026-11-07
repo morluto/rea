@@ -4,13 +4,21 @@ import {
   UpdateCommandRunner,
   UPDATE_COMMAND_OUTPUT_BYTES,
 } from "../../src/application/UpdateCommandRunner.js";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess, spawn } from "node:child_process";
 import { setImmediate as nextTurn } from "node:timers/promises";
 import { Writable } from "node:stream";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 const execution = vi.hoisted(() => ({ spawn: vi.fn() }));
 vi.mock("cross-spawn", () => ({ default: execution.spawn }));
+vi.mock("node:child_process", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("node:child_process")>()),
+  spawn: execution.spawn,
+}));
+const { spawn: spawnFixture } =
+  await vi.importActual<typeof import("node:child_process")>(
+    "node:child_process",
+  );
 let child: ChildProcess | undefined;
 beforeEach(() => {
   execution.spawn.mockReset();
@@ -22,7 +30,7 @@ beforeEach(() => {
     ) => {
       if (executable !== process.execPath)
         throw new Error("Only owned Node fixtures may execute");
-      child = spawn(executable, [...args], options);
+      child = spawnFixture(executable, [...args], options);
       return child;
     },
   );
@@ -174,10 +182,12 @@ const nextChildReady = (script?: string): Promise<void> =>
         args: readonly string[],
         options: Parameters<typeof spawn>[2],
       ) => {
-        child = spawn(
+        child = spawnFixture(
           script === undefined ? executable : process.execPath,
           script === undefined ? [...args] : ["-e", script],
-          options,
+          script === undefined
+            ? options
+            : { ...options, windowsVerbatimArguments: false },
         );
         child.stdout!.once("data", () => resolve());
         return child;
@@ -303,4 +313,56 @@ it("preserves cancellation during final progress acknowledgement", async () => {
     error: { detail: expect.stringContaining("cancelled") },
   });
   await closing;
+});
+
+it("drains a real child after a progress writer closes before acknowledging its write", async () => {
+  let acknowledge!: (cause?: Error | null) => void;
+  let enter!: () => void;
+  const writing = new Promise<void>((resolve) => {
+    enter = resolve;
+  });
+  const destination = new Writable({
+    highWaterMark: 1024,
+    write(_chunk, _encoding, callback) {
+      acknowledge = callback;
+      enter();
+    },
+  });
+  vi.spyOn(process, "stderr", "get").mockReturnValue(
+    destination as typeof process.stderr,
+  );
+  let settled = false;
+  const pending = updateCommands
+    .runProbe(
+      command(
+        "process.stdout.write('x'.repeat(1024*1024));process.stderr.write('finished')",
+      ),
+      process.env,
+      "human",
+    )
+    .then((result) => {
+      settled = true;
+      return result;
+    });
+  await writing;
+  const closed = new Promise<void>((resolve) =>
+    destination.once("close", resolve),
+  );
+  destination.destroy();
+  await closed;
+  try {
+    await expect.poll(() => settled, { timeout: 1000 }).toBe(true);
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: { detail: expect.stringContaining("progress destination closed") },
+    });
+    expect(child?.exitCode).toBe(0);
+    expect(destination.listenerCount("error")).toBe(1);
+  } finally {
+    acknowledge();
+    await pending;
+    await nextTurn();
+    expect(destination.listenerCount("error")).toBe(0);
+    expect(destination.listenerCount("close")).toBe(0);
+  }
 });

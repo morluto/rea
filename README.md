@@ -156,6 +156,9 @@ Updater commands retain at most 4 MiB of stdout and stderr combined. Oversized
 metadata replies are rejected after the command exits; verbose installs continue
 with bounded diagnostics. Human progress output respects terminal backpressure
 and waits for submitted writes to finish.
+if the progress destination closes unexpectedly, output continues to drain so the
+package manager can finish. a progress error can therefore accompany an applied
+installation; check `rea --version` before retrying.
 
 Bun global updates require Bun 1.2.17 or later. With an older Bun release,
 upgrade Bun manually before running `rea update`.
