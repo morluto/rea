@@ -32,6 +32,7 @@ export default defineConfig({
           { text: "IL2CPP metadata", link: "/il2cpp-metadata" },
           { text: "Model artifacts", link: "/model-artifacts" },
           { text: "Rust dependencies", link: "/rust-binaries" },
+          { text: "CycloneDX dependencies", link: "/cyclonedx-view" },
           { text: "PE certificates", link: "/pe-certificates" },
           { text: "PE imports", link: "/pe-imports" },
           { text: "PE TLS/load config", link: "/pe-load-config" },

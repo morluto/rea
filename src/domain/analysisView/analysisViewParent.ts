@@ -87,3 +87,25 @@ export const analysisViewResultInputError = (
     { source: { normalized_result: input } },
     { cause },
   );
+
+/** Path named by a parent result, or the Evidence id when the result has none. */
+export const parentArtifactPath = (parent: AnalysisViewParent): string => {
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "artifact" in parent.normalizedResult &&
+    typeof parent.normalizedResult.artifact === "object" &&
+    parent.normalizedResult.artifact !== null &&
+    "path" in parent.normalizedResult.artifact &&
+    typeof parent.normalizedResult.artifact.path === "string"
+  )
+    return parent.normalizedResult.artifact.path;
+  if (
+    typeof parent.normalizedResult === "object" &&
+    parent.normalizedResult !== null &&
+    "input_path" in parent.normalizedResult &&
+    typeof parent.normalizedResult.input_path === "string"
+  )
+    return parent.normalizedResult.input_path;
+  return parent.evidenceId;
+};

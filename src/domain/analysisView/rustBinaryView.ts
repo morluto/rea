@@ -1,6 +1,5 @@
-import { binaryMetadataArchitecture } from "../binaryMetadataArchitecture.js";
-import { metadataReportSubjectFormat } from "../apple/machoTargetSelection.js";
 import { z } from "zod";
+import { requireMetadataReportSubject } from "./metadataReportSubject.js";
 import {
   rustBinarySchema,
   rustAuditableMetadataSchema,
@@ -27,6 +26,30 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import { selectViewRows } from "./selectViewRows.js";
 
 const count = z.number().int().nonnegative();
+
+const RUST_BINARY_RUNTIME_UNKNOWN =
+  "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+
+/** Unknowns owned by the Rust binary view. Other projections reuse them. */
+export const rustBinaryUnknowns = (
+  report: RustBinary,
+): {
+  readonly values: readonly string[];
+  readonly required: readonly string[];
+} => {
+  const metadata = report.auditable_metadata;
+  return {
+    required: [RUST_BINARY_RUNTIME_UNKNOWN],
+    values: [
+      RUST_BINARY_RUNTIME_UNKNOWN,
+      ...(metadata === null
+        ? [
+            "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
+          ]
+        : []),
+    ],
+  };
+};
 export const rustBinarySummarySchema = z.strictObject({
   bytes: count,
   format: rustBinarySchema.shape.format,
@@ -119,7 +142,7 @@ export const projectRustBinaryView = (
         {
           path: ["view"],
           reason: "invalid_value",
-          message: "Rust Evidence supports summary and rust views.",
+          message: "Rust Evidence supports summary, rust and cyclonedx views.",
         },
       ]),
     );
@@ -129,27 +152,14 @@ export const projectRustBinaryView = (
   const parsed = parseReport(parent);
   if (!parsed.ok) return parsed;
   const report = parsed.value;
-  const subject = parent.subject;
-  if (
-    subject == null ||
-    subject.digest.sha256 !== report.artifact.sha256 ||
-    subject.format !== metadataReportSubjectFormat(report) ||
-    subject.architecture !==
-      (binaryMetadataArchitecture(report.architecture) ?? null)
-  )
-    return err(
-      analysisViewInputError([
-        {
-          path: ["source", "subject"],
-          reason: "invalid_value",
-          message:
-            "Rust parent subject must identify the report's exact artifact.",
-        },
-      ]),
-    );
+  const subject = requireMetadataReportSubject(
+    parent,
+    report,
+    "Rust parent subject must identify the report's exact artifact.",
+  );
+  if (!subject.ok) return subject;
   const metadata = report.auditable_metadata;
-  const unknown =
-    "Embedded dependency records do not authenticate build provenance or establish complete runtime dependencies or target behavior.";
+  const unknowns = rustBinaryUnknowns(report);
   const shared = {
     parent_evidence_id: parent.evidenceId,
     parent_operation: "inspect_rust_binary" as const,
@@ -167,17 +177,10 @@ export const projectRustBinaryView = (
       "limitations",
     ),
     unknowns: boundedViewMessages(
-      [
-        unknown,
-        ...(metadata === null
-          ? [
-              "No cargo-auditable metadata was observed; missing metadata does not establish an empty dependency set.",
-            ]
-          : []),
-      ],
+      unknowns.values,
       parent.evidenceId,
       "unknowns",
-      [unknown],
+      unknowns.required,
     ),
   };
   const summary = summarize(report);

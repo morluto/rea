@@ -109,6 +109,51 @@ const assertRetainedPages = async (
   }
 };
 
+type CycloneDxCliRun = {
+  exitCode: number | null;
+  stderr: string;
+  json: unknown;
+};
+
+const expectCycloneDxView = async (
+  call: Awaited<ReturnType<typeof connectLocalToolsMcp>>["call"],
+  cli: { run: (input: { arguments: string[] }) => Promise<CycloneDxCliRun> },
+  input: { exported: string; format: string; root: string },
+): Promise<void> => {
+  const { exported, format, root } = input;
+  const request = {
+    source: { kind: "evidence-file", path: exported },
+    view: { kind: "cyclonedx" },
+  } as const;
+  const cyclonedx = await call("inspect_analysis_view", request);
+  expect(cyclonedx.isError, JSON.stringify(cyclonedx)).not.toBe(true);
+  const result = analysisViewResultSchema.parse(
+    parseEvidence(cyclonedx.structuredContent).normalized_result,
+  );
+  if (result.kind !== "cyclonedx") throw new Error("Expected a CycloneDX view");
+  expect(result.document).toMatchObject({
+    bomFormat: "CycloneDX",
+    specVersion: "1.6",
+    compositions: [{ aggregate: "unknown" }],
+  });
+  const documentText = JSON.stringify(result.document);
+  expect(documentText).toContain("pkg:cargo/same@1");
+  expect(documentText).not.toContain("pkg:cargo/app@1");
+  if (format !== "elf") return;
+  const requestPath = join(root, "cyclonedx-view.json");
+  await writeFile(requestPath, JSON.stringify(request));
+  const cliView = await cli.run({
+    arguments: ["inspect-analysis-view", requestPath, "--json"],
+  });
+  expect(cliView.exitCode, cliView.stderr).toBe(0);
+  const cliResult = analysisViewResultSchema.parse(
+    parseEvidence(cliView.json).normalized_result,
+  );
+  if (cliResult.kind !== "cyclonedx")
+    throw new Error("Expected a CycloneDX view");
+  expect(cliResult.document).toEqual(result.document);
+};
+
 cliTest(
   "queries stable Rust packages and edges through real CLI/MCP and portable Evidence",
   async ({ cli }) => {
@@ -229,6 +274,7 @@ cliTest(
       await unlink(path);
 
       await assertRetainedPages(call, full.evidence_id, exported);
+      await expectCycloneDxView(call, cli, { exported, format, root });
       const malformed = structuredClone(report);
       malformed.auditable_metadata!.dependency_edges[0]!.to_index = 999;
       if (full.subject == null)

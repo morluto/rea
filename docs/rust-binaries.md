@@ -68,6 +68,10 @@ to the parent Evidence, selected fields, examined coverage and the next offset.
 Default package fields omit dependency vectors; explicitly select
 `dependencies` to obtain direct references. No dependency path is traversed.
 
+The same parent also projects one CycloneDX 1.6 document with
+`view: { "kind": "cyclonedx" }`. It reads no target bytes. See
+[CycloneDX dependencies](cyclonedx-view.md).
+
 The CLI uses the same views and requires an exclusive output bundle for compact
 delivery so the complete Evidence survives process exit:
 
