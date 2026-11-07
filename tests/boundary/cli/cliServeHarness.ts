@@ -13,7 +13,7 @@ export const serveCli = async (
   argv: readonly string[],
   environment: Readonly<Record<string, string | undefined>> = {},
 ): Promise<ServedCli> => {
-  const cli = createCli(environment);
+  const cli = await createCli(environment);
   let stdout = "";
   let exitCode = 0;
   await cli.serve([...argv], {

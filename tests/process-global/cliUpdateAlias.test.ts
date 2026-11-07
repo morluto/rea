@@ -70,7 +70,7 @@ afterEach(() => {
 });
 
 const serve = async (
-  cli: ReturnType<typeof createCli>,
+  cli: Awaited<ReturnType<typeof createCli>>,
   arguments_: string[],
 ) => {
   process.exitCode = 0;
@@ -92,7 +92,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"])(
   "uses the verified update command and selected environment through direct serve with %s output",
   async (format) => {
     const selected = { REA_SELECTED_UPDATE: "original" };
-    const cli = createCli(selected);
+    const cli = await createCli(selected);
     selected.REA_SELECTED_UPDATE = "changed";
     const expected = await serve(cli, ["update", "--format", format]);
     const actual = await serve(cli, ["--format", format, "--update"]);
@@ -113,7 +113,7 @@ it.each(["json", "jsonl", "yaml", "toon", "md"])(
 );
 
 it("preserves filtering, full output and unsuccessful update exit status", async () => {
-  const cli = createCli({});
+  const cli = await createCli({});
   const flags = ["--json", "--full-output", "--filter-output", "status"];
   const filtered = await serve(cli, ["--update", ...flags]);
   const canonical = await serve(cli, ["update", ...flags]);
@@ -145,13 +145,13 @@ it.each([
   ["--update", "--help"],
   ["--incur-update-check", "--update"],
 ])("preserves non-installing precedence for %j", async (...arguments_) => {
-  await serve(createCli({}), arguments_);
+  await serve(await createCli({}), arguments_);
   expect(mocks.run).not.toHaveBeenCalled();
   expect(mocks.dependencyInstall).not.toHaveBeenCalled();
 });
 
 it("refuses ambiguous built-in installation rather than selecting another updater", async () => {
-  const result = await serve(createCli({}), [
+  const result = await serve(await createCli({}), [
     "providers",
     "--update",
     "--json",

@@ -1,8 +1,8 @@
 import { afterEach, expect, it, vi } from "vitest";
 
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
-import { CliGuidanceResources } from "../../../src/cli/guidanceCommands.js";
-import { CliJavaScriptAnalysisHost } from "../../../src/cli/javascriptApplicationAnalysis.js";
+import { CliGuidanceResources } from "../../../src/cli/cliGuidanceResources.js";
+import { CliJavaScriptAnalysisHost } from "../../../src/cli/cliJavaScriptResources.js";
 
 const originalClose = ArtifactResourceScope.prototype.close;
 

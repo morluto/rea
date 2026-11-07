@@ -1,5 +1,8 @@
 import { z } from "incur";
-import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import {
+  type CliGuidanceResources,
+  processGuidanceResources,
+} from "./cliGuidanceResources.js";
 import {
   readGuidanceSection,
   searchGuidance,
@@ -15,32 +18,6 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { cliDecimalField } from "./options.js";
-
-/** Guidance descriptors owned by one CLI host. */
-export class CliGuidanceResources {
-  #retained: ArtifactResourceScope | undefined;
-
-  resources(): ArtifactResourceScope {
-    this.#retained ??= new ArtifactResourceScope();
-    return this.#retained;
-  }
-
-  /** Release this host's descriptors, retaining failed cleanup for retry. */
-  async close(): Promise<void> {
-    const resources = this.#retained;
-    if (resources === undefined) return;
-    await resources.close();
-    if (this.#retained === resources) this.#retained = undefined;
-  }
-}
-
-/** Process CLI host used when a caller does not pass its own resources. */
-const processGuidanceResources = new CliGuidanceResources();
-
-/** Release CLI-owned guidance descriptors, retaining failed cleanup for retry. */
-export const closeCliGuidanceResources = (
-  resources: CliGuidanceResources = processGuidanceResources,
-): Promise<void> => resources.close();
 
 /** Register offline search and retrieval for the installed REA guide bundle. */
 export const registerGuidanceCommands = (

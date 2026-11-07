@@ -4,6 +4,76 @@ import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 /**
+ * Entry and lazy-group chunks that must reference a CLI module before it joins
+ * the shared chunk. Measured on representative commands: lower values grow the
+ * shared chunk every single command loads; higher values restore many small
+ * chunks that slow the full command catalog.
+ */
+const CLI_SHARED_CHUNK_MIN_SHARE_COUNT = 12;
+
+/**
+ * Entries the executable imports before it selects a command. Their static
+ * closure stays out of the shared chunk so version reports, preflight errors
+ * and MCP routing do not load the command runtime or its dependencies.
+ */
+const CLI_PREFLIGHT_ENTRIES = ["cliOutput.js", "cliBuiltinArguments.js"];
+
+/**
+ * Compute the modules statically reachable from a preflight entry once the
+ * graph is complete. Chunking runs after `buildEnd`, so every group test sees
+ * the finished closure.
+ */
+const createPreflightClosure = (compiledRoot) => {
+  let closure;
+  return {
+    plugin: {
+      name: "record-cli-preflight-closure",
+      buildEnd() {
+        closure = new Set();
+        const pending = CLI_PREFLIGHT_ENTRIES.map((path) =>
+          join(compiledRoot, path),
+        );
+        while (pending.length > 0) {
+          const next = pending.pop();
+          if (closure.has(next)) continue;
+          closure.add(next);
+          pending.push(...(this.getModuleInfo(next)?.importedIds ?? []));
+        }
+      },
+    },
+    has(id) {
+      if (closure === undefined)
+        throw new Error("CLI preflight closure was read before buildEnd");
+      return closure.has(id);
+    },
+  };
+};
+
+/**
+ * CLI command groups load lazily. Modules shared by many groups share one
+ * chunk, so a single command avoids hundreds of tiny imports while the full
+ * catalog still loads each group's own code once.
+ */
+const cliCodeSplitting = (preflight) => ({
+  groups: [
+    // Captured first so the shared group cannot pull preflight modules in as
+    // dependencies. Entry-aware subgroups keep each preflight entry's load
+    // limited to the modules it reaches.
+    {
+      name: "cli-preflight",
+      priority: 1,
+      entriesAware: true,
+      test: (id) => preflight.has(id),
+    },
+    {
+      name: "cli-shared",
+      minShareCount: CLI_SHARED_CHUNK_MIN_SHARE_COUNT,
+      test: (id) => !preflight.has(id),
+    },
+  ],
+});
+
+/**
  * Reduce filesystem resolution during CLI and MCP startup. Keep dependencies
  * external, dynamic imports lazy, and original compiled worker entrypoints.
  */
@@ -30,6 +100,7 @@ export const bundleRuntime = async (root) => {
       },
     ],
   ]) {
+    const preflight = createPreflightClosure(compiledRoot);
     const bundle = await rolldown({
       input: Object.fromEntries(
         Object.entries(entries).map(([name, path]) => [
@@ -43,6 +114,7 @@ export const bundleRuntime = async (root) => {
         isMetadataModule(source) ||
         (!source.startsWith(".") && !isAbsolute(source)),
       plugins: [
+        preflight.plugin,
         {
           name: "preserve-compiled-module-locations",
           transform(code, id) {
@@ -114,6 +186,9 @@ export const bundleRuntime = async (root) => {
           directory === "mcp"
             ? "[name]-[hash].js"
             : (chunk) => {
+                // Entry-aware subgroup names list every entry; the hash suffices.
+                if (chunk.name.startsWith("cli-preflight"))
+                  return "cli-preflight-[hash].js";
                 // Keep lazy facades distinguishable when source basenames repeat.
                 if (typeof chunk.facadeModuleId !== "string")
                   return "[name]-[hash].js";
@@ -123,7 +198,7 @@ export const bundleRuntime = async (root) => {
         paths: (id) =>
           isMetadataModule(id) ? "../generatedPackageMetadata.js" : id,
         minifyInternalExports: directory === "mcp",
-        codeSplitting: true,
+        codeSplitting: directory === "mcp" ? true : cliCodeSplitting(preflight),
         strictExecutionOrder: true,
         minify: false,
         sourcemap: false,

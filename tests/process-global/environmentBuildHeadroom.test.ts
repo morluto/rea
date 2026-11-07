@@ -93,16 +93,15 @@ describe("environment build heap headroom", () => {
     starveHeap();
     let stdout = "";
     try {
-      await createCli({ REA_LOG_LEVEL: "silent" }).serve(
-        ["environment-build", har, join(root, "built"), "--json"],
-        {
-          env: {},
-          exit: () => {},
-          stdout: (text) => {
-            stdout += text;
-          },
+      await (
+        await createCli({ REA_LOG_LEVEL: "silent" })
+      ).serve(["environment-build", har, join(root, "built"), "--json"], {
+        env: {},
+        exit: () => {},
+        stdout: (text) => {
+          stdout += text;
         },
-      );
+      });
     } finally {
       process.exitCode = exitCode;
     }

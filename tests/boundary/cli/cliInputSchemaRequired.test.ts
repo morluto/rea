@@ -16,7 +16,7 @@ import {
 } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
 import { presentOmittableDefaults } from "../../../src/cli/omittableDefaults.js";
 
-type CliInstance = ReturnType<typeof createCli>;
+type CliInstance = Awaited<ReturnType<typeof createCli>>;
 type CommandMap = NonNullable<ReturnType<typeof Cli.toCommands.get>>;
 
 const INPUT_GROUPS = ["args", "options"] as const;
@@ -83,7 +83,7 @@ const acceptsOmittedKey = (key: string, field: z.ZodType): boolean =>
 
 const registerParserAdvertisementInventoryTests = (): void => {
   it("require exactly the inputs whose omission the parser rejects", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const mismatches: string[] = [];
     const primary = createCliInventory(cli).primary;
     expect(primary).toEqual(
@@ -127,7 +127,7 @@ describe("CLI advertised input schemas", () => {
   registerParserAdvertisementInventoryTests();
 
   it("preserves client choices, selected path bounds and required decoded steps", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const ajv = new Ajv2020({ strict: false });
     for (const command of ["setup", "doctor"]) {
       const schema = await advertisedSchema(cli, command);
@@ -188,7 +188,7 @@ describe("CLI advertised input schemas", () => {
   });
 
   it("allows an omitted WASM timeout while validating explicitly supplied values", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "inspect-wasm-artifact");
     const options = parserSchema(cli, "inspect-wasm-artifact", "options");
     expect(options).toBeDefined();
@@ -212,7 +212,7 @@ describe("CLI advertised input schemas", () => {
   });
 
   it("accepts the one-argument keyed-archive call and keeps its constraints", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "inspect-keyed-archive");
     const ajv = new Ajv2020({ strict: false });
     const args = ajv.compile(advertised.args ?? {});
@@ -264,7 +264,7 @@ describe("CLI advertised input schemas", () => {
 
 describe("firmware CLI advertised input schema", () => {
   it("keeps limits and defaults from its shared input contract", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "extract-firmware");
     const ajv = new Ajv2020({ strict: false });
     const args = ajv.compile(advertised.args ?? {});
@@ -307,7 +307,7 @@ describe("firmware CLI advertised input schema", () => {
 
 describe("web module CLI advertised input schema", () => {
   it("advertises the shared path and URL constraints", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "trace-web-module-imports");
     const ajv = new Ajv2020({ strict: false });
     const args = ajv.compile(advertised.args ?? {});
@@ -333,7 +333,7 @@ describe("web module CLI advertised input schema", () => {
 
 describe("ADB selector input schemas", () => {
   it("matches canonical serial constraints for every command that accepts a serial", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const values = [
       ["", false],
@@ -385,7 +385,7 @@ describe("ADB selector input schemas", () => {
 
 describe("ADB selector input schemas: package and activity", () => {
   it("preserves package and activity selector boundaries in parser and advertisement", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const descriptions: Record<string, string> = {
       "pull-adb-package:package": "Installed package name",
@@ -578,7 +578,7 @@ describe("ADB selector input schemas: dispatch", () => {
 
 describe("ADB activity extra input schema", () => {
   it("matches the owning workflow's extra count through advertisement and CLI parsing", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "start-adb-activity");
     const parser = parserSchema(cli, "start-adb-activity", "options");
     if (parser === undefined)
@@ -621,7 +621,7 @@ describe("ADB activity extra input schema", () => {
 
 describe("Apktool locale selection input schema", () => {
   it("preserves the owner's array bounds through CLI advertisement and parsing", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "decode-android-resources");
     expect(advertised.options?.properties?.locales).toMatchObject({
       type: "array",
@@ -655,7 +655,7 @@ describe("Apktool locale selection input schema", () => {
 
 describe("reference-source outline-depth input schema", () => {
   it("parses decimal CLI tokens into the advertised safe integer schema", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const advertised = await advertisedSchema(cli, "import-reference-source");
     const outlineDepth = advertised.options?.properties?.outlineDepth;
     expect(outlineDepth).toMatchObject({ type: "integer", minimum: 0 });
@@ -978,7 +978,7 @@ describe("required CLI selector discovery", () => {
   it.each(selectorDiscovery)(
     "$command names every permitted selector alternative in schema, help, and the full LLM manifest",
     async (entry) => {
-      const cli = createCli({});
+      const cli = await createCli({});
       const advertised = await advertisedSchema(cli, entry.command);
       const otherChoice =
         entry.choice === "at least one" ? "exactly one" : "at least one";
@@ -1038,7 +1038,7 @@ describe("required CLI selector discovery", () => {
 });
 
 it("advertises and rejects an empty native-value procedure before opening a target", async () => {
-  const cli = createCli({});
+  const cli = await createCli({});
   const schema = await advertisedSchema(cli, "trace-native-values");
   expect(schema.args?.properties.procedure).toMatchObject({ minLength: 1 });
   const result = await serve(cli, [

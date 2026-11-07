@@ -45,7 +45,7 @@ it.skipIf(process.platform === "win32").each([
       '#!/bin/sh\nprofile=${REA_APKTOOL_ENV_PROFILE-absent}\n[ -n "$profile" ] || profile=empty\nprintf "2.11.1+%s\\n" "$profile"\n',
       { mode: 0o755 },
     );
-    const cli = createCli({ REA_APKTOOL_COMMAND: command, ...selected });
+    const cli = await createCli({ REA_APKTOOL_COMMAND: command, ...selected });
     vi.stubEnv("REA_APKTOOL_ENV_PROFILE", "late-ambient-profile");
     let stdout = "";
     await cli.serve(["inspect-apktool-client", "--json"], {
