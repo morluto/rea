@@ -5,6 +5,7 @@ import {
   type ProcessOwnershipHost,
   type ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import type { LinuxEnvironmentRestriction } from "./LinuxProcessStatus.js";
 import { createSystemProcessOwnershipHost } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
 
@@ -264,59 +265,62 @@ it
   },
 );
 
+/** Verify one unrelated same-UID Linux process whose run token could not be read. */
+const verifyUnrelatedLinuxProcess = async (
+  diagnostic: string,
+  processGroupId: number,
+  environmentRestriction: LinuxEnvironmentRestriction | undefined,
+) => {
+  const row: ProcessTableEntry = {
+    pid: 908,
+    parentPid: 1,
+    processGroupId,
+    uid: process.getuid!(),
+    state: "S",
+    command: "unrelated-process",
+  };
+  const host: ProcessOwnershipHost = {
+    platform: "linux",
+    signalGroup: vi.fn(),
+    listProcesses: () => Promise.resolve([row]),
+    environment: () => Promise.resolve({}),
+    runTokens: () =>
+      Promise.resolve(
+        new Map([[908, { state: "unavailable", reason: diagnostic } as const]]),
+      ),
+    processIdentities: (entries) =>
+      Promise.resolve(
+        new Map(
+          entries.map((entry) => [
+            entry.pid,
+            {
+              ...observedIdentity(entry, "current-generation"),
+              effectiveUid: process.getuid!(),
+              ...(environmentRestriction === undefined
+                ? {}
+                : { environmentRestriction }),
+            },
+          ]),
+        ),
+      ),
+  };
+  return verifyNoTokenOwnedProcesses("run-token", host, undefined, {
+    leaderPid: 100,
+    processGroupId: 100,
+    evidenceOwner: new ProcessOwnershipEvidenceOwner(),
+  });
+};
+
 it
   .skipIf(typeof process.getuid !== "function")
-  .each(["credentials", "non-dumpable"] as const)(
+  .each(["credentials", "non-dumpable", "user-namespace"] as const)(
   "records an unrelated same-UID Linux process whose environment is withheld for %s",
   async (restriction) => {
     const diagnostic = "EACCES: permission denied, open '/proc/908/environ'";
-    const verify = async (
-      processGroupId: number,
-      environmentRestriction: typeof restriction | undefined,
-    ) => {
-      const row: ProcessTableEntry = {
-        pid: 908,
-        parentPid: 1,
-        processGroupId,
-        uid: process.getuid!(),
-        state: "S",
-        command: "unrelated-process",
-      };
-      const host: ProcessOwnershipHost = {
-        platform: "linux",
-        signalGroup: vi.fn(),
-        listProcesses: () => Promise.resolve([row]),
-        environment: () => Promise.resolve({}),
-        runTokens: () =>
-          Promise.resolve(
-            new Map([
-              [908, { state: "unavailable", reason: diagnostic } as const],
-            ]),
-          ),
-        processIdentities: (entries) =>
-          Promise.resolve(
-            new Map(
-              entries.map((entry) => [
-                entry.pid,
-                {
-                  ...observedIdentity(entry, "current-generation"),
-                  effectiveUid: process.getuid!(),
-                  ...(environmentRestriction === undefined
-                    ? {}
-                    : { environmentRestriction }),
-                },
-              ]),
-            ),
-          ),
-      };
-      return verifyNoTokenOwnedProcesses("run-token", host, undefined, {
-        leaderPid: 100,
-        processGroupId: 100,
-        evidenceOwner: new ProcessOwnershipEvidenceOwner(),
-      });
-    };
 
-    await expect(verify(908, restriction)).resolves.toMatchObject({
+    await expect(
+      verifyUnrelatedLinuxProcess(diagnostic, 908, restriction),
+    ).resolves.toMatchObject({
       cleaned: true,
       unverified: [{ pid: 908, diagnostic }],
     });
@@ -326,11 +330,37 @@ it
       [100, restriction],
     ] as const)
       await expect(
-        verify(processGroupId, environmentRestriction),
+        verifyUnrelatedLinuxProcess(
+          diagnostic,
+          processGroupId,
+          environmentRestriction,
+        ),
       ).resolves.toMatchObject({
         cleaned: false,
         failures: [{ pid: 908, reason: "environment-unreadable" }],
       });
+  },
+);
+
+it.skipIf(typeof process.getuid !== "function").each([
+  ["EACCES: permission denied, open '/proc/908/environ'", true],
+  ["EPERM: operation not permitted, open '/proc/908/environ'", true],
+  ["EIO: i/o error, read", false],
+  ["ESRCH: no such process, open '/proc/908/environ'", false],
+  ["environment_unavailable", false],
+] as const)(
+  "classifies another user namespace as withheld only for a permission denial: %s",
+  async (diagnostic, withheld) => {
+    await expect(
+      verifyUnrelatedLinuxProcess(diagnostic, 908, "user-namespace"),
+    ).resolves.toMatchObject(
+      withheld
+        ? { cleaned: true, unverified: [{ pid: 908, diagnostic }] }
+        : {
+            cleaned: false,
+            failures: [{ pid: 908, reason: "environment-unreadable" }],
+          },
+    );
   },
 );
 

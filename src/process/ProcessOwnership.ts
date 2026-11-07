@@ -1555,6 +1555,10 @@ const PLATFORM_BINARY_ENVIRONMENT_WITHHELD =
 const RESTRICTED_PROCESS_ENVIRONMENT_WITHHELD =
   "restricted_process_environment_withheld";
 
+/** A permission-denied read of a process environment, raw or sanitized. */
+const PERMISSION_DENIED_DIAGNOSTIC =
+  /^(?:environment_errno_)?(?:EACCES|EPERM)\b/u;
+
 const currentProcessUid = (): number | undefined =>
   typeof process.getuid === "function" ? process.getuid() : undefined;
 
@@ -1563,10 +1567,12 @@ const currentProcessUid = (): number | undefined =>
  * current macOS omits the environment of Apple platform binaries and
  * CS_RESTRICT processes from KERN_PROCARGS2, and fails with EINVAL for
  * processes owned by another account. Linux denies `/proc/<pid>/environ` for
- * another account, mismatched real/saved IDs (setgid and setuid programs) and
- * non-dumpable processes. These classes cannot be token-verified by this
- * caller. An unrelated candidate is recorded as unverified instead of failing
- * an otherwise clean capture; every related or otherwise unreadable candidate
+ * another account, mismatched real/saved IDs (setgid and setuid programs),
+ * non-dumpable processes and, when the read is permission-denied, processes in
+ * another user namespace (for example bubblewrap sandboxes, whose UID still
+ * matches). These classes cannot be token-verified by this caller. An
+ * unrelated candidate is recorded as unverified instead of failing an
+ * otherwise clean capture; every related or otherwise unreadable candidate
  * stays fail-closed.
  */
 const environmentWithheldFromInspection = (
@@ -1574,6 +1580,10 @@ const environmentWithheldFromInspection = (
   observedUid: number | undefined,
   restriction?: LinuxEnvironmentRestriction,
 ): boolean => {
+  // A namespace difference explains only a permission denial; any other read
+  // failure (EIO, a vanished process) is not evidence of withholding.
+  if (restriction === "user-namespace")
+    return PERMISSION_DENIED_DIAGNOSTIC.test(diagnostic);
   if (restriction !== undefined) return true;
   const uid = currentProcessUid();
   if (uid !== undefined && observedUid !== undefined && observedUid !== uid)
