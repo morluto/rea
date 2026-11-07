@@ -143,7 +143,10 @@ register("rea_native_declarations", ({ path }) => {
 register("get_app_info", () => {
   if (mode === "rpc-disconnect") process.exit(17);
   return json({
-    package: "fixture",
+    package:
+      mode === "app-functions" || mode === "ordinary-apk"
+        ? "com.example.fixture"
+        : "fixture",
     version_name: "1",
     version_code: "1",
     min_sdk: "26",
@@ -159,6 +162,14 @@ register("get_android_manifest", () => {
     };
   if (mode === "frame-overflow") return text("x".repeat(9 * 1024 * 1024));
   if (mode === "large-manifest") return text("x".repeat(1024 * 1024));
+  if (mode === "ordinary-apk")
+    return text(
+      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.fixture"><application><activity android:name=".MainActivity" android:exported="false"/></application></manifest>',
+    );
+  if (mode === "app-functions")
+    return text(
+      '<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.fixture"><application><service android:name=".AgentAppFunctionService" android:exported="true" android:permission="android.permission.BIND_APP_FUNCTION_SERVICE"><intent-filter><action android:name="android.app.appfunctions.AppFunctionService"/></intent-filter><property android:name="android.app.appfunctions" android:value="assets/app_functions_v2.xml"/></service></application></manifest>',
+    );
   return text('<manifest package="fixture"/>');
 });
 register("list_classes", ({ offset, limit, query = "" }) => {

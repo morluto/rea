@@ -159,7 +159,7 @@ export const registerAndroidCommands = (
         .string()
         .optional()
         .describe(
-          "JSON android manifest/components/component-summary view; requires --detail summary and --evidence_output",
+          "JSON android manifest/components/component-summary/app-functions view; requires --detail summary and --evidence_output",
         ),
     }),
     run: ({ args, options }) =>

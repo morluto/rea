@@ -11,6 +11,7 @@ import {
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
   androidClassSummaryViewResultSchema,
   androidMethodSummaryViewResultSchema,
   androidJniSummaryViewResultSchema,
@@ -53,7 +54,7 @@ export const ANDROID_TOOL_CONTRACTS = [
     name: "inspect_android_package",
     ...toolContractMetadata("inspect_android_package"),
     description:
-      'Inspect a local APK\'s package, SDK and permission declarations, decoded manifest and class/resource counts, with a bounded static component projection. Omitted or complete detail preserves the complete result. Select detail: "summary" for all declarations, engine identity and counts without decoded manifest text or duplicate raw calls; retains the complete source and returns a distinct linked inspect_analysis_view summary. With summary detail, optionally select view kind android: facet components supports offset/limit, fields and exact kinds/names/actions/exported filters; source_index preserves the retained parent array ordinal and declaration_coverage preserves historical unknowns. Facet component-summary counts selected kinds and exported declarations separately from defaults. Facet manifest pages exact UTF-16 text. Reuse the same views with inspect_analysis_view and normalized_result.parent_evidence_id; complete detail rejects view selection. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.',
+      'Inspect a local APK\'s package, SDK and permission declarations, decoded manifest and class/resource counts, with bounded static component and AppFunctions projections. Omitted or complete detail preserves the complete result. Select detail: "summary" for all declarations, engine identity and counts without decoded manifest text or duplicate raw calls; retains the complete source and returns a distinct linked inspect_analysis_view summary. With summary detail, optionally select view kind android: facet components supports offset/limit, fields and exact kinds/names/actions/exported filters; source_index preserves the retained parent array ordinal and declaration_coverage preserves historical unknowns. Facet component-summary counts selected kinds and exported declarations separately from defaults. Facet app-functions returns declared AppFunctionService bindings, bundled XML schema assets and summary counts. Facet manifest pages exact UTF-16 text. Reuse the same views with inspect_analysis_view and normalized_result.parent_evidence_id; complete detail rejects view selection. Does not execute the APK or verify signatures. Requires a caller-supplied JADX MCP JAR and JDK; uses one worker in an isolated temporary workspace.',
     kind: "android-provider",
     inputSchema: androidPackageInspectionInputSchema,
     outputSchema: evidenceResultOf(
@@ -63,6 +64,7 @@ export const ANDROID_TOOL_CONTRACTS = [
         androidManifestViewResultSchema,
         androidComponentsViewResultSchema,
         androidComponentSummaryViewResultSchema,
+        androidAppFunctionsViewResultSchema,
       ]),
     ),
     examples: [

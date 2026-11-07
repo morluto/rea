@@ -4,8 +4,10 @@ import { projectAnalysisError } from "../analysisErrorProjection.js";
 import type { JsonValue } from "../jsonValue.js";
 import {
   analysisViewRequestSchema,
+  androidAppFunctionsViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidPackageSummaryViewResultSchema,
   projectAnalysisView,
   type AnalysisViewParent,
 } from "./analysisView.js";
@@ -78,7 +80,9 @@ const report = (
   resource_count: 0,
   signature_verification: "not_performed",
 });
-const parent = (value = report()): AnalysisViewParent => {
+const parent = (
+  value: Record<string, JsonValue> = report(),
+): AnalysisViewParent => {
   const evidence = createEvidence(
     { path: "/retained.apk", sha256: "a".repeat(64), format: "apk" },
     { id: "jadx", name: "JADX", version: "0.7.1" },
@@ -275,4 +279,106 @@ it("returns a resumable byte-limited page instead of silently omitting later row
   );
   expect(last.items.map((row) => row.source_index)).toEqual([2]);
   expect(last.coverage.exhausted).toBe(true);
+});
+
+it("projects AppFunctions summary counts and facet views while preserving historical unavailable defaults", () => {
+  const legacySource = parent();
+  const legacySummary = androidPackageSummaryViewResultSchema.parse(
+    project(legacySource, { kind: "summary" }),
+  );
+  expect(legacySummary.summary.app_functions.status).toBe("unavailable");
+  expect(legacySummary.summary.app_functions_summary).toEqual({
+    service_count: 0,
+    system_bound_service_count: 0,
+    schema_count: 0,
+    function_count: 0,
+  });
+  const legacyFacet = androidAppFunctionsViewResultSchema.parse(
+    project(legacySource, { kind: "android", facet: "app-functions" }),
+  );
+  expect(legacyFacet.source_status).toBe("unavailable");
+  expect(legacyFacet.unknowns.join(" ")).toContain("do not establish absence");
+
+  const populatedSource = parent({
+    ...report(),
+    app_functions: {
+      status: "complete",
+      services: [
+        {
+          declared_name: ".AgentAppFunctionService",
+          name: "example.AgentAppFunctionService",
+          declaration_index: 0,
+          location: { line: 4, column: 6, offset: 96 },
+          exported: true,
+          permission: "android.permission.BIND_APP_FUNCTION_SERVICE",
+          binds_system_permission: true,
+          declares_service_action: true,
+          schema_pointers: [
+            {
+              source: "property",
+              name: "android.app.appfunctions",
+              value: "assets/app_functions_v2.xml",
+              resource: null,
+              resolved_asset_path: "assets/app_functions_v2.xml",
+              location: { line: 5, column: 8, offset: 140 },
+            },
+          ],
+        },
+      ],
+      schemas: [
+        {
+          path: "assets/app_functions_v2.xml",
+          source_path: "assets/app_functions_v2.xml",
+          sha256: "b".repeat(64),
+          size: 256,
+          status: "complete",
+          functions: [
+            {
+              id: "example#createNote",
+              schema_name: "createNote",
+              schema_category: "notes",
+              schema_version: "2",
+              enabled_by_default: true,
+            },
+            {
+              id: "example#listNotes",
+              schema_name: "listNotes",
+              schema_category: "notes",
+              schema_version: "2",
+              enabled_by_default: false,
+            },
+          ],
+          limitations: [],
+        },
+      ],
+      limitations: [
+        "Static AppFunction declarations and XML schema assets do not establish runtime registration, caller authorization, or execution.",
+      ],
+    },
+  });
+  const populatedSummary = androidPackageSummaryViewResultSchema.parse(
+    project(populatedSource, { kind: "summary" }),
+  );
+  expect(populatedSummary.summary.app_functions_summary).toEqual({
+    service_count: 1,
+    system_bound_service_count: 1,
+    schema_count: 1,
+    function_count: 2,
+  });
+  const populatedFacet = androidAppFunctionsViewResultSchema.parse(
+    project(populatedSource, { kind: "android", facet: "app-functions" }),
+  );
+  expect(populatedFacet.source_status).toBe("complete");
+  expect(populatedFacet.summary).toEqual({
+    service_count: 1,
+    system_bound_service_count: 1,
+    schema_count: 1,
+    function_count: 2,
+  });
+  expect(populatedFacet.app_functions.schemas[0]?.functions).toHaveLength(2);
+  expect(populatedFacet.coverage).toMatchObject({
+    examined: 2,
+    total: 2,
+    exhausted: true,
+  });
 });

@@ -96,8 +96,10 @@ attributes are retained in `enabled_declaration` and
 `intent_filters` preserves each filter's source ordinal, exact priority spelling,
 actions, categories and individual data declarations (scheme, host, port, path,
 path prefix/pattern/advanced pattern/suffix and MIME type). These are declarations,
-not computed Android matching rules. `meta_data` lists names; values remain in the
-complete decoded manifest. Component, filter, data and metadata `location` values
+not computed Android matching rules. `meta_data` and `properties` retain each
+declaration's `name`, `value` and `resource` attributes within the shared nested
+copy budget; omitted historical values remain unknown rather than absent. Component,
+filter, data, metadata and property `location` values
 use one-based lines/columns and UTF-16 offsets into that manifest. A component's
 `declaration_index` preserves its original declaration ordinal, including gaps.
 
@@ -105,7 +107,7 @@ use one-based lines/columns and UTF-16 offsets into that manifest. A component's
 Historical Evidence omits newly introduced fields and defaults coverage to
 `unknown`; omission never establishes absence. Current records contain the fields,
 with null for absent or unresolved scalar declarations. The inventory retains at
-most 32 filters and 64 nested action/category/data/metadata records per component,
+most 32 filters and 64 nested action/category/data/metadata/property records per component,
 and shares a 1 MiB structured-value copy budget across components. Omitted values
 or unsupported filter constructs mark coverage partial and include a limitation;
 complete retained manifest text remains accessible.
@@ -141,6 +143,25 @@ The service `foreground_service_type` field preserves the declared attribute,
 including an empty value or surrounding spaces; `null` means the attribute is
 absent or the component is not a service. This field does not validate service
 type tokens or establish runtime eligibility.
+
+`app_functions` projects static Android 16+ / Jetpack AppFunctions bindings and
+bundled XML schema inventories. It lists `<service>` declarations that name the
+`android.app.appfunctions.AppFunctionService` intent action, require
+`android.permission.BIND_APP_FUNCTION_SERVICE` (`binds_system_permission`), or
+declare `android.app.appfunctions` / `android.app.appfunctions.*` `<property>` or
+`<meta-data>` pointers. Bundled APK archive members referenced by those pointers or
+matching `assets/*app_function*.xml` are read under bounded entry and byte limits
+with DTD/DOCTYPE declarations rejected, retaining each asset's path, SHA-256 digest
+and parsed function entries (`id`, `schema_name`, `schema_category`,
+`schema_version`, `enabled_by_default`). Services referencing compiled `@xml/...`
+resources or missing assets mark `app_functions.status` as `"partial"` with a
+bounded limitation (identifying repeated or oversized service names by
+`declaration_index`), and interrupted or cleanup-failed scans retain completed
+manifest bindings and XML schema checkpoints on `partial_observation.app_functions`.
+Summary views include `app_functions_summary` counts, and
+`view: {kind: "android", facet: "app-functions"}` projects the retained inventory
+and counts without reopening the APK. Static declarations and XML assets do not
+establish runtime registration, caller authorization or execution.
 
 ## Supply tools
 

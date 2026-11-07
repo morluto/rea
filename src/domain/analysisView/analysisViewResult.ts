@@ -277,6 +277,9 @@ import {
   androidManifestViewRequestSchema,
   androidComponentsViewRequestSchema,
   androidComponentSummaryViewRequestSchema,
+  androidAppFunctionsViewRequestSchema,
+  androidAppFunctionsSchema,
+  androidAppFunctionsSummarySchema,
   androidComponentViewRowSchema,
   androidComponentViewContextSchema,
   androidComponentSummarySchema,
@@ -763,10 +766,21 @@ export const androidComponentSummaryViewResultSchema = z.strictObject({
   summary: androidComponentSummarySchema,
   parent_operation: z.literal("inspect_android_package"),
 });
+export const androidAppFunctionsViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  kind: z.literal("android"),
+  facet: z.literal("app-functions"),
+  view: androidAppFunctionsViewRequestSchema,
+  source_status: androidAppFunctionsSchema.shape.status,
+  summary: androidAppFunctionsSummarySchema,
+  app_functions: androidAppFunctionsSchema,
+  parent_operation: z.literal("inspect_android_package"),
+});
 const androidPackageViewResultSchema = z.discriminatedUnion("facet", [
   androidManifestViewResultSchema,
   androidComponentsViewResultSchema,
   androidComponentSummaryViewResultSchema,
+  androidAppFunctionsViewResultSchema,
 ]);
 
 export const pcapCaptureSummaryViewResultSchema = z.strictObject({
