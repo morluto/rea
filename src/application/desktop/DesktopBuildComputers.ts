@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
+import { counted } from "../../domain/desktop/appExportUnowned.js";
 import {
   driverCall,
   type ComputerAction,
@@ -36,7 +37,7 @@ import {
   BuildComputerActionLog,
   type ReadonlyActionLog,
 } from "./DesktopBuildActionLog.js";
-import { writeRequestBundle } from "./DesktopBuildBundle.js";
+import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
@@ -221,6 +222,38 @@ const liveComputer = (
   };
 };
 
+/** How agentenv and REA say a computer's readiness checks never passed. */
+const NOT_READY = /\bnot ready\b|wasn't ready|didn't boot/u;
+
+/**
+ * A bundle's start that failed on readiness, naming the lock files its seed
+ * holds, which an app that finds its profile or document in use may never
+ * start past; any other failure as it is.
+ */
+/** The start failure's notice that the bundle seed still holds lock files. */
+export const seededLockStartNotice = (locks: readonly string[]): string =>
+  `The bundle's seed holds lock files, which can keep the app from starting when it finds its profile or document in use: ${counted(locks)}. Delete them from the bundle, or export it again, which leaves them out, and start again.`;
+
+const withSeededLocks = async (
+  source: BuildSource,
+  cause: unknown,
+): Promise<unknown> => {
+  if (
+    source.kind !== "bundle" ||
+    !(cause instanceof ComputerStartFailure) ||
+    !NOT_READY.test(cause.message)
+  )
+    return cause;
+  const locks = await seededLockFiles(source.path);
+  return locks.length === 0
+    ? cause
+    : new ComputerStartFailure(
+        `${cause.message} ${seededLockStartNotice(locks)}`,
+        cause.remediation,
+        cause.cause === undefined ? undefined : { cause: cause.cause },
+      );
+};
+
 /**
  * Why a start failed, with the helper's output, and, when its teardown is
  * unconfirmed, the id REA keeps that teardown under for close to retry.
@@ -395,7 +428,12 @@ export class DesktopBuildComputers {
         closing: true,
       });
       const release = await this.#retire(id);
-      return err(startFailure(cause, signal, owner?.output(), { id, release }));
+      const failed = signal.aborted
+        ? cause
+        : await withSeededLocks(source, cause);
+      return err(
+        startFailure(failed, signal, owner?.output(), { id, release }),
+      );
     }
   }
 

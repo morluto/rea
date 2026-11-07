@@ -4,16 +4,23 @@ import { buildSourceSchema } from "../domain/desktop/appBuild.js";
 import { desktopTaskSchema } from "../domain/desktop/appTask.js";
 import {
   buildCheckpointNameSchema,
+  buildStatePathSchema,
   END_CHECKPOINT,
+  MAX_BUILD_STATE_PATHS,
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
+import { draftNoteSchema } from "../domain/desktop/appTaskDraftNotes.js";
+import { draftValueSchema } from "../domain/desktop/appTaskDraftValues.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
 import {
   COMPUTER_ACTIONS,
   computerActionInputSchema,
   screenshotOptionsSchema,
 } from "../domain/desktop/computerActions.js";
-import { desktopCheckpointSchema } from "../domain/desktop/desktopCapture.js";
+import {
+  desktopCheckpointSchema,
+  MAX_ACKNOWLEDGED_FILES,
+} from "../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -121,7 +128,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_build_computer"),
     kind: "application",
     description:
-      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry (it is not open at first: open it from the desktop's Applications menu, under Other, by the environment's name), and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE. Set source.electron for an Electron app: the install rewrites that desktop entry's command with the same launch policy an export uses, adding --no-sandbox right after the program unless the command already has it, because the container does not grant the user namespaces Chromium needs and Electron exits without the flag. From a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes. screenshot sets the first screenshot's region, format and quality. The computer stays up, reachable on this host, until close_build_computer or the server closes; when a start fails before its teardown is confirmed, the error's computer_id names what close_build_computer retries.",
+      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry (it is not open at first: start_build_capture opens it under capture, and only when no capture is under way is it opened from the desktop's Applications menu, under Other, by the environment's name), and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE. Set source.electron for an Electron app: the install rewrites that desktop entry's command with the same launch policy an export uses, adding --no-sandbox right after the program unless the command already has it, because the container does not grant the user namespaces Chromium needs and Electron exits without the flag. From a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes, and agentenv makes a start wait while another agentenv run on this host writes its bundle's ids, so starts at the same time can wait minutes for each other. screenshot sets the first screenshot's region, format and quality. The computer stays up, reachable on this host, until close_build_computer or the server closes; when a start fails before its teardown is confirmed, the error's computer_id names what close_build_computer retries.",
     inputSchema: z.strictObject({
       source: buildSourceSchema,
       screenshot: screenshotOptionsSchema.optional(),
@@ -183,7 +190,11 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       },
       {
         title: "Save",
-        input: { computer_id: EXAMPLE_ID, action: "key", keys: ["ctrl+s"] },
+        input: {
+          computer_id: EXAMPLE_ID,
+          action: "key",
+          keys: ["Control", "s"],
+        },
       },
     ],
   },
@@ -191,7 +202,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "start_build_capture",
     ...toolContractMetadata("start_build_capture"),
     kind: "application",
-    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
+    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. When the app exits before its window opens, the error gives its exit code and the end of its stderr, with the capture's record of the session in its details. REA counts a file as the app's document when an app window's title shows its name or ~/ path; name the file the app will save in state_paths when its title shows something else, such as a score's title. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       arguments: z
@@ -200,6 +211,13 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         .optional()
         .describe(
           "Arguments appended to the app's launch command, such as a file to open.",
+        ),
+      state_paths: z
+        .array(buildStatePathSchema)
+        .max(MAX_BUILD_STATE_PATHS)
+        .optional()
+        .describe(
+          "Files or folders in the computer's home that hold the app's state, relative to the home (Documents/Scores/song.mscz), after ~/ or absolute under it; they need not exist yet. The capture retains them from its start and counts their files as the app's: a document, which the bundle owns, seeds and opens at launch when it is the seed's only one, or the app's own state under a hidden folder such as .config/MuseScore. An absolute path outside the home is refused.",
         ),
     }),
     outputSchema: z.strictObject({
@@ -222,13 +240,20 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         title: "Capture the requested app",
         input: { computer_id: EXAMPLE_ID },
       },
+      {
+        title: "Capture an app whose title shows a score's title, not its file",
+        input: {
+          computer_id: EXAMPLE_ID,
+          state_paths: ["Documents/MuseScore3/Scores/Morning_Song.mscz"],
+        },
+      },
     ],
   },
   {
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts: entries walked, paths changed since the checkpoint before, and files retained. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those under state_paths first, then those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -243,6 +268,20 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         changes: z.int().nonnegative(),
         retained_files: z.int().nonnegative(),
         retained_bytes: z.int().nonnegative(),
+        changed_files: z
+          .array(z.string())
+          .max(MAX_ACKNOWLEDGED_FILES)
+          .nullable()
+          .describe(
+            "Files, not folders, changed since the checkpoint before, relative to the home: those under state_paths, those the app held open, those in its state directories, the rest, then caches and browser-engine storage, each by path. null when the REA in the computer is older and does not report them, so which files changed is unknown; the checkpoint was still taken.",
+          ),
+        more_changed_files: z
+          .int()
+          .nonnegative()
+          .nullable()
+          .describe(
+            "How many more files changed than changed_files names; null when changed_files is.",
+          ),
       }),
     }),
     examples: [
@@ -256,7 +295,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed, with their net change, and suggested checks. Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed; the changes lie outside the owned paths, listed with their roles; the app saved its change only in dconf, which no check reads; a dconf database changed that REA could not read; or REA recognized no document: capture again with state_paths naming the file, or make a change the app saves in a file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -285,6 +324,14 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
               file: z.string(),
               role: z.string(),
               change: jsonValueSchema,
+              values: z
+                .array(draftValueSchema)
+                .describe(
+                  "The values the change added, changed and removed, ready to copy into a check: what a check can name first, then what only position reaches, then noise; at most 20 entries and 8 KB a file and 24 KB a draft. Only XML files, archives, JSON and key files have values: a text file's or SQLite database's change already lists its lines and rows.",
+                ),
+              values_cut: z
+                .boolean()
+                .describe("Whether a limit left values out."),
             }),
           ),
           task: z.strictObject({
@@ -292,6 +339,16 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
             prompt: z.string(),
             checks: z.array(jsonObjectSchema),
           }),
+          guards: z
+            .array(jsonObjectSchema)
+            .describe(
+              "Optional checks that the rest keeps its seed value, which the end holds too: a field on like siblings, one that varies among them before a default they all share; the text an addition kept; a text file's lines beside its new one. Add those worth keeping to the task's checks.",
+            ),
+          notes: z
+            .array(draftNoteSchema)
+            .describe(
+              "Why the draft has no files, or why a file's suggested checks are thin; empty when neither.",
+            ),
         })
         .nullable(),
       draft_refusal: z.string().optional(),

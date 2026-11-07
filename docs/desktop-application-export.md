@@ -25,6 +25,9 @@ a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
+`--synthetic-seed` says the seed was made for the task, as a build agent makes
+it in a [build computer](desktop-build-witness.md), rather than taken from the
+user's own data; see [A seed made for the task](#a-seed-made-for-the-task).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
@@ -124,6 +127,17 @@ The class declares:
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
   export refuses a capture that saw no application window.
+- The seed's document, opened at launch, so the app shows it rather than its
+  start screen: when the seed holds exactly one file the state view gives the
+  `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
+  `%u` or `%U` field code), its path under `$HOME` is appended to the command.
+  A command that already names a document, absolute or from its working
+  directory, as one captured with `--argument <file>` does, is kept as it is;
+  a settings path under the home does not count. A seed with no document launches
+  as captured. With several, no desktop entry or an `Exec` that takes no file,
+  the app launches as captured and the README and the result's limitations say
+  why. A reset
+  relaunches the app, so it opens the document again.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the
@@ -155,10 +169,43 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders. The
-desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
-the user moved there is neither owned nor seeded, even when a window title
-names it; a limitation lists the files the Trash held at the seed.
+content the capture did not retain, a limitation names those folders, spelled
+from `~/` under the home: a file there is seeded only when the capture
+retained it, as it does one written during the capture, and the limitation
+names the seed files there or says there are none. The desktop Trash,
+`~/.local/share/Trash`, is never the application's, so a file the user moved
+there is neither owned nor seeded, even when a window title names it; a
+limitation lists the files the Trash held at the seed.
+
+Files that changed during the capture outside the owned paths are neither
+owned nor seeded, so the app starts without what it saved there: MuseScore
+keeps its settings in `~/.config/MuseScore`, which its name rules miss, and
+showed its first-run wizard on every boot. A limitation and the README name
+those folders, leaving out desktop services' files, each collapsed to its
+folder in `~/.config`, `~/.local/share`, `~/.local/state` or `~/.local`, the
+hidden folder of the home it lies in, or else its own folder, up to eight and
+a count of the rest. Capture again naming them with `--state-path`, or
+`state_paths` on a build computer, to own them.
+
+Lock files the app holds while it runs are left out of the seed: a copied one
+makes the app find its profile or document in use, and a LibreOffice Calc
+bundle whose seed held its profile's `.lock` showed no window at boot. They
+are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock` and
+`SingletonLock` anywhere, LibreOffice's document lock `.~lock.<name>#`, and
+`*.lock` or `*.lck` directly in one of the application's state directories.
+Elsewhere such a file may be a project's own, such as `Cargo.lock` or
+`yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
+name starts with a dot. A file the state view makes a document, or one named
+itself by `--state-path` or an absolute `--argument`, is never left out,
+whatever its name. A limitation and the README list them, up to
+eight and a count, after "Left out of the seed". They stay under the owned
+paths, so `data/get` returns the lock the running app holds, and `data/reset`
+restores the seed without them. Other seed files the app keeps for its own
+running are seeded as captured and named, collapsed to the folder that holds
+them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`), which may hold the
+app's own data, and caches (a folder whose name ends in `cache`); a stale one
+can change how the app starts.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -168,7 +215,11 @@ existing user database through a `file-db:` profile, then runs `dconf compile`
 on that dump and the captured keys, in that name order so the captured keys
 win, and replaces `~/.config/dconf/user`. If that fails, the server prints a
 one-line warning and the app starts without the captured keys. `data/reset` does
-not restore them.
+not restore them. No file of the bundle holds them, so `data/get` does not
+return them and no task check reads them; a draft whose only change between
+its checkpoints is to the application's dconf keys says so with
+`uncheckable_changes`, and one whose dconf database changed but could not be
+read says so with `unreadable_changes`.
 
 ## The seed checkpoint
 
@@ -184,6 +235,16 @@ A file's state at a checkpoint is its last version recorded at or before it.
 The export refuses a name the capture does not hold exactly once, and an end
 checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
 lists the names in `capture.checkpoints`.
+
+## A seed made for the task
+
+By default the seed is the user's real data: the README and the result's
+limitations say to keep the bundle local and not publish it. With
+`--synthetic-seed` they say instead that the seed was made for the task, and
+to read `envs/<name>/seed/` before publishing the bundle; the export cannot
+tell the two apart, so the flag is the caller's word. `export_build_environment`
+passes it, since the building agent makes the seed in the build computer. The
+Evidence records it as `synthetic_seed`.
 
 ## Host name and user
 
@@ -337,6 +398,7 @@ when a DOCTYPE names a DTD. Known differences remain:
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
 
-The seed is the user's real data. Keep the bundle local and do not publish it.
+Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
+user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.

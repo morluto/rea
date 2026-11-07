@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { runtimeFile } from "./runtimeFiles.js";
+
 const sha256 = z.string().regex(/^[0-9a-f]{64}$/u);
 const milliseconds = z.int().min(0);
 
@@ -48,10 +50,13 @@ export const desktopCheckpointSchema = z.strictObject({
 });
 export type DesktopCheckpoint = z.infer<typeof desktopCheckpointSchema>;
 
+/** The most changed files a checkpoint's acknowledgement names. */
+export const MAX_ACKNOWLEDGED_FILES = 10;
+
 /**
  * What a running capture reports beside its progress text, for a driver to
  * wait on: the window opening, a checkpoint once it has been taken, with its
- * counts, and a requested name it refused.
+ * counts and the files that changed, and a requested name it refused.
  */
 export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
   z.strictObject({ kind: z.literal("window_open") }),
@@ -64,6 +69,19 @@ export const desktopCaptureEventSchema = z.discriminatedUnion("kind", [
     changes: z.int().min(0),
     retained_files: z.int().min(0),
     retained_bytes: z.int().min(0),
+    /**
+     * Files, not folders, changed since the checkpoint before: those under a
+     * selected path, those the app held open, those in its state
+     * directories, the rest, then caches and browser-engine storage, each by
+     * path; home-relative under the home. Absent from the acknowledgement of
+     * a REA that predates it, such as an older one in a build computer.
+     */
+    changed_files: z
+      .array(z.string().min(1))
+      .max(MAX_ACKNOWLEDGED_FILES)
+      .optional(),
+    /** How many more changed files there are than `changed_files` names; absent with it. */
+    more_changed_files: z.int().min(0).optional(),
   }),
   z.strictObject({
     kind: z.literal("checkpoint_refused"),
@@ -91,19 +109,57 @@ export const captureProgressEvent = (
 ): DesktopCaptureEvent | undefined =>
   desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
 
-/** The acknowledgement of a taken checkpoint, from what it recorded. */
+/**
+ * The acknowledgement of a taken checkpoint, from what it recorded, naming
+ * changed files relative to the home. Files under a path the caller selected
+ * come first, then those the app held open, then those in its state
+ * directories, then the rest; caches and WebKit or Chromium storage come
+ * last unless selected, since an app may rewrite many of them on any save.
+ */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
-): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => ({
-  kind: "checkpoint",
-  name: checkpoint.name,
-  trigger: checkpoint.trigger,
-  at_ms: checkpoint.at_ms,
-  entries: checkpoint.entries,
-  changes: checkpoint.changes.length,
-  retained_files: checkpoint.retained.length,
-  retained_bytes: checkpoint.retained.reduce((sum, file) => sum + file.size, 0),
-});
+  home: string,
+  selectedPaths: readonly string[] = [],
+): Extract<DesktopCaptureEvent, { kind: "checkpoint" }> => {
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : path;
+  const rank = (change: DesktopStateChange) =>
+    selectedPaths.some(
+      (root) => change.path === root || change.path.startsWith(`${root}/`),
+    )
+      ? 0
+      : runtimeFile(relative(change.path)) !== undefined
+        ? 4
+        : change.opened_by_application
+          ? 1
+          : change.in_state_directory
+            ? 2
+            : 3;
+  const files = checkpoint.changes
+    .filter((change) => (change.after ?? change.before)?.type !== "directory")
+    .map((change) => ({ path: change.path, rank: rank(change) }))
+    .sort(
+      (left, right) =>
+        left.rank - right.rank ||
+        (left.path < right.path ? -1 : left.path > right.path ? 1 : 0),
+    )
+    .map(({ path }) => relative(path));
+  return {
+    kind: "checkpoint",
+    name: checkpoint.name,
+    trigger: checkpoint.trigger,
+    at_ms: checkpoint.at_ms,
+    entries: checkpoint.entries,
+    changes: checkpoint.changes.length,
+    retained_files: checkpoint.retained.length,
+    retained_bytes: checkpoint.retained.reduce(
+      (sum, file) => sum + file.size,
+      0,
+    ),
+    changed_files: files.slice(0, MAX_ACKNOWLEDGED_FILES),
+    more_changed_files: Math.max(0, files.length - MAX_ACKNOWLEDGED_FILES),
+  };
+};
 
 const desktopEntrySchema = z.strictObject({
   id: z.string().nullable(),
@@ -270,8 +326,9 @@ export const desktopSessionSchema = z.strictObject({
   opened_files: z.array(
     z.strictObject({ path: z.string().min(1), first_seen_ms: milliseconds }),
   ),
-  /** The first bytes the launched process wrote to stderr. */
+  /** The last bytes the launched process wrote to stderr, up to 8 KiB. */
   stderr: z.string(),
+  /** Whether earlier stderr was dropped to keep the last bytes. */
   stderr_truncated: z.boolean(),
   /** Whether the run-token sweep confirmed every launched process is gone. */
   cleanup: z.strictObject({
@@ -302,6 +359,22 @@ export const desktopApplicationCaptureSchema = z.strictObject({
      * spelling; absent from captures written before it was recorded.
      */
     state_directories: z.array(z.string().min(1)).optional(),
+    /**
+     * Each `--state-path` and absolute `--argument` among the content roots,
+     * absolute as the caller named it, beside the physical spelling walked,
+     * so a link keeps what its name means; absent from captures written
+     * before it was recorded.
+     */
+    selected_paths: z
+      .array(
+        z.strictObject({
+          path: z.string().min(1),
+          physical: z.string().min(1),
+          /** Whether the walked path is a directory; absent from captures written before it was recorded. */
+          kind: z.enum(["file", "directory"]).optional(),
+        }),
+      )
+      .optional(),
     /** Paths every walk left out; absent from captures written before it was recorded. */
     excluded: z.array(z.string().min(1)).optional(),
     /** At least the baseline; a cancelled capture can stop there. */

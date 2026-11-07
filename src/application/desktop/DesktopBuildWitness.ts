@@ -44,6 +44,7 @@ import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
 import type { ReadonlyActionLog } from "./DesktopBuildActionLog.js";
 import { errorText } from "./DesktopBuildCommands.js";
+import { desktopOperationFailure } from "./DesktopCaptureRefusals.js";
 import {
   writeWitnessRecord,
   type EndedWitness,
@@ -143,6 +144,11 @@ interface OpenWitness extends EndedWitness {
   record?: WitnessRecord;
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
+  /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
   /**
    * A published record whose handles are still open. The error already carries
    * the record and the cleanup lease; every later close failure returns it.
@@ -360,10 +366,14 @@ export class DesktopBuildWitness {
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
     const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
+      witness.logged,
       signal,
       witness.pendingManifest,
     );
@@ -491,10 +501,23 @@ export class DesktopBuildWitness {
           "Give a new or empty folder.",
         ),
       );
-    const differs =
-      this.bundle === undefined
-        ? undefined
-        : await bundleTaskDifference(this.bundle, task, signal);
+    let differs: string | undefined;
+    if (this.bundle !== undefined) {
+      try {
+        differs = await bundleTaskDifference(this.bundle, task, signal);
+      } catch (cause: unknown) {
+        // A cancelled read, an I/O failure, or a handle that would not close
+        // stays a Result. A cleanup lease stays bound to that error.
+        return err(
+          desktopOperationFailure(
+            cause,
+            signal,
+            CHECK,
+            "Reading the bundle's task",
+          ),
+        );
+      }
+    }
     if (differs !== undefined)
       return err(
         refused(
