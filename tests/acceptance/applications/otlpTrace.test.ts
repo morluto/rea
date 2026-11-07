@@ -67,6 +67,7 @@ cliTest(
     const fixture = await writeExport();
     const { call } = await connectLocalToolsMcp({
       REA_MCP_TOOL_FAMILIES: "application,session",
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: "compact",
     });
     const parent = parseEvidence(
       (await call("inspect_otlp_trace", { path: fixture.path }))
