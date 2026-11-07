@@ -86,6 +86,52 @@ describe("draftTaskFiles for elements no attribute names", () => {
       true,
     );
   });
+
+  it("skips an added record's identifier and stamped date, and notes a field past the text limit", () => {
+    const home = ".local/share/osmo/contacts.xml";
+    const essay = "N".repeat(2001);
+    const book = (records: string) =>
+      `<osmo_contacts><contacts_records>${records}</contacts_records></osmo_contacts>`;
+    const kept =
+      "<record><group>None</group><first_name>Hannah</first_name></record>";
+    const before = book(kept);
+    const after = book(
+      `${kept}<record><id>124</id><first_name>Delphine</first_name><mdate><year>2026</year><month>11</month><day>7</day></mdate><note>${essay}</note></record>`,
+    );
+    const file = xmlDraft(before, after, {
+      role: "application_state",
+      file: home,
+    });
+    const values = file.suggested.flatMap((check) =>
+      check.kind === "text_contains" ? [check.value] : [],
+    );
+    expect(values).toContain("Delphine");
+    expect(values).not.toContain("124");
+    expect(values).not.toContain("2026");
+    expect(values.some((value) => value.includes(essay))).toBe(false);
+    expect(file.notes.map(({ code }) => code)).toContain("long_text");
+  });
+});
+
+describe("draftTaskFiles for a named record that also holds a save time", () => {
+  it("checks the edited field, not the record text that joins the timestamp", () => {
+    const box = (value: string, modified: string) =>
+      `<doc><box name="other"><value>Keep</value><modified>2026-11-01T10:12:00Z</modified></box><box name="target"><value>${value}</value><modified>${modified}</modified></box></doc>`;
+    const before = box("Old", "2026-11-07T10:12:00Z");
+    const saved = box("New", "2026-11-07T10:12:00Z");
+    const restamped = box("New", "2026-11-08T09:00:00Z");
+    const file = xmlDraft(before, saved);
+    const values = file.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+    expect(values.some((value) => value.includes("2026-11-07T10:12:00Z"))).toBe(
+      false,
+    );
+    expect(values).toContain("New");
+    expect(passing(FILE, xml(restamped), file.suggested).every(Boolean)).toBe(
+      true,
+    );
+  });
 });
 
 describe("draftTaskFiles for a record only position names, removed whole", () => {

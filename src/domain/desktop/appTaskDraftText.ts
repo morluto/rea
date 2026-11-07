@@ -1,6 +1,10 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
-import { holdsSplitDate, isStamp } from "./appTaskDraftNoise.js";
+import {
+  holdsSplitDate,
+  isStamp,
+  isVolatileValue,
+} from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
@@ -169,6 +173,15 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
 /** How far a text check climbs from an element no attribute names to an ancestor its tag names. */
 const MAX_TAG_CLIMB = 3;
 
+/** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
+const holdsNoisyText = (value: JsonValue | undefined): boolean => {
+  if (typeof value === "string") {
+    const text = value.trim();
+    return text.length > 0 && (isStamp(text) || isVolatileValue(text));
+  }
+  return isXmlElement(value) && value.children.some(holdsNoisyText);
+};
+
 /**
  * Where a text check goes for an element whose text changed, best first, so
  * the check names the paragraph, which a later save keeps, rather than a run
@@ -202,6 +215,21 @@ const outsideRuns = (pointer: string, ends: Ends): readonly Candidate[] => {
         .map((element) => ({ element, pointer: element, identifier: false }));
     passed.push(named);
     named = parent;
+  }
+  const noisy = (element: string) =>
+    holdsNoisyText(resolvePointer(ends.final, element));
+  // An ancestor whose text joins a timestamp fails a later save that only restamps it.
+  if (noisy(named)) {
+    const narrower = [current, ...passed].filter(
+      (element, index, all) =>
+        all.indexOf(element) === index && element !== named && !noisy(element),
+    );
+    if (narrower.length > 0)
+      return narrower.map((element) => ({
+        element,
+        pointer: element,
+        identifier: false,
+      }));
   }
   const ranked = [
     { element: named, pointer: named, identifier: namedByIdentifier(named) },

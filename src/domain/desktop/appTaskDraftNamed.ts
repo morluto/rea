@@ -251,6 +251,8 @@ interface Collected {
     real: number;
     readonly tags: Set<string>;
   };
+  /** Fields of an added record left unchecked because their text is past the limit. */
+  readonly fieldLong: string[];
 }
 
 const named = (
@@ -345,6 +347,7 @@ const elementChecks = (
     named: (view: JsonValue | null, at: string) =>
       named(collected, view, at) && !tree.leavesOut(view, at),
     chars: collected.context.limit.chars,
+    long: collected.fieldLong,
   };
   if (!named(collected, ends.final, `${pointer}/name`)) {
     const fields = fieldChecks(added, pointer, value);
@@ -473,6 +476,7 @@ const collectChecks = (
     values: [],
     noise: { elements: [], values: [] },
     positional: { count: 0, real: 0, tags: new Set() },
+    fieldLong: [],
   };
   const { ends, tree } = context;
   for (const pointer of change.added) {
@@ -575,7 +579,7 @@ export const namedDraft = (
     facts: {
       positional: checks.positional.count,
       positionalTags: [...checks.positional.tags],
-      long: texts.long,
+      long: [...new Set([...texts.long, ...checks.fieldLong])],
       changes: listed.length,
       noise: listed.filter((pointer) => noise(pointer) !== undefined).length,
       flagged: edited
