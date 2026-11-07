@@ -45,7 +45,10 @@ positions in the input. Event and link counts are reported without their payload
   numeric 64-bit field whose JSON number cannot be admitted exactly is also
   refused with the file identity, rather than returning a rounded value. Numeric
   spellings longer than 256 characters are refused before exactness checking;
-  recorded decimal strings are preserved within the file-size allowance.
+  recorded decimal strings are preserved within the file-size allowance. Source
+  coordinates for at most 16,384 imprecise numeric fields are retained; an
+  export exceeding that memory bound fails with the verified file identity.
+  Array and key-value-list contents are counted without scanning their numbers.
 - **Attributes are bounded.** Scalar attribute values are preserved as recorded,
   including values whose keys resemble credentials. Array and key-value-list
   attributes report only their element count. Each span and resource retains at

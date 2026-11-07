@@ -36,6 +36,11 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
+import {
+  OTLP_MAX_LOSSY_FIELDS,
+  OtlpNumberScanLimitError,
+  scanOtlpNumbers,
+} from "./scanOtlpNumbers.js";
 
 const inputFailure = (message: string, cause?: unknown) =>
   new AnalysisInputError(
@@ -121,42 +126,30 @@ const decodeExport = (
       )
     )
       return ok({ document: JSON.parse(text), lossyNumber: () => false });
-    const lossy = new WeakMap<object, Set<string>>();
-    const numericFields = new Set([
-      "startTimeUnixNano",
-      "endTimeUnixNano",
-      "intValue",
-    ]);
-    const document: unknown = JSON.parse(
-      text,
-      function (
-        this: object,
-        key: string,
-        value: unknown,
-        ...extra: unknown[]
-      ) {
-        if (numericFields.has(key) && typeof value === "number") {
-          const context = extra[0];
-          const source =
-            typeof context === "object" &&
-            context !== null &&
-            "source" in context
-              ? context.source
-              : undefined;
-          if (!isExactIntegerNumber(value, source)) {
-            const keys = lossy.get(this) ?? new Set<string>();
-            keys.add(key);
-            lossy.set(this, keys);
-          }
-        }
-        return value;
+    const document: unknown = JSON.parse(text);
+    return {
+      ok: true,
+      value: {
+        document,
+        lossyNumber: scanOtlpNumbers(text, document, isExactIntegerNumber),
       },
-    );
-    return ok({
-      document,
-      lossyNumber: (holder, key) => lossy.get(holder)?.has(key) === true,
-    });
+    };
   } catch (cause: unknown) {
+    if (cause instanceof OtlpNumberScanLimitError)
+      return err(
+        new AnalysisResourceConstraintError(
+          operation,
+          "memory",
+          cause.message,
+          { max_lossy_fields: OTLP_MAX_LOSSY_FIELDS },
+          {
+            cause,
+            retryable: false,
+            remediationAction:
+              "Inspect a smaller export or preserve integer values as OTLP decimal strings.",
+          },
+        ),
+      );
     return err(
       inputFailure(
         cause instanceof RangeError

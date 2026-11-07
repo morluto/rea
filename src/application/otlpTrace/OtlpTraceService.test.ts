@@ -268,3 +268,61 @@ it("reports the selected path and cause when the trace cannot be resolved", asyn
     ]);
   }
 });
+
+it.each([
+  ['"intValue":1.0000000000000001,"intValue":1', true],
+  ['"intValue":1,"intValue":1.0000000000000001', false],
+])(
+  "uses the final duplicate numeric field for source accuracy",
+  async (fields, accepted) => {
+    const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"count","value":{${fields}}}]}]}]}]}`;
+    const path = join(
+      await createTestTempDirectory("rea-otlp-duplicate-"),
+      "trace.json",
+    );
+    await writeFile(path, input);
+    const resources = new ArtifactResourceScope();
+    onTestFinished(() => resources.close());
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(accepted);
+  },
+);
+
+it("counts a large unexamined array without interpreting its numeric members", async () => {
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","attributes":[{"key":"items","value":{"arrayValue":{"values":[${'{"intValue":1.0000000000000001},'.repeat(19999)}{"intValue":0}]}}}]}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-array-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected an inventory");
+  expect(result.value.evidence.normalized_result).toMatchObject({
+    spans: [{ attributes: [{ value_kind: "array", element_count: 20000 }] }],
+  });
+});
+
+it("bounds retained numeric-loss coordinates and keeps the file identity", async () => {
+  const group =
+    '{"resource":{"attributes":[{"key":"n","value":{"intValue":1.0000000000000001}}]}}';
+  const input = `{"resourceSpans":[${(group + ",").repeat(16384)}${group}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-loss-cap-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected resource refusal");
+  expect(result.error._tag).toBe("AnalysisResourceConstraintError");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(input).digest("hex"),
+  });
+});
