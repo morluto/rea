@@ -787,7 +787,6 @@ it.each(["__proto__", "constructor"])(
       generator().generate,
     );
     for (const result of [created, updated]) {
-      expect(result.ok).toBe(true);
       if (!result.ok) throw new Error(result.error);
       expect(
         Object.getOwnPropertyDescriptor(result.value, field)?.value,

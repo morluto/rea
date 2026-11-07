@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
@@ -52,11 +51,6 @@ const distinctMemberSources = (
       message: "Managed member Evidence must be distinct",
     });
 };
-
-/** Two complete managed member observations for semantic consumers. */
-export const compareManagedMembersInputSchema = z
-  .strictObject(memberComparisonShape(evidenceSchema))
-  .superRefine(distinctMemberSources);
 
 /** Public member comparison selects records inline or by exact retained identity. */
 export const compareManagedMembersRequestSchema = z

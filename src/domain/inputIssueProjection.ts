@@ -62,21 +62,6 @@ const projectionBudgetExceeded = Symbol(
   "input issue projection budget exceeded",
 );
 
-/** Bound representation expansion before constructing projected diagnostics. */
-export const projectInputIssuesWithinBudget = (
-  issues: readonly z.core.$ZodIssue[],
-  input: unknown,
-  budgetBytes: number,
-  operation?: string,
-): readonly AnalysisInputIssue[] | undefined => {
-  return projectInputIssueGroupsWithinBudget(
-    issues,
-    input,
-    budgetBytes,
-    operation,
-  )?.flat();
-};
-
 /** Field diagnostics that fit a byte allowance, plus what was dropped. */
 export interface BoundedInputIssues {
   readonly issues: readonly AnalysisInputIssue[];

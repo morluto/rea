@@ -26,10 +26,8 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { protobufFrame } from "../../fixtures/protobufCapture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
-import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
-} from "../../../src/browser/history/CaptureRelease.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "../../../src/browser/history/CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../fixtures/captureDecoderLimits.js";
 const hasMemoryBound =
   NODE_CAPTURE_HEAP_ENFORCED ||
   NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES !== null;

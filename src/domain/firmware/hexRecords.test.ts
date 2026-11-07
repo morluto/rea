@@ -136,8 +136,9 @@ describe("Intel HEX decoding", () => {
       ok: false,
       error: {
         kind: "format",
-        message:
-          "address 0x00000003 written with different values at line 1 (0x04) and line 2 (0x99)",
+        message: expect.stringMatching(
+          /0x00000003\b.*different values.*line 1\b.*0x04\b.*line 2\b.*0x99\b/iu,
+        ),
       },
     });
   });

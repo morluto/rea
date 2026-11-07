@@ -184,7 +184,7 @@ REA_KUNA_COMMAND=/absolute/path/to/kuna GHIDRA_INSTALL_DIR=/absolute/path/to/ghi
   npm run verify:kuna -- --targets DIR --functions inflate,crc32 --compare-ghidra
 ```
 
-The lane compiles a small source-owned fixture with the host C compiler and verifies the MCP workflow end to end. `--targets DIR --functions a,b` adds caller-built binaries. `--compare-ghidra` (with `GHIDRA_INSTALL_DIR`) runs those same functions through Ghidra; it requires `--targets` and `--functions` and refuses empty matrices or requested function names missing from every target. See [testing](development/testing.md#kuna-lane) for coverage.
+The lane compiles a small source-owned fixture with the host C compiler and verifies the MCP workflow end to end. `--targets DIR --functions a,b` adds caller-built binaries. `--compare-ghidra` (with `GHIDRA_INSTALL_DIR`) runs those same functions through Ghidra; it requires `--targets` and `--functions` and refuses empty matrices or requested function names missing from every target. The report lists examined caller binaries and their matching requested symbols, including inputs omitted from analysis. See [testing](development/testing.md#kuna-lane) for coverage.
 
 Failed runs also report process-lineage evidence and exit unsuccessfully. If provider or transport cleanup is unconfirmed, the report says `cleanup: "incomplete"` and records `retained_workspace`; that directory is preserved for investigation and cleanup retries.
 

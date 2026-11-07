@@ -465,7 +465,15 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       stringCoverage = coverage;
     }
     output = jsonValueSchema.parse([
-      { address: "0x401000", value: "projection cache ignored" },
+      {
+        address: "0x401000",
+        value: "projection cache ignored",
+        string: {
+          encoding: "US-ASCII",
+          termination: "present_or_not_required",
+          byte_length: 25,
+        },
+      },
     ]);
     const matched = await harness.mcp.callTool({
       name: "search_strings",
@@ -551,6 +559,31 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
         output: [{ address: "0x401000" }],
       },
       {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000", value: "needle" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [
+          {
+            address: "0x401000",
+            value: "needle",
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: -1,
+            },
+          },
+        ],
+      },
+      {
+        name: "search_procedures",
+        arguments: { pattern: "fixture" },
+        output: [{ address: "0x401000", value: "fixture_main" }],
+      },
+      {
         name: "read_function_instructions",
         arguments: { procedure: "fixture_main" },
         output: {
@@ -617,6 +650,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     address,
     value,
     symbol: primary,
+    procedure: { external: false, thunk: false, thunk_target: null },
     ...(matched_aliases === undefined ? {} : { matched_aliases }),
   });
   let output = jsonValueSchema.parse([
@@ -693,9 +727,14 @@ it("keeps a namespaced entry name that matched by its leaf spelling", async () =
     {
       address: "0x101400",
       value: "outer::impl",
+      procedure: { external: false, thunk: false, thunk_target: null },
       matched_aliases: ["ns::audit_alias"],
     },
-    { address: "0x101440", value: "alpha::same" },
+    {
+      address: "0x101440",
+      value: "alpha::same",
+      procedure: { external: false, thunk: false, thunk_target: null },
+    },
   ]);
   const harness = await connectGhidraMcp("ghidra-namespaced-aliases", () =>
     Promise.resolve(ok(output)),
