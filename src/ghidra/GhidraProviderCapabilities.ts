@@ -285,6 +285,8 @@ export const existingProjectCapabilities = (
         : capability.operation,
       "existing-project",
     );
+    // The provider reports this same rejection as its availability. An edit
+    // stays unmarked: Windows P0 refuses edits after that readiness is fixed.
     if (platform === "win32")
       return {
         ...capability,
@@ -293,6 +295,9 @@ export const existingProjectCapabilities = (
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
         availabilityCode: "unsupported_host",
         remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+        ...(capability.effects.mutatesArtifact
+          ? {}
+          : { readinessGated: true as const }),
       };
     if (capability.effects.mutatesArtifact)
       return {
@@ -334,6 +339,7 @@ export const windowsP0Capabilities = (
             reason: readiness.reason,
             availabilityCode: readiness.code,
             remediation: readiness.remediation,
+            readinessGated: true,
             limitations,
           });
     }),

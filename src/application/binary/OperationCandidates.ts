@@ -188,11 +188,11 @@ const evaluate = (
 };
 
 /**
- * Some providers mark every declared operation unavailable with their own
- * readiness rejection while they are not ready. That is the readiness fact
- * already reported in availability, not a limit of the operation, so such an
- * operation counts as declared. Any other unavailability, including an
- * operation-specific limit without a code, stays unavailable.
+ * A provider owner marks a declared operation readiness-gated when it is
+ * unavailable only because the provider is not ready. That readiness is
+ * already reported in availability, so such an operation counts as declared.
+ * Every other unavailability, including an operation-specific limit that
+ * shares the provider's rejection code, stays unavailable.
  */
 const declarationOf = (
   operation: string,
@@ -201,7 +201,7 @@ const declarationOf = (
 ): OperationDeclaration =>
   descriptor === undefined
     ? { operation, status: "not_declared" }
-    : descriptor.available || repeatsReadiness(descriptor, readiness)
+    : descriptor.available || readinessGated(descriptor, readiness)
       ? { operation, status: "available" }
       : {
           operation,
@@ -210,13 +210,11 @@ const declarationOf = (
           availability_code: descriptor.availabilityCode ?? null,
         };
 
-const repeatsReadiness = (
+const readinessGated = (
   descriptor: Extract<CapabilityDescriptor, { readonly available: false }>,
   readiness: AnalysisProviderCandidateStatus["availability"],
 ): boolean =>
-  readiness.status === "unavailable" &&
-  descriptor.availabilityCode !== undefined &&
-  descriptor.availabilityCode === readiness.code;
+  readiness.status === "unavailable" && descriptor.readinessGated === true;
 
 const requiredOperations = (requirements: ToolProviderRequirements) => {
   const groups =

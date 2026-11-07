@@ -1386,6 +1386,12 @@ describe("binary session operation projection in a resource-only session", () =>
   });
 });
 
+/** Mark an unavailable fixture capability as its provider owner would. */
+const markReadinessGated = (
+  capability: CapabilityDescriptor,
+): CapabilityDescriptor =>
+  capability.available ? capability : { ...capability, readinessGated: true };
+
 describe("binary session operation declarations under provider readiness", () => {
   const unready = (
     provider: ProviderIdentity,
@@ -1419,13 +1425,15 @@ describe("binary session operation declarations under provider readiness", () =>
       ]);
 
   it("does not report an unconfigured provider's declared operation as missing", async () => {
-    // The capability repeats the provider's own readiness code, as IDA and
-    // Kuna report while unconfigured.
-    const gated = descriptor(providerA, "search_strings", [], {
-      available: false,
-      reason: "Set the provider configuration.",
-      availabilityCode: "not_configured",
-    });
+    // The provider owner marks the operation readiness-gated, as IDA, Kuna
+    // and Ghidra's Windows readiness path do while the provider is not ready.
+    const gated = markReadinessGated(
+      descriptor(providerA, "search_strings", [], {
+        available: false,
+        reason: "Set the provider configuration.",
+        availabilityCode: "not_configured",
+      }),
+    );
     expect(await declarationsOf([unready(providerA, [gated])])).toEqual([
       [
         "provider-a",
@@ -1436,17 +1444,35 @@ describe("binary session operation declarations under provider readiness", () =>
   });
 
   it.each([
-    ["an operation-specific limitation", undefined, false],
-    ["a different rejection than the provider's", "runtime_unavailable", false],
-    ["the same code while the provider is ready", "not_configured", true],
+    ["an operation-specific limitation", undefined, false, false],
+    [
+      "a different rejection than the provider's",
+      "runtime_unavailable",
+      false,
+      false,
+    ],
+    // A limit can share the provider's code, as Ghidra's Windows edit ban does.
+    [
+      "the provider's own code without the owner's mark",
+      "not_configured",
+      false,
+      false,
+    ],
+    [
+      "a marked operation while the provider is ready",
+      "not_configured",
+      true,
+      true,
+    ],
   ] as const)(
     "keeps %s as an unavailable declaration",
-    async (_name, availabilityCode, providerReady) => {
-      const limited = descriptor(providerB, "search_strings", [], {
+    async (_name, availabilityCode, providerReady, marked) => {
+      const unmarked = descriptor(providerB, "search_strings", [], {
         available: false,
         reason: "Search is limited for Provider B.",
         ...(availabilityCode === undefined ? {} : { availabilityCode }),
       });
+      const limited = marked ? markReadinessGated(unmarked) : unmarked;
       const status = providerReady
         ? candidate(providerB, [limited])
         : unready(providerB, [limited]);

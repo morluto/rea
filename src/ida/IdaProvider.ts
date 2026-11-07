@@ -214,6 +214,7 @@ export class IdaProvider implements AnalysisProviderCandidate {
               reason: availability.reason,
               availabilityCode: availability.code,
               remediation: availability.remediation,
+              readinessGated: true as const,
             }
           : capability,
       ),

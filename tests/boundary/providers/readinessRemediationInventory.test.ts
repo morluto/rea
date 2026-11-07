@@ -5,9 +5,14 @@ import type { CapabilityDescriptor } from "../../../src/application/AnalysisProv
 import { buildCapabilityInventory } from "../../../src/application/CapabilityInventory.js";
 import { providerCapabilitySets } from "../../../src/application/binary/BinarySessionStatus.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
+import {
+  existingProjectCapabilities,
+  windowsP0Capabilities,
+} from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { IdaProvider } from "../../../src/ida/IdaProvider.js";
 import { readKunaConfiguration } from "../../../src/kuna/KunaConfiguration.js";
 import { KunaProvider } from "../../../src/kuna/KunaProvider.js";
+import { kunaCapabilities } from "../../../src/kuna/KunaProviderCapabilities.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { inspectKunaProviderOwned } from "./kuna/kunaResourceScope.js";
 
@@ -49,6 +54,15 @@ it("carries an unreadable IDA registration's launch-environment repair into disc
         available: false,
         reason: "provider_unavailable",
         remediation: availability.remediation,
+      });
+    // Every declared operation is unavailable only through that readiness.
+    for (const capability of capabilities.filter(
+      (candidate) => !candidate.available,
+    ))
+      expect(capability, capability.operation).toMatchObject({
+        availabilityCode: availability.code,
+        reason: availability.reason,
+        readinessGated: true,
       });
     expect(connect).not.toHaveBeenCalled();
   } finally {
@@ -96,3 +110,74 @@ it.skipIf(process.platform === "win32").each([
     });
   },
 );
+
+const readinessGatedOperations = (
+  capabilities: readonly CapabilityDescriptor[],
+): readonly string[] =>
+  capabilities
+    .filter((capability) => !capability.available && capability.readinessGated)
+    .map(({ operation }) => operation);
+
+it("marks every Kuna operation readiness-gated only while Kuna is unavailable", () => {
+  const unavailable = kunaCapabilities({
+    status: "unavailable",
+    code: "not_configured",
+    reason: "Set REA_KUNA_COMMAND.",
+    remediation: "Set REA_KUNA_COMMAND and restart REA.",
+    diagnostics: {},
+  });
+  expect(readinessGatedOperations(unavailable)).toEqual(
+    unavailable.map(({ operation }) => operation),
+  );
+  expect(
+    readinessGatedOperations(
+      kunaCapabilities({
+        status: "available",
+        code: null,
+        reason: null,
+        diagnostics: {},
+      }),
+    ),
+  ).toEqual([]);
+});
+
+it("keeps Ghidra's Windows edit ban unmarked when the shared readiness code matches", () => {
+  // Windows readiness can itself be unsupported_host, the same code the P0
+  // edit ban uses; only the readiness-gated operations carry the mark.
+  const capabilities = windowsP0Capabilities({
+    available: false,
+    reason: "Windows native controls need x64 Windows.",
+    failureStage: "host",
+    code: "unsupported_host",
+    remediation: "Use Windows x64.",
+    proof: "not-applicable",
+  });
+  for (const capability of capabilities) {
+    if (capability.available) throw new Error("Readiness must gate reads");
+    expect(capability.availabilityCode, capability.operation).toBe(
+      "unsupported_host",
+    );
+    expect(capability.readinessGated === true, capability.operation).toBe(
+      !capability.effects.mutatesArtifact,
+    );
+  }
+  expect(capabilities.some(({ effects }) => effects.mutatesArtifact)).toBe(
+    true,
+  );
+  // A ready Windows host keeps the edit ban and marks nothing.
+  expect(
+    readinessGatedOperations(windowsP0Capabilities({ available: true })),
+  ).toEqual([]);
+});
+
+it("marks a Windows existing-project rejection as readiness only for reads", () => {
+  const capabilities = existingProjectCapabilities("win32");
+  const gated = new Set(readinessGatedOperations(capabilities));
+  for (const capability of capabilities)
+    expect(gated.has(capability.operation), capability.operation).toBe(
+      !capability.effects.mutatesArtifact,
+    );
+  expect(
+    readinessGatedOperations(existingProjectCapabilities("linux")),
+  ).toEqual([]);
+});
