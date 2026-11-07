@@ -1,4 +1,4 @@
-import { readdir, readFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it } from "vitest";
@@ -196,6 +196,45 @@ it("refuses a task too large for one command argument before the export runs in 
   expect(calls.map(({ argv }) => argv[0])).not.toContain(
     "export-desktop-application",
   );
+});
+
+it("refuses an unusable output folder before the export runs", async () => {
+  const { rea, client } = await fakes();
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+
+  const root = await createTestTempDirectory("build-out-unusable-");
+  const nonEmpty = join(root, "occupied");
+  await mkdir(nonEmpty);
+  await writeFile(join(nonEmpty, "keep"), "");
+  const regularFile = join(root, "file");
+  await writeFile(regularFile, "occupied");
+
+  for (const candidate of [nonEmpty, join(regularFile, "bundle")]) {
+    const response = await client.callTool({
+      name: "export_build_environment",
+      arguments: { computer_id: id, task: TASK, directory: candidate },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.details?.issues).toMatchObject([
+      { path: ["directory"], reason: "invalid_value" },
+    ]);
+  }
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "export-desktop-application",
+  );
+
+  const valid = join(root, "notes");
+  await callOk(client, "export_build_environment", {
+    computer_id: id,
+    task: TASK,
+    directory: valid,
+  });
 });
 
 it("refuses capture steps out of order and a capture of a bundle's computer", async () => {

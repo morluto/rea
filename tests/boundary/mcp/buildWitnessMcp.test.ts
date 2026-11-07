@@ -1,4 +1,4 @@
-import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
@@ -374,6 +374,39 @@ it("refuses a witness without a folder for its record, or one already holding fi
     parseMcpToolError(await check({ stage: "seed", directory: used })).error
       .message,
   ).toContain("not empty");
+});
+
+it("refuses an unusable witness folder before recording", async () => {
+  const { check, computer, directory } = await witnessed();
+  const root = await createTestTempDirectory("witness-unusable-");
+  const regularFile = join(root, "file");
+  await writeFile(regularFile, "occupied");
+  const candidates = [regularFile, join(regularFile, "out")];
+  if (process.platform !== "win32") {
+    const emptyFolder = join(root, "empty");
+    await mkdir(emptyFolder);
+    const emptyLink = join(root, "empty-link");
+    await symlink(emptyFolder, emptyLink);
+    const danglingLink = join(root, "dangling-link");
+    await symlink(join(root, "absent"), danglingLink);
+    candidates.push(emptyLink, danglingLink);
+  }
+  for (const candidate of candidates) {
+    const response = await check({ stage: "seed", directory: candidate });
+    const { error } = parseMcpToolError(response);
+    expect(error.code).toBe("invalid_request");
+    expect(error.message).not.toContain("not empty");
+    expect(error.details?.issues).toMatchObject([
+      { path: ["directory"], reason: "invalid_value" },
+    ]);
+  }
+  expect(computer.recordingRequests).toEqual([]);
+  const seed = parsed(await check({ stage: "seed", directory }));
+  expect(seed.witness).toMatchObject({
+    stage: "seed",
+    held: true,
+    next_stage: "after_edit",
+  });
 });
 
 it("retries a seed whose state read failed, with the recording it began", async () => {
