@@ -1490,7 +1490,7 @@ describe("executions that report truncated references", () => {
   });
 });
 
-it("revises the trace_feature workflow profile so earlier results are not replayed", () => {
+it("revises trace workflow profiles so earlier results are not replayed", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
 
   expect(
@@ -1502,9 +1502,12 @@ it("revises the trace_feature workflow profile so earlier results are not replay
     workflowAnalysisProfile(profile),
   );
   expect(
-    workflowAnalysisProfile(profile, "trace_call_path"),
-    "other workflows keep their profile",
-  ).toEqual(workflowAnalysisProfile(profile));
+    workflowAnalysisProfile(profile, "trace_call_path").parameters
+      .workflow_revision,
+  ).toBe(2);
+  expect(workflowAnalysisProfile(profile, "trace_call_path")).not.toEqual(
+    workflowAnalysisProfile(profile),
+  );
 });
 
 it("binds native value-trace absence semantics without changing other workflows", () => {
@@ -1514,7 +1517,7 @@ it("binds native value-trace absence semantics without changing other workflows"
     "recorded-versus-unavailable-v1",
   );
   expect(valueTrace.digest).not.toBe(workflowAnalysisProfile(profile).digest);
-  expect(workflowAnalysisProfile(profile, "trace_call_path")).toEqual(
+  expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
     workflowAnalysisProfile(profile),
   );
 });

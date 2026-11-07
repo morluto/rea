@@ -175,6 +175,12 @@ it("follows native overflow continuations through MCP without repeating provider
             relationshipCoverage: {
               status: "partial",
               limitations: ["Indirect edges unknown"],
+              discovery: {
+                callees: {
+                  status: "partial",
+                  reason: "Body was classified as data.",
+                },
+              },
             },
           },
         ),
@@ -234,6 +240,24 @@ it("follows native overflow continuations through MCP without repeating provider
         kind: "native-observation",
         parent_operation: name,
       });
+      if (name === "get_call_graph")
+        expect(evidence.normalized_result).toMatchObject({
+          items: {
+            type: "graph-nodes",
+            rows: [
+              {
+                relationship_coverage: {
+                  discovery: {
+                    callees: {
+                      status: "partial",
+                      reason: "Body was classified as data.",
+                    },
+                  },
+                },
+              },
+            ],
+          },
+        });
       expect(reads).toBe(before);
     }
   } finally {
