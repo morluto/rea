@@ -68,6 +68,16 @@ describe("draftTaskFiles for lines added to free text", () => {
     );
   });
 
+  it("does not guard a kept line that is only a timestamp", () => {
+    const before = "Notes\n2026-11-07T10:12:00Z\nKeep milk";
+    const file = draftOf(before, `${before}\nBuy eggs`);
+
+    expect(file.guards.map((guard) => "value" in guard && guard.value)).toEqual(
+      ["Notes", "Keep milk"],
+    );
+    expect(file.suggested).toMatchObject([{ value: "Buy eggs" }]);
+  });
+
   it("keeps text_equals where a line was replaced rather than added", () => {
     const file = draftOf(LIST, "Shopping List\n\neggs\nrye bread");
 
