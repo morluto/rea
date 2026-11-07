@@ -1075,6 +1075,61 @@ describe("browser scenario comparison validation", () => {
     });
   });
 
+  const duplicateLastStepCapture = () => {
+    const base = scenarioCapture({});
+    return {
+      ...base,
+      scenario: { ...base.scenario, action_count: 2 },
+      steps: [...base.steps, { ...base.steps[1]!, step_index: 2 }],
+    };
+  };
+
+  it("keeps a duplicated step id unaligned without classifying it as absent", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: duplicateLastStepCapture(),
+        after_scenario: scenarioCapture({}),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_before_step_id",
+          step_id: "open-settings",
+        }),
+      ],
+    });
+  });
+
+  it("mirrors the duplicate classification when the later capture repeats the id", () => {
+    const compared = compareBrowserScenarios(
+      compareBrowserScenariosInputSchema.parse({
+        before_scenario: scenarioCapture({}),
+        after_scenario: duplicateLastStepCapture(),
+      }),
+    );
+
+    expect(compared.overall_status).toBe("unknown");
+    expect(compared.alignment).toMatchObject({
+      status: "partial",
+      aligned_steps: 1,
+      before_only: [],
+      after_only: [],
+      failures: [
+        expect.objectContaining({
+          code: "duplicate_after_step_id",
+          step_id: "open-settings",
+        }),
+      ],
+    });
+  });
+
   it("rejects duplicate normalization rule IDs", () => {
     const capture = scenarioCapture({});
     expect(
