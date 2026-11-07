@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUILD_NODE_VERSION,
+  BUILD_PACKAGE_FILE,
   buildSourceSchema,
   renderBuildBundle,
   type BuildBundleFile,
@@ -33,7 +34,7 @@ const text = (files: readonly BuildBundleFile[], path: string): string => {
 describe("build bundle renderer", () => {
   it("installs an archive package, opens it on demand and adds REA in a build-only layer", () => {
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     expect(bundle.name).toBe("mousepad");
@@ -50,10 +51,10 @@ describe("build bundle renderer", () => {
     ).toEqual({ copyFrom: "/builds/rea-prod.tar.xz" });
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
+      'packages=Packages(apt=["mousepad", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
@@ -118,6 +119,20 @@ describe("build bundle install sources", () => {
     expect(copied instanceof Uint8Array && key.equals(copied)).toBe(true);
   });
 
+  it("installs an archive package's extra packages beside it", () => {
+    const bundle = renderBuildBundle(
+      request({
+        kind: "archive",
+        package: "freeplane",
+        extra_packages: ["openjdk-17-jre"],
+      }),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin", "dconf-cli"])',
+    );
+  });
+
   it("downloads a .deb for its architecture and installs it after its dependencies", () => {
     const sha256 = "a".repeat(64);
     const bundle = renderBuildBundle(
@@ -136,7 +151,7 @@ describe("build bundle install sources", () => {
     );
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["libgl1", "libgtk-3-bin"])',
+      'packages=Packages(apt=["libgl1", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `Download(url="https://downloads.example.com/varicad.deb", sha256="${sha256}", to="vendor/package.deb", arch="amd64")`,
@@ -146,9 +161,14 @@ describe("build bundle install sources", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).not.toContain('to="node-arm64.tar.xz"');
+    // REA's layer keeps the .deb for the capture before the install removes it.
     expect(module).toContain(
-      'run=[RunScript(script="install-package.sh"), RunScript(script="install-rea.sh")]',
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-package.sh")]',
     );
+    expect(text(bundle.files, "envs/mousepad/install-rea.sh")).toContain(
+      `cp vendor/package.deb ${BUILD_PACKAGE_FILE}`,
+    );
+    expect(BUILD_PACKAGE_FILE).toBe("/opt/rea/package.deb");
     expect(text(bundle.files, "envs/mousepad/install-package.sh")).toContain(
       "dpkg -i 'vendor/package.deb'",
     );
@@ -236,7 +256,7 @@ describe("installed launch paths", () => {
       "REA Build",
     ]);
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     const script = text(bundle.files, "envs/mousepad/install-rea.sh")
@@ -260,7 +280,7 @@ describe("installed launch paths", () => {
   it("rewrites an Electron desktop command with the shared launch policy", async () => {
     const bundle = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora.desktop",
         electron: true,
       },
@@ -271,14 +291,14 @@ describe("installed launch paths", () => {
     );
     const module = text(bundle.files, "envs/typora/typora_app.py");
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "typora"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
     );
     expect(module).toContain(
       'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',
     );
     const plain = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora",
         electron: false,
       },

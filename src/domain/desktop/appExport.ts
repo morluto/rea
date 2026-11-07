@@ -9,12 +9,30 @@ import {
   PYTHON_IMPORTS,
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
+  PYTHON_WITHHELD_DATA_HOOKS,
 } from "./appExportPython.js";
+import {
+  installName,
+  installNotes,
+  installs,
+} from "./appExportInstallNotes.js";
+import {
+  withheldNotes,
+  withheldSettingsClass,
+  withheldToml,
+} from "./appExportWithheld.js";
+import type { WithheldFile } from "./appWithheld.js";
+import {
+  leftOutFiles,
+  unownedReadmeNotes,
+  type RuntimeSeeds,
+} from "./appExportUnowned.js";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import { stateDirectoryOf } from "./stateRoles.js";
+import type { LaunchDocument } from "./seedDocument.js";
+import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -39,36 +57,63 @@ export interface DesktopAppExportPlan {
   readonly packageFile: ExportPackageFile | null;
   /** The package of the program the desktop entry runs, installed by name after the app's; absent when the app's package owns it. */
   readonly executablePackage?: string;
+  /** Packages installed beside the app because the export was asked for them; absent when none. */
+  readonly extraPackages?: readonly string[];
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
+  /** What the launch opens: the seed's one document, a file the captured command names, or nothing. */
+  readonly opens: LaunchDocument;
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
+  /** Whether the seed was made for the task, as in a build computer, rather than taken from the user's own data. */
+  readonly syntheticSeed: boolean;
   /** Home-relative files copied into the computer's home before the first launch. */
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
+  /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
+  readonly seedModes: Readonly<Record<string, number>>;
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
+  /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
+  readonly leftOutLocks: readonly string[];
+  /** The app's logs in its own state, left out of the seed since they record facts about the capture host. */
+  readonly leftOutLogs: readonly string[];
+  /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
+  readonly unownedFolders: readonly string[];
+  /** Seed files the app keeps for its own running: web engine storage and caches. */
+  readonly runtimeSeeds: readonly RuntimeSeeds[];
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
+  /** Files withheld from the seed as sign-in or licence state, each a secret setting a deploy takes from the environment. */
+  readonly withheld?: readonly WithheldFile[];
+  /** Withheld files seeded all the same, with the person's consent. */
+  readonly consentedFiles?: readonly string[];
 }
 
-/** A lowercase environment name from a desktop entry id or program, prefixed `app-` when the name check refuses it. */
+/** A reverse-DNS id, such as `org.xfce.mousepad`, whose last part names the app. */
+const REVERSE_DNS = /^[a-z][\w-]*(?:\.[a-z][\w-]*)+\.([^.]+)$/iu;
+/** A version at the end of another id, such as `-3.0` in `glabels-3.0`. */
+const TRAILING_VERSION = /(?<=.)[-_]\d+(?:\.\d+)*$/u;
+
+/**
+ * A lowercase environment name from a desktop entry id or program: a
+ * reverse-DNS id's last part, or else the whole id without a trailing
+ * version; prefixed `app-` when the name check refuses it.
+ */
 export const environmentName = (
   source: string,
   accepted: (name: string) => boolean,
 ): string => {
   const name =
-    source
-      .split(".")
-      .at(-1)
-      ?.toLowerCase()
+    (REVERSE_DNS.exec(source)?.[1] ?? source.replace(TRAILING_VERSION, ""))
+      .toLowerCase()
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+/u, "")
       .slice(0, 48)
@@ -174,63 +219,92 @@ export interface HomePathCollision {
   readonly dropped: string;
 }
 
-/** The state view's files by home path, dconf databases aside; of files sharing one, the first present before the capture is kept. */
+/**
+ * The state view's files by home path, and its dconf databases apart, which
+ * no file of the bundle holds; of files sharing one, the first present before
+ * the capture is kept.
+ */
 export const stateFilesByHomePath = (
   paths: readonly StatePath[],
   homePath: (path: string) => string | null,
 ): {
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly dconf: ReadonlyMap<string, StatePath>;
   readonly collisions: readonly HomePathCollision[];
 } => {
   const absent = (path: StatePath) =>
     path.versions[0]?.present === true ? 0 : 1;
   const files = new Map<string, StatePath>();
+  const dconf = new Map<string, StatePath>();
   const collisions: HomePathCollision[] = [];
   for (const path of [...paths].sort(
     (left, right) => absent(left) - absent(right),
   )) {
     const home = homePath(path.path);
-    if (home === null || path.format === "dconf") continue;
+    if (home === null) continue;
+    if (path.format === "dconf") {
+      dconf.set(home, path);
+      continue;
+    }
     const kept = files.get(home);
     if (kept === undefined) files.set(home, path);
     else collisions.push({ home, kept: kept.path, dropped: path.path });
   }
-  return { files, collisions };
+  return { files, dconf, collisions };
 };
 
-/** The state view's files by home path and the paths the app owns, as the export decides them. */
+/**
+ * The state view's files and dconf databases by home path, the paths the app
+ * owns, and which home files the seed leaves out as locks the app holds, as
+ * the export decides them. A document, a path the caller selected or a file
+ * under one is never left out, whatever its name.
+ */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
   const homePath = capturedHomePath(capture);
-  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
+  const homePaths = (paths: readonly string[]) =>
+    paths.map(homePath).filter((path): path is string => path !== null);
+  const { files, dconf, collisions } = stateFilesByHomePath(
+    state.paths,
+    homePath,
+  );
   const withRole = (role: string) =>
     [...files].filter(([, path]) => path.role === role).map(([home]) => home);
+  const stateDirectories = homePaths([
+    ...capture.application.state_directories.map((entry) => entry.path),
+    ...(capture.state.state_directories ?? []),
+  ]);
+  const usersOwn = [
+    ...withRole("document"),
+    ...homePaths(roleFacts(capture).selectedRoots),
+  ];
+  const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
+  // A lock or log never makes a path the app's, as Poedit's `~/poedit.lock` would.
   const paths = ownedPaths(
-    withRole("application_state"),
+    withRole("application_state").filter((home) => !leftOut.isLeftOut(home)),
     withRole("document"),
-    [
-      ...capture.application.state_directories.map((entry) => entry.path),
-      ...(capture.state.state_directories ?? []),
-    ]
-      .map(homePath)
-      .filter((path): path is string => path !== null),
+    stateDirectories,
   );
-  return { homePath, files, collisions, paths };
+  return { homePath, files, dconf, collisions, paths, ...leftOut };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
 
-const shellQuote = (value: string): string =>
+/** A value as one single-quoted shell word. */
+export const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
- * The launch command for the computer. Arguments that are or start with a
- * path under the captured home, and `<option>=<path>` values that do, are
- * respelled under the computer user's `$HOME` through `sh -c`, since the
- * declared command is not expanded by a shell.
+ * The launch command for the computer, through `sh -c` since the declared
+ * command is not expanded by a shell. It starts in the captured working
+ * directory, which the framework would otherwise replace with the app's own
+ * folder, where an open or save dialog would show build files. That
+ * directory, arguments that are or start with a path under the captured home,
+ * and `<option>=<path>` values that do, are respelled under the computer
+ * user's `$HOME`.
  */
 export const launchCommand = (
   argv: readonly string[],
@@ -254,25 +328,11 @@ export const launchCommand = (
         : `${shellQuote(argument.slice(0, equals + 1))}${value}`)
     );
   };
-  // The framework launches from the app's folder; a missing working directory must not stop the boot.
-  // A relative program path such as `./app` needs that directory too.
-  const relative = argv.some(
-    (argument, index) =>
-      argument.length > 0 &&
-      !argument.startsWith("/") &&
-      !argument.startsWith("-") &&
-      (index > 0 || argument.includes("/")),
-  );
   const respelled = argv.map(respell);
-  if (!relative && respelled.every((argument) => argument === undefined))
-    return argv;
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  return [
-    "sh",
-    "-c",
-    relative ? `cd ${directory} 2>/dev/null; ${command}` : command,
-  ];
+  // A missing working directory must not stop the boot.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */
@@ -280,21 +340,23 @@ export const py = (value: string): string => JSON.stringify(value);
 export const pyList = (values: readonly string[]): string =>
   `[${values.map(py).join(", ")}]`;
 
-/** The bundle's env.toml: a computer app deployed alone on the X11 base. */
+/** The bundle's env.toml: a computer app deployed alone on the X11 base, each withheld file's setting a reference to its environment variable. */
 export const renderEnvToml = (
-  plan: Pick<DesktopAppExportPlan, "name" | "className">,
+  plan: Pick<DesktopAppExportPlan, "name" | "className" | "withheld">,
 ): string =>
   [
     `type = "computer_app"`,
     `module = ${py(`${appModuleFile(plan.name)}:${plan.className}`)}`,
     `computer = "ubuntu-24.04"`,
     `driver = "reference"`,
+    ...withheldToml(plan.withheld ?? []),
     "",
   ].join("\n");
 
 /** The class body: data hooks only for owned paths, and captured settings either way. */
 const classBody = (plan: DesktopAppExportPlan): string => {
   const title = docText(plan.title);
+  const withheld = plan.withheld ?? [];
   if (plan.paths.length > 0)
     return `    """${title}, launched at boot with the captured state in its home.
 
@@ -302,14 +364,14 @@ const classBody = (plan: DesktopAppExportPlan): string => {
     the initial state, reset restores it, add writes files under PATHS, and get returns those files plus a typed JSON
     view of each.
     """
-
+${withheldSettingsClass(withheld)}
     def __init__(self) -> None:
         super().__init__()
         if not INITIAL.exists():
             _seed_home(Path.home())
-            _load_dconf(Path.home())
+            _load_dconf(Path.home())${withheld.length === 0 ? "" : "\n            _write_withheld(Path.home(), self.settings, WITHHELD)"}
         keep_initial(self.paths)
-${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
+${withheld.length === 0 ? PYTHON_DATA_HOOKS : PYTHON_WITHHELD_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   if (plan.dconf.length > 0)
     return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
 
@@ -320,16 +382,11 @@ ${PYTHON_READY_CHECK}`;
   return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
 };
 
-/** The package as apt takes it: `name`, or `name/release` for a vendor release. */
-const installName = (plan: DesktopAppExportPlan): string =>
-  plan.aptRelease === null
-    ? plan.aptPackage
-    : `${plan.aptPackage}/${plan.aptRelease}`;
-
-/** The app's package, or a package file's dependencies, then its program's package, its library packages and dconf-cli when settings are loaded. */
+/** The app's package, or a package file's dependencies, then the extra packages, its program's package, its library packages and dconf-cli when settings are loaded. */
 const aptPackages = (plan: DesktopAppExportPlan): readonly string[] => [
   ...new Set([
     ...(plan.packageFile?.dependencies ?? [installName(plan)]),
+    ...(plan.extraPackages ?? []),
     ...(plan.executablePackage === undefined ? [] : [plan.executablePackage]),
     ...plan.libraryPackages,
     ...(plan.dconf.length === 0 ? [] : ["dconf-cli"]),
@@ -365,22 +422,45 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
     "",
   ].join("\n");
 
+/** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
+export const seedWording = ({
+  name,
+  seedCheckpoint,
+  syntheticSeed,
+}: Pick<DesktopAppExportPlan, "name" | "seedCheckpoint" | "syntheticSeed">) =>
+  syntheticSeed
+    ? {
+        docstring: `The seed was made for the task, as saved at checkpoint ${docText(seedCheckpoint)}.`,
+        origin: `made for the task, as saved at checkpoint \`${seedCheckpoint}\``,
+        notice: `The seed was made for this task, not taken from a user's own data; read \`envs/${name}/seed/\` before publishing the bundle.`,
+      }
+    : {
+        docstring: `The seed is the user's state at checkpoint ${docText(seedCheckpoint)}: keep this bundle local.`,
+        origin: `from the user's home at checkpoint \`${seedCheckpoint}\``,
+        notice:
+          "The seed is the user's real data. Keep this bundle local; do not publish it.",
+      };
+
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
+${seedWording(plan).docstring}
 """
 
-${PYTHON_IMPORTS}
+${PYTHON_IMPORTS}${(plan.withheld ?? []).length === 0 ? "" : "from pydantic import SecretStr, create_model\n"}
 HERE = Path(__file__).resolve().parent
 SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+SEED_MODES = {${Object.entries(plan.seedModes)
+    .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
+    .join(", ")}}
 WINDOW_CLASS = ${py(plan.windowClass)}
+WITHHELD = {${(plan.withheld ?? []).map(({ setting, file }) => `${py(setting)}: ${py(file)}`).join(", ")}}
 ${PYTHON_HELPERS}
 
 @computer_app(supports=[{"os": {"type": "linux", "display": ["x11"]}, "arch": ${pyList(plan.architectures)}}])
@@ -412,59 +492,39 @@ window and dialogs; the result is read from those files.
 `
 }`;
 
-const installedFrom = (plan: DesktopAppExportPlan): string =>
-  plan.aptSources.length === 0
-    ? "the distribution archive"
-    : plan.aptSources
-        .map(
-          (source) =>
-            `the apt repository \`${source.uri}\` (suite \`${source.suite}\`${source.components.length === 0 ? "" : `, components \`${source.components.join(" ")}\``}), trusting \`${source.keyFile}\`, the key that verified its release on the capture host`,
-        )
-        .join(" and ");
+/** The start of the limitation of a launch that opens no document; its reason follows. */
+export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
 
-/** What the computer installs, and from where. */
-const installs = (plan: DesktopAppExportPlan): string =>
-  plan.packageFile === null
-    ? `\`${installName(plan)}\` from ${installedFrom(plan)}`
-    : `\`${plan.aptPackage}\`${plan.packageVersion === null ? "" : ` ${plan.packageVersion}`} from its package file, downloaded from
-  \`${plan.packageFile.url}\` when the bundle is put and refused unless its SHA-256 is \`${plan.packageFile.sha256}\``;
+/** The limitation of a launch that opens no document; none when it opens one. */
+export const launchDocumentLimitation = (
+  opens: LaunchDocument,
+): string | undefined =>
+  opens.kind === "none"
+    ? `${NO_LAUNCH_DOCUMENT}, since ${opens.reason}.`
+    : undefined;
 
-const packageFileNotes = ({ packageFile: file }: DesktopAppExportPlan) =>
-  file === null
-    ? []
-    : [
-        `- The bundle does not contain the package: \`${INSTALL_SCRIPT}\` installs \`${file.path}\` with dpkg once the apt packages
-  it depends on are in${file.dependencies.length === 0 ? "" : ` (${file.dependencies.map((name) => `\`${name}\``).join(", ")})`}, so the computer runs exactly the captured version, on \`${file.architecture}\` only.`,
-        "- Vendor sites may refuse automated downloads, so the URL must point at a copy of the file the operator may use.\n  The package's licence, such as a trial's terms, is the operator's to check.",
-      ];
+/** The README line on what the launch opens; none when the captured command names its own file. */
+export const launchDocumentNote = ({
+  opens,
+}: Pick<DesktopAppExportPlan, "opens">): string =>
+  opens.kind === "seed"
+    ? `\n- At launch the app opens \`~/${opens.document}\`, the seed's one document.`
+    : opens.kind === "none"
+      ? `\n- ${launchDocumentLimitation(opens)}`
+      : "";
 
-const installNotes = (plan: DesktopAppExportPlan): string =>
-  [
-    ...packageFileNotes(plan),
-    ...(plan.executablePackage === undefined
-      ? []
-      : [
-          `- \`${plan.executablePackage}\`, which owns the program the desktop entry runs, is installed with it.`,
-        ]),
-    ...(plan.libraryPackages.length === 0
-      ? []
-      : [
-          `- Library packages, which own the shared libraries the executable loaded on the capture host, are installed with it:
-  ${plan.libraryPackages.map((name) => `\`${name}\``).join(", ")}.`,
-        ]),
-    ...(plan.electron
-      ? [
-          "- Chromium's sandbox is off (`--no-sandbox`): it needs user namespaces the computer's container does not grant,\n  and Electron exits without them.",
-        ]
-      : []),
-  ]
-    .map((line) => `\n${line}`)
-    .join("");
-
-/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
+/**
+ * Bundle files: seeds the export rewrote to remove the capture host's
+ * identity, gzip seeds it compressed again only to clear their headers,
+ * files that still hold the identity, and seeds it left LibreOffice's
+ * recovery list out of.
+ */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
+  readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
+  /** Seeds whose LibreOffice recovery list was left out, as `~/<path>`. */
+  readonly recovered?: readonly string[];
 }
 
 const homeList = (paths: readonly string[]) =>
@@ -473,11 +533,27 @@ const homeList = (paths: readonly string[]) =>
 const bundleList = (paths: readonly string[]) =>
   paths.map((path) => `\`${path}\``).join(", ");
 
-const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+const scrubNotes = ({
+  scrubbed,
+  recompressed,
+  unscrubbed,
+  recovered = [],
+}: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
       ? []
       : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(recompressed.length === 0
+      ? []
+      : [
+          `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
+    ...(recovered.length === 0
+      ? []
+      : [
+          `\n- LibreOffice's list of the documents it had open, which would start it into document recovery instead of
+  its window, is left out of ${bundleList(recovered)}.`,
+        ]),
     ...(unscrubbed.length === 0
       ? []
       : [
@@ -490,7 +566,7 @@ const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
-  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
+  scrub: SeedScrubReport = { scrubbed: [], recompressed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 
@@ -500,10 +576,10 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
   ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs ${installs(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
-  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
+  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}${launchDocumentNote(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) from the user's home at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+- Seed: ${plan.seedFiles.length} file(s) ${seedWording(plan).origin}${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
   Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
   and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
@@ -511,12 +587,12 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }
+  }${withheldNotes(plan)}${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, { locks: plan.leftOutLocks, logs: plan.leftOutLogs })}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}
 
-The seed is the user's real data. Keep this bundle local; do not publish it.
+${seedWording(plan).notice}
 ${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */
