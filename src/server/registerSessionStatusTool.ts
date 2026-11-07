@@ -124,11 +124,8 @@ export const registerSessionStatusTool = (
       >;
       let status: JsonValue;
       try {
-        availabilityResults = await probeSessionAvailability(
-          options,
-          context.mcpReq.signal,
-          (family) => server.advertisesFamily(family),
-        );
+        // Session status owns input admission for the requested view, so an
+        // invalid operation is refused before any family availability probe.
         status = await session.status({
           signal: context.mcpReq.signal,
           detail: input.detail,
@@ -136,6 +133,11 @@ export const registerSessionStatusTool = (
             ? {}
             : { operation: input.operation }),
         });
+        availabilityResults = await probeSessionAvailability(
+          options,
+          context.mcpReq.signal,
+          (family) => server.advertisesFamily(family),
+        );
       } catch (cause) {
         if (!(cause instanceof AnalysisError)) throw cause;
         return server.delivery.toCallToolResult(err(cause), contract);

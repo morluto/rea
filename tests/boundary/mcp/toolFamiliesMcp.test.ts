@@ -266,3 +266,47 @@ describe("MCP tool family advertising", () => {
     });
   });
 });
+
+describe("binary_session operation view input admission", () => {
+  // An unknown name, and an advertised tool served outside deep providers.
+  it.each(["no_such_tool", "inspect_android_package"])(
+    "rejects operation %s before any family availability probe",
+    async (operation) => {
+      const server = scopedServer(
+        new Set(["session", "android", "adb", "apktool", "jeb", "artifact"]),
+      );
+      const calls: string[] = [];
+      const probe = (name: string) => async () => {
+        calls.push(name);
+        return {
+          status: "unavailable",
+          code: "runtime_missing",
+          reason: `${name} runtime is unavailable`,
+          remediation: "Repair the fixture provider.",
+          diagnostics: {},
+        } as const;
+      };
+      registerSessionStatusTool({
+        server,
+        session: sessionWithDirectOperations(),
+        contract: toolContract("binary_session"),
+        startedAt: new Date().toISOString(),
+        availabilityPolicy: () => ({ processCaptureEnabled: false }),
+        androidAnalysisAvailability: probe("android"),
+        adbAnalysisAvailability: probe("adb"),
+        apktoolAnalysisAvailability: probe("apktool"),
+        jebAnalysisAvailability: probe("jeb"),
+        evmLimiterAvailability: probe("evm"),
+      });
+      await withClient(server, async (client) => {
+        const result = await client.callTool({
+          name: "binary_session",
+          arguments: { detail: "operation", operation },
+        });
+        expect(result.isError).toBe(true);
+        expect(JSON.stringify(result.content)).toContain("invalid_input");
+      });
+      expect(calls).toEqual([]);
+    },
+  );
+});
