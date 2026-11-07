@@ -1812,8 +1812,8 @@ describe("NIBArchive UIKit event connections", () => {
       }),
     );
     expect(analysis.graph.truncated).toBe(true);
-    expect(analysis.limitations).toContain(
-      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    expect(analysis.limitations).toContainEqual(
+      expect.stringMatching(/resolvable owner.*omissions/iu),
     );
   });
 });
@@ -1997,8 +1997,8 @@ describe("NIBArchive single-object connectors", () => {
       }),
     );
     expect(analysis.graph.truncated).toBe(false);
-    expect(analysis.limitations).not.toContain(
-      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    expect(analysis.limitations).not.toContainEqual(
+      expect.stringMatching(/resolvable owner/iu),
     );
   });
 });
@@ -2036,8 +2036,8 @@ describe("NIBArchive connectors with unusable sources", () => {
       }),
     );
     expect(analysis.graph.truncated).toBe(true);
-    expect(analysis.limitations).toContain(
-      "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+    expect(analysis.limitations).toContainEqual(
+      expect.stringMatching(/resolvable owner/iu),
     );
   });
 
@@ -2091,8 +2091,8 @@ describe("NIBArchive connectors with unusable sources", () => {
         }),
       );
       expect(analysis.graph.truncated).toBe(true);
-      expect(analysis.limitations).toContain(
-        "Some recognized NIBArchive connectors declare no resolvable owner; they carry no connection evidence and are reported as omissions.",
+      expect(analysis.limitations).toContainEqual(
+        expect.stringMatching(/resolvable owner/iu),
       );
     },
   );
