@@ -1094,3 +1094,52 @@ it("retains an execution limit row only with its admitted unavailable file", () 
     ),
   ).toHaveLength(retained);
 });
+
+it("yields during final measurement and linked-fact admission", () => {
+  let charged = 0;
+  let releases = 0;
+  const admission = {
+    remainingBytes: () => 100_000_000 - charged,
+    reserveBytes: (bytes: number) => {
+      charged += bytes;
+      return true;
+    },
+    releaseBytes: (bytes: number) => {
+      charged -= bytes;
+      releases += 1;
+    },
+  };
+  const projection = createJavaScriptSemanticGraphProjection(
+    {},
+    admission,
+    SHA256,
+  );
+  for (let index = 0; index < 100; index++)
+    projection.recordUnavailableFile(
+      { ...budgetFile(""), path: `failed-${String(index)}.js` },
+      "Module transfer failed.",
+      {},
+      "resource-limit",
+    );
+  const steps = projection.finishImmutableSteps(
+    SHA256,
+    { graph_id: `jag_${"b".repeat(64)}`, nodes: [] },
+    [],
+  );
+  expect(releases).toBe(0);
+  let beforeRelease = 0;
+  let afterRelease = 0;
+  let result;
+  for (;;) {
+    const step = steps.next();
+    if (step.done) {
+      result = step.value;
+      break;
+    }
+    if (releases === 0) beforeRelease += 1;
+    else afterRelease += 1;
+  }
+  expect(beforeRelease).toBeGreaterThan(100);
+  expect(afterRelease).toBeGreaterThan(100);
+  expect(result.coverage.files).toHaveLength(100);
+});

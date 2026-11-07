@@ -73,8 +73,8 @@ import {
   addSemanticGraphRelation as addRelation,
   createSemanticGraphProjectionState as emptyState,
   finishSemanticFileBudget,
-  bindSemanticGraphApplicationNodes,
-  measureSemanticFiles,
+  bindSemanticGraphApplicationNodesSteps,
+  measureSemanticFilesSteps,
   admitSemanticIndexedFingerprint,
   type SemanticGraphProjectionState as BuilderState,
 } from "./JavaScriptSemanticGraphConstruction.js";
@@ -278,29 +278,30 @@ export const createJavaScriptSemanticGraphProjection = (
       fingerprints.push(fingerprint);
     files.push(fileCoverage(file, projected.coverage));
   };
-  const finishWith = <Value>(
+  const finishWithSteps = function* <Value>(
     factory: (input: unknown) => Value,
     rootArtifactSha256: string,
     applicationGraph: BuilderInput["applicationGraph"],
     budgetLimits: ApplicationCoverage["limits"],
-  ): Value => {
+  ): Generator<void, Value> {
     let finalBudget: SemanticFileGraphBudget | undefined;
-    const before = measureSemanticFiles(state, fingerprints);
+    const before = yield* measureSemanticFilesSteps(state, fingerprints);
     if (evidenceBudget !== undefined) {
       evidenceBudget.releaseBytes(graphReservedBytes + coverageReservedBytes);
       finalBudget = new SemanticFileGraphBudget(
         evidenceBudget.remainingBytes(),
       );
     }
-    bindSemanticGraphApplicationNodes(
+    yield* bindSemanticGraphApplicationNodesSteps(
       state,
       applicationGraph,
       fingerprints,
       finalBudget,
     );
-    const measured = measureSemanticFiles(state, fingerprints);
+    const measured = yield* measureSemanticFilesSteps(state, fingerprints);
     const retainedUnknownCounts = new Map<string, number>();
     for (const unknown of state.unknowns.values()) {
+      yield;
       const context = state.evidenceContexts.context(
         unknown.evidence.context_id,
       );
@@ -323,6 +324,7 @@ export const createJavaScriptSemanticGraphProjection = (
         );
       const retainedFiles: JavaScriptSemanticFileCoverage[] = [];
       for (const coverage of files) {
+        yield;
         const key = `${coverage.artifact_sha256}\u0000${coverage.module_path}`;
         const lost =
           (measured.get(key)?.facts ?? 0) < (before.get(key)?.facts ?? 0);
@@ -369,6 +371,7 @@ export const createJavaScriptSemanticGraphProjection = (
       for (const file of retainedFiles) files.push(file);
     } else {
       for (let index = 0; index < files.length; index++) {
+        yield;
         const coverage = files[index];
         if (coverage !== undefined)
           files[index] = {
@@ -395,21 +398,26 @@ export const createJavaScriptSemanticGraphProjection = (
     const unknownsByFamily = new Map<Family, number>();
     const omittedUnknownsByFamily = new Map<Family, number>();
     for (const relation of relations) {
+      yield;
       const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
       retainedByFamily.set(family, (retainedByFamily.get(family) ?? 0) + 1);
     }
-    for (const unknown of unknowns)
+    for (const unknown of unknowns) {
+      yield;
       unknownsByFamily.set(
         unknown.family,
         (unknownsByFamily.get(unknown.family) ?? 0) + 1,
       );
-    for (const coverage of files)
+    }
+    for (const coverage of files) {
+      yield;
       for (const count of coverage.unknowns)
         omittedUnknownsByFamily.set(
           count.family,
           (omittedUnknownsByFamily.get(count.family) ?? 0) +
             (count.total === null ? 0 : count.total - count.retained),
         );
+    }
     const truncatedFiles = files.filter(
       ({ status }) => status === "truncated",
     ).length;
@@ -636,23 +644,31 @@ export const createJavaScriptSemanticGraphProjection = (
     },
     projectFileSteps: projectSourceSteps,
     finish: (rootArtifactSha256, applicationGraph, budgetLimits) =>
-      finishWith(
-        createJavaScriptSemanticGraph,
-        rootArtifactSha256,
-        applicationGraph,
-        budgetLimits,
-      ),
+      (() => {
+        const steps = finishWithSteps(
+          createJavaScriptSemanticGraph,
+          rootArtifactSha256,
+          applicationGraph,
+          budgetLimits,
+        );
+        for (;;) {
+          const step = steps.next();
+          if (step.done) return step.value;
+        }
+      })(),
     finishImmutableSteps: (
       rootArtifactSha256,
       applicationGraph,
       budgetLimits,
-    ) =>
-      finishWith(
-        sealTransferredJavaScriptSemanticGraphSteps,
-        rootArtifactSha256,
-        applicationGraph,
-        budgetLimits,
-      ),
+    ): Generator<void, JavaScriptSemanticGraph> =>
+      (function* () {
+        return yield* yield* finishWithSteps(
+          sealTransferredJavaScriptSemanticGraphSteps,
+          rootArtifactSha256,
+          applicationGraph,
+          budgetLimits,
+        );
+      })(),
   };
 };
 

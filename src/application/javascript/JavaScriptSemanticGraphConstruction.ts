@@ -71,16 +71,17 @@ export const createSemanticGraphProjectionState =
   });
 
 /** Bind application IDs before final byte admission, preserving connected facts. */
-export const bindSemanticGraphApplicationNodes = (
+export function* bindSemanticGraphApplicationNodesSteps(
   state: SemanticGraphProjectionState,
   applicationGraph: Pick<JavaScriptApplicationGraph, "nodes">,
   fingerprints: JavaScriptSemanticFingerprint[] = [],
   budget?: SemanticFileGraphBudget,
-): void => {
-  const applicationNodeIdsByLocation = indexApplicationNodes(
+): Generator<void, void> {
+  const applicationNodeIdsByLocation = yield* indexApplicationNodesSteps(
     applicationGraph.nodes,
   );
   for (const [identifier, node] of state.nodes) {
+    yield;
     state.nodes.set(identifier, {
       ...node,
       // The index owns this immutable-to-consumers array. Share its storage
@@ -98,17 +99,22 @@ export const bindSemanticGraphApplicationNodes = (
   if (budget === undefined) return;
   // These nodes were already admitted and retained by the parent. Reuse their
   // references while their final, linked representation is admitted atomically.
-  for (const [id, node] of state.nodes) budget.pendingNodes.set(id, node);
+  for (const [id, node] of state.nodes) {
+    budget.pendingNodes.set(id, node);
+    yield;
+  }
   state.nodes.clear();
   let rootArrayBytes = 2;
   for (const id of state.roots) {
+    yield;
     const bytes =
       Buffer.byteLength(JSON.stringify(id)) + (rootArrayBytes === 2 ? 2 : 1);
     if (!admitSemanticFact(state, budget, [id], undefined, bytes))
       state.roots.delete(id);
     else rootArrayBytes += bytes;
   }
-  for (const [id, relation] of state.relations)
+  for (const [id, relation] of state.relations) {
+    yield;
     if (
       !admitSemanticFact(
         state,
@@ -118,17 +124,27 @@ export const bindSemanticGraphApplicationNodes = (
       )
     )
       state.relations.delete(id);
-  const retained = fingerprints.filter((fingerprint) =>
-    admitSemanticFact(
-      state,
-      budget,
-      [fingerprint.function_node_id],
-      fingerprint,
-    ),
-  );
+  }
+  const retained: JavaScriptSemanticFingerprint[] = [];
+  for (const fingerprint of fingerprints) {
+    yield;
+    if (
+      admitSemanticFact(
+        state,
+        budget,
+        [fingerprint.function_node_id],
+        fingerprint,
+      )
+    )
+      retained.push(fingerprint);
+  }
   fingerprints.length = 0;
-  for (const fingerprint of retained) fingerprints.push(fingerprint);
-  for (const [id, unknown] of state.unknowns)
+  for (const fingerprint of retained) {
+    fingerprints.push(fingerprint);
+    yield;
+  }
+  for (const [id, unknown] of state.unknowns) {
+    yield;
     if (
       !admitSemanticFact(
         state,
@@ -141,17 +157,23 @@ export const bindSemanticGraphApplicationNodes = (
       )
     )
       state.unknowns.delete(id);
+  }
   if (!budget.closed)
-    for (const id of budget.pendingNodes.keys())
+    for (const id of budget.pendingNodes.keys()) {
+      yield;
       if (!admitSemanticFact(state, budget, [id])) break;
+    }
   budget.pendingNodes.clear();
-};
+}
 
 /** Account final serialized facts, including links and first-referenced contexts. */
-export const measureSemanticFiles = (
+export function* measureSemanticFilesSteps(
   state: SemanticGraphProjectionState,
   fingerprints: readonly JavaScriptSemanticFingerprint[],
-): ReadonlyMap<string, { readonly bytes: number; readonly facts: number }> => {
+): Generator<
+  void,
+  ReadonlyMap<string, { readonly bytes: number; readonly facts: number }>
+> {
   const measurements = new Map<string, { bytes: number; facts: number }>();
   const contexts = new Set<string>();
   const facts = function* () {
@@ -161,6 +183,7 @@ export const measureSemanticFiles = (
     yield* fingerprints;
   };
   for (const fact of facts()) {
+    yield;
     const context = state.evidenceContexts.context(fact.evidence.context_id);
     const location = fact.evidence.location;
     if (!context.artifact.available || !location.available) continue;
@@ -183,7 +206,7 @@ export const measureSemanticFiles = (
     measurements.set(key, current);
   }
   return measurements;
-};
+}
 
 /** Construct one canonical semantic node backed by an exact artifact file. */
 export const constructSemanticGraphNode = (
@@ -508,12 +531,14 @@ export const addSemanticFallbackRoot = (
   if (node !== null) state.roots.add(node.node_id);
 };
 
-const indexApplicationNodes = (
+function* indexApplicationNodesSteps(
   nodes: JavaScriptApplicationGraph["nodes"],
-): ReadonlyMap<string, string[]> => {
+): Generator<void, ReadonlyMap<string, string[]>> {
   const identifiers = new Map<string, Set<string>>();
   for (const node of nodes) {
+    yield;
     for (const observation of node.observations) {
+      yield;
       const { artifact, location } = observation.evidence;
       if (!artifact.available || !location.available) continue;
       if (location.value.kind === "artifact-path") {
@@ -535,14 +560,13 @@ const indexApplicationNodes = (
       }
     }
   }
-  const indexed = new Map(
-    [...identifiers].map(([key, values]) => {
-      const sorted = [...values].sort();
-      return [key, sorted];
-    }),
-  );
+  const indexed = new Map<string, string[]>();
+  for (const [key, values] of identifiers) {
+    indexed.set(key, [...values].sort());
+    yield;
+  }
   return indexed;
-};
+}
 
 const addApplicationNodeIdentifier = (
   identifiers: Map<string, Set<string>>,
