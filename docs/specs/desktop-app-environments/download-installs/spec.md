@@ -26,10 +26,12 @@ with neither the build nor the bundle holding the application.
   - An AppImage is extracted with its own `--appimage-extract`. Its top-level
     `<desktop_entry>.desktop` is installed under
     `/usr/local/share/applications` with each `Exec` program replaced by the
-    extracted `AppRun` and `TryExec` removed, with its `Icon`'s SVG or PNG; an
+    extracted `AppRun`, after any `env` prefix and its assignments, and
+    `TryExec` removed, with its `Icon`'s SVG or PNG; an
     image without that entry fails the build, naming the entries it has.
-  - A tarball is read with Python's `tarfile` and its `tar` filter, since the
-    computer has no `xz` program. Its program must be an executable file; the
+  - A tarball is read with Python's `tarfile` and its `data` filter, since the
+    computer has no `xz` program. The filter refuses links that point outside
+    the folder, absolute ones included, and special files, failing the build. Its program must be an executable file; the
     entry REA writes into the environment folder, `applications/<desktop
     entry>.desktop`, runs it with `%F`, named by `name` or the entry's last
     part, and the script installs it.

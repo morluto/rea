@@ -52,6 +52,19 @@ Each failed on the unchanged code first:
 - through MCP, an AppImage request's export receives `--download-install`
   with the request's download in a file, and its bundle downloads the image.
 
+After review, three more, each failing on the first version:
+
+- a URL holding `"`, `\` and `"""` ended the class's docstring and made the
+  module invalid Python; now the docstring shows it with those characters
+  replaced, Python parses one expression, the docstring, and `Download`'s
+  literal holds the exact URL;
+- an entry's `Exec=env QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" drawio %U`
+  lost its `env` prefix; it now keeps both assignments before `AppRun`;
+- a crafted tarball with an absolute hardlink, then a file of the same name,
+  overwrote the outside file through the link as the script ran; with the
+  `data` filter it and a symlink out of the folder fail the build, and the
+  outside file keeps its content.
+
 ## FreeCAD 1.1.4 (AppImage)
 
 The request named the release's aarch64 AppImage and its published SHA-256.

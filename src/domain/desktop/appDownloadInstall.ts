@@ -135,8 +135,8 @@ const appImageScript = (install: DownloadInstall): string =>
     "  exit 1",
     "fi",
     'chmod -R a+rX "$prefix"',
-    // AppImage entries name their program relative to the image; the extracted image runs from AppRun.
-    `sed -E -e '/^TryExec=/d' -e "s#^Exec=[[:space:]]*(\\"[^\\"]*\\"|[^[:space:]]+)#Exec=$prefix/squashfs-root/AppRun#" "$desktop" > "${APPLICATIONS}/$entry.desktop"`,
+    // AppImage entries name their program relative to the image; it becomes AppRun, after any env prefix and its assignments.
+    `sed -E -e '/^TryExec=/d' -e "s#^Exec=[[:space:]]*(([^[:space:]\\"]*/)?env[[:space:]]+((\\"[A-Za-z_][A-Za-z0-9_]*=[^\\"]*\\"|[A-Za-z_][A-Za-z0-9_]*=[^[:space:]]*)[[:space:]]+)*)?(\\"[^\\"]*\\"|[^[:space:]]+)#Exec=\\1$prefix/squashfs-root/AppRun#" "$desktop" > "${APPLICATIONS}/$entry.desktop"`,
     `icon=$(sed -n 's/^Icon=//p' "$desktop" | head -n 1)`,
     'case "$icon" in',
     "  '' | */*) ;;",
@@ -166,13 +166,13 @@ const tarballScript = (
       "unpack the archive under its folder and install the desktop entry REA wrote for its program.",
     ),
     `program=${word(install.program)}`,
-    // Python's tarfile reads gzip, bzip2 and xz, and the computer has no xz program.
+    // Python's tarfile reads gzip, bzip2 and xz, and the computer has no xz program; its data filter refuses links out of the folder.
     'python3 - "$download" "$prefix" <<\'PY\'',
     "import sys",
     "import tarfile",
     "",
     "with tarfile.open(sys.argv[1]) as archive:",
-    '    archive.extractall(sys.argv[2], filter="tar")',
+    '    archive.extractall(sys.argv[2], filter="data")',
     "PY",
     'rm -f "$download"',
     'if [ ! -f "$prefix/$program" ] || [ ! -x "$prefix/$program" ]; then',

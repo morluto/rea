@@ -1,6 +1,8 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { access, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { promisify } from "node:util";
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
@@ -118,6 +120,8 @@ const exists = (path: string) =>
     () => true,
     () => false,
   );
+
+const execute = promisify(execFile);
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -1392,6 +1396,30 @@ describe("exportDesktopApplication from a download", () => {
     expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
       "The bundle does not contain the application",
     );
+  });
+
+  it("keeps a URL with quotes, backslashes and triple quotes inside the class's Python string literals", async () => {
+    const url =
+      'https://downloads.example.com/notes\\"2.0.AppImage?v="""#""";print(123);"""';
+    const { result, directory } = await exportDownload(downloadCapture(), {
+      ...APPIMAGE_INSTALL,
+      url,
+    });
+
+    if (result instanceof Error) throw result;
+    const { stdout } = await execute("python3", [
+      "-I",
+      "-c",
+      [
+        "import ast, json, sys",
+        "tree = ast.parse(open(sys.argv[1]).read())",
+        'urls = [k.value.value for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "Download" for k in n.keywords if k.arg == "url"]',
+        'print(json.dumps({"urls": urls, "expressions": sum(isinstance(n, ast.Expr) for n in tree.body)}))',
+      ].join("\n"),
+      join(directory, "envs/notes/notes_app.py"),
+    ]);
+    // The docstring is the module's one expression; the URL is data only in Download's literal.
+    expect(JSON.parse(stdout)).toEqual({ urls: [url], expressions: 1 });
   });
 
   it("writes a tarball's desktop entry beside the script that unpacks it", async () => {

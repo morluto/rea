@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import {
   chmod,
+  lstat,
   mkdir,
   readFile,
   readlink,
@@ -365,19 +366,41 @@ printf '%s\\n' '[Desktop Entry]' 'Name=draw.io' 'Exec=drawio %U' 'TryExec=drawio
 printf '<svg/>\\n' > squashfs-root/drawio.svg
 `;
 
+/** A tarball holding the program and a link out of the folder: a hardlink to `<outside>/passwd` then a file written through it, or a symlink to `<outside>`. */
+const CRAFTED_TARBALL = `
+import io, sys, tarfile
+path, outside, link = sys.argv[1:4]
+
+def add(archive, name, data=None, **fields):
+    member = tarfile.TarInfo(name)
+    for key, value in fields.items():
+        setattr(member, key, value)
+    member.size = 0 if data is None else len(data)
+    archive.addfile(member, None if data is None else io.BytesIO(data))
+
+with tarfile.open(path, "w:gz") as archive:
+    add(archive, "notes-2.0/bin/notes", b"#!/bin/sh\\n", mode=0o755)
+    if link == "hardlink":
+        add(archive, "notes-2.0/etc", type=tarfile.LNKTYPE, linkname=outside + "/passwd")
+        add(archive, "notes-2.0/etc", b"overwritten\\n")
+    else:
+        add(archive, "notes-2.0/etc", type=tarfile.SYMTYPE, linkname=outside)
+`;
+
 const exists = (path: string) =>
   stat(path).then(
     () => true,
     () => false,
   );
 
-describe("download install scripts", () => {
-  const stage = async (prefix: string) => {
-    const root = await createTestTempDirectory(prefix);
-    await mkdir(join(root, "env/vendor"), { recursive: true });
-    return root;
-  };
+/** A temporary root with the environment folder's `vendor` folder, where agentenv puts a download. */
+const stage = async (prefix: string) => {
+  const root = await createTestTempDirectory(prefix);
+  await mkdir(join(root, "env/vendor"), { recursive: true });
+  return root;
+};
 
+describe("download install scripts", () => {
   it("extracts an AppImage under its folder and installs its own entry with an absolute Exec, its icon and no TryExec", async () => {
     const root = await stage("rea-appimage-install-");
     const image = join(root, "env/vendor/app.AppImage");
@@ -420,6 +443,33 @@ describe("download install scripts", () => {
     );
     expect(failed?.stderr).toContain("com.example.Other.desktop");
     expect(failed?.stderr).toContain("drawio.desktop");
+  });
+
+  it("keeps an env prefix and its assignments when it points the AppImage's entry at AppRun", async () => {
+    const root = await stage("rea-appimage-env-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(
+      image,
+      STUB_APPIMAGE.replace(
+        "'Exec=drawio %U'",
+        "'Exec=env QT_QPA_PLATFORM=xcb \"GTK_THEME=Adwaita dark\" drawio %U'",
+      ),
+    );
+    await chmod(image, 0o755);
+    await runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    );
+
+    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+    expect(
+      await readFile(
+        join(root, "local-share/applications/drawio.desktop"),
+        "utf8",
+      ),
+    ).toContain(
+      `\nExec=env QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
+    );
   });
 
   it("unpacks a tarball without xz under its folder and installs the entry REA wrote for its program", async () => {
@@ -470,6 +520,45 @@ describe("download install scripts", () => {
     );
     expect(failed?.stderr).toContain("notes-2.0/notes");
     expect(failed?.stderr).toContain("notes-2.0");
+  });
+});
+
+describe("download install scripts and archive links", () => {
+  it("refuses a tarball whose links point outside its folder, leaving the files they name untouched", async () => {
+    for (const link of ["hardlink", "symlink"]) {
+      const root = await stage(`rea-tarball-${link}-`);
+      const outside = join(root, "outside");
+      await mkdir(outside);
+      await writeFile(join(outside, "passwd"), "kept\n");
+      await execute("python3", [
+        "-I",
+        "-c",
+        CRAFTED_TARBALL,
+        join(root, "env/vendor/app.tar"),
+        outside,
+        link,
+      ]);
+      const failed = await runDownloadInstall(
+        renderBuildBundle(tarballRequest("notes-2.0/bin/notes"), localPayload),
+        root,
+      ).then(
+        () => undefined,
+        (error: unknown) => error as { stderr: string },
+      );
+
+      expect(await readFile(join(outside, "passwd"), "utf8"), link).toBe(
+        "kept\n",
+      );
+      const placed = join(root, "opt/rea-apps/org.example.Notes/notes-2.0/etc");
+      expect(
+        await lstat(placed).then(
+          (entry) => entry.isSymbolicLink() || entry.nlink > 1,
+          () => false,
+        ),
+        link,
+      ).toBe(false);
+      expect(failed?.stderr ?? "", link).toContain("notes-2.0/etc");
+    }
   });
 });
 

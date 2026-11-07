@@ -439,7 +439,7 @@ export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
-${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}` : `Downloaded: ${plan.download.url}`}. Capture Evidence: ${plan.captureEvidenceId}.
+${plan.download === undefined ? `Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}` : `Downloaded: ${docText(plan.download.url)}`}. Capture Evidence: ${plan.captureEvidenceId}.
 ${seedWording(plan).docstring}
 """
 
