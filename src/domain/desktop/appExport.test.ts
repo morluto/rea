@@ -418,6 +418,27 @@ describe("README and class wording", () => {
 });
 
 describe("capturedHomePath", () => {
+  it("keeps the application's state directory when a selected link points to it", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [{ path: `${home}/.config/geany` }] },
+      state: {
+        state_directories: [`${home}/.config/geany`],
+        selected_paths: [
+          {
+            path: `${home}/settings`,
+            physical: `${home}/.config/geany`,
+            kind: "directory",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+    expect(path(`${home}/.config/geany/geany.conf`)).toBe(
+      ".config/geany/geany.conf",
+    );
+  });
+
   it("uses the selected spelling of a linked settings folder, and a database's logs", () => {
     const home = "/home/ada";
     const physical = `${home}/settings/vendor`;

@@ -67,6 +67,11 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
   readonly seedModes: Readonly<Record<string, number>>;
+  /** Home-relative selected aliases that must resolve to an app state path. */
+  readonly stateAliases?: readonly {
+    readonly alias: string;
+    readonly target: string;
+  }[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
@@ -176,9 +181,7 @@ export const capturedHomePath = (
   const renamed = (walked.length === logical.length ? walked : [])
     .flatMap((physical, index) => {
       const path = logical[index]?.path;
-      return path === undefined || path === physical
-        ? []
-        : [{ physical, logical: path }];
+      return path === undefined ? [] : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
   const selections = [...(capture.state.selected_paths ?? [])];
@@ -214,8 +217,8 @@ export const capturedHomePath = (
   // settings folder. A broad selection of ~/settings must not hide
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
-    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
     ...renamed,
+    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
   ].sort((left, right) => right.physical.length - left.physical.length);
   const spell = (path: string) => {
     for (const { physical, logical } of spellings) {
@@ -249,6 +252,25 @@ export const capturedHomePath = (
     }
     return own?.spelled ?? null;
   };
+};
+
+/** Selected links to an app state root must keep both the app's name and the selected name. */
+export const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+  const { home } = capture.host;
+  const walked = capture.state.state_directories ?? [];
+  const roots = capture.application.state_directories;
+  if (walked.length !== roots.length) return [];
+  const relative = (path: string) =>
+    path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
+  return (capture.state.selected_paths ?? []).flatMap(({ path, physical }) => {
+    const index = walked.indexOf(physical);
+    const state = index < 0 ? undefined : roots[index]?.path;
+    const alias = relative(path);
+    const target = state === undefined ? null : relative(state);
+    return alias === null || target === null || alias === target
+      ? []
+      : [{ alias, target }];
+  });
 };
 
 type StatePath = DesktopApplicationState["paths"][number];
@@ -414,6 +436,7 @@ const classBody = (plan: DesktopAppExportPlan): string => {
         if not INITIAL.exists():
             _seed_home(Path.home())
             _load_dconf(Path.home())
+        _ensure_state_aliases(Path.home())
         keep_initial(self.paths)
 ${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   if (plan.dconf.length > 0)
@@ -506,6 +529,7 @@ SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}

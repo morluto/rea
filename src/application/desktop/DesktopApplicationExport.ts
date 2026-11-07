@@ -3,6 +3,7 @@ import {
   DESKTOP_EXPORT_FRAMEWORK_VERSION,
   appModuleFile,
   className,
+  capturedStateAliases,
   exportedStateFiles,
   launchDocumentLimitation,
   renderAppClass,
@@ -237,6 +238,7 @@ const planExport = (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
+    stateAliases: capturedStateAliases(capture),
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
     ...leftOutSeeds(
       [...locks, ...unseeded.filter(isLeftOut)],

@@ -143,6 +143,19 @@ def _seed_home(home: Path) -> None:
             target.chmod(mode)
 
 
+def _ensure_state_aliases(home: Path) -> None:
+    """Restore selected aliases without replacing any existing user data."""
+    for alias, target in STATE_ALIASES:
+        link = home / alias
+        destination = home / target
+        if link.is_symlink() and link.resolve() == destination.resolve():
+            continue
+        if os.path.lexists(link):
+            raise FileExistsError(f"Cannot restore selected state alias; path already exists: {link}")
+        link.parent.mkdir(parents=True, exist_ok=True)
+        link.symlink_to(destination)
+
+
 def _dconf(arguments: list, environment: dict) -> str:
     return subprocess.run(["dconf", *arguments], env={**os.environ, **environment}, capture_output=True, text=True,
                           check=True).stdout
@@ -494,6 +507,7 @@ const PYTHON_CONSTANTS = [
   "DCONF",
   "TEXT_SEEDS",
   "SEED_MODES",
+  "STATE_ALIASES",
   "WINDOW_CLASS",
 ] as const;
 
