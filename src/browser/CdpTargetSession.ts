@@ -6,6 +6,7 @@ import {
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { CdpCommandRejection } from "./CdpCommandRejection.js";
@@ -68,14 +69,16 @@ export const openCdpEndpoint = async (
     owner !== undefined && options?.reuseBrowserSocket === true;
   // The browser-socket handshake and discovery commands stay on the discovery
   // deadline. The selected command deadline starts only after discovery returns.
+  const discoveryGuardTimeoutMs = Math.min(
+    MAX_BROWSER_DEADLINE_MS,
+    discoveryTimeoutMs + 1_000,
+  );
   const discoveryLimits = {
-    commandTimeoutMs: discoveryTimeoutMs,
-    // Stay past the discovery abort so a stalled open is labeled as discovery,
-    // not as a command_timeout_ms handshake, without overflowing 32-bit timers.
-    handshakeTimeoutMs: Math.min(
-      MAX_BROWSER_DEADLINE_MS,
-      discoveryTimeoutMs + 1_000,
-    ),
+    // Stay past the discovery abort so a stalled open or discovery command is
+    // labeled as discovery, not as command_timeout_ms, without overflowing
+    // 32-bit timers.
+    commandTimeoutMs: discoveryGuardTimeoutMs,
+    handshakeTimeoutMs: discoveryGuardTimeoutMs,
   };
   return await withCdpDiscoveryDeadline(
     operation,
@@ -132,12 +135,21 @@ export const openCdpEndpoint = async (
           connection: acquired.connection,
         };
       } catch (cause: unknown) {
+        const releaseLeaseOnly =
+          reuseBrowserSocket &&
+          deadlineSignal.aborted &&
+          cause instanceof AnalysisCancelledError &&
+          acquired.connection.isReusable();
         return await failCdpOpenAfterCleanup(
           acquired.connection,
           cause,
           operation,
           owner,
-          reuseBrowserSocket,
+          reuseBrowserSocket
+            ? releaseLeaseOnly
+              ? "release"
+              : "evict"
+            : "finish",
         );
       }
     },
@@ -212,11 +224,14 @@ export const failCdpOpenAfterCleanup = async (
   primary: unknown,
   operation: BrowserObservationOperation,
   owner?: CdpTargetSessionOwner,
-  reuseBrowserSocket = false,
+  ownerDisposition: "finish" | "evict" | "release" = "finish",
 ): Promise<never> => {
   try {
     if (owner === undefined) await connection.close();
-    else if (reuseBrowserSocket) await owner.evictBrowserSocket(connection);
+    else if (ownerDisposition === "release")
+      await owner.releaseBrowserSocket(connection);
+    else if (ownerDisposition === "evict")
+      await owner.evictBrowserSocket(connection);
     else await owner.finish(connection);
   } catch (cleanup: unknown) {
     throw combineOpenFailure(primary, cleanup, operation);

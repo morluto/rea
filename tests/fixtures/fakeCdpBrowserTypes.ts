@@ -53,6 +53,8 @@ export interface FakeOptions {
   readonly discoveryDelayMs?: number;
   /** Delay WebSocket upgrade acceptance so handshake and attach deadlines stay distinct. */
   readonly handshakeDelayMs?: number;
+  /** Delay selected wire replies so one caller's discovery deadline can expire alongside an active peer. */
+  readonly commandDelayMs?: (command: FakeCdpCommand) => number | undefined;
   readonly malformedDiscovery?: boolean;
   readonly oversizedDiscovery?: boolean;
   readonly invalidBrowserWebSocket?: boolean;

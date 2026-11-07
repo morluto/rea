@@ -99,6 +99,16 @@ export const startFakeCdpBrowser = async (
         return;
       }
       if (command.method === "Page.getFrameTree") frameTreeReads += 1;
+      const delayMs = options.commandDelayMs?.(command);
+      if (delayMs !== undefined && delayMs > 0) {
+        const currentFrameReads = frameTreeReads;
+        const timer = setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN)
+            replyToCommand(socket, command, port, options, currentFrameReads);
+        }, delayMs);
+        socket.once("close", () => clearTimeout(timer));
+        return;
+      }
       replyToCommand(socket, command, port, options, frameTreeReads);
     });
   });

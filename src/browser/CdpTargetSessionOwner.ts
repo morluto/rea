@@ -3,7 +3,9 @@ import {
   AnalysisCleanupLeaseGroup,
 } from "../artifacts/AnalysisCleanupLease.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { MAX_BROWSER_DEADLINE_MS } from "../domain/browserDeadline.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
+import { BrowserObservationError } from "../domain/browserObservationError.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
@@ -58,75 +60,239 @@ interface OwnedConnection {
   failure: ProviderCleanupError | undefined;
 }
 
+interface BrowserSocketLimits {
+  readonly maxPayloadBytes?: number;
+  readonly commandTimeoutMs: number;
+  readonly handshakeTimeoutMs: number;
+}
+
+interface BrowserSocketWaiter {
+  readonly operation: BrowserObservationOperation;
+  readonly commandTimeoutMs: number;
+  readonly signal: AbortSignal | undefined;
+  readonly resolve: (acquired: {
+    readonly connection: CdpConnection;
+    readonly reused: boolean;
+  }) => void;
+  readonly reject: (cause: unknown) => void;
+  detachAbort: () => void;
+}
+
+interface PendingBrowserSocket {
+  readonly controller: AbortController;
+  readonly waiters: Set<BrowserSocketWaiter>;
+  done: Promise<void>;
+}
+
 /** Retains exact REA-owned CDP transports until their close is observed. */
 export class CdpTargetSessionOwner {
   readonly #connections = new Map<CdpConnection, OwnedConnection>();
   readonly #browserSockets = new Map<string, CdpConnection>();
+  readonly #candidateBrowserSockets = new Map<string, CdpConnection>();
+  readonly #pendingBrowserSockets = new Map<string, PendingBrowserSocket>();
   #closing = false;
   #admissions = 0;
   #closePromise: Promise<void> | undefined;
   readonly #admissionWaiters = new Set<() => void>();
 
-  /** Reuse an admitted healthy browser socket for `url`, or open a new candidate. */
+  /** Reuse an admitted healthy browser socket for `url`, or coalesce a cold connect. */
   async acquireBrowserSocket(
     url: string,
     operation: BrowserObservationOperation,
     options: ExecutionOptions,
-    limits: {
-      readonly maxPayloadBytes?: number;
-      readonly commandTimeoutMs: number;
-      readonly handshakeTimeoutMs: number;
-    },
+    limits: BrowserSocketLimits,
   ): Promise<{ readonly connection: CdpConnection; readonly reused: boolean }> {
     this.#assertOpen(operation, "browser-endpoint");
     await this.retryPending();
-    this.#assertOpen(operation, "browser-endpoint");
-    if (options.signal?.aborted === true)
-      throw new AnalysisCancelledError(operation, {
-        cause: options.signal.reason,
-      });
-    const existing = this.#browserSockets.get(url);
-    if (existing !== undefined) {
-      const existingRecord = this.#connections.get(existing);
-      if (
-        existingRecord !== undefined &&
-        existingRecord.failure === undefined &&
-        !existingRecord.evicted &&
-        existing.isReusable()
-      ) {
-        if (existingRecord.activeLeases === 0) {
-          let settle = (): void => undefined;
-          existingRecord.settled = new Promise<void>((resolve) => {
-            settle = resolve;
-          });
-          existingRecord.settle = settle;
-          existingRecord.active = true;
-        }
-        existingRecord.activeLeases += 1;
-        existingRecord.operation = operation;
-        return {
-          connection: existing.withOperation(
-            operation,
-            limits.commandTimeoutMs,
-          ),
-          reused: true,
-        };
-      }
-      this.#browserSockets.delete(url);
-      if (existingRecord !== undefined) {
-        this.#evictRecord(existingRecord);
-        if (existingRecord.activeLeases === 0)
-          await this.#releaseTransportRecord(existingRecord);
-      }
-    }
-    const connection = await this.connect(
+    const leased = await this.#leaseExistingBrowserSocket(
       url,
       operation,
       options,
-      "browser-endpoint",
-      limits,
+      limits.commandTimeoutMs,
     );
-    return { connection, reused: false };
+    if (leased !== undefined) return leased;
+    return this.#joinPendingBrowserSocket(url, operation, options, limits);
+  }
+
+  async #leaseExistingBrowserSocket(
+    url: string,
+    operation: BrowserObservationOperation,
+    options: ExecutionOptions,
+    commandTimeoutMs: number,
+  ): Promise<
+    { readonly connection: CdpConnection; readonly reused: boolean } | undefined
+  > {
+    while (true) {
+      this.#assertOpen(operation, "browser-endpoint");
+      if (options.signal?.aborted === true)
+        throw new AnalysisCancelledError(operation, {
+          cause: options.signal.reason,
+        });
+      const admitted = this.#browserSockets.get(url);
+      const socket = admitted ?? this.#candidateBrowserSockets.get(url);
+      if (socket === undefined) return undefined;
+      const record = this.#connections.get(socket);
+      if (
+        record !== undefined &&
+        record.failure === undefined &&
+        !record.evicted &&
+        socket.isReusable()
+      ) {
+        if (record.activeLeases === 0) {
+          let settle = (): void => undefined;
+          record.settled = new Promise<void>((resolve) => {
+            settle = resolve;
+          });
+          record.settle = settle;
+          record.active = true;
+        }
+        record.activeLeases += 1;
+        record.operation = operation;
+        return {
+          connection: socket.withOperation(operation, commandTimeoutMs),
+          reused: admitted !== undefined,
+        };
+      }
+      if (admitted === socket) this.#browserSockets.delete(url);
+      if (this.#candidateBrowserSockets.get(url) === socket)
+        this.#candidateBrowserSockets.delete(url);
+      if (record !== undefined) {
+        this.#evictRecord(record);
+        if (record.activeLeases === 0)
+          await this.#releaseTransportRecord(record);
+      }
+    }
+  }
+
+  #joinPendingBrowserSocket(
+    url: string,
+    operation: BrowserObservationOperation,
+    options: ExecutionOptions,
+    limits: BrowserSocketLimits,
+  ): Promise<{ readonly connection: CdpConnection; readonly reused: boolean }> {
+    let pending = this.#pendingBrowserSockets.get(url);
+    let startPending: (() => void) | undefined;
+    if (pending === undefined) {
+      const created: PendingBrowserSocket = {
+        controller: new AbortController(),
+        waiters: new Set(),
+        done: Promise.resolve(),
+      };
+      this.#pendingBrowserSockets.set(url, created);
+      startPending = () => {
+        created.done = this.#runPendingBrowserSocket({
+          url,
+          pending: created,
+          initialOperation: operation,
+          limits,
+        });
+      };
+      pending = created;
+    }
+    const activePending = pending;
+    return new Promise((resolve, reject) => {
+      const waiter: BrowserSocketWaiter = {
+        operation,
+        commandTimeoutMs: limits.commandTimeoutMs,
+        signal: options.signal,
+        resolve,
+        reject,
+        detachAbort: () => undefined,
+      };
+      const onAbort = (): void => {
+        waiter.detachAbort();
+        if (!activePending.waiters.delete(waiter)) return;
+        const cancelError = new AnalysisCancelledError(operation, {
+          cause: options.signal?.reason,
+        });
+        if (activePending.waiters.size > 0) {
+          reject(cancelError);
+          return;
+        }
+        if (this.#pendingBrowserSockets.get(url) === activePending)
+          this.#pendingBrowserSockets.delete(url);
+        activePending.controller.abort(options.signal?.reason);
+        void activePending.done.then(
+          () => reject(cancelError),
+          (cleanupCause: unknown) =>
+            reject(rebindPendingConnectFailure(cleanupCause, waiter)),
+        );
+      };
+      if (options.signal !== undefined) {
+        options.signal.addEventListener("abort", onAbort, { once: true });
+        waiter.detachAbort = () =>
+          options.signal?.removeEventListener("abort", onAbort);
+      }
+      activePending.waiters.add(waiter);
+      if (options.signal?.aborted === true) {
+        onAbort();
+        return;
+      }
+      startPending?.();
+    });
+  }
+
+  async #runPendingBrowserSocket(context: {
+    readonly url: string;
+    readonly pending: PendingBrowserSocket;
+    readonly initialOperation: BrowserObservationOperation;
+    readonly limits: BrowserSocketLimits;
+  }): Promise<void> {
+    const { url, pending, initialOperation, limits } = context;
+    try {
+      const root = await this.connect(
+        url,
+        initialOperation,
+        { signal: pending.controller.signal },
+        "browser-endpoint",
+        {
+          ...(limits.maxPayloadBytes === undefined
+            ? {}
+            : { maxPayloadBytes: limits.maxPayloadBytes }),
+          commandTimeoutMs: limits.commandTimeoutMs,
+          handshakeTimeoutMs: MAX_BROWSER_DEADLINE_MS,
+        },
+      );
+      if (this.#pendingBrowserSockets.get(url) === pending)
+        this.#pendingBrowserSockets.delete(url);
+      if (pending.waiters.size === 0) {
+        await this.finish(root);
+        return;
+      }
+      const record = this.#connections.get(root);
+      if (record !== undefined) {
+        record.reusableUrl = url;
+        record.activeLeases = pending.waiters.size;
+        if (!this.#closing && !record.evicted && root.isReusable())
+          this.#candidateBrowserSockets.set(url, root);
+      }
+      const snapshot = [...pending.waiters];
+      pending.waiters.clear();
+      for (const waiter of snapshot) {
+        waiter.detachAbort();
+        waiter.resolve({
+          connection: root.withOperation(
+            waiter.operation,
+            waiter.commandTimeoutMs,
+          ),
+          reused: false,
+        });
+      }
+    } catch (cause: unknown) {
+      if (this.#pendingBrowserSockets.get(url) === pending)
+        this.#pendingBrowserSockets.delete(url);
+      const snapshot = [...pending.waiters];
+      pending.waiters.clear();
+      for (const waiter of snapshot) {
+        waiter.detachAbort();
+        waiter.reject(rebindPendingConnectFailure(cause, waiter));
+      }
+      if (
+        (cause instanceof AnalysisError && cause.cleanupIncomplete) ||
+        cause instanceof AggregateError
+      )
+        throw cause;
+    }
   }
 
   /** Publish a verified browser socket for reuse across subsequent operations. */
@@ -135,6 +301,8 @@ export class CdpTargetSessionOwner {
     const record = this.#connections.get(root);
     if (record === undefined) return;
     record.reusableUrl = url;
+    if (this.#candidateBrowserSockets.get(url) === root)
+      this.#candidateBrowserSockets.delete(url);
     if (this.#closing || record.evicted || !root.isReusable()) {
       record.evicted = true;
       return;
@@ -196,14 +364,14 @@ export class CdpTargetSessionOwner {
     }
     const mustCloseImmediately =
       !keepSocket || !root.isReusable() || record.failure !== undefined;
-    const retain =
-      !mustCloseImmediately &&
-      !this.#closing &&
-      !record.evicted &&
+    if (record.activeLeases > 0) record.activeLeases -= 1;
+    const canStayOpen =
+      !mustCloseImmediately && !this.#closing && !record.evicted;
+    const admitted =
       record.reusableUrl !== undefined &&
       this.#browserSockets.get(record.reusableUrl) === root;
+    const retain = canStayOpen && (admitted || record.activeLeases > 0);
     if (!retain) this.#evictRecord(record);
-    if (record.activeLeases > 0) record.activeLeases -= 1;
     try {
       if (mustCloseImmediately || (!retain && record.activeLeases === 0))
         await this.#releaseTransportRecord(record, cleanupFailure);
@@ -353,11 +521,12 @@ export class CdpTargetSessionOwner {
   async close(): Promise<void> {
     this.#closing = true;
     this.#browserSockets.clear();
+    this.#candidateBrowserSockets.clear();
     this.#closePromise ??= this.#closeAll().catch((cause: unknown) => {
       this.#closePromise = undefined;
       throw cause;
     });
-    return await this.#closePromise;
+    return this.#closePromise;
   }
 
   /** Retry retained failures, including failed shared-socket closes with active peers. */
@@ -393,11 +562,15 @@ export class CdpTargetSessionOwner {
 
   #evictRecord(record: OwnedConnection): void {
     record.evicted = true;
-    if (
-      record.reusableUrl !== undefined &&
-      this.#browserSockets.get(record.reusableUrl) === record.connection
-    )
-      this.#browserSockets.delete(record.reusableUrl);
+    if (record.reusableUrl !== undefined) {
+      if (this.#browserSockets.get(record.reusableUrl) === record.connection)
+        this.#browserSockets.delete(record.reusableUrl);
+      if (
+        this.#candidateBrowserSockets.get(record.reusableUrl) ===
+        record.connection
+      )
+        this.#candidateBrowserSockets.delete(record.reusableUrl);
+    }
     record.statusUnsubscribe?.();
     record.statusUnsubscribe = undefined;
   }
@@ -458,6 +631,28 @@ export class CdpTargetSessionOwner {
 const transportRoot = (connection: CdpConnection): CdpConnection =>
   (connection as Partial<Pick<CdpConnection, "transportRoot">>).transportRoot ??
   connection;
+
+const rebindPendingConnectFailure = (
+  cause: unknown,
+  waiter: Pick<BrowserSocketWaiter, "operation" | "signal">,
+): unknown => {
+  if (cause instanceof BrowserObservationError) {
+    const rebound = cause.forOperation(waiter.operation);
+    return cause.cleanupIncomplete
+      ? rebound.bindCleanupDependencies([cause])
+      : rebound;
+  }
+  if (cause instanceof AnalysisCancelledError) {
+    const rebound = new AnalysisCancelledError(waiter.operation, {
+      cause: waiter.signal?.reason ?? cause.cause,
+      cleanup: cause.cleanup,
+    });
+    return cause.cleanupIncomplete
+      ? rebound.bindCleanupDependencies([cause])
+      : rebound;
+  }
+  return cause;
+};
 
 const cleanupError = (
   record: OwnedConnection,

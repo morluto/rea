@@ -779,3 +779,219 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
   }
   await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
+
+it("keeps an admitted shared browser socket alive for concurrent peers when a caller aborts or hits discovery_timeout_ms", async () => {
+  let slowTargetDiscovery = false;
+  let notifySlowDiscoveryStarted: (() => void) | undefined;
+  const browser = await startFakeCdpBrowser({
+    commandDelayMs: ({ method }) => {
+      if (!slowTargetDiscovery || method !== "Target.getTargets")
+        return undefined;
+      notifySlowDiscoveryStarted?.();
+      return 200;
+    },
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  let armed!: () => void;
+  const observationArmed = new Promise<void>((resolve) => {
+    armed = resolve;
+  });
+  const peerController = new AbortController();
+  const cancelController = new AbortController();
+  let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
+  let cancelling: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
+  try {
+    observing = provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 400,
+      }),
+      {
+        signal: peerController.signal,
+        progress: {
+          report: async (update) => {
+            if (update.completed === 1) armed();
+          },
+        },
+      },
+    );
+    await awaitAcknowledgement(
+      observationArmed,
+      observing,
+      "peer session observation start",
+    );
+    expect(browser.openedConnectionCount()).toBe(1);
+
+    slowTargetDiscovery = true;
+    const timedOut = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 0,
+        discovery_timeout_ms: 35,
+      }),
+    );
+    expect(timedOut).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "BrowserObservationError",
+        operation: "inspect_web_page",
+        reason: "timeout",
+      },
+    });
+    if (timedOut.ok) throw new Error("Expected discovery timeout on Call B");
+    expect(timedOut.error.userMessage).toContain("35 ms discovery_timeout_ms");
+    expect(browser.openedConnectionCount()).toBe(1);
+    expect(browser.activeConnectionCount()).toBe(1);
+
+    let enterCancelDiscovery!: () => void;
+    const cancelDiscoveryEntered = new Promise<void>((resolve) => {
+      enterCancelDiscovery = resolve;
+    });
+    notifySlowDiscoveryStarted = enterCancelDiscovery;
+    cancelling = provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+      }),
+      { signal: cancelController.signal },
+    );
+    await awaitAcknowledgement(
+      cancelDiscoveryEntered,
+      cancelling,
+      "shared socket discovery start",
+    );
+    cancelController.abort(new Error("caller cancelled discovery"));
+    expect(await cancelling).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisCancelledError",
+        operation: "list_browser_targets",
+      },
+    });
+
+    slowTargetDiscovery = false;
+    const session = await observing;
+    if (!session.ok) throw session.error;
+    expect(session.value.window.end_reason).toBe("window_elapsed");
+    expect(browser.openedConnectionCount()).toBe(1);
+    expect(browser.activeConnectionCount()).toBe(1);
+  } finally {
+    slowTargetDiscovery = false;
+    peerController.abort(new Error("test teardown"));
+    cancelController.abort(new Error("test teardown"));
+    await Promise.allSettled([observing, cancelling]);
+    await provider.close();
+  }
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+});
+
+describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
+  it("coalesces concurrent cold-start calls onto one browser WebSocket handshake", async () => {
+    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 40 });
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    let batch:
+      | Promise<
+          [
+            Awaited<ReturnType<CdpBrowserProvider["listTargets"]>>,
+            Awaited<ReturnType<CdpBrowserProvider["inspectPage"]>>,
+            Awaited<ReturnType<CdpBrowserProvider["captureScreenshot"]>>,
+          ]
+        >
+      | undefined;
+    try {
+      batch = Promise.all([
+        provider.listTargets(
+          listBrowserTargetsInputSchema.parse({
+            cdp_endpoint: browser.browserWebSocketUrl,
+          }),
+        ),
+        provider.inspectPage(
+          inspectWebPageInputSchema.parse({
+            cdp_endpoint: browser.browserWebSocketUrl,
+            target_id: "allowed-page",
+            observation_ms: 0,
+          }),
+        ),
+        provider.captureScreenshot(
+          captureWebScreenshotInputSchema.parse({
+            cdp_endpoint: browser.browserWebSocketUrl,
+            target_id: "allowed-page",
+          }),
+        ),
+      ]);
+      const [listed, inspected, screenshot] = await batch;
+      if (!listed.ok) throw listed.error;
+      if (!inspected.ok) throw inspected.error;
+      if (!screenshot.ok) throw screenshot.error;
+      expect(listed.value.targets.length).toBeGreaterThan(0);
+      expect(inspected.value.target.origin).toBe(browser.allowedOrigin);
+      expect(screenshot.value.artifact.media_type).toBe("image/png");
+      expect(browser.openedConnectionCount()).toBe(1);
+      expect(browser.activeConnectionCount()).toBe(1);
+    } finally {
+      await batch?.catch(() => undefined);
+      await provider.close();
+    }
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  });
+
+  it("keeps an in-flight cold-start handshake alive for a longer-deadline peer when one waiter times out", async () => {
+    const browser = await startFakeCdpBrowser({ handshakeDelayMs: 120 });
+    trackBrowser(browser);
+    const provider = new CdpBrowserProvider();
+    let shortCall: ReturnType<CdpBrowserProvider["listTargets"]> | undefined;
+    let longCall: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
+    try {
+      shortCall = provider.listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: browser.browserWebSocketUrl,
+          discovery_timeout_ms: 35,
+        }),
+      );
+      longCall = provider.inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.browserWebSocketUrl,
+          target_id: "allowed-page",
+          observation_ms: 0,
+          discovery_timeout_ms: 5_000,
+        }),
+      );
+
+      const shortOutcome = await shortCall;
+      expect(shortOutcome).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BrowserObservationError",
+          operation: "list_browser_targets",
+          reason: "timeout",
+        },
+      });
+      if (shortOutcome.ok)
+        throw new Error("Expected short cold-start waiter to time out");
+      expect(shortOutcome.error.userMessage).toContain(
+        "35 ms discovery_timeout_ms",
+      );
+
+      const longOutcome = await longCall;
+      if (!longOutcome.ok) throw longOutcome.error;
+      expect(longOutcome.value.target.origin).toBe(browser.allowedOrigin);
+      expect(browser.openedConnectionCount()).toBe(1);
+      expect(browser.activeConnectionCount()).toBe(1);
+
+      const followUp = await provider.listTargets(
+        listBrowserTargetsInputSchema.parse({
+          cdp_endpoint: browser.browserWebSocketUrl,
+        }),
+      );
+      if (!followUp.ok) throw followUp.error;
+      expect(browser.openedConnectionCount()).toBe(1);
+    } finally {
+      await Promise.allSettled([shortCall, longCall]);
+      await provider.close();
+    }
+    await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+  });
+});
