@@ -1,0 +1,131 @@
+import { describe, expect, it } from "vitest";
+
+import {
+  isApplicationDconfGroup,
+  stateReasons,
+  stateRole,
+  type DesktopRoleFacts,
+} from "./stateRoles.js";
+
+describe("stateRole", () => {
+  it("ranks application evidence above documents and shared desktop files", () => {
+    expect(stateRole(["state_directory"])).toBe("application_state");
+    expect(stateRole(["dconf_application_keys", "desktop_service"])).toBe(
+      "application_state",
+    );
+    expect(stateRole(["state_directory", "desktop_service"])).toBe(
+      "shared_desktop",
+    );
+    expect(stateRole(["named_in_window_title"])).toBe("document");
+    expect(stateRole(["desktop_service"])).toBe("shared_desktop");
+    expect(stateRole([])).toBe("unrelated");
+  });
+
+  it("treats a file the application holds open as a document when a title or the caller names it", () => {
+    expect(stateRole(["opened_by_application", "named_in_window_title"])).toBe(
+      "document",
+    );
+    expect(stateRole(["opened_by_application", "selected_path"])).toBe(
+      "document",
+    );
+    expect(stateRole(["opened_by_application"])).toBe("application_state");
+    expect(stateRole(["opened_by_application", "desktop_service"])).toBe(
+      "shared_desktop",
+    );
+  });
+
+  it("keeps a file in the desktop Trash shared, whatever else names it", () => {
+    expect(
+      stateRole([
+        "opened_by_application",
+        "named_in_window_title",
+        "selected_path",
+        "desktop_trash",
+      ]),
+    ).toBe("shared_desktop");
+  });
+});
+
+describe("stateReasons", () => {
+  it("matches a window title only where the file name stands on its own", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      titles: ["*today.txt (~/Documents/plan.md) - Notes"],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/Documents/today.txt")).toEqual([
+      "named_in_window_title",
+    ]);
+    expect(reasons("/home/ada/Documents/plan.md")).toEqual([
+      "named_in_window_title",
+    ]);
+    expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
+    expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
+  });
+
+  it("marks the desktop Trash, where a file the user deleted keeps its name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      titles: ["poster.svg - Inkscape"],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.local/share/Trash/files/poster.svg")).toEqual([
+      "named_in_window_title",
+      "desktop_trash",
+    ]);
+    expect(
+      reasons("/home/ada/.local/share/Trash/info/poster.svg.trashinfo"),
+    ).toEqual(["desktop_trash"]);
+    expect(reasons("/home/ada/.local/share/Trashcan/poster.svg")).toEqual([
+      "named_in_window_title",
+    ]);
+  });
+});
+
+describe("stateReasons for state directories", () => {
+  it("counts a folder beside a state directory whose name differs only in letter case, as GIMP's ~/.config/GIMP does", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: ["/data/ada/.config/gimp"],
+      stateTails: [".config/gimp"],
+      selectedRoots: [],
+      titles: [],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/data/ada/.config/GIMP/2.10/sessionrc")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.config/GIMP/2.10/sessionrc")).toEqual([
+      "state_directory",
+    ]);
+    expect(reasons("/home/ada/.config/gimp")).toEqual(["state_directory"]);
+    expect(reasons("/home/ada/.config/GIMPshop/sessionrc")).toEqual([]);
+    expect(reasons("/home/ada/.config/other/GIMP/sessionrc")).toEqual([]);
+    expect(reasons("/home/ada/.Config/gimp/sessionrc")).toEqual([]);
+  });
+});
+
+describe("isApplicationDconfGroup", () => {
+  it("matches a whole path segment, not a substring", () => {
+    const names = new Set(["mousepad"]);
+    expect(isApplicationDconfGroup("org/xfce/mousepad/state", names)).toBe(
+      true,
+    );
+    expect(
+      isApplicationDconfGroup("org/gtk/settings/file-chooser", names),
+    ).toBe(false);
+    expect(isApplicationDconfGroup("org/mousepadx", names)).toBe(false);
+  });
+});
