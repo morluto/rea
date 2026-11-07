@@ -41,6 +41,9 @@ import { refuse } from "./DesktopExportInstall.js";
 
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
+/** Where the change shows on either path: a capture inside a build computer cannot be described with the CLI. */
+const DRAFT =
+  "the task draft, from describe-desktop-application-task or a build computer's stop_build_capture, shows what changed";
 
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
@@ -248,7 +251,7 @@ export const admitDesktopTask = async (
     throw refuse(
       `Check ${JSON.stringify(failing.id)} fails on the captured end state: ${failing.description}.`,
       "task",
-      "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
+      `Write checks that the captured end state passes; ${DRAFT}.`,
     );
   const seed = evaluateTaskChecks(task.checks, views.seed).filter(
     (outcome) => !outcome.passed,
@@ -269,7 +272,7 @@ export const admitDesktopTask = async (
         .map(({ id, description }) => `${JSON.stringify(id)}: ${description}`)
         .join("; ")}).`,
       "task",
-      "Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; describe-desktop-application-task shows its views.",
+      `Add a check that fails on what the seed's views hold, such as a line or row of a file read whole; ${DRAFT}.`,
     );
   return {
     summary: {

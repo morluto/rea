@@ -1,7 +1,9 @@
 """Run REA inside an agentenv build computer for REA on the host: capture the app, draft its task and export it.
 
 REA sends this file's source through the computer's ``computer-exec/v1`` route as
-``python3 -I -c <source> <command> <JSON arguments>``; each command prints one JSON line and exits. ``start``
+``python3 -I -c <source> <command> <JSON arguments>``. JSON that would exceed the bytes Linux
+passes as one string travels as several arguments, which this file joins before parsing. Each command prints
+one JSON line and exits. ``start``
 leaves the capture running on its own: its stdin is a FIFO it holds open for reading and writing, so it never
 sees the end of its input, and ``mark`` and ``stop`` write their requests there and wait for the capture's own
 acknowledgement on its progress log. A small shell around the capture writes its exit status to a file, the
@@ -91,6 +93,13 @@ def _exit_code(capture: str):
         return None
 
 
+def _ended(capture: str, code: int) -> dict:
+    """A capture that has exited: its status, the end of its progress log and its output's size, which REA reads
+    whole for the Evidence or failure it ended with, whichever step was waiting on it."""
+    return {"exited": code, "progress": _tail(os.path.join(capture, "progress.log")),
+            "output_bytes": os.path.getsize(os.path.join(capture, "capture.out"))}
+
+
 def _event_line(path: str, offset: int, kinds: set, name):
     """The first progress line after ``offset`` whose event is of one of ``kinds``, for ``name`` when given."""
     try:
@@ -119,7 +128,7 @@ def _wait(capture: str, offset: int, kinds: set, name, timeout: float) -> dict:
             return {"line": line}
         code = _exit_code(capture)
         if code is not None:
-            return {"exited": code, "progress": _tail(log), "output": _tail(os.path.join(capture, "capture.out"))}
+            return _ended(capture, code)
         if time.monotonic() > deadline:
             return {"timed_out": True, "progress": _tail(log)}
         time.sleep(POLL_S)
@@ -179,7 +188,7 @@ def mark(arguments: dict) -> int:
     code = _exit_code(capture)
     log = os.path.join(capture, "progress.log")
     if code is not None:
-        return _say({"exited": code, "progress": _tail(log)})
+        return _say(_ended(capture, code))
     # A checkpoint already taken, whose answer was lost, is answered from the capture's own log.
     taken = _event_line(log, 0, {"checkpoint"}, name)
     if taken is not None:
@@ -259,4 +268,4 @@ def listing(arguments: dict) -> int:
 COMMANDS = {"start": start, "mark": mark, "stop": stop, "run": run, "list": listing}
 
 if __name__ == "__main__":
-    sys.exit(COMMANDS[sys.argv[1]](json.loads(sys.argv[2])))
+    sys.exit(COMMANDS[sys.argv[1]](json.loads("".join(sys.argv[2:]))))

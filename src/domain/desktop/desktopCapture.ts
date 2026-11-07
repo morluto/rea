@@ -270,8 +270,9 @@ export const desktopSessionSchema = z.strictObject({
   opened_files: z.array(
     z.strictObject({ path: z.string().min(1), first_seen_ms: milliseconds }),
   ),
-  /** The first bytes the launched process wrote to stderr. */
+  /** The last bytes the launched process wrote to stderr, up to 8 KiB. */
   stderr: z.string(),
+  /** Whether earlier stderr was dropped to keep the last bytes. */
   stderr_truncated: z.boolean(),
   /** Whether the run-token sweep confirmed every launched process is gone. */
   cleanup: z.strictObject({

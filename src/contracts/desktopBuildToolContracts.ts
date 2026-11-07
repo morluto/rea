@@ -121,7 +121,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     ...toolContractMetadata("start_build_computer"),
     kind: "application",
     description:
-      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry (it is not open at first: open it from the desktop's Applications menu, under Other, by the environment's name), and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE. Set source.electron for an Electron app: the install rewrites that desktop entry's command with the same launch policy an export uses, adding --no-sandbox right after the program unless the command already has it, because the container does not grant the user namespaces Chromium needs and Electron exits without the flag. From a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes. screenshot sets the first screenshot's region, format and quality. The computer stays up, reachable on this host, until close_build_computer or the server closes; when a start fails before its teardown is confirmed, the error's computer_id names what close_build_computer retries.",
+      "Start a local agentenv computer to build a desktop app environment on, and return its id with a first screenshot as an image. From a request, REA renders a bundle that installs the app from the Ubuntu archive, an apt repository or a .deb URL, opens it on demand from its desktop entry (it is not open at first: start_build_capture opens it under capture, and only when no capture is under way is it opened from the desktop's Applications menu, under Other, by the environment's name), and installs REA itself in a build-only layer from REA_BUILD_COMPUTER_REA_ARCHIVE. Set source.electron for an Electron app: the install rewrites that desktop entry's command with the same launch policy an export uses, adding --no-sandbox right after the program unless the command already has it, because the container does not grant the user namespaces Chromium needs and Electron exits without the flag. From a bundle folder, such as an exported one, it starts that bundle's smoke task as it is. Needs Docker and the agentenv runner named by REA_AGENT_ENV_COMMAND; the first start of a bundle builds its image, which downloads packages and can take minutes, and agentenv makes a start wait while another agentenv run on this host writes its bundle's ids, so starts at the same time can wait minutes for each other. screenshot sets the first screenshot's region, format and quality. The computer stays up, reachable on this host, until close_build_computer or the server closes; when a start fails before its teardown is confirmed, the error's computer_id names what close_build_computer retries.",
     inputSchema: z.strictObject({
       source: buildSourceSchema,
       screenshot: screenshotOptionsSchema.optional(),
@@ -183,7 +183,11 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       },
       {
         title: "Save",
-        input: { computer_id: EXAMPLE_ID, action: "key", keys: ["ctrl+s"] },
+        input: {
+          computer_id: EXAMPLE_ID,
+          action: "key",
+          keys: ["Control", "s"],
+        },
       },
     ],
   },
@@ -191,7 +195,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "start_build_capture",
     ...toolContractMetadata("start_build_capture"),
     kind: "application",
-    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
+    description: `Begin REA's capture of the app on a build computer started from a request, inside the computer: REA downloads the package lists as the computer's user so the capture finds the app's sources, launches the app from its desktop entry under capture (do not open it from the menu first) and returns once its window is open, with a screenshot. When the app exits before its window opens, the error gives its exit code and the end of its stderr, with the capture's record of the session in its details. Then make the seed through the app and save it, mark_build_checkpoint ${SEED_CHECKPOINT}, make the change the task asks for and save it, mark_build_checkpoint ${END_CHECKPOINT}, and stop_build_capture.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       arguments: z
