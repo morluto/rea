@@ -4,7 +4,7 @@
       "command": "node",
       "args": [
         "./scripts/plugin-mcp-launcher.mjs",
-        "6.8.0"
+        "6.9.0"
       ],
       "cwd": ".",
       "startup_timeout_sec": 30
