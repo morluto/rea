@@ -1061,113 +1061,112 @@ describe("what a probe did not observe", () => {
   registerProbeOrderingAndCaptureCases();
 });
 
+const postProbeEntry = (input: {
+  readonly startedDateTime: string;
+  readonly url: string;
+  readonly requestText: string;
+  readonly responseText: string;
+  readonly requestMime?: string;
+  readonly responseMime?: string;
+}) => ({
+  startedDateTime: input.startedDateTime,
+  time: 10,
+  request: {
+    method: "POST",
+    url: input.url,
+    postData: {
+      mimeType: input.requestMime ?? "application/json",
+      text: input.requestText,
+    },
+  },
+  response: {
+    status: 200,
+    content: {
+      mimeType: input.responseMime ?? "application/json",
+      text: input.responseText,
+    },
+  },
+});
+
 describe("multiplexed POST RPC probe comparison", () => {
   it("routes multiplexed GraphQL, JSON-RPC 2.0, and XSSI batchexecute probes to their discriminated state-served tools", async () => {
     const { inspectAnalysisView } =
       await import("../analysisView/AnalysisViewService.js");
-    const makeCapture = () => {
-      const entries = [
-        {
-          startedDateTime: "2026-10-20T09:00:00.000Z",
-          time: 10,
-          request: {
-            method: "POST",
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
             url: "http://grafana.example/graphql",
-            postData: {
-              mimeType: "application/json",
-              text: JSON.stringify({
-                operationName: "GetViewer",
-                query: "query GetViewer { viewer { id } }",
-              }),
-            },
-          },
-          response: {
-            status: 200,
-            content: {
-              mimeType: "application/json",
-              text: JSON.stringify({ data: { viewer: { id: "u1" } } }),
-            },
-          },
-        },
-        {
-          startedDateTime: "2026-10-20T09:00:01.000Z",
-          time: 10,
-          request: {
-            method: "POST",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { id } }",
+            }),
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
             url: "http://grafana.example/graphql",
-            postData: {
-              mimeType: "application/json",
-              text: JSON.stringify({
-                operationName: "ListProjects",
-                query: "query ListProjects { projects { slug } }",
-              }),
-            },
-          },
-          response: {
-            status: 200,
-            content: {
-              mimeType: "application/json",
-              text: JSON.stringify({
-                data: { projects: [{ slug: "alpha" }] },
-              }),
-            },
-          },
-        },
-        {
-          startedDateTime: "2026-10-20T09:00:02.000Z",
-          time: 10,
-          request: {
-            method: "POST",
+            requestText: JSON.stringify({
+              operationName: "ListProjects",
+              query: "query ListProjects { projects { slug } }",
+            }),
+            responseText: JSON.stringify({
+              data: { projects: [{ slug: "alpha" }] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.000Z",
             url: "http://grafana.example/rpc",
-            postData: {
-              mimeType: "application/json",
-              text: JSON.stringify({
-                jsonrpc: "2.0",
-                method: "tools/list",
-                id: 1,
-              }),
-            },
-          },
-          response: {
-            status: 200,
-            content: {
-              mimeType: "application/json",
-              text: JSON.stringify({
-                jsonrpc: "2.0",
-                id: 1,
-                result: { tools: ["ping"] },
-              }),
-            },
-          },
-        },
-        {
-          startedDateTime: "2026-10-20T09:00:03.000Z",
-          time: 10,
-          request: {
-            method: "POST",
+            requestText: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "tools/list",
+              id: 1,
+            }),
+            responseText: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 1,
+              result: { tools: ["ping"] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.500Z",
+            url: "http://grafana.example/rpc",
+            requestText: JSON.stringify({
+              jsonrpc: "2.0",
+              method: "prompts/list",
+              id: 2,
+            }),
+            responseText: JSON.stringify({
+              jsonrpc: "2.0",
+              id: 2,
+              result: { prompts: ["summarize"] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:03.000Z",
             url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=GetNotes",
-            postData: {
-              mimeType: "application/x-www-form-urlencoded",
-              text: new URLSearchParams({
-                "f.req": JSON.stringify([
-                  [["GetNotes", "[]", null, "generic"]],
-                ]),
-              }).toString(),
-            },
-          },
-          response: {
-            status: 200,
-            content: {
-              mimeType: "application/x-javascript",
-              text: ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":7}]",null,null,null,"generic"]]]',
-            },
-          },
-        },
-      ];
-      return analysisViewCaptureEvidence(
-        environmentManifestCaptureFixture(entries),
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["GetNotes", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "application/x-javascript",
+            responseText:
+              ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":7}]",null,null,null,"generic"]]]',
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:03.500Z",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=ListTags",
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["ListTags", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "application/x-javascript",
+            responseText:
+              ')]}\'\n[[["wrb.fr","ListTags","[\\"ops\\"]",null,null,null,"generic"]]]',
+          }),
+        ]),
       );
-    };
     const recorded = makeCapture();
     const manifest = await inspectAnalysisView({
       source: { kind: "inline", evidence: recorded },
@@ -1186,15 +1185,122 @@ describe("multiplexed POST RPC probe comparison", () => {
     });
     if (!report.ok) throw report.error;
     expect(report.value.summary).toMatchObject({
-      steps: 4,
-      equal: 4,
+      steps: 6,
+      equal: 6,
       agreement: 1,
     });
     expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
       "post_graphql_get_viewer",
       "post_graphql_list_projects",
       "post_rpc_tools_list",
+      "post_rpc_prompts_list",
       "post_appui_data_batchexecute_get_notes",
+      "post_appui_data_batchexecute_list_tags",
+    ]);
+  });
+});
+
+describe("single-operation POST /graphql probe comparison", () => {
+  it("keeps single-operation POST /graphql as post_graphql while still serving and matching read-only GraphQL queries", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { id } }",
+            }),
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    expect(rpcSource.manifest.tools.map((tool) => tool.name)).toEqual([
+      "post_graphql",
+    ]);
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "single-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql",
+    ]);
+  });
+});
+
+describe("pretty-printed >64 KiB GraphQL wire budget parity in comparison", () => {
+  it("routes pretty-printed >64 KiB GraphQL requests (compact <64 KiB) to the undispatched fallback tool", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const prettyGraphql = `{\n${" ".repeat(70_000)}"operationName": "GetViewer",\n"query": "query GetViewer { viewer { id } }"\n}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://graphql.example/graphql/query",
+            requestText: JSON.stringify({
+              operationName: "ListProjects",
+              query: "query ListProjects { projects { id } }",
+            }),
+            responseText: JSON.stringify({
+              data: { projects: [{ id: "p1" }] },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            url: "http://graphql.example/graphql/query",
+            requestText: prettyGraphql,
+            responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "pretty-oversized-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_graphql_query_list_projects",
+      "post_graphql_query",
     ]);
   });
 });

@@ -14,7 +14,10 @@ import {
 } from "./environmentStateRules.js";
 import { isAbsence } from "./environmentStateWriteChecks.js";
 import { prefixRelated } from "./environmentStateWriteRules.js";
-import type { RpcOperation } from "./rpcOperationSelector.js";
+import {
+  selectRpcOperationFromText,
+  type RpcOperation,
+} from "./rpcOperationSelector.js";
 import { ENTRY_BYTES, textBytes } from "./webNetworkRouteTemplates.js";
 
 /** The words of a segment or operation name. */
@@ -94,6 +97,7 @@ export interface QueryCallIo {
     use: (body: JsonValue | undefined) => T,
   ) => T;
   readonly request: (ordinal: number) => JsonValue | undefined;
+  readonly rpcOperation?: (ordinal: number) => RpcOperation | null;
   readonly retain: (bytes: number) => void;
 }
 
@@ -558,6 +562,21 @@ const rpcCallReadsOnly = (
   return readsOnly(rpcOperation.name);
 };
 
+const inferredRpcOperation = (
+  call: StateRecordFacts,
+  body: JsonValue | undefined,
+  io: QueryCallIo,
+): RpcOperation | undefined => {
+  if (io.rpcOperation !== undefined)
+    return io.rpcOperation(call.ordinal) ?? undefined;
+  return selectRpcOperationFromText({
+    method: call.method,
+    path: call.path,
+    query: call.query,
+    bodyText: body === undefined ? undefined : JSON.stringify(body),
+  });
+};
+
 /** Every call names only read operations. */
 const namesReadOperations = (
   tool: StateToolFacts,
@@ -566,8 +585,8 @@ const namesReadOperations = (
 ): boolean =>
   calls.every((call) => {
     const body = io.request(call.ordinal);
-    if (tool.rpc_operation !== undefined)
-      return rpcCallReadsOnly(tool.rpc_operation, body);
+    const rpc = tool.rpc_operation ?? inferredRpcOperation(call, body, io);
+    if (rpc !== undefined) return rpcCallReadsOnly(rpc, body);
     const operations = operationsOf(call, body);
     return (
       operations !== undefined &&

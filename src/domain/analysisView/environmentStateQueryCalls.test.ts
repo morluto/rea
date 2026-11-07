@@ -810,3 +810,85 @@ describe("GraphQL operation definition classification with fragments and keyword
     ).toEqual([]);
   });
 });
+
+describe("single-operation POST RPC read-only classification", () => {
+  it("classifies single-operation GraphQL, JSON-RPC, and batchexecute calls when tool.rpc_operation is omitted", () => {
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "query GetViewer { viewer { id } }",
+          },
+          response: { data: { viewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual(["post_graphql"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/graphql",
+          tool: "post_graphql",
+          request: {
+            operationName: "GetViewer",
+            query: "mutation GetViewer { updateViewer { id } }",
+          },
+          response: { data: { updateViewer: { id: "u1" } } },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.get", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual(["post_rpc"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/rpc",
+          tool: "post_rpc",
+          request: { jsonrpc: "2.0", method: "users.create", id: 1 },
+          response: { jsonrpc: "2.0", id: 1, result: {} },
+        },
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=GetItems",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual(["post_appui_data_batchexecute"]);
+
+    expect(
+      readOnlyOf([
+        {
+          method: "POST",
+          path: "/_/AppUi/data/batchexecute",
+          query: "?rpcids=SaveItem",
+          tool: "post_appui_data_batchexecute",
+          response: [],
+        },
+      ]),
+    ).toEqual([]);
+  });
+});

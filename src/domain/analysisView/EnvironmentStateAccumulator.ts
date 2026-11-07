@@ -398,6 +398,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         body: (ordinal) => this.#body(ordinal),
         withRequestBody: (ordinal, use) => this.#withRequestBody(ordinal, use),
         emptyResponse: (ordinal) => this.#emptyResponse(ordinal),
+        rpcOperation: (ordinal) => this.recordRpcOperation(ordinal),
         retain: (bytes) => this.retain(bytes),
         checkpoint: () => this.retainedCheckpoint(),
         release: () => this.#bodyReleases.pop()?.(),

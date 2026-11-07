@@ -369,8 +369,8 @@ recorded again.
 
 An environment manifest is a projection of one application's recorded request
 lines into a tool surface: one tool per method, path template and optional
-single-operation `POST` `rpc_operation` (`graphql`, `json-rpc` or
-`batchexecute`) on the
+`POST` `rpc_operation` (`graphql`, `json-rpc` or `batchexecute`, emitted when
+two or more groups share a `POST` `path_template`) on the
 primary origin, with inferred path parameters, observed query parameter
 names, value-free body shapes and pointers to the parent records each tool
 cites. It carries no bodies and no headers. The manifest's
@@ -625,7 +625,8 @@ boolean is sent as its JSON text) or array of strings (for repeated values in
 captured order); write methods accept an
 optional `body` object described by the recorded top-level key types, or a
 string-or-object `body` (`oneOf: [{"type": "string"}, {"type": "object"}]`) for
-`batchexecute` RPC tools whose requests send form-encoded `f.req` strings. Each
+discriminated `batchexecute` RPC tools (`rpc_operation.kind === "batchexecute"`)
+whose requests send form-encoded `f.req` strings. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
 `query_<n>` (its position) with the captured name sampled in its description,
@@ -1091,9 +1092,9 @@ rea environment-compare manifest.json --evidence capture.json \
 Each `--probe` is capture Evidence (`inspect-web-network-capture` of a HAR, or `capture-browser-scenario`) of one call
 sequence made against the live application, seeded as it was for the capture and reset before the sequence. The command
 makes no network call: whoever records the probes drives the application with its own credentials. For each probe it
-resets the environment's state, takes the requests in the order they were made (record order when any lacks a start time), extracts any `POST` `rpc_operation` from the raw recorded request text under the manifest's 64 KiB body and 8 KiB query limits before converting the body, and matches each request to the manifest tool of the
-same method (and matching `rpc_operation`, falling back to an undispatched `POST` tool only when the request carries no single operation or no discriminated tool shares the path) whose path template fits with the most literal segments (a format-rule parameter must fit its format once
-percent-decoded). A path argument is the raw segment, which the environment decodes once.
+resets the environment's state, takes the requests in the order they were made (record order when any lacks a start time), keeps each request's raw recorded text alongside its parsed body, and matches each request to the manifest tool of the
+same method whose path template fits with the most literal segments (a format-rule parameter must fit its format once
+percent-decoded); when that path template has discriminated `POST` `rpc_operation` tools, the raw request text is evaluated under the manifest's 64 KiB UTF-8 body and 8 KiB query limits to select the matching `rpc_operation` tool (or an undispatched `POST` fallback tool on that template when the request carries no single bounded operation). A path argument is the raw segment, which the environment decodes once.
 It answers the call as the served environment would, and compares that answer with the application's.
 
 A re-seeded application holds the same entities under other ids, so the comparison maps them. Objects in the two answers

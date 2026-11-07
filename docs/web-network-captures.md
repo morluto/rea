@@ -600,9 +600,9 @@ encoding leaves the body unknown. Every other group is listed under
 `excluded` with reason `other-origin`, `ui-page-or-asset` or `non-json`, and
 retained records without a usable request line are counted in a limitation.
 
-Multiplexed `POST` endpoints separate operations when a request within the
-64 KiB UTF-8 body limit (and 8 KiB query limit for `batchexecute` `rpcids`)
-identifies one bounded operation name (`1`–`128` characters):
+Multiplexed `POST` endpoints group requests by operation when a request within
+the 64 KiB raw UTF-8 body limit (and 8 KiB query limit for `batchexecute`
+`rpcids`) identifies one bounded operation name (`1`–`128` characters):
 
 - `graphql`: a JSON object body (`application/json`, `application/*+json`,
   `application/graphql`, `text/plain`, `text/markdown` or omitted media type)
@@ -621,8 +621,14 @@ identifies one bounded operation name (`1`–`128` characters):
   from the manifest without merging query-identified `batchexecute` operations.
 
 Requests exceeding those limits, batching distinct operations, omitting an
-operation name or failing validation remain ordinary `(method, path_template)`
-tools with no `rpc_operation`.
+operation name or failing validation form an undispatched group without an
+operation discriminator. After template rules run, a `(POST, path_template)`
+splits into operation-qualified tools (`rpc_operation` populated and operation
+words appended to `name`) only when two or more groups share that
+`(POST, path_template)`; a `path_template` with a single `POST` group keeps its
+ordinary `(method, path_template)` tool name and omits `rpc_operation`, while
+`environment-state` still recognizes read-only single-operation `POST` RPC calls
+from the recorded requests.
 
 The parent may instead be `capture_browser_scenario` Evidence whose scenario
 selected response bodies or header values: each network transaction is then
@@ -654,7 +660,8 @@ primary host with dots and ports replaced by hyphens, `grafana-example` for
 `http://grafana.example`. Each tool carries a deterministic `name`, `method`,
 `path_template`, `api_surface_template` (the four-rule template of its
 earliest record), optional `rpc_operation` (`{kind, name}` for discriminated
-`graphql`, `json-rpc` and `batchexecute` `POST` tools), `params`,
+`graphql`, `json-rpc` and `batchexecute` `POST` tools when two or more groups
+share a `POST` `path_template`), `params`,
 `query_parameter_names`, `body_shape`, `statuses`, `content_types` and
 `record_ordinals`. `records` lists one pointer
 `{ordinal, method, path, status, content_type}` per record a tool cites and

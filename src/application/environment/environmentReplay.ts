@@ -5,10 +5,7 @@ import {
   ownMember,
   pathSegmentMatches,
 } from "../../domain/analysisView/environmentStateRules.js";
-import {
-  selectRpcOperationFromValue,
-  type RpcOperation,
-} from "../../domain/analysisView/rpcOperationSelector.js";
+import { selectRpcOperationFromText } from "../../domain/analysisView/rpcOperationSelector.js";
 import { segmentRule } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
@@ -41,8 +38,8 @@ export interface ReplayHttpRequest {
   readonly query?: string | null | undefined;
   readonly body?: JsonValue | undefined;
   readonly contentType?: string | null | undefined;
-  /** Pre-extracted RPC discriminator from the raw request text; `null` means already inspected with no match. */
-  readonly rpcOperation?: RpcOperation | null | undefined;
+  /** Raw wire request body text; `null` when the request carried no wire body text. */
+  readonly bodyText?: string | null | undefined;
 }
 
 /** A manifest tool matched to an incoming HTTP request, with its split path segments and literal specificity. */
@@ -77,9 +74,17 @@ const fitOf = (
   return literals;
 };
 
+const replayRequestBodyText = (
+  request: ReplayHttpRequest,
+): string | null | undefined => {
+  if (request.bodyText !== undefined) return request.bodyText;
+  if (typeof request.body === "string") return request.body;
+  return request.body === undefined ? undefined : JSON.stringify(request.body);
+};
+
 /**
  * Select the manifest tool matching an incoming HTTP request by method, path template and optional POST RPC
- * operation discriminator; non-RPC routes preserve exact literal-count specificity and manifest tie order.
+ * operation discriminator; non-RPC and single-operation routes preserve exact literal-count specificity and manifest tie order.
  */
 export const matchReplayTool = (
   manifest: EnvironmentManifest,
@@ -87,46 +92,38 @@ export const matchReplayTool = (
 ): MatchedReplayTool | undefined => {
   const segments = request.path.slice(1).split("/");
   const fits: MatchedReplayTool[] = [];
+  let best: MatchedReplayTool | undefined;
   for (const tool of manifest.tools) {
     if (tool.method !== request.method) continue;
     const literals = fitOf(tool, segments);
-    if (literals !== undefined) fits.push({ tool, segments, literals });
+    if (literals === undefined) continue;
+    const candidate = { tool, segments, literals };
+    fits.push(candidate);
+    if (best === undefined || literals > best.literals) best = candidate;
   }
-  if (fits.length === 0) return undefined;
-  const pickBest = (
-    candidates: readonly MatchedReplayTool[],
-  ): MatchedReplayTool | undefined => {
-    let best: MatchedReplayTool | undefined;
-    for (const candidate of candidates)
-      if (best === undefined || candidate.literals > best.literals)
-        best = candidate;
-    return best;
-  };
+  if (best === undefined) return undefined;
+  const routeFits = fits.filter(
+    ({ tool }) => tool.path_template === best.tool.path_template,
+  );
+  if (!routeFits.some(({ tool }) => tool.rpc_operation !== undefined))
+    return routeFits[0];
   const rpc =
     request.method === "POST"
-      ? request.rpcOperation !== undefined
-        ? (request.rpcOperation ?? undefined)
-        : selectRpcOperationFromValue({
-            method: request.method,
-            path: request.path,
-            query: request.query,
-            mimeType: request.contentType,
-            body: request.body,
-          })
+      ? selectRpcOperationFromText({
+          method: request.method,
+          path: request.path,
+          query: request.query,
+          mimeType: request.contentType,
+          bodyText: replayRequestBodyText(request),
+        })
       : undefined;
-  if (rpc !== undefined) {
-    const exact = pickBest(
-      fits.filter(
-        ({ tool }) =>
-          tool.rpc_operation?.kind === rpc.kind &&
-          tool.rpc_operation.name === rpc.name,
-      ),
+  if (rpc !== undefined)
+    return routeFits.find(
+      ({ tool }) =>
+        tool.rpc_operation?.kind === rpc.kind &&
+        tool.rpc_operation.name === rpc.name,
     );
-    if (exact !== undefined) return exact;
-    if (fits.some(({ tool }) => tool.rpc_operation !== undefined))
-      return undefined;
-  }
-  return pickBest(fits.filter(({ tool }) => tool.rpc_operation === undefined));
+  return routeFits.find(({ tool }) => tool.rpc_operation === undefined);
 };
 
 /** Caller arguments as the MCP tool receives them. */

@@ -66,6 +66,8 @@ export interface StateBudget {
   ) => T | null;
   /** Whether a record's response had no body. */
   readonly emptyResponse: (ordinal: number) => boolean;
+  /** Extracted RPC operation for one recorded exchange (`null` when inspected with no match). */
+  readonly rpcOperation?: (ordinal: number) => RpcOperation | null;
   readonly retain: (bytes: number) => boolean;
   /** Mark the retained bytes; the returned call releases what was retained since, once none of it is held. */
   readonly checkpoint: () => () => void;

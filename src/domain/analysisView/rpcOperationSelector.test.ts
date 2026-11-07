@@ -11,11 +11,10 @@ import {
   RPC_QUERY_LIMIT_CHARS,
   RPC_REQUEST_BODY_LIMIT_BYTES,
   selectRpcOperationFromText,
-  selectRpcOperationFromValue,
   XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "./rpcOperationSelector.js";
 
-describe("selectRpcOperationFromText and selectRpcOperationFromValue", () => {
+describe("selectRpcOperationFromText", () => {
   it("discriminates GraphQL POST requests with a valid operationName", () => {
     expect(
       selectRpcOperationFromText({
@@ -30,13 +29,13 @@ describe("selectRpcOperationFromText and selectRpcOperationFromValue", () => {
     ).toEqual({ kind: "graphql", name: "GetViewer" });
 
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/api/v1/query-gateway",
-        body: {
+        bodyText: JSON.stringify({
           operationName: "_PersistedLookup_1",
           extensions: { persistedQuery: { version: 1, sha256Hash: "abc" } },
-        },
+        }),
       }),
     ).toEqual({ kind: "graphql", name: "_PersistedLookup_1" });
   });
@@ -56,14 +55,14 @@ describe("selectRpcOperationFromText and selectRpcOperationFromValue", () => {
     ).toEqual({ kind: "json-rpc", name: "tools/list" });
 
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/rpc",
-        body: {
+        bodyText: JSON.stringify({
           jsonrpc: "2.0",
           method: "resources/templates/list",
           params: {},
-        },
+        }),
       }),
     ).toEqual({ kind: "json-rpc", name: "resources/templates/list" });
   });
@@ -92,19 +91,19 @@ describe("selectRpcOperationFromText and selectRpcOperationFromValue", () => {
       ]),
     }).toString();
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/_/AppUi/data/batchexecute",
-        body: repeatedSameId,
+        bodyText: repeatedSameId,
       }),
     ).toEqual({ kind: "batchexecute", name: "MaZiqc" });
 
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/_/AppUi/data/batchexecute",
         query: "?rpcids=FEPhDc",
-        body: undefined,
+        bodyText: undefined,
       }),
     ).toEqual({ kind: "batchexecute", name: "FEPhDc" });
   });
@@ -327,32 +326,32 @@ describe("selectRpcOperation length and byte bounds", () => {
     const exactName = "A".repeat(RPC_OPERATION_NAME_LIMIT);
     const overName = "A".repeat(RPC_OPERATION_NAME_LIMIT + 1);
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/graphql",
-        body: { operationName: exactName, query: "{ ok }" },
+        bodyText: JSON.stringify({ operationName: exactName, query: "{ ok }" }),
       }),
     ).toEqual({ kind: "graphql", name: exactName });
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/graphql",
-        body: { operationName: overName, query: "{ ok }" },
+        bodyText: JSON.stringify({ operationName: overName, query: "{ ok }" }),
       }),
     ).toBeUndefined();
 
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/rpc",
-        body: { jsonrpc: "2.0", method: exactName },
+        bodyText: JSON.stringify({ jsonrpc: "2.0", method: exactName }),
       }),
     ).toEqual({ kind: "json-rpc", name: exactName });
     expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/rpc",
-        body: { jsonrpc: "2.0", method: overName },
+        bodyText: JSON.stringify({ jsonrpc: "2.0", method: overName }),
       }),
     ).toBeUndefined();
 
@@ -395,43 +394,23 @@ describe("selectRpcOperation length and byte bounds", () => {
     ).toBeUndefined();
   });
 
-  it("enforces the 64 KiB whole-body byte limit on already-parsed JSON values", () => {
-    const baseObject = { jsonrpc: "2.0", method: "ping", pad: "" };
-    const baseBytes = Buffer.byteLength(JSON.stringify(baseObject), "utf8");
-    const exactParsed = {
-      ...baseObject,
-      pad: "p".repeat(RPC_REQUEST_BODY_LIMIT_BYTES - baseBytes),
-    };
-    expect(Buffer.byteLength(JSON.stringify(exactParsed), "utf8")).toBe(
+  it("measures raw wire UTF-8 bytes including formatting whitespace against the 64 KiB limit", () => {
+    const prettyOverLimit = `{\n${" ".repeat(RPC_REQUEST_BODY_LIMIT_BYTES)}"operationName": "GetViewer",\n"query": "query GetViewer { viewer { id } }"\n}`;
+    expect(Buffer.byteLength(prettyOverLimit, "utf8")).toBeGreaterThan(
       RPC_REQUEST_BODY_LIMIT_BYTES,
     );
     expect(
-      selectRpcOperationFromValue({
-        method: "POST",
-        path: "/rpc",
-        body: exactParsed,
-      }),
-    ).toEqual({ kind: "json-rpc", name: "ping" });
-
+      Buffer.byteLength(
+        JSON.stringify(JSON.parse(prettyOverLimit) as unknown),
+        "utf8",
+      ),
+    ).toBeLessThan(256);
     expect(
-      selectRpcOperationFromValue({
-        method: "POST",
-        path: "/rpc",
-        body: { ...exactParsed, pad: `${exactParsed.pad}x` },
-      }),
-    ).toBeUndefined();
-
-    expect(
-      selectRpcOperationFromValue({
+      selectRpcOperationFromText({
         method: "POST",
         path: "/graphql",
-        body: {
-          operationName: "GetViewer",
-          query: "{ viewer { id } }",
-          variables: {
-            pad: "é".repeat(Math.ceil(RPC_REQUEST_BODY_LIMIT_BYTES / 2)),
-          },
-        },
+        mimeType: "application/json",
+        bodyText: prettyOverLimit,
       }),
     ).toBeUndefined();
   });

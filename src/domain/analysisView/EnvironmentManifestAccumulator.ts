@@ -198,6 +198,7 @@ const hasParam = (parts: readonly MutablePart[]): boolean =>
 export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumulator {
   readonly #groups = new Map<string, GroupState>();
   readonly #records: RecordLine[] = [];
+  readonly #recordRpcOperations = new Map<number, RpcOperation>();
   readonly #origins = new Map<string, OriginStats>();
   readonly #rules: ReadonlySet<TemplateRule>;
   #unrepresented = 0;
@@ -219,6 +220,13 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
   /** Whether the finished projection publishes body shapes, and so states their limitation. */
   protected get reportsBodyShapes(): boolean {
     return true;
+  }
+
+  /** Extracted RPC discriminator for one recorded exchange, even when a single-operation route omits `rpc_operation`. */
+  protected recordRpcOperation(ordinal: number): RpcOperation | null {
+    return this.discriminateRpc
+      ? (this.#recordRpcOperations.get(ordinal) ?? null)
+      : null;
   }
 
   add(
@@ -474,8 +482,11 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     for (const name of queryNames ?? [])
       if (!group?.queryNames.has(name))
         bytes += ENTRY_BYTES + textBytes(name.length);
+    if (bucket.rpcOperation !== undefined) bytes += ENTRY_BYTES;
     // Reserve the whole mutation while route scratch is still live.
     if (!this.retain(bytes)) return this.overBudget();
+    if (bucket.rpcOperation !== undefined)
+      this.#recordRpcOperations.set(ordinal, bucket.rpcOperation);
     const position = this.#records.length;
     this.#records.push({
       ordinal,
@@ -525,30 +536,44 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
 
   #tools(groups: readonly ToolGroup[]): Tool[] {
     const registry = toolNameRegistry();
-    return applyTemplateRules(groups, this.#rules)
-      .map((group) => {
-        const names = parameterNames(group.parts);
-        return { group, names, template: pathTemplate(group.parts, names) };
-      })
+    const templated = applyTemplateRules(groups, this.#rules).map((group) => {
+      const names = parameterNames(group.parts);
+      return { group, names, template: pathTemplate(group.parts, names) };
+    });
+    const routeCounts = new Map<string, number>();
+    for (const entry of templated) {
+      const key = compositeKey([entry.group.method, entry.template]);
+      routeCounts.set(key, (routeCounts.get(key) ?? 0) + 1);
+    }
+    return templated
+      .map(({ group, names, template }) => ({
+        group,
+        names,
+        template,
+        rpcOperation:
+          (routeCounts.get(compositeKey([group.method, template])) ?? 0) > 1
+            ? group.rpcOperation
+            : undefined,
+      }))
       .sort((left, right) =>
         compareTools(
           {
             template: left.template,
             method: left.group.method,
-            ...(left.group.rpcOperation === undefined
+            ...(left.rpcOperation === undefined
               ? {}
-              : { rpcOperation: left.group.rpcOperation }),
+              : { rpcOperation: left.rpcOperation }),
           },
           {
             template: right.template,
             method: right.group.method,
-            ...(right.group.rpcOperation === undefined
+            ...(right.rpcOperation === undefined
               ? {}
-              : { rpcOperation: right.group.rpcOperation }),
+              : { rpcOperation: right.rpcOperation }),
           },
         ),
       )
-      .map(({ group, names, template }): Tool => {
+      .map(({ group, names, template, rpcOperation }): Tool => {
         let next = 0;
         return {
           name: toolName(
@@ -556,7 +581,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
             group.parts,
             names,
             registry,
-            group.rpcOperation,
+            rpcOperation,
           ),
           method: group.method,
           path_template: template,
@@ -582,9 +607,9 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           record_ordinals: group.positions.map(
             (position) => this.#records[position]!.ordinal,
           ),
-          ...(group.rpcOperation === undefined
+          ...(rpcOperation === undefined
             ? {}
-            : { rpc_operation: group.rpcOperation }),
+            : { rpc_operation: rpcOperation }),
         };
       });
   }

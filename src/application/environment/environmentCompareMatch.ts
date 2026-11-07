@@ -4,7 +4,6 @@ import {
 } from "../../domain/analysisView/environmentStateRules.js";
 import { bulkCollectionOf } from "../../domain/analysisView/environmentStateWriteAddress.js";
 import { isPagingParameter } from "../../domain/analysisView/environmentStatePaging.js";
-import type { RpcOperation } from "../../domain/analysisView/rpcOperationSelector.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { BulkIds } from "./environmentCompareIds.js";
 import { matchReplayTool } from "./environmentReplay.js";
@@ -26,8 +25,8 @@ export interface ProbeRequest {
   readonly query: string | null;
   readonly body: JsonValue | undefined;
   readonly contentType?: string | null | undefined;
-  /** Pre-extracted RPC discriminator from the raw request text; `null` means inspected with no match. */
-  readonly rpcOperation?: RpcOperation | null | undefined;
+  /** Raw wire request body text; `null` when the recorded request carried no body text. */
+  readonly bodyText?: string | null | undefined;
 }
 
 /** A probe request as a call of one manifest tool. */

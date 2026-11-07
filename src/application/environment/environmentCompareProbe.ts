@@ -5,11 +5,7 @@ import {
   isJsonLike,
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
-import {
-  hasBoundedXssiJsonResponse,
-  selectRpcOperationFromText,
-  type RpcOperation,
-} from "../../domain/analysisView/rpcOperationSelector.js";
+import { hasBoundedXssiJsonResponse } from "../../domain/analysisView/rpcOperationSelector.js";
 import {
   primaryOrigin,
   type OriginStats,
@@ -112,27 +108,11 @@ const requestContentType = (
     : undefined;
 };
 
-const requestRpcOperation = (
-  record: WebNetworkCaptureRecord,
-  method: string,
-  path: string,
-  query: string | null,
-): RpcOperation | null | undefined => {
-  if (method !== "POST") return undefined;
+const requestBodyText = (record: WebNetworkCaptureRecord): string | null => {
   const facts = readRecordedRequestBody(record.reported);
-  const postData =
-    facts.kind === "request" && facts.postData.kind === "object"
-      ? facts.postData
-      : undefined;
-  return (
-    selectRpcOperationFromText({
-      method,
-      path,
-      query,
-      mimeType: postData?.mimeType,
-      bodyText: postData?.text,
-    }) ?? null
-  );
+  return facts.kind === "request" && facts.postData.kind === "object"
+    ? (facts.postData.text ?? null)
+    : null;
 };
 
 const isProbeJsonLike = (
@@ -203,19 +183,13 @@ export const probeRequests = (
     else {
       const exchange = recordedExchange(record, line);
       const contentType = requestContentType(record);
-      const rpcOperation = requestRpcOperation(
-        record,
-        line.method,
-        exchange.path,
-        exchange.query,
-      );
       const request = {
         method: line.method,
         path: exchange.path,
         query: exchange.query,
         body: requestBody(record),
+        bodyText: requestBodyText(record),
         ...(contentType === undefined ? {} : { contentType }),
-        ...(rpcOperation === undefined ? {} : { rpcOperation }),
       };
       // A request whose answer was lost may still have changed the application, so it is made but not compared.
       if (exchange.status === null) {

@@ -239,6 +239,22 @@ const multiplexedManifestRecords = (): readonly WebNetworkCaptureRecord[] => [
     path: "/api/items",
     postText: JSON.stringify({ name: "plain-rest" }),
   }),
+  rpcRecord({
+    ordinal: 9,
+    path: "/api/orgs/org-1/graphql",
+    postText: JSON.stringify({
+      operationName: "ListMembers",
+      query: "query ListMembers { members { id } }",
+    }),
+  }),
+  rpcRecord({
+    ordinal: 10,
+    path: "/api/orgs/org-2/graphql",
+    postText: JSON.stringify({
+      operationName: "ListMembers",
+      query: "query ListMembers { members { id } }",
+    }),
+  }),
 ];
 
 describe("multiplexed POST RPC manifest grouping", () => {
@@ -294,6 +310,12 @@ describe("multiplexed POST RPC manifest grouping", () => {
         path_template: "/api/orgs/{org_id}/graphql",
         rpc_operation: { kind: "graphql", name: "GetViewer" },
         record_ordinals: [0, 1],
+      },
+      {
+        name: "post_orgs_graphql_list_members_by_org_id",
+        path_template: "/api/orgs/{org_id}/graphql",
+        rpc_operation: { kind: "graphql", name: "ListMembers" },
+        record_ordinals: [9, 10],
       },
       {
         name: "post_rpc_tools_call",
@@ -388,7 +410,7 @@ describe("multiplexed POST RPC state partitioning", () => {
     if (!state.ok) throw state.error;
     expect(state.value.views).toEqual([
       {
-        tool: "post_appui_data_batchexecute_get_items",
+        tool: "post_appui_data_batchexecute",
         shape: "recorded",
         reason: "query-body",
       },
@@ -406,6 +428,92 @@ describe("multiplexed POST RPC state partitioning", () => {
     expect(state.value.writes.map((plan) => plan.tool)).toEqual([
       "post_graphql_update_profile",
       "post_rpc_tools_call",
+    ]);
+  });
+});
+
+describe("single-operation POST RPC paths", () => {
+  it("preserves plain tool names without rpc_operation when one operation occupies a POST path while still classifying read-only RPCs", () => {
+    const readAccumulator = new EnvironmentStateAccumulator(1024 * 1024);
+    const readRecords: readonly WebNetworkCaptureRecord[] = [
+      rpcRecord({
+        ordinal: 0,
+        path: "/graphql",
+        postText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+        }),
+        responseText: JSON.stringify({ data: { viewer: { id: "u1" } } }),
+      }),
+      rpcRecord({
+        ordinal: 1,
+        path: "/rpc",
+        postText: JSON.stringify({
+          jsonrpc: "2.0",
+          method: "users.get",
+          id: 1,
+        }),
+        responseText: JSON.stringify({
+          jsonrpc: "2.0",
+          id: 1,
+          result: { id: "u1" },
+        }),
+      }),
+      rpcRecord({
+        ordinal: 2,
+        path: "/_/AppUi/data/batchexecute?rpcids=GetItems",
+        requestMime: "application/x-www-form-urlencoded",
+        postText: new URLSearchParams({
+          "f.req": JSON.stringify([[["GetItems", "[]", null, "generic"]]]),
+        }).toString(),
+        responseMime: "text/plain",
+        responseText:
+          ')]}\'\n[[["wrb.fr","GetItems","[1]",null,null,null,"generic"]]]',
+      }),
+    ];
+    for (const record of readRecords)
+      expect(readAccumulator.add(record).ok).toBe(true);
+    const manifest = finished(readAccumulator);
+    expect(
+      manifest.tools.map((tool) => ({
+        name: tool.name,
+        rpc_operation: tool.rpc_operation,
+      })),
+    ).toEqual([
+      { name: "post_appui_data_batchexecute", rpc_operation: undefined },
+      { name: "post_graphql", rpc_operation: undefined },
+      { name: "post_rpc", rpc_operation: undefined },
+    ]);
+    const readState = readAccumulator.finishState();
+    if (!readState.ok) throw readState.error;
+    expect(readState.value.views.map((view) => view.tool)).toEqual([
+      "post_appui_data_batchexecute",
+      "post_graphql",
+      "post_rpc",
+    ]);
+    expect(readState.value.writes).toEqual([]);
+
+    const writeAccumulator = new EnvironmentStateAccumulator(1024 * 1024);
+    expect(
+      writeAccumulator.add(
+        rpcRecord({
+          ordinal: 0,
+          path: "/graphql",
+          postText: JSON.stringify({
+            operationName: "UpdateViewer",
+            query: "mutation UpdateViewer { updateViewer { id } }",
+          }),
+        }),
+      ).ok,
+    ).toBe(true);
+    expect(finished(writeAccumulator).tools.map((tool) => tool.name)).toEqual([
+      "post_graphql",
+    ]);
+    const writeState = writeAccumulator.finishState();
+    if (!writeState.ok) throw writeState.error;
+    expect(writeState.value.views).toEqual([]);
+    expect(writeState.value.writes.map((plan) => plan.tool)).toEqual([
+      "post_graphql",
     ]);
   });
 });

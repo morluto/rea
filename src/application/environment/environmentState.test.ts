@@ -820,6 +820,16 @@ describe("saved pre-RPC manifest state compatibility", () => {
           query: "query GetViewer { viewer { id } }",
         },
       ],
+      [
+        "POST",
+        "/graphql",
+        { data: { projects: [{ id: "p1" }] } },
+        200,
+        {
+          operationName: "ListProjects",
+          query: "query ListProjects { projects { id } }",
+        },
+      ],
     ]);
     const legacyManifest = inspectAnalysisViewValidated(
       {

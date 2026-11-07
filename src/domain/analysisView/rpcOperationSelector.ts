@@ -110,45 +110,6 @@ const withinByteLimit = (text: string, limitBytes: number): boolean =>
 const withinBodyByteLimit = (text: string): boolean =>
   withinByteLimit(text, RPC_REQUEST_BODY_LIMIT_BYTES);
 
-/** Measure exact compact JSON UTF-8 byte size, aborting immediately once `limitBytes` is exceeded. */
-const withinJsonValueByteLimit = (
-  root: JsonValue,
-  limitBytes: number,
-): boolean => {
-  let bytes = 0;
-  const stack: JsonValue[] = [root];
-  while (stack.length > 0) {
-    const current = stack.pop()!;
-    if (current === null || current === true) bytes += 4;
-    else if (current === false) bytes += 5;
-    else if (typeof current === "number") {
-      if (!Number.isFinite(current)) return false;
-      bytes += String(current).length;
-    } else if (typeof current === "string") {
-      if (current.length > limitBytes) return false;
-      bytes += Buffer.byteLength(JSON.stringify(current), "utf8");
-    } else if (Array.isArray(current)) {
-      bytes += 2 + Math.max(0, current.length - 1);
-      if (bytes > limitBytes) return false;
-      for (const item of current) stack.push(item);
-    } else {
-      bytes += 2;
-      let count = 0;
-      for (const key in current) {
-        if (!Object.hasOwn(current, key)) continue;
-        if (count > 0) bytes += 1;
-        count += 1;
-        if (key.length > limitBytes) return false;
-        bytes += Buffer.byteLength(JSON.stringify(key), "utf8") + 1;
-        if (bytes > limitBytes) return false;
-        stack.push(current[key]!);
-      }
-    }
-    if (bytes > limitBytes) return false;
-  }
-  return true;
-};
-
 const selectFromJsonObject = (
   root: Readonly<Record<string, unknown>>,
   path: string,
@@ -267,34 +228,6 @@ export const selectRpcOperationFromText = (input: {
     }
   }
   if (isBatchExecutePath(input.path)) {
-    const rpcId = selectBatchExecuteQueryRpcId(input.query);
-    if (rpcId !== undefined) return { kind: "batchexecute", name: rpcId };
-  }
-  return undefined;
-};
-
-/** Extract an optional RPC operation discriminator from a replay or probe HTTP request whose body may already be parsed JSON. */
-export const selectRpcOperationFromValue = (input: {
-  readonly method: string;
-  readonly path: string;
-  readonly query?: string | null | undefined;
-  readonly mimeType?: string | null | undefined;
-  readonly body?: JsonValue | undefined;
-}): RpcOperation | undefined => {
-  if (input.method !== "POST") return undefined;
-  if (typeof input.body === "string")
-    return selectRpcOperationFromText({
-      method: input.method,
-      path: input.path,
-      query: input.query,
-      mimeType: input.mimeType,
-      bodyText: input.body,
-    });
-  if (isPlainObject(input.body))
-    return withinJsonValueByteLimit(input.body, RPC_REQUEST_BODY_LIMIT_BYTES)
-      ? selectFromJsonObject(input.body, input.path)
-      : undefined;
-  if (input.body === undefined && isBatchExecutePath(input.path)) {
     const rpcId = selectBatchExecuteQueryRpcId(input.query);
     if (rpcId !== undefined) return { kind: "batchexecute", name: rpcId };
   }

@@ -659,6 +659,16 @@ const multiplexedRpcSource = async (): Promise<EnvironmentSource> => {
       responseText: `)]}'\n\n${String(batchexecuteChunk.length + 1)}\n${batchexecuteChunk}\n`,
     }),
     postRpcExchange({
+      path: "/_/DashUi/data/batchexecute?rpcids=SaveItem",
+      requestMime: "application/x-www-form-urlencoded",
+      requestText: new URLSearchParams({
+        "f.req": JSON.stringify([[["SaveItem", "[1]", null, "generic"]]]),
+      }).toString(),
+      responseMime: "application/x-javascript; charset=utf-8",
+      responseText:
+        ')]}\'\n[[["wrb.fr","SaveItem","{\\"ok\\":true}",null,null,null,"generic"]]]',
+    }),
+    postRpcExchange({
       path: "/api/items",
       requestText: JSON.stringify({ title: "ordinary" }),
       status: 201,
@@ -774,6 +784,95 @@ describe("multiplexed POST RPC tool matching and XSSI replay", () => {
     expect(replay(restMatch!.tool.name, {}, rpcSource)).toMatchObject({
       status: 201,
       body: { id: 9, title: "ordinary" },
+    });
+  });
+});
+
+describe("single-operation POST paths and 64 KiB raw wire budget in matchReplayTool", () => {
+  it("keeps plain tool names on single-operation POST routes and matches incoming RPC requests", async () => {
+    const capture = environmentManifestCaptureFixture([
+      postRpcExchange({
+        path: "/graphql",
+        requestText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { login } }",
+        }),
+        responseText: JSON.stringify({ data: { viewer: { login: "ada" } } }),
+      }),
+    ]);
+    const evidence = analysisViewCaptureEvidence(capture);
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const source = environmentServeSource({
+      manifest: manifest.value,
+      capture: evidence,
+    });
+    expect(
+      source.manifest.tools.map((tool) => ({
+        name: tool.name,
+        rpc_operation: tool.rpc_operation,
+      })),
+    ).toEqual([{ name: "post_graphql", rpc_operation: undefined }]);
+    const matched = matchReplayTool(source.manifest, {
+      method: "POST",
+      path: "/graphql",
+      contentType: "application/json",
+      body: {
+        operationName: "GetViewer",
+        query: "query GetViewer { viewer { login } }",
+      },
+    });
+    expect(matched?.tool.name).toBe("post_graphql");
+  });
+
+  it("uses raw wire bodyText for the 64 KiB check so pretty-printed oversized GraphQL bodies route to the fallback tool", async () => {
+    const prettyOverLimit = `{\n${" ".repeat(70_000)}"operationName": "GetViewer",\n"query": "query GetViewer { viewer { login } }"\n}`;
+    const capture = environmentManifestCaptureFixture([
+      postRpcExchange({
+        path: "/graphql",
+        requestText: JSON.stringify({
+          operationName: "ListProjects",
+          query: "query ListProjects { projects { id } }",
+        }),
+        responseText: JSON.stringify({ data: { projects: [] } }),
+      }),
+      postRpcExchange({
+        path: "/graphql",
+        requestText: prettyOverLimit,
+        responseText: JSON.stringify({ data: { viewer: { login: "ada" } } }),
+      }),
+    ]);
+    const evidence = analysisViewCaptureEvidence(capture);
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const source = environmentServeSource({
+      manifest: manifest.value,
+      capture: evidence,
+    });
+    expect(source.manifest.tools.map((tool) => tool.name)).toEqual([
+      "post_graphql",
+      "post_graphql_list_projects",
+    ]);
+    const matched = matchReplayTool(source.manifest, {
+      method: "POST",
+      path: "/graphql",
+      contentType: "application/json",
+      body: {
+        operationName: "GetViewer",
+        query: "query GetViewer { viewer { login } }",
+      },
+      bodyText: prettyOverLimit,
+    });
+    expect(matched?.tool.name).toBe("post_graphql");
+    expect(replay(matched!.tool.name, {}, source)).toMatchObject({
+      status: 200,
+      body: { data: { viewer: { login: "ada" } } },
     });
   });
 });

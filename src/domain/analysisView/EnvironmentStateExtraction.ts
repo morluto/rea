@@ -167,6 +167,9 @@ export class EnvironmentStateExtraction {
       {
         withBody: (ordinal, use) => this.#withBody(ordinal, use),
         request: (ordinal) => this.#requestBody(ordinal),
+        ...(this.#budget.rpcOperation === undefined
+          ? {}
+          : { rpcOperation: this.#budget.rpcOperation }),
         retain: (bytes) => this.#retain(bytes),
       },
       this.#chronology,
