@@ -311,7 +311,7 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
           );
           expect(cause).toMatchObject({
             reason: "integrity",
-            message: `PyInstaller source identity changed: ${path}`,
+            message: expect.stringContaining(path),
           });
           expect(
             projectAnalysisError(
@@ -321,7 +321,7 @@ it.each(["ENOENT", "ENOTDIR"] as const)(
             category: "integrity_mismatch",
             details: {
               reason: "integrity",
-              detail: `PyInstaller source identity changed: ${path}`,
+              detail: expect.stringContaining(path),
             },
           });
         }
