@@ -16,6 +16,7 @@ import {
   elfFixture,
   ptxFixture,
   amdFixture,
+  amdMetadataNoteFixture,
   amdNoteFixture,
   llvmBitcodeFixture,
 } from "../../fixtures/gpu/codeObjects.js";
@@ -571,6 +572,44 @@ it("bounds standalone AMD note discovery before retaining metadata", async () =>
   );
   expect(result.value.kernels).toEqual([]);
 });
+it.each([
+  {
+    container: "65,536-element array",
+    metadata: { "amdhsa.extra": Array.from({ length: 65536 }, () => null) },
+    inspection: "inventory",
+  },
+  {
+    container: "65,537-element array",
+    metadata: { "amdhsa.extra": Array.from({ length: 65537 }, () => null) },
+    inspection: "capacity",
+  },
+  {
+    container: "65,537-pair map",
+    metadata: {
+      "amdhsa.extra": Object.fromEntries(
+        Array.from({ length: 65537 }, (_, index) => [
+          `k${String(index)}`,
+          null,
+        ]),
+      ),
+    },
+    inspection: "capacity",
+  },
+])(
+  "classifies a valid AMDGPU note with a $container as $inspection",
+  async ({ metadata, inspection }) => {
+    const result = await inspect(
+      amdFixture(false, amdMetadataNoteFixture(metadata)),
+      {
+        analysis: "inventory",
+      },
+    );
+    if (!result.ok) throw result.error;
+    const object = result.value.objects.find(({ kind }) => kind === "amdgpu");
+    expect(object).toMatchObject({ inspection });
+    expect(object?.inspection).not.toBe("malformed");
+  },
+);
 it("reads PE raw-size fallback and ELF-host section locations", async () => {
   for (const bytes of [
     peGpuFixture(),

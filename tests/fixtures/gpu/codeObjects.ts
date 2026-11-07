@@ -249,6 +249,20 @@ export const amdNoteFixture = (
   metadata.copy(note, 20);
   return note;
 };
+export const amdMetadataNoteFixture = (
+  metadata: Record<string, unknown>,
+): Buffer => {
+  const descriptor = Buffer.from(
+    encode({ "amdhsa.version": [1, 1], "amdhsa.kernels": [], ...metadata }),
+  );
+  const note = Buffer.alloc(20 + Math.ceil(descriptor.length / 4) * 4);
+  note.writeUInt32LE(7, 0);
+  note.writeUInt32LE(descriptor.length, 4);
+  note.writeUInt32LE(32, 8);
+  note.write("AMDGPU ", 12);
+  descriptor.copy(note, 20);
+  return note;
+};
 export const amdFixture = (
   hidden = false,
   trailingNote?: Buffer,
