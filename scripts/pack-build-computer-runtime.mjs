@@ -10,10 +10,16 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-const npm = process.platform === "win32" ? "npm.cmd" : "npm";
+const windows = process.platform === "win32";
+const npm = windows ? "npm.cmd" : "npm";
 
 const run = (command, args, cwd) => {
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
+  // Node refuses to spawn a Windows batch file such as npm.cmd without a shell.
+  const result = spawnSync(command, args, {
+    cwd,
+    stdio: "inherit",
+    ...(windows && command === npm ? { shell: true } : {}),
+  });
   if (result.error !== undefined) throw result.error;
   if (result.status !== 0)
     throw new Error(

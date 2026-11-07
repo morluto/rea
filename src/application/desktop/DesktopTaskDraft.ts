@@ -81,7 +81,10 @@ const draft = async (
     dconf,
     ends,
     checkpoints,
-    observed: covered(ends.seed) && covered(ends.end),
+    observed: Array.from(
+      { length: ends.end - ends.seed + 1 },
+      (_, offset) => ends.seed + offset,
+    ).every(covered),
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {

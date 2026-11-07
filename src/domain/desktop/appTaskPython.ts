@@ -492,22 +492,101 @@ const verifierEvaluator = (source: string): string | undefined => {
   return at < 0 ? undefined : source.slice(at);
 };
 
-/** Pointers the task description names. A file path or a URL is not one. */
-const describedPointers = (description: string): readonly string[] =>
-  [...description.matchAll(/"pointer": "((?:\\.|[^"\\])*)"/gu)].flatMap(
-    (match) => {
-      const before = description.slice(0, match.index ?? 0);
-      let depth = 0;
-      for (const character of before) {
-        if (character === "{") depth += 1;
-        else if (character === "}") depth -= 1;
-      }
-      // A check's own pointer is one object deep. A pointer inside its value is deeper.
-      if (depth !== 1) return [];
-      const token = match[1];
-      return token === undefined ? [] : [JSON.parse(`"${token}"`) as string];
-    },
+/** Read one Python literal that `pythonLiteral` wrote, from `source` at `index`. */
+const readPythonLiteral = (
+  source: string,
+  index: number,
+): { readonly value: JsonValue; readonly index: number } | undefined => {
+  let cursor = index;
+  while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+    cursor += 1;
+  const character = source[cursor];
+  if (source.startsWith("None", cursor))
+    return { value: null, index: cursor + 4 };
+  if (source.startsWith("True", cursor))
+    return { value: true, index: cursor + 4 };
+  if (source.startsWith("False", cursor))
+    return { value: false, index: cursor + 5 };
+  if (character === '"' || character === "'") {
+    let end = cursor + 1;
+    let escaped = false;
+    while (end < source.length) {
+      const next = source[end] ?? "";
+      if (escaped) escaped = false;
+      else if (next === "\\") escaped = true;
+      else if (next === character) break;
+      end += 1;
+    }
+    if (source[end] !== character) return undefined;
+    const token = source.slice(cursor, end + 1);
+    const value =
+      character === '"'
+        ? (JSON.parse(token) as string)
+        : token.slice(1, -1).replaceAll("\\'", "'");
+    return { value, index: end + 1 };
+  }
+  if (character === "[") {
+    const items: JsonValue[] = [];
+    cursor += 1;
+    while (cursor < source.length) {
+      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+        cursor += 1;
+      if (source[cursor] === "]") return { value: items, index: cursor + 1 };
+      const item = readPythonLiteral(source, cursor);
+      if (item === undefined) return undefined;
+      items.push(item.value);
+      cursor = item.index;
+      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+        cursor += 1;
+      if (source[cursor] === ",") cursor += 1;
+    }
+    return undefined;
+  }
+  if (character === "{") {
+    const record: Record<string, JsonValue> = {};
+    cursor += 1;
+    while (cursor < source.length) {
+      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+        cursor += 1;
+      if (source[cursor] === "}") return { value: record, index: cursor + 1 };
+      const key = readPythonLiteral(source, cursor);
+      if (key === undefined || typeof key.value !== "string") return undefined;
+      cursor = key.index;
+      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+        cursor += 1;
+      if (source[cursor] !== ":") return undefined;
+      const item = readPythonLiteral(source, cursor + 1);
+      if (item === undefined) return undefined;
+      record[key.value] = item.value;
+      cursor = item.index;
+      while (cursor < source.length && /\s/u.test(source[cursor] ?? ""))
+        cursor += 1;
+      if (source[cursor] === ",") cursor += 1;
+    }
+    return undefined;
+  }
+  const number = /^-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?/u.exec(
+    source.slice(cursor),
   );
+  if (number?.[0] === undefined) return undefined;
+  return { value: Number(number[0]), index: cursor + number[0].length };
+};
+
+/** Pointers of the checks a verifier states. A pointer inside a check's value is not one. */
+const describedPointers = (description: string): readonly string[] => {
+  const at = description.indexOf("CHECKS = ");
+  if (at < 0) return [];
+  const parsed = readPythonLiteral(description, at + "CHECKS = ".length);
+  if (parsed === undefined || !Array.isArray(parsed.value)) return [];
+  return parsed.value.flatMap((check) =>
+    typeof check === "object" &&
+    check !== null &&
+    !Array.isArray(check) &&
+    typeof check.pointer === "string"
+      ? [check.pointer]
+      : [],
+  );
+};
 
 /**
  * Whether two verifiers grade the same task the same way. The description must
