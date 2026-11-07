@@ -5,7 +5,7 @@ import { nativeFunctionMatchingSchema } from "../../domain/native/functionMatchi
 import { createEvidence, immutableEvidence } from "../../domain/evidence.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { functionDossierSchema } from "../../domain/hopperValues.js";
+import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { procedureInfoSchema } from "../../domain/native/procedureInfo.js";
 import {
   nativeMatchingNamedInventory as nativeMatchingInventory,

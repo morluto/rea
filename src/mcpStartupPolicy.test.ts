@@ -67,17 +67,19 @@ describe("MCP tool deadline allowance for a Ghidra decompile limit", () => {
     expect(recommendedMcpToolTimeoutSeconds(timeoutInputs)).toBe(1050);
   });
 
-  it("forwards curated launch limits without copying transport or unrelated settings", () => {
+  it("forwards selected launch and response limits without copying transport credentials or unrelated settings", () => {
     expect(
       explicitSetupRegistrationEnvironment({
         REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "600",
         REA_ASAR_MAX_HEADER_BYTES: "33554432",
         REA_MCP_MAX_RESPONSE_BYTES: "20971520",
+        REA_TOKEN: "transport-only",
         UNRELATED: "dropped",
       }),
     ).toEqual({
       REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: "600",
       REA_ASAR_MAX_HEADER_BYTES: "33554432",
+      REA_MCP_MAX_RESPONSE_BYTES: "20971520",
     });
   });
 });

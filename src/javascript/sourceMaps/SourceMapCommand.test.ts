@@ -10,12 +10,33 @@ import {
   ProviderProcessSupervisor,
   spawnOwnedProviderProcess,
 } from "../../process/ProviderProcess.js";
-import { WEB_SOURCE_MAP_LIMITS } from "../../domain/webSourceLocation.js";
+import {
+  WEB_SOURCE_MAP_LIMITS,
+  type WebSourceMapReport,
+} from "../../domain/webSourceLocation.js";
+import { traceSourceMap } from "./TraceSourceMap.js";
 import {
   runSourceMapCommand,
   SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
   type SourceMapCleanupRetention,
 } from "./SourceMapCommand.js";
+
+const report = traceSourceMap(
+  JSON.stringify({ version: 3, sources: [], names: [], mappings: "" }),
+  "https://app.test/app.map",
+  { line: 1, column: 0 },
+);
+const completedReport: WebSourceMapReport = {
+  ...report,
+  runtime:
+    report.runtime.id === "node-v8"
+      ? { ...report.runtime, v8_heap_limit_bytes: 200 * 1024 * 1024 }
+      : {
+          ...report.runtime,
+          process_memory_limit_bytes: SOURCE_MAP_CODEC_MEMORY_LIMIT_BYTES,
+        },
+};
+const completedCodec = `process.stdout.write(${JSON.stringify(JSON.stringify({ state: "success", report: completedReport }))})`;
 
 const unexpectedCleanup: SourceMapCleanupRetention = {};
 afterEach(async () => {
@@ -114,7 +135,7 @@ it.each([null, { caller: "late source-map cancellation" }])(
           launcher: async (options) =>
             spawnOwnedProviderProcess({
               ...options,
-              arguments: ["-e", 'process.stdout.write("complete")'],
+              arguments: ["-e", completedCodec],
             }),
         },
         retainedCleanup,
@@ -141,8 +162,8 @@ it.each([null, { caller: "late source-map cancellation" }])(
 );
 
 it("returns completed codec output after successful cleanup", async () => {
-  const result = await runChild(undefined, 'process.stdout.write("complete")');
-  expect(result).toEqual({ ok: true, value: "complete" });
+  const result = await runChild(undefined, completedCodec);
+  expect(result).toEqual({ ok: true, value: completedReport });
 });
 
 it("preserves exact caller reason when cancellation precedes process exit", async () => {

@@ -1,4 +1,11 @@
-import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -9,8 +16,12 @@ import {
   type AnalysisOperation,
   type AnalysisOperationPort,
 } from "../AnalysisProvider.js";
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
 import { EnhancedTools } from "../EnhancedTools.js";
 import { DecompileExport } from "./exportTree.js";
+import { ExportResources } from "./exportResources.js";
+import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
+import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
 import {
   composedLimitationBudget,
   createWorkflowEvidence,
@@ -24,6 +35,7 @@ import {
   decompileJournalLineSchema,
 } from "../../contracts/decompileDirectory.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import { createEvidence } from "../../domain/evidence.js";
 import {
   AnalysisCancelledError,
   AnalysisCapabilityUnavailableError,
@@ -126,6 +138,8 @@ const harness = (options?: {
     Record<string, "error" | "timeout" | "empty" | "null">
   >;
   readonly info?: "ok" | "unavailable" | "error";
+  readonly listLimitations?: readonly string[];
+  readonly listProfile?: typeof profile;
   readonly subject?: boolean;
   readonly mismatch?: string;
   readonly unprofiled?: string;
@@ -158,8 +172,11 @@ const harness = (options?: {
               })),
               provider,
               {
-                analysisProfile: profile,
+                analysisProfile: options?.listProfile ?? profile,
                 ...(options?.subject === false ? {} : { subject }),
+                ...(options?.listLimitations === undefined
+                  ? {}
+                  : { limitations: options.listLimitations }),
               },
             ),
           ),
@@ -363,6 +380,89 @@ describe("decompile_all manifest", () => {
     await expect(
       readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).resolves.toContain(sentinel);
+  });
+});
+
+describe("decompile_all inventory limitations", () => {
+  const directory = useOutputDirectory();
+
+  const readIndex = async (root: string) =>
+    decompileDirectoryIndexSchema.parse(
+      JSON.parse(
+        await readFile(join(root, DECOMPILE_DIRECTORY_INDEX_NAME), "utf8"),
+      ),
+    );
+
+  it("keeps the latest selection's limitations without attaching them to historical files", async () => {
+    const created = await run(
+      harness({ listLimitations: ["first inventory limitation"] }).tools,
+      directory(),
+      { name: "Foo::", limit: 1 },
+    );
+    expect(created.ok).toBe(true);
+    if (!created.ok) throw created.error;
+    expect(created.value).toMatchObject({
+      inventory_limitations: ["first inventory limitation"],
+      counts: { selected: 2, excluded: 1, requested: 1, remaining: 1 },
+    });
+    const firstIndex = await readIndex(directory());
+    expect(firstIndex.latest_run).toEqual({
+      resume: false,
+      selected: 2,
+      excluded: 1,
+      selection: {
+        name: "Foo::",
+        namespace: null,
+        address_start: null,
+        address_end: null,
+        limit: 1,
+      },
+      inventory_limitations: ["first inventory limitation"],
+    });
+    expect(firstIndex.limitations).toEqual([]);
+    expect(firstIndex.functions).toHaveLength(1);
+    expect(firstIndex.functions[0]?.limitations).toContain(
+      "terminal call may cut the body",
+    );
+    expect(firstIndex.functions[0]?.limitations).not.toContain(
+      "first inventory limitation",
+    );
+
+    const resumed = await run(
+      harness({ listLimitations: ["second inventory limitation"] }).tools,
+      directory(),
+      { resume: true, name: "Bar::" },
+    );
+    expect(resumed.ok).toBe(true);
+    if (!resumed.ok) throw resumed.error;
+    expect(resumed.value).toMatchObject({
+      inventory_limitations: ["second inventory limitation"],
+      counts: { selected: 1, excluded: 2, requested: 1, remaining: 0 },
+    });
+    const resumedIndex = await readIndex(directory());
+    expect(resumedIndex.latest_run).toMatchObject({
+      resume: true,
+      selected: 1,
+      excluded: 2,
+      selection: { name: "Bar::" },
+      inventory_limitations: ["second inventory limitation"],
+    });
+    expect(
+      resumedIndex.functions.map((record) => record.address).sort(),
+    ).toEqual(["0x1000", "0x3000"]);
+    expect(
+      resumedIndex.functions.every((record) =>
+        record.limitations?.includes("terminal call may cut the body"),
+      ),
+    ).toBe(true);
+    expect(
+      resumedIndex.functions.every(
+        (record) =>
+          !record.limitations?.includes("first inventory limitation") &&
+          !record.limitations?.includes("second inventory limitation"),
+      ),
+    ).toBe(true);
+    expect(resumedIndex.limitations).toEqual([]);
   });
 });
 
@@ -601,6 +701,37 @@ describe("decompile_all resume", () => {
     expect(
       await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
     ).toContain(sentinel);
+  });
+
+  it("names the resume identity that differs instead of directing callers to the input schema", async () => {
+    expect((await run(harness().tools, directory())).ok).toBe(true);
+
+    const resumed = await run(
+      harness({ listProfile: otherProfile }).tools,
+      directory(),
+      { resume: true },
+    );
+
+    expect(resumed.ok).toBe(false);
+    if (resumed.ok) return;
+    expect(resumed.error).toBeInstanceOf(AnalysisInputError);
+    if (!(resumed.error instanceof AnalysisInputError)) return;
+    expect(resumed.error.userMessage).toBe(
+      "The decompile journal does not match the current analysis profile digest.",
+    );
+    expect(resumed.error.conformsToInputContract).toBe(true);
+    expect(resumed.error.remediationAction).toContain("new output directory");
+    expect(resumed.error.issues).toEqual([
+      expect.objectContaining({
+        path: ["output_directory"],
+        expected: expect.objectContaining({
+          analysis_profile_digest: profile.digest,
+        }),
+        observed: expect.objectContaining({
+          analysis_profile_digest: otherProfile.digest,
+        }),
+      }),
+    ]);
   });
 });
 
@@ -1686,6 +1817,38 @@ describe("decompile_all repeated output failures", () => {
     ).toBe("written");
   });
 
+  it("keeps counting output_io failures across external functions", async () => {
+    const mixed = Array.from({ length: 11 }, (_, index) => ({
+      address: `0x${(0x1000 + index * 0x10).toString(16)}`,
+      name: `f${index.toString()}`,
+    }));
+    const at = (parity: number) =>
+      mixed.filter((_, index) => index % 2 === parity);
+    expect(
+      (await run(harness({ procedures: mixed }).tools, directory())).ok,
+    ).toBe(true);
+    // Locals cannot be read back; externals have no file to resume from.
+    await blockFiles(at(0).map(({ address }) => address));
+    for (const { address } of at(1))
+      await rm(join(directory(), `functions/${address}.c`));
+    const stopped = await run(
+      harness({
+        procedures: mixed,
+        external: at(1).map(({ address }) => address),
+      }).tools,
+      directory(),
+      { resume: true },
+    );
+    expect(stopped.ok).toBe(false);
+    if (stopped.ok) return;
+    expect(stopped.error).toBeInstanceOf(AnalysisOutputError);
+    expect(stopped.error.diagnostics).toMatchObject({
+      failed: 5,
+      external: 4,
+      consecutive_output_io: 5,
+    });
+  });
+
   it("does not stop when a verified file interrupts the failures", async () => {
     expect((await run(harness({ procedures }).tools, directory())).ok).toBe(
       true,
@@ -1703,4 +1866,273 @@ describe("decompile_all repeated output failures", () => {
       counts: { failed: 7, skipped: 1, remaining: 0 },
     });
   });
+});
+
+describe("decompile_all provider cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each([
+    ["procedure_info", false],
+    ["procedure_info", true],
+    ["procedure_pseudo_code", false],
+    ["procedure_pseudo_code", true],
+  ] as const)(
+    "retains %s cleanup and committed work with caller aborted=%s",
+    async (operation, abort) => {
+      const { port } = harness();
+      const controller = new AbortController();
+      const cause = new Error("provider cleanup stopped");
+      const callerReason = new Error("caller stopped");
+      const partial = createEvidence(subject, provider, {
+        operation,
+        parameters: { procedure: "0x2000" },
+        result:
+          operation === "procedure_info"
+            ? infoFor("0x2000")
+            : "int partial(void) {}",
+        analysisProfile: profile,
+        confidence: "observed",
+      });
+      const failure = new AnalysisCancelledError(operation, {
+        cause,
+        partialObservation: partial,
+        capturedOutput: {
+          stdout: "retained provider output",
+          stderr: "",
+          truncated: false,
+        },
+        cleanup: {
+          reason: "descriptor close denied",
+          resources: ["provider descriptor"],
+        },
+      });
+      const lease = new AnalysisCleanupLease(
+        async () => undefined,
+        ["provider descriptor"],
+      );
+      lease.bindCleanupError(failure);
+      const observed: AnalysisOperation[] = [];
+      const failing: AnalysisOperationPort = {
+        execute: (selected, parameters, options) => {
+          observed.push(selected);
+          if (selected === operation && parameters.procedure === "0x2000") {
+            if (abort) controller.abort(callerReason);
+            return Promise.resolve(err(failure));
+          }
+          return port.execute(selected, parameters, options);
+        },
+      };
+      const result = await run(
+        new EnhancedTools(failing),
+        directory(),
+        {},
+        controller.signal,
+      );
+      expect(result).toEqual(err(failure));
+      expect(failure.cause).toBe(cause);
+      if (abort) {
+        expect(failure.secondaryFailures).toHaveLength(1);
+        expect(failure.secondaryFailures[0]).toBeInstanceOf(
+          AnalysisCancelledError,
+        );
+        expect(failure.secondaryFailures[0]?.cause).toBe(callerReason);
+      } else expect(failure.secondaryFailures).toHaveLength(0);
+      expect(failure.partialObservation).toBe(partial);
+      expect(failure.capturedOutput?.stdout).toBe("retained provider output");
+      expect(failure.cleanupIncomplete).toBe(true);
+      expect(observed.at(-1)).toBe(operation);
+      const index = decompileDirectoryIndexSchema.parse(
+        JSON.parse(
+          await readFile(
+            join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+            "utf8",
+          ),
+        ),
+      );
+      expect(index.functions).toHaveLength(1);
+      expect(index.functions[0]).toMatchObject({
+        address: "0x1000",
+        status: "written",
+      });
+      await expect(
+        readFile(join(directory(), "functions", "0x1000.c"), "utf8"),
+      ).resolves.toContain(sentinel);
+      await lease.release();
+      expect(failure.cleanupIncomplete).toBe(false);
+    },
+  );
+});
+
+describe("decompile_all mixed cleanup ownership", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it("waits for both provider and journal cleanup owners after mixed finalization failures", async () => {
+    const { port } = harness();
+    const providerFailure = new AnalysisOutputError(
+      "procedure_info",
+      "provider cleanup failed",
+      {
+        cleanup: {
+          reason: "provider close denied",
+          resources: ["provider descriptor"],
+        },
+      },
+    );
+    const closeFailure = new AnalysisOutputError(
+      "decompile_all",
+      "journal cleanup failed",
+      {
+        cleanup: {
+          reason: "journal close denied",
+          resources: ["journal descriptor"],
+        },
+      },
+    );
+    const providerLease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["provider descriptor"],
+    );
+    const journalLease = new AnalysisCleanupLease(
+      async () => undefined,
+      ["journal descriptor"],
+    );
+    providerLease.bindCleanupError(providerFailure);
+    journalLease.bindCleanupError(closeFailure);
+    const close = DecompileExport.prototype.close;
+    vi.spyOn(DecompileExport.prototype, "close").mockImplementation(
+      async function (this: DecompileExport) {
+        await close.call(this);
+        return err(closeFailure);
+      },
+    );
+    const failing: AnalysisOperationPort = {
+      execute: (operation, parameters, options) =>
+        operation === "procedure_info"
+          ? Promise.resolve(err(providerFailure))
+          : port.execute(operation, parameters, options),
+    };
+    const result = await run(new EnhancedTools(failing), directory());
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error.cleanupPrimary).toBe(providerFailure);
+    expect(result.error.cleanupResources).toEqual(
+      expect.arrayContaining(["provider descriptor", "journal descriptor"]),
+    );
+    await journalLease.release();
+    expect(closeFailure.cleanupIncomplete).toBe(false);
+    expect(result.error.cleanupIncomplete).toBe(true);
+    await providerLease.release();
+    expect(result.error.cleanupIncomplete).toBe(false);
+  });
+});
+
+describe("decompile_all publication cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+
+  it.each(["function", "index"])(
+    "retains a %s publication cleanup failure after final cleanup succeeds",
+    async (publication) => {
+      const cleanupFailure = new Error("staging removal denied");
+      const originalPublish = ExportResources.prototype.publish;
+      const originalClose = OwnedStagedOutput.prototype.close;
+      const destination = join(
+        directory(),
+        publication === "function"
+          ? "functions/0x1000.c"
+          : DECOMPILE_DIRECTORY_INDEX_NAME,
+      );
+      let selected = false;
+      let failed = false;
+      vi.spyOn(ExportResources.prototype, "publish").mockImplementation(
+        async function (this: ExportResources, bytes, path, mode) {
+          selected = path === destination;
+          return originalPublish.call(this, bytes, path, mode);
+        },
+      );
+      vi.spyOn(OwnedStagedOutput.prototype, "close").mockImplementation(
+        async function (this: OwnedStagedOutput) {
+          if (selected && !failed) {
+            failed = true;
+            throw cleanupFailure;
+          }
+          return originalClose.call(this);
+        },
+      );
+      const { tools } = harness();
+      const result = await run(tools, directory());
+      expect(failed).toBe(true);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      if (publication === "index")
+        expect(
+          JSON.parse(
+            await readFile(
+              join(directory(), DECOMPILE_DIRECTORY_INDEX_NAME),
+              "utf8",
+            ),
+          ),
+        ).toMatchObject({ functions: expect.any(Array) });
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toBeInstanceOf(AnalysisOutputError);
+      expect(result.error.message).toContain(
+        `decompile ${publication} publication cleanup failed`,
+      );
+      expect(result.error.cause).toMatchObject({
+        message: "staging removal denied",
+      });
+      expect(result.error.cleanupIncomplete).toBe(false);
+    },
+  );
+});
+
+describe("decompile_all resumed file cleanup", () => {
+  const directory = useOutputDirectory();
+  afterEach(() => vi.restoreAllMocks());
+  it.each(["journaled", "unjournaled"])(
+    "reports a %s file verification close failure after final cleanup succeeds",
+    async (kind) => {
+      const { tools } = harness();
+      expect((await run(tools, directory())).ok).toBe(true);
+      if (kind === "unjournaled") {
+        const journal = join(directory(), DECOMPILE_DIRECTORY_JOURNAL_NAME);
+        const header = (await readFile(journal, "utf8")).split("\n")[0];
+        await writeFile(journal, `${header}\n`);
+      }
+      const identity = await stat(join(directory(), "functions/0x1000.c"));
+      const close = OwnedFileHandle.prototype.close;
+      let failed = false;
+      vi.spyOn(OwnedFileHandle.prototype, "close").mockImplementation(
+        async function (this: OwnedFileHandle) {
+          const observed = await this.handle.stat();
+          if (
+            !failed &&
+            observed.dev === identity.dev &&
+            observed.ino === identity.ino
+          ) {
+            failed = true;
+            throw new Error("verification close denied");
+          }
+          return close.call(this);
+        },
+      );
+      const result = await run(tools, directory(), { resume: true });
+      expect(failed).toBe(true);
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error.message).toContain("verification cleanup failed");
+      expect(result.error.cleanupIncomplete).toBe(false);
+      expect(
+        await readFile(join(directory(), "functions/0x1000.c"), "utf8"),
+      ).toContain(sentinel);
+      const resumed = await run(tools, directory(), { resume: true });
+      expect(resumed.ok).toBe(true);
+      if (resumed.ok)
+        expect(resumed.value).toMatchObject({ counts: { skipped: 3 } });
+    },
+  );
 });

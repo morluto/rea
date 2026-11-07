@@ -9,6 +9,7 @@ import {
   createJavaScriptApplicationGraph,
   type JavaScriptApplicationGraph,
 } from "./javascriptApplicationGraph.js";
+import { IPC_COVERAGE_LIMITED_PAIRING_BASIS } from "./javascriptApplicationGraphSchemas.js";
 import { compareJavaScriptApplicationVersions } from "./javascriptApplicationVersionComparison.js";
 import { applicationVersionComparisonResultSchema } from "./javascriptApplicationVersionComparisonSchemas.js";
 
@@ -20,6 +21,9 @@ const graph = (
     content?: string;
     permission?: string;
     relation?: "handles" | "invokes";
+    candidate?: boolean;
+    candidateExtra?: boolean;
+    noEdge?: boolean;
   } = {},
 ) => {
   const evidence = {
@@ -72,15 +76,32 @@ const graph = (
     schema: "JavaScriptApplicationGraph",
     root_node_ids: [module.node_id],
     nodes: [module, channel],
-    edges: [
-      createJavaScriptApplicationEdge({
-        source_node_id: module.node_id,
-        target_node_id: channel.node_id,
-        relation: options.relation ?? "handles",
-        properties: {},
-        evidence,
-      }),
-    ],
+    edges: options.noEdge
+      ? []
+      : [
+          createJavaScriptApplicationEdge({
+            source_node_id: module.node_id,
+            target_node_id: channel.node_id,
+            relation: options.relation ?? "handles",
+            properties: options.candidate
+              ? { pairing_basis: IPC_COVERAGE_LIMITED_PAIRING_BASIS }
+              : {},
+            evidence,
+          }),
+          ...(options.candidateExtra
+            ? [
+                createJavaScriptApplicationEdge({
+                  source_node_id: module.node_id,
+                  target_node_id: channel.node_id,
+                  relation: "handles" as const,
+                  properties: {
+                    pairing_basis: IPC_COVERAGE_LIMITED_PAIRING_BASIS,
+                  },
+                  evidence,
+                }),
+              ]
+            : []),
+        ],
     coverage,
     limitations:
       coverage.status === "complete"
@@ -113,6 +134,55 @@ const partialCoverage: JavaScriptApplicationGraph["coverage"] = {
   status: "partial",
   omitted_count: null,
 };
+
+it("does not report a candidate-only IPC edge as a definite relationship change", () => {
+  const result = compare(
+    graph("a".repeat(64), 10, partialCoverage, { candidate: true }),
+    graph("b".repeat(64), 50, partialCoverage, {
+      noEdge: true,
+      permission: "changed",
+    }),
+  );
+  const channel = result.items.find((item) => item.node_kind === "ipc-channel");
+  expect(channel?.status).toBe("changed");
+  expect(channel?.dimensions).toContain("properties");
+  expect(channel?.dimensions).not.toContain("relationships");
+  expect(channel?.limitations.length).toBeGreaterThan(0);
+});
+
+it.each([false, true])(
+  "keeps a candidate and a definite equivalent uncertain when reversed: %s",
+  (reverse) => {
+    const candidate = graph("a".repeat(64), 10, partialCoverage, {
+      candidate: true,
+    });
+    const definite = graph("b".repeat(64), 50, partialCoverage, {
+      permission: "changed",
+    });
+    const result = reverse
+      ? compare(definite, candidate)
+      : compare(candidate, definite);
+    const channel = result.items.find(
+      (item) => item.node_kind === "ipc-channel",
+    );
+    expect(channel?.status).toBe("changed");
+    expect(channel?.dimensions).not.toContain("relationships");
+  },
+);
+
+it("retains an independent definite relationship change beside candidate edges", () => {
+  const result = compare(
+    graph("a".repeat(64), 10, partialCoverage, { candidateExtra: true }),
+    graph("b".repeat(64), 50, partialCoverage, {
+      relation: "invokes",
+      candidateExtra: true,
+      permission: "changed",
+    }),
+  );
+  const channel = result.items.find((item) => item.node_kind === "ipc-channel");
+  expect(channel?.status).toBe("changed");
+  expect(channel?.dimensions).toContain("relationships");
+});
 
 it("keeps relocated exact modules and inferred channels unchanged while retaining both coordinates", () => {
   const left = graph("a".repeat(64), 10, completeCoverage),

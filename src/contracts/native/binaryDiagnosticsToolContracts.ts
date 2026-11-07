@@ -11,8 +11,11 @@ import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
 } from "../../domain/native/peLoadConfig.js";
+import {
+  binaryHardeningSchema,
+  inspectBinaryHardeningInputSchema,
+} from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
-import { publicInputStrictObject } from "../../domain/publicInput.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -65,13 +68,9 @@ export const inspectBinaryLayoutRequestSchema =
 export const inspectNativeExportsRequestSchema =
   inspectNativeExportsInputSchema.extend({ detail: analysisDetailSchema });
 
-/**
- * Public `inspect_byte_entropy` input. The shared constructor runs before
- * `detail` is added so the advertised input stays closed.
- */
-export const inspectByteEntropyRequestSchema = publicInputStrictObject(
-  inspectByteEntropyInputSchema.shape,
-).extend({ detail: analysisDetailSchema });
+/** Public byte-entropy input retains the producer schema's closed-object policy. */
+export const inspectByteEntropyRequestSchema =
+  inspectByteEntropyInputSchema.extend({ detail: analysisDetailSchema });
 
 /** Offline binary diagnostics are independent of macOS process/UI providers. */
 export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
@@ -110,13 +109,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "inspect_binary_hardening",
+    ...toolContractMetadata("inspect_binary_hardening"),
+    kind: "native-provider",
+    description:
+      "Inspect compile-time and link-time hardening of one explicit local ELF, PE, or Mach-O file, including one image per universal Mach-O slice. Reports PIE or ASLR, NX, RELRO, stack-protector signs, FORTIFY signs, control-flow flags and stripped state, each with the header field or import behind it. States are enabled, disabled, partial, unknown, or not_applicable. A missing import in a static or stripped image is unknown, not disabled. Authenticode and Mach-O code-signature rows report table or load-command presence, not validity. Mach-O hardened runtime stays unknown and names inspect_signature. This inspection states that it does not execute the image and does not assess exploitability. Reads a stable regular file. A malformed header returns no partial report, except one bad slice in a universal Mach-O. A symbol table, symbol name, or GNU property note over its budget leaves those rows unknown and keeps the header rows. A dynamic-table budget still fails the ELF report.",
+    inputSchema: inspectBinaryHardeningInputSchema,
+    outputSchema: evidenceResultOf(binaryHardeningSchema),
+    examples: [
+      {
+        title: "Inspect binary hardening",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
 
   {
     name: "inspect_elf_notes",
     ...toolContractMetadata("inspect_elf_notes"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields and Linux CORE process, mapping, signal, and auxv notes when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [
@@ -250,7 +264,7 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_binary_layout"),
     kind: "native-provider",
     description:
-      "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Profile: EXEC/DYN/REL ELF64 x86-64, ELF32 i386, ELF32 little-endian ARM and ELF32 little- or big-endian MIPS on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
+      "Inspect an explicit local binary without launching it as a host process. Returns file-backed section/segment ranges, linked addresses, original symbol/REL/RELA table identities, complete encoded RELR tables and upstream-derived offsets with unknown per-word locations/addends, raw name bytes, dependency/interpreter names and static mitigation inferences inline with artifact SHA-256 Evidence. Profile: EXEC/DYN/REL ELF64 x86-64, ELF64 little-endian AArch64, ELF32 i386, ELF32 little-endian ARM and ELF32 little- or big-endian MIPS on Linux x64 via caller-supplied Python with unchanged pwntools 4.15.0, pyelftools 0.33 and Unicorn 2.1.2. Runtime addresses/library paths, overall relocation inventory completeness and complete derived GOT/PLT coverage remain unknown. Zero executable entry values mean absence; relocatable entries are not applicable. Upstream can emulate PLT instructions with Unicorn for derived static maps. Uses bounded complete output and owned temporary files/processes; malformed, unsupported or oversized objects return no partial success. Select detail summary to retain the complete layout Evidence in this session and receive only its summary view, then inspect sections, symbols, mitigations or linkage with inspect_analysis_view. pwntools_timeout_ms is each owned pwntools command's deadline (omitted means 30000 ms, range 1..2147483647, next call). cpuSeconds 30 and the output, diagnostic, and address-space byte allowances have no runtime override.",
     inputSchema: inspectBinaryLayoutRequestSchema,
     outputSchema: analysisDetailOutputSchemaOf(
       binaryLayoutSchema,

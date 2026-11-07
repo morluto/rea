@@ -13,6 +13,8 @@ export const MAX_FIRMWARE_TIMEOUT_MS = 2_147_483_647;
 export const MAX_FIRMWARE_STAGING_BYTES = 512 * 1024 * 1024;
 /** Largest staging entry budget the schema accepts. */
 export const MAX_FIRMWARE_STAGING_ENTRIES = 100_000;
+/** Largest extraction depth the input contract accepts. */
+export const MAX_FIRMWARE_EXTRACTION_DEPTH = 10;
 const timeout = z.number().int().min(1).max(MAX_FIRMWARE_TIMEOUT_MS);
 const target = {
   path: absoluteLocalPathStringSchema.describe(
@@ -40,7 +42,7 @@ export const firmwareInputSchemas = {
       .number()
       .int()
       .min(1)
-      .max(10)
+      .max(MAX_FIRMWARE_EXTRACTION_DEPTH)
       .default(3)
       .describe("Extraction depth; reaching it yields partial analysis"),
     max_output_bytes: z
@@ -194,6 +196,11 @@ export const firmwareResultSchemas = {
         relative_path: z.string(),
         kind: z.enum(["symlink", "special"]),
         link_target: z.string().nullable(),
+        // Older retained Evidence may lack raw target bytes.
+        link_target_hex: z
+          .string()
+          .regex(/^(?:[0-9a-f]{2})*$/u)
+          .optional(),
       }),
     ),
     chunks: z.array(chunk),

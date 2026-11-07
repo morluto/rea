@@ -91,6 +91,8 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
+      invocation_channels: z.literal("literal").exactOptional(),
+      guarded_invocation_channels: strings.exactOptional(),
       ...shape,
       channel: z.null(),
       channel_expression: z.string(),
@@ -298,6 +300,23 @@ const electron = z
         dynamic_member_access: z.boolean().optional(),
       }),
     ),
+    protocols: z.array(
+      z
+        .strictObject({
+          ...findingContext,
+          api: z.string(),
+          role: z.enum([
+            "os-default-client",
+            "privileged-scheme",
+            "handler",
+            "interceptor",
+          ]),
+          scheme: staticValue,
+          session: z.enum(["default-protocol", "default-session"]),
+          enabled_privileges: strings.nullable(),
+        })
+        .transform(withRuntime),
+    ),
   })
   .transform(({ call_paths, app_path_changes, ...rest }) => ({
     ...rest,
@@ -308,6 +327,11 @@ const referenceShape = {
   ...findingContext,
   operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
+  // A `factory-loader` specifier is a recovered bundle module key rather than a
+  // package specifier, so the loader identity travels with the reference.
+  loader: z
+    .enum(["commonjs-loader", "factory-loader", "create-require"])
+    .exactOptional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",
@@ -401,6 +425,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
         path: z.string(),
+        path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,
         mechanism: z.string(),
       }),
@@ -614,18 +639,24 @@ const scope = z.strictObject({
   bindingsComplete: z.boolean(),
   bindingIds: strings,
 });
-const binding = z.strictObject({
-  bindingId: z.string(),
-  scopeId: z.string(),
-  name: z.string(),
-  kind: definitionKind,
-  mutable: z.boolean(),
-  definitions: z.array(
-    z.strictObject({ kind: definitionKind, location: range }),
-  ),
-  value: semanticValue,
-  provenance,
-});
+const binding = z
+  .strictObject({
+    bindingId: z.string(),
+    scopeId: z.string(),
+    name: z.string(),
+    kind: definitionKind,
+    mutable: z.boolean(),
+    definitions: z.array(
+      z.strictObject({ kind: definitionKind, location: range }),
+    ),
+    value: semanticValue,
+    initializerValue: semanticValue.optional(),
+    provenance,
+  })
+  .transform(({ initializerValue, ...rest }) => ({
+    ...rest,
+    ...(initializerValue === undefined ? {} : { initializerValue }),
+  }));
 const callable = z.strictObject({
   callableId: z.string(),
   kind: z.enum(["function", "class", "method"]),

@@ -22,9 +22,9 @@ import {
   captureDecoderHeapConstraint,
   captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
-  MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB,
   parseCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
+import { MAXIMUM_CAPTURE_DECODER_OLD_GENERATION_MIB } from "../domain/analysisResourceLimits.js";
 
 const configured = (oldGenerationMiB: number) =>
   ({ oldGenerationMiB, source: "setting" }) as const;

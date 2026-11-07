@@ -192,7 +192,7 @@ describe("expanded ASAR inventory containment", () => {
       reason: "integrity",
     });
     const observed = await inventoryArtifact(application, {
-      integrity: { mode: "record-and-continue" },
+      integrity: "record-and-continue",
     });
     const container = artifactOccurrenceAt(observed, "resources/app.asar");
     const child = artifactOccurrenceAt(observed, "resources/app.asar/main.js");

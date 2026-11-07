@@ -1,5 +1,8 @@
 import type { AnalysisProfileCommitment } from "../../domain/analysisProfile.js";
-import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
+import {
+  artifactTargetSelectedPath,
+  type BinaryTarget,
+} from "../../domain/binaryTargetTypes.js";
 import { AnalysisCapabilityUnavailableError } from "../../domain/analysisErrorCore.js";
 import { NoBinaryOpenError } from "../../domain/configurationErrors.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -12,6 +15,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
+  ExecutionOptions,
 } from "../AnalysisProvider.js";
 import {
   isSnapshotCacheable,
@@ -38,6 +42,7 @@ interface PrepareSessionExecutionInput {
   readonly active: ActiveExecutionBinding | undefined;
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly snapshotContext?: ExecutionOptions["snapshotContext"];
   readonly nativeSourceAdmitted: boolean;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
@@ -73,6 +78,14 @@ export const prepareSessionExecution = (
         active.route.binding?.identity.id ?? active.route.identity.id,
         operation,
         capability?.reason ?? "operation is not declared by this provider",
+        {
+          ...(capability?.userMessage === undefined
+            ? {}
+            : { userMessage: capability.userMessage }),
+          ...(capability?.remediation === undefined
+            ? {}
+            : { remediationAction: capability.remediation }),
+        },
       ),
     );
   }
@@ -83,7 +96,12 @@ export const prepareSessionExecution = (
       : undefined;
   const cacheable =
     profile !== undefined &&
-    isSnapshotCacheable(operation, capability, parameters);
+    isSnapshotCacheable(
+      operation,
+      capability,
+      parameters,
+      input.snapshotContext,
+    );
   const cached =
     cacheable &&
     (!requiresNativeSourceAdmissionBeforeReplay(capability.provider.id) ||
@@ -155,7 +173,8 @@ const isArtifactBundleSubject = (
   subject: EvidenceSubjectTarget,
   target: BinaryTarget,
 ): boolean =>
+  target.bundleInfoPlist !== undefined &&
   (operation === "inventory_artifact" ||
     operation === "inspect_artifact" ||
     operation === "extract_artifact") &&
-  subject.path === (target.sourcePath ?? target.path);
+  subject.path === artifactTargetSelectedPath(target);

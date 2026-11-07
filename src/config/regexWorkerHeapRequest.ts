@@ -3,11 +3,7 @@ import {
   MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
   MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
 } from "../domain/analysisResourceLimits.js";
-export {
-  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
-  MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
-} from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -28,24 +24,12 @@ export const DEFAULT_REGEX_WORKER_HEAP_REQUEST: RegexWorkerHeapRequest = {
 
 export const regexWorkerHeapRequestConstraint = `${REGEX_WORKER_HEAP_REQUEST_SETTING} must be a decimal integer from ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} to ${String(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB; the default is ${String(DEFAULT_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB. A request below ${String(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)} MiB aborts the worker during startup, and a larger value is refused.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinHeapRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB) &&
-    parsed <= BigInt(MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB)
-  );
-};
-
 /** Optional decimal mebibyte count for the regex worker old-generation request. */
-export const regexWorkerHeapRequestMiBSchema = z
-  .string()
-  .regex(decimalInteger, { error: regexWorkerHeapRequestConstraint })
-  .refine(withinHeapRange, { error: regexWorkerHeapRequestConstraint })
-  .transform(Number);
+export const regexWorkerHeapRequestMiBSchema = positiveDecimalIntegerSchema(
+  MINIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  MAXIMUM_REGEX_WORKER_HEAP_REQUEST_MIB,
+  regexWorkerHeapRequestConstraint,
+);
 
 /** Resolve the effective request from one environment value. */
 export const parseRegexWorkerHeapRequest = (

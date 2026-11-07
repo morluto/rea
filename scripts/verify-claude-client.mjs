@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { createCatalogIdentity } from "../dist/catalogIdentity.js";
@@ -15,14 +15,22 @@ import {
   TOOL_CONTRACTS,
   toolContract,
 } from "../dist/contracts/toolContracts.js";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
+import {
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
 import {
   expandMcpSessionStatus,
   sortVerifierNames,
 } from "./lib/mcp-verifier-results.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createAnthropicModelFixture } from "./verify/clients/anthropic-model-fixture.mjs";
 
@@ -90,10 +98,7 @@ await withVerifierCleanup(async () => {
     }
     const target = join(lab, "fixture α测试");
     await mkdir(target);
-    await writeFile(
-      join(target, "app.js"),
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
+    await writeFile(join(target, "app.js"), CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     const schemaValidator = new Ajv2020({
       strict: false,
       validateFormats: false,
@@ -106,28 +111,14 @@ await withVerifierCleanup(async () => {
         );
       return false;
     };
-    const extractInlineResult = (value, matches) => {
-      if (typeof value === "string") {
-        try {
-          // Native Claude appends this resource hint to tool results. Original bodies remain intact in request artifacts.
-          const json = value.replace(
-            /\n\n<system-reminder>\n<total_tokens>\d+ tokens left<\/total_tokens>\n<\/system-reminder>$/u,
-            "",
-          );
-          return extractInlineResult(JSON.parse(json), matches);
-        } catch {
-          return undefined;
-        }
-      }
-      if (value && typeof value === "object") {
-        if (matches(value)) return value;
-        for (const nested of Object.values(value)) {
-          const result = extractInlineResult(nested, matches);
-          if (result) return result;
-        }
-      }
-      return undefined;
-    };
+    const decodeClaudeResult = (text) =>
+      JSON.parse(
+        // Native Claude appends this resource hint. Original bodies remain in request artifacts.
+        text.replace(
+          /\n\n<system-reminder>\n<total_tokens>\d+ tokens left<\/total_tokens>\n<\/system-reminder>$/u,
+          "",
+        ),
+      );
     fixture = await createAnthropicModelFixture({
       directory: lab,
       onRequest: async ({ body, tools, requestIndex }) => {
@@ -181,11 +172,12 @@ await withVerifierCleanup(async () => {
           }
         }
         if (mode === "call" && !sessionStatusSeen) {
-          const observedStatus = extractInlineResult(
+          const observedStatus = findClientResult(
             body.messages,
             (value) =>
               Boolean(value.result?.server_identity) &&
               Array.isArray(value.result?.tool_availability?.groups),
+            decodeClaudeResult,
           );
           if (observedStatus) {
             const parsedStatus =
@@ -204,10 +196,13 @@ await withVerifierCleanup(async () => {
             assert.ok(outputProfile.ok);
             assert.deepEqual(
               status.result.server_identity.catalog,
-              createCatalogIdentity(
-                compactPresentationForMcpInputSchemaProfile(inputProfile.value),
-                outputProfile.value ?? "full",
-              ),
+              createCatalogIdentity({
+                compactPresentation:
+                  compactPresentationForMcpInputSchemaProfile(
+                    inputProfile.value,
+                  ),
+                outputSchemaProfile: outputProfile.value ?? "full",
+              }),
               "binary_session must return the selected input/output profile's catalog identity",
             );
             assert.equal(
@@ -242,40 +237,15 @@ await withVerifierCleanup(async () => {
           expectedSkillBody !== undefined &&
           containsText(body.messages, expectedSkillBody) &&
           containsText(body.messages, skillDirectory);
-        const observed = extractInlineResult(
+        const observed = findClientResult(
           body.messages,
-          (value) =>
-            typeof value.evidence_id === "string" &&
-            value.normalized_result?.graph?.nodes?.length > 0,
+          isClientJavaScriptEvidence,
+          decodeClaudeResult,
         );
         if (observed) {
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(observed);
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            observed,
+            target,
           );
           const bytes = JSON.stringify(evidence);
           artifactDigest = createHash("sha256").update(bytes).digest("hex");
@@ -337,7 +307,9 @@ await withVerifierCleanup(async () => {
           assert(
             parsed.plannedActions.every(
               (a) =>
-                a.target === configPath || a.target.startsWith(skillDirectory),
+                a.target === configPath ||
+                (isAbsolute(a.target) &&
+                  isPathWithinRoot(skillDirectory, a.target)),
             ),
           );
         }

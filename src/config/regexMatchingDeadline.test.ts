@@ -13,12 +13,12 @@ import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
   parseRegexMatchingDeadline,
   REGEX_MATCHING_DEADLINE_SETTING,
   regexMatchingDeadlineConstraint,
   regexMatchingDeadlineRecovery,
 } from "./regexMatchingDeadline.js";
+import { MAXIMUM_REGEX_MATCHING_DEADLINE_MS } from "../domain/analysisResourceLimits.js";
 
 const configured = (deadlineMs: number) =>
   ({ deadlineMs, source: "setting" }) as const;

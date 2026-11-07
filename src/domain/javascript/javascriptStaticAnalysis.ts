@@ -1,3 +1,4 @@
+import { createXhrOpenRequestQuery } from "./javascriptNetworkRequests.js";
 import { uniqueSortedBy } from "../canonicalOrdering.js";
 import * as t from "@babel/types";
 import { JavaScriptRouteScan } from "./javascriptRouteScan.js";
@@ -7,6 +8,7 @@ import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths
 import {
   ELECTRON_IDENTITY_LIMITATION,
   ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
 } from "./javascriptElectronMemberWrites.js";
 
 import {
@@ -72,8 +74,7 @@ import {
 import { createJavaScriptRpcScan } from "./javascriptRpcEndpoints.js";
 import {
   hasUncertainTypeOnlyModuleSideEffect,
-  isTypeOnlyExportDeclaration,
-  isTypeOnlyImportDeclaration,
+  semanticStaticModuleSource,
   semanticImportEqualsSpecifier,
 } from "./javascriptModuleDeclaration.js";
 import {
@@ -115,6 +116,7 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     bindings,
   );
   const findings: JavaScriptFindingContext = {
+    xhrOpenRequest: createXhrOpenRequestQuery(index),
     pathIntrinsics: createStaticPathIntrinsicQuery(index),
     browserWindowReceiver: (node, site, suffix) =>
       resolveElectronBrowserWindowReceiver(node, site, suffix, findings, index),
@@ -198,9 +200,22 @@ const finalizeStaticAnalysis = (
 ): JavaScriptStaticAnalysis => {
   const parserErrors = file.errors.length;
   const typeOnlySideEffect = hasUncertainTypeOnlyModuleSideEffect(file.program);
+  // A `worker` or `service-worker` reference records a URL relative to the
+  // importing source, so `new Worker(new URL("electron", import.meta.url))` is
+  // not an Electron module. Read the same kinds the Electron boundary owner uses.
+  // Only a loaded module establishes Electron applicability: `require.resolve`
+  // locates the module without loading it, so no boundary fact is expected.
   const electronObserved = accumulator.references.some(
     ({ value }) =>
-      value.specifier !== null && ELECTRON_MODULE.test(value.specifier),
+      value.specifier !== null &&
+      value.operation === "load" &&
+      ELECTRON_REFERENCE_KINDS.has(value.kind) &&
+      ELECTRON_MODULE.test(value.specifier) &&
+      // A `factory-loader` reference names a recovered bundle module, so its
+      // specifier is a module key inside the artifact rather than a package. A
+      // real external load in the same file keeps its `commonjs-loader`
+      // identity, so it is still counted.
+      value.loader !== "factory-loader",
   );
   const resourceLimits = [...bindings.valueResourceLimits].sort();
   const coverage: JavaScriptStaticCoverage = {
@@ -333,6 +348,10 @@ const finalizeStaticAnalysis = (
         accumulator.nativeAddonBindings,
         accumulator.moduleRangeIndex,
       ),
+      protocols: finalizeLocatedFindings(
+        accumulator.protocols,
+        accumulator.moduleRangeIndex,
+      ),
     },
     limitations,
   };
@@ -367,28 +386,16 @@ const inspectNode = (
     const specifier = semanticImportEqualsSpecifier(node);
     if (specifier !== null)
       addReference(findings, { node, kind: "require", specifier });
-  } else if (
-    (t.isImportDeclaration(node) || t.isExportAllDeclaration(node)) &&
-    node.source !== undefined &&
-    !(t.isImportDeclaration(node) && isTypeOnlyImportDeclaration(node)) &&
-    !(t.isExportAllDeclaration(node) && isTypeOnlyExportDeclaration(node))
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (
-    t.isExportNamedDeclaration(node) &&
-    node.source != null &&
-    !isTypeOnlyExportDeclaration(node)
-  )
-    addReference(findings, {
-      node,
-      kind: "static-import",
-      specifier: node.source.value,
-    });
-  else if (t.isImportExpression(node))
+  } else {
+    const moduleSource = semanticStaticModuleSource(node);
+    if (moduleSource !== null)
+      addReference(findings, {
+        node,
+        kind: "static-import",
+        specifier: moduleSource.value,
+      });
+  }
+  if (t.isImportExpression(node))
     addReference(findings, {
       node,
       kind: "dynamic-import",

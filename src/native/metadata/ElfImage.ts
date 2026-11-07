@@ -1,3 +1,4 @@
+import { admitElfLoadSegment } from "../../domain/elfProgramHeader.js";
 import {
   declaredFileRange,
   BinaryFormatFailure,
@@ -13,7 +14,9 @@ import { elfArchitecture } from "../../domain/elfFixedHeader.js";
 import { readElfDirectoryFromBuffer } from "./NativeSectionDirectory.js";
 
 /** Read ELF sections and file-backed program mappings without interpreting language metadata. */
-export const readElfImage = (bytes: Buffer): BinaryContainer => {
+export const readElfImage = (
+  bytes: Buffer,
+): Extract<BinaryContainer, { format: "elf" }> => {
   const directory = readElfDirectoryFromBuffer(bytes);
   const { bits } = directory;
   const reader = new BinaryReader(bytes, directory.little);
@@ -28,6 +31,8 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       dynamicSegments.push(program);
       continue;
     }
+    // PT_INTERP and GNU program headers are not load segments.
+    if (program.type !== 1) continue;
     const {
       flags,
       file_offset: fileOffset,
@@ -35,11 +40,12 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
       file_size: size,
       memory_size: memorySize,
     } = program;
-    if (size > memorySize || address + memorySize > 1n << BigInt(bits))
-      throw new BinaryFormatFailure(
-        "malformed",
-        "ELF load segment sizes or addresses are invalid",
-      );
+    const admitted = admitElfLoadSegment(
+      { virtualAddress: address, memorySize, fileSize: size },
+      bits,
+    );
+    if (!admitted.ok)
+      throw new BinaryFormatFailure("malformed", admitted.error.message);
     const mapping = {
       ...(size === 0n
         ? { offset: 0, size: 0 }
@@ -86,7 +92,11 @@ export const readElfImage = (bytes: Buffer): BinaryContainer => {
   }
   return {
     format: "elf",
-    elf: { machine: directory.machine, dynamicSegments },
+    elf: {
+      machine: directory.machine,
+      type: directory.elf_type,
+      dynamicSegments,
+    },
     architecture: architectureForElfMachine(directory.machine),
     bits,
     byte_order: reader.little ? "little" : "big",

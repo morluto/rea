@@ -1,3 +1,4 @@
+import { parseMzHeaderEvidence } from "../domain/dosMz.js";
 import { createHash } from "node:crypto";
 import { dosMz } from "../domain/binaryTarget.fixture.js";
 import type { NativeLoadImageObservation } from "../domain/native/nativeLoadImage.js";
@@ -21,7 +22,7 @@ export const compareDosFixture = (
     return err(
       "Ghidra load-image snapshot digest does not match the admitted target",
     );
-  const image = prepareGhidraDosLoadImage(bytes, bytes.length);
+  const image = prepareGhidraDosLoadImage(bytes, parseMzHeaderEvidence(bytes));
   if (!image.ok) return image;
   return attestGhidraDosLoadImage(
     {

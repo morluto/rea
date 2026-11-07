@@ -1,3 +1,5 @@
+import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { electronSemanticsState } from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -13,6 +15,7 @@ import {
   selfReferenceOmissions,
   dependencyManifest,
   applicationContainerIdentity,
+  applicationRootPath,
   type JavaScriptArtifactGraphContext,
 } from "./JavaScriptArtifactGraphContext.js";
 import {
@@ -45,8 +48,9 @@ import {
 import { addJavaScriptBundlerNodes } from "./JavaScriptArtifactGraphBundlers.js";
 import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
 import {
-  classifyElectronIpcPairings,
-  collectElectronIpcRecords,
+  createElectronIpcContext,
+  summarizeElectronBoundaries,
+  type ElectronIpcContext,
 } from "./ElectronBoundaryAnalysis.js";
 
 /**
@@ -58,21 +62,33 @@ export function* buildImmutableJavaScriptArtifactGraphSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptArtifactAnalysis,
-): Generator<void, JavaScriptApplicationGraph> {
+): Generator<
+  void,
+  {
+    readonly graph: JavaScriptApplicationGraph;
+    readonly electronSummary: ElectronBoundarySummary;
+  }
+> {
   const input = yield* buildJavaScriptArtifactGraphInputSteps(
     snapshot,
     fileSet,
     analysis,
   );
   // The input was built here and is not retained, so it can be transferred.
-  return yield* sealTransferredJavaScriptApplicationGraphSteps(input);
+  return {
+    graph: yield* sealTransferredJavaScriptApplicationGraphSteps(input.graph),
+    electronSummary: input.electronSummary,
+  };
 }
 
 function* buildJavaScriptArtifactGraphInputSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptArtifactAnalysis,
-): Generator<void, unknown> {
+): Generator<
+  void,
+  { readonly graph: unknown; readonly electronSummary: ElectronBoundarySummary }
+> {
   const accumulator = new JavaScriptArtifactGraphAccumulator();
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
@@ -83,10 +99,14 @@ function* buildJavaScriptArtifactGraphInputSteps(
   const applicationOwnershipUnknownContainers = new Set<string>();
   const applicationModuleGapSources = new Map<string, Set<string>>();
   const applicationModuleReferencesRetained = new Set<string>();
+  let ipcSourceGap = false;
   const recordModuleGap = (file: {
     path: string;
     container_sha256: string;
+    kind?: string;
   }) => {
+    if (file.kind === "javascript" || file.kind === undefined)
+      ipcSourceGap = true;
     const container = applicationContainerIdentity(fileSet, file);
     const sources =
       applicationModuleGapSources.get(container) ?? new Set<string>();
@@ -108,11 +128,24 @@ function* buildJavaScriptArtifactGraphInputSteps(
         (!("text" in file) || !file.text.included)
       )
         recordModuleGap(file);
+      // Unread HTML can conceal inline scripts with Electron IPC calls.
+      if (file.kind === "html" && (!("text" in file) || !file.text.included))
+        ipcSourceGap = true;
     }
   }
   // Omitted module relationships can hide another launch owner. Do not expand
   // retained facts beyond the projection guard merely to recover ownership.
   for (const analyzed of analysis.files) {
+    if (
+      analyzed.file.kind === "javascript" &&
+      (analyzed.javascript === null ||
+        analyzed.javascript.analysis_coverage === undefined ||
+        analyzed.javascript.analysis_coverage.examination
+          .electron_call_paths_limited ||
+        analyzed.javascript.analysis_coverage.examination
+          .semantic_resource_limits.length > 0)
+    )
+      ipcSourceGap = true;
     if (
       analyzed.application_projection_failure !== undefined ||
       analyzed.analysis_failure !== undefined ||
@@ -183,27 +216,53 @@ function* buildJavaScriptArtifactGraphInputSteps(
     yield* addJavaScriptModuleRelationshipsSteps(projectionContext);
   const findingLimitations =
     yield* addJavaScriptStaticFindingsSteps(projectionContext);
-  addElectronBoundaries(projectionContext);
+  const coverage = graphCoverage(context);
+  // Graph-wide partial coverage can describe unrelated dynamic values or
+  // source maps. Qualify IPC pairing by omitted JavaScript sources instead:
+  // their hidden handlers could compete with an observed match.
+  const ipc = createElectronIpcContext(
+    projectionContext.analysis,
+    (file) => applicationRootPath(projectionContext, file),
+    snapshot.coverage.status === "complete" &&
+      !ipcSourceGap &&
+      analysis.html_inline_scripts.length === 0 &&
+      !fileSet.unavailable_relevant_files.some(
+        ({ kind }) => kind === undefined,
+      ),
+  );
+  addElectronBoundaries(projectionContext, ipc);
   yield;
   addJavaScriptHtmlRoles(projectionContext);
   yield;
   addJavaScriptSourceMapOriginals(projectionContext);
   yield;
-  const coverage = graphCoverage(context);
   return {
-    schema: "JavaScriptApplicationGraph",
-    root_node_ids:
-      packageRoots.length === 0
-        ? [root.node_id]
-        : packageRoots.map(({ node_id: id }) => id),
-    nodes: accumulator.nodes(),
-    edges: accumulator.edges(),
-    coverage,
-    limitations: [
-      ...bundlerLimitations,
-      ...findingLimitations,
-      ...graphLimitations(context, coverage.status, relationshipOmissions),
-    ],
+    electronSummary: summarizeElectronBoundaries(
+      projectionContext.analysis,
+      ipc,
+      context.directoryPaths,
+      context.analysis,
+    ),
+    graph: {
+      schema: "JavaScriptApplicationGraph",
+      root_node_ids:
+        packageRoots.length === 0
+          ? [root.node_id]
+          : packageRoots.map(({ node_id: id }) => id),
+      nodes: accumulator.nodes(),
+      edges: accumulator.edges(),
+      coverage,
+      limitations: [
+        ...bundlerLimitations,
+        ...findingLimitations,
+        ...graphLimitations(
+          context,
+          coverage.status,
+          relationshipOmissions,
+          ipc,
+        ),
+      ],
+    },
   };
 }
 
@@ -295,22 +354,13 @@ const graphLimitations = (
   context: JavaScriptArtifactGraphContext,
   coverage: "complete" | "partial" | "unknown" | "unavailable",
   relationshipOmissions: JavaScriptModuleRelationshipOmissions,
+  ipcContext: ElectronIpcContext,
 ): string[] => {
-  const ipc = collectElectronIpcRecords(context.analysis);
-  const pairings = classifyElectronIpcPairings(ipc);
-  const electronFindings = context.analysis.files.reduce(
-    (count, { javascript }) =>
-      count +
-      (javascript === null
-        ? 0
-        : javascript.electron.browser_windows.length +
-          javascript.electron.context_bridge_apis.length +
-          javascript.electron.ipc.length +
-          javascript.electron.sender_validations.length +
-          javascript.electron.utility_processes.length +
-          javascript.electron.native_addon_bindings.length),
-    0,
-  );
+  const ipc = ipcContext.records;
+  const pairings = ipcContext.states;
+  // Shared with the Electron summary so both outputs describe one coverage
+  // result, including when a rejected projection drops a file from the graph.
+  const electronSemantics = electronSemanticsState(context.analysis);
   return [
     ...context.analysis.limitations,
     ...((context.fileSet.source_selection?.unselected_files ?? 0) === 0
@@ -336,11 +386,15 @@ const graphLimitations = (
     )
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
-    ...(electronFindings === 0
-      ? []
-      : [
-          "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
-        ]),
+    ...(electronSemantics === "empty"
+      ? [
+          "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.",
+        ]
+      : electronSemantics === "recovered"
+        ? [
+            "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+          ]
+        : []),
     ...(ipc.some(({ finding }) => finding.channel === null)
       ? [
           "Dynamic IPC channel expressions remain unresolved and are never paired by textual similarity.",
@@ -348,7 +402,7 @@ const graphLimitations = (
       : []),
     ...(pairings.some(({ status }) => status === "ambiguous")
       ? [
-          "Some literal IPC channels have multiple compatible main handlers; ambiguous calls are not paired to any handler.",
+          "Some IPC transmissions have competing handlers or unresolved application ownership; ambiguous calls are not paired to any handler.",
         ]
       : []),
     ...(context.analysis.files.some(

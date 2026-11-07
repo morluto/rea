@@ -1,5 +1,7 @@
+import { projectAnalysisErrorWithoutCapturedOutput } from "../../domain/analysisErrorProjection.js";
+import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
+import { parseAnalysisInput } from "../AnalysisInput.js";
 import { isNativeObservationOperation } from "../../domain/native/nativeObservation.js";
-import { setImmediate } from "node:timers/promises";
 import { dispatchQueuedInterrupts } from "../../process/queuedInterrupts.js";
 import { readImmutableEvidenceBundle } from "../EvidenceBundleFiles.js";
 import { INSPECT_ANALYSIS_VIEW_OPERATION } from "../../domain/analysisView/analysisViewErrors.js";
@@ -60,22 +62,19 @@ export const inspectAnalysisView = async (
   lookup?: EvidenceLookup,
   options: AnalysisViewReadOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  const parsed = inspectAnalysisViewInputSchema.safeParse(rawInput);
-  if (!parsed.success)
-    return err(
-      analysisInputErrorFromIssues(
-        INSPECT_ANALYSIS_VIEW_OPERATION,
-        parsed.error.issues,
-        rawInput,
-        { cause: parsed.error },
-      ),
-    );
+  const parsed = parseAnalysisInput(
+    INSPECT_ANALYSIS_VIEW_OPERATION,
+    rawInput,
+    inspectAnalysisViewInputSchema,
+    options.signal,
+  );
+  if (!parsed.ok) return parsed;
   if (options.evidenceBundlePath !== undefined)
-    return inspectBundleView(parsed.data, options.evidenceBundlePath, options);
-  const source = parsed.data.source;
+    return inspectBundleView(parsed.value, options.evidenceBundlePath, options);
+  const source = parsed.value.source;
   if (source.kind === "evidence-file")
-    return inspectFileView({ ...parsed.data, source }, lookup, options);
-  return inspectAnalysisViewValidated({ ...parsed.data, source }, lookup);
+    return inspectFileView({ ...parsed.value, source }, lookup, options);
+  return inspectAnalysisViewValidated({ ...parsed.value, source }, lookup);
 };
 
 /**
@@ -98,32 +97,24 @@ const inspectFileView = async (
     options,
     input.source.evidence_id,
   );
-  // Authentication and projection are synchronous; yield so a pending abort is dispatched before each check.
-  const cancelled = async (): Promise<boolean> => {
-    await setImmediate();
-    return options.signal?.aborted === true;
-  };
+  // Authentication and projection are synchronous; dispatch queued callbacks and
+  // the signal notifications they enqueue before accepting either result.
+  await dispatchQueuedInterrupts();
   // A request cancelled during authentication reports cancellation, even when authentication failed.
-  if (await cancelled())
-    return err(
-      new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION, {
-        cause: options.signal?.reason,
-      }),
-    );
-  if (!loaded.ok) return loaded;
-  const id = loaded.value.evidence_id;
+  const admitted = cancelledFileViewResult(
+    loaded,
+    options.signal,
+    loaded.ok ? loaded.value : undefined,
+  );
+  if (!admitted.ok) return admitted;
+  const id = admitted.value.evidence_id;
   const projected = inspectAnalysisViewValidated(
     { ...input, source: { kind: "retained-evidence", evidence_id: id } },
-    (evidenceId) => (evidenceId === id ? loaded.value : lookup?.(evidenceId)),
+    (evidenceId) => (evidenceId === id ? admitted.value : lookup?.(evidenceId)),
   );
-  // A request cancelled during projection delivers and records nothing.
-  if (await cancelled())
-    return err(
-      new AnalysisCancelledError(INSPECT_ANALYSIS_VIEW_OPERATION, {
-        cause: options.signal?.reason,
-      }),
-    );
-  return projected;
+  await dispatchQueuedInterrupts();
+  if (!projected.ok) return projected;
+  return cancelledFileViewResult(projected, options.signal, projected.value);
 };
 
 /** Resolve the caller's exact retained parent from an authenticated portable bundle. */
@@ -151,26 +142,58 @@ const inspectBundleView = async (
   );
   // Authentication and projection are synchronous; dispatch queued interrupts before accepting either result.
   await dispatchQueuedInterrupts();
+  // Preserve an already-produced bundle failure before considering a later abort.
   if (!loaded.ok) return loaded;
-  if (signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_analysis_view", {
-        cause: signal.reason,
-      }),
-    );
+  const parentId = input.source.evidence_id;
+  const admitted = cancelledFileViewResult(
+    loaded,
+    signal,
+    signal?.aborted
+      ? loaded.value.records.find((record) => record.evidence_id === parentId)
+      : undefined,
+  );
+  if (!admitted.ok) return admitted;
   const projected = inspectAnalysisViewValidated(
     { source: input.source, view: input.view },
-    (id) => loaded.value.records.find((record) => record.evidence_id === id),
+    (id) => admitted.value.records.find((record) => record.evidence_id === id),
   );
   await dispatchQueuedInterrupts();
-  if (projected.ok && signal?.aborted)
-    return err(
-      new AnalysisCancelledError("inspect_analysis_view", {
-        cause: signal.reason,
-        partialObservation: projected.value,
-      }),
-    );
-  return projected;
+  if (!projected.ok) return projected;
+  return cancelledFileViewResult(projected, signal, projected.value);
+};
+
+/** Retain completed work and pending cleanup when this stage accepts cancellation.
+ * File-source admission explicitly gives queued cancellation precedence over
+ * authentication errors; callers preserve other already-produced failures.
+ */
+const cancelledFileViewResult = <T>(
+  result: Result<T, AnalysisError>,
+  signal?: AbortSignal,
+  completedEvidence?: Evidence,
+): Result<T, AnalysisError> => {
+  if (!signal?.aborted) return result;
+  const cancellation = new AnalysisCancelledError(
+    INSPECT_ANALYSIS_VIEW_OPERATION,
+    {
+      cause: signal.reason,
+      ...(completedEvidence !== undefined
+        ? { partialObservation: completedEvidence }
+        : {}),
+    },
+  );
+  if (!result.ok)
+    cancellation.retainSecondaryFailure(result.error, {
+      source_error: projectAnalysisErrorWithoutCapturedOutput(result.error),
+    });
+  return err(
+    !result.ok && result.error.cleanupIncomplete
+      ? analysisErrorWithCleanupFailure(
+          cancellation,
+          result.error,
+          INSPECT_ANALYSIS_VIEW_OPERATION,
+        ).bindCleanupDependencies([result.error])
+      : cancellation,
+  );
 };
 
 /** Project a parsed request whose selected source is inline or retained. */
@@ -202,6 +225,7 @@ const projectResolvedAnalysisView = (
   const projected = projection.project({
     evidenceId: parent.evidence_id,
     operation: parent.operation,
+    predicateType: parent.predicate_type,
     provider: parent.provider,
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
@@ -378,6 +402,7 @@ const createAnalysisViewEvidence = (
   const nativeObservationView =
     result.kind === "native-observation" ||
     result.kind === "native-context" ||
+    result.kind === "native-instruction-references" ||
     (result.kind === "summary" &&
       isNativeObservationOperation(result.parent_operation));
   return createEvidence(
@@ -393,8 +418,10 @@ const createAnalysisViewEvidence = (
       result,
       rawResult: null,
       confidence:
+        // A projection never strengthens its parent: inferred facts stay inferred.
         // Grouping is whole-capture, so any templated group or parameter makes the result inferred;
         // entity types and identity in an extracted state, and the coverage summarizing it, always are.
+        parent.confidence === "inferred" ||
         result.kind === "environment-state" ||
         result.kind === "environment-coverage" ||
         ((result.kind === "api-surface" ||
@@ -403,6 +430,7 @@ const createAnalysisViewEvidence = (
           ? "inferred"
           : "derived",
       authority: parent.authority,
+      environment: parent.environment,
       limitations: result.limitations,
       ...((nativeFunctionView !== undefined || nativeObservationView) &&
       parent.relationship_coverage !== null
@@ -411,6 +439,15 @@ const createAnalysisViewEvidence = (
       locations: [
         ...(result.artifact != null && result.artifact.path.length > 0
           ? [{ kind: "artifact-path" as const, path: result.artifact.path }]
+          : []),
+        // Scalar text has no structured function entry; retain the producer's
+        // authenticated positions without interpreting the caller's selector.
+        ...(parent.operation === "procedure_pseudo_code"
+          ? parent.locations.filter(
+              (location) =>
+                location.kind !== "artifact-path" ||
+                location.path !== result.artifact?.path,
+            )
           : []),
         ...(nativeFunctionView !== undefined &&
         nativeFunctionView.procedure_address !== null &&

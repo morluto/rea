@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpLifecycleResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -372,8 +375,13 @@ try {
       JSON.stringify(report, null, 2) + "\n",
     );
   }
+  const outcome = report.typed_failure
+    ? "MCP refusal"
+    : mode === "default-native"
+      ? "native load image without metadata recovery"
+      : "MCP metadata";
   console.log(
-    `PASS real Ghidra NativeAOT ${oracle.runtime}/${mode}: MCP metadata, source identity and owned cleanup${report?.compute ? ", independent type/slot oracle and pseudocode" : ""}${report?.cli_metadata ? ", equivalent CLI" : ""}`,
+    `PASS real Ghidra NativeAOT ${oracle.runtime}/${mode}: ${outcome}, source unchanged and runtime directory empty${report?.compute ? ", independent type/slot oracle and pseudocode" : ""}${report?.cli_metadata ? ", equivalent CLI" : ""}`,
   );
 } catch (error) {
   console.error(stderr);
@@ -394,14 +402,8 @@ async function call(name, args = {}) {
     { name, arguments: args },
     { timeout: 360000 },
   );
-  assert.notEqual(response.isError, true, JSON.stringify(response));
-  const projected = requireMcpOperationResult(response, name);
-  if (name === "close_binary") return projected;
-  const evidence = parseEvidence(response.structuredContent);
+  if (name === "close_binary") return requireMcpLifecycleResult(response, name);
+  const evidence = parseEvidence(requireMcpOutput(response, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
-  assert.deepEqual(
-    evidence.normalized_result,
-    response.structuredContent.normalized_result,
-  );
-  return projected;
+  return evidence.normalized_result;
 }

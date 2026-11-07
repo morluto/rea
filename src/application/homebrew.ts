@@ -3,6 +3,8 @@ import { join } from "node:path";
 
 import { z } from "zod";
 
+import { appendCallerPath } from "../filesystem/callerPath.js";
+
 /** Standard executable names and locations used to discover Homebrew. */
 const HOMEBREW_COMMANDS = [
   "brew",
@@ -73,5 +75,7 @@ export const installedCaskAppdir = async (
     config.data.env?.appdir ??
     config.data.default?.appdir;
   if (appdir === undefined) return undefined;
-  return appdir.startsWith("~/") ? join(home, appdir.slice(2)) : appdir;
+  return appdir.startsWith("~/")
+    ? appendCallerPath(home, appdir.slice(2))
+    : appdir;
 };

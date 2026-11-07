@@ -60,7 +60,8 @@ vi.mock("./CdpTargetSession.js", () => ({
   }),
 }));
 
-vi.mock("./PlaywrightScenarioBrowser.js", () => ({
+vi.mock("./PlaywrightScenarioBrowser.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./PlaywrightScenarioBrowser.js")>()),
   openPlaywrightScenarioBrowser: mocks.openBrowser,
   failBrowserScenarioOperation: async (
     cleanup: { release(): Promise<void> },
@@ -118,6 +119,7 @@ vi.mock("./PlaywrightScenarioEvents.js", () => ({
 
 import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { PlaywrightScenarioSession } from "./PlaywrightScenarioSession.js";
+import { PlaywrightScenarioBrowserCleanupOwner } from "./PlaywrightScenarioBrowser.js";
 
 const scenario = browserScenarioSchema.parse({
   browser: { mode: "launch", executable_path: process.execPath },
@@ -211,13 +213,14 @@ const fixture = () => {
       return browserClosed;
     },
   };
-  mocks.openBrowser.mockResolvedValue({
+  const opened = {
     page,
     context,
     browser,
     cleanup,
     profilePath: "/tmp/profile",
-  });
+  };
+  mocks.openBrowser.mockResolvedValue(opened);
   mocks.storage = {
     initialize: vi.fn<PlaywrightScenarioStorage["initialize"]>(
       async () => undefined,
@@ -230,7 +233,7 @@ const fixture = () => {
       }),
     ),
   };
-  return { cleanup, page, storage: mocks.storage };
+  return { cleanup, page, context, storage: mocks.storage, opened };
 };
 
 const policyResponse = (method: string): unknown =>
@@ -1153,6 +1156,80 @@ it("retains a detached policy connection until the main realm is restored", asyn
   expect(cleanup.close).toHaveBeenCalledTimes(1);
 });
 
+it("finishes initialization cleanup independently of request cancellation", async () => {
+  const { context, opened } = fixture();
+  const controller = new AbortController();
+  const closeBrowser = vi.fn(async () => undefined);
+  const removeProfile = vi.fn(async () => undefined);
+  mocks.openBrowser.mockResolvedValue({
+    ...opened,
+    cleanup: new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    }),
+  });
+  context.addCookies.mockImplementationOnce(async () => {
+    controller.abort();
+  });
+  const retainCleanup = vi.fn();
+
+  await expect(
+    PlaywrightScenarioSession.open(
+      scenario,
+      {},
+      {
+        signal: controller.signal,
+        retainCleanup,
+      },
+    ),
+  ).rejects.toMatchObject({ _tag: "AnalysisCancelledError" });
+  expect(closeBrowser).toHaveBeenCalledTimes(1);
+  expect(removeProfile).toHaveBeenCalledTimes(1);
+  expect(retainCleanup).not.toHaveBeenCalled();
+});
+
+it("can retry cleanup of a browser that opened after request cancellation", async () => {
+  const { opened } = fixture();
+  const closeBrowser = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("transport close failed"))
+    .mockResolvedValueOnce(undefined);
+  const removeProfile = vi.fn(async () => undefined);
+  const lateOpened = {
+    ...opened,
+    cleanup: new PlaywrightScenarioBrowserCleanupOwner({
+      closeBrowser,
+      removeProfile,
+    }),
+  };
+  let resolveOpening: ((value: typeof lateOpened) => void) | undefined;
+  const opening = new Promise<typeof lateOpened>((resolve) => {
+    resolveOpening = resolve;
+  });
+  mocks.openBrowser.mockReturnValueOnce(opening);
+  const controller = new AbortController();
+  const retained: AnalysisCleanupLease[] = [];
+  const result = PlaywrightScenarioSession.open(
+    scenario,
+    {},
+    {
+      signal: controller.signal,
+      retainCleanup: (close) => retained.push(close),
+    },
+  );
+  const cancelled = expect(result).rejects.toMatchObject({
+    _tag: "AnalysisCancelledError",
+  });
+  controller.abort();
+  await cancelled;
+  resolveOpening?.(lateOpened);
+  await vi.waitFor(() => expect(closeBrowser).toHaveBeenCalledTimes(1));
+  expect(retained).toHaveLength(1);
+  await expect(retained[0]?.release()).resolves.toBeUndefined();
+  expect(closeBrowser).toHaveBeenCalledTimes(2);
+  expect(removeProfile).toHaveBeenCalledTimes(1);
+});
+
 it("uses browser disconnect as terminal storage release after detach failure", async () => {
   const { cleanup, storage } = fixture();
   const detachFailure = new Error("CDP detach rejected");
@@ -1474,26 +1551,45 @@ it("retains late opening failure cleanup after cancellation until the exact prof
   }
 });
 
-it.each(["launch", "connect"] as const)(
-  "bounds never-settling initial navigation and awaits %s cleanup",
-  async (mode) => {
+it.each([
+  { mode: "launch", selected: undefined, deadline: 20_000 },
+  { mode: "connect", selected: undefined, deadline: 20_000 },
+  { mode: "launch", selected: 250, deadline: 250 },
+  { mode: "connect", selected: 250, deadline: 250 },
+] as const)(
+  "bounds never-settling initial navigation in $mode mode with deadline $deadline and awaits cleanup",
+  async ({ mode, selected, deadline }) => {
     vi.useFakeTimers();
     const { cleanup, page, storage } = fixture();
     const request = browserScenarioSchema.parse({
       ...(mode === "launch" ? scenario : connectedScenario("allow")),
-      command_timeout_ms: 250,
+      ...(selected === undefined ? {} : { command_timeout_ms: selected }),
     });
     page.goto.mockImplementation(() => new Promise<never>(() => {}));
     try {
       const opening = PlaywrightScenarioSession.open(request, {}, {}).catch(
         (cause: unknown) => cause,
       );
-      await vi.advanceTimersByTimeAsync(250);
+      await vi.advanceTimersByTimeAsync(deadline - 1);
+      expect(cleanup.close).not.toHaveBeenCalled();
+      await vi.advanceTimersByTimeAsync(1);
       const failure = await opening;
       expect(failure).toMatchObject({
         _tag: "AnalysisTimeoutError",
         operation: "capture_browser_scenario",
-        timeoutMs: 250,
+        timeoutMs: deadline,
+        partialObservation: {
+          kind: "browser-scenario-observation",
+          capture: {
+            browser: {
+              cleanup:
+                mode === "launch"
+                  ? "terminated-owned-process"
+                  : "disconnected-external",
+            },
+            steps: [],
+          },
+        },
       });
       expect(cleanup.close).toHaveBeenCalledOnce();
       expect(storage?.close).toHaveBeenCalledWith(true);
@@ -1642,3 +1738,111 @@ it.each(["absent", "undefined", "inherited", "empty"] as const)(
     }
   },
 );
+
+it("keeps declared secrets out of final cleanup and retry failure diagnostics", async () => {
+  const { page, cleanup } = fixture();
+  Object.assign(page, { waitForTimeout: vi.fn(async () => undefined) });
+  const input = browserScenarioSchema.parse({
+    ...connectedScenario("allow"),
+    secrets: [
+      {
+        secret_id: "credential",
+        environment_variable: "REA_SCENARIO_TEST_SECRET",
+      },
+    ],
+    capture: { after_each_step: ["url"], at_end: [], events: [] },
+  });
+  const secret = "declared-cleanup-private-value";
+  vi.spyOn(cleanup, "cleanupResources", "get").mockImplementation(() =>
+    cleanup.browserClosed ? [] : [`browser_transport:${secret}`],
+  );
+  const originalClose = cleanup.close.getMockImplementation()!;
+  let blocked = true;
+  cleanup.close.mockImplementation(async (...args) => {
+    if (blocked) throw new Error(`Close failed after ${secret}`);
+    return originalClose(...args);
+  });
+  const provider = new PlaywrightBrowserScenarioProvider((scenario, options) =>
+    PlaywrightScenarioSession.open(
+      scenario,
+      { REA_SCENARIO_TEST_SECRET: secret },
+      options,
+    ),
+  );
+  try {
+    const result = await provider.captureScenario(input, {});
+    if (result.ok) throw new Error("Expected final cleanup failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.partialObservation).toMatchObject({
+      kind: "browser-scenario-observation",
+      capture: {
+        browser: { cleanup: "incomplete" },
+        steps: [{ action: "goto_start" }, { action: "wait_for_timeout" }],
+      },
+    });
+    expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
+      secret,
+    );
+    let retried: unknown;
+    try {
+      await provider.close();
+    } catch (error) {
+      retried = error;
+    }
+    if (!(retried instanceof ProviderCleanupError))
+      throw new Error("Expected retained cleanup failure");
+    expect(JSON.stringify(projectAnalysisError(retried))).not.toContain(secret);
+    blocked = false;
+    await provider.close();
+    expect(cleanup.browserClosed).toBe(true);
+    expect(result.error.cleanupIncomplete).toBe(false);
+  } finally {
+    blocked = false;
+    await provider.close();
+  }
+});
+
+it("projects both request and route cleanup failures with declared secrets redacted", async () => {
+  const { page } = fixture();
+  const secret = "private-request-diagnostic-value";
+  const route = vi.fn(async () => undefined);
+  const unroute = vi.fn(async () => {
+    throw new Error(`page.unroute: closed ${secret}`);
+  });
+  Object.assign(page, {
+    url: () => "https://app.example.test/",
+    route,
+    unroute,
+  });
+  const input = browserScenarioSchema.parse({
+    ...connectedScenario("allow"),
+    start_url: { url: "https://app.example.test/" },
+    actions: [
+      { step_id: "request", action: "request", method: "POST", path: "/api" },
+    ],
+    secrets: [
+      { secret_id: "credential", environment_variable: "REQUEST_SECRET" },
+    ],
+    capture: { after_each_step: ["url"], at_end: [], events: [] },
+  });
+  const provider = new PlaywrightBrowserScenarioProvider((scenario, options) =>
+    PlaywrightScenarioSession.open(
+      scenario,
+      { REQUEST_SECRET: secret },
+      options,
+    ),
+  );
+  page.evaluate.mockRejectedValue(new Error(`page.evaluate: closed ${secret}`));
+  try {
+    const result = await provider.captureScenario(input, {});
+    if (!result.ok) throw result.error;
+    const step = result.value.steps.find((step) => step.step_id === "request");
+    expect(step).toMatchObject({ status: "failed" });
+    expect(step?.error).toContain("page.evaluate: closed");
+    expect(step?.error).toContain("page.unroute: closed");
+    expect(JSON.stringify(result.value)).not.toContain(secret);
+    expect(unroute).toHaveBeenCalledOnce();
+  } finally {
+    await provider.close();
+  }
+});

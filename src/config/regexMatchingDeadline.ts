@@ -2,11 +2,7 @@ import {
   DEFAULT_REGEX_MATCHING_DEADLINE_MS,
   MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
 } from "../domain/analysisResourceLimits.js";
-export {
-  DEFAULT_REGEX_MATCHING_DEADLINE_MS,
-  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
-} from "../domain/analysisResourceLimits.js";
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -26,21 +22,12 @@ export const DEFAULT_REGEX_MATCHING_DEADLINE: RegexMatchingDeadline = {
 
 export const regexMatchingDeadlineConstraint = `${REGEX_MATCHING_DEADLINE_SETTING} must be a positive decimal integer from 1 to ${String(MAXIMUM_REGEX_MATCHING_DEADLINE_MS)} ms; the default is ${String(DEFAULT_REGEX_MATCHING_DEADLINE_MS)} ms. Node schedules a delay above that maximum as 1 ms, so a larger value is refused.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinDeadlineRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return parsed >= 1n && parsed <= BigInt(MAXIMUM_REGEX_MATCHING_DEADLINE_MS);
-};
-
 /** Optional decimal millisecond count for the supervised regex matching deadline. */
-export const regexMatchingDeadlineMsSchema = z
-  .string()
-  .regex(decimalInteger, { error: regexMatchingDeadlineConstraint })
-  .refine(withinDeadlineRange, { error: regexMatchingDeadlineConstraint })
-  .transform(Number);
+export const regexMatchingDeadlineMsSchema = positiveDecimalIntegerSchema(
+  1,
+  MAXIMUM_REGEX_MATCHING_DEADLINE_MS,
+  regexMatchingDeadlineConstraint,
+);
 
 /** Resolve the effective deadline from one environment value. */
 export const parseRegexMatchingDeadline = (

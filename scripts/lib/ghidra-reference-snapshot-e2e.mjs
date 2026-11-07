@@ -1,4 +1,5 @@
 import {
+  requireMcpEvidenceBundle,
   requireMcpToolError,
   requireMcpLifecycleResult,
   requireMcpEvidenceResult,
@@ -26,12 +27,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
   client,
   { target, procedure, omittedEdge, entrypoint, env },
 ) {
-  const bundle = requireMcpLifecycleResult(
+  const bundle = requireMcpEvidenceBundle(
     await client.callTool({
       name: "get_evidence_bundle",
       arguments: {},
     }),
-    "get_evidence_bundle",
   );
   const observed = bundle.records.find(
     (record) =>
@@ -126,11 +126,11 @@ export async function verifyLegacyGhidraReferenceSnapshot(
     assert.equal(reply.isError, true);
     const mcpRejection = requireMcpToolError(reply);
     assert.equal(mcpRejection.code, "evidence_integrity_mismatch");
-    assert.match(mcpRejection.details.reason, /profile_mismatch/u);
-    assert.match(
-      mcpRejection.remediation.action,
-      /without this snapshot.*fresh snapshot/u,
-    );
+    assert.deepEqual(mcpRejection.details.binding_mismatch.profile_digest, {
+      snapshot: legacyProfile.digest,
+      selected: observed.analysis_profile.digest,
+    });
+    assert.match(mcpRejection.remediation.action, /fresh snapshot/u);
     assert.deepEqual(
       requireMcpLifecycleResult(
         await client.callTool({ name: "binary_session", arguments: {} }),

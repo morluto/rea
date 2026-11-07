@@ -1,5 +1,6 @@
+import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeOptionalHeader } from "../../domain/peMachine.js";
-import { readPeSectionHeader } from "./NativeSectionDirectory.js";
+import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
 import {
   mzWindowsHeaderLayoutLimitation,
   parseMzHeaderEvidence,
@@ -16,6 +17,8 @@ import {
 
 const peHeaderOffset = (reader: BinaryReader): number => {
   const evidence = parseMzHeaderEvidence(reader.bytes);
+  if (!evidence.declarations.ok)
+    throw new BinaryFormatFailure("malformed", evidence.declarations.error);
   const { windowsHeader } = evidence;
   if (windowsHeader.state === "candidate")
     throw new BinaryFormatFailure(
@@ -34,7 +37,6 @@ const peHeaderOffset = (reader: BinaryReader): number => {
   const limitation = mzWindowsHeaderLayoutLimitation(windowsHeader);
   if (limitation !== undefined)
     throw new BinaryFormatFailure("unsupported", limitation);
-  reader.range(pe, 24, "PE signature and COFF header");
   if (["NE", "LE", "LX"].includes(windowsHeader.signature))
     throw new BinaryFormatFailure(
       "unsupported",
@@ -45,6 +47,7 @@ const peHeaderOffset = (reader: BinaryReader): number => {
       "malformed",
       "PE signature is invalid or overlaps the DOS header",
     );
+  reader.range(pe, 24, "PE signature and COFF header");
   return pe;
 };
 
@@ -66,6 +69,9 @@ export type PeImage = BinaryContainer & {
   readonly pe_data_directories: NonNullable<
     BinaryContainer["pe_data_directories"]
   >;
+  readonly pe_optional_header_file_offset: number;
+  readonly dll_characteristics: number;
+  readonly dll_characteristics_file_offset: number;
   readonly sections: readonly PeImageSection[];
 };
 
@@ -74,23 +80,36 @@ export const readPeImage = (bytes: Buffer): PeImage => {
   const reader = new BinaryReader(bytes, true);
   const pe = peHeaderOffset(reader);
   const optional = pe + 24;
-  const optionalSize = reader.u16(pe + 20);
-  const machine = reader.u16(pe + 4);
-  const facts = readPeOptionalHeader(
-    reader.range(optional, optionalSize, "PE optional header"),
+  const coff = readPeCoffHeader(bytes.subarray(pe + 4, pe + 24));
+  if (!coff.ok)
+    throw new BinaryFormatFailure(coff.error.kind, coff.error.message);
+  const {
     machine,
+    sectionCount: count,
+    optionalHeaderSize: optionalSize,
+  } = coff.value;
+  const optionalBytes = reader.range(
+    optional,
+    optionalSize,
+    "PE optional header",
   );
+  const facts = readPeOptionalHeader(optionalBytes, machine);
   if (!facts.ok)
     throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
-  const { bits, dataDirectories, sizeOfHeaders } = facts.value;
-  const imageBase = reader.word(optional + (bits === 64 ? 24 : 28), bits);
-  const fileAlignment = reader.u32(optional + 36);
+  const dllCharacteristics = facts.value.dllCharacteristics;
+  const {
+    bits,
+    dataDirectories,
+    sizeOfHeaders,
+    imageBase,
+    sectionAlignment,
+    fileAlignment,
+  } = facts.value;
   const headerMapping: FileMapping = {
     address: imageBase,
     offset: 0,
     size: Math.min(sizeOfHeaders, bytes.length),
   };
-  const count = reader.u16(pe + 6);
   const start = reader.table(
     BigInt(optional + optionalSize),
     count,
@@ -103,6 +122,11 @@ export const readPeImage = (bytes: Buffer): PeImage => {
   const sections: PeImageSection[] = [];
   for (let index = 0; index < count; index++) {
     const entry = start + index * 40;
+    const section = readPeSectionHeader(
+      reader.range(entry, 40, "PE section header"),
+    );
+    if (!section.ok)
+      throw new BinaryFormatFailure(section.error.kind, section.error.message);
     const {
       name: sectionName,
       virtual_size: virtualSize,
@@ -111,7 +135,7 @@ export const readPeImage = (bytes: Buffer): PeImage => {
       offset,
       characteristics,
       size: contentSize,
-    } = readPeSectionHeader(reader.range(entry, 40, "PE section header"));
+    } = section.value;
     sections.push(
       peImageSection({
         reader,
@@ -153,9 +177,12 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     format: "pe",
     image_base: imageBase,
     pe_machine: machine,
-    pe_section_alignment: reader.u32(optional + 32),
+    pe_section_alignment: sectionAlignment,
     pe_file_alignment: fileAlignment,
     pe_data_directories: dataDirectories,
+    pe_optional_header_file_offset: optional,
+    dll_characteristics: dllCharacteristics,
+    dll_characteristics_file_offset: optional + 70,
     pe_header_mapping: headerMapping,
     architecture:
       architecture === "x86"

@@ -3,7 +3,7 @@
 REA can analyze DOS MZ executables and explicitly selected COM images through the bring-your-own Ghidra adapter.
 The Linux x64 and macOS arm64 verification lanes exercise actual 16-bit disassembly and
 decompilation through the CLI and stdio MCP. Provider admission accepts Ghidra
-12.1.x and that installation's declared JDK range. The verification lane uses
+12.x (>=12.1) and that installation's declared JDK range. The verification lane uses
 Ghidra 12.1.4 and JDK 21; no DOS emulator or cross-compiler is required.
 
 ## Open and inspect
@@ -175,8 +175,9 @@ are separate from the initialized MZ module. Headerless COM requires the
 from the filename or unrecognized bytes. DOS extenders without an admitted
 MZ real-mode entry remain outside this import boundary.
 
-DOS MZ is available through Ghidra, with no Hopper support claim. It is outside
-the Windows native PE P0 boundary. macOS x64 DOS verification remains unverified.
+DOS MZ is available through Ghidra, with no Hopper support claim. Windows Ghidra
+P0 admits DOS MZ read-only: function annotations and naming edits are refused
+there, and explicit COM is not admitted. macOS x64 DOS verification remains unverified.
 
 ## Real verification
 

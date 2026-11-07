@@ -50,7 +50,7 @@ Thumbs.db
 
 # Local reference sources and analysis artifacts
 /_reference/
-/experiments/analysis-efficiency/results/
+/experiments/analysis-efficiency/
 
 # Generated website download
 /website/public/examples/notes-example.zip

@@ -51,6 +51,7 @@ const generator = () => {
     clock: NOW,
     "nested-clock": { at: NOW },
     "held-clock": NOW,
+    "made-object": { at: NOW },
   };
   const generate = (rule: GeneratedRule) => {
     asked.push(rule);
@@ -141,6 +142,8 @@ it.each<[string, JsonValue | undefined]>([
   ["/x~1y/m~0n", true],
   ["/", "blank"],
   ["/a/2/b", undefined],
+  ["/a/01/b", undefined],
+  ["/a/999999999999999999999999/b", undefined],
   ["/a/first", undefined],
   ["/a/0/b/c", undefined],
   ["/missing", undefined],
@@ -754,3 +757,46 @@ it("refuses a create whose composed address reads a member the call does not sen
   );
   expect(create({ title: "New Folder" })).toEqual(err(UNSPELLED));
 });
+
+it.each(["__proto__", "constructor"])(
+  "creates and updates an absent own %s field without changing object inheritance",
+  (field) => {
+    const plan = {
+      rules: [{ field, rule: "echo" as const }],
+      body: {
+        accepted: [field],
+        fixed: [],
+        required: [],
+        identity: null,
+        kinds: [],
+      },
+    };
+    const sent = Object.fromEntries([[field, { label: "stored" }]]);
+    const call = callWith(sent);
+    const created = createdFields(plan, { id: 1 }, call, generator().generate);
+    const updated = updatedFields(
+      plan,
+      {
+        before: { id: 1 },
+        observed: Object.fromEntries([
+          ["id", 1],
+          [field, { label: "old" }],
+        ]),
+      },
+      { ...call, id: "1" },
+      generator().generate,
+    );
+    for (const result of [created, updated]) {
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error(result.error);
+      expect(
+        Object.getOwnPropertyDescriptor(result.value, field)?.value,
+      ).toEqual({ label: "stored" });
+      expect(Object.getPrototypeOf(result.value)).toBe(Object.prototype);
+      expect(JSON.parse(JSON.stringify(result.value))).toEqual({
+        id: 1,
+        ...sent,
+      });
+    }
+  },
+);

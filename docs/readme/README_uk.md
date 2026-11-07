@@ -20,7 +20,9 @@
 
 **[Сайт](https://rea.tools/uk/) · [Посібники](https://rea.tools/uk/guides/) · [Приклади](https://rea.tools/uk/showcase/)**
 
-[Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Інструменти GNU objdump і Rizin](../reverse-engineering-tools.md) · [Документація](#документація)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Приєднуйтеся до спільноти REA в Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Документація](#документація)
 
 <code>npx rea-agents setup</code>
 
@@ -60,7 +62,7 @@
 
 REA підключає вашого агента до інструментів дослідження нативних бінарних файлів, застосунків JavaScript і Electron, збірок .NET та сайтів. Ті самі інструменти можна використовувати з термінала. Аналіз виконується локально, а результати містять підтвердження й обмеження, на яких ґрунтується кожен висновок.
 
-Налаштування реєструє REA в агенті та встановлює відповідні інструкції. Нативний аналіз використовує наявний Hopper, Ghidra або IDA; Hopper можна встановити після схвалення. Статичний аналіз JavaScript не потребує нативного рушія.
+Налаштування реєструє REA в агенті та встановлює відповідні інструкції. Нативний аналіз використовує наявний Hopper, Ghidra, IDA або Kuna; Hopper можна встановити після схвалення. Статичний аналіз JavaScript не потребує нативного рушія.
 
 > **[Відвідайте сайт REA](https://rea.tools/uk/)**, щоб знайти інструкції налаштування, ілюстровані посібники та реальні дослідження.
 
@@ -151,13 +153,14 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 
 | Ціль                                 | Що повертає REA                                                                                                   | Вимоги й посібник                                                                                                                                     |
 | ------------------------------------ | ----------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Нативні бінарні файли                | Псевдокод, асемблерний код, рядки, символи, виклики й посилання                                                   | Hopper, Ghidra або IDA; [нативний аналіз](../native-investigation.md)                                                                                 |
+| Нативні бінарні файли                | Псевдокод, асемблерний код, рядки, символи, виклики й посилання                                                   | Hopper, Ghidra, IDA або Kuna; [нативний аналіз](../native-investigation.md)                                                                           |
 | Структура ELF без запуску            | Секції, сегменти, початкові символи/релокації та можливі захисні механізми за даними статичного аналізу           | pwntools, наданий стороною, що викликає інструмент, у Linux x64; [діагностика бінарних файлів](../binary-diagnostics.md)                              |
 | PE certificates                      | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                      | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                               |
 | PE imports                           | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                        | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                         |
 | Байт-код EVM                         | Селектори диспетчеризації, зміщення байтів, виведені припущення про аргументи та змінюваність стану               | Локальні необроблені байти або шістнадцяткове представлення у Linux x64; [посібник EVM без запуску](../evm-bytecode.md)                               |
 | Rust binaries                        | Embedded cargo-auditable dependency list                                                                          | [Rust binaries](../rust-binaries.md)                                                                                                                  |
 | ELF notes                            | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                          |
+| Binary hardening                     | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                         |
 | Linux kernel modules                 | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                |
 | Erlang BEAM                          | IFF chunks, atoms, exports, and tables                                                                            | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                     |
 | Apple IPS crashes                    | .ips metadata, threads, images, registers and crash classes                                                       | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                         |
@@ -189,6 +192,8 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Підписи APK                          | Підписувачі v1/v2/v3/v3.1, відбитки сертифікатів, ротація ключів і внутрішня узгодженість хешів                   | Вбудований статичний аналіз; `inspect_apk_signature`                                                                                                  |
 
 Статична перевірка JavaScript і .NET читає надані файли, не запускаючи застосунок. Захоплення під час виконання запускає вибрану ціль або взаємодіє з нею з правами вашого користувача; відповідні посібники описують його вплив.
+
+Для автономного аналізу нативних бінарних файлів REA також підтримує GNU objdump і Rizin, які користувач надає самостійно. [Посібник з інструментів зворотної розробки](../reverse-engineering-tools.md) описує налаштування провайдерів, команди CLI та обмеження Evidence. REA не встановлює й не оновлює жодного з цих провайдерів.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
@@ -278,9 +283,9 @@ REA експортує готове до запуску середовище з 
 </details>
 
 <details>
-<summary><strong>Чи потрібні мені Hopper, Ghidra або IDA?</strong></summary>
+<summary><strong>Чи потрібні мені Hopper, Ghidra, IDA або Kuna?</strong></summary>
 
-Поглиблений нативний аналіз використовує один із цих інструментів. Статична перевірка JavaScript і .NET працює без рушія нативного аналізу. Налаштування може встановити Hopper після схвалення; Ghidra й IDA використовують наявні встановлення. Дивіться [налаштування провайдерів](../installation.md#hopper).
+Поглиблений нативний аналіз використовує один із цих інструментів. Статична перевірка JavaScript і .NET працює без рушія нативного аналізу. Налаштування може встановити Hopper після схвалення; Ghidra, IDA й Kuna використовують наявні встановлення. Дивіться [налаштування провайдерів](../installation.md#hopper).
 
 </details>
 
@@ -348,7 +353,7 @@ npx rea-agents@latest setup
 
 ## Історія зірок
 
-🎉 **300 000 зірок на GitHub — дякуємо!**
+🎉 **400 000 зірок на GitHub — дякуємо!**
 
 Дякуємо всім, хто використовує REA, повідомляє про помилки, пропонує нові функції, тестує збірки й допомагає з виправленнями.
 

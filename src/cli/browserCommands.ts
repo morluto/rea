@@ -1,8 +1,10 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
+import { webBundleDeliveryOptions } from "./javascriptRouteDelivery.js";
 import {
-  parseJavaScriptRouteDelivery,
-  javascriptRouteDeliveryOptions,
-} from "./javascriptRouteDelivery.js";
-import { deliverCliAnalysisEvidence } from "./analysisEvidenceDelivery.js";
+  deliverCliAnalysisEvidence,
+  parseCliAnalysisEvidenceDelivery,
+} from "./analysisEvidenceDelivery.js";
+import { webRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { Cli, z } from "incur";
 
@@ -23,6 +25,7 @@ import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
@@ -86,7 +89,7 @@ const registerTargetList = (
             provider.identity().id,
             "list_browser_targets",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -143,7 +146,7 @@ const registerPageInspection = (
             provider.identity().id,
             "inspect_web_page",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -164,25 +167,30 @@ const registerBundleAnalysis = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      ...javascriptRouteDeliveryOptions,
+      ...webBundleDeliveryOptions,
       observationMs: observationDuration(500),
       fetchSourceMaps: z
         .boolean()
         .default(false)
         .describe("Fetch source maps referenced by captured scripts"),
-      maxHeapMb: analyzeWebBundleInputSchema.shape.max_heap_mb,
-      analysisTimeoutMs: analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
-      totalAnalysisTimeoutMs:
+      maxHeapMb: cliDecimalField(analyzeWebBundleInputSchema.shape.max_heap_mb),
+      analysisTimeoutMs: cliDecimalField(
+        analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
+      ),
+      totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
-      sourceMapFetchTimeoutMs:
+      ),
+      sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "analyze-web-bundle", async () => {
-          const delivery = parseJavaScriptRouteDelivery(
+          const delivery = parseCliAnalysisEvidenceDelivery(
             "analyze_web_bundle",
             options,
+            webRoutesDeliverySchema,
           );
           if (!delivery.ok) return projectAnalysisError(delivery.error);
           const provider = createBrowserObservationProvider();
@@ -281,7 +289,7 @@ const registerObservationSession = (
             provider.identity().id,
             "observe_web_session",
             signal,
-          );
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

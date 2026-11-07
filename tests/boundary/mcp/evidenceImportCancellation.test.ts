@@ -10,6 +10,7 @@ import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
+import * as evidenceBundleFiles from "../../../src/application/EvidenceBundleFiles.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -51,13 +52,13 @@ it("preserves the exact reason when import is cancelled after reading the bundle
   const reason = { request: "cancel after authenticated bundle read" };
   const controller = new AbortController();
   const before = session.exportEvidenceBundle();
-  const snapshot = session.immutableEvidenceBundle.bind(session);
-  const snapshotRead = vi
-    .spyOn(session, "immutableEvidenceBundle")
-    .mockImplementationOnce(() => {
-      const bundle = snapshot();
+  const read = evidenceBundleFiles.readImmutableEvidenceBundle;
+  const authenticatedRead = vi
+    .spyOn(evidenceBundleFiles, "readImmutableEvidenceBundle")
+    .mockImplementationOnce(async (...args) => {
+      const loaded = await read(...args);
       controller.abort(reason);
-      return bundle;
+      return loaded;
     });
   const imported = vi.spyOn(session, "importEvidenceBundle");
   const delivery = vi.spyOn(ToolResultDelivery.prototype, "toCallToolResult");
@@ -73,7 +74,7 @@ it("preserves the exact reason when import is cancelled after reading the bundle
   expect(response.isError).toBe(true);
   expect(delivered.error._tag).toBe("AnalysisCancelledError");
   expect(delivered.error.cause).toBe(reason);
-  expect(snapshotRead).toHaveBeenCalledOnce();
+  expect(authenticatedRead).toHaveBeenCalledOnce();
   expect(imported).not.toHaveBeenCalled();
   expect(session.exportEvidenceBundle()).toEqual(before);
 });

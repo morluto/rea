@@ -16,8 +16,9 @@ import { parseCliJsonInput } from "../cliJsonInput.js";
 import { logCliCommand } from "../cliLogging.js";
 import { parseEnvironmentName } from "../config/environmentName.js";
 import {
+  mcpHttpHostSchema,
+  mcpHttpPortSchema,
   parseMcpHttpEndpoint,
-  mcpHttpListenerPortSchema,
   type McpHttpEndpoint,
 } from "../config/mcpHttpEndpoint.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -37,6 +38,7 @@ import { inspectWebNetworkCaptureInputSchema } from "../domain/webNetworkCapture
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 
 /** Same envelope label as the other JSON-input commands and `parseCliJsonInput`. */
 const cliError = (error: AnalysisError): JsonValue => ({
@@ -67,8 +69,11 @@ const untilAborted = (signal: AbortSignal): Promise<undefined> =>
 export const transportError = (
   endpoint: McpHttpEndpoint,
   cause: StreamableHttpListenError,
-): AnalysisResourceConstraintError =>
-  new AnalysisResourceConstraintError(
+): AnalysisResourceConstraintError => {
+  const failure = cause.classification.ok
+    ? cause.classification.value
+    : cause.classification.error;
+  return new AnalysisResourceConstraintError(
     CLI_COMMANDS.environmentServe,
     "transport",
     cause.message,
@@ -77,38 +82,22 @@ export const transportError = (
       cause,
       retryable: false,
       diagnostics: {
-        listener_failure: cause.classification.ok
-          ? {
-              kind: cause.classification.value.kind,
-              system_code: cause.classification.value.systemCode,
-            }
-          : {
-              kind: cause.classification.error.kind,
-              ...(cause.classification.error.systemCode === undefined
-                ? {}
-                : { system_code: cause.classification.error.systemCode }),
-            },
+        listener_failure: {
+          kind: failure.kind,
+          ...("systemCode" in failure && failure.systemCode !== undefined
+            ? { system_code: failure.systemCode }
+            : {}),
+          ...(failure.kind === "host_allowlist"
+            ? {
+                reason: failure.reason,
+              }
+            : {}),
+        },
         listener_phase: cause.phase,
       },
-      remediationAction: listenerRemediation(cause.classification),
+      remediationAction: cause.remediationAction,
     },
   );
-
-const listenerRemediation = (
-  classification: StreamableHttpListenError["classification"],
-): string => {
-  if (!classification.ok)
-    return "Check the selected listener host, port, and binding permissions, then retry.";
-  switch (classification.value.kind) {
-    case "host_lookup":
-      return "Check --host or MCP_HOST and host name resolution; correct the value or resolve the lookup failure, then retry.";
-    case "host_unavailable":
-      return "Choose an address assigned to this machine with --host or MCP_HOST, then retry.";
-    case "port_in_use":
-      return "Choose another --port or MCP_PORT, or stop the process using it.";
-    case "permission_denied":
-      return "Choose a host and port this process is permitted to bind; if the selected port is restricted, use an allowed port.";
-  }
 };
 
 interface ServeArguments {
@@ -343,12 +332,6 @@ const conflictingRules = (): JsonValue =>
     ]),
   );
 
-const isEvidenceValue = (value: unknown): boolean =>
-  typeof value === "object" &&
-  value !== null &&
-  "evidence_id" in value &&
-  "normalized_result" in value;
-
 /** Inspect a HAR as inspect-web-network-capture does and serialize the Evidence as it prints it; a refusal is the command's output. */
 const inspectBuildHar = async (
   capturePath: string,
@@ -358,7 +341,6 @@ const inspectBuildHar = async (
 ): Promise<Result<EnvironmentExportFile, JsonValue>> => {
   const { createWebNetworkCaptureService } =
     await import("../composition/webNetworkCaptures.js");
-  const { parseEvidence } = await import("../domain/evidence.js");
   const { environmentExportEvidenceFile } =
     await import("../application/environment/environmentExport.js");
   const { ENVIRONMENT_BUILD_OPERATION } =
@@ -381,15 +363,15 @@ const inspectBuildHar = async (
     "inspect_web_network_capture",
     signal,
   );
-  if (!isEvidenceValue(inspected))
+  if (!inspected.ok)
     return err({
       error: "Application workflow failed",
-      ...(inspected as Record<string, JsonValue>),
+      ...inspected.error,
     });
   const file = await environmentExportEvidenceFile(
     "evidence",
     capturePath,
-    parseEvidence(inspected),
+    inspected.value,
     ENVIRONMENT_BUILD_OPERATION,
   );
   return file.ok ? ok(file.value) : err(cliError(file.error));
@@ -449,6 +431,7 @@ const buildEnvironmentCommand = async (
       "evidence",
       capturePath,
       ENVIRONMENT_BUILD_OPERATION,
+      ["capture"],
     );
     if (!read.ok) return cliError(read.error);
     capture = read.value;
@@ -530,8 +513,10 @@ const registerBuildCommand = (
         .boolean()
         .default(false)
         .describe("Run every stage and report, but write nothing"),
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -697,12 +682,11 @@ export const registerEnvironmentCommands = (
         .describe(
           "Serve pure replay: derive no state, serve every manifest tool from its retained records and answer every /agentenv method as not found",
         ),
-      host: z
-        .string()
-        .min(1)
+      // Flags use the MCP_HOST and MCP_PORT owners shared with rea mcp --http.
+      host: mcpHttpHostSchema
         .optional()
         .describe("Listener address; default MCP_HOST, else 127.0.0.1"),
-      port: mcpHttpListenerPortSchema
+      port: mcpHttpPortSchema
         .optional()
         .describe(
           "Listener port; default MCP_PORT, else 0 for an ephemeral port",

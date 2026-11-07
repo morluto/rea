@@ -1,16 +1,21 @@
+import { parseAnalysisInput } from "./AnalysisInput.js";
 import type {
   AnalysisOperationPort,
   ExecutionOptions,
 } from "./AnalysisProvider.js";
 import { nativeProcedureInputSchema } from "../domain/native/nativeProcedureInput.js";
 import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
-import { createEvidence } from "../domain/evidence.js";
-import { parseFunctionDossier } from "../domain/hopperValues.js";
+import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
+import { parseFunctionDossier } from "../domain/native/functionDossier.js";
 import type { JsonValue } from "../domain/jsonValue.js";
-import { err } from "../domain/result.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { completeProviderEvidence } from "./ProviderOperationExecution.js";
+import type { Evidence } from "../domain/evidence.js";
+import { EvidenceLedger } from "./investigation/EvidenceLedger.js";
+import {
+  recordEvidenceSources,
+  withEvidenceSources,
+  type AnalysisResultWithSources,
+} from "./investigation/recordEvidenceSources.js";
 
 /**
  * Preserve the provider's observations when presenting a validated function
@@ -22,54 +27,60 @@ export const executeFunctionAnalysisEvidence = async (
   parameters: Readonly<Record<string, JsonValue>>,
   target: BinaryTarget | undefined,
   options?: ExecutionOptions,
-) => {
-  if (options?.signal?.aborted)
-    return err(
-      new AnalysisCancelledError("analyze_function", {
-        cause: options.signal.reason,
-      }),
-    );
-  const input = nativeProcedureInputSchema.safeParse(parameters);
-  if (!input.success)
-    return err(
-      analysisInputErrorFromIssues(
-        "analyze_function",
-        input.error.issues,
-        parameters,
-        { cause: input.error },
-      ),
-    );
-  const arguments_ = input.data;
+): Promise<AnalysisResultWithSources<Evidence>> => {
+  const input = parseAnalysisInput(
+    "analyze_function",
+    parameters,
+    nativeProcedureInputSchema,
+    options?.signal,
+  );
+  if (!input.ok) return input;
+  const arguments_ = input.value;
   const execution = await analysis.execute(
     "analyze_function",
     arguments_,
     options,
   );
   if (!execution.ok) return execution;
+  const sourceLedger = new EvidenceLedger();
+  const recorded = recordEvidenceSources(
+    (source) => sourceLedger.record(source),
+    execution.value.sourceEvidence ?? [],
+  );
+  const sources = sourceLedger.recordsForAnalysis();
+  if (!recorded.ok) return withEvidenceSources(recorded, sources);
+  const observation = {
+    ...execution.value,
+    sourceEvidence: sources,
+    ...(execution.value.subject === undefined && target !== undefined
+      ? { subject: target }
+      : {}),
+  };
   const dossier = parseFunctionDossier(execution.value.result);
-  if (!dossier.ok) return dossier;
-  const observation = execution.value;
-  return completeProviderEvidence(
-    createEvidence(
-      observation.subject === undefined
-        ? target
-        : (observation.subject ?? undefined),
-      observation.provider,
-      {
-        operation: "analyze_function",
-        parameters: arguments_,
-        result: dossier.value,
-        rawResult: observation.rawResult,
-        limitations: observation.limitations,
-        locations: observation.locations,
-        ...(observation.relationshipCoverage === undefined
-          ? {}
-          : { relationshipCoverage: observation.relationshipCoverage }),
-        ...(observation.analysisProfile === undefined
-          ? {}
-          : { analysisProfile: observation.analysisProfile }),
-      },
+  if (!dossier.ok) {
+    dossier.error.retainPartialObservation(
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        arguments_,
+        observation,
+        "observed",
+      ),
+    );
+    return withEvidenceSources(dossier, sources);
+  }
+  return withEvidenceSources(
+    completeProviderEvidence(
+      createAnalysisExecutionEvidence(
+        "analyze_function",
+        arguments_,
+        {
+          ...observation,
+          result: dossier.value,
+        },
+        "observed",
+      ),
+      options?.signal,
     ),
-    options?.signal,
+    sources,
   );
 };

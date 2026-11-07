@@ -1,4 +1,4 @@
-import { z } from "zod";
+import { positiveDecimalIntegerSchema } from "./positiveDecimalInteger.js";
 
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
@@ -64,24 +64,12 @@ export type BridgePeer = "Hopper" | "Cutter" | "Ghidra";
 
 export const bridgeMaxRequestBytesConstraint = `${BRIDGE_MAX_REQUEST_BYTES_SETTING} must be a positive decimal integer from ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} to ${String(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes; the default is ${String(DEFAULT_BRIDGE_MAX_REQUEST_BYTES)} bytes (16 MiB). A value below ${String(MINIMUM_BRIDGE_MAX_REQUEST_BYTES)} bytes cannot carry the largest admitted symbol-name command, and a larger value is refused so the encoded payload plus its framing LF stays one string under Node's single-string ceiling.`;
 
-const decimalInteger = /^[1-9]\d*$/u;
-
-const withinRequestRange = (value: string): boolean => {
-  // The pattern check reports a non-decimal value. Refine only bounds integers.
-  if (!decimalInteger.test(value)) return true;
-  const parsed = BigInt(value);
-  return (
-    parsed >= BigInt(MINIMUM_BRIDGE_MAX_REQUEST_BYTES) &&
-    parsed <= BigInt(MAXIMUM_BRIDGE_MAX_REQUEST_BYTES)
-  );
-};
-
 /** Optional decimal byte count for the Hopper and Cutter request payload ceiling. */
-export const bridgeMaxRequestBytesSchema = z
-  .string()
-  .regex(decimalInteger, { error: bridgeMaxRequestBytesConstraint })
-  .refine(withinRequestRange, { error: bridgeMaxRequestBytesConstraint })
-  .transform(Number);
+export const bridgeMaxRequestBytesSchema = positiveDecimalIntegerSchema(
+  MINIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  MAXIMUM_BRIDGE_MAX_REQUEST_BYTES,
+  bridgeMaxRequestBytesConstraint,
+);
 
 /** Resolve the effective ceiling from one environment value. */
 export const parseBridgeMaxRequestBytes = (

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
 import type { DirectAnalysis } from "../composition/directAnalysis.js";
@@ -5,9 +6,11 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import {
+  cliDecimalField,
   directAnalysisOptionsFromCli,
   nativeOpenOptionFields,
 } from "./options.js";
+import { decompileDirectoryInputSchema } from "../contracts/decompileDirectory.js";
 import type { CliInstance } from "./types.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -63,14 +66,11 @@ export const registerDecompileDirectoryCommand = (
         .min(1)
         .optional()
         .describe("Inclusive upper bound, 0xoffset or space:0xoffset"),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Maximum functions to attempt after skipping verified files and recorded external functions",
-        ),
+      limit: cliDecimalField(
+        decompileDirectoryInputSchema.shape.limit,
+      ).describe(
+        "Maximum functions to attempt after skipping verified files and recorded external functions",
+      ),
       snapshot: z
         .string()
         .min(1)
@@ -87,7 +87,7 @@ export const registerDecompileDirectoryCommand = (
           "decompile_all",
           decompileAllArguments(options),
           directAnalysisOptionsFromCli(logger, options),
-        ),
+        ).then(projectCliAnalysisResult),
       ),
   });
 };

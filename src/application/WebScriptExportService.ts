@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
@@ -85,17 +84,6 @@ export const exportWebScriptsValidated = async (
   resources: ArtifactResourceScope,
   options: ExecutionOptions = {},
 ): Promise<Result<Evidence, AnalysisError>> => {
-  if (!isAbsolute(input.capture_path) || !isAbsolute(input.output_directory))
-    return err(
-      new AnalysisInputError(OPERATION, undefined, [
-        {
-          path: [],
-          reason: "invalid_format",
-          message:
-            "capture_path and output_directory must be absolute filesystem paths on this host.",
-        },
-      ]),
-    );
   try {
     if (options.signal?.aborted)
       return err(

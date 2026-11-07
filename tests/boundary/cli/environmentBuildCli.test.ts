@@ -26,6 +26,25 @@ const listFiles = async (root: string): Promise<string[]> =>
     .sort();
 
 cliTest(
+  "attributes invalid capture JSON to the capture argument",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-invalid-capture-",
+    );
+    const capture = join(root, "invalid.json");
+    await writeFile(capture, "{");
+    const result = await cli.run({
+      arguments: ["environment-build", capture, join(root, "output"), "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["capture"], reason: "invalid_format" }] },
+    });
+  },
+);
+
+cliTest(
   "builds the bundle the three CLI steps build, byte for byte",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-environment-build-cli-");
@@ -133,7 +152,13 @@ cliTest(
     const har = join(root, "grafana.har");
     await writeFile(har, JSON.stringify(environmentManifestHar()));
     const planned = await cli.run({
-      arguments: ["environment-build", har, "--dry-run", "--json"],
+      arguments: [
+        "environment-build",
+        har,
+        "--dry-run",
+        "--capture-timeout-ms=030000",
+        "--json",
+      ],
       timeoutMs: 60_000,
     });
     expect(planned.exitCode, planned.stderr).toBe(0);
@@ -169,6 +194,22 @@ cliTest(
     expect(conflicting.exitCode).toBe(1);
     expect(conflicting.json).toMatchObject({ code: "invalid_request" });
 
+    // Both capture readers share the field. Numeric coercion would read
+    // "0x1" as a 1 ms capture deadline.
+    for (const command of [
+      ["environment-build", har, "--dry-run"],
+      ["inspect-web-network-capture", har, "har"],
+    ]) {
+      const hexDeadline = await cli.run({
+        arguments: [...command, "--capture-timeout-ms=0x1", "--json"],
+      });
+      expect(hexDeadline.exitCode).toBe(1);
+      expect(hexDeadline.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [expect.objectContaining({ path: "captureTimeoutMs" })],
+      });
+    }
+
     const noDirectory = await cli.run({
       arguments: ["environment-build", har, "--json"],
       timeoutMs: 60_000,
@@ -191,5 +232,47 @@ cliTest(
       "grafana.har",
       "grafana.saz",
     ]);
+  },
+);
+
+cliTest.for(["--dry-run=abc", "--dry-run="] as const)(
+  "rejects malformed environment-build dry-run %s before publication",
+  async (dryRun, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-invalid-dry-run-",
+    );
+    const har = join(root, "grafana.har");
+    const output = join(root, "bundle");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    const result = await cli.run({
+      arguments: ["environment-build", har, output, dryRun, "--json"],
+      timeoutMs: 60_000,
+    });
+    expect(result.exitCode).not.toBe(0);
+    expect(`${result.stdout}\n${result.stderr}`).toContain("--dry-run");
+    expect(await readdir(root)).toEqual(["grafana.har"]);
+  },
+);
+
+cliTest.for(["--dry-run=true", "--dry-run=false"] as const)(
+  "preserves explicit environment-build dry-run value %s",
+  async (dryRun, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-environment-explicit-dry-run-",
+    );
+    const har = join(root, "grafana.har");
+    const output = join(root, "bundle");
+    await writeFile(har, JSON.stringify(environmentManifestHar()));
+    const result = await cli.run({
+      arguments: ["environment-build", har, output, dryRun, "--json"],
+      timeoutMs: 60_000,
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.json).toMatchObject({
+      status: dryRun === "--dry-run=true" ? "planned" : "built",
+    });
+    expect((await readdir(root)).includes("bundle")).toBe(
+      dryRun === "--dry-run=false",
+    );
   },
 );

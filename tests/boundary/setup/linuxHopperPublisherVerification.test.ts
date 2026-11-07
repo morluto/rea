@@ -22,6 +22,8 @@ import { fileURLToPath } from "node:url";
 
 import { createMessage, generateKey, readPrivateKey, sign } from "openpgp";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 import {
   LinuxHopperPublisher,
@@ -30,10 +32,14 @@ import {
 import { ArtifactReaderFailure } from "../../../src/artifacts/ArtifactReader.js";
 import {
   HOPPER_LINUX_PRIMARY_FINGERPRINT,
+  HOPPER_RELEASES_URL,
   type LinuxHopperRelease,
 } from "../../../src/application/HopperReleaseFeed.js";
 import * as signatures from "../../../src/process/DetachedPgpSignature.js";
-import { downloadHopperPackage } from "../../../src/application/HopperDownload.js";
+import {
+  downloadHopperPackage,
+  HOPPER_METADATA_TIMEOUT_MS,
+} from "../../../src/application/HopperDownload.js";
 import { PrivateRuntimeRoot } from "../../../src/process/PrivateRuntimeRoot.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import * as leases from "../../../src/process/HopperLease.js";
@@ -152,6 +158,133 @@ it.each([undefined, "", "/selected/cache", "relative/cache"])(
   },
 );
 
+portableTar.each(["HOME", "XDG_CACHE_HOME"] as const)(
+  "retains and reads signed packages under the selected %s symlink traversal",
+  async (setting) => {
+    const f = await fixture("arch");
+    admitFixturePublisher(f.fingerprint);
+    const directory = await createTestTempDirectory(
+      "rea-linux-selected-cache-",
+    );
+    const physical = join(directory, "physical");
+    await mkdir(join(physical, "child"), { recursive: true });
+    await symlink(join(physical, "child"), join(directory, "alias"), "dir");
+    const selected = `${directory}/alias/..`;
+    const suffix =
+      setting === "HOME" ? ".cache/rea/hopper-releases" : "rea/hopper-releases";
+    const expected = `${physical}/${suffix}/${f.release.main_exe_hash}`;
+    const decoy = `${directory}/${suffix}/${f.release.main_exe_hash}`;
+    await mkdir(decoy, { recursive: true });
+    await writeFile(`${decoy}/release.json`, "caller evidence");
+    const publisher = new LinuxHopperPublisher(
+      { [setting]: selected },
+      async () => "arch",
+    );
+    try {
+      const verified = await verifyFixtureArchive(f, "arch");
+      expect(
+        await publisher.retainVerifiedArchive(verified, f.archive),
+      ).toEqual({
+        ok: true,
+        value: undefined,
+      });
+      expect(
+        (await readFile(`${expected}/archive`)).equals(
+          await readFile(f.archive),
+        ),
+      ).toBe(true);
+      expect(publisher.cacheRoot).toBe(`${selected}/${suffix}`);
+      expect(await publisher.inspectLauncher(f.launcher)).toMatchObject({
+        ok: true,
+        value: { source: "signed_package_cache" },
+      });
+      expect(await readFile(`${decoy}/release.json`, "utf8")).toBe(
+        "caller evidence",
+      );
+      expect(await readdir(decoy)).toEqual(["release.json"]);
+    } finally {
+      await publisher.close();
+      await f.publisher.close();
+    }
+  },
+);
+
+const feedRelease = () => ({
+  version: "1.0",
+  filename:
+    "https://www.hopperapp.com:443/downloader/public/Hopper-1.0-Linux-demo.deb",
+  file_length: "1",
+  file_hash: "a".repeat(40),
+  main_exe_hash: "b".repeat(64),
+  signature: "AQ==",
+  public: "1",
+  beta: "0",
+  vendor_label: "valid � label",
+  ...JSON.parse(
+    '{"__proto__":{"constructor":"retained"},"vendor_details":{"__proto__":"nested"}}',
+  ),
+});
+
+it.each([false, true])(
+  "retains fetched vendor release JSON with initial BOM=%s",
+  async (bom) => {
+    const root = await createTestTempDirectory("rea-linux-feed-json-");
+    const publisher = new LinuxHopperPublisher(
+      { XDG_CACHE_HOME: root },
+      async () => "deb",
+    );
+    const release = feedRelease();
+    const text = JSON.stringify({ "Ubuntu / Mint": release });
+    const network = vi.fn(
+      async () => new Response(`${bom ? "\uFEFF" : ""}${text}`),
+    );
+    vi.stubGlobal("fetch", network);
+    try {
+      const selected = await publisher.currentRelease("deb");
+      expect(selected).toEqual({ ok: true, value: release });
+      if (!selected.ok) throw selected.error;
+      expect(Object.hasOwn(selected.value, "__proto__")).toBe(true);
+      expect(selected.value.vendor_label).toBe("valid � label");
+      expect(await publisher.currentRelease("deb")).toEqual(selected);
+      expect(network).toHaveBeenCalledOnce();
+      expect(network).toHaveBeenCalledWith(
+        HOPPER_RELEASES_URL,
+        expect.any(Object),
+      );
+    } finally {
+      await publisher.close();
+    }
+  },
+);
+
+it("rejects malformed UTF-8 fetched release metadata without repairing a vendor value", async () => {
+  const root = await createTestTempDirectory("rea-linux-feed-bytes-");
+  const publisher = new LinuxHopperPublisher(
+    { XDG_CACHE_HOME: root },
+    async () => "deb",
+  );
+  const bytes = Buffer.from(JSON.stringify({ "Ubuntu / Mint": feedRelease() }));
+  const offset = bytes.indexOf(Buffer.from("�"));
+  expect(offset).toBeGreaterThanOrEqual(0);
+  const invalid = Buffer.concat([
+    bytes.subarray(0, offset),
+    Buffer.from([0xff]),
+    bytes.subarray(offset + 3),
+  ]);
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async () => new Response(Uint8Array.from(invalid).buffer)),
+  );
+  try {
+    expect(await publisher.currentRelease("deb")).toMatchObject({
+      ok: false,
+      error: { reason: "release_metadata" },
+    });
+  } finally {
+    await publisher.close();
+  }
+});
+
 describe("Linux signed package retention boundary", () => {
   linux(
     "rejects a cryptographically valid package signed by another publisher",
@@ -183,6 +316,14 @@ describe("Linux signed package retention boundary", () => {
     "authenticates a real %s payload and verifies a retained install without network",
     async (family) => {
       const f = await fixture(family);
+      const vendor = {
+        label: "valid � publisher",
+        nested: { ["__proto__"]: "retained" },
+      };
+      Object.defineProperty(f.release, "__proto__", {
+        value: vendor,
+        enumerable: true,
+      });
       admitFixturePublisher(f.fingerprint);
       const network = vi.fn(() => {
         throw new Error("Offline");
@@ -193,6 +334,11 @@ describe("Linux signed package retention boundary", () => {
         expect(
           await f.publisher.retainVerifiedArchive(verifiedArchive, f.archive),
         ).toEqual({ ok: true, value: undefined });
+        const cached = JSON.parse(
+          await readFile(join(f.cache, "release.json"), "utf8"),
+        );
+        expect(Object.hasOwn(cached.release, "__proto__")).toBe(true);
+        expect(cached.release["__proto__"]).toEqual(vendor);
         await f.publisher.close();
         // A new instance alone still shares process-local cryptographic proofs.
         // Reload the owner and assert actual PGP and native payload inspection.
@@ -218,6 +364,9 @@ describe("Linux signed package retention boundary", () => {
               source: "signed_package_cache",
             },
           });
+          expect(
+            JSON.parse(await readFile(join(f.cache, "release.json"), "utf8")),
+          ).toEqual(cached);
           expect(network).not.toHaveBeenCalled();
           expect(signature).toHaveBeenCalledOnce();
           expect(extraction).toHaveBeenCalledWith(
@@ -644,11 +793,21 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
         }),
     ),
   );
-  await expect(
-    downloadHopperPackage("https://www.hopperapp.com/fixture", {
+  // REA's own deadline is a returned transport fact; only caller cancellation rejects.
+  expect(
+    await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       timeoutMs: 10,
     }),
-  ).rejects.toMatchObject({ name: "TimeoutError" });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "timeout",
+      limit: "deadline",
+      timeoutMs: 10,
+      receivedBytes: 0,
+    },
+  });
   const controller = new AbortController();
   const reason = new Error("Caller cancelled metadata inspection");
   const pending = downloadHopperPackage("https://www.hopperapp.com/fixture", {
@@ -656,6 +815,42 @@ it("bounds a stalled metadata fetch and preserves caller cancellation", async ()
   });
   controller.abort(reason);
   await expect(pending).rejects.toBe(reason);
+});
+it("names the release feed and its limit when the metadata fetch times out", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  try {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        (_url, options: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            options.signal?.addEventListener(
+              "abort",
+              () => reject(options.signal?.reason),
+              { once: true },
+            );
+          }),
+      ),
+    );
+    const publisher = new LinuxHopperPublisher({}, async () => "deb");
+    const pending = publisher.currentRelease("deb");
+    await vi.advanceTimersByTimeAsync(HOPPER_METADATA_TIMEOUT_MS);
+    expect(await pending).toMatchObject({
+      ok: false,
+      error: {
+        reason: "release_metadata",
+        download: {
+          request: "release_feed",
+          kind: "timeout",
+          limit: "deadline",
+          timeoutMs: HOPPER_METADATA_TIMEOUT_MS,
+          receivedBytes: 0,
+        },
+      },
+    });
+  } finally {
+    vi.useRealTimers();
+  }
 });
 it("cancels an oversized chunked metadata response before retaining it", async () => {
   const cancelled = vi.fn();
@@ -677,7 +872,14 @@ it("cancels an oversized chunked metadata response before retaining it", async (
     await downloadHopperPackage("https://www.hopperapp.com/fixture", {
       maxBytes: 3,
     }),
-  ).toEqual({ ok: false, bytes: new Uint8Array() });
+  ).toEqual({
+    ok: false,
+    error: {
+      url: "https://www.hopperapp.com/fixture",
+      kind: "response_too_large",
+      maxBytes: 3,
+    },
+  });
   expect(cancelled).toHaveBeenCalledOnce();
 });
 
@@ -891,9 +1093,13 @@ portableTar(
           throw new Error("Fixture descriptor close temporarily unavailable");
         return await originalClose.apply(this);
       });
-    try {
-      const inspection = f.publisher.inspectLauncher(f.launcher);
-      await metadataCloseStarted;
+    const inspection = f.publisher.inspectLauncher(f.launcher);
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(
+        metadataCloseStarted,
+        inspection,
+        "metadata close",
+      );
       const hashFailure = await f.publisher.hashLauncher(f.launcher).then(
         () => undefined,
         (cause: unknown) => cause,
@@ -913,11 +1119,14 @@ portableTar(
       });
       await expect(f.publisher.close()).resolves.toBeUndefined();
       expect(close).toHaveBeenCalledTimes(9);
-    } finally {
-      releaseMetadataClose();
-      close.mockRestore();
-      await f.publisher.close();
-    }
+    }, [
+      releaseMetadataClose,
+      async () => {
+        await inspection;
+      },
+      () => close.mockRestore(),
+      () => f.publisher.close(),
+    ]);
   },
 );
 

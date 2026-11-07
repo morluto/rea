@@ -1,3 +1,8 @@
+import {
+  cdpFrameRecordFacts,
+  cdpFrameEventFacts,
+  type CdpFrameFacts,
+} from "./CdpFrameIdentity.js";
 import { createHash } from "node:crypto";
 
 import type { ProgressReporter } from "../application/ProgressReporter.js";
@@ -32,7 +37,10 @@ import {
   walkFrameTrees,
 } from "./CdpCaptureDocuments.js";
 import { optionalCdpCommand } from "./CdpOptionalCommand.js";
-import { topCallFrame } from "./CdpCaptureEventHelpers.js";
+import {
+  cdpSourceCoordinates,
+  topCallFrame,
+} from "./CdpCaptureEventHelpers.js";
 
 interface DiscoveryContext {
   readonly connection: CdpConnection;
@@ -179,15 +187,12 @@ const ingestInitialFrameTree = (
       omittedCount,
     ),
   )) {
-    const frame = recordValue(tree.frame);
-    const parent = cdpStringValue(frame?.parentId);
-    if (
-      frame !== undefined &&
-      (tree !== root || Object.hasOwn(frame, "parentId")) &&
-      (parent === undefined || parent === "")
-    )
-      state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    handleFrameUpdate(frame, state, true);
+    const facts = cdpFrameRecordFacts(recordValue(tree.frame));
+    if (tree !== root && facts.parentRelation === "root") {
+      invalidateFrameFacts(facts, state);
+      continue;
+    }
+    handleFrameUpdate(facts, state, true);
   }
 };
 
@@ -195,50 +200,54 @@ const ingestFrameScopeEvent = (
   event: CdpEvent,
   state: FrameScopeState,
 ): boolean => {
-  const params = recordValue(event.params);
-  if (params === undefined) return false;
-  switch (event.method) {
-    case "Page.frameDetached":
-      return handleFrameDetached(params, state);
-    case "Page.frameNavigated":
-      return handleFrameUpdate(recordValue(params.frame), state, true);
-    case "Page.navigatedWithinDocument":
-      return handleFrameUpdate(params, state, false);
+  const facts = cdpFrameEventFacts(event);
+  switch (facts.kind) {
+    case "detached":
+      if (facts.identityIssue !== null || facts.frameId === null) {
+        invalidateFrameFacts(facts, state);
+        return true;
+      }
+      removeFrame(facts.frameId, state.frames, state.tools);
+      state.transientFrames.delete(facts.frameId);
+      state.resolvedTransientFrames.delete(facts.frameId);
+      return true;
+    case "navigated":
+      return handleFrameUpdate(facts, state, true);
+    case "within_document":
+      return handleFrameUpdate(facts, state, false);
     default:
       return false;
   }
 };
 
-const handleFrameDetached = (
-  params: UnknownRecord,
+/** Malformed declarations cannot preserve cached authority for an attributable frame. */
+const invalidateFrameFacts = (
+  facts: CdpFrameFacts,
   state: FrameScopeState,
-): boolean => {
-  const frameId = cdpStringValue(params.frameId);
-  if (frameId === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return true;
-  }
-  removeFrame(frameId, state.frames, state.tools);
-  state.transientFrames.delete(frameId);
-  state.resolvedTransientFrames.delete(frameId);
-  return true;
+): void => {
+  state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+  if (facts.frameId === null) return;
+  removeFrame(facts.frameId, state.frames, state.tools);
+  state.transientFrames.delete(facts.frameId);
+  state.resolvedTransientFrames.delete(facts.frameId);
 };
 
 const handleFrameUpdate = (
-  frame: UnknownRecord | undefined,
+  sourceFacts: CdpFrameFacts,
   state: FrameScopeState,
   documentCommitted: boolean,
 ): boolean => {
-  if (frame === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
+  const frameId = sourceFacts.frameId;
+  if (
+    sourceFacts.identityIssue !== null ||
+    sourceFacts.parentIssue !== null ||
+    sourceFacts.loaderIssue !== null ||
+    frameId === null
+  ) {
+    invalidateFrameFacts(sourceFacts, state);
     return true;
   }
-  const frameId = cdpStringValue(frame?.id) ?? cdpStringValue(frame?.frameId);
-  if (frameId === undefined) {
-    state.completeness.exclude("webmcp_tools", "invalid_protocol_value");
-    return true;
-  }
-  const observation = observeCdpFrameUrl(frame);
+  const observation = observeCdpFrameUrl(sourceFacts.source);
   const facts = classifyCdpFrameUrl(observation, state.origins);
   if (observation.kind !== "observed") {
     removeFrameTools(frameId, state.tools);
@@ -263,12 +272,12 @@ const handleFrameUpdate = (
     }
     return true;
   }
-  updateFrameScope(frame, frameId, facts, state, documentCommitted);
+  updateFrameScope(sourceFacts, frameId, facts, state, documentCommitted);
   return true;
 };
 
 const updateFrameScope = (
-  frame: UnknownRecord,
+  sourceFacts: CdpFrameFacts,
   frameId: string,
   facts: ReturnType<typeof classifyCdpFrameUrl>,
   state: FrameScopeState,
@@ -283,7 +292,9 @@ const updateFrameScope = (
     return;
   }
   const previous = state.frames.get(frameId);
-  const loaderId = cdpStringValue(frame?.loaderId);
+  const loaderId = documentCommitted
+    ? sourceFacts.loaderId
+    : previous?.loaderId;
   if (hasNewDocument(documentCommitted, previous, facts.url, loaderId))
     removeFrameTools(frameId, state.tools);
   if (documentCommitted && state.transientFrames.has(frameId))
@@ -293,10 +304,9 @@ const updateFrameScope = (
     origin: facts.origin,
     ...(loaderId === undefined ? {} : { loaderId }),
     parentFrameId:
-      (cdpStringValue(frame?.parentId) ??
-        state.frames.get(frameId)?.parentFrameId ??
-        "") ||
-      null,
+      sourceFacts.parentRelation === "not_applicable"
+        ? (previous?.parentFrameId ?? null)
+        : sourceFacts.parentId,
   });
 };
 
@@ -512,7 +522,10 @@ const normalizeTool = (
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
   const schema = declaration?.success === true ? declaration.data : null;
   const registrationFrame = topCallFrame(value.stackTrace);
-  if (!registrationFrame.ok)
+  const coordinates = cdpSourceCoordinates(
+    registrationFrame.ok ? registrationFrame.value : undefined,
+  );
+  if (!registrationFrame.ok || coordinates.invalid)
     completeness.exclude("webmcp_tools", "invalid_protocol_value");
   return {
     tool_key: toolKey(frame.url, frameId, name),
@@ -535,7 +548,9 @@ const normalizeTool = (
       autosubmit: annotation("autosubmit"),
     },
     registration_source: registrationSource(
-      registrationFrame.ok ? registrationFrame.value : undefined,
+      registrationFrame.ok && !coordinates.invalid
+        ? registrationFrame.value
+        : undefined,
       new Set(input.allowed_origins),
     ),
     trust: "page-declared-untrusted",
@@ -547,12 +562,13 @@ const registrationSource = (
   allowedOrigins: ReadonlySet<string>,
 ): WebMcpDiscovery["tools"]["items"][number]["registration_source"] => {
   const url = allowedSanitizedUrl(frame?.url, allowedOrigins);
+  const coordinates = cdpSourceCoordinates(frame);
   return frame === undefined || url === undefined
     ? null
     : {
         url: url.url,
-        line: integerOrNull(frame.lineNumber),
-        column: integerOrNull(frame.columnNumber),
+        line: coordinates.line,
+        column: coordinates.column,
       };
 };
 
@@ -602,8 +618,3 @@ const toolKey = (frameUrl: string, frameId: string, name: string): string =>
   `webmcp_${createHash("sha256")
     .update(compositeKey([frameUrl, frameId, name]))
     .digest("hex")}`;
-
-const integerOrNull = (value: unknown): number | null => {
-  const number = numberValue(value);
-  return number === undefined ? null : Math.max(0, Math.trunc(number));
-};

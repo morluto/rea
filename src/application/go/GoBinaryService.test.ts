@@ -28,6 +28,7 @@ const report: GoBinary = {
 it("rejects invalid paths and extra caller arguments before invoking the reader", async () => {
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -49,6 +50,7 @@ it("rejects invalid paths and extra caller arguments before invoking the reader"
 it("requires a complete Evidence retention path before starting summary inspection", async () => {
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: async () => {
       calls++;
@@ -67,6 +69,7 @@ it("requires a complete Evidence retention path before starting summary inspecti
 
 it("preserves unsupported subject architectures and does not duplicate metadata", async () => {
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(report)),
   });
@@ -113,6 +116,7 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     limitations: ["Some embedded strings contain non-UTF-8 bytes."],
   };
   const result = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(partial)),
   }).inspect({ path: report.artifact.path });
@@ -128,6 +132,7 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     },
   };
   const invalid = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => Promise.resolve(ok(mismatched)),
   }).inspect({ path: report.artifact.path });
@@ -163,6 +168,7 @@ it("refuses reader identity changes and invalid original source ranges", async (
     outside,
   ]) {
     const result = await new GoBinaryService({
+      close: async () => {},
       identity,
       inspect: () => Promise.resolve(ok(value)),
     }).inspect({ path: report.artifact.path });
@@ -176,6 +182,7 @@ it("honors cancellation before reading and after a completed observation", async
   const reason = { request: "late Go cancellation" };
   let calls = 0;
   const service = new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       calls += 1;
@@ -212,6 +219,7 @@ it("keeps malformed provider output ahead of a late cancellation", async () => {
     artifact: { ...report.artifact, path: "/other" },
   };
   const result = await new GoBinaryService({
+    close: async () => {},
     identity,
     inspect: () => {
       controller.abort();
@@ -240,6 +248,7 @@ it.each([
     controller.abort(reason);
     let calls = 0;
     const service = new GoBinaryService({
+      close: async () => {},
       identity,
       inspect: async () => {
         calls += 1;

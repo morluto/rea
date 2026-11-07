@@ -1,15 +1,18 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { analysisDetailSchema } from "./analysisDetail.js";
 import { z } from "zod";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { examplesFor } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { FUNCTION_WORKFLOW_TOOL_CONTRACTS } from "./functionWorkflowToolContracts.js";
 
-const enhanced = <Name extends string, Schema extends z.ZodObject>(
+const enhanced = <
+  Name extends keyof typeof enhancedOutputSchemas,
+  Schema extends z.ZodObject,
+>(
   name: Name,
   description: string,
   inputSchema: Schema,
@@ -44,8 +47,10 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "batch_decompile",
-    "Decompile each explicit procedure symbol or address, with one provider read active per batch. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item success or error results and aggregate counts. The complete reply retains every pseudocode body; use selected small batches to bound retained output. A per-function limit is not a batch deadline; allow for every item or split calls.",
-    enhancedInputSchemas.batch_decompile,
+    "Decompile each explicit procedure symbol or address, with one provider read active per batch. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item outcomes and aggregate counts. An unavailable item means the provider returned null pseudocode; its limitations retain any reported reason without asserting provider capability or retryability. Errors report failed operations or malformed output. Failed counts include unavailable items. The complete reply carries every pseudocode body. Select detail summary to retain the batch and receive only counts, then read rows or one body by index through inspect_analysis_view. A per-function limit is not a batch deadline; allow for every item or split calls.",
+    enhancedInputSchemas.batch_decompile.extend({
+      detail: analysisDetailSchema,
+    }),
   ),
   enhanced(
     "decompile_all",
@@ -71,14 +76,14 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "binary_overview",
-    "Return the bound document and exhaustive procedure/string counts, plus every segment and segment_count when the provider supports segment enumeration. If segment fields are omitted, segment coverage is unavailable rather than empty. When every observed segment agrees on an analysis image base, return it as image_base so callers can relate provider addresses to their loader coordinates. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
+    "Return the bound document and procedure/string counts totalling every row of the bound provider's inventories (inventory_coverage: provider scope, discovery unknown; not comparable across providers), plus every segment and segment_count when the provider supports segment enumeration. If segment fields are omitted, segment coverage is unavailable rather than empty. When every observed segment agrees on an analysis image base, return it as image_base so callers can relate provider addresses to their loader coordinates. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
     enhancedInputSchemas.binary_overview,
   ),
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Trace the complete literal query, preserving spaces, through every matching string and procedure, their xrefs, and truthful containing-procedure resolution. Returns observations and residual unknowns without inferring reference kinds.",
-    enhancedInputSchemas.trace_feature,
+    "Trace the complete literal query, preserving spaces, through every matching string and procedure and their xrefs. Preserve an explicit unavailable owner for a non-retryable containment capability refusal. Returns observations and residual unknowns without inferring reference kinds; truncated only reports an observed reference cap. For a procedure match, use procedure_references with direction incoming for provider-reported kinds when supported; it covers the procedure body, so compare target addresses when selecting exact-entry references. Select detail summary to retain complete Evidence and page matches, references and unknowns with inspect_analysis_view kind native-feature-trace.",
+    enhancedInputSchemas.trace_feature.extend({ detail: analysisDetailSchema }),
   ),
   enhanced(
     "trace_call_path",

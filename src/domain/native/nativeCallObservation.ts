@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { jsonObjectSchema } from "../jsonValue.js";
+import { jsonRecordSchema } from "../jsonRecord.js";
 import { localPathStringSchema } from "../localPath.js";
 
 const hexSchema = z.string().regex(/^0x[0-9a-f]+$/u);
@@ -66,29 +66,10 @@ const environmentNameSchema = z
 const environmentValueSchema = z
   .string()
   .regex(/^[^\x00]*$/u, "Environment values cannot contain NUL");
-const environmentRecordProjection = z.record(
-  environmentNameSchema,
+const nativeCallEnvironmentSchema = jsonRecordSchema(
   environmentValueSchema,
+  environmentNameSchema,
 );
-
-// z.record skips __proto__. Own the JSON map before validating entries so every
-// selected environment name survives input parsing, readback and partial Evidence.
-const nativeCallEnvironmentSchema = jsonObjectSchema
-  .superRefine((value, context) => {
-    for (const [name, entry] of Object.entries(value)) {
-      for (const parsed of [
-        environmentNameSchema.safeParse(name),
-        environmentValueSchema.safeParse(entry),
-      ]) {
-        if (!parsed.success)
-          for (const issue of parsed.error.issues)
-            context.addIssue({ ...issue, path: [name, ...issue.path] });
-      }
-    }
-  })
-  .transform((value) => value as Record<string, string>);
-nativeCallEnvironmentSchema._zod.toJSONSchema = () =>
-  z.toJSONSchema(environmentRecordProjection, { io: "input" });
 
 /**
  * Launch the active Mach-O as an owned process under LLDB and observe calls.

@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { javascriptRecoveryInputSchema } from "../domain/javascript/javascriptRecovery.js";
 import { z } from "incur";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
@@ -65,7 +66,7 @@ export const registerJavaScriptRecoveryCommands = (
             "wakaru",
             "recover_javascript_sources",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

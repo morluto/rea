@@ -1,5 +1,8 @@
 import { artifactInventoryResultSchema } from "./artifactGraph.js";
-import { artifactManifestId } from "./artifactIdentity.js";
+import {
+  artifactIdForContent,
+  artifactManifestId,
+} from "./artifactIdentity.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { freezeJsonSnapshot } from "./immutableJson.js";
 import { expect, it } from "vitest";
@@ -37,6 +40,40 @@ const inspectionEvidence = (result: unknown, subject = target) =>
   );
 
 const inspection = createArtifactInspection(inventoryEvidence);
+
+it.each([
+  { occurrence_id: `occ_${"f".repeat(64)}` },
+  { artifact_id: null },
+  { artifact_format: "unknown" },
+  { entry_kind: "directory" },
+  { parent_occurrence_id: `occ_${"f".repeat(64)}` },
+])("rejects an invalid root on an incomplete inventory page: %j", (patch) => {
+  const inventory = artifactInventoryResultSchema.parse(
+    inventoryEvidence.normalized_result,
+  );
+  const carrier = createEvidence(
+    {
+      path: target.local_path,
+      sha256: target.digest.sha256,
+      format: target.format,
+    },
+    inventoryEvidence.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: {},
+      result: {
+        ...inventory,
+        nodes: [],
+        occurrences: [{ ...inventory.occurrences[0]!, ...patch }],
+      },
+      confidence: "derived",
+      authority: "shipped-artifact",
+    },
+  );
+  expect(() => parseArtifactInventoryEvidence(carrier)).toThrow(
+    EvidenceIntegrityError,
+  );
+});
 
 it("accepts an inspection whose carrier, declaration, and substep identities agree", () => {
   expect(
@@ -178,3 +215,81 @@ it("reports incompatible independently valid manifests as caller composition", (
     ]),
   ).toThrow(ArtifactInventoryCarrierError);
 });
+
+it.each(
+  (["nodes", "occurrences", "edges"] as const).flatMap((member) =>
+    (["single", "assembled"] as const).map((mode) => ({ member, mode })),
+  ),
+)(
+  "rejects $member exceeding the manifest in $mode pages",
+  ({ member, mode }) => {
+    const inventory = artifactInventoryResultSchema.parse(
+      inventoryEvidence.normalized_result,
+    );
+    const root = inventory.occurrences[0]!;
+    const sha256 = "f".repeat(64);
+    const members = {
+      nodes: [
+        inventory.nodes[0]!,
+        {
+          ...inventory.nodes[0]!,
+          sha256,
+          artifact_id: artifactIdForContent(sha256),
+        },
+      ],
+      occurrences: [
+        root,
+        {
+          ...root,
+          occurrence_id: `occ_${"f".repeat(64)}`,
+          logical_path: "child",
+        },
+      ],
+      edges: ["a", "b"].map((digit) => ({
+        edge_id: `edge_${digit.repeat(64)}`,
+        ordinal: 0,
+        parent_artifact_id: inventory.manifest.root_artifact_id,
+        relation: "contains" as const,
+        occurrence_id: root.occurrence_id,
+        producer: null,
+      })),
+    };
+    const manifest = { ...inventory.manifest, edge_count: 1 };
+    const page = (indices: readonly number[]) =>
+      createEvidence(
+        {
+          path: target.local_path,
+          sha256: target.digest.sha256,
+          format: target.format,
+        },
+        inventoryEvidence.provider,
+        {
+          operation: "inventory_artifact",
+          parameters: {},
+          confidence: "observed",
+          authority: "shipped-artifact",
+          result: {
+            ...inventory,
+            manifest,
+            nodes: [],
+            occurrences: [],
+            edges: [],
+            [member]: indices.map((index) => members[member][index]!),
+          },
+        },
+      );
+    const first = page([0]);
+    const second = page([1]);
+    expect(parseArtifactInventoryEvidence(first).inventory.complete).toBe(
+      false,
+    );
+    expect(parseArtifactInventoryEvidence(second).inventory.complete).toBe(
+      false,
+    );
+    expect(() =>
+      parseArtifactInventoryEvidence(
+        mode === "single" ? page([0, 1]) : [first, second],
+      ),
+    ).toThrow(EvidenceIntegrityError);
+  },
+);

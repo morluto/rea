@@ -9,18 +9,23 @@ import {
   symlink,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
+import { isPathWithinRoot } from "../dist/domain/localPath.js";
 import { createVerifierCommands } from "./lib/verify-commands.mjs";
 import { saveVerifierCommandOutput } from "./lib/verifier-command-output.mjs";
 import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { assertJavaScriptApplicationInputPaths } from "./lib/javascript-application-paths.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import {
-  TOOL_CONTRACTS,
-  toolContract,
-} from "../dist/contracts/toolContracts.js";
+  CLIENT_JAVASCRIPT_FIXTURE_SOURCE,
+  assertClientJavaScriptFixtureEvidence,
+} from "./verify/clients/javascript-fixture.mjs";
+import {
+  findClientResult,
+  isClientJavaScriptEvidence,
+} from "./verify/clients/result-discovery.mjs";
+import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { TOOL_CONTRACTS } from "../dist/contracts/toolContracts.js";
 
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const runtimeRoot = process.env.REA_VERIFY_RUNTIME_ROOT ?? repo;
@@ -54,9 +59,10 @@ let clientVersion = null;
 let fixture;
 let passed = false;
 let evidenceSeen = false;
-let skillSeen = false;
 let finalSeen = false;
 let skillRequested = false;
+let skillCallId;
+let expectedSkillBody;
 let searchCallId;
 let analysisCallId;
 let artifactReadByAgent = false;
@@ -129,8 +135,11 @@ await withVerifierCleanup(async () => {
         assert(
           result.plannedActions.every(
             (a) =>
-              a.target.startsWith(profile + sep) ||
-              a.target.startsWith(sharedSkills + sep),
+              isAbsolute(a.target) &&
+              ((relative(profile, a.target) !== "" &&
+                isPathWithinRoot(profile, a.target)) ||
+                (relative(sharedSkills, a.target) !== "" &&
+                  isPathWithinRoot(sharedSkills, a.target))),
           ),
         );
       await writeFile(
@@ -158,6 +167,20 @@ await withVerifierCleanup(async () => {
       command: "unrelated-server",
       disabled: true,
     });
+    const skillFile = join(
+      sharedSkills,
+      "reverse-engineer-anything",
+      "SKILL.md",
+    );
+    const normalizedSkill = (await readFile(skillFile, "utf8"))
+      .replace(/^\uFEFF/u, "")
+      .replace(/\r\n|\r/gu, "\n");
+    const frontmatter = /^---\n([\s\S]*?)\n---(?:\n|$)([\s\S]*)$/u.exec(
+      normalizedSkill,
+    );
+    assert(frontmatter, "Installed skill must have authored frontmatter");
+    expectedSkillBody = frontmatter[2].trim();
+    assert(expectedSkillBody.length > 0);
     clientPath = baseEnvironment.PATH;
     if (reducedPath) {
       assert.equal(
@@ -191,43 +214,11 @@ await withVerifierCleanup(async () => {
     }
     const target = join(lab, "fixture α测试");
     await mkdir(target, { recursive: true });
-    await writeFile(
-      `${target}/app.js`,
-      'export function result() { return { clientCompatibility: "REA_CLIENT_FIXTURE", count: 7 }; }\n',
-    );
-    const extractEvidence = (value) => {
-      if (typeof value === "string") {
-        try {
-          return extractEvidence(JSON.parse(value));
-        } catch {
-          return null;
-        }
-      }
-      if (Array.isArray(value)) {
-        for (const item of value) {
-          const result = extractEvidence(item);
-          if (result) return result;
-        }
-      } else if (value && typeof value === "object") {
-        if (
-          typeof value.evidence_id === "string" &&
-          value.normalized_result?.graph?.nodes?.length > 0
-        )
-          return value;
-        for (const nested of Object.values(value)) {
-          const result = extractEvidence(nested);
-          if (result) return result;
-        }
-      }
-      return null;
-    };
+    await writeFile(`${target}/app.js`, CLIENT_JAVASCRIPT_FIXTURE_SOURCE);
     fixture = await createOpenAiModelFixture({
       directory: lab,
       prefix: `${client}-${mode}`,
       onRequest: async ({ body, tools, requestIndex }) => {
-        skillSeen ||= JSON.stringify(body.messages ?? []).includes(
-          "reverse-engineer-anything",
-        );
         const messages = (body.messages ?? []).map((message) => ({
           role: message.role,
           callId: message.tool_call_id,
@@ -238,14 +229,14 @@ await withVerifierCleanup(async () => {
                   .map((part) => part.text ?? "")
                   .join("\n"),
         }));
-        const messageText = messages.map((message) => message.text).join("\n");
         const toolResponseText = (callId) =>
           messages.find(
             (message) => message.role === "tool" && message.callId === callId,
           )?.text ?? "";
-        selectedSkillLoaded ||= messageText.includes(
-          join(sharedSkills, "reverse-engineer-anything"),
-        );
+        const expectedSkill = `Base directory for this skill: ${join(sharedSkills, "reverse-engineer-anything")}\nImportant: ALWAYS resolve absolute paths from this base directory when working with skills.\n\n${expectedSkillBody}\n`;
+        selectedSkillLoaded ||=
+          skillCallId !== undefined &&
+          toolResponseText(skillCallId).includes(expectedSkill);
         const toolText = JSON.stringify(
           (body.messages ?? []).filter((m) => m.role === "tool"),
         );
@@ -257,34 +248,9 @@ await withVerifierCleanup(async () => {
           assert(artifactPath);
           const artifact = await readFile(artifactPath);
           artifactDigest = createHash("sha256").update(artifact).digest("hex");
-          const evidence = toolContract(
-            "analyze_javascript_application",
-          ).outputSchema.parse(JSON.parse(artifact.toString("utf8")));
-          assert(extractEvidence(evidence));
-          await assertJavaScriptApplicationInputPaths(evidence, target);
-          const shape = evidence.normalized_result.graph.nodes
-            .flatMap((n) => n.observations)
-            .map((o) => o.properties)
-            .find(
-              (p) =>
-                p.semantic_role === "export-return-shapes" &&
-                p.exported_name === "result",
-            );
-          assert(shape?.return_shape_coverage?.projection_complete);
-          const fields = shape.static_return_shapes.flatMap((s) => s.fields);
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/clientCompatibility" &&
-                f.state === "literal" &&
-                f.value === "REA_CLIENT_FIXTURE",
-            ),
-          );
-          assert(
-            fields.some(
-              (f) =>
-                f.path === "/count" && f.state === "literal" && f.value === 7,
-            ),
+          const { evidence } = await assertClientJavaScriptFixtureEvidence(
+            JSON.parse(artifact.toString("utf8")),
+            target,
           );
           evidenceSeen = true;
           await writeFile(
@@ -294,12 +260,14 @@ await withVerifierCleanup(async () => {
         }
         for (const message of body.messages ?? []) {
           if (message.role !== "tool") continue;
-          const evidence = extractEvidence(message.content);
-          if (evidence) {
-            assert(
-              JSON.stringify(evidence.normalized_result).includes(
-                "REA_CLIENT_FIXTURE",
-              ),
+          const candidate = findClientResult(
+            message.content,
+            isClientJavaScriptEvidence,
+          );
+          if (candidate) {
+            const { evidence } = await assertClientJavaScriptFixtureEvidence(
+              candidate,
+              target,
             );
             evidenceSeen = true;
             await writeFile(
@@ -346,6 +314,7 @@ await withVerifierCleanup(async () => {
         } else if (skill && !skillRequested) {
           skillRequested = true;
           message = call(skill.name, { skill: "reverse-engineer-anything" });
+          skillCallId = message.tool_calls[0].id;
         } else if (persisted && shell) {
           artifactPath = persisted[1];
           assert(

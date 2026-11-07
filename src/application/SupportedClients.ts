@@ -1,12 +1,13 @@
 import { dirname, isAbsolute, join, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { lstatSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
   resolveHermesClientHome,
 } from "./HermesClientHome.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
+import { appendCallerPath } from "../filesystem/callerPath.js";
 import { resolveWindowsClaudeDesktopLocation } from "./ClaudeDesktopConfigLocation.js";
 import {
   type MsixPackageView,
@@ -58,6 +59,7 @@ export interface SetupClient {
     | "omp"
     | "pi"
     | "kimi"
+    | "lm_studio"
     | "hermes"
     | "zcode_fallback"
     | "zcode"
@@ -68,6 +70,7 @@ export interface SetupClient {
 interface ClientPathFailure {
   readonly path: string;
   readonly message: string;
+  readonly msixPackage?: MsixPackageView;
 }
 
 type ClientPathResult = Result<string, ClientPathFailure>;
@@ -129,11 +132,26 @@ const vscodeUserDirectory = ({
   platform,
   env,
 }: ClientPathContext): string => {
-  if (platform === "win32")
-    return join(windowsAppDataRoots(home, env).roaming, "Code", "User");
-  if (platform === "darwin")
-    return join(home, "Library", "Application Support", "Code", "User");
-  return join(xdgConfigHome({ home, platform, env }), "Code", "User");
+  // Match VS Code's user-data selection before appending the User scope.
+  // Empty overrides are unset; portable storage takes precedence over appdata.
+  const userData = env.VSCODE_PORTABLE
+    ? join(env.VSCODE_PORTABLE, "user-data")
+    : env.VSCODE_APPDATA
+      ? join(env.VSCODE_APPDATA, "Code")
+      : platform === "win32"
+        ? join(windowsAppDataRoots(home, env).roaming, "Code")
+        : platform === "darwin"
+          ? join(home, "Library", "Application Support", "Code")
+          : join(xdgConfigHome({ home, platform, env }), "Code");
+  // The catalog can describe Windows clients on another host; retain its
+  // drive-absolute paths instead of resolving them against that host cwd.
+  const absoluteUserData =
+    platform === "win32" && win32.isAbsolute(userData) && !isAbsolute(userData)
+      ? userData
+      : isAbsolute(userData)
+        ? resolve(userData)
+        : resolve(env.VSCODE_CWD || process.cwd(), userData);
+  return join(absoluteUserData, "User");
 };
 
 const traeUserDirectory = ({
@@ -177,11 +195,46 @@ const codexDirectory = ({ home, env }: ClientPathContext): string =>
 const kimiDirectory = ({ home, env }: ClientPathContext): string =>
   env.KIMI_CODE_HOME || join(home, ".kimi-code");
 
+/** Clients registered with the compact input-schema profile unless one is selected. */
+export const compactInputSchemaByDefault = ({
+  name,
+}: Pick<SetupClient, "name">): boolean =>
+  name === "kimi" || name === "lm_studio";
+
+/**
+ * LM Studio's findLMStudioHome, read-only: a home pointer file wins, then an
+ * existing ~/.cache/lm-studio, then ~/.lmstudio. Setup never writes the pointer.
+ */
+const lmStudioLocation = ({
+  home,
+}: ClientPathContext): Result<ClientLocation, ClientPathFailure> => {
+  const pointerPath = join(home, ".lmstudio-home-pointer");
+  let directory: string;
+  try {
+    directory = readFileSync(pointerPath, "utf8").trim();
+  } catch (cause: unknown) {
+    if (!(cause instanceof Error && "code" in cause && cause.code === "ENOENT"))
+      return err({
+        path: pointerPath,
+        message: `${pointerPath} could not be read, so REA cannot establish which LM Studio home holds mcp.json: ${cause instanceof Error ? cause.message : String(cause)}. Repair access to that file, then rerun.`,
+      });
+    const cache = join(home, ".cache", "lm-studio");
+    directory = existsSync(cache) ? cache : join(home, ".lmstudio");
+  }
+  if (!isAbsolute(directory))
+    return err({
+      path: pointerPath,
+      message: `${pointerPath} does not hold an absolute LM Studio home path. Correct or remove that file, then rerun.`,
+    });
+  return ok({ configPath: join(directory, "mcp.json"), markerPath: directory });
+};
+
 const qoderDirectory = ({ home, env }: ClientPathContext): string =>
   env.QODER_CONFIG_DIR || join(home, ".qoder");
 
-const factoryDirectory = ({ home }: ClientPathContext): string =>
-  join(home, ".factory");
+/** Droid's override selects the home containing .factory, including personal skills. */
+const factoryDirectory = ({ home, env }: ClientPathContext): string =>
+  join(env.FACTORY_HOME_OVERRIDE || home, ".factory");
 
 /** Match Qwen Code's home override, including tilde and cwd-relative paths. */
 const qwenCodeDirectory = ({ home, env }: ClientPathContext): string => {
@@ -524,7 +577,7 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "codex",
     displayName: "Codex",
     configPath: (context: ClientPathContext) =>
-      join(codexDirectory(context), "config.toml"),
+      appendCallerPath(codexDirectory(context), "config.toml"),
     markerPath: codexDirectory,
     format: "toml",
   },
@@ -533,6 +586,14 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     displayName: "Cursor",
     configPath: [".cursor", "mcp.json"],
     markerPath: [".cursor"],
+    format: "json",
+  },
+  {
+    name: "codebuddy",
+    displayName: "CodeBuddy",
+    skillPath: [".codebuddy", "skills"],
+    configPath: [".codebuddy", "mcp.json"],
+    markerPath: [".codebuddy"],
     format: "json",
   },
   {
@@ -636,6 +697,12 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     format: "json",
   },
   {
+    name: "lm_studio",
+    displayName: "LM Studio",
+    location: lmStudioLocation,
+    format: "lm_studio",
+  },
+  {
     name: "grok_build",
     displayName: "Grok Build",
     configPath: (context: ClientPathContext) =>
@@ -668,9 +735,9 @@ export const SUPPORTED_CLIENT_DEFINITIONS = [
     name: "hermes",
     displayName: "Hermes",
     skillPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "skills"),
+      appendCallerPath(hermesDirectory(context), "skills"),
     configPath: (context: ClientPathContext) =>
-      join(hermesDirectory(context), "config.yaml"),
+      appendCallerPath(hermesDirectory(context), "config.yaml"),
     markerPath: hermesDirectory,
     format: "hermes",
   },
@@ -846,6 +913,9 @@ export const supportedClients = (
           format: definition.format,
           configPath: location.error.path,
           configPathError: location.error.message,
+          ...(location.error.msixPackage === undefined
+            ? {}
+            : { msixPackage: location.error.msixPackage }),
         };
       const { configPath, markerPath, msixPackage } = location.value;
       return {
@@ -929,6 +999,7 @@ export const clientSkillDirectories = (
       : clientIds.length === 0
         ? ["shared"]
         : clientIds;
+  const sharedDirectory = appendCallerPath(home, ".agents/skills", platform);
   const destinations = new Map<string, { client: string; directory: string }>();
   for (const client of selected) {
     const definition = definitions.find(({ name }) => name === client);
@@ -944,7 +1015,7 @@ export const clientSkillDirectories = (
     try {
       const resolved =
         definition?.skillPath === undefined
-          ? ok(join(home, ".agents", "skills"))
+          ? ok(sharedDirectory)
           : resolvePath(definition.skillPath, {
               home,
               platform,
@@ -968,8 +1039,7 @@ export const clientSkillDirectories = (
     }
     if (!destinations.has(directory))
       destinations.set(directory, {
-        client:
-          directory === join(home, ".agents", "skills") ? "shared" : client,
+        client: directory === sharedDirectory ? "shared" : client,
         directory,
       });
   }

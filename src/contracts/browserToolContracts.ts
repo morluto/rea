@@ -3,7 +3,11 @@ import {
   javaScriptRoutesCompleteDeliveryShape,
   webRoutesSummaryDeliveryShape,
 } from "../domain/analysisView/javascriptRoutesView.js";
-import { javaScriptRoutesViewResultSchema } from "../domain/analysisView/analysisView.js";
+import {
+  javaScriptRoutesViewResultSchema,
+  webBundleSummaryViewResultSchema,
+  webBundlePageViewResultSchema,
+} from "../domain/analysisView/analysisView.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import {
   inspectWebPageInputSchema,
@@ -48,7 +52,12 @@ export const analyzeWebBundleRequestSchema = z
   ])
   .meta({ "x-rea-root-discriminator": "detail" });
 const bundleOutputSchema = evidenceResultOf(
-  z.union([webBundleAnalysisSchema, javaScriptRoutesViewResultSchema]),
+  z.union([
+    webBundleAnalysisSchema,
+    javaScriptRoutesViewResultSchema,
+    webBundleSummaryViewResultSchema,
+    webBundlePageViewResultSchema,
+  ]),
 );
 const observationSessionOutputSchema = evidenceResultOf(
   webObservationSessionSchema,
@@ -197,7 +206,7 @@ export const BROWSER_TOOL_CONTRACTS = [
     name: "analyze_web_bundle",
     ...toolContractMetadata("analyze_web_bundle"),
     description:
-      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed. Select detail summary and an explicit javascript-routes view for filtered route patterns, occurrences, sources, unknowns or summary counts; complete Evidence remains retained for later views. Static candidates do not establish reachability or a complete application route denominator.",
+      "Capture JavaScript source from one selected CDP page and statically derive a chunk graph, route and endpoint candidates, vendor fingerprints, page-declared WebMCP metadata, and optionally fetch source maps from the selected target origin or explicitly requested origins. JavaScript is parsed but never executed. Select detail summary with a web-bundle view for filtered endpoint observations, inferences or counts, or a javascript-routes view for route patterns, occurrences, sources, unknowns or counts. Complete Evidence remains retained for later views. Static candidates do not establish reachability or a complete application route denominator.",
     kind: "browser-provider",
     inputSchema: analyzeWebBundleRequestSchema,
     outputSchema: bundleOutputSchema,
