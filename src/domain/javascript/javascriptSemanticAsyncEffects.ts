@@ -270,14 +270,20 @@ const staticExpressionTruthiness = (
         const l = leftLit.value;
         const r = rightLit.value;
         let boolResult: boolean | undefined;
-        if (unwrapped.operator === "===" || unwrapped.operator === "==") {
+        if (unwrapped.operator === "===") {
           boolResult = l === r;
-        } else if (
-          unwrapped.operator === "!==" ||
-          unwrapped.operator === "!="
-        ) {
+        } else if (unwrapped.operator === "==") {
+          boolResult = (l as any) == (r as any);
+        } else if (unwrapped.operator === "!==") {
           boolResult = l !== r;
+        } else if (unwrapped.operator === "!=") {
+          boolResult = (l as any) != (r as any);
         } else if (typeof l === "number" && typeof r === "number") {
+          if (unwrapped.operator === "<") boolResult = l < r;
+          else if (unwrapped.operator === "<=") boolResult = l <= r;
+          else if (unwrapped.operator === ">") boolResult = l > r;
+          else if (unwrapped.operator === ">=") boolResult = l >= r;
+        } else if (typeof l === "string" && typeof r === "string") {
           if (unwrapped.operator === "<") boolResult = l < r;
           else if (unwrapped.operator === "<=") boolResult = l <= r;
           else if (unwrapped.operator === ">") boolResult = l > r;

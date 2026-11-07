@@ -1033,3 +1033,64 @@ it("retains candidates when assignment RHS in ?? may be nullish", () => {
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("retains valid callbacks when conditional test uses loose equality between mixed types", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ("1" == 1) ? (() => {}) : 0);
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+});
+
+it("prunes invalid callbacks when conditional test evaluates to falsy branch under loose equality", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ("1" == 2) ? (() => {}) : 0);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("does not invalidate array iterators when modifying Map or Set iterators", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    Object.getPrototypeOf(new Map().values()).next = customNext;
+    Object.getPrototypeOf(new Set().values()).next = customNext;
+    const child = spawn("worker");
+    child.on(...["exit", 1]);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("safely bounds alias cycles during array iterator prototype checks", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    let a = b;
+    let b = a;
+    Object.getPrototypeOf(a).next = customNext;
+    const child = spawn("worker");
+    child.on(...["exit", 1]);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});

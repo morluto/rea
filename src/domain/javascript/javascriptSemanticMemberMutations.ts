@@ -597,85 +597,182 @@ export function* collectSemanticMemberMutationsSteps(
     resolvedBindings.set(node, resolved ?? null);
     return resolved;
   };
-  const isPossibleArrayIterator = (node: t.Node, depth = 0): boolean => {
-    if (depth > 5) return false;
-    const unwrapped = unwrapJavaScriptExpression(node).node;
-    if (
-      t.isCallExpression(unwrapped) ||
-      t.isOptionalCallExpression(unwrapped)
-    ) {
-      const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+  const arrayReceiverCache = new WeakMap<t.Node, boolean>();
+  const isPossibleArrayReceiver = (root: t.Node): boolean => {
+    const rootUnwrapped = unwrapJavaScriptExpression(root).node;
+    const cached = arrayReceiverCache.get(rootUnwrapped);
+    if (cached !== undefined) return cached;
+
+    const queue: Array<{ node: t.Node; depth: number }> = [
+      { node: rootUnwrapped, depth: 0 },
+    ];
+    const visitedBindings = new Set<JavaScriptSemanticBindingState>();
+    let steps = 0;
+    let found = false;
+
+    while (queue.length > 0 && steps < 50) {
+      steps++;
+      const item = queue.shift()!;
+      if (item.depth > 5) continue;
+      const unwrapped = unwrapJavaScriptExpression(item.node).node;
+
+      if (t.isArrayExpression(unwrapped)) {
+        found = true;
+        break;
+      }
       if (
-        t.isMemberExpression(callee) ||
-        t.isOptionalMemberExpression(callee)
+        t.isMemberExpression(unwrapped) &&
+        t.isIdentifier(unwrapped.object, { name: "Array" }) &&
+        t.isIdentifier(unwrapped.property, { name: "prototype" })
       ) {
-        if (callee.computed) {
-          const prop = unwrapJavaScriptExpression(callee.property).node;
-          if (
-            t.isMemberExpression(prop) &&
-            t.isIdentifier(prop.object, { name: "Symbol" }) &&
-            t.isIdentifier(prop.property, { name: "iterator" })
-          ) {
-            return true;
+        found = true;
+        break;
+      }
+      if (
+        t.isNewExpression(unwrapped) &&
+        t.isIdentifier(unwrapped.callee, { name: "Array" })
+      ) {
+        found = true;
+        break;
+      }
+      if (t.isNewExpression(unwrapped) || t.isObjectExpression(unwrapped)) {
+        continue;
+      }
+      if (t.isIdentifier(unwrapped)) {
+        const binding = resolveBinding(unwrapped, unwrapped.name);
+        if (binding !== undefined && !visitedBindings.has(binding)) {
+          visitedBindings.add(binding);
+          for (const init of binding.initializers) {
+            queue.push({ node: init.node, depth: item.depth + 1 });
           }
-        } else if (
-          t.isIdentifier(callee.property) &&
-          ["values", "entries", "keys"].includes(callee.property.name)
-        ) {
-          return true;
         }
       }
     }
-    if (t.isIdentifier(unwrapped)) {
-      const binding = resolveBinding(unwrapped, unwrapped.name);
-      if (binding !== undefined) {
-        return binding.initializers.some(({ node }) =>
-          isPossibleArrayIterator(node, depth + 1),
-        );
-      }
-    }
-    return false;
+
+    arrayReceiverCache.set(rootUnwrapped, found);
+    return found;
   };
-  const isPossibleArrayIteratorPrototype = (
-    node: t.Node,
-    depth = 0,
-  ): boolean => {
-    if (depth > 5) return false;
-    const unwrapped = unwrapJavaScriptExpression(node).node;
-    if (
-      t.isCallExpression(unwrapped) ||
-      t.isOptionalCallExpression(unwrapped)
-    ) {
-      const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+  const arrayIteratorCache = new WeakMap<t.Node, boolean>();
+  const isPossibleArrayIterator = (root: t.Node): boolean => {
+    const rootUnwrapped = unwrapJavaScriptExpression(root).node;
+    const cached = arrayIteratorCache.get(rootUnwrapped);
+    if (cached !== undefined) return cached;
+
+    const queue: Array<{ node: t.Node; depth: number }> = [
+      { node: rootUnwrapped, depth: 0 },
+    ];
+    const visitedBindings = new Set<JavaScriptSemanticBindingState>();
+    let steps = 0;
+    let found = false;
+
+    while (queue.length > 0 && steps < 50) {
+      steps++;
+      const item = queue.shift()!;
+      if (item.depth > 5) continue;
+      const unwrapped = unwrapJavaScriptExpression(item.node).node;
+
       if (
-        t.isMemberExpression(callee) ||
-        t.isOptionalMemberExpression(callee)
+        t.isCallExpression(unwrapped) ||
+        t.isOptionalCallExpression(unwrapped)
       ) {
+        const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
         if (
-          t.isIdentifier(callee.object) &&
-          ["Object", "Reflect"].includes(callee.object.name) &&
-          t.isIdentifier(callee.property, { name: "getPrototypeOf" })
+          t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)
         ) {
-          const firstArg = unwrapped.arguments[0];
-          if (
-            firstArg !== undefined &&
-            !t.isSpreadElement(firstArg) &&
-            isPossibleArrayIterator(firstArg)
+          if (callee.computed) {
+            const prop = unwrapJavaScriptExpression(callee.property).node;
+            if (
+              t.isMemberExpression(prop) &&
+              t.isIdentifier(prop.object, { name: "Symbol" }) &&
+              t.isIdentifier(prop.property, { name: "iterator" }) &&
+              isPossibleArrayReceiver(callee.object)
+            ) {
+              found = true;
+              break;
+            }
+          } else if (
+            t.isIdentifier(callee.property) &&
+            ["values", "entries", "keys"].includes(callee.property.name) &&
+            isPossibleArrayReceiver(callee.object)
           ) {
-            return true;
+            found = true;
+            break;
+          }
+        }
+      }
+      if (t.isIdentifier(unwrapped)) {
+        const binding = resolveBinding(unwrapped, unwrapped.name);
+        if (binding !== undefined && !visitedBindings.has(binding)) {
+          visitedBindings.add(binding);
+          for (const init of binding.initializers) {
+            queue.push({ node: init.node, depth: item.depth + 1 });
           }
         }
       }
     }
-    if (t.isIdentifier(unwrapped)) {
-      const binding = resolveBinding(unwrapped, unwrapped.name);
-      if (binding !== undefined) {
-        return binding.initializers.some(({ node }) =>
-          isPossibleArrayIteratorPrototype(node, depth + 1),
-        );
+
+    arrayIteratorCache.set(rootUnwrapped, found);
+    return found;
+  };
+  const arrayIteratorPrototypeCache = new WeakMap<t.Node, boolean>();
+  const isPossibleArrayIteratorPrototype = (root: t.Node): boolean => {
+    const rootUnwrapped = unwrapJavaScriptExpression(root).node;
+    const cached = arrayIteratorPrototypeCache.get(rootUnwrapped);
+    if (cached !== undefined) return cached;
+
+    const queue: Array<{ node: t.Node; depth: number }> = [
+      { node: rootUnwrapped, depth: 0 },
+    ];
+    const visitedBindings = new Set<JavaScriptSemanticBindingState>();
+    let steps = 0;
+    let found = false;
+
+    while (queue.length > 0 && steps < 50) {
+      steps++;
+      const item = queue.shift()!;
+      if (item.depth > 5) continue;
+      const unwrapped = unwrapJavaScriptExpression(item.node).node;
+
+      if (
+        t.isCallExpression(unwrapped) ||
+        t.isOptionalCallExpression(unwrapped)
+      ) {
+        const callee = unwrapJavaScriptExpression(unwrapped.callee).node;
+        if (
+          t.isMemberExpression(callee) ||
+          t.isOptionalMemberExpression(callee)
+        ) {
+          if (
+            t.isIdentifier(callee.object) &&
+            ["Object", "Reflect"].includes(callee.object.name) &&
+            t.isIdentifier(callee.property, { name: "getPrototypeOf" })
+          ) {
+            const firstArg = unwrapped.arguments[0];
+            if (
+              firstArg !== undefined &&
+              !t.isSpreadElement(firstArg) &&
+              isPossibleArrayIterator(firstArg)
+            ) {
+              found = true;
+              break;
+            }
+          }
+        }
+      }
+      if (t.isIdentifier(unwrapped)) {
+        const binding = resolveBinding(unwrapped, unwrapped.name);
+        if (binding !== undefined && !visitedBindings.has(binding)) {
+          visitedBindings.add(binding);
+          for (const init of binding.initializers) {
+            queue.push({ node: init.node, depth: item.depth + 1 });
+          }
+        }
       }
     }
-    return false;
+
+    arrayIteratorPrototypeCache.set(rootUnwrapped, found);
+    return found;
   };
   const nodeIdentities = new WeakMap<t.Node, number>();
   let nextNodeIdentity = 0;
