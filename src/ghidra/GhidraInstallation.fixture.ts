@@ -1,7 +1,9 @@
-import { mkdir, mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, realpath } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join, parse, relative } from "node:path";
 import { onTestFinished } from "vitest";
-import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
+import { normalizeTestTemporaryPrefix } from "../../scripts/lib/test-temporary-ownership.mjs";
+import { removeTestWorkspace } from "../../tests/support/workspace/workspaceFixture.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { err } from "../domain/result.js";
@@ -30,19 +32,38 @@ export const ghidraProfileInstallationHost: GhidraInstallationHost = {
  * A temporary installation directory the simulated Linux host accepts as
  * absolute. On Windows it is made under the working directory and spelled as a
  * POSIX path on that drive; other hosts get an ordinary test directory. The
- * test removes it when it finishes.
+ * caller owns and disposes the native directory.
  */
+export const createSimulatedInstallDirectory = async (
+  prefix: string,
+): Promise<{
+  readonly path: string;
+  readonly dispose: () => Promise<void>;
+}> => {
+  const root =
+    process.platform === "win32"
+      ? join(process.cwd(), "build")
+      : await realpath(tmpdir());
+  await mkdir(root, { recursive: true });
+  const owned = await realpath(
+    await mkdtemp(join(root, normalizeTestTemporaryPrefix(prefix))),
+  );
+  return {
+    path:
+      process.platform === "win32"
+        ? `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`
+        : owned,
+    dispose: () => removeTestWorkspace(owned),
+  };
+};
+
+/** Own the simulated directory for a single test. */
 export const simulatedInstallDirectory = async (
   prefix: string,
 ): Promise<string> => {
-  if (process.platform !== "win32") return createTestTempDirectory(prefix);
-  const root = join(process.cwd(), "build");
-  await mkdir(root, { recursive: true });
-  const owned = await mkdtemp(join(root, prefix));
-  onTestFinished(async () => {
-    await rm(owned, { recursive: true, force: true });
-  });
-  return `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`;
+  const directory = await createSimulatedInstallDirectory(prefix);
+  onTestFinished(directory.dispose);
+  return directory.path;
 };
 
 /** A confirmed absent Java command for installation admission fixtures. */
