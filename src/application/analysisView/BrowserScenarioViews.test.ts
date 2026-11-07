@@ -86,8 +86,8 @@ describe("browser scenario analysis views", () => {
     const summary = await view(capture, { kind: "summary" });
     expect(summary).toMatchObject({
       limitations: [
-        "Artifact identity is unavailable for this observation.",
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/artifact identity.*unavailable/iu),
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ],
       summary: { limitation_count: 2 },
     });

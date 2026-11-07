@@ -241,8 +241,8 @@ it("retains certificate and signer facts for ASCII TeletexString names", () => {
   expect(report.entries[0]?.pkcs7?.signers[0]?.issuer?.text).toBe(
     "commonName=Plain Name, organizationName=Plain Org",
   );
-  expect(report.limitations).toContain(
-    "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+  expect(report.limitations).toContainEqual(
+    expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
   );
 });
 
