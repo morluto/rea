@@ -1,5 +1,6 @@
 import { parse, type ParserOptions, type ParserPlugin } from "@babel/parser";
 import * as t from "@babel/types";
+import { posix } from "node:path";
 import { javaScriptDefinitionExpression } from "./javascriptAstValues.js";
 import {
   hasOnlyInlineTypeExportSpecifiers,
@@ -80,7 +81,7 @@ const parseWithRuntimeContext = (
   const file = parse(source, options);
   runtimeContextByProgram.set(
     file.program,
-    /\.c[jt]s$/iu.test(sourcePath ?? "")
+    isCommonJsSourcePath(sourcePath)
       ? /\.d\.cts$/iu.test(sourcePath ?? "")
         ? "unknown"
         : "commonjs"
@@ -141,14 +142,32 @@ export const parserPluginsForPath = (sourcePath?: string): ParserPlugin[] => {
   return jsxCapable ? [...syntax, "jsx", typescript] : [...syntax, typescript];
 };
 
-/** `.mjs` and `.mts` explicitly select module mode. */
-export const isExplicitModuleSourcePath = (path?: string): boolean =>
-  /\.m[jt]s$/iu.test(path ?? "");
+/**
+ * Loader mode comes from the exact suffix Node dispatches on, so a case-folded
+ * `.MJS` or `.CJS` stays unknown rather than borrowing `.mjs`'s module mode.
+ */
+const exactSuffix = (path?: string): string => posix.extname(path ?? "");
 
+export const isExplicitModuleSourcePath = (path?: string): boolean => {
+  const suffix = exactSuffix(path);
+  return suffix === ".mjs" || suffix === ".mts";
+};
+
+const isCommonJsSourcePath = (path?: string): boolean => {
+  const suffix = exactSuffix(path);
+  return suffix === ".cjs" || suffix === ".cts";
+};
+
+/**
+ * Babel `sourceType` for one path. Only the CommonJS script wrapper is
+ * asserted: `.cts` keeps the module grammar because TypeScript
+ * `import x = require()` is valid only there, and its loader mode comes from
+ * the runtime context instead.
+ */
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  /\.cjs$/iu.test(path ?? "")
+  exactSuffix(path) === ".cjs"
     ? "commonjs"
     : isExplicitModuleSourcePath(path)
       ? "module"
