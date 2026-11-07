@@ -126,6 +126,16 @@ export const il2cppGhidraSeeds = (
         message: "Ghidra seeds need a report linked with binary_path.",
       },
     ]);
+  // wasm32 method rows are function table slots, not code addresses.
+  if (report.binary.format === "wasm")
+    throw new AnalysisInputError(OPERATION, undefined, [
+      {
+        path: ["ghidra_seeds"],
+        reason: "invalid_value",
+        message:
+          "Ghidra seeds need native code addresses; a wasm32 module links table slots and function indices.",
+      },
+    ]);
   const seeded = new Map<bigint, { kept: string; also: string[] }>();
   const lines: string[] = [];
   let folded = 0;

@@ -10,6 +10,7 @@ import { freezeJsonSnapshot } from "../immutableJson.js";
 import { jsonObjectSchema } from "../jsonValue.js";
 import type { AdmittedView, SummaryAnalysisView } from "./analysisViewShape.js";
 import {
+  il2cppMetadataViewItemsSchema,
   il2cppMetadataViewRequestSchema,
   projectIl2cppMetadataView as projectAdmittedIl2cppMetadataView,
 } from "./il2cppMetadataView.js";
@@ -962,4 +963,64 @@ it("refuses generic rows that break the address or definition invariants", () =>
   expect(
     projectIl2cppMetadataView(parent(short, false), { kind: "summary" }).ok,
   ).toBe(false);
+});
+
+it("pages wasm32 method rows with their table slot and function index", () => {
+  const linked = linkedReport();
+  const wasm: Il2cppMetadata = {
+    ...linked,
+    binary: { ...linked.binary!, format: "wasm", image_base: "0x0" },
+    method_addresses: [
+      {
+        state: "code",
+        address: null,
+        rva: null,
+        table_index: 1,
+        function_index: 10,
+      },
+      {
+        state: "code",
+        address: null,
+        rva: null,
+        table_index: 2,
+        function_index: 10,
+      },
+      { state: "no-body", address: null, rva: null },
+      { state: "unknown", address: null, rva: null },
+    ],
+  };
+  const source = parent(freezeJsonSnapshot(wasm), true);
+  const page = projectIl2cppMetadataView(source, {
+    kind: "il2cpp-metadata",
+    collection: "method_addresses",
+    offset: 0,
+    limit: 4,
+  });
+  if (!page.ok) throw page.error;
+  // The closed item schema seals the page; it must admit the wasm row keys.
+  expect(
+    il2cppMetadataViewItemsSchema.safeParse(
+      (page.value as { items: unknown }).items,
+    ).success,
+  ).toBe(true);
+  expect(page.value).toMatchObject({
+    items: [
+      { index: 0, state: "code", table_index: 1, function_index: 10 },
+      { index: 1, table_index: 2, function_index: 10 },
+      { index: 2, state: "no-body" },
+      { index: 3, state: "unknown" },
+    ],
+  });
+  const request = il2cppMetadataViewRequestSchema.parse({
+    kind: "il2cpp-metadata",
+    collection: "method_addresses",
+    fields: ["function_index"],
+    offset: 0,
+    limit: 1,
+  });
+  const selected = projectIl2cppMetadataView(source, request);
+  if (!selected.ok) throw selected.error;
+  expect(selected.value).toMatchObject({
+    items: [{ index: 0, function_index: 10 }],
+  });
 });

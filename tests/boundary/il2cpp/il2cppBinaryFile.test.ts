@@ -1,11 +1,16 @@
+import { gzipSync } from "node:zlib";
 import { javaClassFile } from "../../fixtures/javaClassFile.js";
 import { Il2cppBinaryFormatFailure } from "../../../src/il2cpp/Il2cppBinaryFormat.js";
 import { readBinaryContainer } from "../../../src/native/metadata/readBinaryContainer.js";
 import {
+  IL2CPP_UNRECOGNIZED_BINARY,
+  hasPointerArrayCoverage,
   openImageSteps,
+  readPointer,
   readUInt32,
 } from "../../../src/il2cpp/Il2cppBinaryImage.js";
 import { expect, it } from "vitest";
+import { WASM_MODULE_LIMITS } from "../../../src/wasm/WasmModuleImage.js";
 import { linkIl2cppBinarySteps } from "../../../src/il2cpp/Il2cppBinaryFile.js";
 import {
   drain,
@@ -33,6 +38,8 @@ import {
   type GenericMethodFixtureOptions,
   FIXTURE_RETURN_TYPE_NAME,
   type Il2cppBinaryFixtureOptions,
+  createWasmFixture,
+  FIXTURE_WASM_METHODS,
 } from "../../fixtures/il2cpp/binary.js";
 import {
   createIl2cppMetadataFixture,
@@ -70,6 +77,17 @@ const failure = (bytes: Buffer, architecture?: string) => {
     throw cause;
   }
   throw new Error("expected a link failure");
+};
+/** The typed reason and kind of a link refusal, for tests that start the link themselves. */
+const refusal = (run: () => unknown) => {
+  try {
+    run();
+  } catch (cause) {
+    if (cause instanceof Il2cppBinaryFormatFailure)
+      return { reason: cause.reason, kind: cause.kind };
+    throw cause;
+  }
+  throw new Error("expected a link refusal");
 };
 const addElfLoadAlias = (
   bytes: Buffer,
@@ -1902,3 +1920,399 @@ it.each([183, 62])(
     expect(link(bytes)).toEqual(link(createElfFixture(image, { machine })));
   },
 );
+
+it("links a wasm32 module through table slots to function indices", () => {
+  const linked = link(createWasmFixture());
+  expect(linked).toMatchObject({
+    format: "wasm",
+    architecture: "wasm32",
+    image_base: 0n,
+    code_gen_modules_field: 0x600n,
+    code_gen_modules_array: 0x500n,
+    code_gen_modules: [
+      { image: 0, address: 0x400n, method_pointer_count: 3 },
+      { image: 1, address: 0x440n, method_pointer_count: 2 },
+    ],
+    types_field: 0x818n,
+    types_count: 4,
+  });
+  expect(linked.method_addresses).toEqual(
+    FIXTURE_WASM_METHODS.map((row) =>
+      row === "no-body"
+        ? { state: "no-body", address: null, rva: null }
+        : { state: "code", address: null, rva: null, ...row },
+    ),
+  );
+  expect(linked.return_types).toEqual(
+    Array.from({ length: 5 }, () => ({
+      type: 0,
+      name: FIXTURE_RETURN_TYPE_NAME,
+    })),
+  );
+});
+
+it("refuses a wasm method pointer whose table slot no element segment fills", () => {
+  // Slot 4 holds mscorlib.dll's first method pointer.
+  expect(failure(createWasmFixture(3))).toEqual({
+    reason: "invalid-method-pointer",
+    kind: "malformed",
+  });
+});
+
+it("refuses a CPU architecture, generic instances and gzip for a wasm module", () => {
+  expect(failure(createWasmFixture(), "arm64").reason).toBe("slice-not-found");
+  const generic = genericFacts(31);
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(
+        createWasmFixture(),
+        generic.metadata,
+        generic.link,
+        undefined,
+        { genericInstances: true },
+      ),
+    ),
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
+  expect(failure(gzipSync(createWasmFixture())).reason).toBe(
+    "unsupported-container",
+  );
+});
+
+const leb128 = (value: number): number[] => {
+  const out: number[] = [];
+  do {
+    let byte = value & 0x7f;
+    value >>>= 7;
+    if (value !== 0) byte |= 0x80;
+    out.push(byte);
+  } while (value !== 0);
+  return out;
+};
+const sleb128 = (value: number): number[] => {
+  const out: number[] = [];
+  for (;;) {
+    const byte = value & 0x7f;
+    value >>= 7;
+    const done =
+      (value === 0 && (byte & 0x40) === 0) ||
+      (value === -1 && (byte & 0x40) !== 0);
+    out.push(done ? byte : byte | 0x80);
+    if (done) return out;
+  }
+};
+/** A module with `pages` of memory and one-byte-or-more data segments at the given offsets. */
+const wasmMemoryModule = (
+  pages: number,
+  bytes: number[],
+  ...more: [offset: number, bytes: number[]][]
+) => {
+  const memory = [1, 0, ...leb128(pages)];
+  const segments: [number, number[]][] = [[16, bytes], ...more];
+  const data = [
+    ...leb128(segments.length),
+    ...segments.flatMap(([offset, content]) => [
+      0,
+      0x41,
+      ...sleb128(offset | 0),
+      0x0b,
+      ...leb128(content.length),
+      ...content,
+    ]),
+  ];
+  return Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    5,
+    ...leb128(memory.length),
+    ...memory,
+    11,
+    ...leb128(data.length),
+    ...data,
+  ]);
+};
+
+it("reads a wasm pointer whose zero high bytes lie past the last data segment", () => {
+  // A trimmed segment stores 0x0102 and leaves the pointer's high bytes zero.
+  const image = drain(openImageSteps(wasmMemoryModule(1, [2, 1]), undefined));
+  expect(readPointer(image, 16n)).toBe(0x0102n);
+});
+
+it("reports wasm data spread over more than the reconstruction allowance as capacity", () => {
+  // Two one-byte segments 1 GiB apart in a 1 GiB + 64 KiB memory.
+  expect(failure(wasmMemoryModule(16385, [1], [0x40000010, [1]]))).toEqual({
+    reason: "wasm-memory-capacity",
+    kind: "capacity",
+  });
+});
+
+/** A module whose data section declares `count` segments over `body` bytes. */
+const wasmDataCountModule = (count: number, body: number) => {
+  const data = [...leb128(count), ...new Array<number>(body).fill(0)];
+  return Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    11,
+    ...leb128(data.length),
+    ...data,
+  ]);
+};
+
+it("reports a wasm module past a parser count cap as wasm module capacity", () => {
+  // One segment more than the reader keeps, with a body that could hold them.
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  expect(failure(wasmDataCountModule(count, count))).toEqual({
+    reason: "wasm-module-capacity",
+    kind: "capacity",
+  });
+});
+
+it("reports a wasm segment count its section cannot hold as malformed, not capacity", () => {
+  const count = WASM_MODULE_LIMITS.dataSegments + 1;
+  expect(failure(wasmDataCountModule(count, 0))).toEqual({
+    reason: "malformed-container",
+    kind: "malformed",
+  });
+});
+
+it("builds a wasm fixture that the engine itself accepts", () => {
+  // The type library has no WebAssembly global; Node provides it at runtime.
+  const engine = (
+    globalThis as unknown as {
+      WebAssembly: { validate: (bytes: Uint8Array) => boolean };
+    }
+  ).WebAssembly;
+  expect(engine.validate(createWasmFixture())).toBe(true);
+});
+
+it("refuses a wasm module that imports its memory", () => {
+  // env.memory, one page; the host may supply bytes no data segment writes.
+  const importMemory = [
+    1,
+    3,
+    ..."env".split("").map((c) => c.charCodeAt(0)),
+    6,
+    ..."memory".split("").map((c) => c.charCodeAt(0)),
+    0x02,
+    0x00,
+    1,
+  ];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importMemory.length,
+    ...importMemory,
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("refuses a wasm module that imports its function table", () => {
+  // env.table, funcref, minimum 4; the host may fill slots no segment writes.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const importTable = [
+    1,
+    ...name("env"),
+    ...name("table"),
+    0x01,
+    0x70,
+    0x00,
+    4,
+  ];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importTable.length,
+    ...importTable,
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("refuses an imported table as unsupported even when a segment passes its declared minimum", () => {
+  // env.table declares minimum 4; the host may supply more, so a segment
+  // at slot 6 is not damage but a table the module does not determine.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4];
+  const types = [1, 0x60, 0, 0];
+  const functions = [1, 0];
+  const elements = [1, 0x00, 0x41, 6, 0x0b, 1, 0];
+  const code = [1, 2, 0, 0x0b];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(1, types),
+    ...section(2, imports),
+    ...section(3, functions),
+    ...section(9, elements),
+    ...section(10, code),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("names wasm32 among the formats IL2CPP links when the binary is none of them", () => {
+  try {
+    link(Buffer.from("not a binary at all"));
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(Il2cppBinaryFormatFailure);
+    expect((cause as Il2cppBinaryFormatFailure).reason).toBe(
+      "unsupported-container",
+    );
+    expect((cause as Error).message).toBe(
+      `unsupported-container: ${IL2CPP_UNRECOGNIZED_BINARY}`,
+    );
+    return;
+  }
+  throw new Error("expected a link failure");
+});
+
+it("keeps the native reader's own refusal for a format it recognizes", () => {
+  // A complete DOS MZ image: recognized, then refused by the PE reader.
+  const bytes = Buffer.alloc(128);
+  bytes.write("MZ", 0, "ascii");
+  bytes.writeUInt16LE(128, 2);
+  bytes.writeUInt16LE(1, 4);
+  bytes.writeUInt16LE(2, 6);
+  bytes.writeUInt16LE(4, 8);
+  bytes.writeUInt16LE(28, 24);
+  bytes.write("ABCD", 60, "ascii");
+  try {
+    link(bytes);
+  } catch (cause) {
+    expect(cause).toBeInstanceOf(Il2cppBinaryFormatFailure);
+    expect((cause as Error).message).not.toContain(IL2CPP_UNRECOGNIZED_BINARY);
+    expect((cause as Error).message).toContain("DOS MZ images");
+    return;
+  }
+  throw new Error("expected a link failure");
+});
+
+it("refuses an imported memory as unsupported even when a segment passes its declared minimum", () => {
+  // env.memory declares one page; the host may supply more.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("memory"), 0x02, 0x00, 1];
+  const data = [1, 0x00, 0x41, 0x80, 0x80, 0x04, 0x0b, 1, 7];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(2, imports),
+    ...section(11, data),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("refuses an imported table as unsupported rather than measuring its span", () => {
+  // Two slots 2^22 apart would pass the slot allowance in a defined table.
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const imports = [1, ...name("env"), ...name("table"), 0x01, 0x70, 0x00, 4];
+  const far = [0x41, 0x80, 0x80, 0x80, 0x02, 0x0b];
+  const elements = [2, 0x00, 0x41, 0, 0x0b, 1, 0, 0x00, ...far, 1, 0];
+  const section = (id: number, body: number[]) => [id, body.length, ...body];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    ...section(1, [1, 0x60, 0, 0]),
+    ...section(2, imports),
+    ...section(3, [1, 0]),
+    ...section(9, elements),
+    ...section(10, [1, 2, 0, 0x0b]),
+  ]);
+  expect(failure(bytes)).toEqual({
+    reason: "unsupported-container",
+    kind: "unsupported",
+  });
+});
+
+it("covers a wasm pointer array that runs from the last segment into zero fill", () => {
+  // The only segment ends at 0x201 (16 + 497 bytes); 20 slots from 0x200 reach 0x250.
+  const image = drain(
+    openImageSteps(
+      wasmMemoryModule(1, Array<number>(0x1f1).fill(1)),
+      undefined,
+    ),
+  );
+  expect(hasPointerArrayCoverage(image, 0x200n, 20)).toBe(true);
+});
+
+it("refuses generic instances for a wasm module before opening it", () => {
+  // The module imports its memory, which opening would refuse; the generic
+  // refusal comes first, from the module kind alone.
+  const generic = genericFacts(31);
+  const name = (text: string) => [text.length, ...Buffer.from(text)];
+  const importMemory = [1, ...name("env"), ...name("memory"), 0x02, 0x00, 1];
+  const bytes = Buffer.from([
+    0x00,
+    0x61,
+    0x73,
+    0x6d,
+    1,
+    0,
+    0,
+    0,
+    2,
+    importMemory.length,
+    ...importMemory,
+  ]);
+  expect(
+    refusal(() =>
+      linkIl2cppBinary(bytes, generic.metadata, generic.link, undefined, {
+        genericInstances: true,
+      }),
+    ),
+  ).toEqual({ reason: "generic-methods-unsupported", kind: "unsupported" });
+});

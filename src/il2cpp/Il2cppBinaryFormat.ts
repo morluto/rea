@@ -12,6 +12,8 @@ export const IL2CPP_BINARY_FAILURE_REASONS = {
     "native-index-capacity",
     "type-nesting-capacity",
     "native-type-text-capacity",
+    "wasm-memory-capacity",
+    "wasm-module-capacity",
   ],
   malformed: [
     "malformed-container",
