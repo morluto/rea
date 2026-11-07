@@ -25,9 +25,9 @@ const PYTHON_BYTECODE_IDENTITIES: ReadonlyMap<number, PythonBytecodeIdentity> =
     ...identities([3494, 3495], "3.11"),
     ...identities(range(3500, 3531), "3.12"),
     ...identities(range(3550, 3571), "3.13"),
-    ...identities([3627], "3.14"),
+    ...identities(range(3600, 3627), "3.14"),
     // Reported against Python 3.15, the default `python3` on current Homebrew.
-    ...identities([3666], "3.15"),
+    ...identities(range(3650, 3666), "3.15"),
   ]);
 
 export const pythonBytecodeIdentity = (

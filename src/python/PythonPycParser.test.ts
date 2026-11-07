@@ -141,6 +141,8 @@ it("fails unknown magics and truncated marshal without partial success", () => {
 
 it.each([
   { magic: 3571, layout: "py311", version: "3.13" },
+  { magic: 3627, layout: "py311", version: "3.14" },
+  { magic: 3666, layout: "py311", version: "3.15" },
   { magic: 3401, layout: "py37", version: "3.8" },
 ] as const)(
   "decodes supported standalone magic $magic with its own marshal layout",
@@ -157,87 +159,11 @@ it.each([
   },
 );
 
-it.each([
-  { magic: 3627, version: "3.14", flags: 0x0, mode: "timestamp-based" },
-  { magic: 3666, version: "3.15", flags: 0x0, mode: "timestamp-based" },
-  // A non-zero flag word and a PEP 552 hash-based header, so a refusal that hardcoded
-  // `flags 0x0, timestamp-based` could not pass.
-  { magic: 3666, version: "3.15", flags: 0x3, mode: "hash-based" },
-  { magic: 3627, version: "3.14", flags: 0x1, mode: "hash-based" },
-] as const)(
-  "qualifies the recognized CPython $version header without a pinned code layout",
-  ({ magic, version, flags, mode }) => {
-    // The header is still a packed 16-byte 3.7+ header, so its identity and flags are
-    // reported even though no marshal layout is pinned for this version.
-    const header = pythonPycHeader(magic, {
-      flags,
-      ...(flags === 0 ? {} : { sourceHash: Buffer.alloc(8, 0xab) }),
-    });
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        kind: "unsupported",
-        message: expect.stringContaining(
-          `CPython ${version} header is recognized`,
-        ),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(`magic ${magic}, 16-byte header`),
-      }),
-    );
-    // The reported facts are the ones packed into this header.
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(`flags 0x${flags.toString(16)}`),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(mode),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(
-          "no marshal code layout is pinned for that version",
-        ),
-      }),
-    );
-    expect(() => parse(header)).toThrow(
-      expect.objectContaining({
-        message: expect.stringContaining(
-          "marshal decoding is pinned for CPython 3.7",
-        ),
-      }),
-    );
-  },
-);
-
-it("reports timestamp-based for a pyc without the hash flag and hash-based with it", () => {
-  // Same magic, opposite header mode: the two refusals must differ only in that fact.
-  const timestamp = () =>
-    parse(pythonPycHeader(3666, { mtime: 7, sourceSize: 9 }));
-  const hash = () =>
-    parse(
-      pythonPycHeader(3666, { flags: 0x1, sourceHash: Buffer.alloc(8, 1) }),
-    );
-  expect(timestamp).toThrow(
+it("keeps CPython 3.16 pre-release magics outside standalone decoder coverage", () => {
+  expect(() => parse(pythonPycHeader(3706))).toThrow(
     expect.objectContaining({
-      message: expect.stringContaining("timestamp-based"),
-    }),
-  );
-  expect(timestamp).toThrow(
-    expect.not.objectContaining({
-      message: expect.stringContaining("hash-based"),
-    }),
-  );
-  expect(hash).toThrow(
-    expect.objectContaining({ message: expect.stringContaining("hash-based") }),
-  );
-  expect(hash).toThrow(
-    expect.not.objectContaining({
-      message: expect.stringContaining("timestamp-based"),
+      kind: "unsupported",
+      message: expect.stringMatching(/3706.*3\.7.*3\.15/),
     }),
   );
 });
@@ -251,6 +177,117 @@ it("does not qualify a magic outside the pinned identity table", () => {
       ),
     }),
   );
+});
+
+const withSliceConsts = (magic: number, consts: Buffer[]): Buffer =>
+  Buffer.concat([pythonPycHeader(magic), marshalCode("py311", { consts })]);
+const marshalSlice = (
+  start: Buffer,
+  stop: Buffer,
+  step: Buffer,
+  flagged = false,
+): Buffer =>
+  Buffer.concat([Buffer.from([flagged ? 0xba : 0x3a]), start, stop, step]);
+const marshalInt = (value: number): Buffer =>
+  Buffer.concat([Buffer.from([0x69]), i32(value)]);
+const marshalFrozenset = (...members: Buffer[]): Buffer =>
+  Buffer.concat([Buffer.from([0x3e]), u32(members.length), ...members]);
+const MARSHAL_NONE = Buffer.from([0x4e]);
+
+it("decodes CPython 3.14 slice constants with Python slice equality", () => {
+  const report = parse(
+    withSliceConsts(3627, [
+      marshalSlice(marshalInt(1), marshalInt(10), marshalInt(2)),
+      // 1 == True, so the first two slices are one member; the third differs
+      // in its step.
+      marshalFrozenset(
+        marshalSlice(marshalInt(1), marshalInt(2), MARSHAL_NONE),
+        marshalSlice(Buffer.from([0x54]), marshalInt(2), MARSHAL_NONE),
+        marshalSlice(marshalInt(1), marshalInt(2), marshalInt(1)),
+      ),
+      // A slice never equals the tuple of its fields.
+      marshalFrozenset(
+        marshalSlice(marshalInt(1), marshalInt(2), MARSHAL_NONE),
+        Buffer.concat([
+          Buffer.from([0x29, 3]),
+          marshalInt(1),
+          marshalInt(2),
+          MARSHAL_NONE,
+        ]),
+      ),
+    ]),
+  );
+  expect(report.header).toMatchObject({ magic: 3627, python_version: "3.14" });
+  expect(root(report).consts).toEqual([
+    { kind: "slice" },
+    { kind: "frozenset", length: 2 },
+    { kind: "frozenset", length: 2 },
+  ]);
+  expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("walks slice members for hashability and nested code", () => {
+  const emptyList = Buffer.concat([Buffer.from([0x5b]), u32(0)]);
+  expect(() =>
+    parse(
+      withSliceConsts(3627, [
+        marshalFrozenset(marshalSlice(emptyList, MARSHAL_NONE, MARSHAL_NONE)),
+      ]),
+    ),
+  ).toThrow(/Unhashable set member/);
+  const report = parse(
+    withSliceConsts(3627, [
+      marshalSlice(
+        marshalCode("py311", {
+          name: "inner",
+          qualname: "inner",
+          firstlineno: 2,
+        }),
+        MARSHAL_NONE,
+        MARSHAL_NONE,
+      ),
+    ]),
+  );
+  expect(root(report).nested_code).toEqual([1]);
+  expect(report.code_objects[1]?.name).toBe("inner");
+});
+
+it("rejects slice tags before magic 3608 and follows CPython on null members", () => {
+  const sliced = marshalSlice(marshalInt(1), marshalInt(2), MARSHAL_NONE);
+  for (const magic of [3571, 3607]) {
+    expect(() => parse(withSliceConsts(magic, [sliced]))).toThrow(
+      expect.objectContaining({
+        kind: "malformed",
+        message: expect.stringMatching(/0x3a.*3608/),
+      }),
+    );
+  }
+  expect(root(parse(withSliceConsts(3608, [sliced]))).consts).toEqual([
+    { kind: "slice" },
+  ]);
+  // A TYPE_NULL member leaves no slice object; the enclosing tuple reports it.
+  expect(() =>
+    parse(
+      withSliceConsts(3627, [
+        marshalSlice(marshalInt(1), Buffer.from([0x30]), MARSHAL_NONE),
+      ]),
+    ),
+  ).toThrow(/NULL object in marshal data for sequence/);
+  // A dictionary ends at that null key, and the slice's reserved slot stays
+  // invalid for a later reference, as in CPython.
+  expect(() =>
+    parse(
+      withSliceConsts(3627, [Buffer.from([0x7b, 0xba, 0x30]), marshalRef(0)]),
+    ),
+  ).toThrow(/TYPE_REF index 0 is missing/);
+  // A reference back into a slice still being read is invalid too.
+  expect(() =>
+    parse(
+      withSliceConsts(3627, [
+        marshalSlice(marshalRef(0), MARSHAL_NONE, MARSHAL_NONE, true),
+      ]),
+    ),
+  ).toThrow(/TYPE_REF index 0 is missing/);
 });
 
 it("reports a short unknown header before unsupported magic, and bad CR LF before either", () => {
@@ -1593,6 +1630,25 @@ it("hashes a long TYPE_REF tuple chain without recursing", () => {
   expect(root(report).consts[1]).toEqual({ kind: "set", length: 1 });
   expect(report.coverage.status).toBe("complete");
   expect(pythonPycSchema.safeParse(report).success).toBe(true);
+});
+
+it("names the two opcode tables behind magics 3615 and 3620", () => {
+  const file = (magic: number): Buffer =>
+    Buffer.concat([pythonPycHeader(magic), marshalCode("py311")]);
+  const shared = (magic: number) =>
+    expect.arrayContaining([
+      expect.stringMatching(new RegExp(`Magic ${String(magic)} is shared`)),
+    ]);
+  expect(parse(file(3615)).limitations).toEqual(shared(3615));
+  expect(parse(file(3620)).limitations).toEqual(
+    expect.arrayContaining([
+      expect.stringMatching(/Magic 3620 is shared.*3621/),
+    ]),
+  );
+  for (const magic of [3614, 3616, 3619, 3621])
+    expect(parse(file(magic)).limitations, String(magic)).not.toEqual(
+      expect.arrayContaining([expect.stringMatching(/is shared by builds/)]),
+    );
 });
 
 it("rejects code CPython treats as corrupt instead of complete coverage", () => {

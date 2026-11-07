@@ -143,6 +143,59 @@ cliTest(
   },
 );
 
+cliTest.for([
+  {
+    version: "3.14.4",
+    pythonVersion: "3.14",
+    magic: 3627,
+    encoded:
+      "Kw4NCgAAAAAAAAAAHwAAAOMAAAAAAAAAAAAAAAABAAAAAAAAAPMMAAAAgABSABcAdABSASMAKQNjAQAAAAAAAAAAAAAAAgAAAAMAAADzFAAAAIAAVgBSACwaAAAAAAAAAAAAACMAKQE66QEAAADpCgAAAOkCAAAAqQApAdoBYXMBAAAAJtoKZml4dHVyZS5wedoBZnIJAAAAAQAAAHMMAAAAgADYCwyIVo050AQU8wAAAABOPgIAAADjAgAAAAAAAAAAAAAAAgAAAAMAAADzHgAAAIAAVgBQAAAAAAAAAAAAAAAAAAAAAAAAAFYAMwIjAKkBTqkB2gF4qQJyBwAAANoBYnMCAAAAJiZyCAAAANoIPGxhbWJkYT5yEgAAAAEAAABzDAAAAIAAsAG3A7EDsFGpeHIKAAAA4wIAAAAAAAAAAAAAAAIAAAADAAAA8x4AAACAAFYAUAAAAAAAAAAAAAAAAAAAAAAAAABWATMCIwByDQAAAHIOAAAAchAAAABzAgAAACYmcggAAAByEgAAAHISAAAAAQAAAHMMAAAAgACQcZdzkXOYQZFocgoAAAApAXIJAAAAcgYAAAByCgAAAHIIAAAA2gg8bW9kdWxlPnIVAAAAAQAAAHMKAAAA8AMBAQH0AgEBFXIKAAAA",
+  },
+  {
+    version: "3.15.0a8",
+    pythonVersion: "3.15",
+    magic: 3663,
+    encoded:
+      "Tw4NCgAAAAAAAAAAHwAAAOMAAAAAAAAAAAAAAAABAAAAAAAAAPMOAAAAgAAAAFEAFQBzAFEBIQApA2MBAAAAAAAAAAAAAAACAAAAAwAAAPMWAAAAgAAAAFUAUQAqGgAAAAAAAAAAAAAhACkBOukBAAAA6QoAAADpAgAAAKkAKQHaAWFzAQAAACbaCmZpeHR1cmUucHnaAWZyCQAAAAEAAABzDAAAAIEA2AsMiFaNOdAEFPMAAAAATj4CAAAA4wIAAAAAAAAAAAAAAAIAAAADAAAA8yAAAACAAAAAVQBPAAAAAAAAAAAAAAAAAAAAAAAAAFUAMQIhAKkBTqkB2gF4qQJyBwAAANoBYnMCAAAAJiZyCAAAANoIPGxhbWJkYT5yEgAAAAEAAABzDAAAAIEAsAG3A7EDsFGpeHIKAAAA4wIAAAAAAAAAAAAAAAIAAAADAAAA8yAAAACAAAAAVQBPAAAAAAAAAAAAAAAAAAAAAAAAAFUBMQIhAHINAAAAcg4AAAByEAAAAHMCAAAAJiZyCAAAAHISAAAAchIAAAABAAAAcwwAAACBAJBxl3ORc5hBkWhyCgAAACkBcgkAAAByBgAAAHIKAAAAcggAAADaCDxtb2R1bGU+chUAAAABAAAAcwoAAADxAwEBAfQCAQEVcgoAAAA=",
+  },
+])(
+  "reads CPython $version output with a slice constant and distinct lambdas",
+  async ({ version, pythonVersion, magic, encoded }, { cli }) => {
+    // CPython marshal output of `def f(a): return a[1:10:2]` plus a frozenset
+    // of two same-line lambdas, `(a.x, b)` and `(a.x, a)`, whose bytecode
+    // differs only in the LOAD_FAST_BORROW operand after LOAD_ATTR's caches.
+    const pyc = Buffer.from(encoded, "base64");
+    const root = await createTestTempDirectory("rea-python-pyc-slice-");
+    const path = join(root, `slice-${version}.pyc`);
+    await writeFile(path, pyc);
+    const result = await cli.run({
+      arguments: ["inspect-python-pyc", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const evidence = completePycEvidenceSchema.parse(result.json);
+    expect(evidence.normalized_result.header).toMatchObject({
+      magic,
+      python_version: pythonVersion,
+      code_layout: "py311",
+    });
+    expect(evidence.normalized_result.code_objects).toHaveLength(4);
+    expect(evidence.normalized_result.code_objects[0]).toMatchObject({
+      consts: [
+        { kind: "code", name: "f", firstlineno: 1 },
+        { kind: "none" },
+        { kind: "frozenset", length: 2 },
+      ],
+      nested_code: [1, 2, 3],
+    });
+    expect(evidence.normalized_result.code_objects[1]).toMatchObject({
+      name: "f",
+      consts: [{ kind: "slice" }],
+    });
+    expect(evidence.normalized_result.code_objects[2]?.name).toBe("<lambda>");
+    expect(evidence.normalized_result.code_objects[3]?.name).toBe("<lambda>");
+  },
+);
+
 cliTest(
   "uses magic-specific cache tables for synthetic pyc bytecode equality",
   async ({ cli }) => {
@@ -156,6 +209,9 @@ cliTest(
       { magic: 3553, opcode: 25, cacheUnits: 1 },
       { magic: 3564, opcode: 58, cacheUnits: 1 },
       { magic: 3571, opcode: 82, cacheUnits: 9 },
+      { magic: 3627, opcode: 80, cacheUnits: 9 },
+      { magic: 3663, opcode: 79, cacheUnits: 9 },
+      { magic: 3666, opcode: 128, cacheUnits: 1 },
     ];
     for (const { magic, opcode, cacheUnits } of cases) {
       const cache = Buffer.alloc(cacheUnits * 2);
@@ -200,6 +256,48 @@ cliTest(
       });
       expect(evidence.normalized_result.artifact.sha256).toBe(
         createHash("sha256").update(pyc).digest("hex"),
+      );
+    }
+    // Magics 3615 and 3620 pin no table, so a changed cache keeps its code object.
+    for (const { magic, opcode, cacheUnits } of [
+      { magic: 3615, opcode: 45, cacheUnits: 5 },
+      { magic: 3620, opcode: 88, cacheUnits: 4 },
+    ]) {
+      const cache = Buffer.alloc(cacheUnits * 2);
+      const changedCache = Buffer.from(cache);
+      changedCache[0] = 1;
+      const frozenSet = Buffer.concat([
+        Buffer.from([0x3e, 2, 0, 0, 0]),
+        ...[cache, changedCache].map((payload) =>
+          marshalCode("py311", {
+            bytecode: Buffer.concat([
+              Buffer.from([opcode, 0]),
+              payload,
+              Buffer.from([83, 0]),
+            ]),
+          }),
+        ),
+      ]);
+      const path = join(root, `inline-caches-${String(magic)}.pyc`);
+      await writeFile(
+        path,
+        Buffer.concat([
+          pythonPycHeader(magic),
+          marshalCode("py311", { consts: [frozenSet] }),
+        ]),
+      );
+      const result = await runFileCli(cli, {
+        arguments: ["inspect-python-pyc", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const evidence = completePycEvidenceSchema.parse(result.json);
+      expect(evidence.normalized_result.code_objects[0]?.consts).toEqual([
+        expect.objectContaining({ kind: "frozenset", length: 2 }),
+      ]);
+      expect(evidence.normalized_result.limitations).toEqual(
+        expect.arrayContaining([
+          expect.stringMatching(new RegExp(`Magic ${String(magic)} is shared`)),
+        ]),
       );
     }
   },
