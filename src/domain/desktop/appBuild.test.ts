@@ -10,6 +10,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUILD_NODE_VERSION,
+  BUILD_PACKAGE_FILE,
   buildSourceSchema,
   renderBuildBundle,
   type BuildBundleFile,
@@ -53,7 +54,7 @@ describe("build bundle renderer", () => {
       'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
@@ -146,9 +147,14 @@ describe("build bundle install sources", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).not.toContain('to="node-arm64.tar.xz"');
+    // REA's layer keeps the .deb for the capture before the install removes it.
     expect(module).toContain(
-      'run=[RunScript(script="install-package.sh"), RunScript(script="install-rea.sh")]',
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-package.sh")]',
     );
+    expect(text(bundle.files, "envs/mousepad/install-rea.sh")).toContain(
+      `cp vendor/package.deb ${BUILD_PACKAGE_FILE}`,
+    );
+    expect(BUILD_PACKAGE_FILE).toBe("/opt/rea/package.deb");
     expect(text(bundle.files, "envs/mousepad/install-package.sh")).toContain(
       "dpkg -i 'vendor/package.deb'",
     );
@@ -271,7 +277,7 @@ describe("installed launch paths", () => {
     );
     const module = text(bundle.files, "envs/typora/typora_app.py");
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "typora"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
     );
     expect(module).toContain(
       'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',

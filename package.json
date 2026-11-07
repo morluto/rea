@@ -70,6 +70,7 @@
     "bridge/ghidra/ReaGhidraPrepareDol.java",
     "bridge/android/ReaJadxBridge.java",
     "bridge/mitmproxy/capture.py",
+    "bridge/agentenv/capture.py",
     "bridge/agentenv/computer.py",
     "scripts/rea.mjs",
     "scripts/lib/cli-process-environment.mjs",
@@ -112,6 +113,7 @@
   "scripts": {
     "release:notes": "node scripts/release-notes.mjs",
     "deps:check": "node scripts/check-dependency-install.mjs",
+    "pack:build-computer-runtime": "node scripts/pack-build-computer-runtime.mjs",
     "metadata:generate": "node scripts/run-exclusive.mjs artifacts node scripts/generate-package-metadata.mjs",
     "metadata:check": "node scripts/generate-package-metadata.mjs --check",
     "mcp-registry:check": "node scripts/verify-mcp-registry-metadata.mjs",
@@ -205,6 +207,7 @@
     "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
+    "verify:ghidra:checkpoints": "npm run build:cached && node scripts/verify-real-ghidra-checkpoints.mjs",
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",
     "verify:ghidra:mips": "npm run build:cached && node scripts/verify-real-ghidra-mips.mjs",
     "verify:ghidra:ppc": "npm run build:cached && node scripts/verify-real-ghidra-ppc.mjs",
