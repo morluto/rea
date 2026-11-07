@@ -30,6 +30,7 @@ import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
 import {
+  semanticBindingMayHaveOpaqueEffect,
   semanticOpaqueBindingReadMayHaveChanged,
   semanticOpaqueNameMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
@@ -269,7 +270,27 @@ export const rejectsEventListener = (
     current = pending.pop()
   ) {
     if (current.node === undefined) continue;
-    if (t.isSpreadElement(current.node)) return false;
+    if (t.isSpreadElement(current.node)) {
+      const unwrappedArg = unwrapJavaScriptExpression(
+        current.node.argument,
+      ).node;
+      if (t.isArrayExpression(unwrappedArg)) {
+        if (unwrappedArg.elements.length === 0) {
+          // An empty array spread (...[]) supplies no arguments at all;
+          // in call position, omitting the listener throws ERR_INVALID_ARG_TYPE.
+          continue;
+        }
+        const first = unwrappedArg.elements[0];
+        if (first === null) {
+          continue;
+        }
+        if (t.isExpression(first) || t.isSpreadElement(first)) {
+          pending.push({ node: first, depth: current.depth + 1 });
+          continue;
+        }
+      }
+      return false;
+    }
     const unwrapped = unwrapJavaScriptExpression(current.node);
     const depth = current.depth + unwrapped.depth;
     if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
@@ -725,6 +746,10 @@ export const isProvenNodeEmitter = (
   if (
     binding.mutable &&
     semanticOpaqueBindingReadMayHaveChanged(binding, unwrapped, state)
+  )
+    return false;
+  if (
+    semanticBindingMayHaveOpaqueEffect(binding, state, unwrapped, "reference")
   )
     return false;
   const activeBinding = binding.mutable

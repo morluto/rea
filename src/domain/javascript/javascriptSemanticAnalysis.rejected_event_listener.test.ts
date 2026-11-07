@@ -487,3 +487,75 @@ it("does not emit child listener interactions for an immutable alias to a spawn 
   expect(ir.childProcessInteractions).toEqual([]);
   expect(ir.eventOperations).toEqual([]);
 });
+
+it("retains partial candidate when direct eval changes a listener method through an immutable alias", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    const alias = child;
+    eval("alias.on = function () {}");
+    alias.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it.each([
+  ["an empty array spread", `...[]`],
+  ["a nested empty array spread", `...[...[]]`],
+  ["a spread of a non-callable number", `...[1]`],
+])("does not emit child listener interaction for %s", (_name, expr) => {
+  const ir = analyzeJavaScriptSemantics(`
+      import { spawn } from "node:child_process";
+      const child = spawn("worker");
+      child.on("exit", ${expr});
+    `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains child listener interaction when spread provides a callable function", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ...[() => {}]);
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+});
