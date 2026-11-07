@@ -48,17 +48,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 /** Seconds since 1970 of 2000-01-01 and 2100-01-01: an epoch time a save stamps falls between. */
 const EPOCH_RANGE = [946_684_800, 4_102_444_800] as const;
 
-/**
- * A value a program makes anew, a UUID or an epoch time in seconds or
- * milliseconds, which no user types. A 10-digit number that starts with 2–9
- * is a phone number, not an epoch: those through 2033 start with 1.
- */
-export const isVolatileValue = (value: string): boolean => {
+/** UUIDs and epoch-shaped values in named save metadata are likely generated. */
+export const isVolatileValue = (
+  value: string,
+  bookkeeping = false,
+): boolean => {
   if (UUID.test(value)) return true;
+  if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
   if (!(seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1])) return false;
-  return value.length === 13 || value.startsWith("1");
+  return true;
 };
 
 /**
@@ -84,10 +84,11 @@ const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
 const BOOKKEEPING =
   /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|timestamp/u;
 
+export const isBookkeepingName = (name: string) =>
+  BOOKKEEPING.test((name.split(":").at(-1) ?? name).toLowerCase());
+
 export const isBookkeeping = (element: Element) =>
-  BOOKKEEPING.test(
-    (element.name.split(":").at(-1) ?? element.name).toLowerCase(),
-  );
+  isBookkeepingName(element.name);
 
 /**
  * Whether a value is a date written in parts, as Tellico writes an entry's
@@ -355,7 +356,12 @@ export const changeNoise = (
               return text === undefined || text === "";
             })
           ? "renumbered"
-          : (typeof value === "string" && isVolatileValue(value)) ||
+          : (typeof value === "string" &&
+                isVolatileValue(
+                  value,
+                  elements.some(isBookkeeping) ||
+                    (key !== undefined && isBookkeepingName(key)),
+                )) ||
               metadataCount(elements, key, value)
             ? "volatile"
             : isStamp(value ?? null) || stampedAlong(elements)

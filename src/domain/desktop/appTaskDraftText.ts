@@ -209,7 +209,7 @@ export const holdsNoisyText = (
     const text = value.trim();
     return (
       text.length > 0 &&
-      (isStamp(text) || (bookkeeping && isVolatileValue(text)))
+      (isStamp(text) || (bookkeeping && isVolatileValue(text, true)))
     );
   }
   return (

@@ -3,6 +3,8 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   isRenumberedKey,
+  isBookkeeping,
+  isBookkeepingName,
   inSplitDate,
   isStamp,
   isVolatileValue,
@@ -136,7 +138,10 @@ export const attributeChecks = (
   const eligible = own.filter(
     ({ key, value }) =>
       !isStamp(value) &&
-      !isVolatileValue(value) &&
+      !isVolatileValue(
+        value,
+        isBookkeeping(element) || isBookkeepingName(key),
+      ) &&
       !isViewStateName(key) &&
       !isRenumberedKey(key),
   );
@@ -259,7 +264,7 @@ export const fieldChecks = (
         text.length < MIN_FIELD_CHARS ||
         !/[\p{L}\d]/u.test(text) ||
         isStamp(text) ||
-        isVolatileValue(text)
+        isVolatileValue(text, isBookkeeping(field))
       )
         continue;
       if (seen.includes(text)) {
@@ -345,7 +350,7 @@ export const recordChecks = (
       return value.trim() === "" ||
         value.length > context.chars ||
         isStamp(value) ||
-        isVolatileValue(value)
+        isVolatileValue(value, isBookkeeping(field))
         ? []
         : [
             wholeTextCheck(
