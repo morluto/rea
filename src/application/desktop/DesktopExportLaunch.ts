@@ -58,18 +58,22 @@ export const planLaunch = (
   const { application, host } = capture;
   const isDocument = (home: string) => files.get(home)?.role === "document";
   const homeOf = capturedHomePath(capture);
+  const capturedDirectory = application.working_directory;
   const workingDirectory = (() => {
-    const directory = application.working_directory;
-    if (!directory.startsWith(`${host.home}/`)) return directory;
-    const relative = directory.slice(host.home.length + 1);
-    const seed = homeOf(directory) ?? relative;
-    return seed === relative ? directory : `${host.home}/${seed}`;
+    if (!capturedDirectory.startsWith(`${host.home}/`))
+      return capturedDirectory;
+    const relative = capturedDirectory.slice(host.home.length + 1);
+    const seed = homeOf(capturedDirectory) ?? relative;
+    return seed === relative ? capturedDirectory : `${host.home}/${seed}`;
   })();
   const launch = openSeedDocument(
     electronLaunchArguments(application.argv, electron),
     {
       home: host.home,
-      workingDirectory,
+      // Resolve captured relative arguments against the directory the app used,
+      // then place the process in the seeded spelling of that directory.
+      workingDirectory: capturedDirectory,
+      launchDirectory: workingDirectory,
       exec: application.desktop_entry?.exec ?? null,
       documents: [...seeds.keys()].filter(isDocument).sort(),
       isDocument,
