@@ -181,40 +181,27 @@ export const capturedHomePath = (
         : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
-  const selections = [...(capture.state.selected_paths ?? [])].sort(
-    (left, right) => right.physical.length - left.physical.length,
-  );
+  const selections = [...(capture.state.selected_paths ?? [])];
+  // The longest physical path wins, whether it is a selected link or a walked
+  // settings folder. A broad selection of ~/settings must not hide
+  // ~/.config/notes when that folder was walked at ~/settings/notes.
+  const spellings = [
+    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
+    ...renamed,
+    ...selections.flatMap((selection) =>
+      SQLITE_SIDECARS.map(({ suffix }) => ({
+        physical: `${selection.physical}${suffix}`,
+        logical: `${selection.path}${suffix}`,
+      })),
+    ),
+  ].sort((left, right) => right.physical.length - left.physical.length);
   return (path) => {
-    // The path the caller selected is the one the app uses, including through
-    // a link, innermost first. ~/.config/MuseScore pointing at settings or
-    // Documents is seeded as .config/MuseScore, so those settings are not a
-    // second document beside the note.
-    const selection = selections.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    const selected =
-      selection === undefined
-        ? null
-        : relative(`${selection.path}${path.slice(selection.physical.length)}`);
-    if (selected !== null) return selected;
-    for (const { suffix } of SQLITE_SIDECARS) {
-      if (!path.endsWith(suffix)) continue;
-      const database = path.slice(0, -suffix.length);
-      const owner = selections.find(({ physical }) => physical === database);
-      if (owner === undefined) continue;
-      const home = relative(`${owner.path}${suffix}`);
-      if (home !== null) return home;
+    for (const { physical, logical } of spellings) {
+      if (!isWithinAny(path, [physical])) continue;
+      const spelled = relative(`${logical}${path.slice(physical.length)}`);
+      if (spelled !== null) return spelled;
     }
-    const directory = renamed.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    const respelled =
-      directory === undefined
-        ? null
-        : relative(
-            `${directory.logical}${path.slice(directory.physical.length)}`,
-          );
-    return respelled ?? relative(path);
+    return relative(path);
   };
 };
 

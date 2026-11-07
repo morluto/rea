@@ -53,10 +53,10 @@ export const openSeedDocument = (
     const path = homePathOf(argument, home, facts.workingDirectory);
     if (path === undefined) return argument;
     const seedPath = spelled(path);
-    return seedPath !== path &&
-      facts.isDocument(seedPath) &&
-      argument.endsWith(path)
-      ? `${argument.slice(0, -path.length)}${seedPath}`
+    // The argument may be only a filename under a working directory. Replace
+    // the whole argument with the seeded file's absolute path.
+    return seedPath !== path && facts.isDocument(seedPath)
+      ? `${home}/${seedPath}`
       : argument;
   };
   const named = argv
