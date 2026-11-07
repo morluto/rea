@@ -29,6 +29,7 @@ const plan: DesktopAppExportPlan = {
   windowClass: "Mousepad",
   paths: [".config/Mousepad", "Documents"],
   capturedHome: "/home/ada",
+  seedCheckpoint: "baseline",
   seedFiles: ["Documents/todo.txt"],
   textSeeds: ["Documents/todo.txt"],
   unseededFiles: [],
@@ -58,7 +59,7 @@ describe("names", () => {
   it("keeps the class off the module's own names and the module off other modules", () => {
     expect(className("path")).toBe("PathApp");
     expect(className("data-part")).toBe("DataPartApp");
-    expect(className("element-tree")).toBe("ElementTreeApp");
+    expect(className("run-script")).toBe("RunScriptApp");
     expect(className("p-a-t-h-s")).toBe("PATHSApp");
     expect(appModuleFile("calendar")).toBe("calendar_app.py");
     expect(appModuleFile("gnu-cash")).toBe("gnu_cash_app.py");
@@ -76,6 +77,19 @@ describe("ownedPaths", () => {
     ).toEqual([".config/app", "Documents"]);
   });
 
+  it("owns a folder beside a state directory, differing only in letter case, in the file's spelling", () => {
+    expect(
+      ownedPaths(
+        [".config/GIMP/2.10/sessionrc", ".Gimp/x"],
+        [],
+        [".config/gimp", ".gimp"],
+      ),
+    ).toEqual([".Gimp", ".config/GIMP"]);
+    expect(
+      ownedPaths([".config/GIMPshop/2.10/sessionrc"], [], [".config/gimp"]),
+    ).toEqual([".config/GIMPshop/2.10"]);
+  });
+
   it("owns a file directly in the home or a shared folder as itself", () => {
     expect(ownedPaths(["books.gnucash"], [], [])).toEqual(["books.gnucash"]);
     expect(
@@ -85,9 +99,11 @@ describe("ownedPaths", () => {
 });
 
 describe("launchCommand", () => {
-  it("keeps commands without home paths and respells home arguments under $HOME", () => {
+  it("starts in the captured working directory, respelling the home and home arguments under $HOME", () => {
     expect(launchCommand(["mousepad"], "/home/ada", "/home/ada")).toEqual([
-      "mousepad",
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad'`,
     ]);
     expect(
       launchCommand(
@@ -95,7 +111,11 @@ describe("launchCommand", () => {
         "/home/ada",
         "/home/ada",
       ),
-    ).toEqual(["sh", "-c", `exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME" 2>/dev/null; exec 'mousepad' "$HOME"/'Documents/it'"'"'s.txt'`,
+    ]);
   });
 
   it("respells the home itself and option values under it", () => {
@@ -108,11 +128,11 @@ describe("launchCommand", () => {
     ).toEqual([
       "sh",
       "-c",
-      `exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
+      `cd '/' 2>/dev/null; exec 'notes' "$HOME" '--config='"$HOME"/'.notes' '--x=/home/adam'`,
     ]);
   });
 
-  it("tries the captured working directory, the home included, only for relative arguments", () => {
+  it("never leaves the app in the framework's own folder, whatever its arguments", () => {
     expect(
       launchCommand(
         ["notes", "today.md"],
@@ -125,11 +145,12 @@ describe("launchCommand", () => {
       `cd "$HOME"/'project/docs' 2>/dev/null; exec 'notes' 'today.md'`,
     ]);
     expect(
-      launchCommand(["notes", "today.md"], "/home/ada", "/home/ada"),
-    ).toEqual(["sh", "-c", `cd "$HOME" 2>/dev/null; exec 'notes' 'today.md'`]);
-    expect(
       launchCommand(["notes", "--wrap"], "/home/ada", "/home/ada/project"),
-    ).toEqual(["notes", "--wrap"]);
+    ).toEqual([
+      "sh",
+      "-c",
+      `cd "$HOME"/'project' 2>/dev/null; exec 'notes' '--wrap'`,
+    ]);
     expect(launchCommand(["./app"], "/home/ada", "/opt/app")).toEqual([
       "sh",
       "-c",

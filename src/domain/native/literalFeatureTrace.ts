@@ -7,6 +7,18 @@ export const literalFeatureReferenceSchema = z.object({
   target_address: z.string(),
   source_address: z.string(),
   containing_procedure: traceContainingProcedureSchema,
+  source_classifications: z
+    .array(
+      z.strictObject({
+        kind: z.literal("stored_pointer"),
+        provenance: z.string(),
+        width: z.int().positive(),
+      }),
+    )
+    .exactOptional()
+    .describe(
+      "Provider-reported source classifications; omission means none were supplied. The list need not exhaust all kinds.",
+    ),
 });
 
 /** Complete result of a native literal feature trace. */

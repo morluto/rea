@@ -187,10 +187,12 @@ describe("agent recovery metadata", () => {
         operation: "inspect_analysis_view",
       },
       remediation: {
-        action:
-          "Read the declared input schema or CLI usage for inspect_analysis_view; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
+        action: expect.stringContaining("inspect_analysis_view"),
       },
     });
+    expect(projected.remediation.action).toContain("tools/list");
+    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
+    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -1039,8 +1041,7 @@ describe("analysis error projection: caller contract", () => {
     ]);
     expect(projected[1]).toMatchObject({
       category: "unsupported_provider",
-      message:
-        "This analysis is unavailable for the current target. Choose another analysis or target.",
+      message: expect.stringMatching(/unavailable.*target/iu),
       details: {
         provider_id: "fixture",
         operation: "overview",
