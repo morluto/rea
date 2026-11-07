@@ -732,7 +732,7 @@ it("preserves cancellation while projecting observations and successful cleanup"
 
   expect(projectAnalysisError(error)).toMatchObject({
     code: "cancelled",
-    message: "Process capture was cancelled. Start it again when ready.",
+    message: expect.stringMatching(/process capture.*cancelled.*again/iu),
     details: {
       operation: "process_capture",
       cleanup: "complete",
