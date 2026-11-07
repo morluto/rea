@@ -729,7 +729,12 @@ const requiredModuleChanged = (
   const identity = semanticRequireExportsIdentity(specifier, selected);
   return builtinModuleEffects(identity.specifier, state).some(
     ({ path, node, kind }) =>
-      !(ignoreRootSlotWrite && kind === "write" && path.length === 1 && path[0] === identity.path[0]) &&
+      !(
+        ignoreRootSlotWrite &&
+        kind === "write" &&
+        path.length === 1 &&
+        path[0] === identity.path[0]
+      ) &&
       !(
         savedObjectCapture !== undefined &&
         path.length < identity.path.length &&
@@ -781,7 +786,16 @@ export const builtinSharedPrototypeUnmodified = (
   use: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean =>
-  !requiredModuleChanged(specifier, path, use, state, false, undefined, true, true);
+  !requiredModuleChanged(
+    specifier,
+    path,
+    use,
+    state,
+    false,
+    undefined,
+    true,
+    true,
+  );
 
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (

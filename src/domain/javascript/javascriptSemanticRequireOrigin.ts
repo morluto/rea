@@ -1656,8 +1656,10 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
   if (
     (selected.length > 0 || escaped) &&
     ((specifier === "fs" &&
-      (path[0] === "ReadStream" || path[0] === "WriteStream" ||
-        path[0] === "FileReadStream" || path[0] === "FileWriteStream")) ||
+      (path[0] === "ReadStream" ||
+        path[0] === "WriteStream" ||
+        path[0] === "FileReadStream" ||
+        path[0] === "FileWriteStream")) ||
       (specifier === "buffer" && path[0] === "Buffer") ||
       (specifier === "stream" &&
         (path[0] === "Readable" || path[0] === "Writable")))
