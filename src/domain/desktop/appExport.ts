@@ -189,6 +189,11 @@ export const capturedHomePath = (
     ...selections.flatMap(({ path, physical }) => [path, physical]),
   ];
   const directories = new Set<string>();
+  for (const selected of selections)
+    if (selected.kind === "directory") {
+      directories.add(selected.path);
+      directories.add(selected.physical);
+    }
   for (const checkpoint of capture.state.checkpoints ?? [])
     for (const change of checkpoint.changes) {
       const facts = change.after ?? change.before;
