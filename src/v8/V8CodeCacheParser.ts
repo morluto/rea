@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES,
   V8_CODE_CACHE_COMPILE_FUNCTION_BIT,
+  V8_CODE_CACHE_MODULE_BIT,
   V8_CODE_CACHE_HEADER_BYTES,
   V8_CODE_CACHE_MAGIC_HIGH,
   V8_CODE_CACHE_SOURCE_LENGTH_MASK,
@@ -91,10 +92,16 @@ export const parseV8CodeCache = (
 
   const sourceWord = field(2);
   const sourceLength = sourceWord & V8_CODE_CACHE_SOURCE_LENGTH_MASK;
+  // Bit 30 marks a `vm.SourceTextModule` cache and bit 29 a `vm.compileFunction`
+  // one. Measured on Node 24.22.1, an 19-unit module source reads `0x40000013` while a
+  // script of the same length reads `0x00000013`, so the function bit alone reports a
+  // module cache as a script. Both bits sit outside the source-length mask.
   const producer =
-    (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
-      ? ("compile_function" as const)
-      : ("script" as const);
+    (sourceWord & V8_CODE_CACHE_MODULE_BIT) !== 0
+      ? ("module" as const)
+      : (sourceWord & V8_CODE_CACHE_COMPILE_FUNCTION_BIT) !== 0
+        ? ("compile_function" as const)
+        : ("script" as const);
 
   const payload = bytes.subarray(payloadOffset);
   const observations: V8CodeCache["embedded_strings"] = [];
@@ -104,10 +111,12 @@ export const parseV8CodeCache = (
     const runBytes = end - runStart;
     if (runBytes >= input.min_string_bytes) {
       if (observations.length >= input.max_strings)
+        // The message states the fact. Recovery advice belongs to the provider, which
+        // can see whether either budget still has headroom before recommending a retry.
         throw new V8CodeCacheBudgetFailure(
           "max_strings",
           input.max_strings,
-          `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes; raise max_strings or raise min_string_bytes.`,
+          `Payload contains more than ${String(input.max_strings)} printable runs of at least ${String(input.min_string_bytes)} bytes, so the max_strings observation budget was exhausted before the scan finished.`,
         );
       const retained = Math.min(
         runBytes,

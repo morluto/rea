@@ -25,6 +25,8 @@ import {
 import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 import {
   MAX_INSPECT_V8_CODE_CACHE_FILE_BYTES,
+  MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES,
+  MAX_INSPECT_V8_CODE_CACHE_STRINGS,
   type InspectV8CodeCacheInput,
 } from "../domain/v8/v8CodeCache.js";
 import { err, ok } from "../domain/result.js";
@@ -93,12 +95,31 @@ const inputBudgetRemediation = (
   return undefined;
 };
 
-const observationBudgetRemediation = (
+/**
+ * Recovery advice for an exhausted observation budget, depending on remaining headroom.
+ *
+ * `max_strings` tops out at `MAX_INSPECT_V8_CODE_CACHE_STRINGS` and `min_string_bytes`
+ * at 256, so when both are already at their ceiling neither suggested retry is valid —
+ * an admitted file can exceed 65536 runs of 256 bytes. That case has to recommend a
+ * smaller artifact instead of repeating an input change Node would reject.
+ */
+export const observationBudgetRemediation = (
   cause: V8CodeCacheBudgetFailure,
-): string =>
-  cause.boundary === "max_strings"
-    ? `Raise max_strings above ${String(cause.limit)} or raise min_string_bytes; the limit is the caller-selected observation budget.`
-    : `Lower min_string_bytes below ${String(cause.limit)} or select a smaller artifact.`;
+  input: InspectV8CodeCacheInput,
+): string => {
+  if (cause.boundary !== "max_strings")
+    return `Lower min_string_bytes below ${String(cause.limit)} or select a smaller artifact.`;
+  const canRaiseCount = input.max_strings < MAX_INSPECT_V8_CODE_CACHE_STRINGS;
+  const canRaiseRunLength =
+    input.min_string_bytes < MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES;
+  if (canRaiseCount && canRaiseRunLength)
+    return `Raise max_strings above ${String(cause.limit)} or raise min_string_bytes above ${String(input.min_string_bytes)}; both are caller-selected observation budgets.`;
+  if (canRaiseCount)
+    return `Raise max_strings above ${String(cause.limit)}; min_string_bytes is already at its ${String(MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES)}-byte ceiling, so a larger artifact must be reduced or split.`;
+  if (canRaiseRunLength)
+    return `Raise min_string_bytes above ${String(input.min_string_bytes)}; max_strings is already at its ${String(MAX_INSPECT_V8_CODE_CACHE_STRINGS)}-observation ceiling, so a shorter run length cannot help.`;
+  return `Both max_strings and min_string_bytes are already at their ceilings (${String(MAX_INSPECT_V8_CODE_CACHE_STRINGS)} observations, ${String(MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES)}-byte runs), so no option change clears this budget; select a smaller artifact.`;
+};
 
 const v8CodeCacheFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
@@ -117,7 +138,7 @@ const v8CodeCacheFailurePrimary = (
       {
         cause,
         retryable: false,
-        remediationAction: observationBudgetRemediation(cause),
+        remediationAction: observationBudgetRemediation(cause, input),
       },
     );
   if (cause instanceof V8CodeCacheFormatFailure)

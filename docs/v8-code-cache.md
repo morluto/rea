@@ -52,8 +52,11 @@ V8's serializer calls this field the source hash; on the producers measured here
 equals the source length exactly, including sources whose UTF-8 byte length differs, so the
 reader reports it under the name the measurement supports. Treat that name as an
 observation, not as a claim about what any other build stores there.
-`header.producer` names the producer family: `script` for `vm.Script` and bytenode output,
-`compile_function` when V8's function-compilation bit is set in that word.
+`header.producer` names the producer family from the flag bits in that word. Bit 29
+marks `vm.compileFunction` (`compile_function`); bit 30 marks `vm.SourceTextModule`
+(`module`), which a check that only tests bit 29 reports as a plain script. `script`
+covers `vm.Script` and bytenode output, which carry neither flag. The source-length mask
+is `0x1fffffff`, so both flags sit outside the reported length.
 
 ## Embedded byte patterns
 
