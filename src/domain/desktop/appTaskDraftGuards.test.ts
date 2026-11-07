@@ -76,16 +76,18 @@ describe("draftTaskFiles guards", () => {
     ]);
     expect(file.guards).toEqual([
       {
-        kind: "text_equals",
+        kind: "value_equals",
         file: FILE,
         pointer: cell("[@Col=2]"),
-        value: "398.2",
+        value: 398.2,
+        tolerance: 0.001,
       },
       {
-        kind: "text_equals",
+        kind: "value_equals",
         file: FILE,
         pointer: cell("[@Row=3]"),
-        value: "174.9",
+        value: 174.9,
+        tolerance: 0.001,
       },
       {
         kind: "member_count",

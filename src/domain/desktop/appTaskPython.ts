@@ -157,7 +157,7 @@ def _lines(check, entry):
 
 def _near(at: str, found, expected, tolerance):
     """A value compared within a tolerance: numbers, and numeral strings, by their difference."""
-    number = _number(found)
+    number = _number(_element_text(found) if _is_element(found) else found)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"

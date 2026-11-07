@@ -6,7 +6,7 @@ import {
   isRenumberedKey,
   isStamp,
 } from "./appTaskDraftNoise.js";
-import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import {
   isIdentifyingAttribute,
   isNameLikeKey,
@@ -66,6 +66,24 @@ const guardAt = (
   const before = resolvePointer(ends.baseline, pointer);
   const after = resolvePointer(ends.final, pointer);
   if (before === undefined || after === undefined) return undefined;
+  if (
+    check.kind === "value_equals" &&
+    "tolerance" in check &&
+    isXmlElement(before) &&
+    isXmlElement(after)
+  ) {
+    const value = elementText(before);
+    if (
+      value.trim() === "" ||
+      value !== elementText(after) ||
+      value.length > context.chars ||
+      isStamp(value)
+    )
+      return undefined;
+    return decimalOf(value) === undefined
+      ? { kind: "text_equals", file, pointer, value }
+      : valueEqualsCheck(file, pointer, value);
+  }
   if (check.kind === "text_equals") {
     if (!isXmlElement(before) || !isXmlElement(after)) return undefined;
     const attribute = check.text_attribute;
@@ -381,9 +399,13 @@ const siblingGuard = (
     ? (rekeyed(context, step, selected) ?? selected)
     : selected;
   const field =
-    check.kind === "text_equals"
-      ? step.rest
-      : guardField(sibling, { all, varies }, step.rest);
+    check.kind === "value_equals" &&
+    "tolerance" in check &&
+    step.rest.length === 0
+      ? []
+      : check.kind === "text_equals"
+        ? step.rest
+        : guardField(sibling, { all, varies }, step.rest);
   // A guard reading what its sibling is selected by says no more than that the member exists.
   return field === undefined || readsSelector(sibling, field)
     ? undefined
