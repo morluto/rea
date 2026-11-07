@@ -33,10 +33,11 @@ export const BUILD_REQUEST = {
 };
 const ENDS = ["--seed-checkpoint", "seed", "--end-checkpoint", "end"];
 
-/** The app's package as the capture records it, the URL the export downloads its file from, if it needs one, and the packages it installs beside the app. */
+/** The app's package as the capture records it, the URL the export downloads its file from, if it needs one, the download it was installed from, if any, and the packages it installs beside the app. */
 export interface CapturedInstall {
   readonly package?: DesktopPackage;
   readonly packageUrl?: string;
+  readonly downloadInstall?: Readonly<Record<string, string>>;
   readonly extraPackages?: readonly string[];
 }
 
@@ -67,6 +68,9 @@ const realCliOutputs = async (
   const task = join(work, "task.json");
   await writeFile(task, JSON.stringify(BUILD_TASK));
   const bundle = join(work, "bundle");
+  const download = join(work, "download-install.json");
+  if (install?.downloadInstall !== undefined)
+    await writeFile(download, JSON.stringify(install.downloadInstall));
   const draft = await serveCli([
     "describe-desktop-application-task",
     capture,
@@ -84,6 +88,9 @@ const realCliOutputs = async (
     ...(install?.packageUrl === undefined
       ? []
       : ["--package-url", install.packageUrl]),
+    ...(install?.downloadInstall === undefined
+      ? []
+      : ["--download-install", download]),
     ...(install?.extraPackages ?? []).flatMap((name) => [
       "--extra-package",
       name,

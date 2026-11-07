@@ -187,9 +187,30 @@ Applications menu entry can open the app.
 | `archive`        | `package` from the Ubuntu 24.04 archive, on amd64 and arm64, with its optional `extra_packages` beside it  |
 | `apt_repository` | `package` from the repository at `uri` with `suite` and `components`, trusting the key file `key_file`     |
 | `package_file`   | The `.deb` at `url`, checked against `sha256`, for one `architecture`, after its apt `dependencies` are in |
+| `appimage`       | The AppImage at `url`, checked against `sha256`, for one `architecture`, extracted with its own entry      |
+| `tarball`        | The archive at `url`, checked against `sha256`, for one `architecture`, with an entry running `program`    |
 
 Build steps run with the network off, so a `.deb`'s dependencies must be
-listed. `extra_packages` names up to 16 more archive packages, by the same
+listed.
+
+An AppImage or a tarball is downloaded by agentenv when the bundle is put,
+refused unless its SHA-256 is the one named, and unpacked by a root build
+step, `install-download.sh`, under `/opt/rea-apps/<desktop_entry>`; the
+export writes the same step. An AppImage is extracted with its own
+`--appimage-extract`, so no FUSE is needed, and the step installs the image's
+own `<desktop_entry>.desktop` under `/usr/local/share/applications` with
+each `Exec` program replaced by the image's `AppRun`, without `TryExec`, and
+its icon; an image without that entry fails the build, naming the entries it
+has. A tarball is read with Python's `tarfile`, since the computer has no
+`xz` program, so gzip, bzip2 and xz archives work. Its `program` is a path
+inside the archive, and REA writes the entry: `name` in the menu, or the
+entry's last part, and `program` with the files it opens (`%F`). An
+Electron app's command is rewritten after this step, on the entry it
+installed. An image or tarball holds no Debian package, so the capture
+records its package as `unknown`; the export checks instead that the
+captured program lies under the folder the download unpacks to. The
+downloaded file stays in the image's layer under the app's folder beside
+what it unpacks, so a 721 MB AppImage that unpacks to 3.0 GB adds both. `extra_packages` names up to 16 more archive packages, by the same
 name rules as `package`, for a runtime piece the app needs that its package
 does not install: apt here skips Recommends, so MyPaint 2.0.1 exits at launch
 without `librsvg2-common`, GTK's SVG icon loader, and Freeplane 1.7.10 needs
