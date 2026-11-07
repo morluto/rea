@@ -598,6 +598,7 @@ it("admits a compatible caller WABT release and records the observed banner", as
     if (!result.ok) throw result.error;
     const report = wasmArtifactSchema.parse(result.value.result);
     expect(report.tool_profile.release).toBe("1.0.44");
+    expect(report.tool_profile.source_commit).toBeNull();
     expect(
       report.tool_profile.commands.map((command) =>
         command.version_banner.trim(),

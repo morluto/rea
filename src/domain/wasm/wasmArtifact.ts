@@ -83,7 +83,12 @@ export const wasmArtifactSchema = z
     tool_profile: z.strictObject({
       source: z.literal("https://github.com/WebAssembly/wabt"),
       release: wabtReleaseBanner,
-      source_commit: z.literal(WABT_SOURCE_COMMIT),
+      /**
+       * Names the verified upstream revision only when that release is what
+       * ran; a caller-supplied newer 1.0.x build has no revision REA knows, so
+       * the field is null rather than a claim about a build that did not run.
+       */
+      source_commit: z.literal(WABT_SOURCE_COMMIT).nullable(),
       commands: z
         .array(
           z.strictObject({

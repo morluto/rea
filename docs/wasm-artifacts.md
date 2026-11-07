@@ -35,7 +35,7 @@ its actual stdout and stderr, including empty banners or warnings. Fix the
 reported directory, executable access or release rather than changing the module
 or repeating an unchanged call. All three tools must report the same release on
 stdout with empty stderr, and that release must fall within the accepted range
-(`^1.0.42`, verified with 1.0.42). A release above 1.0.42 in that range is
+(`>=1.0.42 <1.1.0`, verified with 1.0.42). A release above 1.0.42 in that range is
 admitted: the observed banner becomes `tool_profile.release` and the
 `provider.version`, and the report states that only 1.0.42 was verified. Managed
 downloads stay pinned to 1.0.42. For CLI calls, set the environment before the

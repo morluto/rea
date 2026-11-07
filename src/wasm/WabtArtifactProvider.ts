@@ -417,7 +417,8 @@ export class WabtArtifactProvider implements WasmArtifactPort {
       toolProfile = {
         source: "https://github.com/WebAssembly/wabt",
         release: admittedVersion,
-        source_commit: WABT_SOURCE_COMMIT,
+        source_commit:
+          admittedVersion === WABT_VERSION ? WABT_SOURCE_COMMIT : null,
         commands: commands.map(
           ({ selection: _selection, ...command }) => command,
         ),
