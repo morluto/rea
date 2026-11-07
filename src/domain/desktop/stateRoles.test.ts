@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import {
   isApplicationDconfGroup,
+  roleFacts,
+  sqliteSidecarRoots,
   stateReasons,
   stateRole,
   type DesktopRoleFacts,
@@ -34,6 +37,40 @@ describe("stateRole", () => {
     );
   });
 
+  it("makes a selected file a document, or the application's state under a hidden folder of the home", () => {
+    expect(
+      stateRole(["selected_path"], "Documents/Scores/Morning_Song.mscz"),
+    ).toBe("document");
+    expect(
+      stateRole(["selected_path"], ".config/MuseScore/MuseScore3.ini"),
+    ).toBe("application_state");
+    expect(stateRole(["selected_path"], ".museScorerc")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], null)).toBe("document");
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        ".local/share/app/notes.txt",
+      ),
+    ).toBe("document");
+  });
+
+  it("keeps a lock the app holds under a selected folder from being a document, unless a title names it", () => {
+    expect(stateRole(["selected_path"], "Documents/.~lock.today.txt#")).toBe(
+      "application_state",
+    );
+    expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
+      "application_state",
+    );
+    expect(
+      stateRole(
+        ["selected_path", "named_in_window_title"],
+        "Documents/.~lock.today.txt#",
+      ),
+    ).toBe("document");
+  });
+
   it("keeps a file in the desktop Trash shared, whatever else names it", () => {
     expect(
       stateRole([
@@ -53,6 +90,7 @@ describe("stateReasons", () => {
       stateDirectories: [],
       stateTails: [],
       selectedRoots: [],
+      selections: [],
       titles: ["*today.txt (~/Documents/plan.md) - Notes"],
       openedFiles: new Set(),
     };
@@ -74,6 +112,7 @@ describe("stateReasons", () => {
       stateDirectories: [],
       stateTails: [],
       selectedRoots: [],
+      selections: [],
       titles: ["poster.svg - Inkscape"],
       openedFiles: new Set(),
     };
@@ -99,6 +138,7 @@ describe("stateReasons for state directories", () => {
       stateDirectories: ["/data/ada/.config/gimp"],
       stateTails: [".config/gimp"],
       selectedRoots: [],
+      selections: [],
       titles: [],
       openedFiles: new Set(),
     };
@@ -114,6 +154,47 @@ describe("stateReasons for state directories", () => {
     expect(reasons("/home/ada/.config/GIMPshop/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.config/other/GIMP/sessionrc")).toEqual([]);
     expect(reasons("/home/ada/.Config/gimp/sessionrc")).toEqual([]);
+  });
+});
+
+describe("sqliteSidecarRoots", () => {
+  it("names the write-ahead log and journal of a selected database, and not a log selected on its own", () => {
+    const database = "/home/ada/Documents/books.db";
+    const wal = `${database}-wal`;
+    const journal = `${database}-journal`;
+    expect(sqliteSidecarRoots([database, wal, journal])).toEqual(
+      new Set([wal, journal]),
+    );
+    expect(sqliteSidecarRoots([wal])).toEqual(new Set());
+  });
+
+  it("keeps a selected folder whose name ends in -journal", () => {
+    const home = "/home/ada";
+    const report = `${home}/Projects/report`;
+    const journal = `${home}/Projects/report-journal`;
+    const database = `${home}/Documents/books.db`;
+    const facts = roleFacts({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [report, journal, database, `${database}-journal`],
+        selected_paths: [
+          { path: report, physical: report, kind: "directory" },
+          { path: journal, physical: journal, kind: "directory" },
+          { path: database, physical: database, kind: "file" },
+        ],
+      },
+      session: { windows: [], opened_files: [] },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(facts.sqliteSidecars).toEqual(new Set([`${database}-journal`]));
+    expect(facts.selectedRoots).toEqual(
+      expect.arrayContaining([report, journal, database]),
+    );
+    expect(facts.selectedRoots).not.toContain(`${database}-journal`);
+    expect(stateReasons(facts, `${journal}/notes.txt`, [], false)).toContain(
+      "selected_path",
+    );
   });
 });
 

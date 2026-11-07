@@ -25,8 +25,10 @@ import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
 } from "./investigation/recordEvidenceSources.js";
-import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
-import { createInvestigationEvidenceClosureChecker } from "./investigation/InvestigationEvidence.js";
+import {
+  resolveInvestigationEvidenceClosure,
+  createInvestigationEvidenceClosureChecker,
+} from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";

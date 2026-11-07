@@ -1,0 +1,261 @@
+import {
+  STATE_PATH_INPUTS,
+  STATE_PATH_INPUTS_MARKDOWN,
+} from "./buildCapture.js";
+import type { DesktopStatePath } from "./desktopState.js";
+import { isWithinAny } from "./desktopStateDiff.js";
+import {
+  isLockName,
+  runtimeFile,
+  type RuntimeFileKind,
+} from "./runtimeFiles.js";
+import { stateDirectoryOf } from "./stateRoles.js";
+
+/** The most paths a limitation or README line names before counting the rest. */
+const MAX_LISTED = 8;
+
+/** Home folders other apps keep files in too, most specific first: a path in one collapses to its child there. */
+const SHARED_PARENTS = [
+  ".local/share",
+  ".local/state",
+  ".config",
+  ".cache",
+  ".local",
+];
+
+const folderOf = (path: string) => path.split("/").slice(0, -1).join("/");
+
+/** The folders a home path lies in, outermost first: `a` and `a/b` for `a/b/c`. */
+const ancestorsOf = (path: string): readonly string[] => {
+  const ancestors: string[] = [];
+  for (let at = path.indexOf("/"); at >= 0; at = path.indexOf("/", at + 1))
+    ancestors.push(path.slice(0, at));
+  return ancestors;
+};
+
+/**
+ * A home file's top state folder: its folder in a shared folder, such as
+ * `.config/MuseScore`, the hidden folder of the home it lies in, or else its
+ * own folder; a file directly in the home or a shared folder is itself.
+ */
+const topFolder = (file: string): string => {
+  const shared = SHARED_PARENTS.find((parent) => file.startsWith(`${parent}/`));
+  const rest = (
+    shared === undefined ? file : file.slice(shared.length + 1)
+  ).split("/");
+  const [first = file] = rest;
+  if (rest.length === 1) return file;
+  if (shared !== undefined) return `${shared}/${first}`;
+  return first.startsWith(".") ? first : folderOf(file);
+};
+
+/**
+ * The folders under the home where files changed during the capture that the
+ * bundle neither owns nor seeds, each collapsed to its top state folder, or
+ * to the file's own folder or the file when that holds an owned path, nested
+ * ones into the outermost. Desktop services' files are left out. A path is
+ * looked up by the folders it lies in, so the work grows with the number of
+ * files and their depth rather than with the folders compared pairwise.
+ */
+export const unownedChangedFolders = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  owned: readonly string[],
+): readonly string[] => {
+  const ownedPaths = new Set(owned);
+  // The owned paths and every folder holding one.
+  const holdingOwned = new Set(
+    owned.flatMap((path) => [path, ...ancestorsOf(path)]),
+  );
+  const isOwned = (home: string) =>
+    ownedPaths.has(home) ||
+    ancestorsOf(home).some((folder) => ownedPaths.has(folder));
+  const folders = new Set<string>();
+  for (const [home, path] of files) {
+    if (
+      path.changes.length === 0 ||
+      path.role === "shared_desktop" ||
+      isOwned(home)
+    )
+      continue;
+    folders.add(
+      [topFolder(home), folderOf(home)].find(
+        (folder) => folder.length > 0 && !holdingOwned.has(folder),
+      ) ?? home,
+    );
+  }
+  return [...folders]
+    .filter(
+      (folder) => !ancestorsOf(folder).some((other) => folders.has(other)),
+    )
+    .sort();
+};
+
+/** What a seed file the app keeps for its own running, seeded as captured, is. */
+export type RuntimeSeedKind = RuntimeFileKind;
+
+/** Seed files of one kind, each collapsed to the folder that holds that kind, or itself. */
+export interface RuntimeSeeds {
+  readonly kind: RuntimeSeedKind;
+  readonly paths: readonly string[];
+}
+
+/**
+ * Whether a home file is a lock an app holds while it runs: a profile lock's
+ * name anywhere, LibreOffice's document lock, or a `*.lock` or `*.lck` file
+ * directly in one of the app's state directories, home-relative. Elsewhere
+ * such a file may be a project's own, such as `Cargo.lock`, which pins
+ * dependencies rather than marking a profile in use.
+ */
+export const isLockFile = (
+  file: string,
+  stateDirectories: readonly string[],
+): boolean => {
+  if (isLockName(file)) return true;
+  const name = file.split("/").at(-1) ?? "";
+  const folder = folderOf(file);
+  // Each directory on its own, so one nested in another is still found.
+  return (
+    /\.(?:lock|lck)$/iu.test(name) &&
+    folder.length > 0 &&
+    stateDirectories.some(
+      (directory) => stateDirectoryOf(file, [directory]) === folder,
+    )
+  );
+};
+
+const KINDS: readonly RuntimeSeedKind[] = ["web_storage", "cache"];
+const KIND_LABELS: Readonly<Record<RuntimeSeedKind, string>> = {
+  web_storage: "WebKit or Chromium storage",
+  cache: "caches",
+};
+
+/** The seed's web engine storage and caches, which the app keeps for its own running rather than as the user's data. */
+export const runtimeSeeds = (
+  seedFiles: readonly string[],
+): readonly RuntimeSeeds[] => {
+  const byKind = new Map<RuntimeSeedKind, Set<string>>();
+  for (const file of seedFiles) {
+    const found = runtimeFile(file);
+    if (found === undefined) continue;
+    const paths = byKind.get(found.kind) ?? new Set();
+    paths.add(found.path);
+    byKind.set(found.kind, paths);
+  }
+  return KINDS.flatMap((kind) => {
+    const paths = byKind.get(kind);
+    return paths === undefined ? [] : [{ kind, paths: [...paths].sort() }];
+  });
+};
+
+/** Names as a list, the first eight named and the rest counted. */
+export const counted = (names: readonly string[]): string => {
+  const named = names.slice(0, MAX_LISTED).join(", ");
+  const rest = names.length - MAX_LISTED;
+  return rest > 0 ? `${named}, and ${String(rest)} more` : named;
+};
+
+/** Home paths as a list, the first eight named and the rest counted. */
+const listed = (paths: readonly string[], markdown: boolean): string =>
+  counted(paths.map((path) => (markdown ? `\`~/${path}\`` : `~/${path}`)));
+
+/** An absolute path relative to the home: empty for the home itself, undefined outside it. */
+const underHome = (path: string, home: string): string | undefined =>
+  path === home
+    ? ""
+    : path.startsWith(`${home}/`)
+      ? path.slice(home.length + 1)
+      : undefined;
+
+/** An absolute path as a limitation spells it: `~` and `~/<path>` in the home, else as it is. */
+const fromHome = (path: string, home: string): string => {
+  const relative = underHome(path, home);
+  return relative === undefined
+    ? path
+    : relative === ""
+      ? "~"
+      : `~/${relative}`;
+};
+
+/** The capture's limitation on folders the app held files open in whose starting content it did not retain; none when there are none. */
+export const unretainedOpenedLimitation = (
+  directories: readonly string[],
+  home: string,
+): string | undefined =>
+  directories.length === 0
+    ? undefined
+    : `The application held files open in ${counted(directories.map((directory) => fromHome(directory, home)))}, whose starting content was not retained; name them with ${STATE_PATH_INPUTS} to retain it.`;
+
+/**
+ * The export's limitation on those folders: a file there is seeded only when
+ * the capture retained it, as it does one written during the capture, and
+ * the seed files there are named; none when there are no such folders.
+ */
+export const heldOpenLimitation = (
+  directories: readonly string[],
+  home: string,
+  seedFiles: readonly string[],
+): string | undefined => {
+  if (directories.length === 0) return undefined;
+  const folders = directories.map((directory) => underHome(directory, home));
+  const there = seedFiles.filter((file) =>
+    folders.some(
+      (folder) =>
+        folder === "" || (folder !== undefined && isWithinAny(file, [folder])),
+    ),
+  );
+  return `The application held files open in ${counted(directories.map((directory) => fromHome(directory, home)))}, whose content from before the capture was not retained: a file there is seeded only when the capture retained it, such as one written during the capture; the seed holds ${there.length === 0 ? "none" : listed(there, false)} from there.`;
+};
+
+/** The limitation naming lock files left out of the seed; none when there were none. */
+export const leftOutLocksLimitation = (
+  locks: readonly string[],
+): string | undefined =>
+  locks.length === 0
+    ? undefined
+    : `Left out of the seed: lock files the app holds while it runs, since a copied one makes the app find its profile or document in use and can keep it from starting: ${listed(locks, false)}. data/reset restores the seed without them.`;
+
+/** The limitation naming unowned folders the capture saw change; none when there are none. */
+export const unownedFoldersLimitation = (
+  folders: readonly string[],
+): string | undefined =>
+  folders.length === 0
+    ? undefined
+    : `Files changed during the capture in ${String(folders.length)} folder(s) under the home that the bundle neither owns nor seeds, so the app starts without what it saved there, such as settings a first-run dialog writes: ${listed(folders, false)}. To own them, capture again naming them with ${STATE_PATH_INPUTS}.`;
+
+/** The limitation naming seeded web engine storage and caches; none when the seed holds none. */
+export const runtimeSeedsLimitation = (
+  seeds: readonly RuntimeSeeds[],
+): string | undefined =>
+  seeds.length === 0
+    ? undefined
+    : `The seed holds files the app keeps for its own running, seeded as captured: ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, false)}`).join("; ")}. A stale one can change how the app starts.`;
+
+/** The README lines on unowned folders, runtime seeds and left-out locks, each starting on a new line; empty when there are none. */
+export const unownedReadmeNotes = (
+  folders: readonly string[],
+  seeds: readonly RuntimeSeeds[],
+  locks: readonly string[],
+): string =>
+  [
+    ...(folders.length === 0
+      ? []
+      : [
+          `- Neither owned nor seeded, so the app starts without what it saved there: files changed during the capture in
+  ${listed(folders, true)}.
+  To own them, capture again naming them with ${STATE_PATH_INPUTS_MARKDOWN}.`,
+        ]),
+    ...(seeds.length === 0
+      ? []
+      : [
+          `- Seeded as captured, though the app keeps them for its own running, so a stale one can change how it starts:
+  ${seeds.map(({ kind, paths }) => `${KIND_LABELS[kind]} ${listed(paths, true)}`).join("; ")}.`,
+        ]),
+    ...(locks.length === 0
+      ? []
+      : [
+          `- Left out of the seed: lock files the app holds while it runs, since a copied one can make it find its profile or document
+  in use and keep it from starting: ${listed(locks, true)}.`,
+        ]),
+  ]
+    .map((line) => `\n${line}`)
+    .join("");

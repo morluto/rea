@@ -10,11 +10,18 @@ import {
   PYTHON_MODULE_NAMES,
   PYTHON_READY_CHECK,
 } from "./appExportPython.js";
+import {
+  isLockFile,
+  unownedReadmeNotes,
+  type RuntimeSeeds,
+} from "./appExportUnowned.js";
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
-import { stateDirectoryOf } from "./stateRoles.js";
+import type { LaunchDocument } from "./seedDocument.js";
+import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
 
 /** agentenv-framework release the exported class was checked against. */
 export const DESKTOP_EXPORT_FRAMEWORK_VERSION = "0.9.1431";
@@ -42,18 +49,28 @@ export interface DesktopAppExportPlan {
   /** Whether the app is Electron, whose launch then runs without Chromium's sandbox. */
   readonly electron: boolean;
   readonly command: readonly string[];
+  /** What the launch opens: the seed's one document, a file the captured command names, or nothing. */
+  readonly opens: LaunchDocument;
   readonly windowClass: string;
   /** Home-relative paths the app owns for data add, get and reset. */
   readonly paths: readonly string[];
   readonly capturedHome: string;
   /** The checkpoint whose state the seed holds. */
   readonly seedCheckpoint: string;
+  /** Whether the seed was made for the task, as in a build computer, rather than taken from the user's own data. */
+  readonly syntheticSeed: boolean;
   /** Home-relative files copied into the computer's home before the first launch. */
   readonly seedFiles: readonly string[];
   /** Seed files read as text, which get the seed's home path respelled. */
   readonly textSeeds: readonly string[];
   /** Files under the owned paths that existed before the capture but whose bytes were not retained. */
   readonly unseededFiles: readonly string[];
+  /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
+  readonly leftOutLocks: readonly string[];
+  /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
+  readonly unownedFolders: readonly string[];
+  /** Seed files the app keeps for its own running: web engine storage and caches. */
+  readonly runtimeSeeds: readonly RuntimeSeeds[];
   /** `dconf dump` key file of the application's groups at the seed, or empty. */
   readonly dconf: string;
   readonly captureEvidenceId: string;
@@ -151,17 +168,73 @@ export const capturedHomePath = (
         : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
+  const selections = [...(capture.state.selected_paths ?? [])];
+  const recorded = [
+    ...(capture.state.content_roots ?? []),
+    ...(capture.state.state_directories ?? []),
+    ...logical.map((entry) => entry.path),
+    ...selections.flatMap(({ path, physical }) => [path, physical]),
+  ];
+  const directories = new Set<string>();
+  for (const selected of selections)
+    if (selected.kind === "directory") {
+      directories.add(selected.path);
+      directories.add(selected.physical);
+    }
+  for (const checkpoint of capture.state.checkpoints ?? [])
+    for (const change of checkpoint.changes) {
+      const facts = change.after ?? change.before;
+      if (facts?.type === "directory") directories.add(change.path);
+    }
+  const known = new Set(recorded);
+  for (const path of known) {
+    let parent = path;
+    for (;;) {
+      const slash = parent.lastIndexOf("/");
+      if (slash <= 0) break;
+      parent = parent.slice(0, slash);
+      if (known.has(parent)) directories.add(parent);
+    }
+  }
+  const isDirectory = (path: string) => directories.has(path);
+  // The longest physical path wins, whether it is a selected link or a walked
+  // settings folder. A broad selection of ~/settings must not hide
+  // ~/.config/notes when that folder was walked at ~/settings/notes.
+  const spellings = [
+    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
+    ...renamed,
+  ].sort((left, right) => right.physical.length - left.physical.length);
+  const spell = (path: string) => {
+    for (const { physical, logical } of spellings) {
+      if (!isWithinAny(path, [physical])) continue;
+      const spelled = relative(`${logical}${path.slice(physical.length)}`);
+      if (spelled !== null) return { spelled, specificity: physical.length };
+    }
+    const plain = relative(path);
+    return plain === null ? undefined : { spelled: plain, specificity: 0 };
+  };
   return (path) => {
-    const directory = renamed.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    const respelled =
-      directory === undefined
-        ? null
-        : relative(
-            `${directory.logical}${path.slice(directory.physical.length)}`,
-          );
-    return respelled ?? relative(path);
+    const own = spell(path);
+    // A database log follows the database only when that database's mapping is
+    // more specific than the log file's own. A selected file whose name ends
+    // in -wal or -journal keeps its own spelling.
+    for (const { suffix } of SQLITE_SIDECARS) {
+      if (!path.endsWith(suffix)) continue;
+      const database = path.slice(0, -suffix.length);
+      const base = spell(database);
+      // A directory selected under a renamed folder is not a database. A file
+      // with an explicit mapping is, even when that mapping keeps its name or
+      // the file sits outside the home.
+      if (
+        isDirectory(database) ||
+        base === undefined ||
+        base.specificity === 0 ||
+        (own !== undefined && base.specificity <= own.specificity)
+      )
+        continue;
+      return `${base.spelled}${suffix}`;
+    }
+    return own?.spelled ?? null;
   };
 };
 
@@ -174,50 +247,75 @@ export interface HomePathCollision {
   readonly dropped: string;
 }
 
-/** The state view's files by home path, dconf databases aside; of files sharing one, the first present before the capture is kept. */
+/**
+ * The state view's files by home path, and its dconf databases apart, which
+ * no file of the bundle holds; of files sharing one, the first present before
+ * the capture is kept.
+ */
 export const stateFilesByHomePath = (
   paths: readonly StatePath[],
   homePath: (path: string) => string | null,
 ): {
   readonly files: ReadonlyMap<string, StatePath>;
+  readonly dconf: ReadonlyMap<string, StatePath>;
   readonly collisions: readonly HomePathCollision[];
 } => {
   const absent = (path: StatePath) =>
     path.versions[0]?.present === true ? 0 : 1;
   const files = new Map<string, StatePath>();
+  const dconf = new Map<string, StatePath>();
   const collisions: HomePathCollision[] = [];
   for (const path of [...paths].sort(
     (left, right) => absent(left) - absent(right),
   )) {
     const home = homePath(path.path);
-    if (home === null || path.format === "dconf") continue;
+    if (home === null) continue;
+    if (path.format === "dconf") {
+      dconf.set(home, path);
+      continue;
+    }
     const kept = files.get(home);
     if (kept === undefined) files.set(home, path);
     else collisions.push({ home, kept: kept.path, dropped: path.path });
   }
-  return { files, collisions };
+  return { files, dconf, collisions };
 };
 
-/** The state view's files by home path and the paths the app owns, as the export decides them. */
+/**
+ * The state view's files and dconf databases by home path, the paths the app
+ * owns, and which home files the seed leaves out as locks the app holds, as
+ * the export decides them. A document or a path the caller selected is never
+ * left out, whatever its name.
+ */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
   const homePath = capturedHomePath(capture);
-  const { files, collisions } = stateFilesByHomePath(state.paths, homePath);
+  const homePaths = (paths: readonly string[]) =>
+    paths.map(homePath).filter((path): path is string => path !== null);
+  const { files, dconf, collisions } = stateFilesByHomePath(
+    state.paths,
+    homePath,
+  );
   const withRole = (role: string) =>
     [...files].filter(([, path]) => path.role === role).map(([home]) => home);
+  const stateDirectories = homePaths([
+    ...capture.application.state_directories.map((entry) => entry.path),
+    ...(capture.state.state_directories ?? []),
+  ]);
   const paths = ownedPaths(
     withRole("application_state"),
     withRole("document"),
-    [
-      ...capture.application.state_directories.map((entry) => entry.path),
-      ...(capture.state.state_directories ?? []),
-    ]
-      .map(homePath)
-      .filter((path): path is string => path !== null),
+    stateDirectories,
   );
-  return { homePath, files, collisions, paths };
+  const usersOwn = new Set([
+    ...withRole("document"),
+    ...homePaths(roleFacts(capture).selectedRoots),
+  ]);
+  const isLeftOutLock = (home: string) =>
+    !usersOwn.has(home) && isLockFile(home, stateDirectories);
+  return { homePath, files, dconf, collisions, paths, isLeftOutLock };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */
@@ -355,13 +453,32 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
     "",
   ].join("\n");
 
+/** How the class and README say where the seed came from: made for the task, or the user's own data, kept local. */
+export const seedWording = ({
+  name,
+  seedCheckpoint,
+  syntheticSeed,
+}: Pick<DesktopAppExportPlan, "name" | "seedCheckpoint" | "syntheticSeed">) =>
+  syntheticSeed
+    ? {
+        docstring: `The seed was made for the task, as saved at checkpoint ${docText(seedCheckpoint)}.`,
+        origin: `made for the task, as saved at checkpoint \`${seedCheckpoint}\``,
+        notice: `The seed was made for this task, not taken from a user's own data; read \`envs/${name}/seed/\` before publishing the bundle.`,
+      }
+    : {
+        docstring: `The seed is the user's state at checkpoint ${docText(seedCheckpoint)}: keep this bundle local.`,
+        origin: `from the user's home at checkpoint \`${seedCheckpoint}\``,
+        notice:
+          "The seed is the user's real data. Keep this bundle local; do not publish it.",
+      };
+
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
   return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
+${seedWording(plan).docstring}
 """
 
 ${PYTHON_IMPORTS}
@@ -451,9 +568,35 @@ const installNotes = (plan: DesktopAppExportPlan): string =>
     .map((line) => `\n${line}`)
     .join("");
 
-/** Bundle files: seeds the export rewrote to remove the capture host's identity, and files that still hold it. */
+/** The start of the limitation of a launch that opens no document; its reason follows. */
+export const NO_LAUNCH_DOCUMENT = "The app opens no document at launch";
+
+/** The limitation of a launch that opens no document; none when it opens one. */
+export const launchDocumentLimitation = (
+  opens: LaunchDocument,
+): string | undefined =>
+  opens.kind === "none"
+    ? `${NO_LAUNCH_DOCUMENT}, since ${opens.reason}.`
+    : undefined;
+
+/** The README line on what the launch opens; none when the captured command names its own file. */
+export const launchDocumentNote = ({
+  opens,
+}: Pick<DesktopAppExportPlan, "opens">): string =>
+  opens.kind === "seed"
+    ? `\n- At launch the app opens \`~/${opens.document}\`, the seed's one document.`
+    : opens.kind === "none"
+      ? `\n- ${launchDocumentLimitation(opens)}`
+      : "";
+
+/**
+ * Bundle files: seeds the export rewrote to remove the capture host's
+ * identity, gzip seeds it compressed again only to clear their headers, and
+ * files that still hold the identity.
+ */
 export interface SeedScrubReport {
   readonly scrubbed: readonly string[];
+  readonly recompressed: readonly string[];
   readonly unscrubbed: readonly string[];
 }
 
@@ -463,11 +606,20 @@ const homeList = (paths: readonly string[]) =>
 const bundleList = (paths: readonly string[]) =>
   paths.map((path) => `\`${path}\``).join(", ");
 
-const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
+const scrubNotes = ({
+  scrubbed,
+  recompressed,
+  unscrubbed,
+}: SeedScrubReport): string =>
   [
     ...(scrubbed.length === 0
       ? []
       : [`\n  Rewritten: ${bundleList(scrubbed)}.`]),
+    ...(recompressed.length === 0
+      ? []
+      : [
+          `\n  ${String(recompressed.length)} gzip file(s) were compressed again only to clear their headers, their content unchanged.`,
+        ]),
     ...(unscrubbed.length === 0
       ? []
       : [
@@ -480,7 +632,7 @@ const scrubNotes = ({ scrubbed, unscrubbed }: SeedScrubReport): string =>
 export const renderReadme = (
   plan: DesktopAppExportPlan,
   taskSection = "",
-  scrub: SeedScrubReport = { scrubbed: [], unscrubbed: [] },
+  scrub: SeedScrubReport = { scrubbed: [], recompressed: [], unscrubbed: [] },
 ): string =>
   `# ${plan.title} computer app
 
@@ -490,10 +642,10 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
 
 - \`envs/${plan.name}/\` is a computer app on the \`ubuntu-24.04\` base with the \`reference\` driver, for
   ${plan.architectures.map((architecture) => `\`${architecture}\``).join(" and ")}. It installs ${installs(plan)}, launches \`${plan.command.join(" ")}\` at boot and is ready
-  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}
+  when a window of class \`${plan.windowClass}\` appears.${installNotes(plan)}${launchDocumentNote(plan)}
 - Owned paths: ${plan.paths.length === 0 ? "none" : plan.paths.map((path) => `\`~/${path}\``).join(", ")}.
   \`data/get\` returns their files and a typed JSON view of each; \`data/reset\` restores the seed.
-- Seed: ${plan.seedFiles.length} file(s) from the user's home at checkpoint \`${plan.seedCheckpoint}\`${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
+- Seed: ${plan.seedFiles.length} file(s) ${seedWording(plan).origin}${plan.dconf.length === 0 ? "" : ", and the application's dconf keys"}.
   Text files and dconf keys spell the capture host's name as \`localhost\`, \`user@host\` as \`user@localhost\`
   and the home as \`${SEED_HOME}\`, which the computer respells to its own at boot.${scrubNotes(scrub)}${
     plan.unseededFiles.length === 0
@@ -501,12 +653,12 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}
 
-The seed is the user's real data. Keep this bundle local; do not publish it.
+${seedWording(plan).notice}
 ${plan.dconf.length === 0 ? "" : "dconf keys are compiled into the user's dconf database, with `dconf-cli`, once when the app first starts; `data/reset` does not restore them.\n"}${taskSection}`;
 
 /** A smoke task that deploys the app. */

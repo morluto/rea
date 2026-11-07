@@ -44,6 +44,7 @@ LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
+GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -411,6 +412,17 @@ def _text_view(name: str, text: str, size: int) -> dict:
     return _text(text)
 
 
+def _bytes_view(name: str, data: bytes) -> dict:
+    """The view of a document that is no database or archive: its text's, or none when it is binary."""
+    try:
+        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+    except UnicodeDecodeError:
+        text = None
+    if text is None:
+        return {"format": "binary", "view": None, "truncated": False}
+    return _text_view(name, text, len(data))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -418,21 +430,18 @@ def _view(path: Path) -> dict:
         return too_large
     with path.open("rb") as file:
         data = file.read(8192)
-        whole = not data.startswith(SQLITE_HEADER) and b"\x00" not in data
+        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
     if data.startswith(ZIP_HEADER):
-        return _zip(path)
+        with path.open("rb") as file:
+            return _zip(file, os.fstat(file.fileno()).st_size)
     if len(data) > MAX_VIEW_BYTES:
         return too_large
-    try:
-        text = data.decode("utf-8-sig") if whole else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None, "truncated": False}
-    return _text_view(path.name, text, len(data))
+    if data.startswith(GZIP_HEADER):
+        return _gzip(path.name, data)
+    return _bytes_view(path.name, data)
 
 
 def _views(home: Path, paths: list) -> dict:
