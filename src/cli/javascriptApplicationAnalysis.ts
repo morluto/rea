@@ -11,10 +11,7 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
-import {
-  AnalysisError,
-  type AnalysisCallerLifetime,
-} from "../domain/analysisErrorBase.js";
+import type { AnalysisCallerLifetime } from "../domain/analysisErrorBase.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
@@ -136,15 +133,12 @@ export const runCliJavaScriptApplicationAnalysis = async (
       cause,
       "JavaScript application resources",
     );
-    const failure =
-      cause instanceof AnalysisError
-        ? cause
-        : new ProviderCleanupError(
-            JAVASCRIPT_APPLICATION_PROVIDER.id,
-            cleanup.resources,
-            { reason: cleanup.reason },
-            { cause, operation: "analyze_javascript_application" },
-          );
+    const failure = new ProviderCleanupError(
+      JAVASCRIPT_APPLICATION_PROVIDER.id,
+      cleanup.resources,
+      { reason: cleanup.reason },
+      { cause, operation: "analyze_javascript_application" },
+    );
     bindArtifactFileCleanup(cause, failure);
     if (result.ok) failure.retainPartialObservation(result.value);
     result = {
