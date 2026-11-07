@@ -886,3 +886,26 @@ it("prunes non-nullish binary and update results before exploring ?? fallback", 
   expect(ir.childProcessInteractions).toEqual([]);
   expect(ir.eventOperations).toEqual([]);
 });
+
+it("rejects provably non-thenable primitive await results", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", await 1);
+    child.on("error", await "not-a-fn");
+    child.on("close", await (1 + 1));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when await target is a callable or dynamic expression", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", await (() => {}));
+    child.on("error", await getHandlerPromise());
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});

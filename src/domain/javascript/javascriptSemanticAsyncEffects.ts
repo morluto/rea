@@ -229,11 +229,113 @@ const staticExpressionTruthiness = (
         return inverted;
       if (unwrapped.name === "Infinity") return !inverted;
     }
+    if (
+      t.isAwaitExpression(unwrapped) &&
+      isProvablyNonThenablePrimitive(unwrapped.argument, state, depth)
+    ) {
+      current = unwrapped.argument;
+      depth++;
+      continue;
+    }
     return undefined;
   }
 
   state.valueResourceLimits.add("expression-depth");
   return undefined;
+};
+
+/**
+ * Identify expressions whose evaluation provably completes with a primitive
+ * value that has no `.then` method (non-thenable), meaning awaiting it
+ * produces that same primitive without invoking dynamic promise callbacks.
+ */
+const isProvablyNonThenablePrimitive = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  depth = 0,
+): boolean => {
+  if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+  const unwrapped = unwrapJavaScriptExpression(node);
+  const currentDepth = depth + unwrapped.depth;
+  if (currentDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+  const value = unwrapped.node;
+
+  if (
+    t.isNumericLiteral(value) ||
+    t.isStringLiteral(value) ||
+    t.isBooleanLiteral(value) ||
+    t.isBigIntLiteral(value) ||
+    t.isNullLiteral(value) ||
+    t.isTemplateLiteral(value) ||
+    (t.isUnaryExpression(value) &&
+      ["+", "-", "~", "!", "typeof", "void", "delete"].includes(
+        value.operator,
+      )) ||
+    (t.isBinaryExpression(value) && value.operator !== "|>") ||
+    t.isUpdateExpression(value) ||
+    (readExactJavaScriptLiteral(value).found &&
+      !t.isFunctionExpression(value) &&
+      !t.isArrowFunctionExpression(value))
+  ) {
+    return true;
+  }
+
+  if (
+    t.isIdentifier(value) &&
+    ["undefined", "NaN", "Infinity"].includes(value.name) &&
+    isUnmodifiedGlobalReference(value, state, value.name) &&
+    !semanticOpaqueNameMayHaveChanged(value, state)
+  ) {
+    return true;
+  }
+
+  if (t.isAwaitExpression(value)) {
+    return isProvablyNonThenablePrimitive(
+      value.argument,
+      state,
+      currentDepth + 1,
+    );
+  }
+
+  if (t.isSequenceExpression(value)) {
+    const last = value.expressions.at(-1);
+    return (
+      last !== undefined &&
+      isProvablyNonThenablePrimitive(last, state, currentDepth + 1)
+    );
+  }
+
+  if (t.isConditionalExpression(value)) {
+    const truthiness = staticExpressionTruthiness(
+      value.test,
+      state,
+      currentDepth,
+    );
+    if (truthiness === true) {
+      return isProvablyNonThenablePrimitive(
+        value.consequent,
+        state,
+        currentDepth + 1,
+      );
+    }
+    if (truthiness === false) {
+      return isProvablyNonThenablePrimitive(
+        value.alternate,
+        state,
+        currentDepth + 1,
+      );
+    }
+    return (
+      isProvablyNonThenablePrimitive(
+        value.consequent,
+        state,
+        currentDepth + 1,
+      ) &&
+      isProvablyNonThenablePrimitive(value.alternate, state, currentDepth + 1)
+    );
+  }
+
+  return false;
 };
 
 /** Determine whether syntax definitely evaluates to null or undefined. */
@@ -244,6 +346,12 @@ const staticExpressionNullishness = (
   const unwrapped = unwrapJavaScriptExpression(node).node;
   if (t.isNullLiteral(unwrapped) || isNullishJavaScriptSyntax(unwrapped))
     return true;
+  if (
+    t.isAwaitExpression(unwrapped) &&
+    isProvablyNonThenablePrimitive(unwrapped.argument, state)
+  ) {
+    return staticExpressionNullishness(unwrapped.argument, state);
+  }
   if (t.isUnaryExpression(unwrapped)) {
     if (unwrapped.operator === "void") return true;
     if (["+", "-", "~", "!", "typeof", "delete"].includes(unwrapped.operator))
@@ -564,6 +672,12 @@ export const rejectsEventListener = (
       t.isImportExpression(value)
     )
       continue;
+    if (
+      t.isAwaitExpression(value) &&
+      isProvablyNonThenablePrimitive(value.argument, state, depth)
+    ) {
+      continue;
+    }
     return false;
   }
   return true;
