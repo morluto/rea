@@ -16,7 +16,7 @@ it("retains complete streams and logs after source deletion while redacting spli
   capture.write("stdout", Buffer.from("head sec"));
   capture.write("stdout", Buffer.from("ret tail"));
   capture.write("stderr", Buffer.from("err"));
-  capture.finish(
+  await capture.finish(
     { ghidraLogPath: source, scriptLogPath: join(root, "missing") },
     true,
   );
@@ -47,7 +47,7 @@ it("records incomplete transport capture rather than calling it complete", async
     profile_digest: "profile",
   });
   capture.write("stdout", Buffer.from("partial sec"));
-  capture.finish(undefined, false);
+  await capture.finish(undefined, false);
   const manifest = JSON.parse(
     await readFile(join(capture.path, "manifest.json"), "utf8"),
   );
@@ -67,12 +67,12 @@ it("publishes a partial manifest and reports a failed log copy", async () => {
     profile_digest: "profile",
   });
   await writeFile(join(capture.path, "ghidra.log"), "occupied");
-  expect(() =>
+  await expect(
     capture.finish(
       { ghidraLogPath: source, scriptLogPath: join(root, "missing") },
       true,
     ),
-  ).toThrow("diagnostic export failed");
+  ).rejects.toThrow("diagnostic export failed");
   const manifest = JSON.parse(
     await readFile(join(capture.path, "manifest.json"), "utf8"),
   );

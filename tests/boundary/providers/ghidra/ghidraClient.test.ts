@@ -1682,6 +1682,44 @@ describe("GhidraClient runtime removal failures", () => {
       });
     },
   );
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps a finished export failure across a failed runtime removal and its retry",
+    async () => {
+      const root = await createTestTempDirectory("ghidra-diagnostics-");
+      const launcher = new FixtureLauncher("remote_error");
+      const client = clientFor(launcher, { diagnosticsDir: root });
+      const result = await client.callTool("list_procedures", {
+        document: null,
+        offset: 0,
+        limit: 500,
+      });
+      if (result.ok) throw new Error("Expected remote lookup failure");
+      const path = result.error.diagnostics.diagnostics_export_path;
+      if (typeof path !== "string")
+        throw new Error("Missing diagnostic export path");
+      await writeFile(join(path, "manifest.json.tmp"), "occupied");
+      const runtimeRoot = launcher.runtimeRoots[0] ?? "";
+      await chmod(runtimeRoot, 0o500);
+      try {
+        await expect(client.close()).resolves.toMatchObject({
+          ok: false,
+          error: {
+            cleanupIncomplete: true,
+            diagnostics: { diagnostics_export_path: path },
+          },
+        });
+      } finally {
+        await chmod(runtimeRoot, 0o700);
+      }
+      // The retry removes the runtime and still reports the finished export.
+      await expect(client.close()).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "ProviderAdapterError", operation: "diagnostic_export" },
+      });
+      await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+    },
+  );
 });
 
 describe("GhidraClient cleanup and diagnostics", () => {

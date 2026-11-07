@@ -2,12 +2,12 @@ import {
   closeSync,
   mkdtempSync,
   openSync,
-  readSync,
   renameSync,
   rmSync,
   writeFileSync,
   writeSync,
 } from "node:fs";
+import { open } from "node:fs/promises";
 import { join } from "node:path";
 
 /** Redacts an exact ASCII credential even when it crosses input chunks. */
@@ -117,10 +117,10 @@ export class GhidraDiagnosticExport {
       this.#errors[stream] = String(cause);
     }
   }
-  finish(
+  async finish(
     paths: { ghidraLogPath: string; scriptLogPath: string } | undefined,
     complete: boolean,
-  ): void {
+  ): Promise<void> {
     const files: Record<string, FileStatus> = {};
     for (const stream of ["stdout", "stderr"] as const) {
       try {
@@ -144,14 +144,20 @@ export class GhidraDiagnosticExport {
         files[name] = { status: "unavailable" };
         continue;
       }
-      let input: number | undefined;
+      let input: Awaited<ReturnType<typeof open>> | undefined;
       let output: RedactedFile | undefined;
       try {
-        input = openSync(source, "r");
+        input = await open(source, "r");
         output = new RedactedFile(join(this.path, `${name}.log`), this.#token);
+        // Each await yields the event loop between 64 KiB chunks.
+        // ponytail: writes stay synchronous (one chunk each); a queued async
+        // writer only if a slow destination is observed.
         const chunk = Buffer.allocUnsafe(64 * 1024);
         let count: number;
-        while ((count = readSync(input, chunk, 0, chunk.length, null)) > 0)
+        while (
+          (count = (await input.read(chunk, 0, chunk.length, null)).bytesRead) >
+          0
+        )
           output.write(chunk.subarray(0, count));
         output.close(true);
         output = undefined;
@@ -169,7 +175,7 @@ export class GhidraDiagnosticExport {
           ? { status: "unavailable" }
           : { status: "error", reason: String(cause) };
       } finally {
-        if (input !== undefined) closeSync(input);
+        await input?.close();
       }
     }
     const manifest = {

@@ -1174,7 +1174,12 @@ export class BinarySession
         resourceFailure,
         "close_binary",
       );
-      if (closed.error.cleanupIncomplete && resourceFailure.cleanupIncomplete)
+      // A completed close owns nothing, but the resource owner still does.
+      if (
+        (closed.error.cleanupIncomplete ||
+          isCompletedCloseFailure(closed.error)) &&
+        resourceFailure.cleanupIncomplete
+      )
         combined.bindCleanupDependencies([closed.error, resourceFailure]);
       return err(combined);
     }

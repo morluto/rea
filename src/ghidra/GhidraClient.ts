@@ -174,6 +174,10 @@ export class GhidraClient {
   #outputDrainIncomplete = false;
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #diagnosticExport: GhidraDiagnosticExport | undefined;
+  /** The finalized export; kept until close completes so a retry reports it. */
+  #exportOutcome:
+    | { readonly path: string; readonly failure?: unknown }
+    | undefined;
   #startupAttempt: GhidraStartupAttempt | undefined;
   #closePromise: Promise<void> | undefined;
   readonly #failure = bindGhidraSessionFailure(
@@ -919,6 +923,7 @@ export class GhidraClient {
     if (this.#hasOwnedResources())
       return err(this.#failure("protocol", "Ghidra client is already started"));
     this.#lastDiagnostics = {};
+    this.#exportOutcome = undefined;
     this.#processSnapshot = undefined;
     this.#startupOutputCheckpoint = undefined;
     this.#activeOutputCheckpoint = undefined;
@@ -1352,7 +1357,6 @@ export class GhidraClient {
   async #cleanup(forceStop = false): Promise<void> {
     this.#closing = true;
     let forcedStopFailure: { readonly cause: unknown } | undefined;
-    let exportFailure: unknown;
     try {
       this.#requestQueue.failQueued(
         this.#failure("process", "Ghidra session closed"),
@@ -1423,27 +1427,24 @@ export class GhidraClient {
         }
       }
       if (this.#diagnosticExport !== undefined) {
+        const exported = this.#diagnosticExport;
+        let failure: unknown;
         try {
-          this.#diagnosticExport.finish(
+          await exported.finish(
             this.#launch,
             this.#process?.observedOutputClose() === true &&
               this.#processSnapshot?.outputIncomplete !== true,
           );
         } catch (cause: unknown) {
-          exportFailure = cause;
+          failure = cause;
         }
+        this.#exportOutcome = {
+          path: exported.path,
+          ...(failure === undefined ? {} : { failure }),
+        };
+        this.#diagnosticExport = undefined;
       }
-      this.#lastDiagnostics = {
-        ...this.#diagnostics(),
-        ...(exportFailure === undefined
-          ? {}
-          : {
-              diagnostics_export_error: this.#redactAuthentication(
-                String(exportFailure),
-              ),
-            }),
-      };
-      this.#diagnosticExport = undefined;
+      this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
       await this.#checkpoint?.close();
@@ -1464,6 +1465,8 @@ export class GhidraClient {
       if (forcedStopFailure !== undefined) throw forcedStopFailure.cause;
       for (const failure of this.#cleanupFailures) failure.resolveCleanup();
       this.#cleanupFailures.clear();
+      const exportFailure = this.#exportOutcome?.failure;
+      this.#exportOutcome = undefined;
       if (exportFailure !== undefined)
         throw new GhidraDiagnosticExportError("ghidra", "diagnostic_export", {
           diagnostics: {
@@ -1639,6 +1642,9 @@ export class GhidraClient {
       scoped === undefined
         ? undefined
         : ghidraFailureOutput(scoped, this.#token, this.#outputDrainIncomplete);
+    const exportPath =
+      this.#diagnosticExport?.path ?? this.#exportOutcome?.path;
+    const exportFailure = this.#exportOutcome?.failure;
     return {
       ...createGhidraDiagnostics({
         scope,
@@ -1651,9 +1657,9 @@ export class GhidraClient {
         providerVersion: this.#options.providerVersion,
         profileDigest: this.#options.profileDigest,
         ...(this.#runId === undefined ? {} : { runId: this.#runId }),
-        ...(this.#diagnosticExport === undefined
+        ...(exportPath === undefined
           ? {}
-          : { diagnosticsExportPath: this.#diagnosticExport.path }),
+          : { diagnosticsExportPath: exportPath }),
         ...(this.#runtimeRoot === undefined
           ? {}
           : { runtimeRoot: this.#runtimeRoot.path }),
@@ -1674,6 +1680,13 @@ export class GhidraClient {
       ...(this.#checkpoint === undefined
         ? {}
         : { checkpoint: this.#checkpoint.observation }),
+      ...(exportFailure === undefined
+        ? {}
+        : {
+            diagnostics_export_error: this.#redactAuthentication(
+              String(exportFailure),
+            ),
+          }),
     };
   }
 
