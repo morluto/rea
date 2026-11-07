@@ -373,6 +373,24 @@ global, per-record and Evidence explanations added during projection. Contract
 field names, typed discriminators and exact decoder identities keep their
 canonical meanings; declarations do not rename formats or providers.
 
+A HAR capture's header names, query parameter names and JSON or form body
+member names that look like credentials (whole name segments such as `token`,
+`secret`, `password`, `api_key`, `authorization` or `session`) and hold a
+retained value are counted in a limitation that lists up to 20 of them by
+record and pointer (`record 3 request header X-Api-Key`) within about 1 KiB
+of text, says how many are not listed, and never names a value; the
+[environment build](agent-environments.md) runs the same scan as its
+`credential-named-members` warning. Values already excluded, such as the
+standard authentication headers or declared sensitive values, are not counted.
+The scan reads at most 524288 values in all across the selected records: a
+body's values are bounded from its text before it is parsed, and a header
+list, query string or form-parameter list is charged by its length before it
+is read, so a body larger than 4 MiB of UTF-8 text, or any of these that would
+take the scan past its budget, is not scanned, and a second limitation counts
+them by record and side. Names do not establish sensitivity, so nothing is excluded on
+them; declare the values as sensitive to exclude them. Other capture formats
+are not scanned.
+
 Historical evidence does not prove runtime attribution, execution or deployment
 authenticity. Mitmproxy messages are upstream-assembled messages, not recovered
 wire fragments. Native dictionary duplicate keys have the unchanged upstream

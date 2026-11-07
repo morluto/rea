@@ -618,3 +618,202 @@ it("rejects relative descriptor paths before starting a capture decoder", async 
     },
   });
 });
+
+/** HAR-shaped record whose credential-named members hold values the decoder retains. */
+const credentialNamedReport = (): WebNetworkCapture => {
+  const report = fixture();
+  report.records[0]!.reported = {
+    request: {
+      method: "POST",
+      url: "https://example.test/login?api_key=demo-key",
+      headers: [
+        { name: "Authorization", value: null },
+        { name: "X-Demo-Token", value: "demo-token" },
+        { name: "Accept", value: "application/json" },
+      ],
+      queryString: [{ name: "api_key", value: "demo-key" }],
+      postData: {
+        mimeType: "application/json",
+        text: '{"user":"demo","password":"demo-pass"}',
+      },
+    },
+    response: {
+      status: 200,
+      headers: [{ name: "Set-Cookie", value: null }],
+      content: {
+        mimeType: "application/json",
+        text: '{"session_token":"demo-session"}',
+      },
+    },
+  };
+  return report;
+};
+
+const credentialNameLimitation = (limitations: readonly string[]) =>
+  limitations.filter((text) => text.includes("look like credentials"));
+
+it("counts credential-named members that hold a retained value, by pointer and never by value", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(credentialNamedReport())),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [limitation, ...others] = credentialNameLimitation(
+    result.value.limitations,
+  );
+  expect(others).toEqual([]);
+  expect(limitation).toMatch(/^4 /);
+  for (const pointer of [
+    "record 0 request header X-Demo-Token",
+    "record 0 request query api_key",
+    "record 0 request /password",
+    "record 0 response /session_token",
+  ])
+    expect(limitation).toContain(pointer);
+  // Redacted standard credentials and ordinary names are not counted.
+  expect(limitation).not.toContain("Authorization");
+  expect(limitation).not.toContain("Accept");
+  for (const value of ["demo-token", "demo-key", "demo-pass", "demo-session"])
+    expect(limitation).not.toContain(value);
+  expect(result.value.normalized_result).toMatchObject({
+    limitations: expect.arrayContaining([limitation]),
+  });
+  expect(parseEvidence(result.value)).toEqual(result.value);
+});
+
+it("bounds the listed pointers so a long member name cannot inflate the limitation", async () => {
+  const report = credentialNamedReport();
+  const long = "k".repeat(2048);
+  report.records[0]!.reported = {
+    request: {
+      method: "POST",
+      url: "https://example.test/login",
+      postData: {
+        mimeType: "application/json",
+        text: JSON.stringify({
+          [long]: { token: "demo-token" },
+          password: "p",
+        }),
+      },
+    },
+    response: { status: 204 },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [limitation] = credentialNameLimitation(result.value.limitations);
+  expect(limitation).toMatch(/^2 /);
+  expect(limitation).toContain("record 0 request /password");
+  expect(limitation).toContain("1 more not listed");
+  expect(limitation).not.toContain(long);
+  expect(limitation!.length).toBeLessThan(1024 + 400);
+});
+
+it("adds no credential-name limitation when no counted name holds a value", async () => {
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(fixture())),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+});
+
+it("scans only HAR records for credential names", async () => {
+  const report = credentialNamedReport();
+  report.format = "mitmproxy";
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "mitmproxy" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+});
+
+it("reports a body whose values would expand past the credential-name scan's bound", async () => {
+  const report = credentialNamedReport();
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/expansive" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"[],".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+});
+
+it("shares the credential-name scan's value budget across the selected records", async () => {
+  const expansive = (path: string) => ({
+    request: { method: "GET", url: `https://example.test/${path}` },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `[${"1,".repeat(300_000)}{"password":"x"}]`,
+      },
+    },
+  });
+  const base = credentialNamedReport();
+  const first = { ...base.records[0]!, reported: expansive("first") };
+  const report: WebNetworkCapture = {
+    ...base,
+    total_records: 2,
+    records: [
+      first,
+      {
+        ...first,
+        ordinal: 1,
+        location: { kind: "json-pointer", pointer: "/log/entries/1" },
+        reported: expansive("second"),
+      },
+    ],
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  const [found] = credentialNameLimitation(result.value.limitations);
+  expect(found).toMatch(/^1 /);
+  expect(found).toContain("record 0 response /300000/password");
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 1 response");
+});
+
+it("reports bodies the credential-name scan could not read", async () => {
+  const report = credentialNamedReport();
+  report.records[0]!.reported = {
+    request: { method: "GET", url: "https://example.test/large" },
+    response: {
+      status: 200,
+      content: {
+        mimeType: "application/json",
+        text: `{"password":"${"x".repeat(4 * 1024 * 1024)}"}`,
+      },
+    },
+  };
+  const result = await new WebNetworkCaptureService({
+    inspect: () => Promise.resolve(ok(report)),
+  }).inspect({ capture_path: "/capture.har", format: "har" });
+  if (!result.ok) throw result.error;
+  expect(credentialNameLimitation(result.value.limitations)).toEqual([]);
+  const skipped = result.value.limitations.filter((text) =>
+    text.includes("were not scanned"),
+  );
+  expect(skipped).toHaveLength(1);
+  expect(skipped[0]).toMatch(/^1 /);
+  expect(skipped[0]).toContain("record 0 response");
+});
