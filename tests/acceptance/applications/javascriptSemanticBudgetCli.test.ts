@@ -171,11 +171,14 @@ cliTest.skipIf(process.versions.bun !== undefined)(
     expect(result.graph.nodes).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
+          kind: "unknown",
+          identity: expect.objectContaining({
+            namespace: "static-parse-scope",
+          }),
           observations: expect.arrayContaining([
             expect.objectContaining({
               properties: expect.objectContaining({
                 path: expect.stringContaining("exports.mjs"),
-                operation: "analyze-javascript-source",
                 limitation: expect.stringContaining(
                   "Exported application facts exceed the remaining Evidence budget",
                 ),
