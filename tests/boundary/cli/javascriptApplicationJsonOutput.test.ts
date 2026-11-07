@@ -11,6 +11,49 @@ import { cliTest } from "../../support/cli/cliFixture.js";
 
 const filter = "evidence_id,normalized_result.graph.nodes[0,1].node_id";
 
+cliTest(
+  "reports a replaced stream constructor as an uncertain resource",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-stream-constructor-");
+    await writeFile(
+      join(root, "main.js"),
+      `
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "ReadStream", { value: Custom });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `,
+    );
+    const output = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+    });
+    expect(output.exitCode).toBe(0);
+    const data = z
+      .object({ normalized_result: javascriptApplicationAnalysisResultSchema })
+      .parse(output.json).normalized_result;
+    expect(data.semantic_graph.relations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          relation: "acquires",
+          resolution: "candidate",
+        }),
+        expect.objectContaining({
+          relation: "releases",
+          resolution: "candidate",
+        }),
+      ]),
+    );
+    expect(data.semantic_graph.unknowns).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          family: "resource-lifecycle",
+          relation_kinds: ["acquires"],
+        }),
+      ]),
+    );
+  },
+);
+
 for (const scenario of [
   {
     command: "analyze-javascript-application",

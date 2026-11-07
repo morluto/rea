@@ -9,6 +9,39 @@ import { resolveJavaScriptSemanticEvidence } from "../../../tests/support/javasc
 const SHA256 = "a".repeat(64);
 const GRAPH_ID = `jag_${"b".repeat(64)}`;
 
+it("retains an uncertain stream acquisition and release as candidates", () => {
+  const graph = graphFor(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "ReadStream", { value: Custom });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `);
+  expect(graph.relations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        relation: "acquires",
+        resolution: "candidate",
+      }),
+      expect.objectContaining({
+        relation: "releases",
+        resolution: "candidate",
+      }),
+    ]),
+  );
+  expect(graph.unknowns).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        family: "resource-lifecycle",
+        relation_kinds: ["acquires"],
+      }),
+      expect.objectContaining({
+        family: "resource-lifecycle",
+        relation_kinds: ["releases"],
+      }),
+    ]),
+  );
+});
+
 it("projects literal events and exact timer cancellation", () => {
   const graph = graphFor(`
       function run(bus, dynamicName) {
