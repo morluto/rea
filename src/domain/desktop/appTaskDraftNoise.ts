@@ -56,16 +56,19 @@ const ENCODED =
   /^(?:iVBORw0KGgo[A-Za-z0-9+/=\r\n]*|(?=[^]*[a-z])(?=[^]*[A-Z])(?=[^]*\d)[A-Za-z0-9+/\r\n]{256,}={0,2})$/u;
 
 /**
- * A value a program makes anew, a UUID, an epoch time, or binary it encodes.
- * A 10-digit number that starts with 2–9 is a phone number, not an epoch:
- * those through 2033 start with 1.
+ * UUIDs, encoded binary, and epoch-shaped values in named save metadata are
+ * likely generated. Numeric shape alone does not identify a timestamp.
  */
-export const isVolatileValue = (value: string): boolean => {
+export const isVolatileValue = (
+  value: string,
+  bookkeeping = false,
+): boolean => {
   if (UUID.test(value) || ENCODED.test(value.trim())) return true;
+  if (!bookkeeping) return false;
   if (!/^\d{10}(?:\d{3})?$/u.test(value)) return false;
   const seconds = Number(value.slice(0, 10));
   if (!(seconds > EPOCH_RANGE[0] && seconds < EPOCH_RANGE[1])) return false;
-  return value.length === 13 || value.startsWith("1");
+  return true;
 };
 
 /**
@@ -91,10 +94,11 @@ const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
 const BOOKKEEPING =
   /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|entered|timestamp/u;
 
+export const isBookkeepingName = (name: string) =>
+  BOOKKEEPING.test((name.split(":").at(-1) ?? name).toLowerCase());
+
 export const isBookkeeping = (element: Element) =>
-  BOOKKEEPING.test(
-    (element.name.split(":").at(-1) ?? element.name).toLowerCase(),
-  );
+  isBookkeepingName(element.name);
 
 /**
  * Whether a value is a date written in parts, as Tellico writes an entry's
@@ -222,7 +226,13 @@ const volatileAt = (
   fresh: boolean,
 ) =>
   (typeof value === "string" &&
-    (isVolatileValue(value) || isGarbled(value) || fresh)) ||
+    (isVolatileValue(
+      value,
+      elements.some(isBookkeeping) ||
+        (key !== undefined && isBookkeepingName(key)),
+    ) ||
+      isGarbled(value) ||
+      fresh)) ||
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||

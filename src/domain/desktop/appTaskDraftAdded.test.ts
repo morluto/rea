@@ -19,6 +19,36 @@ it("keeps a nested phone number that resembles an epoch timestamp", () => {
   );
 });
 
+it("keeps epoch-shaped phone fields and attributes while treating saved metadata as volatile", () => {
+  const before =
+    '<doc><contact name="old" phone="2125550100"><phone>2125550100</phone></contact><meta saved="1793870500"/></doc>';
+  const after =
+    '<doc><contact name="old" phone="2125550100"><phone>2125550100</phone></contact><contact name="new" phone="2025550123"><phone>2025550123</phone></contact><meta saved="1793870600"/></doc>';
+  const file = xmlDraft(before, after);
+  expect(
+    file.suggested.filter(
+      (check) => "value" in check && check.value === "2025550123",
+    ),
+  ).not.toHaveLength(0);
+  expect(file.values).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        note: "volatile",
+        pointer: expect.stringContaining("/attributes/saved"),
+      }),
+    ]),
+  );
+});
+
+it("treats a changed epoch-shaped phone field as an edit", () => {
+  const file = xmlDraft(
+    "<doc><phone>2125550100</phone></doc>",
+    "<doc><phone>2025550123</phone></doc>",
+  );
+  expect(file.suggested.length).toBeGreaterThan(0);
+  expect(file.values.every(({ note }) => note !== "volatile")).toBe(true);
+});
+
 it("omits oversized added attributes while retaining shorter checks and reporting the omitted pointer", () => {
   const before = '<doc><item name="old" note="old"/></doc>';
   const after = `<doc><item name="old" note="old"/><item name="new" note="${"x".repeat(100_000)}" wording="edited"/></doc>`;
