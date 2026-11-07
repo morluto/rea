@@ -4,6 +4,7 @@ import {
   admitWitnessStage,
   appStateViews,
   stageVerdict,
+  unrestoredChecks,
   type WitnessActionLog,
   type WitnessStageRecord,
 } from "./buildWitness.js";
@@ -106,6 +107,17 @@ describe("build witness rules", () => {
         seed,
       ),
     ).toBe("undecided");
+  });
+
+  it("leaves after reset undecided when a check the seed decided can no longer be read, whatever another check's failure shows", () => {
+    const failed = (id: string) => ({ id, passed: false, description: "" });
+    const seed = [
+      { ...staged("seed", 0), results: [failed("a"), failed("b")] },
+    ];
+    const results = [{ ...failed("a"), undecided: true as const }, failed("b")];
+
+    expect(unrestoredChecks(seed, results).map(({ id }) => id)).toEqual(["a"]);
+    expect(stageVerdict("after_reset", results, seed)).toBe("undecided");
   });
 
   it("takes no unreadable or partial view as a failure, leaving a stage it alone would settle undecided", () => {

@@ -417,6 +417,12 @@ const netChange = (baseline: Version, final: Version) => {
   };
 };
 
+/** The paths the export decides the app's logs by: its state directories, and the documents and selected paths it always seeds. */
+export interface SeedingPaths {
+  readonly stateDirectories: readonly string[];
+  readonly kept: readonly string[];
+}
+
 /** One changed file an author writes checks about. */
 export interface TaskDraftFile {
   readonly file: string;
@@ -470,20 +476,25 @@ const changeShape = (change: TaskDraftFile["change"], final: Version) => ({
  * the seed and end checkpoints, with suggested checks, values, guards and
  * notes for the files the user worked on: documents, or the app's own state
  * when no document changed, never the app's logs the export leaves out of
- * the seed (`leftOutFiles`). Values stay within the draft's byte budget, in
- * file order.
+ * the seed (`leftOutFiles`), as it decides them from its state directories
+ * and kept paths. Values stay within the draft's byte budget, in file order.
  */
 export const draftTaskFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
   served: (home: string) => boolean,
   ends: StateEnds,
+  seeding: SeedingPaths,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
   const role = changed.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
   // The app's logs, which the export leaves out of the seed, never hold a check.
-  const { isLeftOutLog } = leftOutFiles(files, [], []);
+  const { isLeftOutLog } = leftOutFiles(
+    files,
+    seeding.stateDirectories,
+    seeding.kept,
+  );
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOutLog(home);

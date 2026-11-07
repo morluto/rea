@@ -109,6 +109,8 @@ const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
           ids.add(value);
       pending.push(...node.children);
     } else if (isRecord(node)) pending.push(...Object.values(node));
+    // An archive keeps its documents in an `entries` array.
+    else if (Array.isArray(node)) pending.push(...node);
   }
   return ids;
 };

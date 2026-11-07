@@ -59,11 +59,12 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, dconf, paths } = exportedStateFiles(capture, state);
+  const { files, dconf, paths, seeding } = exportedStateFiles(capture, state);
   const drafted = draftTaskFiles(
     files,
     (home) => isWithinAny(home, paths),
     ends,
+    seeding,
   );
   const notes = draftNotes(files, {
     drafted,

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { passing, pointerOf, xml, xmlDraft } from "./appTaskDraft.fixture.js";
+import type { JsonValue } from "../jsonValue.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
+import {
+  draftOf,
+  passing,
+  pointerOf,
+  statePath,
+  xml,
+  xmlDraft,
+} from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -83,5 +92,54 @@ describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
       `${MEMBER}/children/[name=ownedAttribute][@name=name]/attributes/type`,
       `${MEMBER}/children/[name=ownedAttribute][@name=memberId]/attributes/type`,
     ]);
+  });
+
+  it("checks the new attribute's type in a zipped model, whose data types only the archive's entries hold", () => {
+    const ZIP = "Documents/library.zip";
+    const zipped = (text: string): JsonValue => ({
+      entries: [
+        {
+          name: "library.xmi",
+          size: text.length,
+          sha256: "a".repeat(64),
+          format: "xml",
+          view: xml(text),
+          view_error: null,
+        },
+      ],
+      entry_count: 1,
+      truncated: false,
+    });
+    const [file] = draftOf({
+      [ZIP]: statePath("document", "zip", zipped(SEED), zipped(email(STRING))),
+    });
+    const passes = (text: string) =>
+      evaluateTaskChecks(
+        (file?.suggested ?? []).map((check, index) => ({
+          ...check,
+          id: `c${String(index)}`,
+        })),
+        new Map([[ZIP, { format: "zip", view: zipped(text) }]]),
+      ).map(({ passed }) => passed);
+
+    const member = `/entries/[name=library.xmi]/view${MEMBER}`;
+    expect(file?.suggested).toEqual([
+      {
+        kind: "value_equals",
+        file: ZIP,
+        pointer: `${member}/children/[name=ownedAttribute][@name=email]/attributes/type`,
+        value: STRING,
+      },
+      {
+        kind: "member_count",
+        file: ZIP,
+        pointer: `${member}/children`,
+        matching: "[name=ownedAttribute][@xmi:type=uml:Property]",
+        equals: 3,
+      },
+    ]);
+    expect(passes(SEED)).toEqual([false, false]);
+    expect(passes(email(STRING))).toEqual([true, true]);
+    expect(passes(email(INT))).toEqual([false, true]);
   });
 });

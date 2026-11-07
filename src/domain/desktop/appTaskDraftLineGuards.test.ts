@@ -217,6 +217,44 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
   });
 });
 
+describe("draftTaskFiles for the app's logs, as the export seeds them", () => {
+  const log = statePath(
+    "application_state",
+    "text",
+    textView("opened Groceries\n"),
+    textView("opened Groceries\nadded Oat milk to Groceries\n"),
+  );
+  const seeding = {
+    stateDirectories: [".config/notes"],
+    kept: [".config/notes/history"],
+  };
+
+  it("drafts a check on a log under a path the user selected, which the export seeds", () => {
+    const [history] = draftOf(
+      { ".config/notes/history/2026-11-06.log": log },
+      seeding,
+    );
+
+    expect(history?.suggested).toEqual([
+      {
+        kind: "lines_present",
+        file: ".config/notes/history/2026-11-06.log",
+        lines: ["added Oat milk to Groceries"],
+      },
+    ]);
+  });
+
+  it("drafts no check or guard on a log under a state directory the user did not select, which the export leaves out", () => {
+    const [run] = draftOf({ ".config/notes/logs/run.log": log }, seeding);
+
+    expect(run).toMatchObject({
+      file: ".config/notes/logs/run.log",
+      suggested: [],
+      guards: [],
+    });
+  });
+});
+
 describe("draftTaskFiles guards of a line-keyed catalogue, as Poedit saves one", () => {
   it("guards the other records' lines of the changed line's keyword, never its own record's source reference or msgid", () => {
     const entry = (line: number, msgid: string, msgstr: string) => [

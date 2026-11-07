@@ -63,9 +63,9 @@ export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
 /** What a stage's results show of it: that it held, that it did not, or, when only undecided checks could tell, nothing. */
 export type StageVerdict = "held" | "not_held" | "undecided";
 
-/** The checks whose result after a reset differs from the filed seed's; a reset that restores the seed leaves none. */
+/** The checks whose result after a reset differs from the filed seed's, or that the seed decided and the reset leaves undecided; a reset that restores the seed leaves none. */
 export const unrestoredChecks = <
-  Outcome extends Pick<TaskCheckOutcome, "id" | "passed">,
+  Outcome extends Pick<TaskCheckOutcome, "id" | "passed" | "undecided">,
 >(
   stages: readonly WitnessStageRecord[],
   results: readonly Outcome[],
@@ -73,9 +73,19 @@ export const unrestoredChecks = <
   const seed = new Map(
     stages
       .find((filed) => filed.stage === "seed")
-      ?.results.map((result): [string, boolean] => [result.id, result.passed]),
+      ?.results.map((result): [string, TaskCheckOutcome] => [
+        result.id,
+        result,
+      ]),
   );
-  return results.filter((result) => seed.get(result.id) !== result.passed);
+  return results.filter((result) => {
+    const filed = seed.get(result.id);
+    return (
+      filed === undefined ||
+      filed.passed !== result.passed ||
+      (filed.undecided !== true && result.undecided === true)
+    );
+  });
 };
 
 /**
