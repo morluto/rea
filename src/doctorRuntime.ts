@@ -132,6 +132,27 @@ type SelectedRegistration = {
   readonly unresolvedSettings: ReadonlySet<string>;
 };
 
+/**
+ * Clients that expand `$VAR` and `${VAR}` in a recorded `env` value from the
+ * environment the client itself runs with.
+ *
+ * REA does not replicate that expansion — it would have to predict a child's
+ * environment — but it must not hand a probe the literal text either, or a
+ * provider that searches for an inherited `PATH` searches for a literal
+ * `${PATH}` entry instead.
+ */
+const VAR_EXPANDING_CLIENTS: ReadonlySet<string> = new Set(["qwen_code"]);
+
+/** Setting names whose recorded value is an expression rather than a literal. */
+const expressionSettings = (
+  values: Readonly<Record<string, string>>,
+): readonly string[] =>
+  Object.entries(values)
+    .filter(([, value]) =>
+      /\$(?:[A-Za-z_][A-Za-z0-9_]*|\{[A-Za-z_][A-Za-z0-9_]*\})/u.test(value),
+    )
+    .map(([name]) => name);
+
 /** Read the selected client's registration, or report it as unreadable. */
 const readSelectedRegistration = async (
   client: Parameters<typeof readEffectiveClientRegistrationConfiguration>[0],
@@ -170,7 +191,12 @@ const readSelectedRegistration = async (
   return details.ok
     ? {
         values: details.value.values,
-        unresolvedSettings: details.value.unresolvedSettings,
+        unresolvedSettings: new Set([
+          ...details.value.unresolvedSettings,
+          ...(VAR_EXPANDING_CLIENTS.has(client.name)
+            ? expressionSettings(details.value.values)
+            : []),
+        ]),
       }
     : { unknown: true };
 };
@@ -209,6 +235,10 @@ export const settingAffectsProbe = (
         read("JAVA_HOME") === undefined
       );
     case "kuna": {
+      // Only cache-location defaults are decided by REA_KUNA_CACHE_DIR. An
+      // unresolved command, job or timeout setting still leaves the probe's
+      // answer unknown, so those keep reporting unknown.
+      if (name !== "HOME" && name !== "XDG_CACHE_HOME") return true;
       // A literal cache directory decides the root on its own.
       if (read("REA_KUNA_CACHE_DIR") !== undefined) return false;
       if (name === "XDG_CACHE_HOME") return platform !== "darwin";

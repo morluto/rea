@@ -39,6 +39,17 @@ export const KUNA_DOCTOR_SETTINGS = [
   "REA_KUNA_JOBS",
 ] as const;
 
+/**
+ * Settings setup writes into a client registration.
+ *
+ * `HOME` and `XDG_CACHE_HOME` are readiness inputs only: they decide where the
+ * cache root falls back to, and recording them would persist the ambient
+ * environment a child already inherits.
+ */
+export const KUNA_REGISTRATION_SETTINGS = KUNA_DOCTOR_SETTINGS.filter(
+  (name) => name !== "HOME" && name !== "XDG_CACHE_HOME",
+);
+
 /** Project Kuna readiness into the doctor contract without writing anything. */
 export const inspectKunaProvider = async (
   environment: Readonly<NodeJS.ProcessEnv>,
@@ -152,7 +163,7 @@ export const inspectKunaProvider = async (
     available: cache.ok,
     providerVersion: value.version,
     registrationEnvironment: Object.fromEntries(
-      KUNA_DOCTOR_SETTINGS.flatMap((name) => {
+      KUNA_REGISTRATION_SETTINGS.flatMap((name) => {
         const setting = environment[name];
         return setting === undefined ? [] : [[name, setting]];
       }),

@@ -514,6 +514,25 @@ it("carries a validated REA_KUNA_COMMAND into the provider registration environm
   });
 });
 
+it("does not save inherited cache defaults into a Kuna registration", async () => {
+  const root = await createTestTempDirectory("rea-kuna-inherited-");
+  const home = join(root, "home");
+  await mkdir(home, { recursive: true });
+  const kuna = join(root, "kuna");
+  await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
+
+  const inspections = await createSystemDoctorHost({
+    HOME: home,
+    XDG_CACHE_HOME: join(root, "xdg"),
+    REA_KUNA_COMMAND: kuna,
+  }).providerInspections?.([]);
+
+  const environment = providerRegistrationEnvironment(inspections ?? []);
+  expect(environment).toMatchObject({ REA_KUNA_COMMAND: kuna });
+  expect(environment).not.toHaveProperty("HOME");
+  expect(environment).not.toHaveProperty("XDG_CACHE_HOME");
+});
+
 const createFakeJdk = async (root: string): Promise<string> => {
   const javaHome = join(root, "fake-jdk");
   const bin = join(javaHome, "bin");
@@ -644,6 +663,24 @@ test("decides whether an unresolved setting is one the probe actually reads", ()
       "linux",
     ),
   ).toBe(false);
+  // Only cache-location defaults are decided by a literal cache directory; an
+  // unresolved command or timeout still leaves the probe's answer unknown.
+  expect(
+    settingAffectsProbe(
+      "kuna",
+      "REA_KUNA_COMMAND",
+      { REA_KUNA_CACHE_DIR: "/opt/cache" },
+      "linux",
+    ),
+  ).toBe(true);
+  expect(
+    settingAffectsProbe(
+      "kuna",
+      "REA_KUNA_JOBS",
+      { REA_KUNA_CACHE_DIR: "/opt/cache" },
+      "linux",
+    ),
+  ).toBe(true);
 });
 
 test("lets a selected client keep the terminal settings its registration omits", async () => {
@@ -699,6 +736,42 @@ test("does not fill a registration's unresolvable expression from the terminal",
       checks: [expect.objectContaining({ classification: "unknown" })],
     });
     expect(inspections?.find(({ id }) => id === "jadx")?.configured).toBe(true);
+  } finally {
+    await host.close?.();
+  }
+});
+
+test("keeps a Qwen registration's variable expression out of the probe", async () => {
+  const home = await createTestTempDirectory("rea-qwen-doctor-expression-");
+  // Qwen expands $VAR and ${VAR} from the environment it runs with, so a
+  // recorded ${PATH} is not the terminal PATH this process sees.
+  await mkdir(join(home, ".qwen"), { recursive: true });
+  await writeFile(
+    join(home, ".qwen/settings.json"),
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "rea",
+          args: ["mcp"],
+          env: { PATH: "${PATH}:/opt/jdk/bin" },
+        },
+      },
+    }),
+    { flag: "w" },
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    PATH: "/usr/bin:/bin",
+  });
+  try {
+    const inspections = await host.providerInspections?.(["qwen_code"]);
+    expect(inspections?.find(({ id }) => id === "jadx")?.checks).toEqual([
+      expect.objectContaining({
+        code: "registration_environment_unknown",
+        classification: "unknown",
+        detail: expect.stringContaining("PATH"),
+      }),
+    ]);
   } finally {
     await host.close?.();
   }
