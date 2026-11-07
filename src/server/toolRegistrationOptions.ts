@@ -1,4 +1,9 @@
-import type { ToolContract } from "../contracts/toolContractTypes.js";
+import {
+  REA_MCP_META_KEY,
+  type ToolContract,
+  type ToolFamilyMeta,
+} from "../contracts/toolContractTypes.js";
+import { toolFamilyId } from "../contracts/toolFamilies.js";
 import type { StandardSchemaWithJSON } from "@modelcontextprotocol/server";
 import type { z } from "zod";
 import {
@@ -26,7 +31,11 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
   >;
   readonly outputSchema: Contract["outputSchema"];
   readonly annotations: Contract["annotations"];
+  readonly _meta?: ToolFamilyMeta;
 } => {
+  // Every catalog contract has a family (toolFamilies.test.ts). A renamed test
+  // fixture has none, and advertises no family rather than a guessed one.
+  const family = toolFamilyId(contract.name);
   const advertised = toolInputSchemaWithMetadata(contract);
   const evidenceInputs = getEvidenceInputContract<Contract["inputSchema"]>(
     contract.inputSchema,
@@ -49,6 +58,9 @@ export const toolRegistrationOptions = <Contract extends ToolContract>(
       : inputSchema,
     outputSchema: toolOutputSchemaWithMetadata(contract),
     annotations: contract.annotations,
+    ...(family === undefined
+      ? {}
+      : { _meta: { [REA_MCP_META_KEY]: { family } } }),
   };
 };
 
