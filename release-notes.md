@@ -85,6 +85,7 @@
 * **contracts:** inventory offline OpenAPI operation declarations ([#9104](https://github.com/morluto/rea/issues/9104)) ([91d73a1](https://github.com/morluto/rea/commit/91d73a113e557aea6e23f454f4adca7579405391))
 * **debugger:** share GDB and Rizin session caps as REA_ settings ([#8056](https://github.com/morluto/rea/issues/8056)) ([4a8d8f7](https://github.com/morluto/rea/commit/4a8d8f72b354dc96a8d1bce06da4bf6c7eda33ec))
 * **desktop:** capture and export apps installed from a downloaded .deb ([#8954](https://github.com/morluto/rea/issues/8954)) ([970969c](https://github.com/morluto/rea/commit/970969cb53f788976e64eae387076fcea104b603))
+* **desktop:** capture, draft, export and witness a task inside a build computer ([#9045](https://github.com/morluto/rea/issues/9045)) ([c5301e6](https://github.com/morluto/rea/commit/c5301e6145a9c8e06719f27e83da55af8e5480fc))
 * **desktop:** keep an agentenv computer up and drive it through REA's MCP tools ([#9041](https://github.com/morluto/rea/issues/9041)) ([fc4c381](https://github.com/morluto/rea/commit/fc4c381dd7232cf0e73f7f0ff8b55248e33dc12c))
 * **desktop:** pick seed and end by checkpoint, and keep the capture host out of bundles ([#9037](https://github.com/morluto/rea/issues/9037)) ([c363f3e](https://github.com/morluto/rea/commit/c363f3e27b485d3f6330c3634d5d9c8f80d98d72))
 * **desktop:** read XML with a plain DOCTYPE, and check an element's whole text ([#9050](https://github.com/morluto/rea/issues/9050)) ([ac23dc8](https://github.com/morluto/rea/commit/ac23dc8077e429bd61030c5d443580e432ae619b))
