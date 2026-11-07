@@ -1,5 +1,9 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
-import { jsonValueSchema, jsonValueValidationIssue } from "../jsonValue.js";
+import {
+  jsonValueSchema,
+  jsonValueValidationIssue,
+  type JsonValue,
+} from "../jsonValue.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   OtlpDiagnostic,
@@ -19,6 +23,22 @@ type Json = unknown;
 
 const isRecord = (value: Json): value is Record<string, Json> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * A recorded value a reader could not convert. Keeping it lets a damaged
+ * 64-bit integer stay distinguishable from an omitted one, but the copy is
+ * bounded: a malformed value can be arbitrarily long inside the file
+ * allowance, and echoing it per attribute would multiply that allowance.
+ */
+const RAW_VALUE_MAX_CHARS = 256;
+
+const retainedRaw = (value: Json): JsonValue | null => {
+  const parsed = jsonValueSchema.safeParse(value);
+  if (!parsed.success) return null;
+  return JSON.stringify(parsed.data).length > RAW_VALUE_MAX_CHARS
+    ? null
+    : parsed.data;
+};
 
 /** OTLP JSON encodes 64-bit integers as decimal strings. */
 const UINT64_MAX = (1n << 64n) - 1n;
@@ -115,6 +135,7 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
     string_value: null,
     bool_value: null,
     int_value: null,
+    int_value_raw: null,
     double_value: null,
     bytes_length: null,
     bytes_base64: null,
@@ -137,10 +158,14 @@ const readAttribute = (key: string, rawValue: Json): Attribute => {
         bool_value: typeof value === "boolean" ? value : null,
       };
     case "intValue": {
+      const parsed = readInt64(value);
       return {
         ...empty,
         value_kind: "int",
-        int_value: readInt64(value),
+        int_value: parsed,
+        // An int64 the inventory cannot read is still evidence the export
+        // recorded; a null alone would read as an omitted value.
+        int_value_raw: parsed === null ? retainedRaw(value) : null,
       };
     }
     case "doubleValue":
@@ -271,6 +296,22 @@ const parseSpan = (
     });
   const startTime = readUInt64(record.startTimeUnixNano);
   const endTime = readUInt64(record.endTimeUnixNano);
+  // A timestamp the inventory cannot read is kept as recorded so callers can
+  // tell a damaged value from an omitted one and still recover the original.
+  const startTimeRaw =
+    startTime === null && record.startTimeUnixNano !== undefined
+      ? retainedRaw(record.startTimeUnixNano)
+      : null;
+  const endTimeRaw =
+    endTime === null && record.endTimeUnixNano !== undefined
+      ? retainedRaw(record.endTimeUnixNano)
+      : null;
+  if (startTimeRaw !== null || endTimeRaw !== null)
+    problems.push({
+      code: "invalid-record",
+      pointer,
+      message: `Span ${spanId} at ${pointer} records a timestamp outside the uint64 range; it is retained as recorded in the *_raw fields and no duration is derived from it.`,
+    });
   let duration: string | null = null;
   if (startTime !== null && endTime !== null) {
     const delta = BigInt(endTime) - BigInt(startTime);
@@ -309,7 +350,9 @@ const parseSpan = (
     name: typeof record.name === "string" ? record.name : "",
     kind: kindName(record.kind),
     start_time_unix_nano: startTime,
+    start_time_unix_nano_raw: startTimeRaw,
     end_time_unix_nano: endTime,
+    end_time_unix_nano_raw: endTimeRaw,
     duration_nano: duration,
     status_code: statusCode(status?.code),
     status_message:

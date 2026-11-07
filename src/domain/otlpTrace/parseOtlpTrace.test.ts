@@ -411,9 +411,36 @@ describe("parseOtlpTrace 64-bit bounds", () => {
     expect(parsed.start_time_unix_nano).toBeNull();
     expect(parsed.end_time_unix_nano).toBeNull();
     expect(parsed.duration_nano).toBeNull();
+    // A rejected value is still a recorded one: keep it so it cannot be read
+    // as an omitted timestamp.
+    expect(parsed.start_time_unix_nano_raw).toBe("18446744073709551616");
     const attributes = new Map(parsed.attributes.map((a) => [a.key, a]));
-    for (const key of ["overflow", "underflow", "huge"])
-      expect(attributes.get(key)).toMatchObject({ int_value: null });
+    expect(attributes.get("overflow")).toMatchObject({
+      int_value: null,
+      int_value_raw: "9223372036854775808",
+    });
+    expect(attributes.get("underflow")).toMatchObject({
+      int_value: null,
+      int_value_raw: "-9223372036854775809",
+    });
+    // A value past the raw copy's allowance is not echoed, so one malformed
+    // decimal cannot multiply the file allowance into the result.
+    expect(parsed.end_time_unix_nano_raw).toBeNull();
+    expect(attributes.get("huge")).toMatchObject({
+      int_value: null,
+      int_value_raw: null,
+    });
+    expect(
+      report.diagnostics.filter((d) => d.code === "invalid-record"),
+    ).toHaveLength(1);
+  });
+
+  it("keeps raw fields empty when no value was recorded", () => {
+    const report = parse(envelope([span({})]));
+    const parsed = report.spans[0]!;
+    expect(parsed.start_time_unix_nano_raw).toBeNull();
+    expect(parsed.end_time_unix_nano_raw).toBeNull();
+    expect(parsed.attributes.map((a) => a.int_value_raw)).toEqual([]);
   });
 });
 

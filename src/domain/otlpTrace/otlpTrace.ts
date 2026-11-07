@@ -47,6 +47,8 @@ export const otlpAttributeSchema = z.strictObject({
   string_value: z.string().nullable(),
   bool_value: z.boolean().nullable(),
   int_value: z.string().nullable(),
+  /** The recorded value when it is not an int64 the inventory can read. */
+  int_value_raw: jsonValueSchema.nullable(),
   double_value: z.number().finite().nullable(),
   bytes_length: z.int().nonnegative().nullable(),
   /** The recorded base64 payload, kept so equal-length values stay distinct. */
@@ -73,7 +75,14 @@ export const otlpSpanSchema = z.strictObject({
     "unknown-kind",
   ]),
   start_time_unix_nano: z.string().nullable(),
+  /**
+   * The recorded timestamps the inventory could not read as uint64, so a
+   * damaged value stays distinguishable from an omitted one. Valid values are
+   * null here rather than repeated.
+   */
+  start_time_unix_nano_raw: jsonValueSchema.nullable(),
   end_time_unix_nano: z.string().nullable(),
+  end_time_unix_nano_raw: jsonValueSchema.nullable(),
   duration_nano: z.string().nullable(),
   status_code: z.enum(["unset", "ok", "error", "unknown-code"]),
   status_message: z.string().nullable(),
