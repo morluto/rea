@@ -424,6 +424,7 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.nativeValueFlow ?? null,
         descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
@@ -437,6 +438,9 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.nativeValueFlow === undefined
+            ? {}
+            : { native_value_flow: descriptor.nativeValueFlow }),
           ...(descriptor.independentDecompile === undefined
             ? {}
             : { independent_decompile: descriptor.independentDecompile }),
