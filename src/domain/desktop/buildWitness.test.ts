@@ -191,6 +191,28 @@ describe("build witness rules", () => {
   });
 });
 
+describe("build witness reset compared with an unreadable seed", () => {
+  it("leaves after_reset undecided when an unreadable seed check later passes", () => {
+    const unread = {
+      id: "note",
+      passed: false,
+      description: "",
+      undecided: true as const,
+    };
+    const failing = { id: "eggs", passed: false, description: "" };
+    const seed = [{ ...staged("seed", 0), results: [unread, failing] }];
+    const passed = { id: "note", passed: true, description: "" };
+    const eggsPass = { id: "eggs", passed: true, description: "" };
+    expect(stageVerdict("after_reset", [passed, failing], seed)).toBe(
+      "undecided",
+    );
+    expect(stageVerdict("after_reset", [unread, failing], seed)).toBe("held");
+    expect(stageVerdict("after_reset", [passed, eggsPass], seed)).toBe(
+      "not_held",
+    );
+  });
+});
+
 describe("build witness edits", () => {
   it("never takes a reset as the edit or the near miss", () => {
     const seed = [staged("seed", 0)];

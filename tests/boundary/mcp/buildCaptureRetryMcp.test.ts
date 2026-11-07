@@ -129,6 +129,40 @@ it("reports a failed package list download with apt's own message", async () => 
   await callOk(client, "stop_build_capture", { computer_id: id });
 });
 
+it("downloads the package lists again when an update exits 0 with no list", async () => {
+  const { client } = await fakes({
+    env: { FAKE_APT_EMPTY: "1", FAKE_APT_IGNORE_ERROR_MODE: "1" },
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  for (const attempt of [1, 2]) {
+    const value = toolContract("start_build_capture").outputSchema.parse(
+      (await callOk(client, "start_build_capture", { computer_id: id }))
+        .structuredContent,
+    );
+    expect(value.package_lists, `start ${String(attempt)}`).toBe(0);
+    expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
+      "without a package list",
+    );
+    await callOk(client, "stop_build_capture", { computer_id: id });
+  }
+});
+
+it("retries an empty apt update that Error-Mode turns into a failure", async () => {
+  const { client } = await fakes({ env: { FAKE_APT_EMPTY: "1" } });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  for (const attempt of [1, 2]) {
+    const value = toolContract("start_build_capture").outputSchema.parse(
+      (await callOk(client, "start_build_capture", { computer_id: id }))
+        .structuredContent,
+    );
+    expect(value.package_lists, `start ${String(attempt)}`).toBe(0);
+    expect(value.package_lists_error, `start ${String(attempt)}`).toContain(
+      "exited 100",
+    );
+    await callOk(client, "stop_build_capture", { computer_id: id });
+  }
+});
+
 it("downloads the package lists again on the next start after an update that fetched some and failed", async () => {
   const { client } = await fakes({
     env: { FAKE_APT_EXIT: "100", FAKE_APT_PARTIAL: "1" },

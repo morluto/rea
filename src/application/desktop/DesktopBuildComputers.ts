@@ -129,6 +129,16 @@ const driverMessage = (content: DriverResult["content"]): string =>
     .join(" ");
 
 /**
+ * What a reset did. `data/reset` completing is the observation that the seed
+ * was restored; readiness and a screenshot after it can still fail or be
+ * cancelled without erasing that observation.
+ */
+type ResetCall =
+  | { readonly kind: "unfinished"; readonly cause: unknown }
+  | { readonly kind: "interrupted"; readonly cause: unknown }
+  | { readonly kind: "done"; readonly result: DriverResult };
+
+/**
  * Restore the app's data to its seed with `data/reset`, which relaunches the
  * app, and wait until the computer reports ready again; a screenshot after,
  * when asked.
@@ -137,35 +147,52 @@ const reset = async (
   computer: AgentEnvComputer,
   fields: Readonly<Record<string, JsonValue>>,
   signal: AbortSignal,
-): Promise<DriverResult> => {
+): Promise<ResetCall> => {
   const startedAt = Date.now();
-  await computer.appData("data/reset", signal);
-  await computer.waitUntilReady(signal);
-  const ready = { reset: true, ready_ms: Date.now() - startedAt };
-  if (fields.screenshot !== true)
-    return { isError: false, content: [], structured: ready };
-  // The reset has happened: a screenshot that fails after it is reported beside it, and only an abort propagates.
-  const shot = await computer
-    .callTool("computer_screenshot", {}, signal)
-    .catch((cause: unknown) => {
-      if (signal.aborted) throw cause;
-      return cause instanceof Error ? cause.message : String(cause);
-    });
-  if (typeof shot === "string" || shot.isError)
+  try {
+    await computer.appData("data/reset", signal);
+  } catch (cause: unknown) {
+    return { kind: "unfinished", cause };
+  }
+  try {
+    await computer.waitUntilReady(signal);
+    const ready = { reset: true, ready_ms: Date.now() - startedAt };
+    if (fields.screenshot !== true)
+      return {
+        kind: "done",
+        result: { isError: false, content: [], structured: ready },
+      };
+    // The reset has happened: a screenshot that fails after it is reported beside it, and only an abort propagates.
+    const shot = await computer
+      .callTool("computer_screenshot", {}, signal)
+      .catch((cause: unknown) => {
+        if (signal.aborted) throw cause;
+        return cause instanceof Error ? cause.message : String(cause);
+      });
+    if (typeof shot === "string" || shot.isError)
+      return {
+        kind: "done",
+        result: {
+          isError: false,
+          content: [],
+          structured: {
+            ...ready,
+            screenshot_error:
+              typeof shot === "string" ? shot : driverMessage(shot.content),
+          },
+        },
+      };
     return {
-      isError: false,
-      content: [],
-      structured: {
-        ...ready,
-        screenshot_error:
-          typeof shot === "string" ? shot : driverMessage(shot.content),
+      kind: "done",
+      result: {
+        isError: false,
+        content: shot.content,
+        structured: { ...ready, frame: shot.structured },
       },
     };
-  return {
-    isError: false,
-    content: shot.content,
-    structured: { ...ready, frame: shot.structured },
-  };
+  } catch (cause: unknown) {
+    return { kind: "interrupted", cause };
+  }
 };
 
 /** A live computer as REA holds it: its action log, its capture and witness, and the turns all its calls take. */
@@ -468,10 +495,21 @@ export class DesktopBuildComputers {
     const logged = held.actions.begin(action, call.tool, call.arguments);
     let result: DriverResult;
     try {
-      result =
-        action === "reset"
-          ? await reset(computer, call.arguments, signal)
-          : await computer.callTool(call.tool, call.arguments, signal);
+      if (action === "reset") {
+        const outcome = await reset(computer, call.arguments, signal);
+        if (outcome.kind === "unfinished") {
+          logged.settle("failed");
+          return err(failure(ACT, outcome.cause, signal));
+        }
+        // The seed restore is already observed. A later cancel or readiness
+        // failure must not make the witness treat that restore as absent.
+        logged.settle("applied");
+        if (outcome.kind === "interrupted")
+          return err(failure(ACT, outcome.cause, signal));
+        result = outcome.result;
+      } else {
+        result = await computer.callTool(call.tool, call.arguments, signal);
+      }
     } catch (cause: unknown) {
       logged.settle("failed");
       return err(failure(ACT, cause, signal));

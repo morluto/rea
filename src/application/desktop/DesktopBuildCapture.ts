@@ -9,7 +9,7 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import {
-  desktopCaptureProgressSchema,
+  captureProgressEvent,
   type DesktopCaptureEvent,
 } from "../../domain/desktop/desktopCapture.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
@@ -79,7 +79,7 @@ type CheckpointTaken = Omit<
 
 /** The capture's progress event in a line the controller waited for. */
 const eventOf = (line: string): DesktopCaptureEvent | undefined =>
-  desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
+  captureProgressEvent(line);
 
 /**
  * One capture in the computer. `unreleased` is a capture that may be

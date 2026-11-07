@@ -92,11 +92,15 @@ const namedByIdentifier = (pointer: string) => {
   return key !== undefined && isIdentifier(key);
 };
 
-/** Whether an end holds an element at a pointer whose text a check reads as nothing, as an image or a break. */
+/**
+ * Whether an end holds an element whose text a check reads as nothing, as an
+ * image or a break. A run of only whitespace is text the paragraph check
+ * already reads, so it stays covered.
+ */
 const textlessAt = (pointer: string, ends: Ends) =>
   [ends.baseline, ends.final].some((view) => {
     const value = resolvePointer(view, pointer);
-    return isXmlElement(value) && isWhitespace(elementText(value));
+    return isXmlElement(value) && elementText(value) === "";
   });
 
 /** Whether both ends hold an element at a pointer. */
