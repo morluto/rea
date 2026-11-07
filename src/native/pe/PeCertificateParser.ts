@@ -79,6 +79,8 @@ export const parsePeCertificates = (
   const directoryAt = optionalHeaderOffset + security.offset;
   if (tableSize === 0 || tableOffset < headerSize)
     fail("PE certificate table offset overlaps headers or has zero size.");
+  if (tableOffset % 8 !== 0)
+    fail("PE certificate table offset must be aligned to eight bytes.");
   requireRange(bytes, tableOffset, tableSize);
   const table = bytes.subarray(tableOffset, tableOffset + tableSize);
   const entries: PeCertificates["entries"] = [];
