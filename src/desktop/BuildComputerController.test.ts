@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
 import {
+  batchListedFiles,
   controllerArgumentPieces,
   fetchHomeFolder,
   LINUX_SINGLE_ARGUMENT_BYTES,
@@ -178,5 +180,27 @@ describe("controller arguments", () => {
     } finally {
       await rm(root, { recursive: true, force: true });
     }
+  });
+});
+
+describe("batchListedFiles", () => {
+  it("splits many tiny files before their envelopes pass the answer budget", () => {
+    const files = Array.from({ length: 3000 }, (_, index) => ({
+      path: `home/file-${String(index)}`,
+      size: 1,
+    }));
+    const answerBytes = guestFileAnswerBytes(1, 1);
+    const batches = batchListedFiles(files, {
+      rawBytes: 8 * MIB,
+      answerBytes,
+    });
+
+    expect(batches.length).toBe(files.length);
+    expect(
+      batches.every(
+        (batch) =>
+          guestFileAnswerBytes(batch.bytes, batch.files.length) <= answerBytes,
+      ),
+    ).toBe(true);
   });
 });

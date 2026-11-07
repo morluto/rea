@@ -6,7 +6,12 @@ import { Buffer } from "node:buffer";
 import { z } from "zod";
 
 import type { JsonValue } from "../domain/jsonValue.js";
-import type { AgentEnvComputer } from "./AgentEnvComputer.js";
+import {
+  guestFileAnswerBytes,
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+  type AgentEnvComputer,
+} from "./AgentEnvComputer.js";
 
 const CONTROLLER = fileURLToPath(
   new URL("../../bridge/agentenv/capture.py", import.meta.url),
@@ -213,20 +218,46 @@ const listFolder = async (
   return listingSchema.parse(JSON.parse(content.toString("utf8")));
 };
 
-/** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES`. */
-const batched = (files: z.infer<typeof listingSchema>["files"]) => {
-  const batches: { files: typeof files; bytes: number }[] = [];
+/** One listed file and the answer budget a batch must fit. */
+export interface ListedBatchFile {
+  readonly path: string;
+  readonly size: number;
+}
+
+/**
+ * Files fetched together. A batch stops before its raw bytes pass
+ * `rawBytes` or its base64 answer, including each file's envelope, passes
+ * `answerBytes`.
+ */
+export const batchListedFiles = <File extends ListedBatchFile>(
+  files: readonly File[],
+  limits: { readonly rawBytes: number; readonly answerBytes: number },
+): { files: File[]; bytes: number }[] => {
+  const batches: { files: File[]; bytes: number }[] = [];
   for (const file of files) {
     const last = batches.at(-1);
-    if (last === undefined || last.bytes + file.size > FETCH_BATCH_BYTES)
+    const nextBytes = (last?.bytes ?? 0) + file.size;
+    const nextCount = (last?.files.length ?? 0) + 1;
+    const fits =
+      last !== undefined &&
+      nextBytes <= limits.rawBytes &&
+      guestFileAnswerBytes(nextBytes, nextCount) <= limits.answerBytes;
+    if (last === undefined || !fits)
       batches.push({ files: [file], bytes: file.size });
     else {
       last.files.push(file);
-      last.bytes += file.size;
+      last.bytes = nextBytes;
     }
   }
   return batches;
 };
+
+/** The answers for one home folder: files listed, then fetched in batches of about `FETCH_BATCH_BYTES` that also fit the host answer budget. */
+const batched = (files: z.infer<typeof listingSchema>["files"]) =>
+  batchListedFiles(files, {
+    rawBytes: FETCH_BATCH_BYTES,
+    answerBytes: guestFileAnswerWorkingBytes(guestFileAnswerCeiling()),
+  });
 
 /**
  * Bring every regular file under a home folder of the computer back to REA:
