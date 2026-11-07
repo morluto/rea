@@ -391,21 +391,21 @@ describe("README and class wording", () => {
 });
 
 describe("capturedHomePath", () => {
-  it("uses the selected spelling of a linked settings folder, innermost selection first", () => {
+  it("keeps a linked settings file in the folder the link points at", () => {
     const home = "/home/ada";
     const physical = `${home}/settings/vendor`;
-    const selected = `${home}/.config/vendor`;
     const path = capturedHomePath({
       host: { home },
       application: { state_directories: [] },
       state: {
         selected_paths: [
           { path: `${home}/settings`, physical: `${home}/settings` },
-          { path: selected, physical },
+          { path: `${home}/.config/vendor`, physical },
         ],
       },
     } as unknown as DesktopApplicationCapture);
-    expect(path(`${physical}/app.conf`)).toBe(".config/vendor/app.conf");
+
+    expect(path(`${physical}/app.conf`)).toBe("settings/vendor/app.conf");
     expect(path(`${home}/Documents/note.txt`)).toBe("Documents/note.txt");
   });
 });

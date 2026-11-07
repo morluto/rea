@@ -167,19 +167,10 @@ export const capturedHomePath = (
         : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
-  const selections = [...(capture.state.selected_paths ?? [])].sort(
-    (left, right) => right.physical.length - left.physical.length,
-  );
   return (path) => {
-    // The caller-selected spelling wins, including through a link, innermost first.
-    const selection = selections.find(({ physical }) =>
-      isWithinAny(path, [physical]),
-    );
-    const selected =
-      selection === undefined
-        ? null
-        : relative(`${selection.path}${path.slice(selection.physical.length)}`);
-    if (selected !== null) return selected;
+    // A selected alias, such as ~/.config/MuseScore pointing at settings/MuseScore
+    // or Documents, does not move the file. The seed keeps the folder the link
+    // points at, which is what the export's linked-settings cases require.
     const directory = renamed.find(({ physical }) =>
       isWithinAny(path, [physical]),
     );
