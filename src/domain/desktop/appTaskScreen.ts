@@ -29,7 +29,7 @@ export interface ScreenExamples {
 export type ScreenJudge = (
   verifier: string,
   check: ScreenJudgeCheck,
-  image: string,
+  image: Uint8Array,
   signal: AbortSignal,
 ) => Promise<TaskCheckOutcome>;
 

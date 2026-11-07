@@ -1,5 +1,3 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { isDeepStrictEqual } from "node:util";
@@ -103,7 +101,7 @@ export const judgeScreenTask = async (
         conformsToInputContract: true,
       }),
     );
-  const folder = await mkdtemp(join(tmpdir(), "rea-screen-judge-"));
+  const results: TaskCheckOutcome[] = [];
   try {
     await delay(SCREEN_SETTLE_MS, undefined, { signal });
     const shot = await computer.callTool(
@@ -114,15 +112,13 @@ export const judgeScreenTask = async (
     const image = shot.content.find((block) => block.type === "image")?.data;
     if (shot.isError || typeof image !== "string")
       throw new Error("the computer took no screenshot");
-    const screen = join(folder, "screen.jpg");
-    await writeFile(screen, Buffer.from(image, "base64"));
+    const screen = Buffer.from(image, "base64");
     const verifier = join(
       bundle.path,
       "artifacts",
       taskVerifierArtifact(task),
       "verify.py",
     );
-    const results: TaskCheckOutcome[] = [];
     for (const check of task.checks)
       if (check.kind === "screen_judge")
         results.push(await judge(verifier, check, screen, signal));
@@ -130,13 +126,16 @@ export const judgeScreenTask = async (
   } catch (cause: unknown) {
     return err(
       cause instanceof AnalysisError
-        ? cause
+        ? results.length === 0
+          ? cause
+          : cause.retainDiagnostics({ completed_judge_checks: results })
         : new ProviderAdapterError(AGENTENV_PROVIDER, CHECK, {
             userMessage: `The screen judge could not check the screen: ${errorText(cause)}`,
             cause,
+            ...(results.length === 0
+              ? {}
+              : { diagnostics: { completed_judge_checks: results } }),
           }),
     );
-  } finally {
-    await rm(folder, { recursive: true, force: true });
   }
 };
