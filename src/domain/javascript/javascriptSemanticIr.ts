@@ -441,6 +441,16 @@ export interface JavaScriptSemanticAssignmentFlow {
   readonly sourceIsReference: boolean;
   readonly operator: string;
   readonly ownerCallableId: string | null;
+  /**
+   * Static value written when an unconditional top-level assignment stores a
+   * literal container directly into a static property path. Absent otherwise;
+   * graph projection treats it like an initializer for that property slot.
+   */
+  readonly assignedValue?: {
+    readonly receiverName: string;
+    readonly propertyPath: readonly string[];
+    readonly value: JavaScriptSemanticValue;
+  };
 }
 
 /** Syntactic inputs to one operator result; this is influence, not identity. */
