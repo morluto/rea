@@ -23,7 +23,8 @@ const homePathOf = (
   home: string,
   workingDirectory: string,
 ): string | undefined => {
-  if (argument.startsWith("-")) return undefined;
+  // An empty value is not a relative path. Resolving it would name the working directory.
+  if (argument === "" || argument.startsWith("-")) return undefined;
   const path = posix.resolve(workingDirectory, argument);
   return path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
 };

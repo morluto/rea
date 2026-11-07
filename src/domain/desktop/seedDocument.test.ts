@@ -262,6 +262,23 @@ describe("openSeedDocument settings spelling", () => {
     });
   });
 
+  it("leaves an empty env value empty when the working directory moves", () => {
+    expect(
+      openSeedDocument(["env", "QT_QPA_PLATFORM=", "app"], {
+        ...AT_HOME,
+        workingDirectory: `${HOME}/work`,
+        launchDirectory: `${HOME}/.config/vendor`,
+        exec: "app",
+        documents: [],
+        isCaptured: (path) => path === "work" || path === ".config/vendor",
+        spell: (path) => (path === "work" ? ".config/vendor" : path),
+      }),
+    ).toEqual({
+      argv: ["env", "QT_QPA_PLATFORM=", "app"],
+      opens: { kind: "empty" },
+    });
+  });
+
   it("resolves a relative note in the captured directory when that directory moves", () => {
     expect(
       openSeedDocument(["editor", "note.txt"], {
