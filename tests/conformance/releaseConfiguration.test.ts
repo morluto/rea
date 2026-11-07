@@ -175,6 +175,50 @@ describe("release configuration", () => {
 });
 
 describe("plugin manifests", () => {
+  it("keeps the shared plugin icon and Codex listing metadata aligned before and after install", async () => {
+    const manifest = (await readJson(".codex-plugin/plugin.json")) as {
+      description: string;
+      interface: Record<string, unknown>;
+    };
+    const marketplace = (await readJson(
+      ".agents/plugins/marketplace.json",
+    )) as {
+      plugins: Array<{
+        description: string;
+        homepage: string;
+        interface: Record<string, unknown>;
+      }>;
+    };
+    const { logo, composerIcon, ...listing } = manifest.interface;
+    expect(marketplace.plugins[0]).toMatchObject({
+      description: manifest.description,
+      homepage: "https://rea.tools/",
+      interface: listing,
+    });
+    expect(String(listing.shortDescription).length).toBeLessThanOrEqual(30);
+    expect(listing.websiteURL).toBe("https://rea.tools/");
+    expect(logo).toBe("./assets/rea-plugin.png");
+    expect(composerIcon).toBe(logo);
+    expect(await readJson("package.json")).toMatchObject({
+      files: expect.arrayContaining(["assets/rea-plugin.png"]),
+    });
+    expect(await readJson(".claude-plugin/plugin.json")).toMatchObject({
+      icon: logo,
+    });
+  });
+
+  it("keeps content-rewriting attributes out of Claude's submitted plugin root", async () => {
+    const rules = (await readFile(".gitattributes", "utf8"))
+      .split(/\r?\n/u)
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0 && !line.startsWith("#"));
+    for (const rule of rules)
+      for (const attribute of rule.split(/\s+/u).slice(1))
+        expect(attribute).not.toMatch(
+          /^[-!]?(?:text|eol|filter|ident|working-tree-encoding|export-ignore|export-subst)(?:=|$)/u,
+        );
+  });
+
   it("distributes both plugins with generated canonical skills from the exact npm release", async () => {
     const pkg = (await readJson("package.json")) as {
       version: string;
