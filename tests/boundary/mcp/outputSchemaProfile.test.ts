@@ -180,6 +180,46 @@ it("bounds output schema advertisements and keeps canonical MCP output validatio
   }
 });
 
+it("advertises slice-relative and container-relative offset bases in the compact catalog description", async () => {
+  const server = createServer("compact");
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const client = new Client({ name: "compact-macho-test", version: "1" });
+  const contract = toolContract("inspect_macho");
+  server.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    async () => ({
+      content: [{ type: "text" as const, text: "fixture" }],
+    }),
+  );
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const tools = (await client.listTools()).tools;
+    const macho = tools.find((tool) => tool.name === contract.name);
+    if (macho === undefined)
+      throw new Error("Missing inspect_macho in compact tools/list");
+
+    expect(macho.description).toBe(contract.description);
+
+    const advertisedOutput = macho.outputSchema as
+      | Record<string, unknown>
+      | undefined;
+    expect(advertisedOutput).toBeDefined();
+    expect(advertisedOutput?.type).toBe("object");
+    expect(advertisedOutput?.description).toContain("reduced form");
+    expect(
+      (advertisedOutput?.properties as Record<string, unknown>)
+        ?.normalized_result,
+    ).toEqual({ type: "object" });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
 it("keeps the default compact-input catalog below a measured one-megabyte frame", async () => {
   const compactInput: CompactInputSchemaPresentation = {
     budgetBytes: COMPACT_INPUT_SCHEMA_BUDGET_BYTES,
