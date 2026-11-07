@@ -82,6 +82,20 @@ describe("draftTaskFiles values", () => {
     expect(cut?.before).toBe(`${"x".repeat(600)}…`);
   });
 
+  it("does not mark a JSON object key as by position when the path looks like an index", () => {
+    const file = draftOf({
+      "settings.json": statePath(
+        "application_state",
+        "json",
+        { children: {} },
+        { children: { "1": "later" } },
+      ),
+    })[0];
+    const added = file?.values.find((value) => value.kind === "added");
+    expect(added?.pointer).toBe("/children/1");
+    expect(added?.note).toBeUndefined();
+  });
+
   it("notes a run of text added or removed in mixed content as by position, since only its index reaches it", () => {
     const document = (lead: string) =>
       `<abiword><section><p xid="1" style="Normal">${lead}<c props="font-weight:bold">Budget</c> is due Friday.</p></section></abiword>`;

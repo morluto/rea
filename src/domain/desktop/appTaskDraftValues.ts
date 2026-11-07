@@ -369,8 +369,13 @@ const entryOf = (
   const located = locatePointer(view, pointer);
   const found = located.kind === "value";
   // A text node added or removed is reached only by its index among its element's children.
+  const listPointer = pointer.replace(/\/\d+$/u, "");
   const indexedText =
-    found && kind !== "changed" && /\/children\/\d+$/u.test(pointer);
+    found &&
+    kind !== "changed" &&
+    /\/children\/\d+$/u.test(pointer) &&
+    Array.isArray(resolvePointer(view, listPointer)) &&
+    isXmlElement(resolvePointer(view, listPointer.replace(/\/children$/u, "")));
   const note: ValueNote | undefined =
     found && located.byPosition.length > 0
       ? "by_position"

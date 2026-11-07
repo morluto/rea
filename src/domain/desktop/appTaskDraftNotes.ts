@@ -99,7 +99,7 @@ type Version = DesktopStatePath["versions"][number];
  * How a changed dconf database's application keys differ between two
  * versions: why one could not be read, whether its application groups
  * differ, or undefined when only other groups changed. A version kept without
- * its bytes, as the first walk leaves the database, counts as holding none.
+ * its bytes stays unread: the missing copy is not an empty key list.
  */
 const dconfKeysChange = (
   baseline: Version,
@@ -108,14 +108,17 @@ const dconfKeysChange = (
   const unread = [baseline, final].find(
     (version) =>
       version.present &&
-      version.sha256 !== null &&
-      (version.view_error !== null || version.format !== "dconf"),
+      (version.sha256 === null ||
+        version.view_error !== null ||
+        version.format !== "dconf"),
   );
   if (unread !== undefined)
     return {
       error:
-        unread.view_error ??
-        `read as ${unread.format ?? "an unknown format"}, not a dconf database`,
+        unread.sha256 === null
+          ? (unread.view_error ?? "content not retained")
+          : (unread.view_error ??
+            `read as ${unread.format ?? "an unknown format"}, not a dconf database`),
     };
   const keys = diffStateViews(
     "dconf",

@@ -18,6 +18,7 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
 import type { LaunchDocument } from "./seedDocument.js";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
@@ -193,6 +194,14 @@ export const capturedHomePath = (
         ? null
         : relative(`${selection.path}${path.slice(selection.physical.length)}`);
     if (selected !== null) return selected;
+    for (const { suffix } of SQLITE_SIDECARS) {
+      if (!path.endsWith(suffix)) continue;
+      const database = path.slice(0, -suffix.length);
+      const owner = selections.find(({ physical }) => physical === database);
+      if (owner === undefined) continue;
+      const home = relative(`${owner.path}${suffix}`);
+      if (home !== null) return home;
+    }
     const directory = renamed.find(({ physical }) =>
       isWithinAny(path, [physical]),
     );

@@ -7,7 +7,9 @@ import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
+import { guestFileAnswerBytes } from "./AgentEnvComputer.js";
 import {
+  batchListedFiles,
   controllerArgumentPieces,
   fetchHomeFolder,
   LINUX_SINGLE_ARGUMENT_BYTES,
@@ -96,6 +98,22 @@ describe("fetchHomeFolder", () => {
       }),
     ).rejects.toThrow(/differs from its listing/u);
     expect(steps).toEqual([]);
+  });
+});
+
+describe("batchListedFiles", () => {
+  it("starts another batch before each file's envelope pushes the answer over the budget", () => {
+    const files = [1, 2, 3].map((index) => ({
+      path: `f${String(index)}`,
+      size: 10,
+    }));
+    const budget = guestFileAnswerBytes(20, 2);
+    expect(
+      batchListedFiles(files, {
+        rawBytes: 8 * 1024 * 1024,
+        answerBytes: budget,
+      }).map((batch) => batch.files.length),
+    ).toEqual([2, 1]);
   });
 });
 
