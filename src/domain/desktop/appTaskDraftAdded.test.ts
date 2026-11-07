@@ -908,6 +908,18 @@ describe("draftTaskFiles for decimals", () => {
       [before, after].map((text) => passing(FILE, xml(text), file.suggested)),
     ).toEqual([[false], [true]]);
   });
+
+  it("does not give a line-broken decimal a tolerance the trimmed seed already meets", () => {
+    const sheet = (rate: string) =>
+      `<Cells><Cell Row="2" Col="3">${rate}</Cell><Cell Row="3" Col="3">5</Cell></Cells>`;
+    const before = sheet("\n10\n");
+    const after = sheet("\n10.0005\n");
+    const file = xmlDraft(before, after);
+
+    expect(file.suggested.some((check) => "tolerance" in check)).toBe(false);
+    expect(passing(FILE, xml(before), file.suggested)).toContain(false);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
 });
 
 describe("draftTaskFiles for records in a list, as Tellico keeps books", () => {

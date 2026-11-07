@@ -531,8 +531,10 @@ export const wholeTextCheck = (
   const { value } = now;
   // A line between breaks is still that line. Trim it before the decimal test so `\\n437.8\\n` stays a number within tolerance.
   const comparable = isLaidOutLine(value) ? value.trim() : value;
+  const earlier =
+    before !== undefined && isLaidOutLine(before) ? before.trim() : before;
   // The element's joined text, not its first text node. A later save may split `437.8` into `437.` and a run holding `8`. When that text is a decimal, compare the number within the usual tolerance, so `437.80` and a long float still match.
-  const numeric = valueEqualsCheck(file, pointer, comparable, before);
+  const numeric = valueEqualsCheck(file, pointer, comparable, earlier);
   if ("tolerance" in numeric) return { check: numeric, guards: [] };
   // One line the app lays out between line breaks, as KmPlot's formula before its next element, compares with its whitespace collapsed.
   const laidOut = isLaidOutLine(value)

@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
 
@@ -34,12 +35,13 @@ print(json.dumps({"exit": module._exit_code(sys.argv[3]), "control": os.path.exi
         "-B",
         "-c",
         script,
-        join("bridge/agentenv/capture.py"),
+        fileURLToPath(
+          new URL("../../../bridge/agentenv/capture.py", import.meta.url),
+        ),
         work,
         capture,
       ],
       {
-        cwd: "/workspace",
         env: { ...process.env, PATH: `${bin}:${process.env.PATH ?? ""}` },
         encoding: "utf8",
       },
