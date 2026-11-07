@@ -417,3 +417,337 @@ it.each([
     { kind: "acquire", method: "openSync" },
   ]);
 });
+/**
+ * `fs.createReadStream` and `fs.createWriteStream` validate their options object
+ * before constructing the stream, so a refused member throws and no handle exists.
+ *
+ * Measured on Node 24.22.1, per member:
+ *
+ *   start / end   -1, 1.5, NaN, Infinity  -> THREW ERR_OUT_OF_RANGE
+ *                 "10", null, true, 1n    -> THREW ERR_INVALID_ARG_TYPE
+ *                 -0, 0, undefined        -> stream
+ *   fd            -1, 1.5                 -> THREW ERR_OUT_OF_RANGE
+ *                 "x"                     -> THREW ERR_INVALID_ARG_TYPE
+ *                 null, 0                 -> stream
+ *   highWaterMark -1, 1.5, "x"            -> THREW ERR_INVALID_ARG_VALUE
+ *                 null, 0                 -> stream
+ *   encoding      "nope", 1, true         -> THREW ERR_INVALID_ARG_VALUE
+ *                 "utf8", "", null, 0, false -> stream
+ *   start > end                            -> THREW ERR_OUT_OF_RANGE
+ *   createWriteStream ignores `end`        -> stream even for `{end: -1}`
+ *   flags / mode / autoClose are not validated eagerly
+ */
+const streamAcquisitionsFor = (call: string) =>
+  analyzeJavaScriptSemantics(
+    `import fs from "node:fs";\nfunction g(p, opts, n) { ${call}; }`,
+  ).resourceOperations.map(({ kind, method }) => ({ kind, method }));
+
+it.each([
+  ["a negative start", `fs.createReadStream(p, {start: -1})`],
+  ["a fractional start", `fs.createReadStream(p, {start: 1.5})`],
+  ["a NaN start", `fs.createReadStream(p, {start: NaN})`],
+  ["an Infinity start", `fs.createReadStream(p, {start: Infinity})`],
+  ["a string start", `fs.createReadStream(p, {start: "10"})`],
+  ["a null start", `fs.createReadStream(p, {start: null})`],
+  ["a boolean start", `fs.createReadStream(p, {start: true})`],
+  ["a BigInt start", `fs.createReadStream(p, {start: 1n})`],
+  ["a negative end", `fs.createReadStream(p, {end: -1})`],
+  ["a fractional end", `fs.createReadStream(p, {end: 1.5})`],
+  ["a string end", `fs.createReadStream(p, {end: "x"})`],
+  ["a null end", `fs.createReadStream(p, {end: null})`],
+  ["a start above the end", `fs.createReadStream(p, {start: 10, end: 2})`],
+  ["a negative fd", `fs.createReadStream(p, {fd: -1})`],
+  ["a fractional fd", `fs.createReadStream(p, {fd: 1.5})`],
+  ["a string fd", `fs.createReadStream(p, {fd: "x"})`],
+  ["a negative high-water mark", `fs.createReadStream(p, {highWaterMark: -1})`],
+  [
+    "a fractional high-water mark",
+    `fs.createReadStream(p, {highWaterMark: 1.5})`,
+  ],
+  ["a string high-water mark", `fs.createReadStream(p, {highWaterMark: "x"})`],
+  ["an unknown encoding", `fs.createReadStream(p, {encoding: "nope"})`],
+  ["a numeric encoding", `fs.createReadStream(p, {encoding: 5})`],
+  ["a truthy boolean encoding", `fs.createReadStream(p, {encoding: true})`],
+  ["a write-stream negative start", `fs.createWriteStream(p, {start: -1})`],
+  ["a write-stream fractional start", `fs.createWriteStream(p, {start: 1.5})`],
+  ["a write-stream string start", `fs.createWriteStream(p, {start: "x"})`],
+  ["a write-stream negative fd", `fs.createWriteStream(p, {fd: -1})`],
+  [
+    "a write-stream negative high-water mark",
+    `fs.createWriteStream(p, {highWaterMark: -1})`,
+  ],
+  ["a write-stream numeric encoding", `fs.createWriteStream(p, {encoding: 5})`],
+] as const)("emits no stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a descriptor with an unknown prototype",
+    `fs.createReadStream(p, {fd: {__proto__: opts}})`,
+  ],
+  [
+    "a copied prototype setter",
+    `fs.createReadStream(p, {["__proto__"]: {set start(v) {}}, start: -1})`,
+  ],
+  [
+    "a spread that may supply a prototype setter",
+    `fs.createReadStream(p, {...opts, start: -1})`,
+  ],
+  [
+    "a computed key that may be a prototype setter",
+    `fs.createWriteStream(p, {[n]: opts, start: -1})`,
+  ],
+  ["a zero start", `fs.createReadStream(p, {start: 0})`],
+  ["a negative zero start", `fs.createReadStream(p, {start: -0})`],
+  ["an undefined start", `fs.createReadStream(p, {start: undefined})`],
+  ["a zero end", `fs.createReadStream(p, {end: 0})`],
+  ["an end equal to the start", `fs.createReadStream(p, {start: 2, end: 2})`],
+  ["an end above the start", `fs.createReadStream(p, {start: 2, end: 10})`],
+  ["a null fd", `fs.createReadStream(p, {fd: null})`],
+  ["a null high-water mark", `fs.createReadStream(p, {highWaterMark: null})`],
+  ["a known encoding", `fs.createReadStream(p, {encoding: "utf8"})`],
+  [
+    "an upper-case known encoding",
+    `fs.createReadStream(p, {encoding: "UTF8"})`,
+  ],
+  ["an empty encoding", `fs.createReadStream(p, {encoding: ""})`],
+  ["a null encoding", `fs.createReadStream(p, {encoding: null})`],
+  ["a zero encoding", `fs.createReadStream(p, {encoding: 0})`],
+  ["a false encoding", `fs.createReadStream(p, {encoding: false})`],
+  ["an unvalidated flags value", `fs.createReadStream(p, {flags: 123})`],
+  ["an unvalidated mode value", `fs.createReadStream(p, {mode: -1})`],
+  ["an ignored end on a write stream", `fs.createWriteStream(p, {end: -1})`],
+  ["an unreadable start", `fs.createReadStream(p, {start: n})`],
+  ["no options object", `fs.createReadStream(p)`],
+] as const)("keeps the stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([
+    {
+      kind: "acquire",
+      method: call.includes("createWriteStream")
+        ? "createWriteStream"
+        : "createReadStream",
+    },
+  ]);
+});
+/**
+ * Five shapes where the stream-option filter disagreed with Node 24.22.1:
+ *
+ * 1. A write stream ignores `end`, so neither its own check nor the `start > end`
+ *    ordering applies: `createWriteStream(p, {start: 10, end: 2})` creates a handle.
+ * 2. `end: Infinity` is a valid unlimited end on a read stream, while `start: Infinity`
+ *    is out of range and `end: -Infinity` and `end: NaN` throw.
+ * 3. A unary member is not always `+`: `~0` is `-1` and throws, `~-1` is `0` and does
+ *    not, and `!0`, `!1` and `typeof 1` yield a boolean or a string Node refuses.
+ * 4. Each integer member has its own upper bound: `start` and `end` stop at
+ *    `Number.MAX_SAFE_INTEGER`, `fd` at `2_147_483_647`, and `highWaterMark` has none
+ *    (`1e21` is accepted, `Infinity` is not).
+ * 5. An object, array, function or regular expression member throws
+ *    `ERR_INVALID_ARG_TYPE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start: 10, end: 2})`],
+  [`fs.createReadStream(p, {start: Infinity})`],
+  [`fs.createReadStream(p, {end: -Infinity})`],
+  [`fs.createReadStream(p, {end: NaN})`],
+  [`fs.createReadStream(p, {start: ~0})`],
+  [`fs.createReadStream(p, {end: ~0})`],
+  [`fs.createReadStream(p, {start: !0})`],
+  [`fs.createReadStream(p, {start: !1})`],
+  [`fs.createReadStream(p, {start: typeof 1})`],
+  [`fs.createReadStream(p, {start: 9007199254740992})`],
+  [`fs.createReadStream(p, {end: 9007199254740992})`],
+  [`fs.createReadStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {fd: -2147483648})`],
+  [`fs.createWriteStream(p, {fd: 2147483648})`],
+  [`fs.createReadStream(p, {highWaterMark: Infinity})`],
+  [`fs.createReadStream(p, {highWaterMark: NaN})`],
+  [`fs.createReadStream(p, {start: []})`],
+  [`fs.createReadStream(p, {start: {}})`],
+  [`fs.createReadStream(p, {start: () => {}})`],
+  [`fs.createReadStream(p, {start: /x/})`],
+] as const)("emits no stream acquisition for %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  [
+    "a write stream ignoring end",
+    `fs.createWriteStream(p, {start: 10, end: 2})`,
+  ],
+  [
+    "a write stream ignoring a negative end",
+    `fs.createWriteStream(p, {end: -1})`,
+  ],
+  [
+    "a write stream ignoring an infinite end",
+    `fs.createWriteStream(p, {end: Infinity})`,
+  ],
+  ["an infinite end", `fs.createReadStream(p, {end: Infinity})`],
+  ["an overflowing end", `fs.createReadStream(p, {end: 1e400})`],
+  [
+    "an infinite end above a start",
+    `fs.createReadStream(p, {start: 5, end: Infinity})`,
+  ],
+  ["a complemented minus one", `fs.createReadStream(p, {start: ~-1})`],
+  ["a complemented uint32 max", `fs.createReadStream(p, {start: ~4294967295})`],
+  ["a void start", `fs.createReadStream(p, {start: void 0})`],
+  [
+    "an offset at the safe-integer ceiling",
+    `fs.createReadStream(p, {start: 9007199254740991})`,
+  ],
+  ["a descriptor at int32 max", `fs.createReadStream(p, {fd: 2147483647})`],
+  [
+    "a descriptor above int32 on a write stream",
+    `fs.createWriteStream(p, {fd: 2147483647})`,
+  ],
+  [
+    "a high-water mark above int32",
+    `fs.createReadStream(p, {highWaterMark: 2147483648})`,
+  ],
+  [
+    "a high-water mark of 1e21",
+    `fs.createReadStream(p, {highWaterMark: 1e21})`,
+  ],
+] as const)("keeps the stream acquisition for %s", (_name, call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+/**
+ * A getter in the options literal runs while Node enumerates and copies the object, so
+ * it can replace another member before that member is read. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get reset(){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get reset(){}, start:-1})              -> stream
+ *   createReadStream(p, {set x(v){}, start:-1})                 -> THREW
+ *   createReadStream(p, {reset(){this.start=0}, start:-1})      -> THREW (methods are not invoked)
+ *   createReadStream(p, {start:-1, get z(){}})                  -> THREW (the getter runs after)
+ *
+ * A `set` accessor and a plain method do not run during the copy, so a bad member there
+ * is still decided.
+ */
+it.each([
+  [`fs.createReadStream(p, {get reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {get reset(){}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1, get z(){}})`],
+  [`fs.createReadStream(p, {get z(){this.highWaterMark=-1}, highWaterMark:0})`],
+  [`fs.createWriteStream(p, {get reset(){this.start=0}, start:-1})`],
+] as const)("leaves a getter-bearing options literal undecided: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`fs.createReadStream(p, {set x(v){}, start:-1})`],
+  [`fs.createReadStream(p, {reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1})`],
+] as const)(
+  "still decides a literal whose accessors do not run: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
+/**
+ * A computed string key does not stop a getter from running while Node copies the
+ * literal. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get ["reset"](){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get ["reset"](){}, start:-1})              -> stream
+ */
+it("treats a computed string-key getter as eager", () => {
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){this.start=0}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+  expect(
+    streamAcquisitionsFor(
+      `fs.createReadStream(p, {get ["reset"](){}, start:-1})`,
+    ),
+  ).toHaveLength(1);
+});
+
+/**
+ * A method written in shorthand reaches the reader as an `ObjectMethod`, and a class
+ * expression has the same runtime type as a function. Measured on Node 24.22.1, all of
+ * `{start(){}}`, `{start: function(){}}`, `{start: class{}}` and `{start: function*(){}}`
+ * throw `ERR_INVALID_ARG_TYPE`, and `{encoding(){}}` throws `ERR_INVALID_ARG_VALUE`.
+ */
+it.each([
+  [`fs.createReadStream(p, {start(){}})`],
+  [`fs.createReadStream(p, {end(){}})`],
+  [`fs.createReadStream(p, {fd(){}})`],
+  [`fs.createReadStream(p, {highWaterMark(){}})`],
+  [`fs.createReadStream(p, {start: class{}})`],
+  [`fs.createReadStream(p, {start: function*(){}})`],
+  [`fs.createReadStream(p, {encoding(){}})`],
+] as const)("emits no acquisition for a method-valued member: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toEqual([]);
+});
+
+/**
+ * Any truthy non-string `encoding` reaches Node's check and is refused; a falsy one is
+ * skipped first. Measured on Node 24.22.1: `-1`, `1.5`, `Infinity`, `-Infinity`, `{}`
+ * and `[]` throw `ERR_INVALID_ARG_VALUE`, while `0`, `-0`, `""`, `false`, `0n` and `NaN`
+ * all construct a stream.
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: -1})`],
+  [`fs.createReadStream(p, {encoding: 1.5})`],
+  [`fs.createReadStream(p, {encoding: Infinity})`],
+  [`fs.createReadStream(p, {encoding: -Infinity})`],
+  [`fs.createReadStream(p, {encoding: {}})`],
+  [`fs.createReadStream(p, {encoding: []})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: NaN})`],
+  [`fs.createReadStream(p, {encoding: -0})`],
+  [`fs.createReadStream(p, {encoding: 0})`],
+  [`fs.createReadStream(p, {encoding: ""})`],
+  [`fs.createReadStream(p, {encoding: false})`],
+] as const)("keeps the acquisition for a falsy encoding: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+/**
+ * `encoding` truthiness is a separate question from the numeric bounds. Measured on
+ * Node 24.22.1:
+ *
+ *   {encoding: !1}        -> false, skipped          -> stream
+ *   {encoding: !0}        -> true,  refused          -> THREW ERR_INVALID_ARG_VALUE
+ *   {encoding: ~-1}       -> 0,     skipped          -> stream
+ *   {encoding: ~0}        -> -1,    refused          -> THREW
+ *   {encoding: typeof 1}  -> "number", refused       -> THREW
+ *   {encoding: `utf8`}                               -> stream
+ *   {encoding: `ut${"f8"}`}                          -> stream (interpolated, undecided)
+ *   {encoding: `nope${"x"}`}                         -> THREW, but undecided here
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: !1})`],
+  [`fs.createReadStream(p, {encoding: ~-1})`],
+  [`fs.createReadStream(p, {encoding: \`utf8\`})`],
+  [`fs.createReadStream(p, {encoding: \`ut\${"f8"}\`})`],
+  [`fs.createReadStream(p, {encoding: \`nope\${"x"}\`})`],
+] as const)(
+  "keeps the acquisition for a skipped or undecided encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: !0})`],
+  [`fs.createReadStream(p, {encoding: ~0})`],
+  [`fs.createReadStream(p, {encoding: typeof 1})`],
+  // A regular expression is an object at runtime, and Node refuses it as an encoding.
+  [`fs.createReadStream(p, {encoding: /x/})`],
+  [`fs.createWriteStream(p, {encoding: /x/})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);
