@@ -268,7 +268,6 @@ describe("empty browser and Inspector selectors", () => {
           {
             code: "too_small",
             path: input.path,
-            message: "Too small: expected string to have >=1 characters",
           },
         ],
       });

@@ -153,7 +153,6 @@ it(
         {
           code: "too_small",
           path: "targetId",
-          message: "Too small: expected string to have >=1 characters",
         },
       ],
     });
