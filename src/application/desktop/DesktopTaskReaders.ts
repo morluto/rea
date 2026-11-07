@@ -33,11 +33,12 @@ export const readTaskReaderViews = async (
   readers: readonly DesktopTaskReader[],
   run: ReaderCommandRun,
   pathOf: (reader: DesktopTaskReader) => string | undefined = () => undefined,
+  work?: string,
 ): Promise<ReadonlyMap<string, TaskFileView>> => {
   const views = new Map<string, TaskFileView>();
   for (const reader of readers) {
     const result = await run(
-      readerCommand(reader, pathOf(reader)),
+      readerCommand(reader, pathOf(reader), work),
       readerTimeout(reader) + READER_RUNNER_SLACK_S,
     );
     if (result.exit_code !== 0 || result.timed_out)
@@ -68,7 +69,8 @@ export const readerViewsOfBytes = async (
     try {
       const path = join(folder, reader.file.split("/").at(-1) ?? "file");
       await writeFile(path, file.bytes);
-      const read = await readTaskReaderViews([reader], run, () => path);
+      // The runner works inside this folder, so removing it cleans up after a runner that was killed.
+      const read = await readTaskReaderViews([reader], run, () => path, folder);
       for (const [id, view] of read) views.set(id, view);
     } finally {
       await rm(folder, { recursive: true, force: true });

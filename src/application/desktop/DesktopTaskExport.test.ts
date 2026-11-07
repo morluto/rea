@@ -553,7 +553,42 @@ const exportScreenTask = async (
   return { result, directory };
 };
 
+/** The screen-only capture where a file outside the app's owned paths, a desktop's recent-files list, changed. */
+const unownedChangeCapture = () => {
+  const base = screenOnlyCapture();
+  const recent = NOTE_PATH.replace(
+    "Documents/today.txt",
+    ".local/share/recently-used.xbel",
+  );
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.trigger === "baseline"
+          ? checkpoint
+          : {
+              ...checkpoint,
+              changes: [change(recent, { after: "milk\n" })],
+              retained: [retained(recent, "milk\n")],
+            },
+      ),
+    },
+  };
+};
+
 describe("exportDesktopApplication with a screen-judged task", () => {
+  it("lets a file outside the app's owned paths change without refusing the screen judge", async () => {
+    const { result } = await exportScreenTask(
+      SCREEN_TASK,
+      unownedChangeCapture(),
+    );
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { name: "note-shown", failing_on_seed: [] },
+    });
+  });
+
   it("ships the seed's screenshot as the judge's failing example and the end's as its passing one, and leaves judging to the witness", async () => {
     const { result, directory } = await exportScreenTask(SCREEN_TASK);
 
@@ -585,6 +620,12 @@ describe("exportDesktopApplication with a screen-judged task", () => {
   it.each([
     [SCREEN_TASK, capture(), undefined, "a check can read"],
     [SCREEN_TASK, screenOnlyCapture(), { baseline: "seed shot" }, "screenshot"],
+    [
+      SCREEN_TASK,
+      screenOnlyCapture(),
+      { baseline: "x".repeat(2 * 1024 * 1024 + 1), edited: "end shot" },
+      "larger than the 2 MiB",
+    ],
   ])(
     "refuses a screen judge where a file shows the change or a screenshot is missing (%#)",
     async (task, base, shots, message) => {

@@ -37,12 +37,17 @@ import signal
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 
 MARKER = "REA "
 PLACEHOLDER = "{file}"
 OUTPUT_BYTES = 1 << 20
 ANSWER_BYTES = OUTPUT_BYTES - (64 << 10)
 STDERR_BYTES = 1024
+#: How often the runner looks whether the reader exited, and how long it waits for its streams to close after.
+POLL_S = 0.05
+DRAIN_S = 2.0
 MAX_LINES = 5000
 MAX_SAFE_INTEGER = 2**53 - 1
 LINE_BREAK = re.compile(r"\r?\n")
@@ -107,52 +112,77 @@ def _view(output: str, lines: list) -> dict:
     return {"view": {"format": "json", "view": value}}
 
 
-def _tail(path: str) -> str:
-    with open(path, "rb") as handle:
-        handle.seek(max(0, os.path.getsize(path) - STDERR_BYTES))
-        text = handle.read().decode("utf-8", "replace").strip()
+def _tail(stderr: bytearray) -> str:
+    text = bytes(stderr).decode("utf-8", "replace").strip()
     return f"; its stderr ends: {text}" if text else ""
 
 
+def _drain(stream, kept: bytearray, limit: int, tail: bool, full: threading.Event) -> None:
+    """Read a stream to its end holding at most limit bytes: the first, setting full past them, or the last."""
+    while chunk := stream.read1(1 << 16):
+        kept += chunk
+        if tail:
+            del kept[:-limit]
+        elif len(kept) > limit:
+            del kept[limit + 1:]
+            full.set()
+
+
+def _feed(stream, text) -> None:
+    try:
+        if text is not None:
+            stream.write(text.encode())
+        stream.close()
+    except OSError:
+        pass
+
+
 def _run(arguments: dict, source: str, work: str) -> dict:
-    copy = os.path.join(work, arguments["name"])
+    # The copy has a folder of its own, so no file name meets the runner's home.
+    copy = os.path.join(work, "file", arguments["name"])
+    os.makedirs(os.path.dirname(copy))
     shutil.copyfile(source, copy)
     home = os.path.join(work, "home")
     os.makedirs(home)
     argv = [part.replace(PLACEHOLDER, copy) for part in arguments["argv"]]
     stdin = arguments.get("stdin")
     timeout = arguments["timeout_s"]
-    out, err = os.path.join(work, "stdout"), os.path.join(work, "stderr")
-    with open(out, "wb") as stdout, open(err, "wb") as stderr:
+    try:
+        process = subprocess.Popen(argv, cwd=os.path.dirname(copy), env=_environment(home, arguments.get("display") is True),
+                                   stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                   start_new_session=True)
+    except OSError as error:
+        return {"error": f"could not start {argv[0]}: {error.strerror or error}"}
+    printed, stderr, full = bytearray(), bytearray(), threading.Event()
+    threads = [threading.Thread(target=_drain, args=(process.stdout, printed, OUTPUT_BYTES, False, full), daemon=True),
+               threading.Thread(target=_drain, args=(process.stderr, stderr, STDERR_BYTES, True, full), daemon=True),
+               threading.Thread(target=_feed, args=(process.stdin, None if stdin is None else stdin.replace(PLACEHOLDER, copy)),
+                                daemon=True)]
+    for thread in threads:
+        thread.start()
+    deadline = time.monotonic() + timeout
+    try:
+        while process.poll() is None and not full.is_set() and time.monotonic() < deadline:
+            time.sleep(POLL_S)
+        timed_out = process.poll() is None and not full.is_set()
+    finally:
+        # The app may leave helpers running, such as a document server: end its whole session.
         try:
-            process = subprocess.Popen(argv, cwd=work, env=_environment(home, arguments.get("display") is True),
-                                       stdin=subprocess.DEVNULL if stdin is None else subprocess.PIPE, stdout=stdout,
-                                       stderr=stderr, start_new_session=True)
-        except OSError as error:
-            return {"error": f"could not start {argv[0]}: {error.strerror or error}"}
-        timed_out = False
-        try:
-            process.communicate(None if stdin is None else stdin.replace(PLACEHOLDER, copy).encode(), timeout=timeout)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-        finally:
-            # The app may leave helpers running, such as a document server: end its whole session.
-            try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except (ProcessLookupError, PermissionError):
-                pass
-            process.wait()
-    if timed_out:
-        return {"error": f"the reader ran past its {timeout} s{_tail(err)}"}
-    with open(out, "rb") as handle:
-        printed = handle.read(OUTPUT_BYTES + 1)
-    if len(printed) > OUTPUT_BYTES:
+            os.killpg(process.pid, signal.SIGKILL)
+        except (ProcessLookupError, PermissionError):
+            pass
+        process.wait()
+        for thread in threads:
+            thread.join(DRAIN_S)
+    if full.is_set():
         return {"error": "the reader printed more than 1 MiB"}
+    if timed_out:
+        return {"error": f"the reader ran past its {timeout} s{_tail(stderr)}"}
     if process.returncode != 0:
-        return {"error": f"the reader exited {process.returncode}{_tail(err)}"}
+        return {"error": f"the reader exited {process.returncode}{_tail(stderr)}"}
     lines = [line[len(MARKER):] for line in LINE_BREAK.split(printed.decode("utf-8", "replace")) if line.startswith(MARKER)]
     if not lines:
-        return {"error": f"the reader printed no line starting with {json.dumps(MARKER)}{_tail(err)}"}
+        return {"error": f"the reader printed no line starting with {json.dumps(MARKER)}{_tail(stderr)}"}
     return _view(arguments["output"], lines)
 
 
@@ -161,7 +191,8 @@ def main(arguments: dict) -> int:
     source = arguments["path"] if os.path.isabs(arguments["path"]) else os.path.join(home, arguments["path"])
     if not os.path.isfile(source):
         return _say({"absent": True})
-    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-"))
+    # A caller that names a work folder removes it itself, even when this runner is killed.
+    work = os.path.realpath(tempfile.mkdtemp(prefix="rea-reader-", dir=arguments.get("work")))
     try:
         return _say(_run(arguments, source, work))
     finally:
@@ -172,22 +203,28 @@ if __name__ == "__main__":
     sys.exit(main(json.loads(sys.argv[1])))
 `;
 
-/** The command that runs a reader through the runner: on `path`, or on its file in the home when none is given. */
+/**
+ * The command that runs a reader through the runner: on `path`, or on its
+ * file in the home when none is given, in a folder under `work` when given,
+ * which the caller then removes.
+ */
 export const readerCommand = (
   reader: DesktopTaskReader,
   path: string | undefined,
+  work?: string,
 ): string[] => [
   "python3",
   "-I",
   "-c",
   PYTHON_READER_RUNNER,
-  readerArguments(reader, path),
+  readerArguments(reader, path, work),
 ];
 
 /** The runner's one argument for a reader, as JSON. */
 export const readerArguments = (
   reader: DesktopTaskReader,
   path: string | undefined,
+  work?: string,
 ): string =>
   JSON.stringify({
     id: reader.id,
@@ -198,6 +235,7 @@ export const readerArguments = (
     output: reader.output,
     timeout_s: readerTimeout(reader),
     display: reader.display ?? false,
+    ...(work === undefined ? {} : { work }),
   });
 
 /** The seconds a reader may run. */

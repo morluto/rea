@@ -397,7 +397,8 @@ export class DesktopBuildComputers {
         id,
         liveComputer(computer, target.workspace, source, {
           settle: this.settle,
-          judge: screenJudgeProcess(this.environment),
+          // The resolved environment, which names a runner found on PATH.
+          judge: screenJudgeProcess(environment),
         }),
       );
       return ok({

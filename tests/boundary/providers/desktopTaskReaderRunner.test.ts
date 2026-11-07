@@ -5,11 +5,13 @@ import { promisify } from "node:util";
 
 import { expect, it } from "vitest";
 
+import { readerViewsOfBytes } from "../../../src/application/desktop/DesktopTaskReaders.js";
 import type { DesktopTaskReader } from "../../../src/domain/desktop/appTask.js";
 import {
   readerAnswerView,
   readerCommand,
 } from "../../../src/domain/desktop/appTaskReaders.js";
+import { runReaderHere } from "../../../src/desktop/TaskReaderProcess.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const execute = promisify(execFile);
@@ -85,12 +87,13 @@ it("runs the reader on a private copy of the file in a fresh home, without the d
   expect(copy.endsWith("/today.txt")).toBe(true);
   expect(copy.startsWith(home)).toBe(false);
   expect(report.stdin).toBe(`open ${copy}`);
-  expect(String(report.home).startsWith(dirname(copy))).toBe(true);
+  // The copy and the fresh home are siblings in the runner's own folder.
+  expect(String(report.home).startsWith(dirname(dirname(copy)))).toBe(true);
   expect(String(report.config).startsWith(String(report.home))).toBe(true);
   expect(report.cwd).toBe(dirname(copy));
   // The reader changed only its copy, which is gone with its folder.
   expect(await readFile(join(home, NOTE), "utf8")).toBe("milk\neggs\n");
-  await expect(access(dirname(copy))).rejects.toThrow();
+  await expect(access(dirname(dirname(copy)))).rejects.toThrow();
 });
 
 it("keeps the display for a reader that asks for it, still without the control token", async () => {
@@ -222,4 +225,79 @@ it("stops a reader past its timeout, with the processes it started", async () =>
   expect(Date.now() - started).toBeLessThan(10_000);
   await new Promise((resolve) => setTimeout(resolve, 3500));
   await expect(access(join(home, "late"))).rejects.toThrow();
+});
+
+it("runs a reader whose file shares a name with the runner's own folders and files", async () => {
+  const { home } = await computer();
+  for (const name of ["home", "stdout", "stderr"]) {
+    await writeFile(join(home, "Documents", name), `${name} bytes`);
+    const view = readerAnswerView(
+      await run(home, {
+        id: "named",
+        file: `Documents/${name}`,
+        argv: ["sh", "-c", 'echo REA $(cat "$1")', "sh", "{file}"],
+        output: "lines",
+      }),
+    );
+    expect(view?.view, name).toEqual({
+      lines: [`${name} bytes`],
+      line_count: 1,
+      truncated: false,
+    });
+  }
+});
+
+it("stops a reader once it has printed more than 1 MiB, rather than at its timeout", async () => {
+  const { home } = await computer();
+  const started = Date.now();
+  const view = readerAnswerView(
+    await run(home, {
+      id: "flood",
+      file: NOTE,
+      argv: ["sh", "-c", "yes 'REA x'; : {file}"],
+      output: "lines",
+      timeout_s: 30,
+    }),
+  );
+  expect(view?.error).toContain("printed more than 1 MiB");
+  expect(Date.now() - started).toBeLessThan(10_000);
+});
+
+it("stops the reader, the processes it started and its folder when the export is cancelled", async () => {
+  const { home } = await computer();
+  const out = join(home, "..", "out");
+  await mkdir(out);
+  const controller = new AbortController();
+  const read = readerViewsOfBytes(
+    [
+      {
+        id: "stuck",
+        file: NOTE,
+        // Python, not the system's sleep, whose environment macOS withholds from the run token sweep.
+        argv: [
+          "python3",
+          "-c",
+          `import os, time; open("${out}/cwd", "w").write(os.getcwd()); open("${out}/pid", "w").write(str(os.getpid())); time.sleep(60)`,
+          "{file}",
+        ],
+        output: "lines",
+      },
+    ],
+    () => Promise.resolve({ kind: "bytes", bytes: Buffer.from("milk\n") }),
+    (argv, timeoutS) => runReaderHere(argv, timeoutS, controller.signal),
+  );
+  const pid = async (): Promise<number> => {
+    for (let tries = 0; tries < 200; tries += 1) {
+      const text = await readFile(join(out, "pid"), "utf8").catch(() => "");
+      if (text.trim() !== "") return Number(text.trim());
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    throw new Error("the reader never started");
+  };
+  const reader = await pid();
+  controller.abort(new Error("cancelled"));
+  await expect(read).rejects.toThrow();
+  expect(() => process.kill(reader, 0)).toThrow();
+  const folder = (await readFile(join(out, "cwd"), "utf8")).trim();
+  await expect(access(folder)).rejects.toThrow();
 });

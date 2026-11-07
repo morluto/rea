@@ -43,8 +43,11 @@ const TASK = {
   ],
 };
 const WITNESS_ORDER = ["seed", "after_edit", "near_miss", "after_reset"];
-/** The build's screenshots a screen-judged bundle ships as its judge's examples. */
-const JUDGE_EXAMPLES = { fail: "c2VlZA==", pass: "ZW5k" };
+/** The build's screenshots a screen-judged bundle ships as its judge's examples, large enough that its verifier passes 1 MiB. */
+const JUDGE_EXAMPLES = {
+  fail: Buffer.alloc(600 * 1024, 1).toString("base64"),
+  pass: Buffer.alloc(600 * 1024, 2).toString("base64"),
+};
 const lines = (...text: string[]) => ({
   "Documents/today.txt": {
     format: "text",
@@ -80,8 +83,13 @@ const witnessed = async (
   slowReset = 0,
   options: FakeComputerOptions = {},
   task: unknown = TASK,
-  settle?: BuildSettle,
+  server: {
+    readonly settle?: BuildSettle;
+    /** Find agent-env on PATH instead of REA_AGENT_ENV_COMMAND naming it. */
+    readonly onPath?: boolean;
+  } = {},
 ) => {
+  const { settle, onPath = false } = server;
   const app: FakeApp = {
     name: "notes",
     state: lines("milk"),
@@ -90,7 +98,13 @@ const witnessed = async (
     unreadyAfterReset: slowReset,
   };
   const { computer, runner } = await buildComputerFakes({ ...options, app });
-  const client = await connectBuildServer(runner.environment, settle);
+  const { REA_AGENT_ENV_COMMAND: _named, ...unnamed } = runner.environment;
+  const client = onPath
+    ? await connectBuildServer(unnamed, settle, {
+        searchPath: runner.state,
+        archiveDirectory: runner.state,
+      })
+    : await connectBuildServer(runner.environment, settle);
   const bundle = await taskBundle(task, app.name);
   const id = await startBuildComputer(client, { kind: "bundle", path: bundle });
   const directory = join(await createTestTempDirectory("witness-"), "add-eggs");
@@ -331,6 +345,10 @@ it("witnesses a task whose check reads a binary file through a reader run in the
     false,
   ]);
   expect(await readFile(join(home, poster), "utf8")).toBe("gimp xcf\0Headline");
+  const evidence = parseEvidence(
+    JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+  );
+  expect(evidence.limitations.join(" ")).toContain("computer-exec/v1");
 });
 
 /** Stand-ins for the runner's model client, agentenv config and MCP client, whose judge answers what `judge-verdict` holds. */
@@ -356,59 +374,72 @@ def get_config():
   "agentenv_protocol/tool_client.py": "class ToolSession:\n    pass\n",
 };
 
-it("witnesses a screen-judged task with the bundle's own judge on a fresh screenshot at each stage", async () => {
-  const task = {
-    name: "result-shown",
-    prompt: "In Notes, show the total and leave it showing.",
-    checks: [
-      {
-        id: "shown",
-        kind: "screen_judge",
-        question: "Does the window show the total?",
-      },
-    ],
-  };
-  const { act, check, computer, directory, runner } = await witnessed(
-    0,
-    {},
-    task,
-  );
-  for (const [path, source] of Object.entries(JUDGE_STUBS)) {
-    await mkdir(join(runner.state, "site", path, ".."), { recursive: true });
-    await writeFile(join(runner.state, "site", path), source);
-  }
-  const shows = (verdict: boolean) =>
-    writeFile(join(runner.state, "judge-verdict"), verdict ? "yes" : "no");
+it.each([
+  ["REA_AGENT_ENV_COMMAND names the runner", false],
+  ["the runner is found on PATH", true],
+])(
+  "witnesses a screen-judged task with the bundle's own judge on a fresh screenshot at each stage when %s",
+  async (_, onPath) => {
+    const task = {
+      name: "result-shown",
+      prompt: "In Notes, show the total and leave it showing.",
+      checks: [
+        {
+          id: "shown",
+          kind: "screen_judge",
+          question: "Does the window show the total?",
+        },
+      ],
+    };
+    const { act, check, computer, directory, runner } = await witnessed(
+      0,
+      {},
+      task,
+      { onPath },
+    );
+    for (const [path, source] of Object.entries(JUDGE_STUBS)) {
+      await mkdir(join(runner.state, "site", path, ".."), { recursive: true });
+      await writeFile(join(runner.state, "site", path), source);
+    }
+    const shows = (verdict: boolean) =>
+      writeFile(join(runner.state, "judge-verdict"), verdict ? "yes" : "no");
 
-  await shows(false);
-  const seed = parsed(await check({ task, stage: "seed", directory }));
-  expect(seed.results[0]).toMatchObject({ id: "shown", passed: false });
-  expect(seed.results[0]?.description).toContain("3 of 3 votes");
-  await act("type", { text: "=" });
-  await shows(true);
-  await check({ task, stage: "after_edit" });
-  await act("type", { text: "x" });
-  await shows(false);
-  await check({ task, stage: "near_miss" });
-  await act("reset");
-  const last = await check({ task, stage: "after_reset" });
-  expectNoToken(computer, last);
-  const record = parsed(last).witness?.record;
-  expect(record?.verdict).toBe("held");
-  expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
-    false,
-    true,
-    false,
-    false,
-  ]);
-  // Three votes a stage, each shown the two examples and the stage's own screenshot.
-  const calls = (await readFile(join(runner.state, "judge-calls"), "utf8"))
-    .trim()
-    .split("\n")
-    .map((line) => JSON.parse(line) as { images: number });
-  expect(calls).toHaveLength(12);
-  expect(calls.every(({ images }) => images === 3)).toBe(true);
-});
+    await shows(false);
+    const seed = parsed(await check({ task, stage: "seed", directory }));
+    expect(seed.results[0]).toMatchObject({ id: "shown", passed: false });
+    expect(seed.results[0]?.description).toContain("3 of 3 votes");
+    await act("type", { text: "=" });
+    await shows(true);
+    await check({ task, stage: "after_edit" });
+    await act("type", { text: "x" });
+    await shows(false);
+    await check({ task, stage: "near_miss" });
+    await act("reset");
+    const last = await check({ task, stage: "after_reset" });
+    expectNoToken(computer, last);
+    const record = parsed(last).witness?.record;
+    expect(record?.verdict).toBe("held");
+    expect(record?.stages.map((stage) => stage.results[0]?.passed)).toEqual([
+      false,
+      true,
+      false,
+      false,
+    ]);
+    // Three votes a stage, each shown the two examples and the stage's own screenshot.
+    const calls = (await readFile(join(runner.state, "judge-calls"), "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line) as { images: number });
+    expect(calls).toHaveLength(12);
+    expect(calls.every(({ images }) => images === 3)).toBe(true);
+    // The record says how its results were reached: the bundle's judge, not data/get.
+    const evidence = parseEvidence(
+      JSON.parse(await readFile(join(directory, "witness.json"), "utf8")),
+    );
+    expect(evidence.limitations.join(" ")).toContain("judge");
+    expect(evidence.limitations.join(" ")).not.toContain("data/get");
+  },
+);
 
 it("fails the witness at after_reset when the reset leaves the near miss instead of the seed", async () => {
   const task = {
@@ -845,7 +876,7 @@ const clocked = () => {
 };
 
 it("grades a stage on what the app saves after the check starts, with progress while it waits", async () => {
-  const witness = await witnessed(0, {}, TASK, clocked().settle);
+  const witness = await witnessed(0, {}, TASK, { settle: clocked().settle });
   const { app, check, directory } = witness;
   expect(
     parsed(await check({ stage: "seed", directory })).witness,
@@ -885,7 +916,9 @@ it("grades files still changing at the bound on the last read, and records that 
     ],
   };
   const { settle, now } = clocked();
-  const { app, check, directory } = await witnessed(0, {}, passing, settle);
+  const { app, check, directory } = await witnessed(0, {}, passing, {
+    settle: settle,
+  });
   const reads: number[] = [];
   // Every read finds the file changed, with eggs on even reads only.
   app.onGet = () => {
@@ -919,7 +952,9 @@ it("grades files still changing at the bound on the last read, and records that 
 });
 
 it("grades an app that saved before the check within the window plus one interval", async () => {
-  const { app, check } = await witnessed(0, {}, TASK, clocked().settle);
+  const { app, check } = await witnessed(0, {}, TASK, {
+    settle: clocked().settle,
+  });
   app.state = lines("milk", "eggs");
   const plain = parsed(await check({}));
   expect(plain).toMatchObject({ passed: 1, settled: true });
@@ -929,7 +964,7 @@ it("grades an app that saved before the check within the window plus one interva
 
 it("counts a slow read's changed files as quiet only from when it returned them", async () => {
   const { settle, pass } = clocked();
-  const { app, check } = await witnessed(0, {}, TASK, settle);
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
   let gets = 0;
   app.onGet = () => {
     gets += 1;
@@ -959,7 +994,7 @@ it("counts a slow read's changed files as quiet only from when it returned them"
 
 it("ends reads slower than the bound at the bound, grading the last completed read", async () => {
   const { settle, now, pass, fired } = clocked();
-  const { app, check } = await witnessed(0, {}, TASK, settle);
+  const { app, check } = await witnessed(0, {}, TASK, { settle: settle });
   const slow = (SETTLE.boundMs * 2) / 3;
   const reads: number[] = [];
   // Each read takes two thirds of the bound; only the first returns eggs.

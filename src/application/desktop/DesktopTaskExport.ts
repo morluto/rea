@@ -21,6 +21,7 @@ import {
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
 import {
   DEFAULT_JUDGE_MODEL,
+  SCREEN_EXAMPLE_MAX_BYTES,
   SCREEN_JUDGE_VOTES,
   isScreenTask,
   readableChanges,
@@ -69,8 +70,10 @@ type TaskTarget = Pick<
     readers: readonly DesktopTaskReader[],
     end: keyof StateEnds,
   ) => Promise<ReadonlyMap<string, TaskFileView>>;
-  /** The screenshot a build computer took at the seed or the end, if any. */
-  readonly screens: (end: keyof StateEnds) => Promise<Buffer | undefined>;
+  /** The screenshot a build computer took at the seed or the end, too large to ship, or undefined when there is none. */
+  readonly screens: (
+    end: keyof StateEnds,
+  ) => Promise<Buffer | "too-large" | undefined>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -361,7 +364,10 @@ const admitScreenTask = async (
   target: TaskTarget,
   views: TaskViews,
 ): Promise<AdmittedTask> => {
-  const changed = readableChanges(views.seed, views.end);
+  // Only a file the app owns could take a check instead; the export refuses the rest.
+  const owned = (all: ReadonlyMap<string, TaskFileView>) =>
+    new Map([...all].filter(([file]) => isWithinAny(file, target.paths)));
+  const changed = readableChanges(owned(views.seed), owned(views.end));
   if (changed.length > 0)
     throw refuse(
       `A screen_judge judges state no file shows, but ${changed.join(", ")} changed between the seed and the end in a way a check can read.`,
@@ -377,6 +383,12 @@ const admitScreenTask = async (
       `A screen_judge needs the screenshots a build computer takes at the seed and end checkpoints, its judge's examples, and the capture has no ${seed === undefined ? "seed" : "end"} screenshot.`,
       "task",
       "Capture the app in a build computer, marking seed and end there, and export from it.",
+    );
+  if (seed === "too-large" || end === "too-large")
+    throw refuse(
+      `The ${seed === "too-large" ? "seed" : "end"} screenshot is larger than the ${String(SCREEN_EXAMPLE_MAX_BYTES / 1024 / 1024)} MiB a judge's example may take.`,
+      "task",
+      "Capture again with a simpler screen at that checkpoint.",
     );
   const examples = {
     fail: seed.toString("base64"),

@@ -4,6 +4,7 @@ import { Readable } from "node:stream";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { DesktopTask } from "../../domain/desktop/appTask.js";
+import { isScreenTask } from "../../domain/desktop/appTaskScreen.js";
 import type {
   WitnessStage,
   WitnessStageRecord,
@@ -197,6 +198,15 @@ const unsettledLimitation = (
   ];
 };
 
+/** How the witness reached its check results, by the kind of task. */
+const howChecked = (task: DesktopTask): string => {
+  if (isScreenTask(task))
+    return "Checks took a screenshot of the computer and ran the bundle's own verifier as its judge, with the agentenv runner's Python and model endpoint, three votes a question; the judge sent each screenshot and the build's two examples to that model.";
+  return task.readers === undefined
+    ? "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run."
+    : "Checks read the app's data/get views and the task's readers' views, the readers run in the computer through computer-exec/v1, with REA's evaluator, as the exported verifier does; the verifier itself did not run.";
+};
+
 /**
  * End the witness's recording, fetch it, and write the segments and
  * `witness.json`, the record as Evidence, into the witness folder.
@@ -235,7 +245,7 @@ export const writeWitnessRecord = async (
     confidence: "observed",
     authority: "controlled-replay",
     limitations: [
-      "Checks read the app's data/get views with REA's evaluator, as the exported verifier does; the verifier itself did not run.",
+      howChecked(witness.task),
       ...("error" in recording
         ? [`The recording is missing: ${recording.error}`]
         : []),

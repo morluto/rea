@@ -17,6 +17,7 @@ import {
 } from "../../domain/desktop/appTaskPython.js";
 import {
   SCREEN_SETTLE_MS,
+  VERIFIER_MAX_BYTES,
   isScreenTask,
   screenExamplesOf,
   type ScreenJudge,
@@ -44,7 +45,7 @@ export type Graded = {
   readonly read_cut: boolean;
 };
 
-/** The most bytes REA reads of each of the bundle's files for the task. */
+/** The most bytes REA reads of the bundle's steps for the task; its verifier may also hold a judge's two examples. */
 const BUNDLE_FILE_BYTES = 1024 * 1024;
 const stepsSchema = z.array(
   z.looseObject({ type: z.string(), env_id: z.string().optional() }),
@@ -58,11 +59,10 @@ export const bundleTaskDifference = async (
 ): Promise<string | undefined> => {
   const stepsPath = `tasks/${task.name}.json`;
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
-  const [steps, verifier] = await Promise.all(
-    [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
-    ),
-  );
+  const [steps, verifier] = await Promise.all([
+    readHostFile(join(bundle, stepsPath), BUNDLE_FILE_BYTES, signal),
+    readHostFile(join(bundle, verifierPath), VERIFIER_MAX_BYTES, signal),
+  ]);
   if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
     return `the bundle at ${bundle} has no readable ${Buffer.isBuffer(steps) ? verifierPath : stepsPath}.`;
   const parsed = safeParseUtf8Json(steps);

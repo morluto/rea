@@ -2,6 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { DesktopTaskReader } from "../../domain/desktop/appTask.js";
+import { SCREEN_EXAMPLE_MAX_BYTES } from "../../domain/desktop/appTaskScreen.js";
 import type { TaskFileView } from "../../domain/desktop/appTaskChecks.js";
 import {
   versionAt,
@@ -39,21 +40,17 @@ export interface ReaderSources {
   readonly screens: string | undefined;
 }
 
-/** The most bytes of a checkpoint's screenshot the export reads. */
-const SCREEN_MAX_BYTES = 8 * 1024 * 1024;
-
-/** The screenshot a build computer took at the seed or the end checkpoint, or undefined when there is none to read. */
+/** The screenshot a build computer took at the seed or the end checkpoint, too large to ship, or undefined when there is none. */
 const screenAt = async (
   sources: ReaderSources,
   end: keyof StateEnds,
-): Promise<Buffer | undefined> => {
+): Promise<Buffer | "too-large" | undefined> => {
   const name = sources.checkpoints[sources.ends[end]];
   if (sources.screens === undefined || name === undefined) return undefined;
   const path = join(sources.screens, `${name}.jpg`);
   const found = await stat(path).catch(() => undefined);
-  return found?.isFile() === true && found.size <= SCREEN_MAX_BYTES
-    ? readFile(path)
-    : undefined;
+  if (found?.isFile() !== true) return undefined;
+  return found.size > SCREEN_EXAMPLE_MAX_BYTES ? "too-large" : readFile(path);
 };
 
 /** A reader's file at the seed, as the bundle ships it, or at the end, as retained. */
