@@ -310,8 +310,8 @@ entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
 bounded chunks no further than a byte past its declared size. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-or nested more than 500 levels deep, gets an `error` instead of a view, as in
-REA, while text that is not one JSON
+or whose retained value nests more than 500 levels deep, gets an `error` instead of a view, as in
+REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. XML is read with Python's `expat` twice: with namespace
