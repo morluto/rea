@@ -3,10 +3,15 @@ import { inspectDevicetreeInputSchema } from "../domain/firmware/devicetree.js";
 import { inspectPeLoadConfigInputSchema } from "../domain/native/peLoadConfig.js";
 import { inspectBinaryHardeningInputSchema } from "../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../domain/native/byteEntropy.js";
+import {
+  inspectRawBytesInputSchema,
+  searchRawBytesInputSchema,
+} from "../domain/native/rawBytes.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
 import {
   createByteEntropyService,
+  createRawBytesService,
   createRecordedCrashService,
   createBinaryLayoutService,
   createElfNotesService,
@@ -294,6 +299,75 @@ export const registerBinaryDiagnosticsCommands = (
             entropy,
             "rea-byte-entropy",
             "inspect_byte_entropy",
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
+  });
+  const rawBytes = createRawBytesService();
+  cli.command(CLI_COMMANDS.inspectRawBytes, {
+    description:
+      "Read a bounded slice of a file at a raw file offset (not a memory address) as hex and an xxd-style dump",
+    args: z.object({ path: localPathStringSchema.describe("Local file") }),
+    options: z.object({
+      offset: inspectRawBytesInputSchema.shape.offset,
+      length: inspectRawBytesInputSchema.shape.length,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.inspectRawBytes, async () => {
+          return await finishCliEvidenceCommand(
+            args.path,
+            () =>
+              rawBytes.inspect(
+                {
+                  path: absoluteCallerPath(args.path),
+                  offset: options.offset,
+                  length: options.length,
+                },
+                { signal },
+              ),
+            rawBytes,
+            "rea-raw-bytes",
+            "inspect_raw_bytes",
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
+  });
+  cli.command(CLI_COMMANDS.searchRawBytes, {
+    description:
+      "Search a file for a masked byte pattern and report raw file offsets (not memory addresses)",
+    args: z.object({
+      path: localPathStringSchema.describe("Local file"),
+      pattern: searchRawBytesInputSchema.shape.pattern,
+    }),
+    options: z.object({
+      mask: searchRawBytesInputSchema.shape.mask,
+      startOffset: searchRawBytesInputSchema.shape.start_offset,
+      maxMatches: searchRawBytesInputSchema.shape.max_matches,
+      contextLines: searchRawBytesInputSchema.shape.context_lines,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, CLI_COMMANDS.searchRawBytes, async () => {
+          return await finishCliEvidenceCommand(
+            args.path,
+            () =>
+              rawBytes.search(
+                {
+                  path: absoluteCallerPath(args.path),
+                  pattern: args.pattern,
+                  mask: options.mask,
+                  start_offset: options.startOffset,
+                  max_matches: options.maxMatches,
+                  context_lines: options.contextLines,
+                },
+                { signal },
+              ),
+            rawBytes,
+            "rea-raw-bytes",
+            "search_raw_bytes",
             signal,
           ).then(projectCliAnalysisResult);
         }),

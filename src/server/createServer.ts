@@ -17,7 +17,10 @@ import { registerApkSignatureTools } from "./registerApkSignatureTools.js";
 import { retainedDebuggerDiagnostics } from "../process/ownedDebuggerCleanupError.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import { captureProviderEnvironment } from "./providerEnvironment.js";
-import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
+import {
+  createByteEntropyService,
+  createRawBytesService,
+} from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
@@ -26,6 +29,7 @@ import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
+import { registerRawBytesTools } from "./registerRawBytesTools.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import { registerEvmTools } from "./registerEvmTools.js";
 import { registerSqliteTools } from "./registerSqliteTools.js";
@@ -438,6 +442,13 @@ export const createServer = (
         toolLogger,
         recordEvidence,
         evidenceById,
+        analysisAdmission,
+      );
+      registerRawBytesTools(
+        server,
+        createRawBytesService(artifactResources),
+        toolLogger,
+        recordEvidence,
         analysisAdmission,
       );
       registerPeResourcesTool(

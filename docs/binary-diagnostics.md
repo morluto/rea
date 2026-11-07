@@ -354,6 +354,51 @@ investigation were not measured; there was no previous equivalent tool to
 benchmark. These figures do not establish a portable peak-memory bound,
 constant memory for retained Evidence or faster agent task completion.
 
+## Raw file bytes
+
+`inspect_raw_bytes` / `inspect-raw-bytes` and `search_raw_bytes` /
+`search-raw-bytes` read a local file as stored on disk, without an analysis
+engine, a loader, extraction or network access. They suit files that are not
+loaded as an analyzed program, such as game data archives and containers. The
+[MCP contracts](mcp-contracts.md#raw-file-offsets-versus-program-memory-addresses)
+explain when to use them instead of `read_bytes` and `search_bytes`.
+
+```sh
+rea inspect-raw-bytes ./data.xcr --offset 120 --length 16 --json
+rea search-raw-bytes ./data.xcr "52 49 46 46 ?? ?? ?? ?? 57 41 56 45" --context-lines 1 --json
+```
+
+`inspect_raw_bytes` takes `path`, `offset` (default 0) and `length`, and returns
+`artifact` (path and byte size), `window`, `data_hex` and `hex_dump`. `length` is
+1 to 4096. A larger request is rejected before the file is opened. A window that
+extends beyond the end of the file is an `invalid_request` error, not a short
+result, and the whole file is never returned. The dump is plain xxd-style text,
+sixteen bytes per line with an absolute file offset, hex in four-digit groups and
+`.` for non-printable bytes:
+
+```text
+00000078: 5045 0000 6486 0600 6c7d e96a 0000 0000  PE..d...l}.j....
+```
+
+`search_raw_bytes` takes `path`, `pattern`, an optional `mask`, `start_offset`
+(default 0), `max_matches` (default 100, at most 1000) and `context_lines`
+(default 0, at most 8). The pattern and mask use the same grammar and validation
+as `search_bytes`: hexadecimal byte pairs or `??` whole-byte wildcards, with a
+same-length hexadecimal mask, and a pattern that constrains no bit is rejected.
+A pattern is at most 256 bytes. The file is scanned as a stream in 64 KiB steps,
+so a large file is never held in memory, and a match that straddles two steps is
+still found. Each match is reported by the file offset of its first byte with a
+hex dump of the lines that cover it plus `context_lines` lines on each side.
+Overlapping matches are all reported. When `max_matches` stops the scan,
+`complete` is `false` and `next_offset` is the `start_offset` for the next page.
+There is no total output budget: 1000 matches with `context_lines` 8 can return
+about 1 MB, so lower `max_matches` or `context_lines` to keep replies small.
+
+Both operations check that the file identity, size and timestamps do not change
+during the read and honor cancellation. Their Evidence carries no whole-file
+SHA-256, because only the selected bytes are read; it records the file size at
+read time.
+
 ## Portable native exports
 
 `inspect_native_exports` / `inspect-native-exports` reads the export table of an

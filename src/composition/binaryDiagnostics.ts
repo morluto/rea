@@ -3,6 +3,7 @@ import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
 import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
 import { BinaryHardeningProvider } from "../native/hardening/BinaryHardeningProvider.js";
 import { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
+import { RawBytesService } from "../application/binaryDiagnostics/RawBytesService.js";
 import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
 import { BinaryLayoutService } from "../application/binaryDiagnostics/BinaryLayoutService.js";
@@ -73,6 +74,11 @@ export const createRecordedCrashService = (
 export const createByteEntropyService = (
   resources?: ArtifactResourceScope,
 ): ByteEntropyService => new ByteEntropyService(undefined, resources);
+
+/** Provider-free raw file offset reads and searches. */
+export const createRawBytesService = (
+  resources?: ArtifactResourceScope,
+): RawBytesService => new RawBytesService(undefined, resources);
 
 export const createPeLoadConfigService = (): PeLoadConfigService =>
   new PeLoadConfigService(new PeLoadConfigProvider());

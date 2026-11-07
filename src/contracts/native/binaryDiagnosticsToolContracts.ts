@@ -16,6 +16,12 @@ import {
   inspectBinaryHardeningInputSchema,
 } from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
+import {
+  inspectRawBytesInputSchema,
+  inspectRawBytesSchema,
+  searchRawBytesInputSchema,
+  searchRawBytesSchema,
+} from "../../domain/native/rawBytes.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
   inspectRecordedCrashInputSchema,
@@ -192,6 +198,44 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
           length: 65536,
           block_size: 4096,
           detail: "summary",
+        },
+      },
+    ],
+  },
+  {
+    name: "inspect_raw_bytes",
+    ...toolContractMetadata("inspect_raw_bytes"),
+    kind: "native-provider",
+    description:
+      "Read one bounded slice of a local file at an absolute RAW FILE OFFSET, offline and read-only, and return the bytes as hex plus an xxd-style hex dump with absolute offsets. Use it for files that are not loaded as an analyzed program, such as game data archives, containers and firmware blobs. A raw file offset is a position in the file on disk; it is not a program memory address, and a loader-adjusted address from read_bytes or search_bytes generally differs. For bytes inside an analyzed program use read_bytes instead. length is 1 to 4096 bytes; a larger request is rejected, and a window that extends beyond the end of the file is an explicit error rather than a short result. The whole file is never returned and is not hashed.",
+    inputSchema: inspectRawBytesInputSchema,
+    outputSchema: evidenceResultOf(inspectRawBytesSchema),
+    examples: [
+      {
+        title: "Read a PE header from a raw file offset",
+        input: { path: "/artifacts/data.bin", offset: 120, length: 16 },
+      },
+    ],
+  },
+  {
+    name: "search_raw_bytes",
+    ...toolContractMetadata("search_raw_bytes"),
+    kind: "native-provider",
+    description:
+      "Search a local file for a masked byte pattern, offline and read-only, and report each match by absolute RAW FILE OFFSET with a hex dump of the surrounding bytes. Use it for files that are not loaded as an analyzed program, such as game data archives. A raw file offset is a position in the file on disk; it is not a program memory address. For an analyzed program use search_bytes instead. pattern uses hexadecimal byte pairs or ?? whole-byte wildcards and an optional mask of the same length; a pattern that constrains no bits is rejected. The file is scanned as a stream, so large files are not loaded into memory. At most max_matches (default 100, limit 1000) matches are returned; when more exist, complete is false and next_offset is the start_offset for the next page. context_lines (0 to 8) adds hex-dump lines before and after each match. There is no total output budget: a page of 1000 matches with context_lines 8 can return about 1 MB; lower max_matches or context_lines to keep replies small.",
+    inputSchema: searchRawBytesInputSchema,
+    outputSchema: evidenceResultOf(searchRawBytesSchema),
+    examples: [
+      {
+        title: "Find a PE signature by raw file offset",
+        input: { path: "/artifacts/data.bin", pattern: "50 45 00 00" },
+      },
+      {
+        title: "Find a RIFF/WAVE header with a wildcarded size",
+        input: {
+          path: "/artifacts/data.bin",
+          pattern: "52 49 46 46 ?? ?? ?? ?? 57 41 56 45",
+          context_lines: 1,
         },
       },
     ],

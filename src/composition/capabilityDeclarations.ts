@@ -28,6 +28,7 @@ import {
   ARTIFACT_GRAPH_PROVIDER,
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
+  RAW_BYTES_PROVIDER,
   DEVICETREE_PROVIDER,
   ELF_NOTES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
@@ -211,6 +212,14 @@ export const CAPABILITY_DECLARATIONS = {
   byteEntropy: {
     providers: [
       providerBinding(BYTE_ENTROPY_PROVIDER, ["inspect_byte_entropy"]),
+    ],
+  },
+  rawBytes: {
+    providers: [
+      providerBinding(RAW_BYTES_PROVIDER, [
+        "inspect_raw_bytes",
+        "search_raw_bytes",
+      ]),
     ],
   },
   cutter: {
