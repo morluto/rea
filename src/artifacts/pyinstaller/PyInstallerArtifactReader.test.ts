@@ -15,7 +15,7 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PyInstallerArtifactReader } from "../PyInstallerArtifactReader.js";
 import { reconstructedPycHeader } from "./PythonBytecode.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import {
   PYTHON_39_MAGIC,
   cArchiveExecutable,
@@ -117,7 +117,7 @@ it("preserves legacy pyc bytes and derives only modern headerless CArchive bytec
         parsePythonPyc(
           bytes,
           { path: module.name, bytes: bytes.length, sha256: sha256(bytes) },
-          inspectPythonPycInputSchema.parse({ path: module.name }),
+          pythonPycLimitsSchema.parse({}),
         ).coverage.status,
       ).toBe("complete");
       expect(await buffer(await reader.open(entry))).toEqual(module.bytes);

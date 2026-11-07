@@ -73,10 +73,8 @@ export const PYTHON_PYC_LIMIT_MAXIMA = {
   max_string_bytes: 8 * 1024 * 1024,
 } as const;
 
-export const inspectPythonPycInputSchema = z.strictObject({
-  path: absoluteLocalPathStringSchema.describe(
-    "Absolute filesystem path to the selected CPython .pyc file",
-  ),
+/** Resource limits shared by the standalone inspector and byte parser. */
+export const pythonPycLimitsSchema = z.strictObject({
   max_file_bytes: z
     .number()
     .int()
@@ -113,6 +111,14 @@ export const inspectPythonPycInputSchema = z.strictObject({
     .describe(
       "Maximum bytes retained for one marshal string or byte string; exceeding the budget fails without partial success",
     ),
+});
+
+export type PythonPycLimits = z.infer<typeof pythonPycLimitsSchema>;
+
+export const inspectPythonPycInputSchema = pythonPycLimitsSchema.extend({
+  path: absoluteLocalPathStringSchema.describe(
+    "Absolute filesystem path to the selected CPython .pyc file",
+  ),
 });
 
 export const PYTHON_PYC_CONST_PREVIEW_LIMIT = 80;
