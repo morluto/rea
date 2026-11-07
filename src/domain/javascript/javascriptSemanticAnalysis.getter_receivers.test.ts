@@ -238,6 +238,42 @@ describe("getters reached through unknown receiver keys", () => {
     expect(value?.status).toBe("unknown");
   });
 
+  it.each(["new Child()", "child"])(
+    "retains aliases reached through %s during widening",
+    (initializer) => {
+      expect(
+        resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const child = new Child();
+      class R {
+        child = ${initializer};
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it("bounds cyclic nested instances without escaping unrelated objects", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { next = flag ? new Child() : null; get container() { return {}; } }
+      class R {
+        child = new Child();
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
   it("uses the overriding method for a widened this call", () => {
     expect(
       resultValue(`

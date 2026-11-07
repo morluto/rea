@@ -344,9 +344,11 @@ const escapedClassValues = (
   lookup: ClassPropertyLookup,
   state: JavaScriptSemanticAnalysisState,
   activeGetters: ReadonlyMap<t.Node, number>,
+  expandedClasses = new Set<t.Node>(),
 ): readonly JavaScriptSemanticObjectReference[] => {
   const values: JavaScriptSemanticObjectReference[] = [];
   const classes = [lookup.receiver ?? lookup.owner];
+  expandedClasses.add(lookup.receiver ?? lookup.owner);
   const seenClasses = new Set<t.Node>();
   const expressions: t.Node[] = [];
   if (lookup.kind === "instance")
@@ -388,6 +390,24 @@ const escapedClassValues = (
     if (seen.has(node)) continue;
     seen.add(node);
     if (t.isThisExpression(node) || t.isSuper(node)) continue;
+    if (t.isIdentifier(node)) {
+      const binding = resolveSemanticBindingState(state, node, node.name);
+      if (binding !== undefined)
+        for (const initializer of binding.initializers)
+          expressions.push(initializer.node);
+    }
+    if (t.isNewExpression(node)) {
+      for (const owner of semanticClassCandidates(node.callee, state))
+        if (!expandedClasses.has(owner))
+          values.push(
+            ...escapedClassValues(
+              { owner, kind: "instance" },
+              state,
+              activeGetters,
+              expandedClasses,
+            ),
+          );
+    }
     if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
       const callee = unwrapJavaScriptExpression(node.callee).node;
       if (
