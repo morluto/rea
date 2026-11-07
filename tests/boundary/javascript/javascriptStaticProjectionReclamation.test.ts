@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto";
 import { expect, it, vi } from "vitest";
+import { z } from "zod";
 
 const heap = vi.hoisted(() => ({
+  usedBytes: 1024 * 1024,
   remainingBytes: 200 * 1024 * 1024,
   readings: [] as number[],
 }));
@@ -13,9 +15,9 @@ vi.mock("node:v8", async (load) => {
       const current = actual.getHeapStatistics();
       return {
         ...current,
+        used_heap_size: heap.usedBytes,
         heap_size_limit:
-          current.used_heap_size +
-          (heap.readings.shift() ?? heap.remainingBytes),
+          heap.usedBytes + (heap.readings.shift() ?? heap.remainingBytes),
       };
     },
   };
@@ -37,32 +39,56 @@ vi.mock(
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import type { JavaScriptArtifactFile } from "../../../src/domain/javascript/javascriptArtifactFiles.js";
-const file = (path: string, count: number): JavaScriptArtifactFile => {
+const sourceText = (text: string) => ({
+  sha256: createHash("sha256").update(text).digest("hex"),
+  bytes: Buffer.byteLength(text),
+  text: { included: true as const, value: text },
+});
+const file = (path: string, count: number): JavaScriptArtifactFile => ({
+  path,
+  container_sha256: "a".repeat(64),
+  inventory_artifact_id: path,
+  kind: "javascript",
+  unpacked: false,
+  ...sourceText(
+    Array.from(
+      { length: count },
+      (_, i) => `localStorage.setItem('k${i}', 'v');`,
+    ).join("\n"),
+  ),
+});
+const expectCapacityRemains = (
+  result: Awaited<ReturnType<JavaScriptAnalysisWorker["analyze"]>>,
+): void => {
+  if (
+    !result.ok &&
+    result.error.error instanceof AnalysisResourceConstraintError
+  )
+    expect(
+      result.error.error.reportedLimits?.parent_result_budget_exhausted,
+    ).not.toBe(true);
+};
+const functions = (count: number): JavaScriptArtifactFile => {
   const text = Array.from(
     { length: count },
-    (_, i) => `localStorage.setItem('k${i}', 'v');`,
+    (_, i) => `export function f${i}(a) { const b = a + ${i}; return b; }`,
   ).join("\n");
-  return {
-    path,
-    container_sha256: "a".repeat(64),
-    sha256: createHash("sha256").update(text).digest("hex"),
-    bytes: Buffer.byteLength(text),
-    inventory_artifact_id: path,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value: text },
-  };
+  return { ...file("functions.js", 0), ...sourceText(text) };
 };
+// The mocked heap leaves a 4 MiB result budget and 6 MiB of static capacity.
+// A 50-line source reserves about 1.1 MiB of relationships; each later 500-line
+// source is charged about 0.5 MiB, so reclamation starts at the eleventh.
+const SOURCES_UNTIL_RECLAMATION = 12;
 it("uses one live heap observation for revocation and static admission", async () => {
   const run = async (changeHeapAt?: number) => {
     const worker = new JavaScriptAnalysisWorker(
       { heapMb: 512, timeoutMs: 30_000 },
       undefined,
-      8,
+      SOURCES_UNTIL_RECLAMATION,
     );
     const results = [];
     try {
-      for (let i = 0; i < 8; i++) {
+      for (let i = 0; i < SOURCES_UNTIL_RECLAMATION; i++) {
         const index = i;
         results.push(
           await worker.analyze(
@@ -108,15 +134,15 @@ it("uses one live heap observation for revocation and static admission", async (
     ).not.toBe(true);
 });
 
-it("reclaims prior unmaterialized projections only when a complete static checkpoint would otherwise exhaust the result budget", async () => {
+it("reclaims prior unmaterialized projections only when a complete static checkpoint would otherwise exhaust the static capacity", async () => {
   const worker = new JavaScriptAnalysisWorker(
     { heapMb: 512, timeoutMs: 30_000 },
     undefined,
-    8,
+    SOURCES_UNTIL_RECLAMATION,
   );
   const results = [];
   try {
-    for (let i = 0; i < 8; i++)
+    for (let i = 0; i < SOURCES_UNTIL_RECLAMATION; i++)
       results.push(
         await worker.analyze(file(`${i}.js`, i === 0 ? 50 : 500), {
           nodes: 1,
@@ -149,13 +175,13 @@ it("keeps earlier projections when reclaiming them cannot admit the checkpoint",
   const worker = new JavaScriptAnalysisWorker(
     { heapMb: 512, timeoutMs: 30_000 },
     undefined,
-    5,
+    6,
   );
   try {
     const results = [];
-    for (let i = 0; i < 5; i++)
+    for (let i = 0; i < 6; i++)
       results.push(
-        await worker.analyze(file(`${i}.js`, i === 0 ? 10 : 1000), {
+        await worker.analyze(file(`${i}.js`, i === 0 ? 10 : 1400), {
           nodes: 1,
           unknowns: 1,
         }),
@@ -173,9 +199,136 @@ it("keeps earlier projections when reclaiming them cannot admit the checkpoint",
     if (last === undefined || last.ok)
       throw new Error("Expected capacity refusal");
     expect(last.error.error).toMatchObject({
-      reportedLimits: { parent_result_budget_exhausted: true },
+      reportedLimits: {
+        parent_result_budget_bytes: 4 * 1024 * 1024,
+        parent_static_capacity_bytes: 6 * 1024 * 1024,
+        parent_result_budget_exhausted: true,
+      },
+    });
+    const {
+      static_retention_estimate_bytes: required,
+      parent_available_static_capacity_bytes: available,
+    } = z
+      .object({
+        static_retention_estimate_bytes: z.number(),
+        parent_available_static_capacity_bytes: z.number(),
+      })
+      .parse(
+        last.error.error instanceof AnalysisResourceConstraintError
+          ? last.error.error.reportedLimits
+          : null,
+      );
+    expect(required).toBeGreaterThan(available);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("retains static facts past the result budget, keeping earlier relationships while the static capacity lasts", async () => {
+  const sources = 9;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 512, timeoutMs: 30_000 },
+    undefined,
+    sources,
+  );
+  try {
+    const details = [];
+    for (let i = 0; i < sources; i++) {
+      const result = await worker.analyze(file(`${i}.js`, i === 0 ? 50 : 500), {
+        nodes: 1,
+        unknowns: 1,
+      });
+      expectCapacityRemains(result);
+      details.push(result.ok ? result.value : result.error);
+    }
+    expect(details.map((detail) => detail.javascript?.storage.length)).toEqual(
+      details.map((_, i) => (i === 0 ? 50 : 500)),
+    );
+    expect(
+      details.flatMap((detail) => detail.revokedStaticProjections ?? []),
+    ).toEqual([]);
+    // Relationships that do not fit the budget are refused, explicitly.
+    expect(details[0]?.applicationProjectionFailure).toBeUndefined();
+    for (const detail of details.slice(1))
+      expect(detail.applicationProjectionFailure).toMatchObject({
+        reason: expect.stringContaining("exceed the parent's result budget"),
+      });
+  } finally {
+    await worker.close();
+  }
+});
+
+it("retains static facts for later sources after semantic results use the result budget", async () => {
+  const sources = 4;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 512, timeoutMs: 30_000 },
+    undefined,
+    sources,
+  );
+  try {
+    // Semantic results are already adopted, so nothing can be reclaimed from them.
+    const first = await worker.analyze(functions(10), {
+      nodes: 20_000,
+      unknowns: 20_000,
+    });
+    if (!first.ok) throw first.error.error;
+    expect(first.value.module?.callables).toHaveLength(10);
+    expect(first.value.projection).not.toBeNull();
+    const later = [];
+    for (let i = 1; i < sources; i++) {
+      const result = await worker.analyze(file(`${i}.js`, 1000), {
+        nodes: 20_000,
+        unknowns: 20_000,
+      });
+      expectCapacityRemains(result);
+      later.push(result.ok ? result.value : result.error);
+    }
+    expect(later.map((detail) => detail.javascript?.storage.length)).toEqual(
+      later.map(() => 1000),
+    );
+    expect(
+      later.flatMap((detail) => detail.revokedStaticProjections ?? []),
+    ).toEqual([]);
+  } finally {
+    await worker.close();
+  }
+});
+
+it("stays within the result budget when the live heap has no room for another copy", async () => {
+  // Each later checkpoint is charged about 1 MiB, against 8 MiB of live room.
+  heap.usedBytes = 7.5 * 1024 * 1024;
+  const sources = 9;
+  const worker = new JavaScriptAnalysisWorker(
+    { heapMb: 512, timeoutMs: 30_000 },
+    undefined,
+    sources,
+  );
+  try {
+    const results = [];
+    for (let i = 0; i < sources; i++)
+      results.push(
+        await worker.analyze(file(`${i}.js`, i === 0 ? 10 : 1000), {
+          nodes: 1,
+          unknowns: 1,
+        }),
+      );
+    const stopped = results
+      .flatMap((result) => (result.ok ? [] : [result.error.error]))
+      .find(
+        (error) =>
+          error instanceof AnalysisResourceConstraintError &&
+          error.reportedLimits?.parent_result_budget_exhausted === true,
+      );
+    expect(stopped).toMatchObject({
+      reportedLimits: {
+        parent_result_budget_bytes: 4 * 1024 * 1024,
+        parent_static_capacity_bytes: 4 * 1024 * 1024,
+        parent_used_heap_bytes: 7.5 * 1024 * 1024,
+        parent_result_budget_exhausted: true,
+      },
     });
   } finally {
+    heap.usedBytes = 1024 * 1024;
     await worker.close();
   }
 });
@@ -192,9 +345,11 @@ it("resets projection reservations and source indices when an idle worker is reu
       unknowns: 1,
     });
     expect(first.ok).toBe(true);
-    expect(worker.prepareForAnotherAnalysis(8)).toBe(true);
+    expect(worker.prepareForAnotherAnalysis(SOURCES_UNTIL_RECLAMATION)).toBe(
+      true,
+    );
     const results = [];
-    for (let i = 0; i < 7; i++)
+    for (let i = 0; i < SOURCES_UNTIL_RECLAMATION; i++)
       results.push(
         await worker.analyze(file(`new-${i}.js`, i === 0 ? 50 : 500), {
           nodes: 1,
