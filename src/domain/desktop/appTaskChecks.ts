@@ -389,7 +389,13 @@ const textVerdict = (
   const truncated = zip
     ? zipLeavesOutAt(read.view, check.pointer)
     : read.truncated;
-  if (located.kind === "none") return noValue(at, located, truncated);
+  // A missing child of a cut view is the same undecided result in both evaluators.
+  if (located.kind === "none")
+    return truncated
+      ? unread(
+          `the view of ${check.file} is truncated, so what it leaves out is unknown (${check.pointer})`,
+        )
+      : noValue(at, located, false);
   const found = located.value;
   if (
     typeof found === "string"

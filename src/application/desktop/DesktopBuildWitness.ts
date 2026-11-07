@@ -160,14 +160,16 @@ interface OpenWitness extends EndedWitness {
   record?: WitnessRecord;
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
-  /** Close the published record's handles again, without rewriting it. */
-  release?: (() => Promise<void>) | undefined;
   /**
-   * The error from the publish whose handles are still open. A later cleanup
-   * failure returns this same error, so the record and the cleanup lease stay
-   * bound to it.
+   * A published record whose handles are still open. The error already carries
+   * the record and the cleanup lease; every later close failure returns it.
    */
-  publishedError?: AnalysisError | undefined;
+  published?:
+    | {
+        readonly error: AnalysisError;
+        readonly release: () => Promise<void>;
+      }
+    | undefined;
 }
 
 /** What the witness says of one filed stage. */
@@ -386,29 +388,14 @@ export class DesktopBuildWitness {
     filed: WitnessStageRecord,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
-    if (witness.record !== undefined && witness.release !== undefined) {
-      const published = witness.publishedError;
-      const released =
-        published === undefined
-          ? await witness
-              .release()
-              .then(() => ok(undefined))
-              .catch((cause: unknown) =>
-                err(
-                  new ProviderAdapterError(
-                    AGENTENV_PROVIDER,
-                    "check_build_task",
-                    {
-                      userMessage: `The witness record was written to ${witness.directory} and is complete, but its output handles could not be closed: ${errorText(cause)}.`,
-                      cause,
-                    },
-                  ),
-                ),
-              )
-          : await retryPublishedCleanup(published, witness.release);
+    const published = witness.published;
+    if (witness.record !== undefined && published !== undefined) {
+      const released = await retryPublishedCleanup(
+        published.error,
+        published.release,
+      );
       if (!released.ok) return released;
-      witness.release = undefined;
-      witness.publishedError = undefined;
+      witness.published = undefined;
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
@@ -427,8 +414,7 @@ export class DesktopBuildWitness {
     witness.pendingManifest = undefined;
     witness.record = written.record;
     if (written.kind === "published") {
-      witness.release = written.release;
-      witness.publishedError = written.error;
+      witness.published = { error: written.error, release: written.release };
       return err(written.error);
     }
     witness.state = "saved";
