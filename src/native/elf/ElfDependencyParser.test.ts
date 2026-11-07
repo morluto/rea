@@ -642,13 +642,33 @@ it.each([32, 64] as const)(
   },
 );
 
+/** The file offset of the little-endian fixture's SHT_GNU_VERSYM section. */
+const versymOffset = (bytes: Buffer, bits: 32 | 64): number => {
+  const wide = bits === 64;
+  const shoff = wide
+    ? Number(bytes.readBigUInt64LE(0x28))
+    : bytes.readUInt32LE(0x20);
+  const width = bytes.readUInt16LE(wide ? 0x3a : 0x2e);
+  const count = bytes.readUInt16LE(wide ? 0x3c : 0x30);
+  for (let index = 0; index < count; index += 1) {
+    const header = shoff + index * width;
+    if (bytes.readUInt32LE(header + 4) !== 0x6fffffff) continue;
+    return wide
+      ? Number(bytes.readBigUInt64LE(header + 24))
+      : bytes.readUInt32LE(header + 16);
+  }
+  throw new Error("fixture has no .gnu.version section");
+};
+
 it.each([32, 64] as const)(
   "keeps ELF%i versions for the whole slots of a short .gnu.version table",
   (bits) => {
     // Six bytes hold the null slot and the slots of the first two imports.
-    const report = parse(
-      elfDependencyFixture({ bits, sectionSizes: { ".gnu.version": 6 } }),
-    );
+    const bytes = elfDependencyFixture({
+      bits,
+      sectionSizes: { ".gnu.version": 6 },
+    });
+    const report = parse(bytes);
     const complete = parse(elfDependencyFixture({ bits })).imports;
     expect(report.coverage.status).toBe("partial");
     expect(report.imports.slice(0, 2)).toEqual(complete.slice(0, 2));
@@ -660,7 +680,7 @@ it.each([32, 64] as const)(
     expect(report.issues).toContainEqual(
       expect.objectContaining({
         code: "table_unavailable",
-        message: expect.stringContaining("GNU versym table holds 3 of"),
+        location: `0x${versymOffset(bytes, bits).toString(16)}`,
       }),
     );
   },
