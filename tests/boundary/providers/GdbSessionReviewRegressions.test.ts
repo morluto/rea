@@ -470,7 +470,6 @@ process.stdin.resume();
     }
     const started = await starting;
     await closing;
-    expect(started.ok).toBe(false);
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");

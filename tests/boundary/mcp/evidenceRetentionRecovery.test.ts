@@ -94,7 +94,6 @@ it.each(["compact", "full"] as const)(
         evidence: unknown;
       };
       const authenticated = safeParseEvidence(partial.evidence);
-      expect(authenticated.ok).toBe(true);
       if (!authenticated.ok) throw authenticated.error;
       expect(session.hasEvidence(authenticated.value.evidence_id)).toBe(false);
       expect(records.statistics().evidenceRecords).toBe(0);

@@ -868,7 +868,6 @@ describe("Ghidra existing project launcher", () => {
         join(parent, "absent-project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       // The launcher wraps the copy failure; the reason stays on the cause.
       expect(String(launched.error.cause)).toMatch(/does not exist/u);
@@ -895,7 +894,6 @@ describe("Ghidra existing project launcher", () => {
         sourceProject,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(/rea-project\.gpr/u);
       expect(spawned).toHaveLength(0);
@@ -922,7 +920,6 @@ describe("Ghidra existing project launcher", () => {
         runtime.path,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -947,7 +944,6 @@ describe("Ghidra existing project launcher", () => {
         join(runtime.path, "project"),
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -983,7 +979,6 @@ describe("Ghidra existing project symlink overlap", () => {
         alias,
         spawned,
       );
-      expect(launched.ok).toBe(false);
       if (launched.ok) throw new Error("launch unexpectedly succeeded");
       expect(String(launched.error.cause)).toMatch(
         /overlaps the REA runtime directory/u,
@@ -1016,7 +1011,6 @@ describe("Ghidra expanded project admission", () => {
       sourceProject,
       spawned,
     );
-    expect(launched.ok).toBe(false);
     if (launched.ok) throw new Error("launch unexpectedly succeeded");
     expect(String(launched.error.cause)).toMatch(
       /restore saved \.grez archives/u,

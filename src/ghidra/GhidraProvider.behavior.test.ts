@@ -2482,7 +2482,6 @@ it.each([
     const detail = await client.execute("inspect_native_data_type", {
       address,
     });
-    expect(detail.ok).toBe(true);
     if (!detail.ok) throw detail.error;
     expect(detail.value.result).toMatchObject({ address: resolvedAddress });
     if (expectedTable === null) {
