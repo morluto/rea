@@ -1,10 +1,8 @@
 import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
-import {
-  assertArtifactSelectedSource,
-  resolveArtifactSourcePath,
-} from "../ArtifactSelectedSource.js";
+import { assertArtifactSelectedSource } from "../ArtifactSelectedSource.js";
+import { resolveTraversablePath } from "../../filesystem/resolveTraversablePath.js";
 import { InesArtifactReader } from "../InesArtifactReader.js";
 import {
   openRootArtifact,
@@ -92,7 +90,7 @@ const extractArtifactInScope = async (
 ): Promise<ArtifactExtractionResult> => {
   // Cancellation wins over every later refusal, including unsupported formats.
   abortIfNeeded(signal);
-  const sourcePath = await resolveArtifactSourcePath(input.inputPath);
+  const sourcePath = await resolveTraversablePath(input.inputPath);
   if (input.expectedRootSha256 !== undefined)
     await assertArtifactSelectedSource(sourcePath, input.selectedPath);
   const probeFacts = await requireExtractableFormat(sourcePath, input, signal);

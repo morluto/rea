@@ -49,8 +49,10 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isSelectedRegularFileError,
+  RegularFileSymlinkRefusalError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { regularFileSymlinkRecovery } from "../artifacts/StableArtifactFailure.js";
 
 const OPERATION = "inspect_model_artifact";
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -177,6 +179,14 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           {},
           { cause: primary },
         );
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof RegularFileSymlinkRefusalError
+      )
+        error = new BinaryTargetError(input.path, primary.message, {
+          cause,
+          ...regularFileSymlinkRecovery(primary),
+        });
       else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else

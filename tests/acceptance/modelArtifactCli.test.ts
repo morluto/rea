@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { resolvedRegularFileRemediation } from "../../src/artifacts/StableArtifactFailure.js";
+import { readFile, symlink, writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { INSPECT_MODEL_ARTIFACT_CONTRACT } from "../../src/contracts/model/modelToolContracts.js";
@@ -1313,5 +1314,113 @@ cliTest(
       },
     });
     expect(JSON.stringify(result.json)).not.toContain("ENOENT");
+  },
+);
+
+cliTest(
+  "names the resolved target for a single symlink and keeps a loop distinct",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-model-symlink-");
+    const real = join(root, "real.gguf");
+    await writeFile(real, ggufFixture().bytes);
+    const single = join(root, "one-link.gguf");
+    await symlink(real, single);
+    const loopA = join(root, "loop-a.gguf");
+    const loopB = join(root, "loop-b.gguf");
+    await symlink("loop-b.gguf", loopA);
+    await symlink("loop-a.gguf", loopB);
+    const unresolved = join(root, "unresolved.gguf");
+    await symlink(join(real, "child"), unresolved);
+    const blocker = join(root, "blocker");
+    await writeFile(blocker, "not a directory");
+    const misleading = join(root, "misleading.gguf");
+    await symlink(`${blocker}/../real.gguf`, misleading);
+
+    const singleResult = await cli.run({
+      arguments: ["inspect-model-artifact", single, "--json"],
+    });
+    expect(singleResult.exitCode).toBe(1);
+    expect(singleResult.json).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      retryable: false,
+      remediation: {
+        action: resolvedRegularFileRemediation(real),
+      },
+      details: {
+        path: single,
+        reason: expect.stringContaining(real),
+      },
+    });
+
+    const loopResult = await cli.run({
+      arguments: ["inspect-model-artifact", loopA, "--json"],
+    });
+    expect(loopResult.exitCode).toBe(1);
+    expect(loopResult.json).toMatchObject({
+      code: "target_unavailable",
+      category: "unavailable",
+      details: {
+        path: loopA,
+        reason: expect.stringContaining(loopA),
+      },
+    });
+    expect(JSON.stringify(loopResult.json)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+
+    const unresolvedResult = await cli.run({
+      arguments: ["inspect-model-artifact", unresolved, "--json"],
+    });
+    expect(unresolvedResult.exitCode).toBe(1);
+    expect(unresolvedResult.json).toMatchObject({
+      code: "target_unavailable",
+      details: { path: unresolved, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(unresolvedResult.json)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+    const call = await modelMcp.session.call();
+    const unresolvedMcp = parseMcpToolError(
+      await call("inspect_model_artifact", { path: unresolved }),
+    );
+    expect(unresolvedMcp.error).toMatchObject({
+      code: "target_unavailable",
+      details: { path: unresolved, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(unresolvedMcp.error)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+    const misleadingResult = await cli.run({
+      arguments: ["inspect-model-artifact", misleading, "--json"],
+    });
+    expect(misleadingResult.exitCode).toBe(1);
+    expect(misleadingResult.json).toMatchObject({
+      code: "target_unavailable",
+      details: { path: misleading, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(misleadingResult.json)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+    const misleadingMcp = parseMcpToolError(
+      await call("inspect_model_artifact", { path: misleading }),
+    );
+    expect(misleadingMcp.error).toMatchObject({
+      code: "target_unavailable",
+      details: { path: misleading, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(misleadingMcp.error)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+
+    const resolved = await cli.run({
+      arguments: ["inspect-model-artifact", real, "--json"],
+    });
+    expect(resolved.exitCode, resolved.stderr).toBe(0);
+    const report = modelArtifactSchema.parse(
+      INSPECT_MODEL_ARTIFACT_CONTRACT.outputSchema.parse(resolved.json)
+        .normalized_result,
+    );
+    expect(report.format).toBe("gguf");
   },
 );

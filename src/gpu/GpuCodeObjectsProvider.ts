@@ -49,8 +49,10 @@ import { GpuInventory } from "./GpuInventory.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isSelectedRegularFileError,
+  RegularFileSymlinkRefusalError,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
+import { regularFileSymlinkRecovery } from "../artifacts/StableArtifactFailure.js";
 
 const OPERATION = "inspect_gpu_code_objects";
 
@@ -168,6 +170,14 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           primary.code,
           { cause: primary },
         );
+      else if (
+        origin === "owned-or-classified" &&
+        primary instanceof RegularFileSymlinkRefusalError
+      )
+        error = new BinaryTargetError(input.path, primary.message, {
+          cause,
+          ...regularFileSymlinkRecovery(primary),
+        });
       else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else if (
