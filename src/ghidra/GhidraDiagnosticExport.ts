@@ -175,7 +175,13 @@ export class GhidraDiagnosticExport {
           ? { status: "unavailable" }
           : { status: "error", reason: String(cause) };
       } finally {
-        await input?.close();
+        // ponytail: a failed close is reported, not retried; a read-only
+        // descriptor close failing is rare and a retry rarely recovers it.
+        try {
+          await input?.close();
+        } catch (cause) {
+          files[name] = { status: "error", reason: String(cause) };
+        }
       }
     }
     const manifest = {

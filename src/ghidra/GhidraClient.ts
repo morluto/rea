@@ -822,24 +822,32 @@ export class GhidraClient {
     primary = await this.#withMemoryCgroupEvidence(
       primary.withDiagnostics(refreshed.diagnostics, refreshed.message),
     );
+    // Cleanup must not rewrite the startup facts; it only adds the export's.
+    const withExport = (failure: GhidraSessionError): GhidraSessionError =>
+      failure.withDiagnostics({
+        ...failure.diagnostics,
+        ...this.#exportDiagnostics(),
+      });
     try {
       await this.#cleanup();
-      return err(
-        primary.withDiagnostics({
-          ...primary.diagnostics,
-          ...this.#diagnostics(),
-        }),
-      );
+      return err(withExport(primary));
     } catch (cause: unknown) {
       if (cause instanceof GhidraDiagnosticExportError)
-        return err(
-          primary.withDiagnostics({
-            ...primary.diagnostics,
-            ...this.#diagnostics(),
-          }),
-        );
-      return err(primary.withCleanupFailure(this.#cleanupError(cause)));
+        return err(withExport(primary));
+      return err(
+        withExport(primary).withCleanupFailure(this.#cleanupError(cause)),
+      );
     }
+  }
+
+  /** Export facts only: the retained outcome, else what the last close recorded. */
+  #exportDiagnostics(): Record<string, JsonValue> {
+    const { diagnostics_export_path: path, diagnostics_export_error: error } =
+      this.#diagnostics();
+    return {
+      ...(path === undefined ? {} : { diagnostics_export_path: path }),
+      ...(error === undefined ? {} : { diagnostics_export_error: error }),
+    };
   }
 
   #requestClose(forceStop: boolean): Promise<void> {
