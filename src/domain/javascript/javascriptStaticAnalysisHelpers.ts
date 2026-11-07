@@ -23,6 +23,7 @@ import {
   compositeKey,
 } from "../unicodeCodePointOrder.js";
 import { unexaminedJavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
+import { pathBelowSyntheticUrlRoot } from "./javascriptSyntheticUrlRoot.js";
 
 /** Explicit result for source text that Babel cannot parse. */
 export const failedJavaScriptStaticAnalysis = (): JavaScriptStaticAnalysis => ({
@@ -368,15 +369,22 @@ export const staticSourceRelativeUrlPath = (
     /%(?:2e|2f|5c)/iu.test(value.split(/[?#]/u, 1)[0] ?? "")
   )
     return undefined;
-  // A sufficiently deep inert anchor preserves any leading parent segments
+  // A sufficiently deep inert root preserves any leading parent segments
   // without using this host's cwd or inventing the application's directory.
-  const directory = `/${"source/".repeat(value.split("/").length + 1)}`;
+  const depth = value.split("/").length + 1;
+  const pathBelow = (root: string): string =>
+    fileURLToPath(new URL(value, `file://${root}entry.js`), { windows: false });
   try {
-    const resolved = new URL(value, `file://${directory}entry.js`);
-    const path = fileURLToPath(resolved, { windows: false });
+    const resolved = new URL(
+      value,
+      `file:///${"source/".repeat(depth)}entry.js`,
+    );
     if (value.startsWith("/"))
-      return { path, directory: resolved.pathname.endsWith("/") };
-    const relative = posix.relative(directory, path) || ".";
+      return {
+        path: fileURLToPath(resolved, { windows: false }),
+        directory: resolved.pathname.endsWith("/"),
+      };
+    const relative = pathBelowSyntheticUrlRoot(depth, pathBelow) || ".";
     // Keep the established explicit source-directory observation spelling.
     return {
       path:
