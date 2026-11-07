@@ -1,5 +1,6 @@
-import { copyFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { copyFile, symlink } from "node:fs/promises";
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, onTestFinished } from "vitest";
@@ -13,6 +14,40 @@ import {
 
 const scriptUrl = (path: string) =>
   JSON.stringify(pathToFileURL(resolve("scripts/lib", path)).href);
+
+processTest(
+  "uses the pinned TypeScript compiler when Node rejects transform mode",
+  async ({ processes }) => {
+    const source = `
+import assert from "node:assert/strict";
+import { createRequire } from "node:module";
+import { resolve } from "node:path";
+import { pathToFileURL } from "node:url";
+import { transformVerifierTypeScript } from ${scriptUrl("verifier-source-loader.mjs")};
+const compiler = createRequire(${scriptUrl("verifier-source-loader.mjs")})("typescript6");
+const source = "export enum Status { Ready = 1 }";
+const rejection = () => {
+  const error = new TypeError("The property options.mode must be one of strip");
+  error.code = "ERR_INVALID_ARG_VALUE";
+  throw error;
+};
+const url = pathToFileURL(resolve("src", "value.ts")).href;
+const esModule = transformVerifierTypeScript(source, url, "module", rejection, () => compiler);
+const commonJs = transformVerifierTypeScript(source, url, "commonjs", rejection, () => compiler);
+assert.match(esModule, /export (?:var|const) Status/);
+assert.match(commonJs, /exports\.Status/);
+assert.match(esModule, /sourceMappingURL=data:application\/json/);
+console.log("ok");
+`;
+    const result = await processes.run(
+      process.execPath,
+      ["--input-type=module", "--eval", source],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim()).toBe("ok");
+  },
+);
 
 for (const missing of ["registerHooks", "stripTypeScriptTypes"]) {
   processTest(
@@ -167,6 +202,16 @@ processTest(
     const workspace = await createTestWorkspace("rea-verifier-source-loader-");
     onTestFinished(() => removeTestWorkspace(workspace.root));
     await workspace.mkdir("scripts/lib");
+    // The loader resolves its compiler relative to the copied script.
+    // Make the real pinned compiler available to the isolated fixture.
+    const resolveCompiler = createRequire(pathToFileURL(resolve("scripts/lib/verifier-source-loader.mjs")).href);
+    const compilerRoot = dirname(dirname(resolveCompiler.resolve("typescript6")));
+    await workspace.mkdir("node_modules");
+    await symlink(
+      compilerRoot,
+      workspace.path("node_modules/typescript6"),
+      process.platform === "win32" ? "junction" : "dir",
+    );
     await copyFile(
       resolve("scripts/lib/verifier-source-loader.mjs"),
       workspace.path("scripts/lib/verifier-source-loader.mjs"),
