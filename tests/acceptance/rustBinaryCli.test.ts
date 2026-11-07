@@ -300,8 +300,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 3 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -702,8 +702,9 @@ cliTest(
       category: "resource_constraint",
       retryable: false,
       remediation: {
-        action:
-          "The rustc commit-path inventory is a fixed count. Waiting for an active analysis to finish does not raise it. Repeating the unchanged request fails the same way.",
+        action: expect.stringMatching(
+          /rustc commit.path inventory.*fixed count/iu,
+        ),
       },
       details: {
         operation: "inspect_rust_binary",

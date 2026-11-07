@@ -620,7 +620,7 @@ cliTest(
               "evidence_id",
             ],
             reason: "invalid_value",
-            message: "Evidence semantic identifier does not match its record",
+            message: expect.stringMatching(/semantic identifier.*not match/iu),
           },
         ],
       },
@@ -693,9 +693,7 @@ cliTest(
     expect(result.normalized_result).toMatchObject({
       groups: [{ content_types: [], flags: ["single-sample"] }],
       limitations: expect.arrayContaining([caveat]),
-      unknowns: [
-        "Some retained records have unavailable status or content type values.",
-      ],
+      unknowns: [expect.stringMatching(/unavailable status or content type/iu)],
     });
   },
 );

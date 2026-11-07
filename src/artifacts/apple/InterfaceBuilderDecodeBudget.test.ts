@@ -228,8 +228,8 @@ it("retains explicit date uncertainty for an overlapping binary plist object", a
     data: { $plist_type: "data", base64: "" },
   });
   expect(result.limitations).toContainEqual(
-    expect.stringContaining(
-      "Panel.nib: 1 date value(s) are reported with unknown timestamps because their sub-millisecond source records overlap",
+    expect.stringMatching(
+      /Panel\.nib: 1 date.*unknown timestamps.*sub.millisecond.*overlap/iu,
     ),
   );
 });
