@@ -1,6 +1,6 @@
 import { JEB_PROVIDER_IDENTITY } from "./JebProviderIdentity.js";
 import {
-  JebMcpAcquisitionCleanupFailure,
+  JebMcpCleanupFailure,
   JebMcpPhysicalFailure,
 } from "./JebMcpConnectionOwner.js";
 import { createAnalysisExecutionEvidence } from "../domain/analysisObservation.js";
@@ -160,6 +160,8 @@ export class JebProvider implements JebAnalysisPort {
     | Pick<z.infer<typeof clientInformation>, "version" | "gui_client">
     | undefined;
 
+  #informationGeneration: number | undefined;
+
   #identity(version: string | null | undefined): ProviderIdentity {
     return {
       ...JEB_PROVIDER_IDENTITY,
@@ -214,11 +216,13 @@ export class JebProvider implements JebAnalysisPort {
     } catch (cause) {
       if (signal?.aborted === true) throw cause;
       if (cause instanceof AnalysisError) {
+        // The failure's owner, such as the discovery deadline, also owns the repair.
         const projected = projectAnalysisError(cause);
         return {
           status: "unavailable",
           code: "runtime_unavailable",
           reason: projected.message,
+          remediation: projected.remediation.action,
           diagnostics: {
             ...cause.diagnostics,
             endpoint: this.#selectedEndpoint,
@@ -228,7 +232,8 @@ export class JebProvider implements JebAnalysisPort {
       return {
         status: "unavailable",
         code: "not_configured",
-        reason: `${cause instanceof Error ? cause.message : "The JEB MCP endpoint did not respond"}. ${JEB_CONNECTION_REMEDIATION}`,
+        reason: `${cause instanceof Error ? cause.message : "The JEB MCP endpoint did not respond"}.`,
+        remediation: JEB_CONNECTION_REMEDIATION,
         diagnostics: { endpoint: this.#selectedEndpoint },
       };
     }
@@ -295,8 +300,10 @@ export class JebProvider implements JebAnalysisPort {
     readonly gui_client: boolean | null;
   }> {
     const information =
-      this.#clientInformation ??
-      (await this.#refreshClientInformation(operation, signal)).information;
+      this.#informationGeneration === this.#connection.sessionGeneration &&
+      this.#clientInformation !== undefined
+        ? this.#clientInformation
+        : (await this.#refreshClientInformation(operation, signal)).information;
     return {
       name: "jeb",
       version: information.version ?? null,
@@ -363,6 +370,7 @@ export class JebProvider implements JebAnalysisPort {
       version: information.version,
       gui_client: information.gui_client,
     };
+    this.#informationGeneration = this.#connection.sessionGeneration;
     return { information, payload };
   }
 
@@ -532,7 +540,7 @@ export class JebProvider implements JebAnalysisPort {
   }
 
   #providerFailure(operation: JebOperation, cause: unknown): AnalysisError {
-    if (cause instanceof JebMcpAcquisitionCleanupFailure)
+    if (cause instanceof JebMcpCleanupFailure)
       return analysisErrorWithCleanupFailure(
         this.#providerFailure(operation, cause.primaryFailure),
         cause.cleanupFailure,

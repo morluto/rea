@@ -26,6 +26,13 @@ export const nativeFunctionMatchMemberSchema = z.strictObject({
   evidence_links: z.array(evidenceId).min(1),
   limitations: z.array(z.string()),
 });
+export const nativeFunctionByteSourceSchema = z.strictObject({
+  side: z.enum(["left", "right"]),
+  evidence_id: evidenceId,
+  limitations: z.array(z.string()),
+});
+export const nativeFunctionByteSourceGuidance =
+  "A function's selected byte sources are its evidence_links listed in the function-matches byte-sources view. Inspect their limitations before interpreting the byte basis.";
 export const nativeFunctionMatchSchema = z.strictObject({
   match_id: prefixedDigestSchema("match"),
   state: nativeMatchStateSchema,
@@ -68,15 +75,21 @@ export const nativeFunctionMatchingContextSchema = z.strictObject({
     right_structural_candidates: z.number().int().nonnegative(),
   }),
   summary: nativeFunctionMatchingSummarySchema,
+  byte_sources_count: z.number().int().nonnegative().optional(),
 });
 export const nativeFunctionMatchingSchema = nativeFunctionMatchingContextSchema
   .extend({
     matches: z.array(nativeFunctionMatchSchema),
     limitations: z.array(z.string()),
+    byte_sources: z.array(nativeFunctionByteSourceSchema).optional(),
   })
   .superRefine((report, context) => {
     const seen = new Set<string>();
     const members = { left: new Set<string>(), right: new Set<string>() };
+    const byteReferences = {
+      left: new Set<string>(),
+      right: new Set<string>(),
+    };
     const fingerprints = { left: 0, right: 0 };
     const candidates = { left: 0, right: 0 };
     const counts = { matched: 0, only_left: 0, only_right: 0, unresolved: 0 };
@@ -119,6 +132,7 @@ export const nativeFunctionMatchingSchema = nativeFunctionMatchingContextSchema
                 "Function occurrence identity, provenance or uniqueness disagrees with its selected inventory",
             });
           members[side].add(member.function_id);
+          for (const id of member.evidence_links) byteReferences[side].add(id);
           if (member.body_sha256 !== null) fingerprints[side]++;
           if (member.structural_candidate_sha256 !== null) candidates[side]++;
         }
@@ -169,6 +183,31 @@ export const nativeFunctionMatchingSchema = nativeFunctionMatchingContextSchema
           code: "custom",
           message: "Match state contradicts its occurrences",
         });
+    }
+    if (
+      (report.byte_sources === undefined) !==
+        (report.byte_sources_count === undefined) ||
+      (report.byte_sources !== undefined &&
+        report.byte_sources_count !== report.byte_sources.length)
+    )
+      context.addIssue({
+        code: "custom",
+        message: "Byte-source count disagrees with recorded sources",
+      });
+    if (report.byte_sources !== undefined) {
+      const recorded = { left: new Set<string>(), right: new Set<string>() };
+      for (const source of report.byte_sources) {
+        if (
+          recorded[source.side].has(source.evidence_id) ||
+          !byteReferences[source.side].has(source.evidence_id)
+        )
+          context.addIssue({
+            code: "custom",
+            message:
+              "Byte source is duplicated or not used on its recorded side",
+          });
+        recorded[source.side].add(source.evidence_id);
+      }
     }
     if (
       report.source_coverage.status !==

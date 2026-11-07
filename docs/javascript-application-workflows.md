@@ -173,7 +173,14 @@ Results follow retained node order and default to offset 0 and limit 64. Supply
 to examine relationships from that node. Other typed seeds do not search labels.
 
 The result contains the matching basis, complete reachable subgraph, terminal
-paths, authority summaries, and native handoffs. A handoff binds
+paths, authority summaries, and native handoffs. A bidirectional trace of a
+large application can exceed one MCP response. Over MCP, pass
+`view: {"kind":"summary"}` or a `feature-trace` page of `paths`, `nodes`,
+`edges`, `seed_matches` or `native_handoffs` to retain the complete trace in
+the session and return only selected rows with the trace's identity and
+coverage. Page the retained trace with `inspect_analysis_view`; an oversized
+complete reply offers its first `paths` page as a ready-to-call continuation.
+See [MCP contracts](mcp-contracts.md) for filters. A handoff binds
 the exact native artifact digest and requested exports from the application
 graph. Trace direction selects the reachable addons; requested
 exports for each selected addon come from the complete supplied graph, so an
