@@ -132,7 +132,7 @@ it.skipIf(process.platform === "win32")(
       const health = await client.execute("health", {});
       if (!health.ok) throw health.error;
       expect(health.value.limitations.join("\n")).toContain(
-        "last successfully saved owned Program",
+        "Ghidra Program checkpoint mode is enabled",
       );
       expect(health.value.limitations.join("\n")).toContain(
         "auto-analysis was not rerun",

@@ -213,6 +213,11 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase("first analysis creates a checkpoint", async () => {
     original = await cli("rea_checkpoint_leaf", ["--snapshot", snapshotPath]);
     assert.match(JSON.stringify(original.normalized_result), /value/);
+    assert.ok(
+      original.limitations.some((value) =>
+        value.includes("Created the initial owned Ghidra Program"),
+      ),
+    );
     const keys = await readdir(checkpointDirectory);
     assert.equal(keys.length, 1);
     manifestPath = join(checkpointDirectory, keys[0], "current.json");
@@ -251,6 +256,11 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
       assert.ok(
         restored.limitations.some((value) =>
           value.includes(initialManifest.source.sha256),
+        ),
+      );
+      assert.ok(
+        !restored.limitations.some((value) =>
+          value.includes("Created the initial owned Ghidra Program"),
         ),
       );
       assert.deepEqual(await manifest(), initialManifest);

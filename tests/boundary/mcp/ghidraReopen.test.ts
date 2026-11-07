@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -43,6 +44,7 @@ class FixtureLauncher implements GhidraLauncher {
   readonly handshakeReports: Record<string, unknown>[] = [];
   cleanupAllowed = true;
   cleanupAttempts = 0;
+  constructor(readonly mode: "success" | "checkpoint" = "success") {}
 
   async launch(session: GhidraLaunchSession) {
     const projectRoot = join(session.runtimeRoot, "project");
@@ -59,6 +61,7 @@ class FixtureLauncher implements GhidraLauncher {
           profileDigest: session.profileDigest,
           targetSha256: session.targetSha256,
           transport: session.transport,
+          mode: this.mode,
           handshakeReports: this.handshakeReports.shift() ?? {},
         }),
       },
@@ -119,16 +122,20 @@ const installationHost: GhidraInstallationHost = {
 
 // Only installation discovery and the Java bridge are simulated. Requests use
 // the production client, real child/socket and public MCP session routing.
-const connectGhidra = async () => {
+const connectGhidra = async (checkpoints = false) => {
   const directory = await createTestTempDirectory("rea-ghidra-reopen-");
   const target = join(directory, "target.elf");
   const source = elf(2, 1, 62);
   await writeFile(target, source);
   const config = parseConfig({
     GHIDRA_INSTALL_DIR: "/fixture/ghidra_12.1.4_PUBLIC",
+    REA_GHIDRA_STARTUP_TIMEOUT_MS: "5000",
+    ...(checkpoints
+      ? { REA_GHIDRA_CHECKPOINT_DIR: join(directory, "checkpoints") }
+      : {}),
   });
   if (!config.ok) throw config.error;
-  const launcher = new FixtureLauncher();
+  const launcher = new FixtureLauncher(checkpoints ? "checkpoint" : "success");
   const clients: GhidraClient[] = [];
   const provider = new GhidraProvider(
     config.value,
@@ -140,7 +147,6 @@ const connectGhidra = async () => {
         ...options,
         launcher,
         platform: process.platform,
-        startupTimeoutMs: 5_000,
       });
       clients.push(client);
       return client;
@@ -198,6 +204,7 @@ const connectGhidra = async () => {
     throw cause;
   }
   return {
+    mcp,
     clients,
     launcher,
     close,
@@ -274,6 +281,104 @@ const disconnect = async (
   expect(child.exitCode).toBeNull();
   expect(child.signalCode).toBeNull();
 };
+
+describe.skipIf(process.platform === "win32")(
+  "Ghidra checkpoint discoverability over MCP",
+  () => {
+    it.each([false, true])(
+      "discovers checkpoint mode %s from the catalog and default summary before analysis",
+      async (enabled) => {
+        const harness = await connectGhidra(enabled);
+        try {
+          // Metadata discovery does not need the SDK's whole-catalog validator
+          // cache. Check the relevant returned fields explicitly below.
+          const catalog = z
+            .object({
+              tools: z.array(
+                z.object({
+                  name: z.string(),
+                  description: z.string().optional(),
+                }),
+              ),
+            })
+            .parse(
+              await harness.mcp.request({ method: "tools/list", params: {} }),
+            );
+          expect(
+            catalog.tools.find(({ name }) => name === "open_binary")
+              ?.description,
+          ).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(
+            catalog.tools.find(({ name }) => name === "close_binary")
+              ?.description,
+          ).toContain("Program metadata");
+          expect((await harness.open()).isError).not.toBe(true);
+          const status = await harness.mcp.callTool({
+            name: "binary_session",
+            arguments: {},
+          });
+          const parsed = z
+            .object({
+              result: z.object({
+                detail: z.literal("summary"),
+                capabilities: z.array(
+                  z.object({
+                    provider: z.object({ id: z.string() }),
+                    shared_limitations: z.array(z.string()),
+                  }),
+                ),
+              }),
+            })
+            .parse(status.structuredContent);
+          const limitations = parsed.result.capabilities
+            .find(({ provider }) => provider.id === "ghidra")
+            ?.shared_limitations.join("\n");
+          expect(limitations).toContain(
+            `checkpoint mode is ${enabled ? "enabled" : "disabled"}`,
+          );
+          expect(limitations).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(harness.clients).toHaveLength(0);
+          expect(harness.launcher.launches).toHaveLength(0);
+          if (enabled) {
+            const output = z.object({ limitations: z.array(z.string()) });
+            const initial = output.parse(
+              (await harness.query(1)).structuredContent,
+            );
+            expect(
+              initial.limitations.some((value) =>
+                value.includes("Created the initial owned Ghidra Program"),
+              ),
+            ).toBe(true);
+            expect(
+              (
+                await harness.mcp.callTool({
+                  name: "close_binary",
+                  arguments: {},
+                })
+              ).isError,
+            ).not.toBe(true);
+            expect((await harness.open()).isError).not.toBe(true);
+            const restored = output.parse(
+              (await harness.query(2)).structuredContent,
+            );
+            expect(
+              restored.limitations.some((value) =>
+                value.startsWith("Restored owned Program "),
+              ),
+            ).toBe(true);
+            expect(
+              restored.limitations.some((value) =>
+                value.includes("Created the initial owned Ghidra Program"),
+              ),
+            ).toBe(false);
+          } else expect(limitations).toContain("restart MCP");
+        } finally {
+          await harness.close();
+        }
+      },
+    );
+  },
+);
 
 describe.skipIf(process.platform === "win32")(
   "Ghidra MCP session recovery over Unix sockets",
