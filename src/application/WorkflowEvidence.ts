@@ -75,7 +75,7 @@ const DECOMPILE_ALL_LIMITATIONS: ComposedLimitationBudget = {
   perItemOperations: new Set(["procedure_info", "procedure_pseudo_code"]),
   maxDistinct: 8,
   retainedIn:
-    "each function's record in decompile-index.json keeps the caveats of the observations it used",
+    "decompile-index.json keeps the latest record for each function; decompile-journal.jsonl keeps each attempt and its caveats",
 };
 
 /** The caveat budget for a composed workflow, when it has one. */

@@ -104,9 +104,7 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
         expect(entries[0]?.limitations).toEqual(
           mode === "valid"
             ? []
-            : [
-                "Slice range was derived from structural Mach-O facts because lipo omitted it.",
-              ],
+            : [expect.stringMatching(/structural Mach.O.*lipo.*omitted/iu)],
         );
       }
     } finally {

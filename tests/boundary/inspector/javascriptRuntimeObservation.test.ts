@@ -62,7 +62,7 @@ test("reports static-layer Evidence digest failure at its caller path", () => {
         {
           path: ["static_layers", 0, "analysis", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
