@@ -7,6 +7,7 @@ import { inspectWindowsNativeReadiness } from "../process/WindowsAuthority.js";
 import {
   loadWindowsNativeAuthority,
   type WindowsNativeLoadHost,
+  WINDOWS_NATIVE_ARTIFACT_REMEDIATION,
 } from "./WindowsNativeLoader.js";
 
 const fixture = (
@@ -155,6 +156,27 @@ describe("packaged Windows native compatibility", () => {
     });
     expect(value.loads()).toBe(0);
   });
+});
+
+describe("shared native artifact recovery guidance", () => {
+  it("is exported and contains key recovery phrases", () => {
+    expect(typeof WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toBe("string");
+    expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+      "Matching package version alone is insufficient",
+    );
+    expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+      "from this exact source checkout",
+    );
+    expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+      "native/windows/README.md",
+    );
+    expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+      "no download or install is performed automatically",
+    );
+  });
+});
+
+describe("packaged Windows native artifact validation", () => {
   it("loads only after compatibility and digest checks, preserving producer identity", () => {
     const value = fixture();
     expect(loadWindowsNativeAuthority(value.host)).toMatchObject({
