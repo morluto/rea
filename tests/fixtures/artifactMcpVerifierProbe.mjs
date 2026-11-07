@@ -37,14 +37,21 @@ if (mode === "cancel-finalization" || mode === "failure-cancel-finalization") {
   };
 }
 
-const request = Client.prototype.request;
+// Count one schema discovery per listTools call: pagination turns one
+// discovery into several tools/list requests, which must not look like
+// repeated discovery.
 let catalogRequests = 0;
+const listTools = Client.prototype.listTools;
+Client.prototype.listTools = async function (...args) {
+  catalogRequests++;
+  return listTools.call(this, ...args);
+};
+const request = Client.prototype.request;
 let corruptedReplies = 0;
 let toolCalls = 0;
 let connection = 0;
 const toolTimeouts = [];
 Client.prototype.request = async function (input, options) {
-  if (input.method === "tools/list") catalogRequests++;
   if (input.method === "tools/call") {
     toolCalls++;
     toolTimeouts.push(options?.timeout ?? null);
@@ -69,10 +76,13 @@ Client.prototype.request = async function (input, options) {
         }),
       };
     if (mode === "duplicate-first" || mode === "duplicate-last") {
+      // Paged listings return one page at a time; inject only on the page
+      // carrying the target tool, so the accumulated catalog holds exactly
+      // one duplicate, as before.
       const listed = result.tools.find(
         (tool) => tool.name === "open_bundle_resources",
       );
-      assert.ok(listed);
+      if (listed === undefined) return result;
       const duplicate = {
         ...listed,
         outputSchema: { type: "object", required: ["__rea_wrong_schema"] },
