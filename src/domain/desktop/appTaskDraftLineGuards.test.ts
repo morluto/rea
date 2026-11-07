@@ -41,7 +41,9 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
       { kind: "lines_present", file: FILE, lines: [translation] },
     ]);
   });
+});
 
+describe("draftTaskFiles for XML text views", () => {
   it("checks an XML text fallback without freezing a timestamp after a literal backslash", () => {
     const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
     const node = (time: string) =>
@@ -115,6 +117,66 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
     ]);
   });
 
+  it("recognizes attributes after a comment inside the DTD", () => {
+    const opening = "<!DOCTYPE map [<!-- author's note -->]>\n<map>\n";
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${node}\n</map>`);
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: '<node TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+  });
+
+  it("counts repeated new lines even when one is inside an XML comment", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(
+      `${opening}</map>`,
+      `${opening}<!--\n${node}\n-->\n${node}\n</map>`,
+    );
+    expect(file.suggested).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "line_count",
+          contains: '<node TEXT="C:\\work\\" CREATED="',
+          equals: 2,
+        }),
+      ]),
+    );
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}<!--\n${node}\n-->\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(results.some(({ passed }) => !passed)).toBe(true);
+  });
+
+  it("does not guess attribute boundaries when the XML syntax reader cannot finish", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>&title;\n';
+    const node = '<node TEXT="C:\\work\\" CREATED="1793955250671"/>';
+    const file = drafted(`${opening}</map>`, `${opening}${node}\n</map>`);
+    expect(file.suggested).toEqual([]);
+    expect(file.notes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "read_as_text",
+          message: expect.stringContaining("could not locate XML attributes"),
+        }),
+      ]),
+    );
+  });
+});
+
+describe("draftTaskFiles for added lines", () => {
   it("keeps long ordinary text as a whole line", () => {
     const text = `msgstr "${"ordinary words ".repeat(3000)}"`;
     const file = drafted(lines(), lines(text));

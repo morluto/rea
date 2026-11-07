@@ -1,3 +1,4 @@
+import { xmlAttributeQuoteStarts } from "../xmlDocument.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { isBookkeepingName, isVolatileValue } from "./appTaskDraftNoise.js";
 import { textOpensXml, type FileNote } from "./appTaskDraftFileNotes.js";
@@ -102,63 +103,6 @@ export const lineGuards = (
 /** A run of letters, digits, `_` and `-`, a token a line may hold. */
 const TOKEN = /[\p{L}\d_-]+/gu;
 
-/** Locate XML attribute quote starts while preserving text, comments and CDATA. */
-const xmlAttributeQuotes = (
-  lines: readonly string[],
-): readonly ReadonlySet<number>[] => {
-  let mode: "text" | "tag" | "comment" | "cdata" | "declaration" = "text";
-  let quote: string | undefined;
-  let subsetDepth = 0;
-  let lastTagCharacter = "";
-  return lines.map((line) => {
-    const starts = new Set<number>();
-    for (let at = 0; at < line.length; at += 1) {
-      if (mode === "comment" || mode === "cdata") {
-        const end = mode === "comment" ? "-->" : "]]>";
-        if (line.startsWith(end, at)) {
-          mode = "text";
-          at += end.length - 1;
-        }
-        continue;
-      }
-      const character = line[at];
-      if (mode === "text") {
-        if (line.startsWith("<!--", at)) {
-          mode = "comment";
-          at += 3;
-        } else if (line.startsWith("<![CDATA[", at)) {
-          mode = "cdata";
-          at += 8;
-        } else if (line.startsWith("<!", at) || line.startsWith("<?", at)) {
-          mode = "declaration";
-          at += 1;
-        } else if (character === "<" && /[A-Za-z_:]/u.test(line[at + 1] ?? ""))
-          mode = "tag";
-        continue;
-      }
-      if (quote !== undefined) {
-        if (character === quote) quote = undefined;
-        continue;
-      }
-      if (character === '"' || character === "'") {
-        if (mode === "tag" && lastTagCharacter === "=") starts.add(at);
-        quote = character;
-        lastTagCharacter = character;
-      } else if (mode === "declaration" && character === "[") subsetDepth += 1;
-      else if (mode === "declaration" && character === "]" && subsetDepth > 0)
-        subsetDepth -= 1;
-      else if (character === ">" && subsetDepth === 0) mode = "text";
-      else if (
-        mode === "tag" &&
-        character !== undefined &&
-        !/\s/u.test(character)
-      )
-        lastTagCharacter = character;
-    }
-    return starts;
-  });
-};
-
 /** Where a line's first value the app generates starts: a UUID, an epoch time, or an id such as Freeplane's `ID_329023692`; -1 when it holds none. */
 const volatileAt = (line: string, xmlQuotes: ReadonlySet<number>): number => {
   let end = 0;
@@ -222,23 +166,47 @@ export const addedLineChecks = (
 ): { readonly checks: DesktopTaskCheckInput[]; readonly notes: FileNote[] } => {
   const holding = (all: readonly string[], text: string) =>
     all.filter((line) => line.includes(text)).length;
-  const quoteStarts = textOpensXml(lines.after)
-    ? xmlAttributeQuotes(lines.after)
-    : [];
-  const lineQuotes = new Map<string, Set<number>>();
-  for (const [index, line] of lines.after.entries()) {
-    const starts = quoteStarts[index] ?? new Set<number>();
-    const previous = lineQuotes.get(line);
-    lineQuotes.set(
-      line,
-      previous === undefined
-        ? new Set(starts)
-        : new Set([...previous].filter((at) => starts.has(at))),
-    );
+  const isXml = textOpensXml(lines.after);
+  const source = isXml ? lines.after.join("\n") : "";
+  const parsed = isXml ? xmlAttributeQuoteStarts(source) : undefined;
+  if (parsed?.ok === false && /^\s*(?:<\?xml\b|<!DOCTYPE\b)/u.test(source))
+    return {
+      checks: [],
+      notes: [
+        {
+          code: "read_as_text",
+          file,
+          message: `REA could not locate XML attributes in ~/${file}, so no added-line checks are suggested; inspect the changed text and add checks manually.`,
+        },
+      ],
+    };
+  const offsets = parsed?.ok === true ? parsed.value : [];
+  const addedSet = new Set(added);
+  const classifications = new Map<string, number>();
+  let lineStart = 0;
+  let nextOffset = 0;
+  for (const line of lines.after) {
+    const quoteStarts = new Set<number>();
+    const lineEnd = lineStart + line.length;
+    while (nextOffset < offsets.length && offsets[nextOffset]! < lineEnd) {
+      const offset = offsets[nextOffset]!;
+      if (offset >= lineStart) quoteStarts.add(offset - lineStart);
+      nextOffset += 1;
+    }
+    if (addedSet.has(line)) {
+      const at = volatileAt(line, quoteStarts);
+      const previous = classifications.get(line);
+      if (
+        previous === undefined ||
+        (at >= 0 && (previous < 0 || at < previous))
+      )
+        classifications.set(line, at);
+    }
+    lineStart = lineEnd + 1;
   }
   const classified = added.map((line) => ({
     line,
-    at: volatileAt(line, lineQuotes.get(line) ?? new Set<number>()),
+    at: classifications.get(line) ?? -1,
   }));
   const whole = classified.filter(({ at }) => at < 0).map(({ line }) => line);
   const prefixes = new Set<string>();
