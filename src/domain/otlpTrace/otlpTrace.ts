@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema, prefixedDigestSchema } from "../digests.js";
 import { localPathStringSchema } from "../localPath.js";
+import { jsonValueSchema } from "../jsonValue.js";
 
 /** Resource allowances, not OTLP format limits. */
 export const OTLP_TRACE_MAX_FILE_BYTES = 32 * 1024 * 1024;
@@ -57,6 +58,9 @@ export const otlpSpanSchema = z.strictObject({
   span_id: z.string(),
   trace_id: z.string(),
   parent_span_id: z.string().nullable(),
+  /** Invalid recorded values are not equivalent to a declared root. */
+  parent_span_id_state: z.enum(["absent", "valid", "invalid"]),
+  parent_span_id_raw: jsonValueSchema.nullable(),
   name: z.string(),
   kind: z.enum([
     "unspecified",

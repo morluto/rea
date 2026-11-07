@@ -386,8 +386,37 @@ describe("parseOtlpTrace parent links", () => {
     expect(report.diagnostics.map((entry) => entry.code)).toContain(
       "invalid-record",
     );
-    expect(report.spans[0]?.parent_span_id).toBeNull();
-    expect(report.summary.roots).toBe(1);
+    expect(report.spans[0]).toMatchObject({
+      parent_span_id: null,
+      parent_span_id_state: "invalid",
+      parent_span_id_raw: "broken",
+    });
+    expect(report.roots).toEqual([]);
+    expect(report.summary.roots).toBe(0);
+  });
+
+  it("distinguishes omitted, zero, valid and non-string parent identities", () => {
+    const report = parse(
+      envelope([
+        span({ spanId: "1".repeat(16) }),
+        span({ spanId: "2".repeat(16), parentSpanId: "0".repeat(16) }),
+        span({ spanId: "3".repeat(16), parentSpanId: "1".repeat(16) }),
+        span({ spanId: "4".repeat(16), parentSpanId: 42 }),
+      ]),
+    );
+    expect(
+      report.spans.map((entry) => [
+        entry.parent_span_id_state,
+        entry.parent_span_id_raw,
+      ]),
+    ).toEqual([
+      ["absent", null],
+      ["absent", "0".repeat(16)],
+      ["valid", "1".repeat(16)],
+      ["invalid", 42],
+    ]);
+    expect(report.roots).toEqual(["1".repeat(16), "2".repeat(16)]);
+    expect(report.summary.with_parent).toBe(1);
   });
 
   it("keeps a span-local diagnostic pointed at its own record", () => {

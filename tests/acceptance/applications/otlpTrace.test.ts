@@ -33,6 +33,12 @@ const exportDocument = {
             },
             {
               traceId: "1".repeat(32),
+              spanId: "4".repeat(16),
+              parentSpanId: "broken",
+              name: "unreadable-parent",
+            },
+            {
+              traceId: "1".repeat(32),
               spanId: "3".repeat(16),
               parentSpanId: "2".repeat(16),
               name: "fetch",
@@ -69,7 +75,7 @@ cliTest(
     const report = otlpTraceSchema.parse(parent.normalized_result);
     expect(report.artifact.path).toBe(fixture.path);
     expect(report.summary).toMatchObject({
-      spans: 2,
+      spans: 3,
       roots: 1,
       orphans: 0,
       error_status: 1,
@@ -78,6 +84,13 @@ cliTest(
       redacted_attributes: 1,
     });
     expect(report.spans[1]).toMatchObject({
+      span_id: "4".repeat(16),
+      parent_span_id: null,
+      parent_span_id_state: "invalid",
+      parent_span_id_raw: "broken",
+    });
+    expect(report.roots).toEqual(["2".repeat(16)]);
+    expect(report.spans[2]).toMatchObject({
       span_id: "3".repeat(16),
       parent_span_id: "2".repeat(16),
       duration_nano: "1500",

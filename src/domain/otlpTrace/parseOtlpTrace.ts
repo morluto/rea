@@ -1,4 +1,5 @@
 import { digestCanonicalValue } from "../canonicalDigest.js";
+import { jsonValueSchema } from "../jsonValue.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import type {
   OtlpDiagnostic,
@@ -267,7 +268,14 @@ const parseSpan = (
     record.parentSpanId !== undefined &&
     record.parentSpanId !== null &&
     record.parentSpanId !== "";
-  if (parentRecorded && parentSpanId === null)
+  const parentState =
+    !parentRecorded || parentSpanId === "0000000000000000"
+      ? "absent"
+      : parentSpanId === null
+        ? "invalid"
+        : "valid";
+  const rawParent = jsonValueSchema.safeParse(record.parentSpanId ?? null);
+  if (parentState === "invalid")
     problems.push({
       code: "invalid-record",
       pointer,
@@ -293,7 +301,6 @@ const parseSpan = (
     .filter((entry) => isRecord(entry) && typeof entry.key === "string")
     .slice(0, OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN);
   const attributes = spanAttributes(retained);
-  const redacted = attributes.filter((attribute) => attribute.redacted).length;
   const attributesDropped =
     rawAttributes.filter(
       (entry) => isRecord(entry) && typeof entry.key === "string",
@@ -309,6 +316,8 @@ const parseSpan = (
     span_id: spanId,
     trace_id: traceId,
     parent_span_id: parentSpanId,
+    parent_span_id_state: parentState,
+    parent_span_id_raw: rawParent.success ? rawParent.data : null,
     name: typeof record.name === "string" ? record.name : "",
     kind: kindName(record.kind),
     start_time_unix_nano: startTime,
@@ -573,11 +582,7 @@ export const parseOtlpTrace = (
   // A span whose recorded parent link is unreadable is not a root: it may be a
   // damaged child, so only a span that declares no parent counts as a root.
   const roots = walked.spans
-    .filter(
-      (span) =>
-        span.parent_span_id === null ||
-        span.parent_span_id === "0000000000000000",
-    )
+    .filter((span) => span.parent_span_id_state === "absent")
     .map((span) => span.span_id);
   // A captured subtree can be reachable through its recorded root and still not
   // prove the export is complete: an unrecorded ancestor may still exist.

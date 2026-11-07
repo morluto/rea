@@ -25,7 +25,9 @@ without their payloads.
 - **Identity is recorded, not reconstructed.** A parent identifier the export
   does not contain is reported in `orphan_span_ids` with a `missing-parent`
   diagnostic. Its children stay parented to an unrecorded span and are not
-  promoted to roots. `roots` lists only spans that declare no parent at all, so a
+  promoted to roots. An invalid parent retains its original JSON value in
+  `parent_span_id_raw` and has `parent_span_id_state: "invalid"`; missing and
+  zero-value parent IDs have state `absent`. `roots` lists only spans that declare no parent at all, so a
   captured subtree is never presented as a complete one.
 - **Duplicates and cycles stay visible.** A repeated span identifier retains both
   records with a `duplicate-span-id` diagnostic, and a parent cycle is reported as
