@@ -165,8 +165,28 @@ cliTest.skipIf(process.versions.bun !== undefined)(
     );
     expect(result.limitations).toContainEqual(
       expect.stringContaining(
-        "Exported application facts exceed the remaining Evidence budget",
+        "source file(s) have analysis or application projection failures",
       ),
+    );
+    expect(result.graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                path: expect.stringContaining("exports.mjs"),
+                operation: "analyze-javascript-source",
+                limitation: expect.stringContaining(
+                  "Exported application facts exceed the remaining Evidence budget",
+                ),
+                analysis_failure: expect.objectContaining({
+                  code: "resource_constraint",
+                }),
+              }),
+            }),
+          ]),
+        }),
+      ]),
     );
     expect(
       result.graph.nodes.some(({ observations }) =>
