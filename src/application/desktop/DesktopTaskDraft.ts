@@ -71,7 +71,7 @@ const draft = async (
       point !== undefined &&
       !point.truncated &&
       point.unreadable_directories === 0 &&
-      (point.unchecked_paths ?? 0) === 0 &&
+      point.unchecked_paths === 0 &&
       point.unconfirmed_changes === 0
     );
   };
@@ -81,7 +81,10 @@ const draft = async (
     dconf,
     ends,
     checkpoints,
-    observed: covered(ends.seed) && covered(ends.end),
+    observed: Array.from(
+      { length: ends.end - ends.seed + 1 },
+      (_, offset) => ends.seed + offset,
+    ).every(covered),
   });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {

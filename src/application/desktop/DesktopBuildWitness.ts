@@ -145,6 +145,11 @@ interface OpenWitness extends EndedWitness {
   /** A manifest whose segments still need to be fetched. */
   pendingManifest?: RecordingManifest | undefined;
   /**
+   * The action log as it stood when the record was first written. A retry
+   * uses this copy, so later activity cannot drop the witnessed actions.
+   */
+  logged?: Pick<ReadonlyActionLog, "entries" | "dropped">;
+  /**
    * A published record whose handles are still open. The error already carries
    * the record and the cleanup lease; every later close failure returns it.
    */
@@ -361,10 +366,14 @@ export class DesktopBuildWitness {
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
+    witness.logged ??= {
+      entries: [...this.actions.entries],
+      dropped: this.actions.dropped,
+    };
     const written = await writeWitnessRecord(
       this.computer,
       witness,
-      this.actions,
+      witness.logged,
       signal,
       witness.pendingManifest,
     );
