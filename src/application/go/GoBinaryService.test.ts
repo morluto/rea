@@ -74,7 +74,6 @@ it("preserves unsupported subject architectures and does not duplicate metadata"
     inspect: () => Promise.resolve(ok(report)),
   });
   const result = await service.inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.subject).toMatchObject({
     architecture: null,
@@ -120,7 +119,6 @@ it("preserves byte-valued build metadata and validates compiler source lengths",
     identity,
     inspect: () => Promise.resolve(ok(partial)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value.normalized_result).toEqual(partial);
 
