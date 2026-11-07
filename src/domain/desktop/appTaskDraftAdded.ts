@@ -37,6 +37,8 @@ export interface AddedContext {
   };
   readonly named: (view: JsonValue | null, pointer: string) => boolean;
   readonly chars: number;
+  /** Fields left unchecked because their text is past `chars`. */
+  readonly long?: string[];
 }
 
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
@@ -167,22 +169,16 @@ const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   return undefined;
 };
 
-/** The texts an element holds, each trimmed, in document order. */
-const leafTexts = (value: JsonValue): string[] =>
-  typeof value === "string"
-    ? [value.trim()]
-    : isXmlElement(value)
-      ? value.children.flatMap(leafTexts)
-      : [];
-
 /**
  * A `text_contains` per new field of a record added whole that only position
  * names, as Osmo adds a `<record>` of `<first_name>` and `<email_1>` among
  * others, at the nearest ancestor both ends hold that a check can name: up to
  * five fields of three or more characters, each absent from that ancestor's
- * text at the seed, so each fails there. Empty for an element that
- * `holdsFields` says is no record, as a paragraph of runs, or that has no
- * like sibling.
+ * text at the seed, so each fails there. The field's own path is kept, so an
+ * identifier, a date stamped in parts and text past the limit are left out,
+ * as `recordChecks` leaves them out; a field past the limit is named in
+ * `context.long`. Empty for an element that `holdsFields` says is no record,
+ * as a paragraph of runs, or that has no like sibling.
  */
 export const fieldChecks = (
   context: AddedContext,
@@ -195,15 +191,30 @@ export const fieldChecks = (
   const at = keptNamedAncestor(context, pointer);
   if (at === undefined) return [];
   const seen = elementText(resolvePointer(ends.baseline, at) ?? null);
-  return [...new Set(leafTexts(element))]
-    .filter(
-      (text) =>
-        text.length >= MIN_FIELD_CHARS &&
-        /[\p{L}\d]/u.test(text) &&
-        !seen.includes(text) &&
-        !isStamp(text) &&
-        !isVolatileValue(text),
+  const { keys } = pairMembers(element.children, []).newer;
+  const texts: string[] = [];
+  element.children.forEach((field, index) => {
+    if (!isXmlElement(field)) return;
+    const key = keys[index] ?? String(index);
+    const fieldAt = `${pointer}/children/${key.startsWith("[") ? escapeToken(key) : key}`;
+    if (ID_FIELD.test(field.name) || inSplitDate(ends.final, fieldAt)) return;
+    const value = elementText(field);
+    const text = value.trim();
+    if (
+      text.length < MIN_FIELD_CHARS ||
+      !/[\p{L}\d]/u.test(text) ||
+      seen.includes(text) ||
+      isStamp(text) ||
+      isVolatileValue(text)
     )
+      return;
+    if (value.length > context.chars) {
+      context.long?.push(fieldAt);
+      return;
+    }
+    texts.push(text);
+  });
+  return [...new Set(texts)]
     .slice(0, MAX_FIELD_CHECKS)
     .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
 };
