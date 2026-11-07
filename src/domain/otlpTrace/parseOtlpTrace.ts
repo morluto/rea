@@ -161,6 +161,7 @@ const readAttribute = (
     int_value: null,
     int_value_raw: null,
     double_value: null,
+    double_value_raw: null,
     bytes_length: null,
     bytes_base64: null,
     element_count: null,
@@ -197,13 +198,19 @@ const readAttribute = (
           parsed === null ? retainedRaw(value, capture, "attribute") : null,
       };
     }
-    case "doubleValue":
+    case "doubleValue": {
+      const finite = typeof value === "number" && Number.isFinite(value);
       return {
         ...empty,
         value_kind: "double",
-        double_value:
-          typeof value === "number" && Number.isFinite(value) ? value : null,
+        double_value: finite ? value : null,
+        // OTLP JSON spells NaN and both infinities as strings, and an overflowed
+        // exponent arrives as a non-finite number; both are recorded values.
+        double_value_raw: finite
+          ? null
+          : retainedRaw(value, capture, "attribute"),
       };
+    }
     case "bytesValue":
       return {
         ...empty,

@@ -443,6 +443,34 @@ describe("parseOtlpTrace 64-bit bounds", () => {
     expect(parsed.attributes.map((a) => a.int_value_raw)).toEqual([]);
   });
 
+  it("retains non-finite double spellings instead of dropping them", () => {
+    const report = parse(
+      envelope([
+        span({
+          attributes: [
+            { key: "nan", value: { doubleValue: "NaN" } },
+            { key: "pos", value: { doubleValue: "Infinity" } },
+            { key: "neg", value: { doubleValue: "-Infinity" } },
+          ],
+        }),
+      ]),
+    );
+    const attributes = new Map(
+      report.spans[0]!.attributes.map((a) => [a.key, a]),
+    );
+    for (const [key, raw] of [
+      ["nan", "NaN"],
+      ["pos", "Infinity"],
+      ["neg", "-Infinity"],
+    ] as const) {
+      expect(attributes.get(key)).toMatchObject({
+        value_kind: "double",
+        double_value: null,
+        double_value_raw: raw,
+      });
+    }
+  });
+
   it("distinguishes an explicitly invalid null timestamp from an omitted one", () => {
     const invalid = parse(envelope([span({ startTimeUnixNano: null })]));
     expect(invalid.diagnostics.map((entry) => entry.code)).toContain(

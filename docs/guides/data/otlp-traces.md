@@ -50,7 +50,10 @@ positions in the input. Event and link counts are reported without their payload
   export exceeding that memory bound fails with the verified file identity.
   Array and key-value-list contents are counted without scanning their numbers.
 - **Attributes are bounded.** Scalar attribute values are preserved as recorded,
-  including values whose keys resemble credentials. Array and key-value-list
+  including values whose keys resemble credentials. A `doubleValue` the schema
+  cannot hold as a finite JavaScript number — the OTLP spellings `"NaN"`,
+  `"Infinity"` and `"-Infinity"`, or an overflowed exponent — keeps the recorded
+  JSON in `double_value_raw`. Array and key-value-list
   attributes report only their element count. Each span and resource retains at
   most 128 attributes; omissions are reported in diagnostics or limitations.
   Resource and scope groups are retained when at least one span is inventoried.

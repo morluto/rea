@@ -2240,4 +2240,5 @@ run the recorded application; protobuf exports are not supported. A parent the
 export does not contain is reported as an orphan rather than inferred. Resource
 and scope facts are retained once and spans reference them by index. Recorded
 scalar attribute values are preserved. See
-[offline OTLP traces](./otlp-traces.md) for coverage and resource policies.
+[offline OTLP traces](../guides/data/otlp-traces.md) for coverage and resource
+policies.
