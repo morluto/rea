@@ -106,4 +106,32 @@ describe("sameTaskVerifier", () => {
 
     expect(sameTaskVerifier(hosted, older)).toBe(true);
   });
+
+  it("rejects the older index helper when a brace inside an earlier check's text hides a leading-zero pointer", () => {
+    const indexed: DesktopTask = {
+      ...task,
+      checks: [
+        {
+          id: "brace",
+          kind: "value_equals",
+          file: "Documents/today.txt",
+          pointer: "/lines/0",
+          value: "{",
+        },
+        {
+          id: "line",
+          kind: "value_absent",
+          file: "Documents/today.txt",
+          pointer: "/lines/01",
+        },
+      ],
+    };
+    const hosted = renderTaskVerifier(indexed, "notes");
+    const older = hosted.replace(
+      'INDEX = re.compile(r"0|[1-9][0-9]*")',
+      'INDEX = re.compile(r"[0-9]+")',
+    );
+
+    expect(sameTaskVerifier(hosted, older)).toBe(false);
+  });
 });
