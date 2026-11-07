@@ -1,5 +1,6 @@
 import { chmod, mkdir, readdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { expect, it } from "vitest";
@@ -230,5 +231,33 @@ it("refuses to write a bundle that holds a handle's value, naming the files but 
   expect(error.message).toContain("task-name");
   expect(error.message).toContain("tasks/<secret:task-name>.json");
   expect(error.message).not.toContain(TASK.name);
+  expect(await readdir(directory).catch(() => [])).toEqual([]);
+});
+
+it("refuses UTF-16 credentials in seeded files and gzip content", async () => {
+  const { client, outputs } = await buildCaptureFakes();
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+  const seed = join(outputs.bundle, "envs/notes/seed/Documents");
+  await mkdir(seed, { recursive: true });
+  const token =
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJyZWEtdGVzdCJ9.ZmFrZS1zaWduYXR1cmU";
+  const bytes = Buffer.from(`token=${token}\n`, "utf16le").swap16();
+  await writeFile(join(seed, "credential.txt"), bytes);
+  await writeFile(join(seed, "credential.txt.gz"), gzipSync(bytes));
+  const directory = join(await createTestTempDirectory("build-out-"), "notes");
+  const refused = await client.callTool({
+    name: "export_build_environment",
+    arguments: { computer_id: id, task: TASK, directory },
+  });
+  const { error } = parseMcpToolError(refused as CallToolResult);
+  expect(error.code).toBe("invalid_request");
+  expect(error.message).toContain("credential.txt");
+  expect(error.message).toContain("credential.txt.gz");
+  expect(error.message).toContain("jwt");
+  expect(JSON.stringify(refused)).not.toContain(token);
   expect(await readdir(directory).catch(() => [])).toEqual([]);
 });
