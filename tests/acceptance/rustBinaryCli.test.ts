@@ -491,13 +491,14 @@ cliTest(
     const path = join(root, "over-ratio.exe");
     const document = Buffer.concat([
       Buffer.from(JSON.stringify({ packages: [] })),
-      Buffer.alloc(24 * 1024, 0x20),
+      Buffer.alloc(40 * 1024, 0x20),
     ]);
     const compressed = deflateSync(document);
     const alignedSize = 512;
     expect(compressed.length).toBeLessThan(alignedSize);
     expect(document.length).toBeGreaterThan(compressed.length * 64);
-    expect(document.length).toBeLessThanOrEqual(alignedSize * 64);
+    // Exercise the padded-storage allocation guard, not just the later ratio check.
+    expect(document.length).toBeGreaterThan(alignedSize * 64);
 
     const bytes = createRustImage({
       format: "pe",
