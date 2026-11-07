@@ -3,6 +3,7 @@ import {
   RuntimeControlUnavailableError,
   runtimeControlCapabilityError,
 } from "../process/RuntimeControlUnavailableError.js";
+import { WINDOWS_NATIVE_ARTIFACT_REMEDIATION } from "./WindowsNativeLoader.js";
 
 const nativeCall = vi.hoisted(() => vi.fn());
 const nativeInspection = vi.hoisted(() => ({
@@ -276,6 +277,45 @@ describe("Windows private runtime transient write", () => {
       "runtime_write_transient",
     ]);
     await runtime.close();
+  });
+
+  it("keeps runtime refusal remediation consistent with the shared artifact guidance", async () => {
+    nativeInspection.runtimeWriteTransient = undefined;
+    nativeCall.mockImplementation((operation: string) => {
+      if (operation === "runtime_create") return observation;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+    try {
+      let cause: unknown;
+      try {
+        runtime.writeTransientFile("job.source", "source-bytes");
+      } catch (error: unknown) {
+        cause = error;
+      }
+      expect(cause).toBeInstanceOf(
+        WindowsRuntimeWriteTransientUnavailableError,
+      );
+      const remediation =
+        cause instanceof WindowsRuntimeWriteTransientUnavailableError
+          ? cause.remediationAction
+          : "";
+      expect(remediation).toContain(
+        "Matching package version alone is insufficient",
+      );
+      expect(remediation).toContain("from this exact source checkout");
+      expect(remediation).toContain("native/windows/README.md");
+      // The shared guidance exported by the loader is reflected in the runtime
+      // refusal, so operators see consistent recovery text across both layers.
+      expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+        "Matching package version alone is insufficient",
+      );
+      expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
+        "from this exact source checkout",
+      );
+    } finally {
+      await runtime.close();
+    }
   });
 });
 
