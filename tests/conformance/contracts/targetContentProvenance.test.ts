@@ -1,3 +1,6 @@
+import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
 import { TOOL_CONTRACTS } from "../../../src/contracts/toolContracts.js";
@@ -19,10 +22,24 @@ describe("target-content provenance audit", () => {
       });
     expect([...TARGET_CONTENT_FREE_TOOLS].sort()).toEqual([
       "export_evidence_bundle",
+      "guided_workflows",
       "inspect_analysis_settings",
+      "read_guidance_section",
       "record_unknown",
+      "search_guidance",
       "update_analysis_settings",
     ]);
+  });
+
+  it("documents exactly the audited content-free exceptions", async () => {
+    const guide = await readFile(resolve("docs/mcp-contracts.md"), "utf8");
+    const exceptions = /on by default: ([^.]*?) omit it\./su.exec(guide)?.[1];
+    expect(exceptions).toBeDefined();
+    expect(
+      [...(exceptions ?? "").matchAll(/`([a-z_]+)`/gu)]
+        .map(([, name]) => name)
+        .sort(),
+    ).toEqual([...TARGET_CONTENT_FREE_TOOLS].sort());
   });
 
   it.each([

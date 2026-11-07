@@ -1,6 +1,8 @@
 import { z } from "zod";
 
 import type { Evidence } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
+import { getEvidenceInputContract } from "../evidenceInputContract.js";
 import {
   createJavaScriptApplicationGraph,
   javascriptApplicationGraphSchema,
@@ -44,25 +46,52 @@ import { err, ok, type Result } from "../result.js";
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const textSchema = z.string().min(1);
 
-/** Authenticated managed Evidence records projected into the application graph. */
-const managedGraphRequestSchema = z
-  .strictObject({
-    managed_artifact: z.unknown().optional(),
-    managed_members: z.unknown().optional(),
-    managed_native_boundaries: z.unknown().optional(),
-  })
+const managedApplicationGraphReferenceShape = z.strictObject({
+  managed_artifact: evidenceInputSchema.optional(),
+  managed_members: evidenceInputSchema.optional(),
+  managed_native_boundaries: evidenceInputSchema.optional(),
+});
+
+/** Inline or exact retained Evidence sources for managed application graph projection. */
+export const managedApplicationGraphReferenceInputSchema = z
+  .union([
+    managedApplicationGraphReferenceShape.extend({
+      managed_artifact: evidenceInputSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_members: evidenceInputSchema,
+    }),
+    managedApplicationGraphReferenceShape.extend({
+      managed_native_boundaries: evidenceInputSchema,
+    }),
+  ])
   .superRefine((input, context) => {
-    if (
-      input.managed_artifact === undefined &&
-      input.managed_members === undefined &&
-      input.managed_native_boundaries === undefined
-    )
+    const sources = [
+      input.managed_artifact,
+      input.managed_members,
+      input.managed_native_boundaries,
+    ].filter((source) => source !== undefined);
+    if (sources.length === 0)
       context.addIssue({
         code: "custom",
-        message:
-          "At least one managed artifact, member, or native-boundary Evidence record is required",
+        message: "Provide at least one managed Evidence source",
+      });
+    // The derived frame borrows unadmitted payloads. Their owner reports a
+    // malformed carrier rather than mistaking its missing ID for duplication.
+    if (sources.some((source) => typeof source?.evidence_id !== "string"))
+      return;
+    const ids = sources.map((source) => source.evidence_id);
+    if (new Set(ids).size !== ids.length)
+      context.addIssue({
+        code: "custom",
+        message: "Managed application graph Evidence IDs must be unique",
       });
   });
+
+/** Borrow source payloads until the managed owner authenticates each role. */
+const managedGraphRequestSchema = getEvidenceInputContract(
+  managedApplicationGraphReferenceInputSchema,
+).frameSchema;
 
 /** Managed-code projection result containing a validated application graph. */
 export const managedApplicationGraphResultSchema = z.strictObject({
@@ -300,6 +329,17 @@ export const readManagedGraphProjection = (
 
 const OPERATION = "project_managed_application_graph";
 
+/** Validated graph input still had no artifact source. */
+class ManagedGraphSourceError extends Error {
+  readonly _tag = "ManagedGraphSourceError";
+  readonly code = "missing_source" as const;
+
+  constructor() {
+    super("missing_source");
+    this.name = "ManagedGraphSourceError";
+  }
+}
+
 const chooseArtifact = (
   parsed: ParsedManagedGraphInput,
 ): { readonly sha256: string; readonly path: string } => {
@@ -307,8 +347,7 @@ const chooseArtifact = (
     parsed.artifact?.result ??
     parsed.members?.result ??
     parsed.boundaries?.result;
-  if (result === undefined)
-    throw new Error("Validated managed graph projection has no source");
+  if (result === undefined) throw new ManagedGraphSourceError();
   return { sha256: result.artifact.sha256, path: result.artifact.path };
 };
 

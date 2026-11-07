@@ -177,6 +177,27 @@ const cases: readonly {
     complete: true,
   },
   {
+    name: "text field cells retain ownership without visual hierarchy claims",
+    objects: [
+      {
+        classIndex: 0,
+        values: {
+          NSRoot: { ref: 1 },
+          NSObjectsKeys: { ref: 4 },
+          NSObjectsValues: { ref: 5 },
+        },
+      },
+      { classIndex: 3, values: {} },
+      { classIndex: 1, values: { NSCell: { ref: 3 } } },
+      { classIndex: 6, values: { NSControlView: { ref: 2 } } },
+      { classIndex: 2, values: { "NS.objects": { ref: 3 } } },
+      { classIndex: 2, values: { "NS.objects": { ref: 2 } } },
+      { classIndex: 1, values: { NSSuperview: { ref: 2 } } },
+    ],
+    links: [["2", "6"]],
+    complete: true,
+  },
+  {
     name: "unknown cell classes retain unknown registry parentage",
     objects: [
       {
@@ -239,6 +260,7 @@ cliTest.for(cases)(
           "NSCustomObject",
           "NSButtonCell",
           "CustomButtonCell",
+          "NSTextFieldCell",
         ],
         objects,
       }),
@@ -279,7 +301,7 @@ cliTest.for(cases)(
     for (const [index, object] of objects.entries()) {
       if (
         decodeRejected ||
-        ![1, 4, 5].includes(object.classIndex) ||
+        ![1, 4, 5, 6].includes(object.classIndex) ||
         Array.isArray(object.values)
       )
         continue;

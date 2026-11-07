@@ -61,11 +61,11 @@ export class TerminalRenderer {
   }
 
   /** Queue one PTY chunk and capture state only after xterm has parsed it. */
-  write(data: string, atMs: number): void {
+  write(data: string | (() => string), atMs: number): void {
     this.#queue(
       () =>
         new Promise<void>((resolveWrite, rejectWrite) => {
-          this.#terminal.write(data, () => {
+          this.#terminal.write(typeof data === "string" ? data : data(), () => {
             try {
               this.#capture(atMs);
               resolveWrite();

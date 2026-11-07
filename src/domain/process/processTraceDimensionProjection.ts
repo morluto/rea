@@ -1,6 +1,7 @@
 import type { ProcessCapture } from "./processCaptureParsing.js";
 import type { ProcessObservationSource } from "./processObservation.js";
 import type { ProcessComparisonDimension } from "./processComparison.js";
+import { processSourceTruncated } from "./processCaptureCoverage.js";
 
 /** Map declared trace sources to process-comparison dimensions. */
 export const dimensionsForTraceSources = (
@@ -31,8 +32,17 @@ export const traceCoversObservedDimension = (
   switch (dimension) {
     case "terminal":
       return (
-        (!any(left.frames, right.frames) || sources.has("terminal_raw")) &&
-        (!any(left.rendered_frames, right.rendered_frames) ||
+        (!(
+          any(left.frames, right.frames) ||
+          processSourceTruncated(left, "terminal_raw") ||
+          processSourceTruncated(right, "terminal_raw")
+        ) ||
+          sources.has("terminal_raw")) &&
+        (!(
+          any(left.rendered_frames, right.rendered_frames) ||
+          processSourceTruncated(left, "terminal_rendered") ||
+          processSourceTruncated(right, "terminal_rendered")
+        ) ||
           sources.has("terminal_rendered"))
       );
     case "interaction":

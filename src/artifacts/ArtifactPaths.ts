@@ -2,7 +2,11 @@ import { posix } from "node:path";
 
 import { logicalPathNfc } from "../domain/artifactIdentity.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
-import { ArtifactReaderFailure, type ArtifactEntry } from "./ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  artifactFixedLimitFailure,
+  type ArtifactEntry,
+} from "./ArtifactReader.js";
 
 const ABSOLUTE_DRIVE_PATH = /^[A-Za-z]:[\\/]/u;
 
@@ -47,6 +51,21 @@ export class DestinationCaseCollisionFailure extends ArtifactReaderFailure {
   }
 }
 
+/** The destination rejected a name before a file or directory was acquired. */
+export class DestinationPathUnrepresentableFailure extends ArtifactReaderFailure {
+  constructor(
+    readonly requestedPath: string,
+    options: ErrorOptions,
+  ) {
+    super(
+      "path",
+      `Destination filesystem cannot represent ${pathDiagnostic(requestedPath)}.`,
+      options,
+    );
+    this.name = "DestinationPathUnrepresentableFailure";
+  }
+}
+
 /** Normalize slash-separated logical names; backslashes are literal components. */
 export const normalizeArtifactPath = (input: string): string => {
   if (
@@ -72,16 +91,59 @@ export const normalizeArtifactPath = (input: string): string => {
   return normalized;
 };
 
-/** Reject exact and same-spelling prefix collisions. Case-distinct names stay distinct. */
+/** Reject prefix collisions and optionally bound the allocated path tree. */
 export class ArtifactPathRegistry {
   readonly #root: PathTrieNode = { kind: undefined, children: new Map() };
+  #nodeCount = 0;
+
+  constructor(
+    private readonly budget?: {
+      readonly maxParts: number;
+      readonly maxNodes: number;
+    },
+  ) {}
 
   add(path: string, kind: ArtifactEntry["kind"]): void {
     if (!hasDestinationPath(kind)) return;
+    this.#visit(path, kind);
+  }
+
+  /** Account for distinct prefixes without claiming file/directory validity. */
+  reservePath(path: string): void {
+    this.#visit(path);
+  }
+
+  #visit(path: string, kind?: DestinationEntryKind): void {
     const parts = path.split("/");
+    if (this.budget !== undefined && parts.length > this.budget.maxParts)
+      throw artifactFixedLimitFailure(
+        "Artifact path depth",
+        this.budget.maxParts,
+        "path parts",
+      );
+    if (this.budget !== undefined) {
+      let observed = this.#root;
+      for (const [index, part] of parts.entries()) {
+        const existing = observed.children.get(part);
+        if (existing === undefined) {
+          if (parts.length - index > this.budget.maxNodes - this.#nodeCount)
+            throw artifactFixedLimitFailure(
+              "Artifact path tree",
+              this.budget.maxNodes,
+              "path nodes",
+            );
+          break;
+        }
+        observed = existing;
+      }
+    }
     let node = this.#root;
     for (const [index, part] of parts.entries()) {
-      if (node.kind !== undefined && node.kind !== "directory")
+      if (
+        kind !== undefined &&
+        node.kind !== undefined &&
+        node.kind !== "directory"
+      )
         throw new ArtifactReaderFailure(
           "path",
           `Artifact prefix conflict: ${pathDiagnostic(path)}`,
@@ -90,9 +152,10 @@ export class ArtifactPathRegistry {
       if (child === undefined) {
         child = { kind: undefined, children: new Map() };
         node.children.set(part, child);
+        if (this.budget !== undefined) this.#nodeCount++;
       }
       node = child;
-      if (index === parts.length - 1) {
+      if (kind !== undefined && index === parts.length - 1) {
         if (node.kind !== undefined && node.kind !== kind)
           throw new ArtifactReaderFailure(
             "path",
@@ -105,7 +168,7 @@ export class ArtifactPathRegistry {
           );
       }
     }
-    node.kind = kind;
+    if (kind !== undefined) node.kind = kind;
   }
 }
 

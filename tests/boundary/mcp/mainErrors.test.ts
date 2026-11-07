@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { run, runEntrypoint } from "../../../src/main.js";
 import {
   MCP_CONNECTION_LOST,
+  MCP_TRANSPORT_ERROR,
   MCP_CONNECTION_START_FAILED,
   MCP_HTTP_LISTEN_FAILED,
   MCP_SHUTDOWN_FAILED,
@@ -21,6 +22,16 @@ type RuntimeDependencies = NonNullable<Parameters<typeof run>[0]>;
 
 const nextTurn = (): Promise<void> =>
   new Promise((resolve) => setImmediate(resolve));
+
+const wrappedListenerDisconnect = (code: "EPIPE" | "ECONNRESET") => {
+  const error = new StreamableHttpListenError(
+    Object.assign(new Error("SECRET listener stack"), { code }),
+    "serving",
+  );
+  // Consumers must use the owner's parsed facts, not re-read its native cause.
+  Object.defineProperty(error, "cause", { value: new Error("opaque cause") });
+  return error;
+};
 
 const dependencies = ({
   serve,
@@ -68,7 +79,28 @@ describe("MCP runtime errors", () => {
     expect(child.stderr).toBe("");
   });
 
-  it("reports connection loss without the transport cause", async () => {
+  it.each([
+    {
+      name: "a broken pipe",
+      cause: Object.assign(new Error("SECRET broken pipe"), { code: "EPIPE" }),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a wrapped HTTP broken pipe",
+      cause: wrappedListenerDisconnect("EPIPE"),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "a wrapped HTTP reset",
+      cause: wrappedListenerDisconnect("ECONNRESET"),
+      message: MCP_CONNECTION_LOST,
+    },
+    {
+      name: "an unknown connection state",
+      cause: new Error("SECRET transport stack"),
+      message: MCP_TRANSPORT_ERROR,
+    },
+  ])("reports $name without exposing its cause", async ({ cause, message }) => {
     const output: string[] = [];
     const shutdown: Array<() => void> = [];
     const shutdownUnregistrations: string[] = [];
@@ -93,8 +125,8 @@ describe("MCP runtime errors", () => {
         }),
       ),
     ).toBe(0);
-    options?.onerror?.(new Error("SECRET transport stack"));
-    expect(output).toEqual([`${MCP_CONNECTION_LOST}\n`]);
+    options?.onerror?.(cause);
+    expect(output).toEqual([`${message}\n`]);
     shutdown[0]?.();
     await nextTurn();
     expect(closeCalls).toBe(1);

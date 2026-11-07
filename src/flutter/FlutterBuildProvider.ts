@@ -1,3 +1,4 @@
+import { FLUTTER_PROVIDER_IDENTITY } from "./FlutterProviderIdentity.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
   AnalysisCleanupLease,
@@ -65,13 +66,6 @@ import {
 } from "./DartElf.js";
 import { readElfBuildIds } from "./ElfBuildId.js";
 import { privateWorkspaceFailure } from "../process/privateWorkspaceFailure.js";
-
-/** Stable identity for the Flutter build-identification provider. */
-export const FLUTTER_PROVIDER_IDENTITY = {
-  id: "flutter",
-  name: "Flutter build identification",
-  version: null,
-} as const;
 
 const APK_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
 const LIBRARY_MAX_BYTES = 256 * 1024 * 1024;
@@ -1029,7 +1023,7 @@ export class FlutterBuildProvider {
           limitations: [
             "The APK is read through an owned read-only snapshot; concurrent changes to the original cannot mix into this observation",
             "The snapshot hash identifies a Dart SDK build only against an external mapping dataset; REA performs no lookup",
-            "Release engine builds often carry no labeled Dart version string; absence is reported, not guessed",
+            "Unlabeled Dart version values are identified by their printable-string shape, not a symbol or other source identity; a matching unrelated string may be reported and a null value means no supported pattern was found",
             "Engine build IDs come only from ELF-declared PT_NOTE/SHT_NOTE records; conflicting or incompletely examined notes preserve candidates and report partial coverage",
             ...[...facts].flatMap(([abi, value]) => [
               ...value.libflutter.buildIdFailures.map(

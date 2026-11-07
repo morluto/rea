@@ -14,7 +14,7 @@ import {
 } from "../../../../src/domain/native/nativeInspection.js";
 import {
   NativeFixtureRunner,
-  nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { NATIVE_COMMAND_OUTPUT_BUDGET_BYTES } from "../../../../src/native/CommandRunner.js";
@@ -55,7 +55,7 @@ it.each(["absent", "valid", "uninterpretable"] as const)(
     ].join("\n");
     const runner = new NativeFixtureRunner({ lipo: stdout });
     const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-      nativeMachoTarget(path),
+      await nativeMachoTargetForFile(path),
     );
     const reader = new MachOSliceArtifactReader(path, {}, runner);
     try {
@@ -184,7 +184,7 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
     },
   });
   const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
-    nativeMachoTarget(path),
+    await nativeMachoTargetForFile(path),
   );
   const reader = new MachOSliceArtifactReader(path, {}, runner);
   try {
@@ -220,6 +220,75 @@ it("refuses retained raw-field expansion as capacity rather than a malformed lip
     ]);
   } finally {
     await reader.close();
+    await client.close();
+  }
+});
+
+it("does not publish file locations beyond the selected binary slice", async () => {
+  const path = join(
+    await createTestTempDirectory("rea-macho-location-"),
+    "fixture",
+  );
+  const segment = Buffer.alloc(72);
+  segment.writeUInt32LE(0x19, 0);
+  segment.writeUInt32LE(72, 4);
+  segment.write("__TEXT", 8);
+  segment.writeBigUInt64LE(0x100000000n, 24);
+  segment.writeBigUInt64LE(0x4000n, 32);
+  segment.writeBigUInt64LE(0x4000n, 48);
+  const main = Buffer.alloc(24);
+  main.writeUInt32LE(0x80000028, 0);
+  main.writeUInt32LE(24, 4);
+  main.writeBigUInt64LE(0x1000n, 8);
+  await writeFile(
+    path,
+    machoImage({ cpu: CPU.arm64, commands: [segment, main] }),
+  );
+  const runner = new NativeFixtureRunner({
+    lipo: "input file fixture is not a fat file\nNon-fat file: fixture is architecture: arm64\n",
+    "dyld_info:-exports": "offset symbol\n0x20 _outside\n",
+    nm: "_outside\n",
+  });
+  const client = new NativeMacOSProvider({}, runner, "darwin").createClient(
+    await nativeMachoTargetForFile(path),
+  );
+  try {
+    const result = await client.execute("inspect_macho", {});
+    if (!result.ok) throw result.error;
+    const inspected = inspectMachoSchema.parse(result.value.result);
+    expect(inspected.exports.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ name: "_outside", address: null }),
+      ]),
+    );
+    expect(inspected.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("no file-backed image base"),
+      ]),
+    );
+    expect(inspected.segments.items[0]).toMatchObject({
+      file_offset: 0,
+      file_size: 0x4000,
+    });
+    expect(inspected.entrypoints.exhaustive).toBe(false);
+    expect(inspected.entrypoints.limitations).toContain(
+      "An entrypoint lies outside the selected Mach-O slice.",
+    );
+    expect(inspected.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining("outside the selected slice"),
+      ]),
+    );
+    expect(result.value.locations).not.toContainEqual({
+      kind: "file-offset",
+      offset: 0x1000,
+    });
+    expect(result.value.locations).not.toContainEqual({
+      kind: "file-offset-range",
+      start: 0,
+      end: 0x4000,
+    });
+  } finally {
     await client.close();
   }
 });
