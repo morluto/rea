@@ -157,6 +157,83 @@ const expectHistoricalDiscovery = async (
   expect(session.evidenceById(historical.evidence_id)).toEqual(historical);
 };
 
+it.each(["complete", "partial"] as const)(
+  "retains %s discovery when a call facet is unavailable",
+  async (discoveryStatus) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("offline comparison must not launch a provider");
+    });
+    const { client } = await createApplicationMcpHarness({ session });
+    const original = functionDossierSchema.parse(
+      FUNCTION_COMPARISON_EXAMPLE.left.normalized_result,
+    );
+    const unavailable = {
+      ...original,
+      facet_availability: {
+        ...original.facet_availability,
+        callers: { available: false as const, reason: "Read unavailable." },
+      },
+    };
+    const coverage: RelationshipCoverage = {
+      status: "complete",
+      discovery: {
+        callers: { status: "complete" },
+        callees:
+          discoveryStatus === "complete"
+            ? { status: "complete" }
+            : { status: "partial", reason: "Some bodies unclassified." },
+      },
+    };
+    const left = sourceWithCoverage(
+      FUNCTION_COMPARISON_EXAMPLE.left,
+      "facet-left",
+      unavailable,
+      coverage,
+    );
+    const right = sourceWithCoverage(
+      FUNCTION_COMPARISON_EXAMPLE.right,
+      "facet-right",
+      original,
+      coverage,
+    );
+    const compared = await client.callTool({
+      name: "compare_functions",
+      arguments: { left, right },
+    });
+    expect(compared.isError).not.toBe(true);
+    const comparison = parseEvidence(compared.structuredContent);
+    expect(comparison.normalized_result).toMatchObject({
+      dimensions: expect.arrayContaining([
+        expect.objectContaining({
+          dimension: "calls",
+          status: "unknown",
+          discovery_status: discoveryStatus,
+          limitations: expect.arrayContaining([
+            "Left: callers: Read unavailable.",
+          ]),
+        }),
+      ]),
+    });
+    const changed = await client.callTool({
+      name: "find_changed_behavior",
+      arguments: { comparisons: [comparison] },
+    });
+    expect(changed.isError).not.toBe(true);
+    const findings = (
+      parseEvidence(changed.structuredContent).normalized_result as {
+        findings: {
+          items: Array<{ dimension: string; limitations: string[] }>;
+        };
+      }
+    ).findings.items;
+    const calls = findings.find((finding) => finding.dimension === "calls");
+    expect(calls).toBeDefined();
+    expect(calls?.limitations).not.toContain(
+      "Static call discovery coverage was not recorded in the comparison.",
+    );
+  },
+);
+
 it.each(["full", "compact"] as const)(
   "qualifies observed calls and verifies discovery independently (%s)",
   async (profile) => {

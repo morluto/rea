@@ -78,13 +78,18 @@ export const compareDimensions = (
     ];
     return limitations.length === 0
       ? result
-      : unresolvedDimension({
-          dimension: result.dimension,
-          links: context.links,
-          leftCount: null,
-          rightCount: null,
-          limitations: [...result.limitations, ...limitations],
-        });
+      : {
+          ...unresolvedDimension({
+            dimension: result.dimension,
+            links: context.links,
+            leftCount: null,
+            rightCount: null,
+            limitations: [...result.limitations, ...limitations],
+          }),
+          ...(result.discovery_status === undefined
+            ? {}
+            : { discovery_status: result.discovery_status }),
+        };
   });
 };
 
