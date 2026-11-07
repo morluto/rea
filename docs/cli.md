@@ -292,6 +292,18 @@ Plaintext packages retain header, table and member facts with verbatim member
 bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
 extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
 
+Inspect or extract a legacy Android backup without connecting to a device:
+
+```sh
+rea inspect-artifact backup.ab --json
+rea extract-artifact backup.ab --json
+```
+
+Unencrypted versions 1-5 support plain or zlib-compressed TAR payloads.
+Encrypted archives retain unknown member coverage and refuse extraction.
+See [Android backup archives](android-backup.md) for selection, provenance
+and resource bounds.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh

@@ -1,4 +1,5 @@
 import { artifactFormatDescriptor } from "../artifactFormats.js";
+import { hasAndroidBackupMagic } from "../../domain/androidBackup.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
 import { hasUnityFsHeader } from "../../domain/unityfsFormat.js";
@@ -301,6 +302,7 @@ export const rootOccurrenceFor = (
   encrypted:
     (metadata.formatMetadata?.kind === "godot-pck" ||
       metadata.formatMetadata?.kind === "unityfs" ||
+      metadata.formatMetadata?.kind === "android-backup" ||
       metadata.formatMetadata?.kind === "wxapkg") &&
     metadata.formatMetadata.directory_status === "encrypted",
   hash_status: "verified",
@@ -618,6 +620,7 @@ export const classifyArtifactBytes = (
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;
   if (hasUf2Block(prefix)) return "uf2";
+  if (hasAndroidBackupMagic(prefix)) return "android-backup";
   if (suffix !== undefined && isDfuSeFile(prefix, suffix, fileSize))
     return "dfuse";
   if (recognizeEspImage(prefix, fileSize) === "esp-image") return "esp-image";

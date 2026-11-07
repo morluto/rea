@@ -200,6 +200,7 @@ export interface ArtifactReader {
     | "godot-pck"
     | "unityfs"
     | "wxapkg"
+    | "android-backup"
     | "uimage"
     | "pyinstaller"
     | "dotnet-bundle"

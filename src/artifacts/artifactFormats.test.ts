@@ -31,6 +31,7 @@ type FormatsWithReaders =
   | "godot-pck"
   | "unityfs"
   | "wxapkg"
+  | "android-backup"
   | "uimage"
   | "mach-o-universal"
   | "directory"

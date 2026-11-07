@@ -74,6 +74,7 @@ export const liveBinaryTargetSummaryVariants = [
       "godot-pck",
       "unityfs",
       "wxapkg",
+      "android-backup",
       "uimage",
       "dmg",
       "pkg",
