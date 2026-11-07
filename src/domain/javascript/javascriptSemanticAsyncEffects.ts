@@ -12,6 +12,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -161,34 +162,89 @@ export const rejectsEventListener = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   if (listener === undefined) return true;
-  if (t.isSpreadElement(listener)) return false;
-  const value = unwrapJavaScriptExpression(listener).node;
-  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+  const pending: {
+    readonly node: t.Node | undefined;
+    readonly depth: number;
+  }[] = [{ node: listener, depth: 0 }];
+  for (
+    let current = pending.pop();
+    current !== undefined;
+    current = pending.pop()
+  ) {
+    if (current.node === undefined) continue;
+    if (t.isSpreadElement(current.node)) return false;
+    const unwrapped = unwrapJavaScriptExpression(current.node);
+    const depth = current.depth + unwrapped.depth;
+    if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+      state.valueResourceLimits.add("expression-depth");
+      return false;
+    }
+    const value = unwrapped.node;
+    if (t.isConditionalExpression(value)) {
+      pending.push(
+        { node: value.consequent, depth: depth + 1 },
+        { node: value.alternate, depth: depth + 1 },
+      );
+      continue;
+    }
+    if (t.isLogicalExpression(value)) {
+      pending.push(
+        { node: value.left, depth: depth + 1 },
+        { node: value.right, depth: depth + 1 },
+      );
+      continue;
+    }
+    if (t.isSequenceExpression(value)) {
+      pending.push({ node: value.expressions.at(-1), depth: depth + 1 });
+      continue;
+    }
+    if (t.isAssignmentExpression(value)) {
+      if (value.operator === "=") {
+        pending.push({ node: value.right, depth: depth + 1 });
+        continue;
+      }
+      if (["||=", "&&=", "??="].includes(value.operator)) {
+        pending.push(
+          { node: value.left, depth: depth + 1 },
+          { node: value.right, depth: depth + 1 },
+        );
+        continue;
+      }
+      continue;
+    }
+    if (
+      t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value)
+    )
+      return false;
+    // A numeric literal is always a number, including the non-finite value Babel
+    // stores for `1e999`, which the exact-value reader refuses to price.
+    if (t.isNumericLiteral(value)) continue;
+    if (
+      t.isIdentifier(value) &&
+      ["undefined", "NaN", "Infinity"].includes(value.name) &&
+      isUnmodifiedGlobalReference(value, state, value.name) &&
+      !semanticOpaqueNameMayHaveChanged(value, state)
+    )
+      continue;
+    // Every unary, non-pipeline binary or update operator yields a primitive,
+    // and a primitive is never callable.
+    if (
+      t.isUnaryExpression(value) ||
+      (t.isBinaryExpression(value) && value.operator !== "|>") ||
+      t.isUpdateExpression(value) ||
+      readExactJavaScriptLiteral(value).found ||
+      t.isTemplateLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrayExpression(value) ||
+      t.isObjectExpression(value)
+    )
+      continue;
     return false;
-  if (t.isClassExpression(value)) return false;
-  // A numeric literal is always a number, including the non-finite value Babel
-  // stores for `1e999`, which the exact-value reader refuses to price.
-  if (t.isNumericLiteral(value)) return true;
-  if (
-    t.isIdentifier(value) &&
-    ["undefined", "NaN", "Infinity"].includes(value.name) &&
-    isUnmodifiedGlobalReference(value, state, value.name) &&
-    !semanticOpaqueNameMayHaveChanged(value, state)
-  )
-    return true;
-  // Every unary, binary or update operator yields a primitive, and a primitive
-  // is never callable.
-  return (
-    t.isUnaryExpression(value) ||
-    t.isBinaryExpression(value) ||
-    t.isUpdateExpression(value) ||
-    readExactJavaScriptLiteral(value).found ||
-    t.isTemplateLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isArrayExpression(value) ||
-    t.isObjectExpression(value)
-  );
+  }
+  return true;
 };
 
 const collectEvent = (
