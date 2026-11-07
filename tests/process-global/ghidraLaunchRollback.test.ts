@@ -375,3 +375,19 @@ it.skipIf(process.platform === "win32")(
     expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(false);
   },
 );
+
+it.skipIf(process.platform === "win32")(
+  "keeps the log coordinates of a started launch whose rollback succeeded",
+  async () => {
+    denyCleanup = false;
+    const { launcher, session } = await fixture(async () => incomplete);
+    const result = await launcher.launch(session);
+    if (result.ok || !(result.error instanceof GhidraLaunchError))
+      throw new Error("Expected launch failure");
+    expect(result.error.partialLaunch).toBeUndefined();
+    expect(result.error.logPaths).toEqual({
+      ghidraLogPath: join(session.runtimeRoot, "ghidra.log"),
+      scriptLogPath: join(session.runtimeRoot, "script.log"),
+    });
+  },
+);

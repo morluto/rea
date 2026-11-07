@@ -106,6 +106,12 @@ export interface GhidraLauncher {
   ): Promise<Result<GhidraLaunch, GhidraLaunchError | AnalysisCancelledError>>;
 }
 
+/** Private Ghidra log files a failed launch may already have produced. */
+export type GhidraLogPaths = Pick<
+  GhidraLaunch,
+  "ghidraLogPath" | "scriptLogPath"
+>;
+
 /** A rollback attempt failed without releasing its process owner. */
 export type GhidraLaunchRollbackFailure =
   | { readonly kind: "incomplete"; readonly result: ProcessCleanupFailure }
@@ -117,6 +123,8 @@ export class GhidraLaunchError extends Error {
   readonly #capturedOutput: AnalysisCapturedOutput | undefined;
   readonly launchSupport: readonly GhidraLaunchSupportDiagnostic[];
   readonly rollbackFailure: GhidraLaunchRollbackFailure | undefined;
+  /** Log coordinates of a started launch, kept even when its rollback succeeded. */
+  readonly logPaths: GhidraLogPaths | undefined;
   readonly cleanupFailure: AnalysisError | undefined;
   /** Known producer outcome, independent of a signal that changes during finalization. */
   readonly primaryFailure: AnalysisError | undefined;
@@ -125,6 +133,7 @@ export class GhidraLaunchError extends Error {
     message: string,
     options?: ErrorOptions & {
       readonly partialLaunch?: GhidraLaunch;
+      readonly logPaths?: GhidraLogPaths;
       readonly rollbackFailure?: GhidraLaunchRollbackFailure;
       readonly cleanupFailure?: AnalysisError;
       readonly primaryFailure?: AnalysisError;
@@ -134,6 +143,7 @@ export class GhidraLaunchError extends Error {
   ) {
     const {
       partialLaunch,
+      logPaths,
       capturedOutput,
       launchSupport,
       rollbackFailure,
@@ -144,6 +154,7 @@ export class GhidraLaunchError extends Error {
     super(message, errorOptions);
     this.name = "GhidraLaunchError";
     this.#partialLaunch = partialLaunch;
+    this.logPaths = logPaths;
     this.rollbackFailure = rollbackFailure;
     this.primaryFailure =
       primaryFailure ??
@@ -637,6 +648,14 @@ export class GhidraHeadlessLauncher implements GhidraLauncher {
             ? {}
             : { primaryFailure: cancellation }),
           launchSupport,
+          ...(started === undefined
+            ? {}
+            : {
+                logPaths: {
+                  ghidraLogPath: paths.ghidraLogPath,
+                  scriptLogPath: paths.scriptLogPath,
+                },
+              }),
           ...(capturedOutput === undefined ? {} : { capturedOutput }),
         },
       );

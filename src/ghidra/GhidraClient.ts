@@ -61,7 +61,11 @@ import {
   GHIDRA_PROCESS_DIAGNOSTIC_BYTES,
   type GhidraDiagnosticsScope,
 } from "./GhidraDiagnostics.js";
-import { GhidraLaunchError, type GhidraLaunch } from "./GhidraLauncher.js";
+import {
+  GhidraLaunchError,
+  type GhidraLaunch,
+  type GhidraLogPaths,
+} from "./GhidraLauncher.js";
 import { GhidraResponseRouter } from "./GhidraResponseRouter.js";
 import { GhidraRequestQueue } from "./GhidraRequestQueue.js";
 import {
@@ -174,6 +178,8 @@ export class GhidraClient {
   #outputDrainIncomplete = false;
   #lastDiagnostics: Readonly<Record<string, JsonValue>> = {};
   #diagnosticExport: GhidraDiagnosticExport | undefined;
+  /** Logs of a launch whose rollback succeeded; the export can still copy them. */
+  #launchLogPaths: GhidraLogPaths | undefined;
   /** The finalized export; kept until close completes so a retry reports it. */
   #exportOutcome:
     | { readonly path: string; readonly failure?: unknown }
@@ -932,6 +938,7 @@ export class GhidraClient {
       return err(this.#failure("protocol", "Ghidra client is already started"));
     this.#lastDiagnostics = {};
     this.#exportOutcome = undefined;
+    this.#launchLogPaths = undefined;
     this.#processSnapshot = undefined;
     this.#startupOutputCheckpoint = undefined;
     this.#activeOutputCheckpoint = undefined;
@@ -1098,6 +1105,8 @@ export class GhidraClient {
         err(this.#failure("start", "Ghidra launcher failed", cause)),
       );
     if (!launched.ok) {
+      if (launched.error instanceof GhidraLaunchError)
+        this.#launchLogPaths = launched.error.logPaths;
       const partialLaunch =
         launched.error instanceof GhidraLaunchError
           ? launched.error.partialLaunch
@@ -1439,7 +1448,7 @@ export class GhidraClient {
         let failure: unknown;
         try {
           await exported.finish(
-            this.#launch,
+            this.#launch ?? this.#launchLogPaths,
             this.#process?.observedOutputClose() === true &&
               this.#processSnapshot?.outputIncomplete !== true,
           );
@@ -1455,6 +1464,7 @@ export class GhidraClient {
       this.#lastDiagnostics = this.#diagnostics();
       this.#process = undefined;
       this.#launch = undefined;
+      this.#launchLogPaths = undefined;
       await this.#checkpoint?.close();
       await this.#fileResources.retryCleanup();
       try {
