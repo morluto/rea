@@ -51,6 +51,7 @@ interface OwnedConnection {
   settle: () => void;
   reusableUrl: string | undefined;
   evicted: boolean;
+  closingTransport: boolean;
   statusUnsubscribe: (() => void) | undefined;
   cleanup: (() => Promise<void>) | undefined;
   cleanupAttempted: boolean;
@@ -309,6 +310,7 @@ export class CdpTargetSessionOwner {
       settle,
       reusableUrl: undefined,
       evicted: false,
+      closingTransport: false,
       statusUnsubscribe: undefined,
       cleanup: undefined,
       cleanupAttempted: false,
@@ -358,12 +360,16 @@ export class CdpTargetSessionOwner {
     return await this.#closePromise;
   }
 
-  /** Retry retained failures without touching concurrently active sessions. */
+  /** Retry retained failures, including failed shared-socket closes with active peers. */
   async retryPending(): Promise<void> {
     const failures: CdpTransportCleanupFailure[] = [];
     for (const record of this.#connections.values()) {
-      if (record.active || (record.failure === undefined && !record.evicted))
-        continue;
+      const needsRelease =
+        !record.cleanupLease.released &&
+        (record.failure !== undefined ||
+          record.closingTransport ||
+          (!record.active && record.evicted));
+      if (!needsRelease) continue;
       try {
         await this.#releaseTransportRecord(record);
       } catch (cause: unknown) {
@@ -400,10 +406,12 @@ export class CdpTargetSessionOwner {
     record: OwnedConnection,
     primaryCleanupCause?: unknown,
   ): Promise<void> {
+    record.closingTransport = true;
     record.statusUnsubscribe?.();
     record.statusUnsubscribe = undefined;
     try {
       await record.cleanupLease.release();
+      record.closingTransport = false;
       record.failure = undefined;
       if (record.activeLeases === 0)
         this.#connections.delete(record.connection);

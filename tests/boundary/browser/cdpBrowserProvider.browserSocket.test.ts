@@ -665,3 +665,89 @@ describe("CdpTargetSessionOwner: callback failures and idle protocol eviction", 
     }
   });
 });
+
+it("blocks new admissions while forced shared-socket cleanup fails with an active peer, then recovers cleanly", async () => {
+  const browser = await startFakeCdpBrowser({
+    commandError: ({ method }) =>
+      method === "Target.detachFromTarget"
+        ? { code: -32_000, message: "Detach rejected" }
+        : undefined,
+  });
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const originalClose = CdpConnection.prototype.close;
+  let denyClose = false;
+  const closeSpy = vi
+    .spyOn(CdpConnection.prototype, "close")
+    .mockImplementation(function (this: CdpConnection) {
+      return denyClose
+        ? Promise.reject(new Error("controlled shared socket close failure"))
+        : originalClose.call(this);
+    });
+  let armed!: () => void;
+  const observationArmed = new Promise<void>((resolve) => {
+    armed = resolve;
+  });
+  try {
+    const observing = provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 15_000,
+      }),
+      {
+        progress: {
+          report: async (update) => {
+            if (update.completed === 1) armed();
+          },
+        },
+      },
+    );
+    await observationArmed;
+    expect(browser.openedConnectionCount()).toBe(1);
+
+    denyClose = true;
+    const failedInspect = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (failedInspect.ok)
+      throw new Error("Expected failed forced shared-socket close");
+    expect(failedInspect.error.cleanupIncomplete).toBe(true);
+    expect(browser.openedConnectionCount()).toBe(1);
+
+    // Peer observation is still active; Call C must NOT bypass the unresolved close failure.
+    const blocked = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+      }),
+    );
+    if (blocked.ok)
+      throw new Error("Expected admission blocked on failed cleanup");
+    expect(blocked.error.cleanupIncomplete).toBe(true);
+    expect(browser.openedConnectionCount()).toBe(1);
+
+    // Allow close retry to succeed while peer observation is still unwinding.
+    denyClose = false;
+    const recovered = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+      }),
+    );
+    if (!recovered.ok) throw recovered.error;
+    expect(failedInspect.error.cleanupIncomplete).toBe(false);
+    expect(blocked.error.cleanupIncomplete).toBe(false);
+    expect(browser.openedConnectionCount()).toBe(2);
+
+    const session = await observing;
+    if (!session.ok) throw session.error;
+    expect(session.value.window.end_reason).toBe("transport_disconnected");
+  } finally {
+    closeSpy.mockRestore();
+    await provider.close();
+  }
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
+});
