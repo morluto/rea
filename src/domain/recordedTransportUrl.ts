@@ -106,6 +106,14 @@ export const parseRecordedTransportUrl = (
   };
 };
 
+/** HTTP origin-form targets are paths even when they begin with two slashes. */
+export const parseRecordedHttpRequestTarget = (
+  value: string,
+): RecordedTransportUrl =>
+  value.startsWith("/")
+    ? { origin: null, path: null, credentials: null }
+    : parseRecordedTransportUrl(value);
+
 /** WHATWG form decoding; native fallback preserves replacement behavior on malformed escapes/UTF-8. */
 const formComponent = (raw: string): string => {
   if (!/[%+\uD800-\uDFFF]/u.test(raw)) return raw;

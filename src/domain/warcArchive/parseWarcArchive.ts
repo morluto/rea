@@ -1,7 +1,10 @@
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { ok, type Result } from "../result.js";
-import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
+import {
+  parseRecordedHttpRequestTarget,
+  parseRecordedTransportUrl,
+} from "../recordedTransportUrl.js";
 import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
   WARC_ARCHIVE_HEADER_BLOCK_BYTES,
@@ -101,8 +104,12 @@ interface RedactionState {
 const withoutUrlUserInfo = (
   value: string,
   redaction: RedactionState,
+  role: "url" | "request-target" = "url",
 ): string => {
-  const { credentials } = parseRecordedTransportUrl(value);
+  const { credentials } =
+    role === "request-target"
+      ? parseRecordedHttpRequestTarget(value)
+      : parseRecordedTransportUrl(value);
   if (credentials === "ambiguous") {
     redaction.ambiguousUrl = true;
     return AMBIGUOUS_URL;
@@ -517,7 +524,9 @@ const readHttpMessage = (
   );
   const target = "request_target" in parsed ? parsed.request_target : null;
   const safeTarget =
-    target === null ? null : withoutUrlUserInfo(target, redaction);
+    target === null
+      ? null
+      : withoutUrlUserInfo(target, redaction, "request-target");
   const targetOffset =
     target === null
       ? -1

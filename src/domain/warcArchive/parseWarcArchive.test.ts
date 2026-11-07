@@ -623,6 +623,19 @@ describe("embedded HTTP resource and URL boundaries", () => {
     expect(archive.source_coverage.status).toBe("complete-within-scope");
   });
 
+  it("preserves origin-form request paths while redacting URL references", () => {
+    const path = "//caller:keep@path/a?q=1";
+    const archive = parsed(
+      record("request", [], `GET ${path} HTTP/1.1\r\nReferer: ${path}\r\n\r\n`),
+    );
+    expect(archive.records[0]?.http?.request_target).toBe(path);
+    expect(archive.records[0]?.http?.start_line).toBe(`GET ${path} HTTP/1.1`);
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Referer", value: "//[redacted]@path/a?q=1" },
+    ]);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
   it("redacts URL userinfo without treating a backslash in the path as authority", () => {
     const url =
       "https://fixture-user:fixture-pass@example.test\\@other.test/path";
