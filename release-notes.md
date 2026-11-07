@@ -346,6 +346,7 @@
 * **cli:** reject non-decimal byte-entropy window options ([#8919](https://github.com/morluto/rea/issues/8919)) ([f76be69](https://github.com/morluto/rea/commit/f76be69428078344673e2e1aa2a8355337587c65))
 * **cli:** reject non-decimal desktop application limits ([#9061](https://github.com/morluto/rea/issues/9061)) ([a74ce45](https://github.com/morluto/rea/commit/a74ce4512c9cdb6a3dd33c1cf8ddcae41be2e0f6))
 * **cli:** reject non-decimal guidance search limits ([#9165](https://github.com/morluto/rea/issues/9165)) ([9cdcdf3](https://github.com/morluto/rea/commit/9cdcdf3dff3118f13f667f04ffab9e3eefe7c3a7))
+* **cli:** reject non-decimal integer tokens on every numeric option ([#9178](https://github.com/morluto/rea/issues/9178)) ([99db80a](https://github.com/morluto/rea/commit/99db80a13e369885e7de99417475c25380446081))
 * **cli:** reject non-decimal native UI and command deadline options ([#8920](https://github.com/morluto/rea/issues/8920)) ([f1212b9](https://github.com/morluto/rea/commit/f1212b9e4e5d01a26131c6001193d9858b8b6bbc))
 * **cli:** reject non-decimal pyc and BEAM limit options ([#9060](https://github.com/morluto/rea/issues/9060)) ([6430f39](https://github.com/morluto/rea/commit/6430f395a8c4d3784bc03d9cf050a70e9e9e318a))
 * **cli:** reject non-decimal web capture deadlines ([#9167](https://github.com/morluto/rea/issues/9167)) ([d1103be](https://github.com/morluto/rea/commit/d1103beb8dc17bb6540ba211b333fa97bc0907c8))
