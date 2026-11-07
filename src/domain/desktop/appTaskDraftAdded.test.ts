@@ -550,10 +550,20 @@ describe("draftTaskFiles for decimals", () => {
     const after = cell("437.8");
     const file = xmlDraft(before, after);
 
-    expect(
-      passing(FILE, xml(cell("437.<span>8</span>")), file.suggested),
-    ).toEqual([true]);
-    expect(passing(FILE, xml(cell("437.89")), file.suggested)).toEqual([false]);
+    const passes = (inner: string) =>
+      passing(FILE, xml(cell(inner)), file.suggested);
+    expect(file.suggested).toMatchObject([
+      { kind: "value_equals", value: 437.8, tolerance: 0.001 },
+    ]);
+    for (const same of [
+      "437.8",
+      "437.80",
+      "437.80000000000001",
+      "437.<span>8</span>",
+    ])
+      expect(passes(same)).toEqual([true]);
+    expect(passes("437.89")).toEqual([false]);
+    expect(passes("four hundred")).toEqual([false]);
   });
 
   it("checks a decimal so it fails at a seed whose integer is within the tolerance of it", () => {

@@ -2,7 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
 import { isRenumberedKey, isStamp } from "./appTaskDraftNoise.js";
-import { valueEqualsCheck } from "./appTaskDraftScalars.js";
+import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import { isIdentifyingAttribute, rankAttributes } from "./attributeRank.js";
 import {
   elementText,
@@ -64,6 +64,24 @@ const guardAt = (
   const before = resolvePointer(ends.baseline, pointer);
   const after = resolvePointer(ends.final, pointer);
   if (before === undefined || after === undefined) return undefined;
+  if (
+    check.kind === "value_equals" &&
+    "tolerance" in check &&
+    isXmlElement(before) &&
+    isXmlElement(after)
+  ) {
+    const value = elementText(before);
+    if (
+      value.trim() === "" ||
+      value !== elementText(after) ||
+      value.length > context.chars ||
+      isStamp(value)
+    )
+      return undefined;
+    return decimalOf(value) === undefined
+      ? { kind: "text_equals", file, pointer, value }
+      : valueEqualsCheck(file, pointer, value);
+  }
   if (check.kind === "text_equals") {
     if (!isXmlElement(before) || !isXmlElement(after)) return undefined;
     const value = elementText(before);
@@ -207,9 +225,13 @@ const guardsFor = (context: GuardContext, check: Suggestion): Suggestion[] => {
     for (const sibling of siblings.slice(0, MAX_SIBLINGS_READ)) {
       if (guards.length === MAX_GUARDS_PER_CHECK) break;
       const field =
-        check.kind === "value_equals"
-          ? guardField(sibling, varies, step.rest)
-          : step.rest;
+        check.kind === "value_equals" &&
+        "tolerance" in check &&
+        step.rest.length === 0
+          ? []
+          : check.kind === "value_equals"
+            ? guardField(sibling, varies, step.rest)
+            : step.rest;
       const pointer = [step.list, sibling.member, ...field].join("/");
       const guard = guardAt(context, check, pointer);
       if (guard !== undefined) guards.push(guard);
