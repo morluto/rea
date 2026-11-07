@@ -14,7 +14,10 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
+import {
+  desktopApplicationCaptureSchema,
+  desktopCaptureEventSchema,
+} from "../../domain/desktop/desktopCapture.js";
 import type { SessionRequest } from "../../desktop/DesktopApplicationSession.js";
 import { OwnedFileHandle } from "../../filesystem/OwnedFileHandle.js";
 import {
@@ -382,6 +385,76 @@ describe.skipIf(process.platform !== "linux")(
           kind: "modified",
           after: expect.objectContaining({ sha256: sha256("count=2\n") }),
         }),
+      ]);
+    }, 30_000);
+  },
+);
+
+describe.skipIf(process.platform !== "linux")(
+  "captureDesktopApplication acknowledgements on Linux",
+  () => {
+    it("acknowledges each checkpoint once it is taken, with its counts, and a refused name", async () => {
+      const { root, home, environment } = await fixture();
+      const output = join(root, "out");
+      const statePath = join(home, ".config/fakeapp/state.ini");
+      const requests: SessionRequest[] = [
+        { kind: "checkpoint", name: "seed" },
+        { kind: "checkpoint", name: "seed" },
+        { kind: "stop" },
+      ];
+      const events: unknown[] = [];
+      const windowOpen = () =>
+        events.some(
+          (event) =>
+            desktopCaptureEventSchema.parse(event).kind === "window_open",
+        );
+      const nextRequest = (): SessionRequest | undefined =>
+        readFileSyncSafe(statePath) === "count=1\n" && windowOpen()
+          ? requests.shift()
+          : undefined;
+
+      const evidence = await captureDesktopApplication(request(output), {
+        ...host(environment, nextRequest),
+        report: async (_message, event) => {
+          if (event !== undefined) events.push(event);
+        },
+      });
+
+      if ("error" in evidence) throw new Error(JSON.stringify(evidence));
+      const parsed = events.map((event) =>
+        desktopCaptureEventSchema.parse(event),
+      );
+      expect(parsed.map((event) => event.kind)).toEqual([
+        "checkpoint",
+        "window_open",
+        "checkpoint",
+        "checkpoint_refused",
+        "checkpoint",
+        "checkpoint",
+      ]);
+      const capture = desktopApplicationCaptureSchema.parse(
+        evidence.normalized_result,
+      );
+      const seed = capture.state.checkpoints[1];
+      // The acknowledgement comes after the checkpoint is taken and carries its counts.
+      expect(parsed[2]).toEqual({
+        kind: "checkpoint",
+        name: "seed",
+        trigger: "request",
+        at_ms: seed?.at_ms,
+        entries: seed?.entries,
+        changes: seed?.changes.length,
+        retained_files: 1,
+        retained_bytes: 8,
+      });
+      expect(parsed[3]).toEqual({
+        kind: "checkpoint_refused",
+        name: "seed",
+        reason: "A checkpoint named seed was already recorded.",
+      });
+      expect(parsed.slice(4)).toMatchObject([
+        { name: "stop", trigger: "stop" },
+        { name: "exit", trigger: "exit" },
       ]);
     }, 30_000);
   },

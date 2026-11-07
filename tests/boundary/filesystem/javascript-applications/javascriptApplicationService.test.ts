@@ -555,3 +555,55 @@ describe("JavaScript application cleanup diagnostics", () => {
     });
   });
 });
+
+describe("JavaScript application symbolic coverage", () => {
+  it("analyzes sources spreading recursive call results while preserving coverage limits and independent endpoints", async () => {
+    const root = await createTestTempDirectory("rea-js-recursive-spread-");
+    await writeFile(
+      join(root, "self.js"),
+      'function f(o) { const stay = f(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-self");\n',
+    );
+    await writeFile(
+      join(root, "mutual.js"),
+      'function a(o) { const stay = b(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfunction b(o) { const stay = a(o); return { ...stay, c: stay.sc.startsWith("k") }; }\nfetch("/kept-mutual");\n',
+    );
+    const result = await analyzeJavaScriptApplication({
+      input_path: root,
+      format: "directory",
+      source_paths: ["self.js", "mutual.js"],
+    });
+    if (!result.ok) throw result.error;
+    const normalized = javascriptApplicationAnalysisResultSchema.parse(
+      result.value.normalized_result,
+    );
+    expect(normalized.statistics).toMatchObject({
+      parsed_javascript_files: 2,
+      parse_failures: 0,
+    });
+    const endpoints = normalized.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) =>
+        observations.map(({ properties }) => properties.value),
+      )
+      .sort();
+    expect(endpoints).toEqual(["/kept-mutual", "/kept-self"]);
+
+    const assetObservations = normalized.graph.nodes
+      .filter(({ kind }) => kind === "javascript-asset")
+      .flatMap(({ observations }) => observations);
+    for (const path of ["self.js", "mutual.js"]) {
+      const observation = assetObservations.find(
+        ({ properties }) => properties.path === path,
+      );
+      expect(observation?.properties).toMatchObject({
+        parse_status: "partial",
+        analysis_coverage: {
+          examination: {
+            status: "limited",
+            electron_call_paths_limited: true,
+          },
+        },
+      });
+    }
+  });
+});

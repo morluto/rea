@@ -1556,6 +1556,7 @@ it("finds retained debugger IDs through composed failures without looping on cyc
 
 it("names every retained debugger in its remediation", () => {
   const remediation = retainedDebuggerRemediation([4242, 4243]);
+  expect(remediation).toMatch(/no later REA command can retry this cleanup/iu);
   expect(remediation).toMatch(/\b4242\b/u);
   expect(remediation).toMatch(/\b4243\b/u);
 });

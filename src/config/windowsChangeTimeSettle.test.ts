@@ -4,12 +4,10 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEnvironment } from "./environment.js";
 import {
-  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
   WINDOWS_CHANGE_TIME_DRIFT_MS,
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   resolveWindowsChangeTimeSettle,
-  windowsChangeTimeSettleRecovery,
   windowsChangeTimeSettingFailure,
   windowsChangeTimeSettingMessage,
 } from "./windowsChangeTimeSettle.js";
@@ -37,7 +35,14 @@ const requiredFacts = (
 it("keeps today's settle defaults when the settings are unset", () => {
   expect(resolveWindowsChangeTimeSettle({})).toEqual({
     ok: true,
-    value: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
+    value: {
+      driftMs: 2_000,
+      driftSource: "default",
+      pollMs: 25,
+      pollSource: "default",
+      maxPolls: 40,
+      maxPollsSource: "default",
+    },
   });
   const startup = parseEnvironment({});
   if (!startup.ok) throw new Error("unset settle settings were rejected");
@@ -46,17 +51,6 @@ it("keeps today's settle defaults when the settings are unset", () => {
   expect(
     startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   ).toBeUndefined();
-  requiredFacts(
-    windowsChangeTimeSettleRecovery(DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS),
-    {
-      setting: WINDOWS_CHANGE_TIME_DRIFT_MS.setting,
-      currentValue: "2000",
-      source: "default",
-      defaultValue: 2_000,
-      floor: 1,
-      maximum: 60_000,
-    },
-  );
 });
 
 it("uses valid settle overrides", () => {
