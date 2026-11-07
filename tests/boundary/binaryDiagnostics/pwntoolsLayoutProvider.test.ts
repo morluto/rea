@@ -677,6 +677,11 @@ it.runIf(unsupportedHost)(
     const projected = projectAnalysisError(result.error);
     expect(projected.message).toContain("Linux x64");
     expect(projected.remediation.action).toContain("Linux x64");
+    // The refusal names this host, not the target, which was never read.
+    expect(projected.message).toContain(
+      `this host is ${process.platform}/${process.arch}`,
+    );
+    expect(projected.message).toContain("The selected target was not read.");
   },
 );
 

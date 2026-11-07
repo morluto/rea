@@ -5,7 +5,8 @@ import {
 import { ghidraFunctionDossier } from "../../domain/ghidraValues.fixture.js";
 import { functionDossierSchema } from "../../domain/native/functionDossier.js";
 import { jsonValueSchema } from "../../domain/jsonValue.js";
-import { ok } from "../../domain/result.js";
+import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { err, ok } from "../../domain/result.js";
 
 /** Simulated provider seam for value traces; not a real decompiler observation. */
 export const valueTraceSubject = {
@@ -215,3 +216,42 @@ export const valueTraceDiamond = (options: GraphOptions = {}) =>
     },
     options,
   );
+
+/**
+ * The diamond's reads with max_depth 1 when nothing fails. 0x2000's call to
+ * 0x3000 is resolved but not followed, because 0x3000 is already queued.
+ */
+export const VALUE_TRACE_DIAMOND_READS = [
+  "analyze_function:0x1000",
+  "resolve_native_call_targets:0x1004",
+  "resolve_native_call_targets:0x1008",
+  "analyze_function:0x2000",
+  "resolve_native_call_targets:0x2004",
+  "analyze_function:0x3000",
+] as const;
+export type ValueTraceDiamondRead = (typeof VALUE_TRACE_DIAMOND_READS)[number];
+
+/** Fail each listed `operation:selector` trace read and record every trace read. */
+export const failingValueTraceReads = (
+  port: AnalysisOperationPort,
+  failures: Partial<Record<ValueTraceDiamondRead, AnalysisError>>,
+) => {
+  const reads: string[] = [];
+  const failed = new Map(Object.entries(failures));
+  const failing: AnalysisOperationPort = {
+    execute: async (operation, parameters, options) => {
+      if (
+        operation !== "analyze_function" &&
+        operation !== "resolve_native_call_targets"
+      )
+        return ok(createAnalysisExecution(null, valueTraceProvider));
+      const read = `${operation}:${String(parameters.procedure ?? parameters.address)}`;
+      reads.push(read);
+      const failure = failed.get(read);
+      return failure === undefined
+        ? port.execute(operation, parameters, options)
+        : err(failure);
+    },
+  };
+  return { port: failing, reads };
+};
