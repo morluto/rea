@@ -550,11 +550,9 @@ const drawingLayout = (
     elementsAlong(viewOf(pointer), pointer).some(({ name }) =>
       DRAWING.test(name.split(":").at(-1) ?? name),
     );
-  const elsewhere = [
-    ...change.added,
-    ...change.changed,
-    ...change.removed,
-  ].some(
+  // A model element added or removed can resize the drawing. A rename or
+  // other edit outside it does not make a deliberate resize into layout.
+  const elsewhere = [...change.added, ...change.removed].some(
     (pointer) =>
       noise(pointer) === undefined &&
       !ENTRY_META.test(pointer) &&

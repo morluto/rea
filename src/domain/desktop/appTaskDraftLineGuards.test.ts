@@ -215,6 +215,33 @@ describe("draftTaskFiles for the app's log beside its journal", () => {
       byFile.get(".config/app/state.xml")?.notes.map(({ code }) => code),
     ).toEqual(["read_as_text"]);
   });
+
+  it("drafts a log the caller selected, and does not call a quoted bracket an entity subset", () => {
+    const lines = (...text: string[]) => textView(text.join("\n"));
+    const selected = {
+      ...statePath(
+        "application_state",
+        "text",
+        lines("opened"),
+        lines("opened", "saved"),
+      ),
+      reasons: ["selected_path" as const],
+    };
+    const logged = draftOf({ ".config/app/notes.log": selected });
+    const noted = draftOf({
+      "Documents/state.txt": statePath(
+        "document",
+        "text",
+        lines('<!DOCTYPE state SYSTEM "state[1].dtd">', "<state/>"),
+        lines('<!DOCTYPE state SYSTEM "state[1].dtd">', "<state>saved</state>"),
+      ),
+    });
+
+    expect(logged[0]?.suggested).not.toEqual([]);
+    expect(
+      noted[0]?.notes.some((note) => note.message.includes("internal subset")),
+    ).toBe(false);
+  });
 });
 
 describe("draftTaskFiles guards of a line-keyed catalogue, as Poedit saves one", () => {

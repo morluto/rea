@@ -180,6 +180,12 @@ describe("detectStateFormat with a DOCTYPE", () => {
         '<!DOCTYPE kmpdoc>\n<kmpdoc version="4"/>\n',
       ),
     ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/state.txt",
+        '<!DOCTYPE state SYSTEM "state[1].dtd"><state/>',
+      ),
+    ).toBe("xml");
     // A DOCTYPE that can declare entities, or text that is not well formed, stays text.
     expect(
       detectStateFormat(

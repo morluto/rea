@@ -44,22 +44,38 @@ def _selector(token: str):
 _ISO_STAMP = re.compile(
     r"^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(?::\d{2}(?:[.,]\d+)?)?(?:Z|[+-]\d{2}:?\d{2})?$"
 )
+_ASCTIME_STAMP = re.compile(
+    r"^(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun) (?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec) [ 0-3]?\d \d{2}:\d{2}:\d{2} \d{4}$"
+)
+
+
+def _is_saved_time(text: str) -> bool:
+    stripped = text.strip()
+    return _ISO_STAMP.fullmatch(stripped) is not None or _ASCTIME_STAMP.fullmatch(stripped) is not None
 
 
 def _text_without_stamps(node) -> str:
-    """An element's text with ISO save-time leaves removed, matching the selector that named it."""
+    """An element's text with save-time leaves removed, matching the selector that named it."""
     if isinstance(node, str):
-        return "" if _ISO_STAMP.fullmatch(node.strip()) else node
+        return "" if _is_saved_time(node) else node
     if not _is_element(node):
         return ""
     return "".join(_text_without_stamps(child) for child in node["children"])
 
 
 def _has_child_text(member, key: str, value: str) -> bool:
-    """Whether an element has a child element named key whose text, its whitespace collapsed, is value."""
-    return _is_element(member) and any(
-        _is_element(child) and child["name"] == key and _collapse_whitespace(_text_without_stamps(child)) == value
-        for child in member["children"])
+    """Whether an element has a child element named key whose text, its whitespace collapsed, is value. A nested
+    save time is not part of the name. A child that is only a time still matches that time."""
+    if not _is_element(member):
+        return False
+    for child in member["children"]:
+        if not _is_element(child) or child["name"] != key:
+            continue
+        plain = _collapse_whitespace(_text_without_stamps(child))
+        text = plain if plain else _collapse_whitespace(_element_text(child))
+        if text == value:
+            return True
+    return False
 
 
 def _selects(member, conditions) -> bool:

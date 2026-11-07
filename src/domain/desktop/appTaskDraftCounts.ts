@@ -136,6 +136,11 @@ const editedList = (
     const { list } = step;
     const at = `${list}/${step.member}`;
     const member = resolvePointer(ends.final, at);
+    const local = isXmlElement(member)
+      ? (member.name.split(":").at(-1) ?? member.name)
+      : "";
+    // A formatting run, as Scribus's ITEXT or SVG's tspan, is not the frame the count guards.
+    if (/^(?:itext|tspan|span)$/iu.test(local)) continue;
     if (
       !isXmlElement(member) ||
       recordOfField(ends.final, step, steps.slice(index + 1)) !== undefined

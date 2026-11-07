@@ -39,7 +39,27 @@ from agentenv_protocol.types import DataPart
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
-OPENS_ELEMENT = re.compile(r"(?:<!DOCTYPE[ \t\r\n][^\[>]*>[ \t\r\n]*)?<[A-Za-z_:]")
+def _opens_element(text: str) -> bool:
+    """Whether text opens with an element, after a DOCTYPE with no internal subset or none. A '[' inside a quoted id is not a subset."""
+    if re.match(r"<[A-Za-z_:]", text):
+        return True
+    declared = re.match(r"(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b", text)
+    if declared is None:
+        return False
+    quote = ""
+    for index in range(declared.end(), len(text)):
+        character = text[index]
+        if quote:
+            if character == quote:
+                quote = ""
+            continue
+        if character in ('"', "'"):
+            quote = character
+        elif character == "[":
+            return False
+        elif character == ">":
+            return re.match(r"<[A-Za-z_:]", text[index + 1:].lstrip()) is not None
+    return False
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
@@ -408,7 +428,7 @@ def _text_view(name: str, text: str, size: int) -> dict:
     lowered = name.lower()
     # Text that opens with an element, after a DOCTYPE with no internal subset or none, is XML if it parses, whatever
     # the file is called, as a Freeplane map or KmPlot's <!DOCTYPE kmpdoc> plot.
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or re.match(OPENS_ELEMENT, trimmed):
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or _opens_element(trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):

@@ -321,6 +321,27 @@ describe("draftTaskFiles for components of a wiring diagram, as QElectroTech sav
       },
     ]);
   });
+
+  it("checks a component's shown text when only another component's label made the same change", () => {
+    const page = (
+      coil: readonly [string, string, string],
+      other: readonly [string, string, string],
+    ) =>
+      `<project><diagram><elements>${component("3524", other)}${component("1b6b", coil, TERMINALS)}${component("af99", ["S1", "S1", "Start pump"])}</elements></diagram></project>`;
+    const file = xmlDraft(
+      page(["K1", "K1", "Pump contactor"], ["K1", "H1", "Pump running"]),
+      page(["K1", "KM1", "Pump contactor"], ["KM1", "H1", "Pump running"]),
+    );
+
+    expect(file.suggested.map(pointerOf)).toContain(
+      `${ELEMENTS}/[name=element][@uuid={1b6b}]/children/[name=dynamic_texts]/children/[name=dynamic_elmt_text][@uuid={1b6b-text}]/children/[name=text]`,
+    );
+    expect(
+      file.values.find((value) =>
+        value.pointer.endsWith("/children/[name=text]"),
+      )?.note,
+    ).toBeUndefined();
+  });
 });
 
 describe("draftTaskFiles for a dialog's buttons, as Glade saves them", () => {

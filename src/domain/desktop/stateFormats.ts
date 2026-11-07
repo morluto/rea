@@ -229,8 +229,51 @@ const namedXml = (path: string, trimmed: string): boolean =>
  * if it is well formed, whatever the file is called. A DOCTYPE with an
  * internal subset, which may declare entities, never opens one.
  */
-const opensElement = (trimmed: string): boolean =>
-  /^(?:<!DOCTYPE[ \t\r\n][^[>]*>[ \t\r\n]*)?<[A-Za-z_:]/u.test(trimmed);
+/**
+ * Whether a DOCTYPE before `>` opens an internal subset. A `[` inside a
+ * quoted system or public id, as `state[1].dtd`, does not.
+ */
+const doctypeOpensSubset = (text: string, from: number): boolean => {
+  let quote = "";
+  for (let index = from; index < text.length; index += 1) {
+    const character = text[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return true;
+    else if (character === ">") return false;
+  }
+  return false;
+};
+
+const opensElement = (trimmed: string): boolean => {
+  if (/^<[A-Za-z_:]/u.test(trimmed)) return true;
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(trimmed);
+  if (declared === null) return false;
+  let quote = "";
+  for (let index = declared[0].length; index < trimmed.length; index += 1) {
+    const character = trimmed[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return false;
+    else if (character === ">") {
+      const rest = trimmed.slice(index + 1).trimStart();
+      return /^<[A-Za-z_:]/u.test(rest);
+    }
+  }
+  return false;
+};
+
+/** Whether `opening` has a DOCTYPE whose internal subset starts outside quotes. */
+export const doctypeHasInternalSubset = (opening: string): boolean => {
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(opening);
+  return declared !== null && doctypeOpensSubset(opening, declared[0].length);
+};
 
 /**
  * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told

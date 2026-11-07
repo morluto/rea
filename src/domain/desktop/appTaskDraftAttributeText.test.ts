@@ -42,6 +42,19 @@ describe("draftTaskFiles for text an app keeps in an attribute", () => {
         flyer("Summer ", "Fete"),
       ].map((text) => passing(FILE, xml(text), file.suggested)),
     ).toEqual([[false], [true], [true], [true], [false]]);
+    const checks = [...file.suggested, ...file.guards];
+    expect(
+      file.guards.some(
+        (guard) =>
+          "matching" in guard && String(guard.matching).includes("ITEXT"),
+      ),
+    ).toBe(false);
+    expect(
+      passing(FILE, xml(flyer("Summer Fair")), checks).every(Boolean),
+    ).toBe(true);
+    expect(
+      passing(FILE, xml(flyer("Sum", "mer ", "Fair")), checks).every(Boolean),
+    ).toBe(true);
   });
 
   it("keeps a check of a run's formatting the text check does not read, beside it", () => {

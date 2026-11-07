@@ -92,12 +92,13 @@ const textWithoutStamps = (node: JsonValue): string => {
 /** Whether an element has a child element named `key` whose text, its whitespace collapsed, is `value`. */
 const hasChildText = (member: JsonValue, { key, value }: Condition) =>
   isXmlElement(member) &&
-  member.children.some(
-    (child) =>
-      isXmlElement(child) &&
-      child.name === key &&
-      collapseWhitespace(textWithoutStamps(child)) === value,
-  );
+  member.children.some((child) => {
+    if (!isXmlElement(child) || child.name !== key) return false;
+    // A nested save time is not part of the name. A child that is only a time still matches that time.
+    const plain = collapseWhitespace(textWithoutStamps(child));
+    const text = plain === "" ? collapseWhitespace(elementText(child)) : plain;
+    return text === value;
+  });
 
 /** Whether an array member meets every condition; selectors compare strings only. */
 const selects = (member: JsonValue, conditions: readonly Condition[]) =>
@@ -163,6 +164,8 @@ export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
 ): Located => {
+  if (pointer === "")
+    return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };

@@ -609,3 +609,47 @@ describe("draftTaskFiles styles a user applies", () => {
     ).toContain(false);
   });
 });
+
+describe("draftTaskFiles for a name shared by two lists", () => {
+  it("checks a category added beside a template of the same name", () => {
+    const file = xmlDraft(
+      '<doc><template name="Travel"><item>bag</item></template></doc>',
+      '<doc><template name="Travel"><item>bag</item></template><category name="Travel"/></doc>',
+    );
+
+    expect(
+      file.values.some(
+        (value) =>
+          value.pointer.includes("category") && value.note === "upkeep",
+      ),
+    ).toBe(false);
+    expect(file.suggested.map(pointerOf).join(" ")).toContain("category");
+  });
+});
+
+describe("draftTaskFiles for a drawing resized beside a rename", () => {
+  const model = (name: string, width: string) =>
+    `<model><name>${name}</name><diagram><widget width="${width}"/><widget width="4"/></diagram></model>`;
+
+  it("checks the width the user changed when the only other edit is a name outside the drawing", () => {
+    const file = xmlDraft(model("Shop", "10"), model("Store", "20"));
+    const width = file.suggested.find(
+      (check) => "pointer" in check && check.pointer.endsWith("width"),
+    );
+
+    expect(file.suggested.map(pointerOf)).toContain(
+      "/root/children/[name=diagram]/children/[name=widget][@width=20]/name",
+    );
+    expect(
+      file.values.some(
+        (value) => value.pointer.includes("width") && value.note === "layout",
+      ),
+    ).toBe(false);
+    expect(passing(FILE, xml(model("Store", "10")), file.suggested)).toContain(
+      false,
+    );
+    expect(
+      passing(FILE, xml(model("Store", "20")), file.suggested).every(Boolean),
+    ).toBe(true);
+  });
+});
