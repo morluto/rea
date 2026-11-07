@@ -3,7 +3,10 @@ import { lstat, open, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, dirname, join } from "node:path";
 import { afterEach, expect, onTestFinished, test, vi } from "vitest";
 
-import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
+import {
+  AdbProvider,
+  type AdbProviderOptions,
+} from "../../../../src/adb/AdbProvider.js";
 import {
   execFileBytes,
   execFileOutput,
@@ -36,7 +39,9 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 
 afterEach(() => vi.restoreAllMocks());
 
-const fixture = async () => {
+const fixture = async (
+  createRuntimeRoot?: AdbProviderOptions["createRuntimeRoot"],
+) => {
   const root = await createTestTempDirectory("rea-adb-input-owner-");
   const binary = join(root, "adb");
   const source = join(root, "payload.bin");
@@ -96,7 +101,10 @@ const fixture = async () => {
     }
     throw new Error(`Unexpected ADB fixture command: ${JSON.stringify(args)}`);
   });
-  const provider = new AdbProvider({ environment: { REA_ADB_PATH: binary } });
+  const provider = new AdbProvider({
+    environment: { REA_ADB_PATH: binary },
+    ...(createRuntimeRoot === undefined ? {} : { createRuntimeRoot }),
+  });
   onTestFinished(() => provider.close());
   return {
     root,
@@ -117,15 +125,16 @@ const fixture = async () => {
 };
 
 test("retains failed snapshot cleanup ownership and retries it on close", async () => {
-  const f = await fixture();
-  const actualFs =
-    await vi.importActual<typeof import("node:fs/promises")>(
-      "node:fs/promises",
-    );
-  vi.mocked(rm).mockImplementationOnce(async (path, options) => {
-    if (basename(String(path)).startsWith("rea-adb-input-"))
-      throw new Error("snapshot cleanup denied");
-    return actualFs.rm(path, options);
+  let closeAttempts = 0;
+  const f = await fixture(async (options) => {
+    const root = await PrivateRuntimeRoot.create(options);
+    return {
+      path: root.path,
+      close: async () => {
+        if (++closeAttempts === 1) throw new Error("snapshot cleanup denied");
+        await root.close();
+      },
+    };
   });
 
   const result = await f.provider.execute(f.request);
@@ -184,7 +193,7 @@ test("closes retained snapshot handles before removing their runtime root", asyn
     const handle = await originalOpen(...args);
     const path = String(args[0]);
     const isSource = path === f.source;
-    const isSnapshot = path.startsWith(`${runtimePath}/`);
+    const isSnapshot = dirname(path) === runtimePath;
     if (!isSource && !isSnapshot) return handle;
     if (isSnapshot) snapshotHandleOpen = true;
     return new Proxy(handle, {
@@ -634,19 +643,21 @@ test("resolves package-directory cleanup on the originating pull error", async (
 test.each([false, true])(
   "preserves cancellation and push receipt during final snapshot cleanup (cleanup failure: %s)",
   async (failCleanup) => {
-    const f = await fixture();
     const controller = new AbortController();
     const abortReason = new Error("caller stopped after snapshot cleanup");
-    const actualFs =
-      await vi.importActual<typeof import("node:fs/promises")>(
-        "node:fs/promises",
-      );
-    vi.mocked(rm).mockImplementationOnce(async (path, options) => {
-      if (basename(String(path)).startsWith("rea-adb-input-")) {
-        controller.abort(abortReason);
-        if (failCleanup) throw new Error("snapshot cleanup denied");
-      }
-      return actualFs.rm(path, options);
+    let closeAttempts = 0;
+    const f = await fixture(async (options) => {
+      const root = await PrivateRuntimeRoot.create(options);
+      return {
+        path: root.path,
+        close: async () => {
+          if (++closeAttempts === 1) {
+            controller.abort(abortReason);
+            if (failCleanup) throw new Error("snapshot cleanup denied");
+          }
+          await root.close();
+        },
+      };
     });
 
     const result = await f.provider.execute(f.request, {
