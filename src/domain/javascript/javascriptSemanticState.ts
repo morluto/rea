@@ -1,6 +1,7 @@
 import type { SemanticPropertyReadSource } from "./javascriptSemanticIterationSources.js";
 import * as t from "@babel/types";
 import {
+  isObjectPrototypeSetter,
   semanticStaticPropertyKey,
   staticJavaScriptTruthiness,
   unwrapJavaScriptExpression,
@@ -440,10 +441,8 @@ const semanticWithRequireLookup = (
     );
     if (key === "require") ownRequire = true;
     else if (
-      key === "__proto__" &&
       t.isObjectProperty(property) &&
-      !property.computed &&
-      !property.shorthand
+      isObjectPrototypeSetter(property)
     ) {
       const prototype = unwrapJavaScriptExpression(property.value).node;
       if (t.isNullLiteral(prototype)) prototypeIsNull = true;
@@ -526,12 +525,7 @@ const semanticWithPrototypeKind = (
   object: t.ObjectExpression,
 ): "null" | "ordinary" | "other" => {
   for (const property of object.properties) {
-    if (
-      t.isObjectProperty(property) &&
-      !property.computed &&
-      !property.shorthand &&
-      t.isIdentifier(property.key, { name: "__proto__" })
-    )
+    if (t.isObjectProperty(property) && isObjectPrototypeSetter(property))
       return t.isNullLiteral(unwrapJavaScriptExpression(property.value).node)
         ? "null"
         : "other";

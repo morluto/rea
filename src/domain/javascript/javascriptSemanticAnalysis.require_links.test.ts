@@ -357,6 +357,28 @@ describe("CommonJS dependency links", () => {
   });
 });
 
+it.each([
+  ['{"__proto__": {require: true}}', false],
+  ["{__proto__: {require: true}}", false],
+  ["{require: true}", false],
+  ["{require: false}", true],
+  ['{["__proto__"]: {require: true}}', true],
+] as const)(
+  "tracks an outer require write with unscopables %s",
+  (entry, resolved) => {
+    const source = `
+      with ({require: null, [Symbol.unscopables]: ${entry}}) {
+        require = () => "LOCAL";
+      }
+      require("./dep.cjs");
+    `;
+    const links = analyzeJavaScriptSemantics(source).moduleLinks;
+    expect(links.map(({ kind, specifier }) => ({ kind, specifier }))).toEqual(
+      resolved ? [{ kind: "require", specifier: "./dep.cjs" }] : [],
+    );
+  },
+);
+
 it("preserves unshadowed require origins through aliases and assignments", () => {
   const ir = analyzeJavaScriptSemantics(`
     const { ipcMain: bus } = require("electron");
