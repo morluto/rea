@@ -1292,9 +1292,19 @@ export class JavaScriptSymbolicBindings {
     const key = semanticStaticPropertyKey(parent.property, parent.computed);
     if (key === null) return false;
     const memberPath = [...path, key] as const;
+    const inheritedMemberPaths = [
+      [...path, "__proto__", key],
+      ["global", "Function", "prototype", key],
+      ["global", "Object", "prototype", key],
+    ] as const;
     return (
       !this.state.ambientWrites.covers(memberPath) &&
-      !this.state.ambientEscapes.covers(memberPath)
+      !this.state.ambientEscapes.covers(memberPath) &&
+      inheritedMemberPaths.every(
+        (inheritedPath) =>
+          !this.state.ambientWrites.covers(inheritedPath) &&
+          !this.state.ambientEscapes.covers(inheritedPath),
+      )
     );
   }
 

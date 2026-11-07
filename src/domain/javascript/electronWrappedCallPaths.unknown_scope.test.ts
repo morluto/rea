@@ -671,6 +671,117 @@ describe("later initializer mutation proof", () => {
   });
 });
 
+describe("later initializer ambient prototype proof", () => {
+  it("keeps the unknown when an ambient value inherits a loader member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      Object.prototype.load = require;
+      const name = "electron";
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => String.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps the unknown when an ambient value inherits a function loader member", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      Function.prototype.load = require;
+      const name = "electron";
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => String.load(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("partial");
+    expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it.each([
+    [
+      "Object.prototype through a sequence",
+      "Object.prototype.load = require;",
+      "(0, String.load)",
+    ],
+    [
+      "Object.prototype through a logical expression",
+      "Object.prototype.load = require;",
+      "(true && String.load)",
+    ],
+    [
+      "Function.prototype through a sequence",
+      "Function.prototype.load = require;",
+      "(0, String.load)",
+    ],
+    [
+      "a computed Object.prototype write through a sequence",
+      'Object.prototype["load"] = require;',
+      "(0, String.load)",
+    ],
+    [
+      "String.__proto__ through a sequence",
+      "String.__proto__.load = require;",
+      "(0, String.load)",
+    ],
+    [
+      "Object.defineProperty through a sequence",
+      'Object.defineProperty(Object.prototype, "load", { value: require });',
+      "(0, String.load)",
+    ],
+  ])(
+    "keeps the unknown when %s supplies an indirect ambient loader",
+    (_source, write, callee) => {
+      const result = analyzeJavaScriptStaticSource(`
+        ${write}
+        const name = "electron";
+        function register() {
+          load().ipcMain.on("ping", () => {});
+        }
+        var load = () => ${callee}(name);
+        register();
+      `);
+
+      expect(result.parse_error_count).toBe(0);
+      expect(result.parse_status).toBe("partial");
+      expect(result.limitations).toContainEqual(UNKNOWN_LIMITATION);
+    },
+  );
+
+  it("keeps an indirect ambient member call complete without a prototype write", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const name = "electron";
+      function register() {
+        load().ipcMain.on("ping", () => {});
+      }
+      var load = () => (0, String.load)(name);
+      register();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+
+  it("keeps a safe ambient member helper complete", () => {
+    const result = analyzeJavaScriptStaticSource(`
+      const { app } = require("electron");
+      String.fromCharCode(65);
+      app.getName();
+    `);
+
+    expect(result.parse_error_count).toBe(0);
+    expect(result.parse_status).toBe("complete");
+    expect(result.limitations).not.toContainEqual(UNKNOWN_LIMITATION);
+  });
+});
+
 describe("later initializer literal prototype proof", () => {
   it.each(["[]", '("")', "(0)", "(false)", "/value/", "(0n)"])(
     "keeps the unknown when Object.prototype can supply a late loader through %s",
