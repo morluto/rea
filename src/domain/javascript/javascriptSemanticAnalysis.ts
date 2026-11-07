@@ -77,6 +77,7 @@ import {
 } from "./javascriptBundledRequireOrigin.js";
 import { collectSemanticMemberMutationsSteps } from "./javascriptSemanticMemberMutations.js";
 import {
+  semanticBindingAtRead,
   semanticEffectTiming,
   semanticEffectTimingWithinActivation,
 } from "./javascriptSemanticMutationInitializers.js";
@@ -872,11 +873,26 @@ export function* indexJavaScriptElectronIdentitySteps(
   let collectedWrites = false;
   const exportsByBinding = new Map<string, readonly string[] | null>();
   const candidatesByBinding = new Map<string, readonly string[] | null>();
+  const originAvailableAtRead = (
+    binding: JavaScriptSemanticBindingState,
+    read: t.Node,
+  ): boolean => {
+    if (
+      binding.directOrigins.length > 0 ||
+      semanticStableInitializer(binding, state) === undefined
+    )
+      return true;
+    const access = semanticBindingAtRead(binding, read, state);
+    // An unresolved activation can still carry a possible identity, while an
+    // ordered read before its initializer cannot refer to that value.
+    return access.status !== "ordered" || access.hasDefiniteInitializer;
+  };
   const rootOrigin = (root: t.Node): readonly string[] | undefined => {
     if (t.isIdentifier(root)) {
       if (semanticResolutionBlocked(state, root, root.name)) return undefined;
       const binding = resolveSemanticBindingState(state, root, root.name);
-      if (binding === undefined) return undefined;
+      if (binding === undefined || !originAvailableAtRead(binding, root))
+        return undefined;
       let exported = exportsByBinding.get(binding.bindingId);
       if (exported === undefined) {
         exported = electronExport(binding, state, interop);
@@ -920,11 +936,11 @@ export function* indexJavaScriptElectronIdentitySteps(
         (collectedWrites && interop.invalidated(binding))
       )
         return undefined;
-      if (
-        binding.directOrigins.length === 0 &&
-        semanticStableInitializer(binding, state) === undefined
-      )
-        return undefined;
+      if (binding.directOrigins.length === 0) {
+        if (semanticStableInitializer(binding, state) === undefined)
+          return undefined;
+        if (!originAvailableAtRead(binding, root)) return undefined;
+      }
       if (
         state.opaqueEffects.byScope.size > 0 &&
         (semanticOpaqueBindingReadMayHaveChanged(binding, root, state) ||

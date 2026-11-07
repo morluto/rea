@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics, analyzeParsedJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   onlyBinding,

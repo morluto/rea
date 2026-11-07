@@ -236,11 +236,23 @@ it("keeps established logical operands across a long chain", () => {
   expect(proven.coverage).toEqual({ status: "complete", omittedCount: 0 });
   expect(onlyBinding(proven, "tok").provenance).toEqual({
     status: "module",
-    origins: [{ specifier: "electron", importedPath: ["app"], resolutionMode: "require" }],
+    origins: [
+      {
+        specifier: "electron",
+        importedPath: ["app"],
+        resolutionMode: "require",
+      },
+    ],
     reason: null,
   });
   expect(onlyBinding(candidate, "tok").provenance).toMatchObject({
     status: "ambiguous",
-    origins: [{ specifier: "electron", importedPath: ["app"], loaderAuthority: "candidate" }],
+    origins: [
+      {
+        specifier: "electron",
+        importedPath: ["app"],
+        loaderAuthority: "candidate",
+      },
+    ],
   });
 });

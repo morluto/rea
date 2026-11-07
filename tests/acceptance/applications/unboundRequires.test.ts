@@ -350,6 +350,62 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     );
   },
 );
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains loader uncertainty in Electron semantic paths through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-electron-semantic-authority-",
+    );
+    const source = [
+      'const { contextBridge, ipcRenderer } = require("electron");',
+      'contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
+    ].join("\n");
+    await writeFixtureFiles(root, {
+      "candidate.MJS": source,
+      "proven.cjs": source,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const graph = result.semantic_graph;
+    const pathNodes = graph.nodes.filter((node) =>
+      node.identity.role_key.startsWith("electron-path:"),
+    );
+    const candidate = pathNodes.filter(
+      (node) => node.identity.module_path === "candidate.MJS",
+    );
+    const proven = pathNodes.filter(
+      (node) => node.identity.module_path === "proven.cjs",
+    );
+    expect(candidate.length).toBeGreaterThan(0);
+    expect(proven.length).toBeGreaterThan(0);
+    const evidenceFor = (contextId: string) =>
+      graph.evidence_contexts.find(
+        ({ context_id }) => context_id === contextId,
+      );
+    for (const node of candidate) {
+      expect(node.properties.loader_authority).toBe("candidate");
+      const evidence = evidenceFor(node.evidence.context_id);
+      expect(evidence).toMatchObject({ state: "inferred", confidence: "low" });
+      expect(evidence?.limitations.join(" ")).toContain("loader is unknown");
+    }
+    for (const node of proven) {
+      expect(node.properties.loader_authority).toBeUndefined();
+      expect(evidenceFor(node.evidence.context_id)).toMatchObject({
+        state: "observed",
+        confidence: "exact",
+      });
+    }
+    const relations = graph.relations.filter(
+      ({ properties }) => properties.loader_authority === "candidate",
+    );
+    expect(relations.length).toBeGreaterThan(0);
+    for (const relation of relations) {
+      const evidence = evidenceFor(relation.evidence.context_id);
+      expect(evidence).toMatchObject({ state: "inferred", confidence: "low" });
+      expect(evidence?.limitations.join(" ")).toContain("loader is unknown");
+    }
+  },
+);
 const compiler = join(
   dirname(createRequire(import.meta.url).resolve("typescript/package.json")),
   "bin",

@@ -54,16 +54,25 @@ describe("conditional Electron identities", () => {
   });
 
   it("retains optional loader findings with the host's authority", () => {
-    const optional = 'const {app, BrowserWindow} = require?.("electron"); app.setAppPath("/tmp"); new BrowserWindow();';
+    const optional =
+      'const {app, BrowserWindow} = require?.("electron"); app.setAppPath("/tmp"); new BrowserWindow();';
     const candidate = analyze(optional, "main.MJS");
     expect(candidate.analysis_coverage?.applicability.electron).toBe("unknown");
-    expect(candidate.electron.browser_windows).toMatchObject([{ loader_authority: "candidate" }]);
-    expect(candidate.electron.app_path_changes).toMatchObject([{ loader_authority: "candidate" }]);
+    expect(candidate.electron.browser_windows).toMatchObject([
+      { loader_authority: "candidate" },
+    ]);
+    expect(candidate.electron.app_path_changes).toMatchObject([
+      { loader_authority: "candidate" },
+    ]);
     const commonjs = analyze(optional, "main.cjs");
     expect(commonjs.electron.browser_windows).toHaveLength(1);
-    expect(commonjs.electron.browser_windows[0]?.loader_authority).toBeUndefined();
+    expect(
+      commonjs.electron.browser_windows[0]?.loader_authority,
+    ).toBeUndefined();
     expect(commonjs.electron.app_path_changes).toHaveLength(1);
-    expect(commonjs.electron.app_path_changes?.[0]?.loader_authority).toBeUndefined();
+    expect(
+      commonjs.electron.app_path_changes?.[0]?.loader_authority,
+    ).toBeUndefined();
   });
 
   it("does not claim conditional identity when initialization is skipped or loader is shadowed", () => {
@@ -77,5 +86,59 @@ describe("conditional Electron identities", () => {
       "main.MJS",
     );
     expect(shadowed.electron.browser_windows).toEqual([]);
+  });
+
+  it("does not use a later candidate initializer at an earlier read", () => {
+    const early = analyze(
+      'new electron.BrowserWindow({}); var electron = require("electron");',
+      "main.MJS",
+    );
+    expect(early.electron.browser_windows).toEqual([]);
+    const later = analyze(
+      'var electron = require("electron"); new electron.BrowserWindow({});',
+      "main.MJS",
+    );
+    expect(later.electron.browser_windows).toMatchObject([
+      { loader_authority: "candidate" },
+    ]);
+    const aliasCapturedEarly = analyze(
+      'var BrowserWindow = electron.BrowserWindow; var electron = require("electron"); new BrowserWindow({});',
+      "main.MJS",
+    );
+    expect(aliasCapturedEarly.electron.browser_windows).toEqual([]);
+    const aliasCapturedLater = analyze(
+      'var electron = require("electron"); var BrowserWindow = electron.BrowserWindow; new BrowserWindow({});',
+      "main.MJS",
+    );
+    expect(aliasCapturedLater.electron.browser_windows).toMatchObject([
+      { loader_authority: "candidate" },
+    ]);
+  });
+
+  it("does not use a later proven CommonJS initializer at an earlier read", () => {
+    const early = analyze(
+      'new electron.BrowserWindow({}); var electron = require("electron");',
+      "main.cjs",
+    );
+    expect(early.electron.browser_windows).toEqual([]);
+    const later = analyze(
+      'var electron = require("electron"); new electron.BrowserWindow({});',
+      "main.cjs",
+    );
+    expect(later.electron.browser_windows).toHaveLength(1);
+    expect(later.electron.browser_windows[0]?.loader_authority).toBeUndefined();
+    const aliasEarly = analyze(
+      'var BrowserWindow = electron.BrowserWindow; var electron = require("electron"); new BrowserWindow({});',
+      "main.cjs",
+    );
+    expect(aliasEarly.electron.browser_windows).toEqual([]);
+    const aliasLater = analyze(
+      'var electron = require("electron"); var BrowserWindow = electron.BrowserWindow; new BrowserWindow({});',
+      "main.cjs",
+    );
+    expect(aliasLater.electron.browser_windows).toHaveLength(1);
+    expect(
+      aliasLater.electron.browser_windows[0]?.loader_authority,
+    ).toBeUndefined();
   });
 });
