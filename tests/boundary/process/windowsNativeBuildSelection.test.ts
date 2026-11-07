@@ -26,26 +26,51 @@ it.each([
   ["wrong target", "aarch64-w64-mingw32", "", "must target x86_64-w64-mingw32"],
   ["empty tool", "x86_64-w64-mingw32", "", "did not identify its dlltool"],
   ["relative tool", "x86_64-w64-mingw32", "dlltool", "by absolute path"],
-  ["selected tool", "x86_64-w64-mingw32", "absolute", "controlled stop after tool selection"],
-])("Windows build checks %s before downloading prerequisites", async (_name, target, tool, error) => {
-  const dir = await createTestTempDirectory("rea-windows-build-selection-");
-  const hook = join(dir, "preload.mjs");
-  const callsPath = join(dir, "calls.jsonl");
-  const selectedTool = tool === "absolute" ? join(dir, "dlltool.exe") : tool;
-  await writeFile(hook, preload);
-  const script = fileURLToPath(new URL("../../../scripts/build-windows-native.mjs", import.meta.url));
-  const result = spawnSync(process.execPath, ["--import", hook, script], {
-    encoding: "utf8",
-    timeout: 10_000,
-    env: { ...process.env, BUILD_CALLS: callsPath, BUILD_TARGET: target, BUILD_DLLTOOL: selectedTool },
-  });
-  expect(result.status).not.toBe(0);
-  expect(result.stderr).toContain(error);
-  const calls = (await readFile(callsPath, "utf8")).trim().split("\n").map((line) => JSON.parse(line));
-  expect(calls.map((call) => call.args[0])).toEqual(
-    target !== "x86_64-w64-mingw32" ? ["--version", "-dumpmachine"] :
-      tool === "absolute" ? ["--version", "-dumpmachine", "-print-prog-name=dlltool", "--version"] :
-        ["--version", "-dumpmachine", "-print-prog-name=dlltool"],
-  );
-  if (tool === "absolute") expect(calls.at(-1).command).toBe(selectedTool);
-});
+  [
+    "selected tool",
+    "x86_64-w64-mingw32",
+    "absolute",
+    "controlled stop after tool selection",
+  ],
+])(
+  "Windows build checks %s before downloading prerequisites",
+  async (_name, target, tool, error) => {
+    const dir = await createTestTempDirectory("rea-windows-build-selection-");
+    const hook = join(dir, "preload.mjs");
+    const callsPath = join(dir, "calls.jsonl");
+    const selectedTool = tool === "absolute" ? join(dir, "dlltool.exe") : tool;
+    await writeFile(hook, preload);
+    const script = fileURLToPath(
+      new URL("../../../scripts/build-windows-native.mjs", import.meta.url),
+    );
+    const result = spawnSync(process.execPath, ["--import", hook, script], {
+      encoding: "utf8",
+      timeout: 10_000,
+      env: {
+        ...process.env,
+        BUILD_CALLS: callsPath,
+        BUILD_TARGET: target,
+        BUILD_DLLTOOL: selectedTool,
+      },
+    });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain(error);
+    const calls = (await readFile(callsPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(calls.map((call) => call.args[0])).toEqual(
+      target !== "x86_64-w64-mingw32"
+        ? ["--version", "-dumpmachine"]
+        : tool === "absolute"
+          ? [
+              "--version",
+              "-dumpmachine",
+              "-print-prog-name=dlltool",
+              "--version",
+            ]
+          : ["--version", "-dumpmachine", "-print-prog-name=dlltool"],
+    );
+    if (tool === "absolute") expect(calls.at(-1).command).toBe(selectedTool);
+  },
+);
