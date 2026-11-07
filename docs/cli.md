@@ -1441,6 +1441,16 @@ Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
 
+### PE Rich header
+
+```sh
+rea inspect-pe-rich-header /absolute/path/to/application.exe --json
+```
+
+Reports the Rich header's product IDs, builds and use counts, and whether its
+checksum reproduces the stored key, without execution. Use `--max-entries` and
+`--max-file-bytes` to set read budgets. See [PE Rich header](pe-rich-header.md).
+
 ### Binary hardening
 
 ```sh

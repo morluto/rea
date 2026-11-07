@@ -25,6 +25,7 @@ import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
 import { registerPeImportsTool } from "./registerPeImportsTool.js";
+import { registerPeRichHeaderTool } from "./registerPeRichHeaderTool.js";
 import { registerPeResourcesTool } from "./registerPeResourcesTool.js";
 import { registerNativeExportsTool } from "./registerNativeExportsTool.js";
 import { registerEvmTools } from "./registerEvmTools.js";
@@ -222,6 +223,7 @@ export const createServer = (
     binaryHardening,
     peCertificates,
     peImports,
+    peRichHeader,
     electronFuses,
     pythonPyc,
     webNetworkCapture,
@@ -508,6 +510,13 @@ export const createServer = (
       registerPeImportsTool(
         server,
         peImports,
+        toolLogger,
+        recordEvidence,
+        analysisAdmission,
+      );
+      registerPeRichHeaderTool(
+        server,
+        peRichHeader,
         toolLogger,
         recordEvidence,
         analysisAdmission,

@@ -7,6 +7,7 @@ import { packetFieldsSchema } from "../domain/captures/packetCapture.js";
 import { swiftStringLiteralSchema } from "../domain/native/swiftStringLiteral.js";
 import { applicationVersionComparisonResultSchema } from "../domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { kernelModuleSchema } from "../domain/native/kernelModule.js";
+import { peRichHeaderSchema } from "../domain/native/peRichHeader.js";
 import { pinvokeVerificationSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { compactAdvertisedInputSchema } from "./compactInputSchema.js";
@@ -75,6 +76,21 @@ const signatureInfo = {
   sig_len: 16,
 };
 
+const peRichHeaderRecord = peRichHeaderSchema.shape.rich_header.options.find(
+  (option) => option.shape.state.value === "present",
+);
+if (peRichHeaderRecord === undefined)
+  throw new Error("Missing present Rich header contract");
+const richRecord = {
+  state: "present",
+  location: { offset: 128, bytes: 32 },
+  footer_location: { offset: 152, bytes: 8 },
+  key: 0x1234,
+  checksum: { computed: 0x1234, matches: true },
+  padding: [0, 0, 0],
+  entries: [{ product_id: 260, build: 33145, count: 11 }],
+};
+
 const cases: readonly {
   readonly name: string;
   readonly schema: z.ZodType;
@@ -131,6 +147,16 @@ const cases: readonly {
       { value: signatureInfo, valid: true },
       ...[[], [0], [0, 0, 0, 0], [0, null, 0], [0, 256, 0], null].map(
         (pad) => ({ value: { ...signatureInfo, pad }, valid: false }),
+      ),
+    ],
+  },
+  {
+    name: "PE Rich header padding words",
+    schema: peRichHeaderRecord,
+    samples: [
+      { value: richRecord, valid: true },
+      ...[[], [0], [0, 0, 0, 0], [0, null, 0], [0, 2 ** 32, 0], null].map(
+        (padding) => ({ value: { ...richRecord, padding }, valid: false }),
       ),
     ],
   },
