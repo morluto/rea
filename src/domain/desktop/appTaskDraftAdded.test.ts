@@ -393,12 +393,24 @@ describe("draftTaskFiles for an identified record's own text", () => {
 
     expect(shown).toEqual(["Delphine", "Moreau"]);
     expect(
+      file.suggested.every(
+        (check) => "pointer" in check && check.pointer.includes("[@id=two]"),
+      ),
+    ).toBe(true);
+    expect(
       file.suggested.some(
         (check) => "value" in check && check.value === "record",
       ),
     ).toBe(false);
     expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
     expect(passing(FILE, xml(before), file.suggested).every(Boolean)).toBe(
+      false,
+    );
+    const stolen = records([
+      ["one", "Delphine", "Moreau"],
+      ["two", "Ada", "Lovelace"],
+    ]);
+    expect(passing(FILE, xml(stolen), file.suggested).every(Boolean)).toBe(
       false,
     );
   });
@@ -445,6 +457,53 @@ describe("draftTaskFiles for an added record whose words the seed already has", 
       false,
     );
     expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+  });
+
+  it("keeps a save time out of the list check and still requires the added record", () => {
+    const stamp = "2026-11-07T10:12:00Z";
+    const later = "2026-11-08T09:00:00Z";
+    const dated = (people: readonly (readonly [string, string, string])[]) =>
+      `<records>${people
+        .map(
+          ([first, last, time]) =>
+            `<record><field>${first}</field><field>${last}</field><modified>${time}</modified></record>`,
+        )
+        .join("")}</records>`;
+    const before = dated([["Ada", "Lin", stamp]]);
+    const after = dated([
+      ["Ada", "Lin", stamp],
+      ["Lin", "Ada", later],
+    ]);
+    const file = xmlDraft(before, after);
+    const values = file.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+
+    expect(
+      values.some((value) => value.includes(stamp) || value.includes(later)),
+    ).toBe(false);
+    expect(values).toEqual(["AdaLin", "LinAda"]);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+    expect(
+      passing(
+        FILE,
+        xml(
+          dated([
+            ["Ada", "Lin", stamp],
+            ["Lin", "Ada", stamp],
+          ]),
+        ),
+        file.suggested,
+      ).every(Boolean),
+    ).toBe(true);
+    expect(
+      passing(FILE, xml(before), file.suggested).some((passed) => !passed),
+    ).toBe(true);
+    expect(
+      passing(FILE, xml(dated([["Lin", "Ada", later]])), file.suggested).some(
+        (passed) => !passed,
+      ),
+    ).toBe(true);
   });
 
   it("does not check a long list whole when the added record only repeats its words", () => {
