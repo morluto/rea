@@ -1,5 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
 import { leftOutFiles } from "./appExportUnowned.js";
+import { siblingLockTargets } from "./runtimeFiles.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
@@ -453,8 +454,20 @@ export const draftTaskFiles = (
   ends: StateEnds,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
+  const besideRecorded = (home: string) => {
+    const slash = home.lastIndexOf("/");
+    const folder = slash < 0 ? "" : home.slice(0, slash);
+    return siblingLockTargets(home).some((locked) =>
+      files.has(folder.length === 0 ? locked : `${folder}/${locked}`),
+    );
+  };
+  // A file under a selected folder inherits selected_path. A lock beside its
+  // file is still left out; only a lock with no recorded sibling was chosen.
   const selected = [...files]
-    .filter(([, path]) => path.reasons.includes("selected_path"))
+    .filter(
+      ([home, path]) =>
+        path.reasons.includes("selected_path") && !besideRecorded(home),
+    )
     .map(([home]) => home);
   const { isLeftOut, isLeftOutLog } = leftOutFiles(
     files,
