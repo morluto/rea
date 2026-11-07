@@ -223,6 +223,59 @@ const namedXml = (path: string, trimmed: string): boolean =>
   XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml");
 
 /**
+ * Whether text opens with an element, as a Freeplane map's `<map version=…>`
+ * without a declaration, or with a DOCTYPE that has no internal subset and
+ * then an element, as KmPlot's `<!DOCTYPE kmpdoc><kmpdoc …>`, so it is XML
+ * if it is well formed, whatever the file is called. A DOCTYPE with an
+ * internal subset, which may declare entities, never opens one.
+ */
+/**
+ * Whether a DOCTYPE before `>` opens an internal subset. A `[` inside a
+ * quoted system or public id, as `state[1].dtd`, does not.
+ */
+const doctypeOpensSubset = (text: string, from: number): boolean => {
+  let quote = "";
+  for (let index = from; index < text.length; index += 1) {
+    const character = text[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return true;
+    else if (character === ">") return false;
+  }
+  return false;
+};
+
+const opensElement = (trimmed: string): boolean => {
+  if (/^<[A-Za-z_:]/u.test(trimmed)) return true;
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(trimmed);
+  if (declared === null) return false;
+  let quote = "";
+  for (let index = declared[0].length; index < trimmed.length; index += 1) {
+    const character = trimmed[index] ?? "";
+    if (quote !== "") {
+      if (character === quote) quote = "";
+      continue;
+    }
+    if (character === '"' || character === "'") quote = character;
+    else if (character === "[") return false;
+    else if (character === ">") {
+      const rest = trimmed.slice(index + 1).trimStart();
+      return /^<[A-Za-z_:]/u.test(rest);
+    }
+  }
+  return false;
+};
+
+/** Whether `opening` has a DOCTYPE whose internal subset starts outside quotes. */
+export const doctypeHasInternalSubset = (opening: string): boolean => {
+  const declared = /^(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b/u.exec(opening);
+  return declared !== null && doctypeOpensSubset(opening, declared[0].length);
+};
+
+/**
  * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told
  * by syntax alone so no value or document is built: JSON a token at a time
  * and XML by its well-formedness pass, each holding only what is open.
@@ -233,7 +286,10 @@ export const textSyntaxFormat = (
 ): "json" | "xml" | "text" => {
   const trimmed = text.trimStart();
   if (namedJson(path, trimmed) && isJsonText(text)) return "json";
-  if (namedXml(path, trimmed) && isWellFormedXml(text, XML_POLICY))
+  if (
+    (namedXml(path, trimmed) || opensElement(trimmed)) &&
+    isWellFormedXml(text, XML_POLICY)
+  )
     return "xml";
   return "text";
 };
@@ -260,6 +316,9 @@ export const detectStateFormat = (
     return "json";
   if (namedXml(path, trimmed))
     return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
+  // Checked by its well-formedness pass, so text that only opens with `<` builds no document.
+  if (opensElement(trimmed))
+    return isWellFormedXml(text, XML_POLICY) ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };
 

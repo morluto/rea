@@ -1,5 +1,5 @@
 import { DOMParser, onErrorStopParsing, type Document } from "@xmldom/xmldom";
-import { SaxesParser } from "saxes";
+import { SaxesParser, type SaxesTagNS } from "saxes";
 import { err, ok, type Result } from "./result.js";
 
 /** XML 1.0 literal line endings; Unicode separators remain source characters. */
@@ -57,12 +57,17 @@ type DoctypePolicy = "allow" | "reject" | "external";
  * open elements. Saxes reads a DOCTYPE without checking it, so the policy
  * checks one it admits without an internal subset against XML's grammar.
  */
-const checkXmlSyntax = (source: string, doctype: DoctypePolicy): void => {
+const checkXmlSyntax = (
+  source: string,
+  doctype: DoctypePolicy,
+  listen?: (syntax: SaxesParser<{ xmlns: true }>) => void,
+): void => {
   const syntax = new SaxesParser({
     xmlns: true,
     defaultXMLVersion: "1.0",
     forceXMLVersion: true,
   });
+  listen?.(syntax);
   syntax.on("doctype", (declaration) => {
     if (doctype === "reject") throw new XmlDocumentParseError("doctype");
     if (doctype !== "external") return;
@@ -88,6 +93,67 @@ export const isWellFormedXml = (
     return true;
   } catch {
     return false;
+  }
+};
+
+/** An element as `xmlElementRanges` offers it: its namespace and local name, and an attribute's value by namespace and local name. */
+export interface XmlElementFacts {
+  readonly uri: string;
+  readonly local: string;
+  readonly attribute: (uri: string, local: string) => string | undefined;
+}
+
+/**
+ * The source ranges of the elements `select` picks, from the `<` of the start
+ * tag to the `>` that ends the element, outermost first and none inside
+ * another picked one; read with the syntax check `parseXmlDocument` makes, so
+ * text in a comment, CDATA or an attribute is never an element.
+ */
+export const xmlElementRanges = (
+  source: string,
+  select: (element: XmlElementFacts) => boolean,
+  policy: { readonly doctype: Exclude<DoctypePolicy, "allow"> },
+): Result<
+  readonly { readonly start: number; readonly end: number }[],
+  XmlDocumentParseError
+> => {
+  const ranges: { start: number; end: number }[] = [];
+  // Each open element's start, and whether it was picked.
+  const open: { start: number; picked: boolean }[] = [];
+  try {
+    checkXmlSyntax(source, policy.doctype, (syntax) => {
+      // Saxes reports the opening after reading the name and one character past it, none of which is `<`.
+      syntax.on("opentagstart", () => {
+        open.push({
+          start: source.lastIndexOf("<", syntax.position - 1),
+          picked: false,
+        });
+      });
+      syntax.on("opentag", (tag: SaxesTagNS) => {
+        const element = open.at(-1);
+        if (element === undefined || open.some(({ picked }) => picked)) return;
+        element.picked = select({
+          uri: tag.uri,
+          local: tag.local,
+          attribute: (uri, local) =>
+            Object.values(tag.attributes).find(
+              (attribute) => attribute.uri === uri && attribute.local === local,
+            )?.value,
+        });
+      });
+      syntax.on("closetag", () => {
+        const element = open.pop();
+        if (element?.picked === true)
+          ranges.push({ start: element.start, end: syntax.position });
+      });
+    });
+    return ok(ranges.sort((left, right) => left.start - right.start));
+  } catch (cause: unknown) {
+    return err(
+      cause instanceof XmlDocumentParseError
+        ? cause
+        : new XmlDocumentParseError("malformed", cause),
+    );
   }
 };
 

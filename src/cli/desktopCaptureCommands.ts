@@ -168,6 +168,18 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      extraPackage: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Ubuntu 24.04 archive package installed beside the application, such as a runtime piece its package does not install; repeat for more",
+        ),
+      syntheticSeed: z
+        .boolean()
+        .default(false)
+        .describe(
+          "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
+        ),
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -192,8 +204,10 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    extraPackages: options.extraPackage,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
+                    syntheticSeed: options.syntheticSeed,
                   },
                   readers,
                   signal,

@@ -15,23 +15,40 @@ agent-env run ./mousepad-bundle --dry-run
 
 The export reads the capture and its [state view](desktop-application-state.md);
 it does not run the application. `--name` sets the environment name; otherwise
-it comes from the desktop entry id or the program, with an `app-` prefix when
+it comes from the desktop entry id or the program: a reverse-DNS id's last
+part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
+trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
 the capture, once REA has validated it against the capture; see
 [desktop application tasks](desktop-application-tasks.md). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
+`--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
+package beside the application, such as a runtime piece its package does not
+install; a [build computer](desktop-build-witness.md) passes its request's
+`extra_packages`, or a `.deb` request's `dependencies`, this way. A name that
+is not a Debian package name is refused (`extra_package`). Names the bundle
+installs anyway, the application's own package and the dependencies it names
+for a package installed from its `.deb` file, are not repeated; the rest are
+listed in the limitations and the README. A package the captured `.deb` lists
+as one alternative, such as `openjdk-17-jre | java-runtime`, is kept when apt
+installs the application by name, since apt may satisfy it with another.
 `--seed-checkpoint` names the checkpoint whose state seeds the bundle, the
 baseline by default, and `--end-checkpoint` the one a task must pass on, the
 capture's last by default; see [The seed checkpoint](#the-seed-checkpoint).
+`--synthetic-seed` says the seed was made for the task, as a build agent makes
+it in a [build computer](desktop-build-witness.md), rather than taken from the
+user's own data; see [A seed made for the task](#a-seed-made-for-the-task).
 
 The command returns Evidence with operation `export_desktop_application` and
 predicate type `rea.desktop-application-export`, listing the environment name,
 the seed and end `checkpoints`, owned paths, seed files, the seeds it
 rewrote to remove the capture host's name and user (`scrubbed_files`), the
-bundle files that still hold them (`unscrubbed_files`), and written files,
-the last three by their path in the bundle. A failed export, cancellation
+gzip seeds it compressed again only to clear their headers
+(`recompressed_files`), the bundle files that still hold them
+(`unscrubbed_files`), and written files, the last four by their path in the
+bundle. A failed export, cancellation
 included, removes the bundle it had not yet published, so no partial copy of the
 user's data remains. If the bundle was published but its output handles could
 not be closed, the command reports a cleanup error that carries the export
@@ -59,9 +76,10 @@ an `App` suffix.
 
 The class declares:
 
-- `Packages(apt=[...])` with the package the capture found. A vendor package
-  is named `<package>/<release>`, its repository's release (the Suite apt
-  reports as `a=`, or else its Codename), so apt takes it from that repository
+- `Packages(apt=[...])` with the package the capture found, then the
+  `--extra-package` names. A vendor package is named `<package>/<release>`,
+  its repository's release (the Suite apt reports as `a=`, or else its
+  Codename), so apt takes it from that repository
   even when the Ubuntu archive offers a higher version or epoch, as noble's
   transitional `firefox` does over packages.mozilla.org's; it is named alone
   when the release names neither, or when the capture was written before
@@ -124,6 +142,17 @@ The class declares:
   desktop entry without `Path`), which a relative argument or program path
   such as `./app` also needs, and still starts if that folder is missing. The
   export refuses a capture that saw no application window.
+- The seed's document, opened at launch, so the app shows it rather than its
+  start screen: when the seed holds exactly one file the state view gives the
+  `document` role, and the desktop entry's `Exec` takes files (a `%f`, `%F`,
+  `%u` or `%U` field code), its path under `$HOME` is appended to the command.
+  A command that already names a document, absolute or from its working
+  directory, as one captured with `--argument <file>` does, is kept as it is;
+  a settings path under the home does not count. A seed with no document launches
+  as captured. With several, no desktop entry or an `Exec` that takes no file,
+  the app launches as captured and the README and the result's limitations say
+  why. A reset
+  relaunches the app, so it opens the document again.
 - For an Electron application (the capture found its fuse sentinel or a
   `resources/app.asar`), `--no-sandbox` right after the program unless the
   command already has it: Chromium's sandbox needs user namespaces the
@@ -131,7 +160,8 @@ The class declares:
   README and the result's limitations say the sandbox is off.
 - `paths`: the state directories holding the application's state files and the
   folders holding its documents, nested folders collapsed. A folder beside a
-  state directory whose name differs from it only in letter case is owned
+  state directory whose name differs from it only in letter case, or that
+  adds a version, as TreeLine's `~/.treeline-3.1` beside `~/.treeline`, is owned
   whole in the files' spelling, so a `~/.config/GIMP` profile GIMP created
   during the capture beside the candidate `~/.config/gimp` is owned as
   `.config/GIMP`, not as the folder of its first file. The home itself and
@@ -140,9 +170,11 @@ The class declares:
   Files the capture recorded under a symlinked state directory's physical
   spelling are mapped back to the innermost such directory's home spelling,
   unless that spelling is outside the captured home, as when the home itself is
-  a symbolic link. When two files map to one home path, the export uses the one
-  present before the capture, else the first by path, and a limitation names
-  the other.
+  a symbolic link. When a selected link names an application state directory,
+  the bundle seeds the application's state path and restores the selected
+  alias at boot. Selections nested under that alias are seeded under the same
+  state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
+  before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
   plane: the class seeds the home once per boot and keeps it as the initial
   state with `keep_initial`, `data/add` and `data/reset` call agentenv's `add`
@@ -155,10 +187,86 @@ retain is not seeded: one in the state view without retained content at that
 checkpoint, or one the capture omitted (for example too large or past the
 content budget). The result lists them in `unseeded_files` and the README
 names them. When the application held files open in folders whose starting
-content the capture did not retain, a limitation names those folders. The
-desktop Trash, `~/.local/share/Trash`, is never the application's, so a file
-the user moved there is neither owned nor seeded, even when a window title
-names it; a limitation lists the files the Trash held at the seed.
+content the capture did not retain, a limitation names those folders, spelled
+from `~/` under the home: a file there is seeded only when the capture
+retained it, as it does one written during the capture, and the limitation
+names the seed files there or says there are none. The desktop Trash,
+`~/.local/share/Trash`, is never the application's, so a file the user moved
+there is neither owned nor seeded, even when a window title names it; a
+limitation lists the files the Trash held at the seed.
+
+Files that changed during the capture outside the owned paths are neither
+owned nor seeded, so the app starts without what it saved there: MuseScore
+keeps its settings in `~/.config/MuseScore`, which its name rules miss, and
+showed its first-run wizard on every boot. A limitation and the README name
+those folders, leaving out desktop services' files, each collapsed to its
+folder in `~/.config`, `~/.local/share`, `~/.local/state` or `~/.local`, the
+hidden folder of the home it lies in, or else its own folder, up to eight and
+a count of the rest. Capture again naming them with `--state-path`, or
+`state_paths` on a build computer, to own them.
+
+Lock files the app holds while it runs are left out of the seed: a copied one
+makes the app find its profile or document in use, and a LibreOffice Calc
+bundle whose seed held its profile's `.lock` showed no window at boot. They
+are `lockfile`, `lock`, `.lock`, `.parentlock`, `parent.lock`,
+`SingletonLock` and Lucene's index lock `write.lock` anywhere, as Poedit's
+translation memory holds, LibreOffice's document lock `.~lock.<name>#`, a
+`<file>.lck`, `.<file>.lock`, `.<file>.lck` or `<file>.<ext>.lock` beside a
+file the capture recorded in the same folder, such as GnuCash's
+`household.gnucash.LCK`, Grisbi's empty `.household.gsb.lock`, which made it
+refuse every save, and VYM's `plan.vym.lock` (a project's `Gemfile.lock`
+beside its `Gemfile` has no extension to its file, so it is seeded), and
+`*.lock` or `*.lck` directly in the home, as wxWidgets' single-instance
+`~/poedit.lock`, or directly in one of the application's state directories;
+a lone `notes.lck` or `.notes.lock` elsewhere is seeded. A lock or a log (below)
+never makes a path the application's own, so `~/poedit.lock` is neither owned
+nor named among the folders the bundle does not own.
+Elsewhere such a file may be a project's own, such as `Cargo.lock` or
+`yarn.lock`, which pin dependencies, and is seeded, even under a folder whose
+name starts with a dot. A file the state view makes a document, or one named
+itself by `--state-path` or an absolute `--argument`, is never left out,
+whatever its name. A limitation and the README list them, up to
+eight and a count, after "Left out of the seed". They stay under the owned
+paths, so `data/get` returns the lock the running app holds, and `data/reset`
+restores the seed without them.
+
+A seed file keeps the permission bits it had at the seed when the capture saw
+it change, such as a `0600` file an app checks: the class module lists those
+other than `0644` in `SEED_MODES`, and the first boot sets them when it copies
+the seed. A file the capture never saw change has no recorded mode and is
+written `0644`.
+
+The app's logs are left out of the seed the same way, since they record facts
+about the capture host that the host scrub does not catch, such as Freeplane's
+`os_version` with the host's kernel, or QElectroTech's CPU model, memory and
+disk sizes, and no app needs its old log to start. A log is a file named
+`*.log` or `log.<n>`, with the `.lck` or `.lock` beside such a file, that is
+in the app's own state: application state in the state view, or under one of
+its state directories. Other files under a `logs` folder are seeded, since
+apps keep the user's data there, such as Pidgin's conversations or fldigi's
+logbook. A document, or a path named by `--state-path` or a file under one, is
+seeded even when it ends in `.log`, since a user's own log may be the
+document, and so is a database's journal of saved writes: a `*.log` in WebKit
+or Chromium storage (such as `Local Storage/leveldb/000003.log`), under a
+`leveldb` folder, or numbered (`000005.log`) beside a LevelDB database's
+`CURRENT` or `MANIFEST-*`. A limitation and the README list the logs left out
+apart from the lock files, after "Left out of the seed".
+
+Other seed files the app keeps for its own
+running are seeded as captured and named, collapsed to the folder that holds
+them: WebKit or Chromium storage (such as `hsts-storage.sqlite`, `storage/`,
+`mediakeys/`, `Local Storage/`, `IndexedDB/`, `Cookies`, `Visited Links`,
+`Platform Notifications/`, and a whole `QtWebEngine/`
+profile), which may hold the app's own data, and caches (a folder whose name ends in `cache`); a stale one
+can change how the app starts. A seeded LibreOffice profile's
+`registrymodifications.xcu` ships without its `RecoveryList` items, which
+LibreOffice writes for the documents it has open and which would start the
+bundle into document recovery instead of its window; a limitation and the
+README name the file. REA finds the items with its XML parser, as `item`
+elements whose `oor:path` is `/org.openoffice.Office.Recovery/RecoveryList`
+however the tags are spelled, and cuts exactly those elements, so text in a
+comment or CDATA and every other byte stay as captured. A registry that is
+not well-formed XML ships unchanged.
 
 The application's dconf keys at the seed, if any, are written once when the
 app first starts, also for an application that owns no files, and the class adds
@@ -168,7 +276,14 @@ existing user database through a `file-db:` profile, then runs `dconf compile`
 on that dump and the captured keys, in that name order so the captured keys
 win, and replaces `~/.config/dconf/user`. If that fails, the server prints a
 one-line warning and the app starts without the captured keys. `data/reset` does
-not restore them.
+not restore them. No file of the bundle holds them, so `data/get` does not
+return them and no task check reads them; a draft whose only change between
+its checkpoints is to the application's dconf keys says so with
+`uncheckable_changes`, and one whose dconf database changed but could not be
+read says so with `unreadable_changes`. When a dconf database changed by the
+seed checkpoint but its version there could not be read, as without
+`dconf-cli`, the export seeds no keys from it and a limitation names it with
+the read error.
 
 ## The seed checkpoint
 
@@ -184,6 +299,16 @@ A file's state at a checkpoint is its last version recorded at or before it.
 The export refuses a name the capture does not hold exactly once, and an end
 checkpoint taken before the seed checkpoint; `inspect-desktop-application-state`
 lists the names in `capture.checkpoints`.
+
+## A seed made for the task
+
+By default the seed is the user's real data: the README and the result's
+limitations say to keep the bundle local and not publish it. With
+`--synthetic-seed` they say instead that the seed was made for the task, and
+to read `envs/<name>/seed/` before publishing the bundle; the export cannot
+tell the two apart, so the flag is the caller's word. `export_build_environment`
+passes it, since the building agent makes the seed in the build computer. The
+Evidence records it as `synthetic_seed`.
 
 ## Host name and user
 
@@ -228,6 +353,26 @@ export removes them from what the bundle ships:
   boot, as it did the captured home before. The replacements read as the
   computer's own: its user is `user`, with its home in `/home/user`, and
   `localhost` is the name every host has for itself.
+- A gzip-compressed seed, such as a Gnumeric workbook, is decompressed, up to
+  256 MiB, scrubbed as the format the state view read its document as, and
+  compressed again whether or not its document changed, so no file name,
+  comment or time its header held ships: with no file name, comment or extra
+  field, modification time 0 and the operating system unknown, so the same
+  document gives the same bytes on every host. It is deflated at the fastest
+  level, or stored when deflating would make it expand more than the 100 times
+  a view reads, so a seed that read still reads. It is listed in
+  `scrubbed_files` when its document changed, and otherwise in
+  `recompressed_files`, which the README counts rather than lists, so the
+  example and template files an app copies on first run do not bury the
+  document scrubbed; one already in that form ships as captured. The class copies it at
+  boot as it is, so the home it holds stays `/home/user`. One that does not
+  decompress ships as captured, its bytes searched, and one the state view did
+  not read is only searched. One whose document needs no edit but a member of
+  which has an extra field, where BGZF (`.vcf.gz`, `.bam`) and dictzip
+  (`.dict.dz`) files index their blocks, also ships as captured, its bytes
+  searched, so its blocks stay where its index says; one whose document
+  changed is still compressed again as one member, losing them, as the
+  export's limitation says.
 - Binary files, SQLite databases among them, and text files over 256 MiB are
   copied as captured. Then every file the bundle ships, the class module with
   its dconf keys and the README included, is searched by a looser rule than
@@ -294,6 +439,39 @@ declared vendor repository installs the package already; when the URL is not
 written as `http://` or `https://` or holds a user name or password; and when
 the file is built for an architecture other than `amd64`, `arm64` or `all`.
 
+## Grading once the app has saved
+
+A task's verifier, `artifacts/<task>-check/verify.py`, grades the app's files
+only once they have settled, because an app can save on its own timer after the
+last change. Gnote saves a note 4 s after the last key, so a read taken as
+soon as the agent stops finds the text on screen but not yet in the file. The
+verifier reads the app's `data/get` every 0.5 s. It compares each file's bytes
+between reads by their SHA-256, as `data/get` returns them, and grades once
+every file has held for 3 s. The 3 s count from when a read returned the
+current bytes, not when it began, so a slow read that brings a change late
+does not count its own run as quiet. 15 s after the first read began, the
+bound, the verifier grades the last completed read: no read starts at or
+after the bound, and a read still running then is cut. Each result records
+whether the files settled in `settled`, and whether the bound cut a read in
+`read_cut`.
+
+The window has a cost and a limit:
+
+- An app whose files do not change during the check, such as one that saved
+  at once, is graded 3 s after the first read returns.
+- A save that lands more than 3 s after the first read returns is still
+  missed. An app that saves 4 s after the last key is caught only when the
+  agent stops at least a second after that key.
+- Files the app rewrites more often than every 3 s, such as a log, never
+  settle, so every check waits until the bound.
+- The bound counts the reads too, so a slow `data/get` ends the check at
+  15 s. Only the first read, which every grade needs, runs to its own
+  timeout.
+
+The bound and window are `SETTLE_BOUND_S` and `SETTLE_WINDOW_S` in the
+verifier. `check_build_task` waits the same way before it grades each
+witness stage; see [witnessing](desktop-build-witness.md#witness).
+
 ## Typed views
 
 The views follow the [state view](desktop-application-state.md)'s formats and
@@ -308,7 +486,10 @@ as their entries, read with Python's `zipfile` from the file in place, with
 REA's entry, size, compression ratio and archive limits and its wording for an
 entry it does not read. The module reads the central directory itself, as REA
 does, and shows `zipfile` only the records it lists, reading each entry in
-bounded chunks no further than a byte past its declared size. A JSON file
+bounded chunks no further than a byte past its declared size. A gzip file is
+the view of the document inside it, with `"compression": "gzip"` beside its
+format, decompressed with Python's `zlib` within the same entry size and ratio
+limits, its members joined as REA joins them. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
 or whose retained value nests more than 500 levels deep, gets an `error` instead of a view, as in
 REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
@@ -337,6 +518,7 @@ when a DOCTYPE names a DTD. Known differences remain:
   and then gives the file an `error`, and so does a table or column name that
   is not UTF-8.
 
-The seed is the user's real data. Keep the bundle local and do not publish it.
+Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
+user's real data. Keep the bundle local and do not publish it.
 The class was checked against agentenv-framework 0.9.1431 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.

@@ -164,6 +164,43 @@ describe("detectStateFormat with a DOCTYPE", () => {
     ).toBe("text");
   });
 
+  it("reads a file that opens with a DOCTYPE naming no internal subset and then an element as XML, as KmPlot's plot, whatever it is called", () => {
+    const plot = (doctype: string, body = '<function type="cartesian"/>') =>
+      bytes(`${doctype}\n<kmpdoc version="4">\n    ${body}\n</kmpdoc>\n`);
+
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>"),
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/lesson_plots.fkt",
+        '<!DOCTYPE kmpdoc>\n<kmpdoc version="4"/>\n',
+      ),
+    ).toBe("xml");
+    expect(
+      textSyntaxFormat(
+        "/h/Documents/state.txt",
+        '<!DOCTYPE state SYSTEM "state[1].dtd"><state/>',
+      ),
+    ).toBe("xml");
+    // A DOCTYPE that can declare entities, or text that is not well formed, stays text.
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot('<!DOCTYPE kmpdoc [<!ENTITY e "x">]>', "<f>&e;</f>"),
+      ),
+    ).toBe("text");
+    expect(
+      detectStateFormat(
+        "/h/Documents/lesson_plots.fkt",
+        plot("<!DOCTYPE kmpdoc>", "<function>"),
+      ),
+    ).toBe("text");
+  });
+
   it.each([
     '<!DOCTYPE abiword PUBLIC "-//ABISOURCE//DTD AWML 1.0 Strict//EN" "http://www.abisource.com/awml.dtd"><abiword/>',
     '<!DOCTYPE abiword [<!ENTITY lol "lol">]><abiword>&lol;</abiword>',

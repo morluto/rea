@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import type { JsonValue } from "../jsonValue.js";
 import { parseDesktopTask } from "./appTask.js";
 import {
   evaluateTaskChecks,
@@ -7,7 +8,8 @@ import {
   type TaskFileView,
 } from "./appTaskChecks.js";
 import { CHECK_CASES, CHECK_VIEWS } from "./appTaskChecks.fixture.js";
-import { textView } from "./stateFormats.js";
+import { textView, xmlView } from "./stateFormats.js";
+import { elementText } from "./viewPointer.js";
 
 const portable = (name: string) => /^[a-z0-9]+(?:-[a-z0-9]+)*$/u.test(name);
 
@@ -248,6 +250,65 @@ const REFUSALS: readonly (readonly [Record<string, unknown>, string])[] = [
     },
     "at checks.0.normalize_whitespace",
   ],
+  [
+    {
+      checks: [
+        {
+          kind: "text_equals",
+          file: "a",
+          pointer: "/p",
+          value: "x",
+          text_attribute: "",
+        },
+      ],
+    },
+    "at checks.0.text_attribute",
+  ],
+  [
+    { checks: [{ kind: "member_count", file: "a", pointer: "/x" }] },
+    "exactly one of equals, at_least and at_most",
+  ],
+  [
+    {
+      checks: [
+        {
+          kind: "member_count",
+          file: "a",
+          pointer: "/x",
+          equals: 1,
+          at_least: 1,
+        },
+      ],
+    },
+    "exactly one of equals, at_least and at_most",
+  ],
+  [
+    {
+      checks: [{ kind: "member_count", file: "a", pointer: "/x", equals: -1 }],
+    },
+    "at checks.0.equals",
+  ],
+  [
+    { checks: [{ kind: "member_count", file: "a", pointer: "x", equals: 1 }] },
+    "must start with /",
+  ],
+  ...["[>first_name]", "first_name=x", "[name=a]x"].map(
+    (matching) =>
+      [
+        {
+          checks: [
+            {
+              kind: "member_count",
+              file: "a",
+              pointer: "/x",
+              matching,
+              equals: 1,
+            },
+          ],
+        },
+        `matching ${JSON.stringify(matching)}`,
+      ] as const,
+  ),
 ];
 
 describe("evaluateTaskChecks", () => {
@@ -315,6 +376,12 @@ describe("evaluateTaskChecks", () => {
           file: "Documents/photo.png",
           lines: ["x"],
         },
+        {
+          id: "gzip",
+          kind: "value_absent",
+          file: "Documents/bomb.gnumeric",
+          pointer: "/root/attributes/x",
+        },
       ] as never,
       new Map(Object.entries(CHECK_VIEWS)),
     );
@@ -326,6 +393,7 @@ describe("evaluateTaskChecks", () => {
       ["cut", false, true],
       ["shown", false, undefined],
       ["binary", false, undefined],
+      ["gzip", false, true],
     ]);
   });
 });
@@ -441,6 +509,155 @@ describe("evaluateTaskChecks on cut views", () => {
       { id: "c", passed: false },
       ["notes.txt", "/lines/0", quoted("note 1"), quoted("note 2")],
     );
+  });
+});
+
+describe("evaluateTaskChecks text on a cut view", () => {
+  /** A paragraph of `before`, then `dropped` nested past the 64 levels an XML view keeps, then `after`. */
+  const nested = (before: string, dropped: string, after: string) =>
+    `<p id="t">${before}${"<b>".repeat(65)}${dropped}${"</b>".repeat(65)}${after}</p>`;
+  const views = new Map<string, TaskFileView>([
+    [
+      "page.xml",
+      {
+        format: "xml",
+        view: {
+          root: { name: "doc", attributes: {}, children: ["kept"] },
+          truncated: true,
+        },
+      },
+    ],
+    [
+      "time.xml",
+      {
+        format: "xml",
+        view: xmlView(nested("at 3", "WRONG", ":30 PM")) ?? null,
+      },
+    ],
+    [
+      "word.xml",
+      { format: "xml", view: xmlView(nested("alpha", "zzz", "beta")) ?? null },
+    ],
+  ]);
+  const text = (kind: string, file: string, pointer: string, value: string) =>
+    evaluateTaskChecks(
+      [{ id: "c", kind, file, pointer, value } as never],
+      views,
+    )[0];
+  const cut = { id: "c", passed: false, undecided: true } as const;
+
+  it("leaves both text checks of an element in a cut view undecided, even where the runs it kept hold the value", () => {
+    // The reader drops the nested text but keeps the run after it, so the kept runs read as text the file never had.
+    const keptText = (file: string) =>
+      elementText(
+        (views.get(file)?.view as { root: JsonValue } | undefined)?.root ??
+          null,
+      );
+    expect(keptText("time.xml")).toBe("at 3:30 PM");
+    expect(keptText("word.xml")).toBe("alphabeta");
+
+    for (const [file, value] of [
+      ["time.xml", "at 3:30 PM"],
+      ["word.xml", "alphabeta"],
+      ["page.xml", "kept"],
+      ["page.xml", "gone"],
+    ] as const)
+      for (const kind of ["text_contains", "text_equals"])
+        expectOutcome(text(kind, file, "/root", value), cut, [file]);
+  });
+
+  it("decides a text node or an attribute value in a cut view, and leaves a pointer naming nothing there undecided", () => {
+    expectOutcome(
+      text("text_equals", "time.xml", "/root/children/0", "at 3"),
+      { id: "c", passed: true },
+      ["time.xml", "/root/children/0", quoted("at 3")],
+    );
+    expectOutcome(
+      text("text_contains", "time.xml", "/root/attributes/id", "t"),
+      { id: "c", passed: true },
+      ["time.xml", "/root/attributes/id", quoted("t")],
+    );
+    expectOutcome(
+      text("text_equals", "page.xml", "/root/children/0", "gone"),
+      { id: "c", passed: false },
+      ["page.xml", "/root/children/0", quoted("kept"), quoted("gone")],
+    );
+    expectOutcome(
+      text("text_equals", "page.xml", "/root/children/1", "kept"),
+      cut,
+      ["page.xml", "/root/children/1"],
+    );
+  });
+});
+
+describe("evaluateTaskChecks numeric element text", () => {
+  const grade = (file: string, pointer: string, value: number) =>
+    evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file,
+          pointer,
+          value,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+
+  it("accepts an equivalent or split decimal on a whole cell, and refuses a cut cell or a JSON object", () => {
+    const cell = (row: string) =>
+      `/root/children/[name=Cell][@Row=${row}][@Col=3]`;
+    expect(grade("Documents/budget.xml", cell("2"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.8)?.passed).toBe(true);
+    expect(grade("Documents/budget.xml", cell("5"), 437.89)?.passed).toBe(
+      false,
+    );
+    expect(
+      grade("Documents/budget.xml", cell("6"), 400)?.undecided,
+    ).toBeUndefined();
+    expect(grade("Documents/cut-number.xml", "/root", 437.8)).toMatchObject({
+      passed: false,
+      undecided: true,
+    });
+    const shaped = grade(".config/notes/settings.json", "/shaped", 437.8);
+    expect(shaped?.passed).toBe(false);
+    expect(shaped?.undecided).toBeUndefined();
+    expect(shaped?.description).toContain("not a number");
+  });
+
+  it("decides a numeral text node in a cut view, because that node was kept whole", () => {
+    const [outcome] = evaluateTaskChecks(
+      [
+        {
+          id: "c",
+          kind: "value_equals",
+          file: "n.xml",
+          pointer: "/root/children/0",
+          value: 437.8,
+          tolerance: 0.001,
+        } as never,
+      ],
+      new Map([
+        [
+          "n.xml",
+          {
+            format: "xml",
+            view: {
+              root: {
+                name: "Cell",
+                attributes: {},
+                children: ["437.80"],
+              },
+              truncated: true,
+            },
+          },
+        ],
+      ]),
+    );
+    expect(outcome?.passed).toBe(true);
+    expect(outcome?.undecided).toBeUndefined();
   });
 });
 
@@ -569,6 +786,99 @@ describe("evaluateTaskChecks selectors and tolerance", () => {
   });
 });
 
+describe("evaluateTaskChecks attribute text, child-text selectors and member counts", () => {
+  const outcome = (check: Record<string, unknown>) =>
+    evaluateTaskChecks(
+      [{ id: "c", ...check } as never],
+      new Map(Object.entries(CHECK_VIEWS)),
+    )[0];
+  const contacts = ".local/share/osmo/contacts_records.xml";
+  const cut = { id: "c", passed: false, undecided: true } as const;
+  const failed = { id: "c", passed: false } as const;
+
+  it("leaves each failure that a cut view may cause undecided", () => {
+    for (const check of [
+      {
+        kind: "member_count",
+        file: "Documents/cut.xml",
+        pointer: "/root/children",
+        at_least: 1,
+      },
+      {
+        kind: "member_count",
+        file: "Documents/many.zip",
+        pointer: "/entries",
+        at_least: 1,
+      },
+      {
+        kind: "member_count",
+        file: "Documents/listing.zip",
+        pointer: "/entries/1/view/root/children",
+        equals: 1,
+      },
+      {
+        kind: "text_contains",
+        file: "Documents/cut.xml",
+        pointer: "/root",
+        value: "1",
+        text_attribute: "id",
+      },
+      {
+        kind: "value_absent",
+        file: "Documents/cut.xml",
+        pointer: "/root/children/[name=p][>q=x]",
+      },
+    ])
+      expectOutcome(outcome(check), cut, [check.file]);
+  });
+
+  it("decides a failure on what the view holds, and says what it found", () => {
+    expectOutcome(
+      outcome({
+        kind: "member_count",
+        file: contacts,
+        pointer: "/root/children",
+        matching: "[>first_name=Delphine]",
+        at_most: 2,
+      }),
+      failed,
+      [contacts, "/root/children", "[>first_name=Delphine]", "3 ", " 2"],
+    );
+    expectOutcome(
+      outcome({
+        kind: "member_count",
+        file: ".config/notes/settings.json",
+        pointer: "/size",
+        equals: 0,
+      }),
+      failed,
+      ["/size", quoted(12)],
+    );
+    expectOutcome(
+      outcome({
+        kind: "text_equals",
+        file: "Documents/flyer.sla",
+        pointer:
+          "/root/children/[name=DOCUMENT]/children/[name=PAGEOBJECT][@ANNAME=Headline]",
+        value: "Spring Fete",
+        text_attribute: "CH",
+      }),
+      failed,
+      [quoted("Spring Fair"), quoted("Spring Fete"), "CH"],
+    );
+    expectOutcome(
+      outcome({
+        kind: "value_equals",
+        file: contacts,
+        pointer: "/root/children/[name=contact][>first_name=Delphine]/name",
+        value: "contact",
+      }),
+      failed,
+      ["[name=contact][>first_name=Delphine]", "2"],
+    );
+  });
+});
+
 describe("evaluateTaskChecks whole text", () => {
   const outcome = (check: Record<string, unknown>) =>
     evaluateTaskChecks(
@@ -578,26 +888,17 @@ describe("evaluateTaskChecks whole text", () => {
   const meeting = "Documents/meeting.xml";
   const plate = "Documents/plate.FCStd";
   const time = "/root/children/[name=p][@id=time]";
-  /** A value as a description shows it: caller data and what the view holds, as JSON. */
-  const quoted = (value: unknown) => JSON.stringify(value);
-  const expectFacts = (
-    found: { passed: boolean; description: string } | undefined,
-    passed: boolean,
-    facts: readonly string[],
-  ) => {
-    expect(found?.passed).toBe(passed);
-    for (const fact of facts) expect(found?.description).toContain(fact);
-  };
+  const failed = { id: "c", passed: false } as const;
 
   it("reports the text an element has, its runs joined, beside the value it was compared with", () => {
-    expectFacts(
+    expectOutcome(
       outcome({
         kind: "text_equals",
         file: meeting,
         pointer: time,
         value: "Starts at 3:45 today.",
       }),
-      false,
+      failed,
       [
         meeting,
         time,
@@ -605,14 +906,14 @@ describe("evaluateTaskChecks whole text", () => {
         quoted("Starts at 3:45 today."),
       ],
     );
-    expectFacts(
+    expectOutcome(
       outcome({
         kind: "text_contains",
         file: meeting,
         pointer: time,
         value: "3:45",
       }),
-      false,
+      failed,
       [quoted("Starts at 3:30 today."), quoted("3:45")],
     );
     const collapsed = outcome({
@@ -622,7 +923,7 @@ describe("evaluateTaskChecks whole text", () => {
       value: "Doors  open",
       normalize_whitespace: true,
     });
-    expectFacts(collapsed, true, [quoted("Doors open")]);
+    expectOutcome(collapsed, { id: "c", passed: true }, [quoted("Doors open")]);
     expect(collapsed?.description).not.toContain(quoted("Doors  open"));
   });
 
@@ -659,7 +960,7 @@ describe("evaluateTaskChecks whole text", () => {
     ];
 
     for (const [check, facts] of refused)
-      expectFacts(outcome({ kind: "text_equals", ...check }), false, facts);
+      expectOutcome(outcome({ kind: "text_equals", ...check }), failed, facts);
   });
 
   it("leaves an element of a truncated view undecided as a value check is, while a text node there is decided", () => {
@@ -703,7 +1004,7 @@ describe("evaluateTaskChecks whole text", () => {
     expect(missing?.passed).toBe(false);
     expect(missing?.undecided).toBe(true);
     expect(missing?.description).toBe(
-      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown",
+      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown (/root/children/2)",
     );
     const zipped = outcome({
       kind: "text_equals",

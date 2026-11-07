@@ -2,6 +2,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { exportedStateFiles } from "../../domain/desktop/appExport.js";
 import { DRAFT_PROMPT } from "../../domain/desktop/appTask.js";
 import { draftTaskFiles } from "../../domain/desktop/appTaskDraft.js";
+import { draftNotes } from "../../domain/desktop/appTaskDraftNotes.js";
 import { desktopApplicationStateSchema } from "../../domain/desktop/desktopState.js";
 import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
@@ -25,9 +26,20 @@ const OPERATION = "describe_desktop_application_task";
 
 const DRAFT_LIMITATIONS = [
   "Files are those under the paths the export owns, whose state differs between the seed and end checkpoints, by default the capture's first and last; data/get serves nothing else.",
-  "Suggested checks and views cover documents, or the app's own state when no document changed; each check is derived from the net change and is a starting point, not a task.",
+  "Suggested checks, values, guards and views cover documents, or the app's own state when no document changed; each check is derived from the net change and is a starting point, not a task.",
+  "Values cover XML, archives, JSON and key files: at most 20 entries and 8 KB a file and 24 KB a draft, each value cut at 600 characters (values_cut says when any is left out).",
   "Views longer than 200 items or strings longer than 2,000 characters are cut here (view_cut); inspect-desktop-application-state shows every view whole.",
 ];
+
+/** Checks with ids `PREFIX-1`, `PREFIX-2` and on, in order. */
+const numbered = <Check extends object>(
+  prefix: string,
+  checks: readonly Check[],
+) =>
+  checks.map((check, index) => ({
+    id: `${prefix}-${String(index + 1)}`,
+    ...check,
+  }));
 
 const draft = async (
   folder: string,
@@ -47,12 +59,34 @@ const draft = async (
   );
   const { checkpoints } = state.capture;
   const ends = selectStateEnds(checkpoints, selection, OPERATION);
-  const { files, paths } = exportedStateFiles(capture, state);
+  const { files, dconf, paths, selected } = exportedStateFiles(capture, state);
   const drafted = draftTaskFiles(
     files,
     (home) => isWithinAny(home, paths),
     ends,
+    selected,
   );
+  const covered = (index: number) => {
+    const point = capture.state.checkpoints[index];
+    return (
+      point !== undefined &&
+      !point.truncated &&
+      point.unreadable_directories === 0 &&
+      point.unchecked_paths === 0 &&
+      point.unconfirmed_changes === 0
+    );
+  };
+  const notes = draftNotes(files, {
+    drafted,
+    owned: paths,
+    dconf,
+    ends,
+    checkpoints,
+    observed: Array.from(
+      { length: ends.end - ends.seed + 1 },
+      (_, offset) => ends.seed + offset,
+    ).every(covered),
+  });
   const environment = exportEnvironmentName(capture, undefined);
   const result = {
     application: {
@@ -65,23 +99,30 @@ const draft = async (
       baseline: checkpoints[ends.seed],
       final: checkpoints[ends.end],
     },
-    files: drafted.map(({ file, role, baseline, final, change }) => ({
-      file,
-      role,
-      baseline,
-      final,
-      change,
-    })),
+    files: drafted.map(
+      ({ file, role, baseline, final, change, values, values_cut }) => ({
+        file,
+        role,
+        baseline,
+        final,
+        change,
+        values,
+        values_cut,
+      }),
+    ),
     task: {
       name: "change",
       prompt: DRAFT_PROMPT,
-      checks: drafted
-        .flatMap((file) => file.suggested)
-        .map((check, index) => ({
-          id: `check-${String(index + 1)}`,
-          ...check,
-        })),
+      checks: numbered(
+        "check",
+        drafted.flatMap((file) => file.suggested),
+      ),
     },
+    guards: numbered(
+      "guard",
+      drafted.flatMap((file) => file.guards),
+    ),
+    notes,
   } as unknown as JsonValue;
   signal?.throwIfAborted();
   return createEvidence(undefined, DESKTOP_PROVIDER, {

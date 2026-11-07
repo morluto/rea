@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
-import { memberLookup, pairMembers } from "./viewPointer.js";
+import { holdsTagOnly, pairMembers } from "./memberPairing.js";
+import { memberLookup } from "./viewPointer.js";
 import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
@@ -76,10 +77,14 @@ interface Noting extends WalkOptions {
 const keyedMembers = (
   from: readonly JsonValue[],
   other: JsonValue | undefined,
-  older: boolean,
+  at: { readonly older: boolean; readonly list: string },
 ) => {
   const others = Array.isArray(other) ? other : [];
-  const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
+  const hold = holdsTagOnly(at.list);
+  const pairing = at.older
+    ? pairMembers(others, from, hold)
+    : pairMembers(from, others, hold);
+  const older = at.older;
   const side = older ? pairing.older : pairing.newer;
   const lookup = memberLookup(other);
   return side.keys.map((key, index) => {
@@ -119,7 +124,10 @@ const walk = (
     path.length -= segment.length + 1;
   };
   if (Array.isArray(from) && into.keyed === true) {
-    const members = keyedMembers(from, other, into.older === true);
+    const members = keyedMembers(from, other, {
+      older: into.older === true,
+      list: path.segments.map((segment) => `/${segment}`).join(""),
+    });
     from.forEach((item, index) => {
       const member = members[index];
       if (member !== undefined) visit(member.key, item, member.counterpart);
@@ -307,13 +315,22 @@ const truncatedView = (view: JsonValue): boolean => {
   );
 };
 
-/** Describe how one state file changed between two readable versions. */
+/**
+ * Describe how one state file changed between two readable versions. With
+ * `named`, XML members are listed by the selectors naming them, as a check
+ * names them, and by position only where nothing names them or where only
+ * their order changed, which no selector shows.
+ */
 export const diffStateViews = (
   format: DesktopStateFormat,
   before: JsonValue,
   after: JsonValue,
+  options: { readonly named?: boolean } = {},
 ): DesktopStateDifference => {
-  const difference = compareViews(format, before, after);
+  const difference =
+    (format === "xml" || format === "json") && options.named === true
+      ? namedOrPositional(before, after)
+      : compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.
   const flagged = format === "text" || format === "xml" || format === "sqlite";
   const partial =
@@ -321,6 +338,17 @@ export const diffStateViews = (
       ? zipLeavesOut(before) || zipLeavesOut(after)
       : flagged && (truncatedView(before) || truncatedView(after));
   return partial ? { ...difference, complete: false } : difference;
+};
+
+/** An XML change keyed by selector, or by position when keying shows none, as when siblings only moved. */
+const namedOrPositional = (
+  before: JsonValue,
+  after: JsonValue,
+): DesktopStateDifference => {
+  const named = compareTrees(before, after, { keyed: true });
+  return named.added_count + named.removed_count + named.changed_count > 0
+    ? named
+    : compareTrees(before, after);
 };
 
 const compareViews = (

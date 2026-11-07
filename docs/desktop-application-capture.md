@@ -56,6 +56,9 @@ environment, and reads commands from stdin, one per line. The application gets
 REA's environment without the `AGENTENV_*` variables an agent environment sets,
 such as its control token: an app the exported computer launches never has
 them, and an app captured inside a computer must not hold a credential to it.
+It also gets `LIBC_FATAL_STDERR_=1`, so glibc writes a fatal error, such as
+an abort's reason, to the app's stderr rather than its terminal, and an app
+that exits at launch reports it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -90,12 +93,20 @@ Progress lines on stderr are JSON, `{"rea_progress": {"phase":
 "desktop_capture", "message": ...}}`. Those a driver waits on also carry an
 `event`: `{"kind": "window_open"}` once the window opens; `{"kind":
 "checkpoint", "name", "trigger", "at_ms", "entries", "changes",
-"retained_files", "retained_bytes"}` once a checkpoint has been taken, the
-baseline, `stop` and `exit` included, with the paths walked, the paths
-changed since the checkpoint before and the files retained; and `{"kind":
-"checkpoint_refused", "name", "reason"}` for a requested name it refused. A
-driver that sends `checkpoint <name>` waits for the event naming it rather
-than for a fixed time.
+"retained_files", "retained_bytes", "changed_files", "more_changed_files"}`
+once a checkpoint has been taken, the baseline, `stop` and `exit` included,
+with the paths walked, the paths changed since the checkpoint before, the
+files retained, and up to ten of the files (not folders) that changed,
+home-relative: those under a `--state-path` or absolute `--argument` first,
+then those the application held open, then those in its state directories,
+then the rest, and last caches (a folder whose name ends in `cache`, such as
+`~/.cache`) and WebKit or Chromium storage, each by path, with a count of the
+rest. An application can rewrite dozens of cache files on a save, and KDE's
+holds its service cache open, so the saved document would otherwise fall past
+the ten;
+and `{"kind": "checkpoint_refused", "name", "reason"}` for a requested name it
+refused. A driver that sends `checkpoint <name>` waits for the event naming it
+rather than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -296,11 +307,16 @@ dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
 start. A folder in those places whose name is one of these in another letter
 case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
-the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+the whole name is compared, so `~/.config/GIMPshop` does not. A file under a
+folder the application creates during the capture beside one of them, with
+the same name in another letter case or with a version added (`-3.1` or
+`3`), as TreeLine's `~/.treeline-3.1`, is its state too. Dotfiles in the
 home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
-file during the capture. A `flatpak run` launch is named after its application
+file during the capture. So does KDE's settings file in the config folder,
+`<name>rc` such as Tellico's `~/.config/tellicorc`, for each such name of three
+or more characters, whether or not it exists yet. A `flatpak run` launch is named after its application
 id rather than the `flatpak` launcher, and adds `~/.var/app/<id>`.
 
 **Session.** When it started, how long it ran and why it ended; the launched
@@ -308,8 +324,9 @@ process's exit status; every process seen in the application's tree; every
 client window with its class pair, titles, owner pid and type, marked when it
 belongs to the application; when the first application window appeared; the
 most common class pair of the application's windows, for matching its window
-later; files the application's processes held open under the walked roots; the first
-8 KiB of the launched process's stderr; and whether cleanup was verified. Each
+later; files the application's processes held open under the walked roots; the last
+8 KiB of the launched process's stderr, where a failing app's last words are,
+with `stderr_truncated` when earlier output was dropped; and whether cleanup was verified. Each
 process records whether the capture started it: the launched process, a
 process carrying the capture's run token, or a descendant of one, even when
 its environment cannot be read, as for a zombie or a sandboxed renderer.
@@ -335,7 +352,9 @@ directory, which are named in the limitations instead; a selected path that is
 not a directory brings the `-wal` and `-journal` paths beside it, so a database
 selected on its own is captured with its logs), the state directories
 as walked (their physical spelling, which differs from the inventory's when one
-is a symlink), the paths every walk left out (the output folder and
+is a symlink), the selected paths (each `--state-path` and content-root
+`--argument` as named, absolute, beside the physical path walked, so a
+symlinked settings folder keeps what its name means), the paths every walk left out (the output folder and
 `--exclude` values), and the checkpoints in order: `baseline` before
 launch, each requested checkpoint, `stop` or `time-limit`, and `exit` after the
 application has gone. Each checkpoint records how many paths its walk saw,
@@ -360,7 +379,11 @@ retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
-`--state-path`.
+`--state-path`, or `state_paths` on a build computer's `start_build_capture`,
+and a limitation names them, spelled from `~/` under the home. A lock file
+the application held open, such as Poedit's `~/poedit.lock` or Lucene's
+`write.lock`, makes no folder such a directory, since it holds nothing to
+retain.
 
 **Limitations.** What the capture could not establish, such as a truncated
 walk or a missing window.

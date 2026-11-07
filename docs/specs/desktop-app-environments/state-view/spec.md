@@ -35,7 +35,11 @@ generation reads the kinds of change.
   ([XML text checks](../xml-text-checks/spec.md)); key files up to 4 MiB
   whose every line parses; zip archives by
   their local file header, as their entries with each entry's own format and
-  view ([document views](../document-views/spec.md)); text; binary.
+  view ([document views](../document-views/spec.md)); text; binary. A gzip
+  file, told by its magic bytes, is read as the document inside, its members
+  joined, within a zip entry's 16 MiB and 100-times limits, and its version
+  records `compression: "gzip"` beside that document's format; past the
+  limits, or damaged, it has a `view_error`.
 - Changes between versions are created, deleted, or lines, values, keys or
   rows with added, removed and changed lists (100 each, with counts); content
   for binary files and unreadable when a view is missing. Values are JSON
@@ -51,5 +55,6 @@ generation reads the kinds of change.
 
 - No export, seed selection or task generation.
 - No parsing of other binary formats (GVDB other than dconf, LevelDB, Realm,
-  protobuf); they are listed as binary.
+  protobuf), or of compression other than gzip (xz, Zstandard, bzip2); they
+  are listed as binary.
 - No redaction: views contain the user's real data, as the capture does.
