@@ -53,6 +53,13 @@ export const ELF_NOTES_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free DWARF compile-unit inspection. */
+export const DWARF_UNITS_PROVIDER = Object.freeze({
+  id: "rea-dwarf-units",
+  name: "REA DWARF compile-unit parser",
+  version: "1",
+} as const);
+
 /** Provider identity for portable, execution-free Apple .ips crash-report decoding. */
 export const APPLE_IPS_PROVIDER = Object.freeze({
   id: "rea-apple-ips",

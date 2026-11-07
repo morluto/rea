@@ -29,6 +29,7 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  DWARF_UNITS_PROVIDER,
   ELF_NOTES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
@@ -230,6 +231,9 @@ export const CAPABILITY_DECLARATIONS = {
   desktopBuildComputers: { providers: [] },
   devicetree: {
     providers: [providerBinding(DEVICETREE_PROVIDER, ["inspect_devicetree"])],
+  },
+  dwarfUnits: {
+    providers: [providerBinding(DWARF_UNITS_PROVIDER, ["inspect_dwarf_units"])],
   },
   electronActiveObservation: {
     providers: [
