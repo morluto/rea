@@ -17,19 +17,24 @@ export const projectDirectAnalysisFailure = (
   callerInputPath: string,
 ): ReturnType<typeof projectAnalysisError> => {
   const projection = projectAnalysisError(error);
-  const observation = tryParseEvidence(projection.details?.partial_observation);
-  return observation === undefined
-    ? projection
-    : {
-        ...projection,
-        details: {
-          ...projection.details,
-          partial_observation: withEvidenceCallerInputPath(
-            observation,
-            callerInputPath,
-          ),
-        },
-      };
+  const partial = projection.details?.partial_observation;
+  const wrapped =
+    typeof partial === "object" &&
+    partial !== null &&
+    !Array.isArray(partial) &&
+    partial.kind === "unretained-evidence";
+  const observation = tryParseEvidence(wrapped ? partial.evidence : partial);
+  if (observation === undefined) return projection;
+  const rebound = withEvidenceCallerInputPath(observation, callerInputPath);
+  return {
+    ...projection,
+    details: {
+      ...projection.details,
+      partial_observation: wrapped
+        ? { ...partial, evidence: rebound }
+        : rebound,
+    },
+  };
 };
 
 /** Await one-shot cleanup and retain either the outcome or both failures. */
