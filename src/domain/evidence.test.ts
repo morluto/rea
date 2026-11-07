@@ -1135,3 +1135,25 @@ it("discloses an outside-root target even when no observation path is mapped", (
     "logical-root redaction incomplete; host-local path retained.",
   );
 });
+
+it("uses the same Evidence identity for equivalent logical prefixes", () => {
+  const target = {
+    path: "/tmp/work/app",
+    sha256: "a".repeat(64),
+    format: "file" as const,
+  };
+  const input = {
+    operation: "inspect",
+    parameters: { path: target.path },
+    result: {},
+  };
+  const first = createEvidence(target, PROVIDER, input, {
+    logicalRoot: { root: "/tmp/work", logicalPrefix: "logical://app" },
+  });
+  const second = createEvidence(target, PROVIDER, input, {
+    logicalRoot: { root: "/tmp/work", logicalPrefix: "logical://app/" },
+  });
+  expect(first.subject?.local_path).toBe(second.subject?.local_path);
+  expect(first.limitations).toEqual(second.limitations);
+  expect(first.evidence_id).toBe(second.evidence_id);
+});

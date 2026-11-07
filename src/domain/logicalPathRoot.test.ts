@@ -162,3 +162,15 @@ it("retains own __proto__ JSON members when mapping a sibling path", () => {
     true,
   );
 });
+
+it.skipIf(process.platform !== "win32")(
+  "recognizes drive-qualified filesystem paths before URI schemes",
+  () => {
+    expect(
+      normalizeLogicalPath("C:\\repo\\app.bin", { root: "C:\\repo" }),
+    ).toEqual({ kind: "mapped", path: "workspace://app.bin" });
+    expect(
+      normalizeLogicalPath("https://example.com/file", { root: "C:\\repo" }),
+    ).toEqual({ kind: "unmodified", path: "https://example.com/file" });
+  },
+);

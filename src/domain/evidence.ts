@@ -11,6 +11,7 @@ import { nulFreeStringSchema } from "./localPath.js";
 import {
   DEFAULT_LOGICAL_ROOT_PREFIX,
   normalizeLogicalPath,
+  normalizeLogicalPrefix,
   redactEvidenceObservationPaths,
   type LogicalPathRootMapping,
 } from "./logicalPathRoot.js";
@@ -500,7 +501,9 @@ const applyLogicalRootRedaction = (
 
   const totalOutsideCount = outsideCount + obsOutsideCount;
   const addedLimitations: string[] = [];
-  const prefix = mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX;
+  const prefix = normalizeLogicalPrefix(
+    mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX,
+  );
   if (
     mappedCount > 0 ||
     (target !== undefined && effectiveTarget?.path !== target.path)

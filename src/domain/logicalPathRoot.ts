@@ -1,6 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { isPathWithinRoot } from "./localPath.js";
-import { hasScheme } from "./artifactPathSyntax.js";
 import {
   jsonObjectSchema,
   jsonValueSchema,
@@ -45,7 +44,7 @@ export type NormalizedLogicalPathResult =
 export const DEFAULT_LOGICAL_ROOT_PREFIX = "workspace://";
 
 /** Standardize path separator to POSIX forward slash and remove trailing slash. */
-const cleanLogicalPrefix = (prefix: string): string => {
+export const normalizeLogicalPrefix = (prefix: string): string => {
   const normalized = prefix.replaceAll("\\", "/");
   return normalized.endsWith("/") ? normalized : `${normalized}/`;
 };
@@ -54,10 +53,7 @@ const cleanLogicalPrefix = (prefix: string): string => {
  * Check if a string is a candidate local filesystem path (not a URL, relative label, or empty).
  */
 const isFilesystemPathCandidate = (candidate: string): boolean => {
-  if (candidate === "" || hasScheme(candidate)) {
-    return false;
-  }
-  return isAbsolute(candidate);
+  return candidate !== "" && isAbsolute(candidate);
 };
 
 /** Normalize local path against configured logical root. */
@@ -94,7 +90,7 @@ export const normalizeLogicalPath = (
 
   const rel = relative(rootCandidate, pathCandidate);
   const posixRel = rel === "" ? "" : rel.split(sep).join("/");
-  const prefix = cleanLogicalPrefix(
+  const prefix = normalizeLogicalPrefix(
     mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX,
   );
   const mapped =
