@@ -30,6 +30,7 @@ import {
   semanticBindingAtRead,
 } from "./javascriptSemanticMutationInitializers.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { rejectsEventListener } from "./javascriptSemanticAsyncEffects.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
@@ -216,14 +217,15 @@ const childInteraction = (
   const method = semanticStaticPropertyName(member.property, member.computed);
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
+  const { kind, interactionMethod, eventName } = classification;
+  const listener = node.arguments[1];
+  if (kind === "listener" && rejectsEventListener(listener, state)) return null;
   const binding = objectBinding(member.object, state);
   const { candidates: linked, complete } = resolveChildCandidates(
     member.object,
     context,
   );
   if (linked.length === 0) return null;
-  const { kind, interactionMethod, eventName } = classification;
-  const listener = node.arguments[1];
   return {
     interactionId: `child:${kind}:${String(node.start ?? -1)}:${String(node.end ?? -1)}`,
     kind,

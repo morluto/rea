@@ -12,6 +12,7 @@ import {
   semanticStaticPropertyName,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import {
   resolveSemanticBindingState,
   semanticResolutionBlocked,
@@ -152,32 +153,98 @@ export const collectJavaScriptSemanticAsyncEffects = (
 
 /**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
- * anything is registered or removed when it is not. An exactly readable literal
- * that cannot be a function is therefore not an event operation, while an
- * identifier, a call result or a spread may still supply one and keeps its
- * operation.
- *
- * A class expression passes Node's own `typeof` check, so it is kept.
+ * anything is registered or removed when it is omitted or is a value that can
+ * never be a function. An identifier, a call result, a class expression or a
+ * spread may still supply a callable at runtime and keeps its operation.
  */
-const rejectsEventListener = (listener: t.Node): boolean => {
-  if (t.isSpreadElement(listener)) return false;
-  const value = unwrapJavaScriptExpression(listener).node;
-  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
+export const rejectsEventListener = (
+  listener: t.Node | undefined,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (listener === undefined) return true;
+  const pending: {
+    readonly node: t.Node | undefined;
+    readonly depth: number;
+  }[] = [{ node: listener, depth: 0 }];
+  for (
+    let current = pending.pop();
+    current !== undefined;
+    current = pending.pop()
+  ) {
+    if (current.node === undefined) continue;
+    if (t.isSpreadElement(current.node)) return false;
+    const unwrapped = unwrapJavaScriptExpression(current.node);
+    const depth = current.depth + unwrapped.depth;
+    if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+      state.valueResourceLimits.add("expression-depth");
+      return false;
+    }
+    const value = unwrapped.node;
+    if (t.isConditionalExpression(value)) {
+      pending.push(
+        { node: value.consequent, depth: depth + 1 },
+        { node: value.alternate, depth: depth + 1 },
+      );
+      continue;
+    }
+    if (t.isLogicalExpression(value)) {
+      pending.push(
+        { node: value.left, depth: depth + 1 },
+        { node: value.right, depth: depth + 1 },
+      );
+      continue;
+    }
+    if (t.isSequenceExpression(value)) {
+      pending.push({ node: value.expressions.at(-1), depth: depth + 1 });
+      continue;
+    }
+    if (t.isAssignmentExpression(value)) {
+      if (value.operator === "=") {
+        pending.push({ node: value.right, depth: depth + 1 });
+        continue;
+      }
+      if (["||=", "&&=", "??="].includes(value.operator)) {
+        pending.push(
+          { node: value.left, depth: depth + 1 },
+          { node: value.right, depth: depth + 1 },
+        );
+        continue;
+      }
+      continue;
+    }
+    if (
+      t.isFunctionExpression(value) ||
+      t.isArrowFunctionExpression(value) ||
+      t.isClassExpression(value)
+    )
+      return false;
+    // A numeric literal is always a number, including the non-finite value Babel
+    // stores for `1e999`, which the exact-value reader refuses to price.
+    if (t.isNumericLiteral(value)) continue;
+    if (
+      t.isIdentifier(value) &&
+      ["undefined", "NaN", "Infinity"].includes(value.name) &&
+      isUnmodifiedGlobalReference(value, state, value.name) &&
+      !semanticOpaqueNameMayHaveChanged(value, state)
+    )
+      continue;
+    // Every unary, non-pipeline binary or update operator yields a primitive,
+    // and a primitive is never callable.
+    if (
+      t.isUnaryExpression(value) ||
+      (t.isBinaryExpression(value) && value.operator !== "|>") ||
+      t.isUpdateExpression(value) ||
+      readExactJavaScriptLiteral(value).found ||
+      t.isTemplateLiteral(value) ||
+      t.isBigIntLiteral(value) ||
+      t.isRegExpLiteral(value) ||
+      t.isArrayExpression(value) ||
+      t.isObjectExpression(value)
+    )
+      continue;
     return false;
-  if (t.isClassExpression(value)) return false;
-  // A numeric literal is always a number, including the non-finite value Babel
-  // stores for `1e999`, which the exact-value reader refuses to price.
-  if (t.isNumericLiteral(value)) return true;
-  // Every unary operator yields a primitive, and a primitive is never callable.
-  return (
-    t.isUnaryExpression(value) ||
-    readExactJavaScriptLiteral(value).found ||
-    t.isTemplateLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isRegExpLiteral(value) ||
-    t.isArrayExpression(value) ||
-    t.isObjectExpression(value)
-  );
+  }
+  return true;
 };
 
 const collectEvent = (
@@ -196,16 +263,15 @@ const collectEvent = (
   if (method === undefined) return;
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
-  const listenerArgument = EVENT_LISTENER_METHODS.includes(method)
-    ? node.arguments[1]
-    : undefined;
+  const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
+  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
   if (
+    listenerMethod &&
     !t.isSpreadElement(eventArgument) &&
-    listenerArgument !== undefined &&
-    rejectsEventListener(listenerArgument)
+    rejectsEventListener(listenerArgument, state)
   )
     return;
   const emitter = emitterIdentity(member.object, state);
@@ -331,42 +397,9 @@ const nodeBuiltinTimerMethod = (
 const schedulesWithNonFunctionCallback = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean => {
-  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
-    return false;
-  const argument = node.arguments[0];
-  // No argument at all cannot be a function. A spread may still expand to one.
-  if (argument === undefined) return true;
-  if (t.isSpreadElement(argument)) return false;
-  const value = unwrapJavaScriptExpression(argument).node;
-  if (t.isFunctionExpression(value) || t.isArrowFunctionExpression(value))
-    return false;
-  if (
-    t.isStringLiteral(value) ||
-    t.isNumericLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value) ||
-    t.isNullLiteral(value) ||
-    t.isTemplateLiteral(value) ||
-    t.isArrayExpression(value) ||
-    t.isObjectExpression(value)
-  )
-    return true;
-  // `undefined`, `NaN` and `Infinity` are unmodified globals, and none is a
-  // function. A shadowed binding may still hold one, so only the global counts.
-  if (
-    t.isIdentifier(value) &&
-    ["undefined", "NaN", "Infinity"].includes(value.name) &&
-    isUnmodifiedGlobalReference(value, state, value.name) &&
-    !semanticOpaqueNameMayHaveChanged(value, state)
-  )
-    return true;
-  // A class passes Node's own typeof check; invoking it is a separate failure,
-  // so the schedule itself still happens. Every other unary operator (including
-  // `void`, `!`, `~`, `typeof` and `delete`) yields a primitive, never a
-  // function.
-  return t.isUnaryExpression(value);
-};
+): boolean =>
+  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
+  rejectsEventListener(node.arguments[0], state);
 
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;

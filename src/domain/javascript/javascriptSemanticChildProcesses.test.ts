@@ -261,3 +261,119 @@ it("resolves an unconditional assignment before the read in the same function bo
     })),
   );
 });
+
+it.each([
+  ["a missing on listener", `child.on("exit")`],
+  ["a missing once listener", `child.once("error")`],
+  ["a missing addListener listener", `child.addListener("exit")`],
+  ["a numeric listener", `child.on("exit", 1)`],
+  ["an overflowing numeric listener", `child.on("exit", 1e999)`],
+  ["a string listener", `child.on("exit", "done")`],
+  ["a template-literal listener", 'child.on("exit", `done`)'],
+  ["a boolean listener", `child.on("exit", true)`],
+  ["a null listener", `child.on("exit", null)`],
+  ["a void listener", `child.on("exit", void 0)`],
+  ["a unary listener", `child.on("exit", !0)`],
+  ["a binary listener", `child.on("exit", 1 + 1)`],
+  ["an update listener", `child.on("exit", ++count)`],
+  ["a conditional listener", `child.on("exit", flag ? 1 : 2)`],
+  ["a logical listener", `child.on("exit", 0 || 1)`],
+  ["a sequence listener", `child.on("exit", (done, 1))`],
+  ["an assignment listener", `child.on("exit", (count = 1))`],
+  ["a BigInt listener", `child.on("exit", 0n)`],
+  ["a RegExp listener", `child.on("exit", /re/)`],
+  ["an object listener", `child.on("exit", {})`],
+  ["an array listener", `child.on("exit", [])`],
+  ["an unshadowed undefined listener", `child.on("exit", undefined)`],
+  ["an unshadowed NaN listener", `child.once("error", NaN)`],
+  ["an unshadowed Infinity listener", `child.addListener("exit", Infinity)`],
+] as const)("emits no child listener interaction for %s", (_name, call) => {
+  const ir = analyze(`let count = 0; const child = spawn('worker'); ${call};`);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it.each([
+  ["an arrow listener", `child.on("exit", () => {})`, "on", "exit"],
+  [
+    "a function-expression listener",
+    `child.once("error", function () {})`,
+    "once",
+    "error",
+  ],
+  [
+    "a class-expression listener",
+    `child.addListener("exit", class {})`,
+    "addListener",
+    "exit",
+  ],
+  ["an identifier listener", `child.on("exit", done)`, "on", "exit"],
+  ["a call-result listener", `child.on("exit", makeListener())`, "on", "exit"],
+  [
+    "a conditional listener branch",
+    `child.on("exit", flag ? 1 : done)`,
+    "on",
+    "exit",
+  ],
+  ["a logical listener branch", `child.on("exit", done || 1)`, "on", "exit"],
+  ["a sequence listener branch", `child.on("exit", (1, done))`, "on", "exit"],
+  ["a spread listener", `child.on("exit", ...listeners)`, "on", "exit"],
+  [
+    "a shadowed undefined parameter",
+    `function register(undefined) { child.on("exit", undefined); }`,
+    "on",
+    "exit",
+  ],
+] as const)(
+  "keeps the child listener interaction for %s",
+  (_name, call, method, eventName) => {
+    const ir = analyze(`const child = spawn('worker'); ${call};`);
+    expect(ir.childProcessInteractions).toMatchObject([
+      {
+        kind: "listener",
+        method,
+        eventName,
+        linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+        resolution: "complete",
+      },
+    ]);
+  },
+);
+
+it.each([
+  [
+    "an eval-introduced undefined listener",
+    `eval("var undefined = () => {}"); child.on("exit", undefined);`,
+    "on",
+    "exit",
+  ],
+  [
+    "an eval-introduced NaN listener",
+    `eval("var NaN = () => {}"); child.once("error", NaN);`,
+    "once",
+    "error",
+  ],
+  [
+    "an eval-introduced Infinity listener",
+    `eval("var Infinity = () => {}"); child.addListener("exit", Infinity);`,
+    "addListener",
+    "exit",
+  ],
+] as const)(
+  "keeps the child listener interaction after %s in sloppy script scope",
+  (_name, call, method, eventName) => {
+    const ir = analyzeJavaScriptSemantics(
+      `const { spawn } = require("node:child_process"); function register() { const child = spawn("worker"); ${call} }`,
+    );
+    expect(ir.childProcessInteractions).toMatchObject([
+      {
+        kind: "listener",
+        method,
+        eventName,
+        linkedProcessIds: [ir.childProcessSpawns[0]!.processId],
+        resolution: "complete",
+      },
+    ]);
+    expect(ir.eventOperations).toMatchObject([{ kind: "register", method }]);
+  },
+);
