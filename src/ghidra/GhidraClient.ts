@@ -108,6 +108,7 @@ export type GhidraTargetSnapshot =
 import { connectGhidraSocket } from "./GhidraSocketConnection.js";
 import {
   createGhidraEndpoint,
+  defaultGhidraTransport,
   type GhidraEndpoint,
 } from "./GhidraTransport.js";
 import { GhidraWire } from "./GhidraClientWire.js";
@@ -208,7 +209,9 @@ export class GhidraClient {
       startupTimeoutMs:
         options.startupTimeoutMs ?? DEFAULT_GHIDRA_STARTUP_TIMEOUT_MS,
       platform: options.platform ?? process.platform,
-      transport: options.transport ?? "unix-socket",
+      transport:
+        options.transport ??
+        defaultGhidraTransport(options.platform ?? process.platform),
     };
     this.#logger = options.logger ?? silentLogger;
     this.#wire = new GhidraWire({
