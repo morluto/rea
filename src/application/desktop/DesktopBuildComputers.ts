@@ -46,6 +46,12 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildOwnedWork } from "./DesktopBuildOwnedWork.js";
+import {
+  measureInFreshComputers,
+  type MeasuredTask,
+  type MeasureRequest,
+} from "./DesktopBuildSolves.js";
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
@@ -53,6 +59,7 @@ import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
 const START = "start_build_computer";
 const ACT = "act_on_build_computer";
 const CLOSE = "close_build_computer";
+const MEASURE = "measure_build_task";
 
 /** A result with the driver's content blocks, delivered after REA's own. */
 export interface ForwardedResult<Value> {
@@ -100,11 +107,6 @@ export interface BuildComputerSteps {
 }
 
 /** A start still in progress, which shutdown cancels and joins. */
-interface PendingStart {
-  readonly settled: Promise<unknown>;
-  readonly stop: AbortController;
-}
-
 const unknownComputer = (operation: string) =>
   new AnalysisInputError(operation, {
     userMessage:
@@ -283,8 +285,7 @@ const startFailure = (
  */
 export class DesktopBuildComputers {
   readonly #computers = new Map<string, HeldComputer>();
-  readonly #starts = new Set<PendingStart>();
-  #closed = false;
+  readonly #work = new DesktopBuildOwnedWork();
 
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
@@ -311,25 +312,25 @@ export class DesktopBuildComputers {
       AnalysisError
     >
   > {
-    if (this.#closed)
-      return err(
-        new AnalysisCancelledError(START, {
-          cause: new Error("REA is closing its build computers"),
-        }),
-      );
-    const stop = new AbortController();
-    const settled = this.#start(
-      input,
-      AbortSignal.any([signal, stop.signal]),
-      progress,
+    return this.#work.run(START, signal, (stopping) =>
+      this.#start(input, stopping, progress),
     );
-    const pending = { settled, stop };
-    this.#starts.add(pending);
-    try {
-      return await settled;
-    } finally {
-      this.#starts.delete(pending);
-    }
+  }
+
+  /** Measure a bundle's task in fresh computers of its own; closing REA stops it, tearing the solve's computer down. */
+  measure(
+    input: MeasureRequest,
+    signal: AbortSignal,
+    progress?: ProgressReporter,
+  ): Promise<Result<MeasuredTask, AnalysisError>> {
+    return this.#work.run(MEASURE, signal, (stopping) =>
+      measureInFreshComputers(
+        input,
+        { environment: this.environment, defaults: this.defaults },
+        stopping,
+        progress,
+      ),
+    );
   }
 
   async #start(
@@ -559,11 +560,7 @@ export class DesktopBuildComputers {
 
   /** Cancel and join the starts in progress, then bring every held computer down, as the server closes. */
   async closeAll(): Promise<void> {
-    this.#closed = true;
-    const starts = [...this.#starts];
-    for (const start of starts)
-      start.stop.abort(new Error("REA is closing its build computers"));
-    await Promise.allSettled(starts.map((start) => start.settled));
+    await this.#work.close();
     const results = await Promise.all(
       [...this.#computers.keys()].map((id) => this.close(id)),
     );

@@ -14,6 +14,7 @@ grades the witness with the same checks the exported verifier runs.
 | `stop_build_capture`       | Stops the capture and returns its checkpoints and the task drafts, from `seed` to `end` and on to each `end-<task name>` |
 | `export_build_environment` | Exports the bundle with the agent's tasks inside the computer and copies it to a folder here                             |
 | `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness                               |
+| `measure_build_task`       | Runs a bundle's task in fresh computers for a model and records how hard it is in the bundle                             |
 
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
@@ -301,6 +302,45 @@ computer is witnessed once; witness again from a fresh computer. A bundle of
 several tasks is witnessed one task per fresh computer: the seed stage
 refuses a task whose steps and verifier differ from the bundle's for that
 task's name, so each task's record shows that task alone from the seed.
+
+## Measure
+
+`measure_build_task` takes a bundle folder, a task's name, a `model`, an
+`agent` (`claude-code` by default) and `budget_usd`. It runs the task through
+REA's helper, `bridge/agentenv/solve.py`, with the agentenv runner's Python on
+this host, one solve at a time, each in a fresh computer the run tears down:
+the bundle's own steps, with the agent deployed as the solver on the model.
+The model endpoint is the one agentenv reads where REA starts,
+`LITELLM_BASE_URL` and `LITELLM_API_KEY` or `[model]` in
+`.agentenv/config.toml`; REA holds no model client and never reads the key.
+
+| Solves finished | Passes    | Band       | Next          |
+| --------------- | --------- | ---------- | ------------- |
+| 3               | 0         | `too_hard` | stop          |
+| 3               | 3         | `too_easy` | stop          |
+| 3               | 1 or 2    |            | 2 more solves |
+| 5               | 1, 2 or 3 | `in_band`  | stop          |
+| 5               | 4         | `too_easy` | stop          |
+
+A solve agentenv reports `failed`, `unscored` or `cancelled` did not finish:
+it is run again, at most twice, and not counted, though its cost is. Before
+each solve the measure stops, `stopped: "budget"`, when the largest cost so
+far would take the total past `budget_usd`; a solve's cost is known only when
+it ends, from Claude Code's last trajectory record, so the first solve always
+runs and a solve that reports no cost stops the measure. A solve that could
+not run at all, such as for want of a model endpoint, ends the measure with
+its error and records nothing.
+
+The result and `difficulty.json`, at the bundle's root, keep per task: the
+model, agent and time; the band and why it stopped; `k`, the finished solves,
+the passes and unfinished solves; the cost in all and the budget; each
+finished solve's turns; `failures_per_check`, how many finished solves failed
+each check; each solve's outcome, turns, cost, seconds, failed checks and
+instance id; `task_sha256`, the SHA-256 of the task's steps file followed by
+its verifier, so a record whose task changed since shows it is stale; and
+REA's and agentenv's versions. Measuring a task again replaces its record and
+keeps the others. The README gets a Measured difficulty section with one
+line per task, which agentenv ignores like the file.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)
 for scope and verification.

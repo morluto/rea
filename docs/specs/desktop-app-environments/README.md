@@ -53,6 +53,10 @@ The work lands as one PR per step:
     tasks, each checked at its own end checkpoint and, when one was taken,
     failing at its near miss; the eval lists them all and each is witnessed
     on its own fresh computer.
+16. [Task difficulty](task-difficulty/spec.md): a build tool solves a
+    bundle's task in fresh computers for a model, 3 times and 2 more unless
+    they passed none or all, within a budget, and records its band, cost,
+    turns and failures per check in the bundle.
 
 Version 1 covers Linux with X11, applications whose state lives in files or
 SQLite under the home directory, and real applications from public packages.

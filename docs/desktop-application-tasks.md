@@ -856,7 +856,10 @@ it: `--seed-checkpoint end --end-checkpoint end-add-bread`.
 
 ## Solve rate
 
-REA does not run agents. To measure how often an agent solves the task, run it
+REA's CLI runs no agent. On a build host, the MCP tool `measure_build_task`
+measures a bundle's task for a model, records it in the bundle's
+`difficulty.json`, and keeps the task in the band when it passes 1 to 3 of 5;
+see [measuring a task](desktop-build-witness.md#measure). By hand, run the task
 k times, three by default, and count the runs whose summary line says
 `passed`:
 

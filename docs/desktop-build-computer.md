@@ -123,11 +123,11 @@ setup wrote, such as in `~/.claude.json`:
 }
 ```
 
-Solver runs are `agent-env run` commands the agent runs in its shell, and
-agentenv refuses them without a model endpoint: export `LITELLM_BASE_URL` and
-`LITELLM_API_KEY` in the shell that starts `claude`, whose Bash tool inherits
-them, or set `base_url` and `api_key` under `[model]` in
-`.agentenv/config.toml`.
+`measure_build_task` runs solves through agentenv, which refuses them without
+a model endpoint: export `LITELLM_BASE_URL` and `LITELLM_API_KEY` in the shell
+that starts `claude`, whose REA server inherits them, or set `base_url` and
+`api_key` under `[model]` in `.agentenv/config.toml`. REA passes them on to
+agentenv and never reads the key.
 
 Claude Code asks before each MCP tool call its permission settings do not
 allow, and a build makes dozens of `act_on_build_computer` calls. You can
@@ -139,13 +139,13 @@ A headless run, `claude -p`, ends when the skill asks its upfront questions,
 and refuses the tool calls its permission settings do not allow. Put the
 answers in the request: the install source when the app is not in the Ubuntu
 archive, a synthetic seed or the file to start from, whether to review the
-task before solver runs, and the solver runs' count, model and budget, or
+task before it is measured, and the model and budget to measure it with, or
 none:
 
 ```bash
 claude -p 'Build me a Gnote environment where the agent adds olive oil to the
-shopping list note. Make a synthetic note. Then make 2 solver runs with
-<model>, at most $4 in all, without a review first.'
+shopping list note. Make a synthetic note. Then measure it with <model>,
+at most $4 in all, without a review first.'
 ```
 
 ## Start a computer

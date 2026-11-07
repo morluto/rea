@@ -11,6 +11,7 @@ import {
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
+import { MEASURE_BUILD_TASK_CONTRACT } from "./desktopBuildMeasureContract.js";
 import {
   draftSchema,
   EXAMPLE_LATER_TASK,
@@ -485,4 +486,5 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       },
     ],
   },
+  MEASURE_BUILD_TASK_CONTRACT,
 ] as const satisfies readonly ToolContract[];

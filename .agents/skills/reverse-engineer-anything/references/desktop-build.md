@@ -30,16 +30,16 @@ start without asking:
 1. The app and the task, if either is unclear: what changes, in which
    document.
 2. Whether they have a starting file of their own; otherwise you make one.
-3. Whether they want solver runs after the witness: how many (the budget)
-   and with which model.
-4. If so, whether they want to review the task before those runs.
+3. Whether they want the tasks measured after the witness: with which
+   model, within which budget, and whether to harden a task until it lands
+   in the band.
+4. If so, whether they want to review the tasks before those solves.
 
 When you cannot ask, as in a headless `claude -p` run, do not stop: take
 these defaults for whatever the request leaves open, say which you took in
 your first message and in the report, and go on. Install from the Ubuntu
-archive, make a synthetic seed, skip the review, and make 3 solver runs
-within $4 in all, with the model the request names or else the runner's
-default.
+archive, make a synthetic seed, skip the review, and measure each task
+within $4 in all, with the model the request names, without hardening.
 
 ## When you are blocked
 
@@ -578,19 +578,53 @@ result and decide:
 
 Stop after three witnesses of a task and report what still fails.
 
-## Solver runs
+## Measure
 
-Only if the requester asked for them, or by the headless default above. If
-they wanted to review the task first, show them its prompt and checks and
-wait for their approval. Then run the bundle within the budget, one run at a
-time, with `REA_AGENT_ENV_COMMAND`'s runner, or else `agent-env` on PATH:
-`agent-env run <bundle> --task <name> --agent claude-code --model <model>`.
-The runner needs a model endpoint in your shell: `LITELLM_BASE_URL` and
-`LITELLM_API_KEY`, or `base_url` and `api_key` under `[model]` in
-`.agentenv/config.toml`. When a run says no model endpoint is set, tell the
-person what to set and stop. Count runs reported `passed`. A run
-`scored below 1` is a miss; one reported `failed` did not finish, so run it
-again if the budget allows instead of counting it. Never run past the budget.
+Only if the requester asked for it, or by the headless default above. If
+they wanted to review the tasks first, show them each prompt and checks and
+wait for their approval. Then `measure_build_task` each task with `bundle`,
+`task`, `model` and `budget_usd`, its share of the budget. It runs the task
+in fresh computers, 3 times, then 2 more unless they passed none or all, and
+keeps a task that passes 1 to 3 of 5 (`band: "in_band"`). It stops before a
+solve the largest cost so far would take past the budget, and writes the
+record into the bundle's `difficulty.json` and README. The solver needs a
+model endpoint where REA starts: `LITELLM_BASE_URL` and `LITELLM_API_KEY`, or
+`base_url` and `api_key` under `[model]` in `.agentenv/config.toml`; when the
+measure says a solve did not run for want of one, tell the person what to
+set and stop. Read the result's `failures_per_check` and each solve's
+`failed_checks` before calling a task hard: a check that fails in most failed
+solves while the app shows the right change is brittle, so fix the check,
+export and witness again, rather than count it as difficulty.
+
+## Harder tasks
+
+When the requester wants tasks worth evaluating or training on, harden a
+task that came out `too_easy` and measure it again, within the budget. The
+solver sees and fixes its slips on screen, so one edit with the value in the
+prompt is solved almost every time; so far, on TreeLine with Sonnet 5.5, so
+were one more dialog, a conditional move of seven records, and ten
+corrections read from a second document and applied across the list. Try,
+one at a time, measuring each:
+
+- A longer chain of exact edits than that, each a value the checks compare
+  whole, so one slip in the chain fails the task.
+- Facts read in one view and used in another: values the solver must read
+  from a second document the app opens, or from another record, rather than
+  from the prompt, such as "the same year as The Quiet Glacier's".
+- Distractors beside each target: records with near-identical names or
+  values, and a guard check on each that it stays as it was.
+- Mistakes that do not show once saved: a value the app displays rounded or
+  formatted unlike what it stores, or an edit the app keeps only when its
+  field loses focus.
+
+Stop when the budget left cannot cover 3 solves of the hardened task, and
+report the bands measured.
+
+Each hardened task stays sound: its checks still fail on the seed and pass on
+its end, its near miss fails, and another valid way of doing it passes, so
+check values, never the order or method the solver used. Put the second
+document in the seed. Count records with `member_count` and check each
+value by a selector that names its record, since no check joins two records.
 
 ## Close and report
 
@@ -611,7 +645,8 @@ Report:
   are gzip seeds whose headers were cleared, their content unchanged: give
   their count;
 - limitations: the capture's, the export's and anything you could not do;
-- solver runs, if any: the model, the runs and the passes;
+- each measured task's band, passes of finished solves, turns, cost and
+  failures per check, from `difficulty.json`;
 - the build time and the questions you asked.
 
 Never publish or share the bundle yourself.

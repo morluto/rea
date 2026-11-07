@@ -85,8 +85,9 @@ never runs code the agent wrote.
 
 ## Non-goals
 
-- No REA command that runs agents or measures a solve rate; the user guide
-  gives the `agent-env run` recipe.
+- No REA CLI command that runs agents; the user guide gives the
+  `agent-env run` recipe, and the build tools measure a solve rate with
+  [task difficulty](../task-difficulty/spec.md).
 - No checks over dconf keys, which `data/get` serves as binary, or over files
   outside the owned paths.
 - No timestamp detection beyond ISO 8601 and `asctime` date-times; other volatile values

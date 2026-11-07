@@ -790,6 +790,15 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     accessesNetwork: true,
     idempotent: false,
   }),
+  // Runs the bundle's task in fresh computers and writes its record into the bundle.
+  measure_build_task: effects({
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
   close_build_computer: effects({
     mutatesSession: true,
     launchesProcess: true,
