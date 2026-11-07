@@ -447,7 +447,11 @@ const registerFunctionCommand = (
                 "analyze_function",
               ),
             },
-            { ...directAnalysisOptionsFromCli(logger, options), signal },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
           );
           return publishCliAnalysisEvidence(complete, delivery);
         }),
