@@ -39,7 +39,6 @@ it("retains the screenshot and process owner after cancelled cleanup until retry
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(cancelled);
   const judge = new ScreenJudgeProcess({});
   const controller = new AbortController();
-  controller.abort(new Error("stop"));
   const failure: unknown = await judge
     .judge(
       "/verifier",
@@ -67,6 +66,88 @@ it("retains the screenshot and process owner after cancelled cleanup until retry
   expect(stop).toHaveBeenCalledTimes(2);
   expect(dispose).toHaveBeenCalledTimes(1);
   expect((failure as ProviderCleanupError).cleanupIncomplete).toBe(false);
+});
+
+it("retries retained cleanup before launching another judge", async () => {
+  const stop = vi
+    .fn()
+    .mockResolvedValueOnce({ status: "incomplete", reason: "still running" })
+    .mockResolvedValueOnce({ status: "stopped" });
+  const owner = {
+    stop,
+    dispose: vi.fn(),
+  } as unknown as ProviderProcessSupervisor;
+  vi.mocked(runOwnedCommand).mockRejectedValueOnce(
+    new OwnedCommandFailure(
+      "cancelled",
+      "cancelled",
+      null,
+      "still running",
+      undefined,
+      ["run"],
+      owner,
+    ),
+  );
+  const judge = new ScreenJudgeProcess({});
+  const check = { id: "x", kind: "screen_judge", question: "ready?" } as const;
+  const signal = new AbortController().signal;
+  const first = await judge
+    .judge("/verifier", check, new Uint8Array([1]), signal)
+    .catch((cause: unknown) => cause);
+  const launches = vi.mocked(runOwnedCommand).mock.calls.length;
+  try {
+    await expect(
+      judge.judge("/verifier", check, new Uint8Array([1]), signal),
+    ).rejects.toMatchObject({ cleanupIncomplete: true });
+    expect(vi.mocked(runOwnedCommand).mock.calls).toHaveLength(launches);
+    expect((first as ProviderCleanupError).cleanupIncomplete).toBe(true);
+  } finally {
+    const released = await judge.close();
+    if (!released.verified) await judge.close();
+  }
+  expect((first as ProviderCleanupError).cleanupIncomplete).toBe(false);
+});
+
+it("starts a later judge once retained cleanup succeeds", async () => {
+  const owner = {
+    stop: vi.fn().mockResolvedValue({ status: "stopped" }),
+    dispose: vi.fn(),
+  } as unknown as ProviderProcessSupervisor;
+  const text = JSON.stringify({ id: "x", result: true, description: "ready" });
+  vi.mocked(runOwnedCommand)
+    .mockRejectedValueOnce(
+      new OwnedCommandFailure(
+        "process",
+        "failed",
+        null,
+        "running",
+        undefined,
+        ["run"],
+        owner,
+      ),
+    )
+    .mockResolvedValueOnce({
+      exitCode: 0,
+      stdout: {
+        text,
+        bytes: Buffer.byteLength(text),
+        observedBytes: Buffer.byteLength(text),
+      },
+      stderr: { text: "", bytes: 0, observedBytes: 0 },
+      signal: null,
+    });
+  const judge = new ScreenJudgeProcess({});
+  const check = { id: "x", kind: "screen_judge", question: "ready?" } as const;
+  const signal = new AbortController().signal;
+  const first: unknown = await judge
+    .judge("/verifier", check, new Uint8Array([1]), signal)
+    .catch((cause: unknown) => cause);
+  expect(first).toBeInstanceOf(ProviderCleanupError);
+  expect(
+    await judge.judge("/verifier", check, new Uint8Array([1]), signal),
+  ).toEqual({ id: "x", passed: true, description: "ready" });
+  expect((first as ProviderCleanupError).cleanupIncomplete).toBe(false);
+  expect(await judge.close()).toMatchObject({ verified: true });
 });
 
 it("reports a completed answer when process cleanup subsequently fails", async () => {

@@ -71,6 +71,24 @@ export class ScreenJudgeProcess {
   constructor(readonly environment: Readonly<NodeJS.ProcessEnv>) {}
 
   readonly judge: ScreenJudge = async (verifier, check, image, signal) => {
+    const cleanup = await this.close();
+    if (!cleanup.verified) {
+      const pending = [...this.#retained].map((item) => item.failure);
+      if (pending.length === 1) throw pending[0];
+      throw new ProviderCleanupError(
+        AGENTENV_PROVIDER,
+        cleanup.resources,
+        { reason: cleanup.reason },
+        {
+          operation: "check_build_task",
+          remediationAction: "Close the build computer to retry judge cleanup.",
+        },
+      ).bindCleanupDependencies(pending);
+    }
+    if (signal.aborted)
+      throw new AnalysisCancelledError("check_build_task", {
+        cause: signal.reason,
+      });
     const python = await agentEnvInterpreter(
       this.environment,
       "check_build_task",
