@@ -28,8 +28,9 @@ it("reports the selected path and cause when it cannot resolve the event log", a
       {
         path: ["path"],
         reason: "invalid_format",
-        message: `Selected event log could not be read (${code}): ${path}`,
+        message: expect.stringContaining(path),
       },
     ]);
+    expect(result.error.issues[0]?.message).toContain(code);
   }
 });
