@@ -313,6 +313,57 @@ describe("draftTaskFiles for records whatever their fields are called", () => {
   });
 });
 
+describe("draftTaskFiles for an identified record's own text", () => {
+  it("checks the text of repeated unnamed fields", () => {
+    const records = (people: readonly (readonly [string, string, string])[]) =>
+      `<doc><records>${people
+        .map(
+          ([id, first, last]) =>
+            `<record id="${id}"><field>${first}</field><field>${last}</field></record>`,
+        )
+        .join("")}</records></doc>`;
+    const before = records([["one", "Ada", "Lovelace"]]);
+    const after = records([
+      ["one", "Ada", "Lovelace"],
+      ["two", "Delphine", "Moreau"],
+    ]);
+    const file = xmlDraft(before, after);
+    const shown = file.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+
+    expect(shown).toEqual(["Delphine", "Moreau"]);
+    expect(
+      file.suggested.some(
+        (check) => "value" in check && check.value === "record",
+      ),
+    ).toBe(false);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+    expect(passing(FILE, xml(before), file.suggested).every(Boolean)).toBe(
+      false,
+    );
+  });
+
+  it("checks a phone number and a clock time a person entered", () => {
+    const people = (extra: string) =>
+      `<doc><records><record id="one"><name>Ada</name></record>${extra}</records></doc>`;
+    const before = people("");
+    const after = people(
+      `<record id="two"><name>Delphine</name><phone>2025550163</phone><meet>09:30:00</meet></record>`,
+    );
+    const file = xmlDraft(before, after);
+    const shown = file.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+
+    expect(shown).toContain("2025550163");
+    expect(shown).toContain("09:30:00");
+    expect(passing(FILE, xml(before), file.suggested).some(Boolean)).toBe(
+      false,
+    );
+  });
+});
+
 describe("draftTaskFiles for a paragraph made of runs", () => {
   /** A Writer document's body: a paragraph, and any added after it. */
   const body = (added: string) =>
@@ -430,6 +481,19 @@ describe("draftTaskFiles for decimals", () => {
         value: "14",
       },
     ]);
+  });
+
+  it("checks a decimal by the element's whole text, so a save that splits the same digits across a run passes", () => {
+    const cell = (inner: string) =>
+      `<Cells><Cell Row="2" Col="3">${inner}</Cell><Cell Row="2" Col="4">1</Cell></Cells>`;
+    const before = cell("405.1");
+    const after = cell("437.8");
+    const file = xmlDraft(before, after);
+
+    expect(
+      passing(FILE, xml(cell("437.<span>8</span>")), file.suggested),
+    ).toEqual([true]);
+    expect(passing(FILE, xml(cell("437.89")), file.suggested)).toEqual([false]);
   });
 
   it("checks a decimal so it fails at a seed whose integer is within the tolerance of it", () => {

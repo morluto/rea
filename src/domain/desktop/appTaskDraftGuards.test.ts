@@ -54,12 +54,12 @@ describe("draftTaskFiles guards", () => {
     expect(passing(FILE, xml(after), file.guards)).toEqual([true, true]);
   });
 
-  it("guards no sibling whose field changed too, and a number by its value within the tolerance", () => {
+  it("guards no sibling whose field changed too, and a number by the cell's whole text", () => {
     const sheet = (march: string, april: string) =>
       `<Sheet><Cells><Cell Row="2" Col="2">398.2</Cell><Cell Row="2" Col="3">${march}</Cell><Cell Row="2" Col="4">${april}</Cell><Cell Row="3" Col="3">174.9</Cell></Cells></Sheet>`;
     // Each cell by the fewest attributes naming it alone.
     const cell = (selector: string) =>
-      `/root/children/[name=Cells]/children/[name=Cell]${selector}/children/0`;
+      `/root/children/[name=Cells]/children/[name=Cell]${selector}`;
 
     const file = xmlDraft(sheet("405.1", "421.75"), sheet("437.8", "430.1"));
 
@@ -69,18 +69,16 @@ describe("draftTaskFiles guards", () => {
     ]);
     expect(file.guards).toEqual([
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: FILE,
         pointer: cell("[@Col=2]"),
-        value: 398.2,
-        tolerance: 0.001,
+        value: "398.2",
       },
       {
-        kind: "value_equals",
+        kind: "text_equals",
         file: FILE,
         pointer: cell("[@Row=3]"),
-        value: 174.9,
-        tolerance: 0.001,
+        value: "174.9",
       },
     ]);
   });
@@ -119,10 +117,10 @@ describe("draftTaskFiles guards beyond a sibling's same field", () => {
     const file = xmlDraft(sheet("405.1"), sheet("437.8"));
 
     expect(file.suggested.map(pointerOf)).toEqual([
-      "/root/children/[name=Cell][@Row=2]/children/0",
+      "/root/children/[name=Cell][@Row=2]",
     ]);
     expect(file.guards.map(pointerOf)).toEqual([
-      "/root/children/[name=Cell][@Col=4]/children/0",
+      "/root/children/[name=Cell][@Col=4]",
     ]);
   });
 
