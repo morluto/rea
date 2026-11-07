@@ -1,6 +1,7 @@
-import { rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
 
-import type { Client } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 import { afterEach, describe, expect, it } from "vitest";
 
@@ -10,13 +11,22 @@ import type {
   CapabilityDescriptor,
 } from "../../../src/application/AnalysisProvider.js";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
+import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { AnalysisOutputError } from "../../../src/domain/analysisErrorCore.js";
-import { inspectNativeDispatchMetadata } from "../../../src/domain/native/objcSwiftMetadata.js";
+import {
+  inspectNativeDispatchMetadata,
+  isAppleDispatchMetadataTarget,
+} from "../../../src/domain/native/objcSwiftMetadata.js";
 import { err, ok } from "../../../src/domain/result.js";
 import type { ProviderRejectionCode } from "../../../src/domain/providerSelection.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { expandToolAvailability } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
+import { silentLogger } from "../../../src/logger.js";
+import { NativeMacOSProvider } from "../../../src/native/NativeMacOSProvider.js";
+import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { NativeFixtureRunner } from "../../fixtures/nativeCommands.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createSessionMcpHarness } from "./sessionMcpHarness.js";
 
@@ -179,6 +189,56 @@ describe("native dispatch availability at the public MCP boundary", () => {
     },
   );
 
+  it("keeps the binary reader refusal when the symbol fallback is unavailable", async () => {
+    directory = await createTestTempDirectory("rea-native-dispatch-fallback-");
+    const path = join(directory, "armv7");
+    // A complete thin 32-bit armv7 MH_EXECUTE header with no load commands.
+    const header = Buffer.alloc(28);
+    header.writeUInt32LE(0xfeedface, 0);
+    header.writeUInt32LE(12, 4);
+    header.writeUInt32LE(9, 8);
+    header.writeUInt32LE(2, 12);
+    await writeFile(path, header);
+    const calls: Operation[] = [];
+    const mcp = await connectUnconfiguredSymbolFallback(calls);
+    const opened = await mcp.callTool({
+      name: "open_binary",
+      arguments: { path },
+    });
+    expect(opened.isError).not.toBe(true);
+
+    const result = await mcp.callTool({
+      name: "inspect_native_dispatch_metadata",
+      arguments: { max_records: 10 },
+    });
+    expect(parseMcpToolError(result).error).toMatchObject({
+      code: "provider_unavailable",
+      details: {
+        operation: "list_names",
+        rejections: [
+          {
+            provider_id: "fixture",
+            origin: "availability",
+            code: "not_configured",
+          },
+        ],
+        diagnostics: {
+          binary_metadata_failure: {
+            code: "capability_unavailable",
+            details: {
+              provider_id: "native-macos",
+              operation: "inspect_native_dispatch_metadata",
+              reason: expect.stringMatching(/32-bit/u),
+            },
+          },
+        },
+      },
+    });
+    expect(calls).toEqual([]);
+    const closed = await mcp.callTool({ name: "close_binary", arguments: {} });
+    expect(closed.isError).not.toBe(true);
+  });
+
   it("reports a target requirement before probing provider operations", async () => {
     directory = await createTestTempDirectory("rea-native-dispatch-no-target-");
     const calls: Operation[] = [];
@@ -202,6 +262,61 @@ const readInventory = async (mcp: Client) => {
   return toolContract("binary_session").outputSchema.parse(
     result.structuredContent,
   );
+};
+
+/**
+ * Compose dispatch inspection with the real native reader and provider
+ * registry: Mach-O targets open without a deep provider, and the only
+ * `list_names` candidate is not configured. Calls to that candidate are recorded.
+ */
+const connectUnconfiguredSymbolFallback = async (
+  calls: Operation[],
+): Promise<Client> => {
+  const symbols = provider(
+    {
+      name: "unconfigured symbol inventory",
+      capabilities: [{ operation: "list_names", available: true }],
+    },
+    calls,
+  );
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry(
+      [
+        {
+          ...symbols,
+          resolveAnalysisProfile: () =>
+            Promise.reject(new Error("Unavailable provider was resolved")),
+          inspectAvailability: () => ({
+            status: "unavailable",
+            code: "not_configured",
+            reason: "Fixture symbol provider is not configured.",
+            diagnostics: {},
+          }),
+          inspectTargetSupport: () => ({
+            status: "supported",
+            code: null,
+            reason: null,
+            diagnostics: {},
+          }),
+        },
+      ],
+      "auto",
+      isAppleDispatchMetadataTarget,
+    ),
+    // The real byte reader, with Darwin host support injected on any host.
+    [new NativeMacOSProvider({}, new NativeFixtureRunner(), "darwin")],
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "native-dispatch-fallback", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  return mcp;
 };
 
 const dispatchAvailability = (
