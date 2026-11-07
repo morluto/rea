@@ -416,16 +416,43 @@ it.skipIf(process.platform === "win32").each([false, true])(
     const result = await manager.execute(started.value.session_id, "noisy");
     expect(result.ok).toBe(!retry);
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(!retry);
+    expect(manager.status(started.value.session_id)).toMatchObject({
+      state: "closed",
+      closed_reason: expect.stringContaining("Rizin command output exceeded"),
+    });
+    const later = await manager.execute(started.value.session_id, "later");
+    expect(later.ok).toBe(false);
+    if (!later.ok)
+      expect(later.error).toMatchObject({
+        _tag: "AnalysisCapabilityUnavailableError",
+        operation: "rizin_debug_command",
+        reason: expect.stringContaining("Rizin command output exceeded"),
+      });
     if (retry) {
       if (result.ok) throw new Error("Expected retained cleanup");
       expect(result.error.cleanupIncomplete).toBe(true);
-      expect(manager.status(started.value.session_id)).toBeDefined();
-      expect(
-        (await manager.execute(started.value.session_id, "later")).ok,
-      ).toBe(false);
       synchronizationAllowed = true;
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
+      expect(await manager.retryCleanupFailures()).toEqual({
+        ok: true,
+        value: null,
+      });
       expect(result.error.cleanupIncomplete).toBe(false);
+      expect(manager.status(started.value.session_id)).toMatchObject({
+        state: "closed",
+        closed_reason: expect.stringContaining("Rizin command output exceeded"),
+      });
+      const afterRecovery = await manager.execute(
+        started.value.session_id,
+        "after recovery",
+      );
+      expect(afterRecovery.ok).toBe(false);
+      if (!afterRecovery.ok)
+        expect(afterRecovery.error).toMatchObject({
+          _tag: "AnalysisCapabilityUnavailableError",
+          operation: "rizin_debug_command",
+          reason: expect.stringContaining("Rizin command output exceeded"),
+        });
+      expect((await manager.close(started.value.session_id)).ok).toBe(true);
     }
     expect(writes.some((text) => text.startsWith("olj\n"))).toBe(true);
     if (!retry)

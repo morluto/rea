@@ -217,6 +217,7 @@ interface RizinDebugSession {
   exited: boolean;
   commandTail: Promise<void>;
   protocolError: string | undefined;
+  closedReason: string | undefined;
   cleanupSynchronization:
     | {
         readonly marker: string;
@@ -228,6 +229,32 @@ interface RizinDebugSession {
   commandOutputDropped: boolean;
   discardingOversizedFrame: boolean;
 }
+
+const rizinStoppedSessionError = (
+  operation: "rizin_debug_command",
+  session: RizinDebugSession,
+): AnalysisCapabilityUnavailableError =>
+  new AnalysisCapabilityUnavailableError(
+    "rizin",
+    operation,
+    session.closedReason ??
+      session.protocolError ??
+      "The Rizin debug session is closed.",
+    {
+      userMessage:
+        "The Rizin debug session stopped before this operation could run.",
+      remediationAction:
+        "Close the stopped Rizin debug session and start a new session before retrying.",
+    },
+  );
+
+const rememberRizinProtocolError = (
+  session: RizinDebugSession,
+  message: string,
+): void => {
+  session.protocolError = message;
+  session.closedReason ??= message;
+};
 
 interface RizinFrame {
   readonly text: string;
@@ -530,6 +557,7 @@ export class RizinDebugSessionManager {
       exited: false,
       commandTail: Promise.resolve(),
       protocolError: undefined,
+      closedReason: undefined,
       cleanupSynchronization: undefined,
       commandCaptureActive: false,
       commandOutputDropped: false,
@@ -637,11 +665,12 @@ export class RizinDebugSessionManager {
     >
   > {
     const session = this.#sessions.get(sessionId);
+    if (session?.closedReason !== undefined)
+      return err(rizinStoppedSessionError("rizin_debug_command", session));
     if (
       session === undefined ||
       !session.ready ||
       session.exited ||
-      session.protocolError !== undefined ||
       session.closing ||
       this.#closingAll
     )
@@ -696,9 +725,13 @@ export class RizinDebugSessionManager {
         session.exited ||
         session.closing ||
         this.#closingAll ||
-        session.protocolError !== undefined
+        session.protocolError !== undefined ||
+        session.closedReason !== undefined
       )
-        return err(new AnalysisInputError("rizin_debug_command"));
+        return session.protocolError === undefined &&
+          session.closedReason === undefined
+          ? err(new AnalysisInputError("rizin_debug_command"))
+          : err(rizinStoppedSessionError("rizin_debug_command", session));
       if (hasUnclaimedRizinFrames(session)) {
         const message =
           "Unsolicited Rizin frames arrived before a command; command output can no longer be safely correlated.";
@@ -836,8 +869,10 @@ export class RizinDebugSessionManager {
           "The owned debugger session was stopped because command output can no longer be correlated safely.",
           "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
         ]);
-        session.protocolError =
-          "A Rizin command was cancelled; the owned session was stopped because command output can no longer be correlated safely.";
+        rememberRizinProtocolError(
+          session,
+          "A Rizin command was cancelled; the owned session was stopped because command output can no longer be correlated safely.",
+        );
         const primary = rizinCancellation(
           "rizin_debug_command",
           signal,
@@ -880,7 +915,10 @@ export class RizinDebugSessionManager {
         );
       }
       if (interruption?.kind === "timeout") {
-        session.protocolError = `Rizin command timed out before its completion marker at ${String(this.#commandDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(this.#commandDeadline)} Output correlation is no longer safe.`;
+        rememberRizinProtocolError(
+          session,
+          `Rizin command timed out before its completion marker at ${String(this.#commandDeadline.value)} ms (deadlineExpired). ${debuggerAdmissionRecovery(this.#commandDeadline)} Output correlation is no longer safe.`,
+        );
         const stopped = await this.#stopDebuggerOnly(session, true);
         const result = {
           ...commandResult(interruption.capture, "unknown"),
@@ -924,10 +962,16 @@ export class RizinDebugSessionManager {
           signal,
         );
       }
-      session.protocolError =
-        "Rizin did not return the current command-completion marker; the session was stopped to prevent late output from being attributed to a later command.";
+      rememberRizinProtocolError(
+        session,
+        "Rizin did not return the current command-completion marker; the session was stopped to prevent late output from being attributed to a later command.",
+      );
+      const protocolFailure =
+        session.closedReason ??
+        session.protocolError ??
+        "Rizin command correlation failed.";
       const evidence = partialEvidence([
-        session.protocolError,
+        protocolFailure,
         "The command is unrestricted and may access local files, the shell, network, or mutate the target.",
       ]);
       const errorOptions = {
@@ -977,6 +1021,7 @@ export class RizinDebugSessionManager {
         readonly recent_output_truncated: boolean;
         readonly diagnostics_truncated: boolean;
         readonly output_invalid_utf8: boolean;
+        readonly closed_reason?: string;
       }
     | undefined {
     const session = this.#sessions.get(sessionId);
@@ -987,6 +1032,7 @@ export class RizinDebugSessionManager {
           state:
             session.exited ||
             session.protocolError !== undefined ||
+            session.closedReason !== undefined ||
             session.closing ||
             !session.ready
               ? "closed"
@@ -997,6 +1043,9 @@ export class RizinDebugSessionManager {
           diagnostics_truncated:
             session.supervisor.snapshot().diagnosticTruncated === true,
           output_invalid_utf8: session.invalidUtf8Observed,
+          ...(session.closedReason === undefined
+            ? {}
+            : { closed_reason: session.closedReason }),
         };
   }
 
@@ -1035,7 +1084,7 @@ export class RizinDebugSessionManager {
               stopped.reason,
             ),
         );
-      this.#sessions.delete(session.id);
+      if (session.closedReason === undefined) this.#sessions.delete(session.id);
     }
     return ok(null);
   }
@@ -1083,7 +1132,7 @@ export class RizinDebugSessionManager {
           this.#failProtocol(session, message);
           return;
         }
-        session.protocolError = message;
+        rememberRizinProtocolError(session, message);
         session.historyTruncated = true;
         const remainingBytes = MAX_FRAME_BYTES - session.bufferedFrameBytes;
         if (remainingBytes > 0) {
@@ -1192,7 +1241,7 @@ export class RizinDebugSessionManager {
   }
 
   #failProtocol(session: RizinDebugSession, message: string): void {
-    session.protocolError = message;
+    rememberRizinProtocolError(session, message);
     session.cleanupSynchronization?.reject(new Error(message));
     if (!session.commandCaptureActive) {
       session.frameChunks = [];
@@ -1829,19 +1878,29 @@ const waitForCommandFrames = async (
     }
     frameCount += 1;
     if (frameCount > MAX_COMMAND_FRAMES) {
-      session.protocolError = `Rizin emitted more than ${String(MAX_COMMAND_FRAMES)} frames for one command. This release has no runtime override. The session was stopped because output correlation is ambiguous.`;
+      rememberRizinProtocolError(
+        session,
+        `Rizin emitted more than ${String(MAX_COMMAND_FRAMES)} frames for one command. This release has no runtime override. The session was stopped because output correlation is ambiguous.`,
+      );
       noteLimit("command_frames");
       return ok(snapshot());
     }
     const markerSeen = append(received);
     if (outputTruncated) {
-      if (outputLimit === "command_output_bytes")
-        session.protocolError ??=
-          commandOutput === debuggerControlReplyOutput
-            ? `Rizin control readback exceeded the ${String(maxCommandOutputBytes)} byte control-reply budget. That budget is separate from REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES and has no runtime override.`
-            : `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte command limit. ${debuggerAdmissionRecovery(commandOutput)}`;
-      else if (outputLimit === "frame_bytes")
-        session.protocolError ??= `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`;
+      if (session.protocolError === undefined) {
+        if (outputLimit === "command_output_bytes")
+          rememberRizinProtocolError(
+            session,
+            commandOutput === debuggerControlReplyOutput
+              ? `Rizin control readback exceeded the ${String(maxCommandOutputBytes)} byte control-reply budget. That budget is separate from REA_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES and has no runtime override.`
+              : `Rizin command output exceeded the ${String(maxCommandOutputBytes)} byte command limit. ${debuggerAdmissionRecovery(commandOutput)}`,
+          );
+        else if (outputLimit === "frame_bytes")
+          rememberRizinProtocolError(
+            session,
+            `Rizin emitted a NUL frame exceeding the ${String(MAX_FRAME_BYTES)} byte (16 MiB) protocol limit. This release has no runtime override.`,
+          );
+      }
       return ok(snapshot());
     }
     if (markerSeen) return ok(snapshot());
