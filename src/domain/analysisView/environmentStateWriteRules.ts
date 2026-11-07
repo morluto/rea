@@ -53,12 +53,13 @@ export type GeneratedRule =
       readonly rule: "identity";
       readonly generator: "sequence" | "uuid" | "token";
     }
-  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them. */
+  /** One past the largest value its scope holds, and never below `start`, a value the first create took above them; with `sent`, the value a call sends instead. */
   | {
       readonly field: string;
       readonly rule: "sequence";
       readonly scope: "collection" | "type";
       readonly start?: number;
+      readonly sent?: true;
     }
   | { readonly field: string; readonly rule: "unique" }
   /** The value kept with each UUID at the pointers (`*` for any array index) replaced by a fresh one, as rewritten child rows are. */
@@ -123,6 +124,8 @@ export type FieldRule =
       readonly member: string;
       readonly type: string;
       readonly fields: string[];
+      /** The member sends a list of ids, and the field holds each named entity in that order. */
+      readonly many?: true;
     }
   | { readonly field: string; readonly rule: "increment" }
   /** An update stores `value` whenever the call sends the member, as the call that showed it did. */
@@ -150,6 +153,11 @@ export type FieldRule =
       readonly field: string;
       readonly rule: "set";
       readonly value: JsonValue;
+    }
+  /** An item action flips a boolean on every call. */
+  | {
+      readonly field: string;
+      readonly rule: "toggle";
     };
 
 /** Clock rules spelled as a trimmed sibling is, since an application spells its clocks alike: fields whose `values`, and every `later` call's, show no fixed width. */

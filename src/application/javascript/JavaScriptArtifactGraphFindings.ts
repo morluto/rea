@@ -36,6 +36,7 @@ import {
 import {
   moduleResolutionModeForJavaScriptReference,
   isJsonModuleTarget,
+  isNativeAddonModuleTarget,
 } from "../../domain/javascript/javascriptModuleResolutionMode.js";
 
 type StaticReference = JavaScriptStaticAnalysis["references"][number];
@@ -309,7 +310,8 @@ const addReference = (
     coverage: input.coverage,
     relation:
       input.value.operation === "load" &&
-      resolved?.file?.kind === "native-addon"
+      resolved?.path != null &&
+      isNativeAddonModuleTarget(resolved.path, resolved.file?.kind)
         ? "loads"
         : "imports",
     properties: {
@@ -676,8 +678,14 @@ const resolveReference = (
       ? null
       : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
+  // Only a recovered factory loader names a bundle module key. A real CommonJS
+  // `require("electron")` inside a factory body records `commonjs-loader`, so its
+  // specifier is an external package name even though the finding sits inside a
+  // module range and carries that range's runtime.
   const module =
-    isWorker || reference.module_runtime === undefined
+    isWorker ||
+    reference.module_runtime === undefined ||
+    reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
           moduleLookupKey(sourcePath, reference.module_runtime, specifier),
@@ -741,7 +749,8 @@ const resolveReference = (
     targetPath !== undefined && isJsonModuleTarget(targetPath, targetKind);
   const targetImportsUnexamined =
     !targetIsJson &&
-    (resolution.resolution_status === "unavailable" ||
+    (resolution.unexamined_module_imports === true ||
+      resolution.resolution_status === "unavailable" ||
       (path !== null &&
         !context.applicationModuleReferencesRetained.has(path)));
   if (path === null) {

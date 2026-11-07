@@ -26,8 +26,18 @@ const OID_NAMES: Readonly<Record<string, string>> = {
   "2.16.840.1.101.3.4.2.3": "sha512",
 };
 
+/** A fixed per-payload decoder allowance and its limit. */
+export interface PeCertificateDecodeAllowance {
+  readonly allowance: "asn1-nodes" | "decoded-text";
+  readonly limit: number;
+}
+
 export class PeCertificateAsn1Failure extends Error {
-  constructor(message: string) {
+  constructor(
+    message: string,
+    /** Set when a fixed decoder allowance, not malformed DER, refused the payload. */
+    readonly exhausted: PeCertificateDecodeAllowance | null = null,
+  ) {
     super(message);
     this.name = "PeCertificateAsn1Failure";
   }
@@ -49,7 +59,13 @@ export const readAsn1 = (bytes: Buffer): Asn1BerNode => {
   try {
     return new Asn1BerReader(bytes, ASN1_NODE_BUDGET).read();
   } catch (cause: unknown) {
-    if (cause instanceof Asn1BerFailure) return fail(cause.message);
+    if (cause instanceof Asn1BerFailure)
+      throw new PeCertificateAsn1Failure(
+        cause.message,
+        cause.kind === "budget-exceeded"
+          ? { allowance: "asn1-nodes", limit: cause.limit ?? ASN1_NODE_BUDGET }
+          : null,
+      );
     throw cause;
   }
 };
@@ -78,8 +94,9 @@ interface DecodedNameBudget {
 
 const chargeDecodedName = (budget: DecodedNameBudget, bytes: number): void => {
   if (!Number.isSafeInteger(bytes) || bytes < 0 || bytes > budget.remaining)
-    fail(
+    throw new PeCertificateAsn1Failure(
       `Certificate text exceeds the ${String(MAX_DECODED_NAME_BYTES)}-byte decoded budget.`,
+      { allowance: "decoded-text", limit: MAX_DECODED_NAME_BYTES },
     );
   budget.remaining -= bytes;
 };
@@ -109,7 +126,7 @@ export const decodeOid = (content: Buffer): string => {
   }
 };
 
-const decodeUtf16Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
+const decodeBmpString = (bytes: Buffer, budget: DecodedNameBudget): string => {
   if (bytes.length % 2 !== 0) return fail("BMPString length is odd.");
   // Charge before the copy. Appending one character at a time retains a
   // cons-string chain of about sixteen heap bytes per source byte.
@@ -117,8 +134,11 @@ const decodeUtf16Be = (bytes: Buffer, budget: DecodedNameBudget): string => {
   if (bytes.length === 0) return "";
   const decoded = Buffer.allocUnsafe(bytes.length);
   for (let index = 0; index < bytes.length; index += 2) {
-    decoded[index] = bytes[index + 1] ?? 0;
-    decoded[index + 1] = bytes[index] ?? 0;
+    const codeUnit = bytes.readUInt16BE(index);
+    // BMPString is UCS-2: even a paired UTF-16 surrogate is not a BMP character.
+    if (codeUnit >= 0xd800 && codeUnit <= 0xdfff)
+      return fail("BMPString holds a surrogate code point.");
+    decoded.writeUInt16LE(codeUnit, index);
   }
   return decoded.toString("utf16le");
 };
@@ -165,10 +185,20 @@ const decodeDirectoryString = (
     case 0x1c:
       return decodeUtf32Be(node.content, budget);
     case 0x1e:
-      return decodeUtf16Be(node.content, budget);
-    case 0x0c:
-    case 0x13:
+      return decodeBmpString(node.content, budget);
+    case 0x13: {
+      const decoded = decodeUtf8(node.content, budget);
+      if (/[^A-Za-z0-9 '()+,\-./:=?]/u.test(decoded))
+        return fail("PrintableString holds a character outside its alphabet.");
+      return decoded;
+    }
     case 0x16:
+      chargeDecodedName(budget, node.content.length);
+      if (node.content.some((byte) => byte > 0x7f))
+        return fail("IA5String holds a non-ASCII character.");
+      // Validated ASCII needs no UTF-8 round trip or second budget charge.
+      return node.content.toString("ascii");
+    case 0x0c:
     case 0x17:
     case 0x18:
       return decodeUtf8(node.content, budget);
@@ -184,7 +214,22 @@ const decodeDirectoryString = (
   }
 };
 
-const integerHex = (content: Buffer, budget: DecodedNameBudget): string => {
+// X.690 8.3.1 and 8.3.2 hold for BER as well as DER: an INTEGER has at least
+// one content octet, and its first nine bits are never all zeros or all ones.
+// Padded encodings would otherwise collapse onto the minimal serial's hex.
+const integerHex = (
+  content: Buffer,
+  budget: DecodedNameBudget,
+  label: string,
+): string => {
+  if (content.length === 0) return fail(`${label} INTEGER is empty.`);
+  const second = content[1];
+  if (
+    second !== undefined &&
+    ((content[0] === 0x00 && second < 0x80) ||
+      (content[0] === 0xff && second >= 0x80))
+  )
+    return fail(`${label} INTEGER is not minimally encoded.`);
   let start = 0;
   while (start < content.length - 1 && content[start] === 0) start += 1;
   chargeDecodedName(budget, (content.length - start) * 2);
@@ -202,6 +247,11 @@ const requireBitStringContent = (content: Buffer, label: string): void => {
   const unused = content[0];
   if (unused === undefined || unused > 7)
     return fail(`${label} BIT STRING is truncated or has invalid unused bits.`);
+  if (
+    (content.length === 1 && unused !== 0) ||
+    ((content[content.length - 1] ?? 0) & ((1 << unused) - 1)) !== 0
+  )
+    return fail(`${label} BIT STRING has invalid padding bits.`);
 };
 
 const requireBitString = (
@@ -269,12 +319,51 @@ const decodeName = (
   return { text, attributes };
 };
 
+// RFC 5280 4.1.2.5 and X.690 11.7-11.8: UTC with seconds, a final "Z", and
+// no fractional seconds. UTCTime years 50-99 are 1950-1999, 00-49 are 2000-2049.
+const VALIDITY_TIMES = {
+  0x17: {
+    label: "UTCTime",
+    layout: "YYMMDDHHMMSSZ",
+    form: /^(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+  0x18: {
+    label: "GeneralizedTime",
+    layout: "YYYYMMDDHHMMSSZ",
+    form: /^(\d{4})(\d{2})(\d{2})(\d{2})(\d{2})(\d{2})Z$/u,
+  },
+} as const;
+
+const isCalendarInstant = (
+  year: number,
+  [month = 0, day = 0, hour = 24, minute = 60, second = 60]: number[],
+): boolean => {
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const days = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return (
+    day >= 1 &&
+    day <= (days[month - 1] ?? 0) &&
+    hour <= 23 &&
+    minute <= 59 &&
+    second <= 59
+  );
+};
+
 const validityTime = (node: Asn1BerNode, budget: DecodedNameBudget): string => {
   if (node.tag !== 0x17 && node.tag !== 0x18)
     return fail("Validity instant is not UTCTime or GeneralizedTime.");
   // A zero byte becomes "\u0000" (six characters) in the hashed evidence JSON.
   chargeDecodedName(budget, node.content.length * 6);
-  return node.content.toString("utf8");
+  const { label, layout, form } = VALIDITY_TIMES[node.tag];
+  // Latin-1 maps each byte to one character, so no invalid byte can match.
+  const text = node.content.toString("latin1");
+  const [year = 0, ...rest] = form.exec(text)?.slice(1).map(Number) ?? [];
+  if (rest.length === 0)
+    return fail(`${label} validity instant is not ${layout}.`);
+  const fullYear = node.tag === 0x17 ? year + (year < 50 ? 2000 : 1900) : year;
+  if (!isCalendarInstant(fullYear, rest))
+    return fail(`${label} validity instant is not a calendar time.`);
+  return text;
 };
 
 export interface ParsedCertificate {
@@ -300,15 +389,44 @@ const requireSubjectPublicKeyInfo = (node: Asn1BerNode): void => {
   requireBitString(key, "SubjectPublicKeyInfo subjectPublicKey");
 };
 
+// RFC 5280 4.1 and 4.2: an Extension is extnID, an optional critical BOOLEAN
+// and an extnValue OCTET STRING. A certificate MUST NOT repeat an extnID.
+const requireExtensions = (extensions: readonly Asn1BerNode[]): void => {
+  const seen = new Set<string>();
+  for (const extension of extensions) {
+    const fields = sequence(extension, "TBSCertificate extension");
+    const extnId = fields[0];
+    const critical = fields.length === 3 ? fields[1] : undefined;
+    const extnValue = fields[fields.length - 1];
+    if (
+      (fields.length !== 2 && fields.length !== 3) ||
+      extnId?.tag !== 0x06 ||
+      (critical !== undefined &&
+        (critical.tag !== 0x01 || critical.content.length !== 1)) ||
+      extnValue?.tag !== 0x04
+    )
+      return fail(
+        "TBSCertificate extension is not an OID, optional BOOLEAN, and OCTET STRING.",
+      );
+    const oid = decodeOid(extnId.content);
+    if (seen.has(oid)) return fail(`TBSCertificate repeats extension ${oid}.`);
+    seen.add(oid);
+  }
+};
+
 // issuerUniqueID [1], subjectUniqueID [2], and extensions [3] are optional
-// and ordered. Anything else is not a TBSCertificate field.
+// and ordered. Anything else is not a TBSCertificate field. RFC 5280
+// 4.1.2.8-4.1.2.9: unique identifiers need v2 or v3; extensions need v3.
 const finishTbsCertificate = (
   children: readonly Asn1BerNode[],
   start: number,
+  version: number,
 ): void => {
   let cursor = start;
   const issuerUniqueId = children[cursor];
   if (issuerUniqueId?.tag === 0x81) {
+    if (version < 1)
+      return fail("TBSCertificate issuerUniqueID requires version 2 or 3.");
     requireBitStringContent(
       issuerUniqueId.content,
       "TBSCertificate issuerUniqueID",
@@ -317,6 +435,8 @@ const finishTbsCertificate = (
   }
   const subjectUniqueId = children[cursor];
   if (subjectUniqueId?.tag === 0x82) {
+    if (version < 1)
+      return fail("TBSCertificate subjectUniqueID requires version 2 or 3.");
     requireBitStringContent(
       subjectUniqueId.content,
       "TBSCertificate subjectUniqueID",
@@ -325,6 +445,8 @@ const finishTbsCertificate = (
   }
   const extensions = children[cursor];
   if (extensions?.tag === 0xa3) {
+    if (version !== 2)
+      return fail("TBSCertificate extensions require version 3.");
     const body = extensions.children[0];
     if (
       extensions.children.length !== 1 ||
@@ -332,6 +454,7 @@ const finishTbsCertificate = (
       body.tag !== 0x30
     )
       return fail("TBSCertificate extensions are not a SEQUENCE.");
+    requireExtensions(body.children);
     cursor += 1;
   }
   if (cursor !== children.length)
@@ -365,15 +488,22 @@ export const parseCertificate = (
   requireBitString(signatureValue, "Certificate signatureValue");
   const tbsChildren = sequence(tbs, "TBSCertificate");
   let index = 0;
-  const version = tbsChildren[0];
-  if (version?.tag === 0xa0) {
-    const versionNumber = version.children[0];
+  // An omitted version is the DEFAULT v1, encoded as 0.
+  let version = 0;
+  const versionField = tbsChildren[0];
+  if (versionField?.tag === 0xa0) {
+    const versionNumber = versionField.children[0];
     if (
-      version.children.length !== 1 ||
+      versionField.children.length !== 1 ||
       versionNumber === undefined ||
       versionNumber.tag !== 0x02
     )
       return fail("TBSCertificate version is not an INTEGER.");
+    // RFC 5280 4.1.2.1: v1(0), v2(1) or v3(2), one minimal octet each.
+    const [value] = versionNumber.content;
+    if (versionNumber.content.length !== 1 || value === undefined || value > 2)
+      return fail("TBSCertificate version is not v1, v2 or v3.");
+    version = value;
     index = 1;
   }
   const serial = tbsChildren[index];
@@ -395,8 +525,17 @@ export const parseCertificate = (
       "TBSCertificate is missing serial, signature, issuer, validity, subject, or subjectPublicKeyInfo.",
     );
   algorithmOid(tbsSignature);
+  // RFC 5280 4.1.1.2: signatureAlgorithm MUST equal the TBSCertificate
+  // signature field. Compare encodings, parameters included.
+  if (
+    signatureAlgorithm.tag !== tbsSignature.tag ||
+    !signatureAlgorithm.content.equals(tbsSignature.content)
+  )
+    return fail(
+      "Certificate signatureAlgorithm differs from the TBSCertificate signature.",
+    );
   requireSubjectPublicKeyInfo(subjectPublicKeyInfo);
-  finishTbsCertificate(tbsChildren, index + 6);
+  finishTbsCertificate(tbsChildren, index + 6, version);
   const validityChildren = sequence(validity, "Validity");
   const notBefore = validityChildren[0];
   const notAfter = validityChildren[1];
@@ -409,7 +548,11 @@ export const parseCertificate = (
   return {
     start: node.start,
     end: node.end,
-    serial_hex: integerHex(serial.content, names),
+    serial_hex: integerHex(
+      serial.content,
+      names,
+      "TBSCertificate serialNumber",
+    ),
     issuer: decodeName(issuer, names),
     subject: decodeName(subject, names),
     not_before: validityTime(notBefore, names),
@@ -425,6 +568,7 @@ export interface ParsedSigner {
   readonly serial_hex: string | null;
   readonly subject_key_identifier_hex: string | null;
   readonly authenticated_attributes: boolean;
+  readonly unsigned_attribute_oids: readonly string[] | null;
 }
 
 const signerIdentifier = (
@@ -448,7 +592,11 @@ const signerIdentifier = (
       return fail("SignerInfo issuerAndSerialNumber is truncated.");
     return {
       issuer: decodeName(name, names),
-      serial_hex: integerHex(serial.content, names),
+      serial_hex: integerHex(
+        serial.content,
+        names,
+        "SignerInfo issuerAndSerialNumber serialNumber",
+      ),
       subject_key_identifier_hex: null,
     };
   }
@@ -482,6 +630,16 @@ const parseSigner = (
     sid,
     names,
   );
+  // RFC 5652 5.3: issuerAndSerialNumber requires version 1 and
+  // subjectKeyIdentifier requires version 3.
+  const [expected, identifier] =
+    sid.tag === 0x80
+      ? [3, "subjectKeyIdentifier"]
+      : [1, "issuerAndSerialNumber"];
+  if (version.content.length !== 1 || version.content[0] !== expected)
+    return fail(
+      `SignerInfo version must be ${String(expected)} with ${identifier}.`,
+    );
   let cursor = 3;
   const authenticated = children[cursor]?.tag === 0xa0;
   if (authenticated) {
@@ -497,7 +655,22 @@ const parseSigner = (
   if (signature.content.length === 0)
     return fail("SignerInfo signature OCTET STRING is empty.");
   cursor += 2;
-  if (children[cursor]?.tag === 0xa1) cursor += 1;
+  let unsignedAttributeOids: string[] | null = null;
+  const unsigned = children[cursor];
+  if (unsigned?.tag === 0xa1) {
+    unsignedAttributeOids = unsigned.children.map((attribute) => {
+      const fields = sequence(attribute, "SignerInfo unsigned attribute");
+      const oid = fields[0];
+      if (fields.length !== 2 || oid?.tag !== 0x06 || fields[1]?.tag !== 0x31)
+        return fail(
+          "SignerInfo unsigned attribute is missing its type or values.",
+        );
+      // OID text expands into decimal arcs and is retained in the result.
+      chargeDecodedName(names, oid.content.length * 4);
+      return decodeOid(oid.content);
+    });
+    cursor += 1;
+  }
   if (cursor !== children.length)
     return fail("SignerInfo has unexpected trailing fields.");
   return {
@@ -507,6 +680,7 @@ const parseSigner = (
     serial_hex,
     subject_key_identifier_hex,
     authenticated_attributes: authenticated,
+    unsigned_attribute_oids: unsignedAttributeOids,
   };
 };
 

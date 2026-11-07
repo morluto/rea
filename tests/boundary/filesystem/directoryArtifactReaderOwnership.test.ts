@@ -48,11 +48,15 @@ afterEach(() => {
 
 describe("DirectoryArtifactReader resource ownership", () => {
   it("rejects descendants after the selected root directory is replaced", async () => {
-    const { root, reader } = await makeFixture();
+    const parent = await createTestTempDirectory("rea-directory-replacement-");
+    const root = join(parent, "selected");
+    await mkdir(root);
+    await writeFile(join(root, "sample.txt"), "directory content\n");
+    const reader = new DirectoryArtifactReader(root);
     const subdirectory = join(root, "sub");
     await mkdir(subdirectory);
     await writeFile(join(subdirectory, "old.txt"), "original tree\n");
-    const movedRoot = `${root}-original`;
+    const movedRoot = join(parent, "original");
     try {
       const entries = reader.entries()[Symbol.asyncIterator]();
       // Root entries follow the filesystem's directory order; descendants are

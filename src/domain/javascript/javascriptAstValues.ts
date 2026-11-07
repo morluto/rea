@@ -1,7 +1,27 @@
 import * as t from "@babel/types";
+
 import type { JavaScriptSemanticPrimitive } from "./javascriptSemanticValueTypes.js";
 import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 import { semanticArrayIndex } from "./javascriptSemanticPropertyPaths.js";
+
+/** Computed definition keys use the surrounding evaluation environment. */
+export const javaScriptComputedDefinitionKey = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  (t.isObjectMethod(parent) ||
+    t.isClassMethod(parent) ||
+    t.isClassProperty(parent) ||
+    t.isClassAccessorProperty(parent)) &&
+  parent.computed &&
+  parent.key === child;
+
+/** Class decorators and computed definition keys use the enclosing environment. */
+export const javaScriptDefinitionExpression = (
+  parent: t.Node | undefined,
+  child: t.Node,
+): boolean =>
+  t.isDecorator(child) || javaScriptComputedDefinitionKey(parent, child);
 
 /** Type-only class fields neither initialize own slots nor shadow inherited members. */
 export const isRuntimeJavaScriptClassProperty = (
@@ -154,6 +174,14 @@ export const staticJavaScriptTruthiness = (
   if (t.isStringLiteral(value)) return value.value.length > 0;
   if (t.isNumericLiteral(value))
     return value.value !== 0 && !Number.isNaN(value.value);
+  // Babel exposes a BigIntLiteral value as either "0" or 0n depending on version.
+  if (t.isBigIntLiteral(value)) return String(value.value) !== "0";
+  if (
+    t.isUnaryExpression(value) &&
+    value.operator === "-" &&
+    t.isNumericLiteral(value.argument)
+  )
+    return value.argument.value !== 0 && !Number.isNaN(value.argument.value);
   if (
     t.isObjectExpression(value) ||
     t.isArrayExpression(value) ||
@@ -436,13 +464,43 @@ const readStaticObjectProperty = (
   return prototypeMaySupply ? { status: "dynamic" } : { status: "missing" };
 };
 
-/** Parse ordered members once for related property queries within one boundary. */
+/** Index effective keys once for related property queries within one boundary. */
 export const staticObjectPropertyReader = (
   object: t.Node | undefined,
   isNullish?: (node: t.Node) => boolean,
 ): ((name: string) => StaticObjectProperty) => {
   const source = staticObjectPropertySource(object, isNullish);
-  return (name) => readStaticObjectProperty(source, name);
+  if (typeof source === "string") return () => ({ status: source });
+  const properties = new Map<string, StaticObjectProperty>();
+  let fallback: "missing" | "dynamic" = "missing";
+  let hasIndexedSpread = false;
+  for (let index = source.length - 1; index >= 0; index--) {
+    const member = source[index]!;
+    if (member.kind === "prototype-setter") {
+      if (member.prototype === "unknown") fallback = "dynamic";
+    } else if (
+      member.kind === "primitive-indices" ||
+      member.kind === "array-indices"
+    ) {
+      hasIndexedSpread = true;
+    } else if (member.kind === "unknown" || member.key === null) {
+      fallback = "dynamic";
+      break;
+    } else if (!properties.has(member.key)) {
+      const { property, key } = member;
+      const value = objectDataPropertyValue(property);
+      properties.set(
+        key,
+        value === undefined
+          ? { status: "dynamic" }
+          : { status: "explicit", property, value },
+      );
+    }
+  }
+  return (name) =>
+    hasIndexedSpread && semanticArrayIndex(name) !== null
+      ? readStaticObjectProperty(source, name)
+      : (properties.get(name) ?? { status: fallback });
 };
 
 /** Find the effective explicit property, preserving unresolved overrides. */
@@ -452,6 +510,28 @@ export const staticObjectProperty = (
   isNullish?: (node: t.Node) => boolean,
 ): StaticObjectProperty =>
   readStaticObjectProperty(staticObjectPropertySource(object, isNullish), name);
+
+/** Prove a literal's effective own member is a method, independent of its prototype. */
+export const staticObjectOwnMethodReader = (
+  object: t.Node,
+): ((name: string) => boolean) => {
+  if (!t.isObjectExpression(object)) return () => false;
+  const methods = new Map<string, boolean>();
+  const members = staticObjectMembers(object, 0);
+  for (let index = members.length - 1; index >= 0; index--) {
+    const member = members[index]!;
+    if (member.kind === "prototype-setter") continue;
+    if (member.kind === "unknown") break;
+    if (member.kind !== "property") continue;
+    if (member.key === null) break;
+    if (!methods.has(member.key))
+      methods.set(
+        member.key,
+        t.isObjectMethod(member.property) && member.property.kind === "method",
+      );
+  }
+  return (name) => methods.get(name) === true;
+};
 
 export type StaticObjectPropertyNames =
   | { readonly status: "missing" | "dynamic" }

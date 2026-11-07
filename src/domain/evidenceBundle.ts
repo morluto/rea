@@ -2,6 +2,7 @@ import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
+import { AnalysisInputError } from "./analysisErrorCore.js";
 import { err, ok, type Result } from "./result.js";
 import { describeValidationFailure } from "./validationFailure.js";
 import { equalJsonText } from "./jsonSerialization.js";
@@ -53,6 +54,12 @@ export const evidenceBundleSchema = z.strictObject({
 
 export type EvidenceBundle = z.infer<typeof evidenceBundleSchema>;
 const immutableBundles = new WeakMap<object, EvidenceBundle>();
+
+/** Recognize an authenticated sealed bundle without traversing or copying it. */
+export const isImmutableEvidenceBundle = (
+  input: unknown,
+): input is EvidenceBundle =>
+  typeof input === "object" && input !== null && immutableBundles.has(input);
 
 /** Caller input has valid shape but is not in authenticated canonical form. */
 export class NonCanonicalEvidenceBundleError extends TypeError {
@@ -150,7 +157,7 @@ export const createEvidenceBundle = (
   };
 };
 
-/** Retain target records and eligible complete unknown histories with their mutation evidence. */
+/** Retain target records, their linked sources, and eligible complete unknown histories. */
 export const evidenceBundleForTarget = (
   bundle: EvidenceBundle,
   sha256: string,
@@ -211,12 +218,30 @@ export const evidenceBundleForTarget = (
   const mutationIds = new Set(
     unknowns.flatMap(({ mutation_evidence_ids: ids }) => ids),
   );
+  const selectedIds = new Set(
+    bundle.records
+      .filter(
+        (record) =>
+          record.subject?.digest.sha256 === sha256 ||
+          mutationIds.has(record.evidence_id),
+      )
+      .map((record) => record.evidence_id),
+  );
+  // Source Evidence may have no subject or describe a different artifact.
+  // Follow only explicit links from selected records, retaining missing links
+  // as missing rather than inventing or importing unrelated observations.
+  const pendingEvidence = [...selectedIds];
+  for (let index = 0; index < pendingEvidence.length; index += 1) {
+    const record = recordsById.get(pendingEvidence[index] ?? "");
+    for (const id of record?.evidence_links ?? []) {
+      if (!selectedIds.has(id) && recordsById.has(id)) {
+        selectedIds.add(id);
+        pendingEvidence.push(id);
+      }
+    }
+  }
   return createEvidenceBundle(
-    bundle.records.filter(
-      (record) =>
-        record.subject?.digest.sha256 === sha256 ||
-        mutationIds.has(record.evidence_id),
-    ),
+    bundle.records.filter((record) => selectedIds.has(record.evidence_id)),
     unknowns,
   );
 };
@@ -295,14 +320,26 @@ const parseBundle = (input: unknown, seal: boolean): EvidenceBundle => {
 /** Read a source bundle while preserving unexpected implementation failures. */
 export const readEvidenceBundle = (
   input: unknown,
-): Result<EvidenceBundle, EvidenceIntegrityError> => {
+  context: {
+    readonly operation: string;
+    readonly path: readonly (string | number)[];
+  },
+): Result<EvidenceBundle, AnalysisInputError | EvidenceIntegrityError> => {
   const parsed = safeParseEvidenceBundle(input);
   if (parsed.ok) return parsed;
-  const { cause } = parsed.error;
+  const { cause, kind, message } = parsed.error;
+  if (kind === "single-record")
+    return err(
+      new AnalysisInputError(
+        context.operation,
+        { cause, userMessage: message, remediationAction: message },
+        [{ path: context.path, reason: "invalid_value", message }],
+      ),
+    );
   return err(
     new EvidenceIntegrityError(cause.message, {
       cause,
-      userMessage: cause.message,
+      userMessage: message,
     }),
   );
 };

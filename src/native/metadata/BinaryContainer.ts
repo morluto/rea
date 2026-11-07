@@ -40,7 +40,7 @@ export class BinaryStringReadLimitFailure extends BinaryFormatFailure {
     // allowing coverage-aware consumers to distinguish a limit from corruption.
     super(
       "malformed",
-      `String is unterminated or longer than ${String(maximumBytes)} bytes`,
+      `String termination was not established within its ${String(maximumBytes)}-byte read allowance`,
     );
   }
 }

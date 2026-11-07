@@ -6,7 +6,8 @@ import {
   readPeResourceEntryFacts,
   readPeResourceNameFacts,
 } from "./PeResourceTreeFacts.js";
-import { observeMzWindowsHeader } from "../../domain/dosMz.js";
+import { parseMzHeaderEvidence } from "../../domain/dosMz.js";
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import { readPeCoffHeader } from "../../domain/peCoffHeader.js";
 import { readPeSectionHeader } from "../../domain/peSectionHeader.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -91,7 +92,13 @@ const intersectsResource = (
 export const readPeHeaders = (bytes: Buffer, fileSize = bytes.length) => {
   requirePeRange(bytes, 0, 64);
   if (bytes.readUInt16LE(0) !== 0x5a4d) peFailure("Expected an MZ PE image.");
-  const observed = observeMzWindowsHeader(bytes, fileSize);
+  const evidence = parseMzHeaderEvidence(bytes, fileSize);
+  const observed = evidence.windowsHeader;
+  if (observed.state === "absent" && evidence.dos.ok)
+    throw new BinaryFormatFailure(
+      "unsupported",
+      "DOS MZ images do not contain PE resource or certificate tables",
+    );
   if (observed.state === "candidate" || observed.state === "signature-needed")
     requirePeRange(bytes, observed.offset, 24);
   if (observed.state !== "declared" || observed.signature !== "PE")

@@ -62,7 +62,19 @@ const resolveInputPath = async (
   try {
     // Darwin realpath can collapse file/.. even though native lookup rejects
     // that traversal. Admit the selected path before canonicalizing it.
-    await stat(selected);
+    const metadata = await stat(selected);
+    if (field === "application_root" && !metadata.isDirectory()) {
+      const cause = new Error("not a directory");
+      return err({
+        kind: "invalid",
+        issue: {
+          path: [field],
+          reason: "invalid_value",
+          message: `application_root ${selected} is not a directory`,
+        },
+        cause,
+      });
+    }
     return ok(await realpath(selected));
   } catch (cause: unknown) {
     return err(

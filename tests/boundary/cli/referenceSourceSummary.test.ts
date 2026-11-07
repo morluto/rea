@@ -7,7 +7,7 @@ import { describe, expect } from "vitest";
 
 import { parseHistoricalSourceGraph } from "../../../src/domain/referenceSourceGraph.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 describe.skipIf(process.platform === "win32")(
   "compiled historical-source summaries",
@@ -195,10 +195,14 @@ describe("compiled historical-source summary input boundaries", () => {
       const root = await createTestTempDirectory(
         "rea-reference-summary-input-",
       );
-      const result = await cli.run({
+      const invocation = {
         arguments: ["import-reference-source", root, ...options, "--json"],
         cwd: root,
-      });
+      };
+      const result =
+        label === "--outline-depth="
+          ? await cli.run(invocation)
+          : await runFileCli(cli, invocation);
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code: "VALIDATION_ERROR",
@@ -222,7 +226,7 @@ describe("compiled historical-source summary input boundaries", () => {
       const root = await createTestTempDirectory(
         "rea-reference-summary-input-",
       );
-      const result = await cli.run({
+      const result = await runFileCli(cli, {
         arguments: ["import-reference-source", root, ...options, "--json"],
         cwd: root,
       });
