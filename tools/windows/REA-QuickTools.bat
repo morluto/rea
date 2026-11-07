@@ -3,19 +3,32 @@ chcp 65001 >nul
 title REA Quick Tools - Reverse Engineer Anything (Windows)
 color 0A
 
-:: Ensure environment variables for Ghidra and Java
-if not defined GHIDRA_INSTALL_DIR (
-    set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
-)
-if not defined JAVA_HOME (
-    set "JAVA_HOME=C:\Program Files\Java\jdk-22"
-)
+:: ---- Analysis engine environment -------------------------------------------
+:: Only set defaults when the caller has not chosen an installation already.
+if not defined GHIDRA_INSTALL_DIR if exist "C:\tools\ghidra_12.1.4_PUBLIC" set "GHIDRA_INSTALL_DIR=C:\tools\ghidra_12.1.4_PUBLIC"
+if not defined JAVA_HOME if exist "C:\Program Files\Java\jdk-22" set "JAVA_HOME=C:\Program Files\Java\jdk-22"
 
-:: Resolve Node executable and REA script
-set "NODE_EXE=C:\Users\AD PAO\AppData\Local\hermes\tools\node-26.7.0-win32-x64\node.exe"
-set "REA_SCRIPT=C:\Users\AD PAO\AppData\Local\hermes\tools\node-26.7.0-win32-x64\node_modules\rea-agents\scripts\rea.mjs"
+:: ---- Locate the REA launcher -----------------------------------------------
+:: Order: npm global shim on PATH, %APPDATA%\npm shim, then a source checkout
+:: two levels above this script (tools\windows\ -> repo root).
+set "REA_CMD="
+for %%I in (rea.cmd) do if not defined REA_CMD if exist "%%~$PATH:I" set "REA_CMD=%%~$PATH:I"
+if not defined REA_CMD if exist "%APPDATA%\npm\rea.cmd" set "REA_CMD=%APPDATA%\npm\rea.cmd"
+if not defined REA_CMD if exist "%~dp0..\..\scripts\rea.mjs" set "REA_SOURCE=%~dp0..\..\scripts\rea.mjs"
+if not defined REA_CMD if not defined REA_SOURCE goto NO_REA
+goto HAVE_REA
 
-:: Check if file was dragged and dropped
+:NO_REA
+echo [ERROR] ไม่พบคำสั่ง rea ในระบบ
+echo.
+echo ติดตั้งก่อนด้วยคำสั่ง:  npm install -g rea-agents
+echo.
+pause
+exit /b 1
+
+:HAVE_REA
+
+:: Check if a file was dragged and dropped onto this script
 if not "%~1"=="" (
     set "TARGET=%~1"
     goto FILE_DROPPED
@@ -35,6 +48,8 @@ echo  [5] ออกจากโปรแกรม
 echo.
 echo ========================================================
 set /p choice="เลือกเมนู [1-5]: "
+:: stop when stdin is closed instead of looping forever
+if not defined choice exit /b 0
 
 if "%choice%"=="1" goto DOCTOR
 if "%choice%"=="2" goto MCP_DOCTOR
@@ -46,11 +61,7 @@ goto MENU
 :DOCTOR
 cls
 echo [กำลังตรวจสอบสถานะ REA...]
-if exist "%NODE_EXE%" (
-    "%NODE_EXE%" "%REA_SCRIPT%" doctor --client codex --client hermes
-) else (
-    rea doctor --client codex --client hermes
-)
+call :RUN_REA doctor --client codex --client hermes
 echo.
 pause
 goto MENU
@@ -58,26 +69,26 @@ goto MENU
 :MCP_DOCTOR
 cls
 echo [กำลังตรวจสอบ MCP Server...]
-if exist "%NODE_EXE%" (
-    "%NODE_EXE%" "%REA_SCRIPT%" mcp doctor
-) else (
-    rea mcp doctor
-)
+call :RUN_REA mcp doctor
 echo.
 pause
 goto MENU
 
 :INPUT_PATH
 cls
+set "TARGET_INPUT="
 set /p TARGET_INPUT="วางหรือพิมพ์ Path ของไฟล์ที่ต้องการวิเคราะห์: "
-:: Strip quotes if entered by user
+if not defined TARGET_INPUT goto MENU
+:: Strip surrounding quotes the user may have pasted
 set "TARGET=%TARGET_INPUT:"=%"
-if not exist "%TARGET%" (
-    echo.
-    echo ไม่พบไฟล์: "%TARGET%"
-    pause
-    goto MENU
-)
+if not exist "%TARGET%" goto BAD_TARGET
+goto FILE_DROPPED
+
+:BAD_TARGET
+echo.
+echo ไม่พบไฟล์: "%TARGET%"
+pause
+goto MENU
 
 :FILE_DROPPED
 cls
@@ -94,93 +105,91 @@ echo  [6] ตรวจสอบ .NET / C# Assembly
 echo  [7] กลับสู่เมนูหลัก
 echo.
 echo ========================================================
+set "file_choice="
 set /p file_choice="เลือกการดำเนินการ [1-7]: "
+if not defined file_choice goto MENU
 
-if "%file_choice%"=="1" (
-    cls
-    echo [กำลัง Decompile ฟังก์ชัน entry ด้วย Ghidra...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" decompile "%TARGET%" entry --provider ghidra
-    ) else (
-        rea decompile "%TARGET%" entry --provider ghidra
-    )
-    pause
-    goto FILE_DROPPED
-)
-
-if "%file_choice%"=="2" (
-    set /p func_name="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
-    cls
-    echo [กำลัง Decompile ฟังก์ชัน %func_name%...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" decompile "%TARGET%" %func_name% --provider ghidra
-    ) else (
-        rea decompile "%TARGET%" %func_name% --provider ghidra
-    )
-    pause
-    goto FILE_DROPPED
-)
-
-if "%file_choice%"=="3" (
-    cls
-    echo [กำลังวิเคราะห์ PE Resources...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" inspect-pe-resources "%TARGET%"
-    ) else (
-        rea inspect-pe-resources "%TARGET%"
-    )
-    pause
-    goto FILE_DROPPED
-)
-
-if "%file_choice%"=="4" (
-    set /p search_term="พิมพ์คำที่ต้องการค้นหาใน Strings: "
-    cls
-    echo [กำลังค้นหาข้อความ: %search_term%...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" search "%TARGET%" "%search_term%" --kind strings --provider ghidra
-    ) else (
-        rea search "%TARGET%" "%search_term%" --kind strings --provider ghidra
-    )
-    pause
-    goto FILE_DROPPED
-)
-
-if "%file_choice%"=="5" (
-    set /p proc_term="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
-    cls
-    echo [กำลังค้นหาฟังก์ชัน: %proc_term%...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" search "%TARGET%" "%proc_term%" --kind procedures --provider ghidra
-    ) else (
-        rea search "%TARGET%" "%proc_term%" --kind procedures --provider ghidra
-    )
-    pause
-    goto FILE_DROPPED
-)
-
-if "%file_choice%"=="6" (
-    cls
-    echo [กำลังตรวจสอบ .NET Managed Artifact...]
-    if exist "%NODE_EXE%" (
-        "%NODE_EXE%" "%REA_SCRIPT%" inspect-managed-artifact "%TARGET%"
-    ) else (
-        rea inspect-managed-artifact "%TARGET%"
-    )
-    pause
-    goto FILE_DROPPED
-)
-
+if "%file_choice%"=="1" goto DO_ENTRY
+if "%file_choice%"=="2" goto DO_FUNCTION
+if "%file_choice%"=="3" goto DO_PE
+if "%file_choice%"=="4" goto DO_STRINGS
+if "%file_choice%"=="5" goto DO_PROCEDURES
+if "%file_choice%"=="6" goto DO_MANAGED
 if "%file_choice%"=="7" goto MENU
+goto FILE_DROPPED
 
+:DO_ENTRY
+cls
+echo [กำลัง Decompile ฟังก์ชัน entry ด้วย Ghidra...]
+call :RUN_REA decompile "%TARGET%" entry --provider ghidra
+pause
+goto FILE_DROPPED
+
+:DO_FUNCTION
+set "func_name="
+set /p func_name="พิมพ์ชื่อฟังก์ชันหรือ Memory Address (เช่น FUN_1400021b4): "
+if not defined func_name goto FILE_DROPPED
+cls
+echo [กำลัง Decompile ฟังก์ชัน %func_name%...]
+call :RUN_REA decompile "%TARGET%" "%func_name%" --provider ghidra
+pause
+goto FILE_DROPPED
+
+:DO_PE
+cls
+echo [กำลังวิเคราะห์ PE Resources...]
+call :RUN_REA inspect-pe-resources "%TARGET%"
+pause
+goto FILE_DROPPED
+
+:DO_STRINGS
+set "search_term="
+set /p search_term="พิมพ์คำที่ต้องการค้นหาใน Strings: "
+if not defined search_term goto FILE_DROPPED
+cls
+echo [กำลังค้นหาข้อความ: %search_term%...]
+call :RUN_REA search "%TARGET%" "%search_term%" --kind strings --provider ghidra
+pause
+goto FILE_DROPPED
+
+:DO_PROCEDURES
+set "proc_term="
+set /p proc_term="พิมพ์ชื่อ Procedure ที่ต้องการค้นหา: "
+if not defined proc_term goto FILE_DROPPED
+cls
+echo [กำลังค้นหาฟังก์ชัน: %proc_term%...]
+call :RUN_REA search "%TARGET%" "%proc_term%" --kind procedures --provider ghidra
+pause
+goto FILE_DROPPED
+
+:DO_MANAGED
+cls
+echo [กำลังตรวจสอบ .NET Managed Artifact...]
+call :RUN_REA inspect-managed-artifact "%TARGET%"
+pause
 goto FILE_DROPPED
 
 :GUIDE
-set "GUIDE_FILE=C:\Users\AD PAO\AppData\Local\hermes\skills\reverse-engineer-anything\references\thai-guide.md"
-if exist "%GUIDE_FILE%" (
-    start notepad "%GUIDE_FILE%"
-) else (
-    echo ไม่พบคู่มือภาษาไทยที่: "%GUIDE_FILE%"
-    pause
-)
+:: The installed skill ships the guide; the source checkout keeps it beside the skill.
+set "GUIDE_FILE="
+if exist "%APPDATA%\npm\node_modules\rea-agents\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%APPDATA%\npm\node_modules\rea-agents\skills\reverse-engineer-anything\references\thai-guide.md"
+if not defined GUIDE_FILE if exist "%LOCALAPPDATA%\hermes\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%LOCALAPPDATA%\hermes\skills\reverse-engineer-anything\references\thai-guide.md"
+if not defined GUIDE_FILE if exist "%~dp0..\..\.agents\skills\reverse-engineer-anything\references\thai-guide.md" set "GUIDE_FILE=%~dp0..\..\.agents\skills\reverse-engineer-anything\references\thai-guide.md"
+if defined GUIDE_FILE goto OPEN_GUIDE
+echo ไม่พบคู่มือภาษาไทยในเครื่องนี้
+echo ค้นหาได้ที่: skills\reverse-engineer-anything\references\thai-guide.md
+pause
 goto MENU
+
+:OPEN_GUIDE
+start notepad "%GUIDE_FILE%"
+goto MENU
+
+:: ---- run rea with the resolved launcher ------------------------------------
+:RUN_REA
+if defined REA_CMD (
+    call "%REA_CMD%" %*
+    goto :eof
+)
+node "%REA_SOURCE%" %*
+goto :eof
