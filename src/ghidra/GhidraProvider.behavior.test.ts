@@ -3681,13 +3681,19 @@ describe("Ghidra empty instruction reference facets", () => {
     ...compactInstruction(outgoing),
     incoming_references: incoming,
   });
-  const nonDecoded = (status: JsonValue, incoming: JsonValue[]) => ({
+  const definedData = (incoming: JsonValue[]) => ({
     ...compactInstruction(),
-    status,
+    status: "data",
     bytes: null,
     length: null,
     mnemonic: null,
     raw_disassembly: null,
+    containing_data: {
+      address: "0x401000",
+      length: 1,
+      type_id: "/undefined1",
+      provenance: "ghidra-listing",
+    },
     incoming_references: incoming,
   });
   const executeInspect = async (
@@ -3738,15 +3744,13 @@ describe("Ghidra empty instruction reference facets", () => {
   });
 
   it("keeps only the address caveat when a data address resolves no incoming references", async () => {
-    const limitations = await executeInspect(nonDecoded("data", []));
+    const limitations = await executeInspect(definedData([]));
     expect(limitations).toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 
   it("adds no caveat for a data address whose incoming references were observed", async () => {
-    const limitations = await executeInspect(
-      nonDecoded("data", [compactReference()]),
-    );
+    const limitations = await executeInspect(definedData([compactReference()]));
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
