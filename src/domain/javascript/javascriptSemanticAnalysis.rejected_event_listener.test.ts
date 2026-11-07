@@ -808,3 +808,39 @@ it("preserves candidate when chain of logical NOT exceeds expression depth limit
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("efficiently indexes bindings across many local declarations and rejected listeners", () => {
+  const localDecls = Array.from(
+    { length: 50 },
+    (_, i) => `const local_${i} = ${i};`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    import * as events from "node:events";
+    ${localDecls}
+    const child = spawn("worker");
+    const e = new events.EventEmitter();
+    child.on("exit", 1);
+    child.on("error", "not-a-fn");
+    e.on("ready", 42);
+    process.on("exit", false);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when pre-indexed relevant binding escapes despite many local declarations", () => {
+  const localDecls = Array.from(
+    { length: 50 },
+    (_, i) => `const local_${i} = ${i};`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    import * as events from "node:events";
+    ${localDecls}
+    opaqueHelper(events);
+    const e = new events.EventEmitter();
+    e.on("ready", 42);
+  `);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});

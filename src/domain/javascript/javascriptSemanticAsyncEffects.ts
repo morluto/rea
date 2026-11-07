@@ -577,12 +577,34 @@ const isProcessModuleOrigin = (origin: JavaScriptModuleOrigin): boolean => {
   );
 };
 
-/** Check whether prototype, module, or escape effects may have changed Node's listener methods. */
-const hasInheritedListenerMethodOverride = (
+interface RelevantListenerOverrideBinding {
+  readonly binding: JavaScriptSemanticBindingState;
+  readonly isClass: boolean;
+  readonly isNamespace: boolean;
+  readonly hasMemberOverride: boolean;
+}
+
+interface RelevantListenerOverrideIndex {
+  readonly child_process: readonly RelevantListenerOverrideBinding[];
+  readonly events: readonly RelevantListenerOverrideBinding[];
+  readonly process: readonly RelevantListenerOverrideBinding[];
+}
+
+const listenerOverrideIndexByState = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  RelevantListenerOverrideIndex
+>();
+
+const getListenerOverrideIndex = (
   state: JavaScriptSemanticAnalysisState,
-  target: "child_process" | "events" | "process",
-  call?: t.Node,
-): boolean => {
+): RelevantListenerOverrideIndex => {
+  const existing = listenerOverrideIndexByState.get(state);
+  if (existing !== undefined) return existing;
+
+  const childProcessBindings: RelevantListenerOverrideBinding[] = [];
+  const eventsBindings: RelevantListenerOverrideBinding[] = [];
+  const processBindings: RelevantListenerOverrideBinding[] = [];
+
   for (const binding of state.bindingsById.values()) {
     if (binding.memberWrites.length === 0 && binding.escapedPaths.length === 0)
       continue;
@@ -590,72 +612,113 @@ const hasInheritedListenerMethodOverride = (
     if (provenance.status !== "module") continue;
     for (const origin of provenance.origins) {
       const specifier = origin.specifier.replace(/^node:/u, "");
-      if (target === "child_process" && specifier === "child_process") {
+      if (specifier === "child_process") {
         const isClass = origin.importedPath[0] === "ChildProcess";
         const isNamespace = origin.importedPath.length === 0;
-        if (
-          isClass ||
-          (isNamespace &&
-            binding.escapedPaths.some(
-              (effect) => call === undefined || effect.node !== call,
-            )) ||
-          binding.memberWrites.some(({ path }) =>
-            path.some(
-              (segment) =>
-                segment === "prototype" || segment === "ChildProcess",
-            ),
-          )
-        )
-          return true;
-      }
-      if (
-        (target === "events" ||
-          target === "child_process" ||
-          target === "process") &&
-        specifier === "events"
-      ) {
+        const hasMemberOverride = binding.memberWrites.some(({ path }) =>
+          path.some(
+            (segment) => segment === "prototype" || segment === "ChildProcess",
+          ),
+        );
+        childProcessBindings.push({
+          binding,
+          isClass,
+          isNamespace,
+          hasMemberOverride,
+        });
+      } else if (specifier === "events") {
         const isClass = origin.importedPath[0] === "EventEmitter";
         const isNamespace =
           origin.importedPath.length === 0 ||
           (origin.importedPath.length === 1 &&
             origin.importedPath[0] === "default");
-        if (
-          isClass ||
-          (isNamespace &&
-            binding.escapedPaths.some(
-              (effect) => call === undefined || effect.node !== call,
-            )) ||
-          binding.memberWrites.some(({ path }) =>
-            path.some(
-              (segment) =>
-                segment === "prototype" || segment === "EventEmitter",
-            ),
-          )
-        )
-          return true;
-      }
-      if (target === "process" && specifier === "process") {
+        const hasMemberOverride = binding.memberWrites.some(({ path }) =>
+          path.some(
+            (segment) => segment === "prototype" || segment === "EventEmitter",
+          ),
+        );
+        eventsBindings.push({
+          binding,
+          isClass,
+          isNamespace,
+          hasMemberOverride,
+        });
+      } else if (specifier === "process") {
         const isNamespace =
           origin.importedPath.length === 0 ||
           (origin.importedPath.length === 1 &&
             origin.importedPath[0] === "default");
-        if (
-          binding.memberWrites.some(({ path }) =>
-            path.some(
-              (segment) =>
-                segment === "prototype" ||
-                EVENT_LISTENER_METHODS.includes(
-                  segment as (typeof EVENT_LISTENER_METHODS)[number],
-                ),
-            ),
-          ) ||
-          (isNamespace &&
-            binding.escapedPaths.some(
-              (effect) => call === undefined || effect.node !== call,
-            ))
-        )
-          return true;
+        const hasMemberOverride = binding.memberWrites.some(({ path }) =>
+          path.some(
+            (segment) =>
+              segment === "prototype" ||
+              EVENT_LISTENER_METHODS.includes(
+                segment as (typeof EVENT_LISTENER_METHODS)[number],
+              ),
+          ),
+        );
+        processBindings.push({
+          binding,
+          isClass: false,
+          isNamespace,
+          hasMemberOverride,
+        });
       }
+    }
+  }
+
+  const index: RelevantListenerOverrideIndex = {
+    child_process: childProcessBindings,
+    events: eventsBindings,
+    process: processBindings,
+  };
+  listenerOverrideIndexByState.set(state, index);
+  return index;
+};
+
+const hasRelevantBindingOverride = (
+  entries: readonly RelevantListenerOverrideBinding[],
+  call?: t.Node,
+): boolean => {
+  for (const entry of entries) {
+    if (
+      entry.isClass ||
+      entry.hasMemberOverride ||
+      (entry.isNamespace &&
+        entry.binding.escapedPaths.some(
+          (effect) => call === undefined || effect.node !== call,
+        ))
+    ) {
+      return true;
+    }
+  }
+  return false;
+};
+
+/** Check whether prototype, module, or escape effects may have changed Node's listener methods. */
+const hasInheritedListenerMethodOverride = (
+  state: JavaScriptSemanticAnalysisState,
+  target: "child_process" | "events" | "process",
+  call?: t.Node,
+): boolean => {
+  const index = getListenerOverrideIndex(state);
+  if (target === "child_process") {
+    if (
+      hasRelevantBindingOverride(index.child_process, call) ||
+      hasRelevantBindingOverride(index.events, call)
+    ) {
+      return true;
+    }
+  } else if (target === "events") {
+    if (hasRelevantBindingOverride(index.events, call)) {
+      return true;
+    }
+  } else if (target === "process") {
+    if (
+      hasRelevantBindingOverride(index.process, call) ||
+      hasRelevantBindingOverride(index.events, call)
+    ) {
+      return true;
     }
   }
   for (const [specifier, effects] of state.requiredModuleEffects.entries()) {
