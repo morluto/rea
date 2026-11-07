@@ -40,6 +40,12 @@ signer identifier facts. A signer identified by subject key identifier reports
 that value as `subject_key_identifier_hex`. Other certificate types keep
 `pkcs7` null.
 
+Each signer reports `unsigned_attribute_oids`: null means the field was absent,
+and an array lists the types when present. Older retained Evidence may omit the
+field. Unsigned attribute contents, including nested signatures and timestamp
+tokens, are not decoded; their presence makes coverage partial and adds a
+limitation. Certificate and signer counts refer to the outer SignedData.
+
 A missing table is observed absence of that directory. It is not proof the
 image is unsigned in every catalog or overlay sense.
 

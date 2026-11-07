@@ -20,7 +20,9 @@
 
 **[Trang web](https://rea.tools/vi/) · [Hướng dẫn](https://rea.tools/vi/guides/) · [Các nghiên cứu điển hình](https://rea.tools/vi/showcase/)**
 
-[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Công cụ GNU objdump và Rizin](../reverse-engineering-tools.md) · [Tài liệu](#tài-liệu)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Tham gia cộng đồng REA trên Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Bắt đầu nhanh](#bắt-đầu-nhanh) · [Cách REA hoạt động](#cách-rea-hoạt-động) · [Những gì bạn có thể phân tích](#những-gì-bạn-có-thể-phân-tích) · [Các nghiên cứu điển hình](#các-nghiên-cứu-điển-hình) · [Xây dựng môi trường RL](#build-rl-environments) · [Câu hỏi thường gặp](#câu-hỏi-thường-gặp) · [Tài liệu](#tài-liệu)
 
 <code>npx rea-agents setup</code>
 
@@ -158,6 +160,7 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | PE certificates                   | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                    | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                                  |
 | PE imports                        | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                      | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                            |
 | ELF notes                         | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                             |
+| Binary hardening                  | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                            |
 | Linux kernel modules              | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                   |
 | Erlang BEAM                       | IFF chunks, atoms, exports, and tables                                                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                        |
 | Apple IPS crashes                 | .ips metadata, threads, images, registers and crash classes                                                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                            |
@@ -189,6 +192,8 @@ REA yêu cầu Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) hoặc 26+ (>=26.12.1)
 | Chữ ký APK                        | Bên ký v1/v2/v3/v3.1, dấu vân tay chứng chỉ, xoay vòng khóa và tính nhất quán nội bộ của digest                 | Kiểm tra tĩnh tích hợp; `inspect_apk_signature`                                                                                                                          |
 
 Kiểm tra tĩnh JavaScript và .NET đọc các tệp được cung cấp mà không chạy ứng dụng. Ghi lại khi chạy sẽ khởi chạy hoặc tương tác với mục tiêu đã chọn bằng quyền người dùng của bạn; từng hướng dẫn mô tả tác động của nó.
+
+Để kiểm tra tệp nhị phân native ngoại tuyến, REA cũng hỗ trợ GNU objdump và Rizin do bạn tự cung cấp. [Hướng dẫn công cụ dịch ngược](../reverse-engineering-tools.md) trình bày cách thiết lập nhà cung cấp, các lệnh CLI và giới hạn của Evidence. REA không cài đặt hoặc cập nhật hai nhà cung cấp này.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

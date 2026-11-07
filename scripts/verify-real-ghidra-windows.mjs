@@ -8,13 +8,13 @@ import { fileURLToPath } from "node:url";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "../dist/ghidra/GhidraFunctionOperations.js";
 import {
-  GHIDRA_FUNCTION_OPERATIONS,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
 } from "../dist/ghidra/GhidraFunctionValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "../dist/ghidra/GhidraInventoryOperations.js";
 import {
-  GHIDRA_INVENTORY_OPERATIONS,
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";

@@ -20,7 +20,9 @@
 
 **[Сайт](https://rea.tools/uk/) · [Посібники](https://rea.tools/uk/guides/) · [Приклади](https://rea.tools/uk/showcase/)**
 
-[Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Інструменти GNU objdump і Rizin](../reverse-engineering-tools.md) · [Документація](#документація)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Приєднуйтеся до спільноти REA в Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Швидкий старт](#швидкий-старт) · [Як працює REA](#як-працює-rea) · [Що можна аналізувати](#що-можна-аналізувати) · [Приклади](#приклади) · [Створення RL-середовищ](#build-rl-environments) · [Поширені запитання](#поширені-запитання) · [Документація](#документація)
 
 <code>npx rea-agents setup</code>
 
@@ -158,6 +160,7 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Байт-код EVM                         | Селектори диспетчеризації, зміщення байтів, виведені припущення про аргументи та змінюваність стану               | Локальні необроблені байти або шістнадцяткове представлення у Linux x64; [посібник EVM без запуску](../guides/evm/evm-bytecode.md)                                |
 | Rust binaries                        | Embedded cargo-auditable dependency list                                                                          | [Rust binaries](../rust-binaries.md)                                                                                                                              |
 | ELF notes                            | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                      |
+| Binary hardening                     | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                     |
 | Linux kernel modules                 | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                            |
 | Erlang BEAM                          | IFF chunks, atoms, exports, and tables                                                                            | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                 |
 | Apple IPS crashes                    | .ips metadata, threads, images, registers and crash classes                                                       | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                     |
@@ -189,6 +192,8 @@ REA потребує Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) або 26+ (>=26
 | Підписи APK                          | Підписувачі v1/v2/v3/v3.1, відбитки сертифікатів, ротація ключів і внутрішня узгодженість хешів                   | Вбудований статичний аналіз; `inspect_apk_signature`                                                                                                              |
 
 Статична перевірка JavaScript і .NET читає надані файли, не запускаючи застосунок. Захоплення під час виконання запускає вибрану ціль або взаємодіє з нею з правами вашого користувача; відповідні посібники описують його вплив.
+
+Для автономного аналізу нативних бінарних файлів REA також підтримує GNU objdump і Rizin, які користувач надає самостійно. [Посібник з інструментів зворотної розробки](../reverse-engineering-tools.md) описує налаштування провайдерів, команди CLI та обмеження Evidence. REA не встановлює й не оновлює жодного з цих провайдерів.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

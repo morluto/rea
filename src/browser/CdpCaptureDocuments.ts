@@ -275,6 +275,7 @@ interface DomMetadataCapture {
 
 export interface DomCapture extends DomMetadataCapture {
   readonly total: number;
+  readonly nodeValueLengthUnit: "utf16-code-units";
   readonly nodes: WebPageInspection["dom"]["nodes"];
 }
 
@@ -420,6 +421,7 @@ export function* captureDom(
   }
   return {
     total,
+    nodeValueLengthUnit: "utf16-code-units",
     nodes,
     urls,
     agentHints,

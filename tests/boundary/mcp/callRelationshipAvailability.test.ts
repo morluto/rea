@@ -106,6 +106,10 @@ describe("call relationship capability inventory at the public MCP boundary", ()
         directory,
         () => relationshipProvider(scenario, calls),
         resources,
+        undefined,
+        // The full scenario retains default advertisement coverage; the
+        // remaining cases exercise availability and canonical call results.
+        scenario === FULL_SCENARIO ? undefined : "off",
       );
       const toolsBefore = await mcp.listTools();
       const before = await sessionInventory(mcp);

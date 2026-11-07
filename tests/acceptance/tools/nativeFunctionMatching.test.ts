@@ -1,7 +1,11 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest, type TestCli } from "../../support/cli/cliFixture.js";
+import {
+  cliTest,
+  runFileCli,
+  type TestCli,
+} from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -327,11 +331,14 @@ cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
       "compare_functions",
     );
     await verifyPortableCli(cli, fixture, input, evidence.evidence_id);
+    const missingId = `ev_${"a".repeat(64)}`;
     const missing = await call("match_native_functions", {
-      left: reference(`ev_${"a".repeat(64)}`),
+      left: reference(missingId),
       right: reference(right.evidence_id),
     });
-    expect(missing.isError).toBe(true);
+    expect(parseMcpToolError(missing)).toMatchObject({
+      error: { details: { evidence_id: missingId, reason: "missing" } },
+    });
   },
 );
 
@@ -467,6 +474,9 @@ cliTest(
       "left_observations",
       "right_observations",
     ] as const) {
+      // Keep fresh-process coverage for both source-admission routes on left.
+      const run =
+        field === "left" ? cli.run.bind(cli) : runFileCli.bind(undefined, cli);
       const observation = field.endsWith("observations");
       const request = {
         left,
@@ -491,7 +501,7 @@ cliTest(
       const requestPath = join(root, "request.json");
       await writeFile(requestPath, JSON.stringify(request));
       for (const sourceArguments of [[], ["--source_bundle", bundlePath]]) {
-        const rejected = await cli.run({
+        const rejected = await run({
           arguments: [
             "match-native-functions",
             requestPath,
@@ -568,7 +578,7 @@ cliTest(
 
     const corruptRequest = { left: badCoordinate, right, detail: "complete" };
     await writeFile(requestPath, JSON.stringify(corruptRequest));
-    const corruptInline = await cli.run({
+    const corruptInline = await runFileCli(cli, {
       arguments: ["match-native-functions", requestPath, "--json"],
     });
     const corruptPortableRequest = {
@@ -580,7 +590,7 @@ cliTest(
       detail: "complete",
     };
     await writeFile(requestPath, JSON.stringify(corruptPortableRequest));
-    const corruptPortable = await cli.run({
+    const corruptPortable = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,
@@ -598,7 +608,7 @@ cliTest(
 
     const malformedBundlePath = join(root, "malformed-outer-frame.json");
     await writeFile(malformedBundlePath, JSON.stringify({ records: [left] }));
-    const malformedBundle = await cli.run({
+    const malformedBundle = await runFileCli(cli, {
       arguments: [
         "match-native-functions",
         requestPath,
@@ -618,7 +628,11 @@ cliTest(
 cliTest(
   "native matching admits the request representation before authenticating observation carriers",
   async () => {
-    const { call } = await connectLocalToolsMcp();
+    // Reach the native matching representation boundary with this intentionally
+    // oversized carrier fixture, rather than stopping at MCP's lower default.
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_MAX_INPUT_ELEMENTS: "1048576",
+    });
     const left = nativeMatchingInventory("1", [
       { address: "0x10", value: "main" },
     ]);
@@ -645,4 +659,320 @@ cliTest(
     );
   },
   60000,
+);
+
+cliTest.for([{ profile: "full" }, { profile: "compact" }] as const)(
+  "ties byte qualifications to selected observations through paged and offline MCP ($profile)",
+  { timeout: 60000 },
+  async ({ profile }) => {
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "left" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "right" },
+    ]);
+    const [leftInfo] = nativeMatchingDetails("1", "0x10", "c3");
+    const [rightInfo] = nativeMatchingDetails("2", "0x20", "c3");
+    const read = (side: "1" | "2", address: string, limitation: string) =>
+      createEvidence(nativeMatchingTarget(side), nativeMatchingProvider, {
+        operation: "read_bytes",
+        parameters: { address, length: 1 },
+        result: {
+          address,
+          requested_bytes: 1,
+          returned_bytes: 1,
+          bytes_hex: "c3",
+          complete: true,
+        },
+        limitations: [limitation],
+      });
+    const first = read("1", "0x10", "First selected source limitation");
+    const duplicate = read("1", "0x10", "Alternative source limitation");
+    const unused = read("1", "0x99", "Unused source limitation");
+    const other = read("2", "0x20", "Right source limitation");
+    const reference = (evidence_id: string) => ({
+      kind: "retained-evidence",
+      evidence_id,
+    });
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+    });
+    const execute = async (
+      firstRead: typeof first,
+      secondRead: typeof first,
+    ) => {
+      const reply = await call("match_native_functions", {
+        left,
+        right,
+        left_observations: [leftInfo, firstRead, firstRead, secondRead, unused],
+        right_observations: [rightInfo, other],
+        detail: "complete",
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      return parseEvidence(reply.structuredContent);
+    };
+    const evidence = await execute(first, duplicate);
+    const report = nativeFunctionMatchingSchema.parse(
+      evidence.normalized_result,
+    );
+    const match = report.matches.find(
+      (item) => item.basis === "identical-bytes",
+    );
+    expect(match?.left[0]?.evidence_links).toContain(first.evidence_id);
+    expect(match?.left[0]?.evidence_links).not.toContain(duplicate.evidence_id);
+    expect(match?.right[0]?.evidence_links).toContain(other.evidence_id);
+    expect(report.byte_sources).toEqual([
+      {
+        side: "left",
+        evidence_id: first.evidence_id,
+        limitations: ["First selected source limitation"],
+      },
+      {
+        side: "right",
+        evidence_id: other.evidence_id,
+        limitations: ["Right source limitation"],
+      },
+    ]);
+    const alternate = nativeFunctionMatchingSchema.parse(
+      (await execute(duplicate, first)).normalized_result,
+    );
+    expect(
+      alternate.matches.find((item) => item.basis === "identical-bytes")
+        ?.left[0]?.evidence_links,
+    ).toContain(duplicate.evidence_id);
+    expect(alternate.byte_sources?.map((item) => item.evidence_id)).toEqual([
+      duplicate.evidence_id,
+      other.evidence_id,
+    ]);
+    const sourcePage = async (caller: typeof call, offset: number) => {
+      const reply = await caller("inspect_analysis_view", {
+        source: reference(evidence.evidence_id),
+        view: {
+          kind: "function-matches",
+          collection: "byte-sources",
+          offset,
+          limit: 1,
+        },
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      return parseEvidence(reply.structuredContent).normalized_result;
+    };
+    expect(await sourcePage(call, 0)).toMatchObject({
+      items: [
+        {
+          side: "left",
+          evidence_id: first.evidence_id,
+          limitations: ["First selected source limitation"],
+        },
+      ],
+      coverage: { total: 2, next_offset: 1 },
+    });
+    expect(await sourcePage(call, 1)).toMatchObject({
+      items: [
+        {
+          side: "right",
+          evidence_id: other.evidence_id,
+          limitations: ["Right source limitation"],
+        },
+      ],
+      coverage: { total: 2, next_offset: null },
+    });
+    const root = await createTestTempDirectory("rea-match-byte-sources-");
+    const path = join(root, "bundle.json");
+    const exported = await call("export_evidence_bundle", { path });
+    expect(exported.isError, JSON.stringify(exported)).not.toBe(true);
+    const offline = await connectLocalToolsMcp({
+      REA_MCP_INPUT_SCHEMA_PROFILE: profile,
+      REA_MCP_OUTPUT_SCHEMA_PROFILE: profile,
+    });
+    const imported = await offline.call("import_evidence_bundle", { path });
+    expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+    expect(await sourcePage(offline.call, 0)).toMatchObject({
+      items: [{ evidence_id: first.evidence_id }],
+    });
+  },
+);
+
+cliTest(
+  "bounds byte-source pages and recovers an oversized source",
+  { timeout: 60000 },
+  async () => {
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "left" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "right" },
+    ]);
+    const [info] = nativeMatchingDetails("1", "0x10", "00".repeat(256));
+    if (info === undefined) throw new Error("Missing synthetic body");
+    const reads = Array.from({ length: 256 }, (_, index) => {
+      const address = `0x${(16 + index).toString(16)}`;
+      return createEvidence(nativeMatchingTarget("1"), nativeMatchingProvider, {
+        operation: "read_bytes",
+        parameters: { address, length: 1 },
+        result: {
+          address,
+          requested_bytes: 1,
+          returned_bytes: 1,
+          bytes_hex: "00",
+          complete: true,
+        },
+        limitations: [
+          `${index}:` +
+            "x".repeat(index === 0 ? 1_100_000 : index === 1 ? 6000 : 4500),
+        ],
+      });
+    });
+    const reference = (evidence_id: string) => ({
+      kind: "retained-evidence",
+      evidence_id,
+    });
+    const root = await createTestTempDirectory("rea-match-large-source-");
+    const path = join(root, "inputs.json");
+    await writeFile(
+      path,
+      JSON.stringify(createEvidenceBundle([left, right, info, ...reads])),
+    );
+    const { call } = await connectLocalToolsMcp();
+    const imported = await call("import_evidence_bundle", { path });
+    expect(imported.isError, JSON.stringify(imported)).not.toBe(true);
+    const result = await call("match_native_functions", {
+      left: reference(left.evidence_id),
+      right: reference(right.evidence_id),
+      left_observations: [info, ...reads].map((record) =>
+        reference(record.evidence_id),
+      ),
+      detail: "summary",
+    });
+    expect(result.isError, JSON.stringify(result)).not.toBe(true);
+    const parent = parseEvidence(result.structuredContent)
+      .normalized_result as { parent_evidence_id: string };
+    const oversized = await call("inspect_analysis_view", {
+      source: reference(parent.parent_evidence_id),
+      view: { kind: "function-matches", collection: "byte-sources" },
+    });
+    expect(parseMcpToolError(oversized).error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        resource: "transport",
+        reported_limits: {
+          source_evidence_id: reads[0]!.evidence_id,
+          next_offset: 1,
+        },
+      },
+    });
+    let offset = 1;
+    const ids: string[] = [reads[0]!.evidence_id];
+    let limited = false;
+    while (true) {
+      const reply = await call("inspect_analysis_view", {
+        source: reference(parent.parent_evidence_id),
+        view: {
+          kind: "function-matches",
+          collection: "byte-sources",
+          offset,
+          limit: 1000,
+        },
+      });
+      expect(reply.isError, JSON.stringify(reply)).not.toBe(true);
+      const page = parseEvidence(reply.structuredContent).normalized_result as {
+        byte_limited: boolean;
+        items: { evidence_id: string; limitations: string[] }[];
+        coverage: { total: number; next_offset: number | null };
+      };
+      limited ||= page.byte_limited;
+      if (offset === 1)
+        expect(page.items[0]?.limitations).toEqual(reads[1]!.limitations);
+      ids.push(...page.items.map((item) => item.evidence_id));
+      expect(page.coverage.total).toBe(256);
+      if (page.coverage.next_offset === null) break;
+      expect(page.coverage.next_offset).toBe(ids.length);
+      offset = page.coverage.next_offset;
+    }
+    expect(limited).toBe(true);
+    expect(ids).toEqual(reads.map((record) => record.evidence_id));
+    const original = await call("get_evidence_bundle", {
+      detail: "records",
+      filters: { evidence_id: reads[0]!.evidence_id },
+    });
+    expect(original.isError, JSON.stringify(original)).not.toBe(true);
+    expect(JSON.stringify(original.structuredContent)).toContain(
+      reads[0]!.limitations[0],
+    );
+  },
+);
+
+cliTest(
+  "oversized inline matching Evidence points back to the caller's original record",
+  { timeout: 60000 },
+  async () => {
+    const left = nativeMatchingInventory("1", [
+      { address: "0x10", value: "left" },
+    ]);
+    const right = nativeMatchingInventory("2", [
+      { address: "0x20", value: "right" },
+    ]);
+    const [info] = nativeMatchingDetails("1", "0x10", "c3");
+    if (info === undefined) throw new Error("Missing synthetic body");
+    const read = createEvidence(
+      nativeMatchingTarget("1"),
+      nativeMatchingProvider,
+      {
+        operation: "read_bytes",
+        parameters: { address: "0x10", length: 1 },
+        result: {
+          address: "0x10",
+          requested_bytes: 1,
+          returned_bytes: 1,
+          bytes_hex: "c3",
+          complete: true,
+        },
+        limitations: ["x".repeat(1_100_000)],
+      },
+    );
+    const { call } = await connectLocalToolsMcp();
+    const match = await call("match_native_functions", {
+      left,
+      right,
+      left_observations: [info, read],
+      detail: "complete",
+    });
+    expect(match.isError, JSON.stringify(match)).not.toBe(true);
+    const matchingEvidence = parseEvidence(match.structuredContent);
+    const offline = await connectLocalToolsMcp();
+    const page = await offline.call("inspect_analysis_view", {
+      source: { kind: "inline", evidence: matchingEvidence },
+      view: { kind: "function-matches", collection: "byte-sources" },
+    });
+    const error = parseMcpToolError(page).error;
+    expect(error).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reported_limits: {
+          source_evidence_id: read.evidence_id,
+          next_offset: 1,
+        },
+      },
+    });
+    const report = nativeFunctionMatchingSchema.parse(
+      matchingEvidence.normalized_result,
+    );
+    expect(report.byte_sources).toEqual([
+      {
+        side: "left",
+        evidence_id: read.evidence_id,
+        limitations: read.limitations,
+      },
+    ]);
+    const lookup = await offline.call("get_evidence_bundle", {
+      detail: "records",
+      filters: { evidence_id: read.evidence_id },
+    });
+    expect(lookup.isError, JSON.stringify(lookup)).not.toBe(true);
+    expect(
+      (lookup.structuredContent as { result: { records: unknown[] } }).result
+        .records,
+    ).toEqual([]);
+  },
 );

@@ -32,11 +32,13 @@ import { isX86OnlyTarget } from "./IdaCallGraph.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import {
   IDA_LIMITATIONS,
-  IDA_OPERATIONS,
-  IDA_PROVIDER_IDENTITY,
   idaOperationUnavailableReason,
   type IdaOperation,
 } from "./IdaProviderCapabilities.js";
+import {
+  IDA_OPERATIONS,
+  IDA_PROVIDER_IDENTITY,
+} from "./IdaProviderMetadata.js";
 import {
   absentDatabaseCloseSchema,
   closeDatabaseSchema,
@@ -525,7 +527,7 @@ export class IdaSessionClient implements AnalysisClient {
       failure = analysisClientFailureForOperation(cause, "ida", operation, {
         ...endpoint,
         recovery:
-          "Check the configured upstream MCP registration and selected target; see docs/ida-provider.md.",
+          "Check the configured upstream MCP registration and selected target; see docs/providers/ida-provider.md.",
       }).bindCleanupResourceOwner(cause);
     else if (cause instanceof AnalysisProtocolError && "endpoint" in endpoint)
       failure = new AnalysisProtocolError(cause.message, {
@@ -675,7 +677,7 @@ export class IdaSessionClient implements AnalysisClient {
     }[profile.protocol];
     const missing = expected.filter((name) => !tools.has(name));
     if (missing.length > 0) {
-      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/ida-provider.md.`;
+      const summary = `IDA MCP ${profile.diagnosticLabel} compatibility profile is missing tools: ${missing.join(", ")}. Native attached mode requires the native IDA MCP tool catalog; legacy attached mode requires the legacy 1.4 profile; headless mode requires the database supervisor profile. See docs/providers/ida-provider.md.`;
       // The caller cannot act on a profile mismatch it never sees, so the
       // missing names travel as adapter diagnostics rather than a bare message.
       throw new ProviderAdapterError("ida", "initialize", {

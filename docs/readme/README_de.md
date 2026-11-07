@@ -20,7 +20,9 @@
 
 **[Website](https://rea.tools/de/) · [Anleitungen](https://rea.tools/de/guides/) · [Fallstudien](https://rea.tools/de/showcase/)**
 
-[Schnellstart](#schnellstart) · [So funktioniert REA](#so-funktioniert-rea) · [Was du analysieren kannst](#was-du-analysieren-kannst) · [Fallstudien](#fallstudien) · [RL-Umgebungen erstellen](#build-rl-environments) · [Häufige Fragen](#häufige-fragen) · [GNU-objdump- und Rizin-Tools](../reverse-engineering-tools.md) · [Dokumentation](#dokumentation)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Der REA-Community auf Discord beitreten" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Schnellstart](#schnellstart) · [So funktioniert REA](#so-funktioniert-rea) · [Was du analysieren kannst](#was-du-analysieren-kannst) · [Fallstudien](#fallstudien) · [RL-Umgebungen erstellen](#build-rl-environments) · [Häufige Fragen](#häufige-fragen) · [Dokumentation](#dokumentation)
 
 <code>npx rea-agents setup</code>
 
@@ -158,6 +160,7 @@ REA benötigt Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) oder 26+ (>=26.12.1) so
 | EVM-Bytecode                        | Dispatch-Selektoren, Byte-Offsets, abgeleitete Argumente und Veränderbarkeit des Zustands                       | Lokale Eingabe mit Rohbytes oder Hexdarstellung unter Linux x64; [Offline-EVM-Leitfaden](../guides/evm/evm-bytecode.md)                                                         |
 | Rust binaries                       | Embedded cargo-auditable dependency list                                                                        | [Rust binaries](../rust-binaries.md)                                                                                                                                            |
 | ELF notes                           | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                 | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                                    |
+| Binary hardening                    | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                             | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                                   |
 | Linux kernel modules                | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                     | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                          |
 | Erlang BEAM                         | IFF chunks, atoms, exports, and tables                                                                          | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                               |
 | Apple IPS crashes                   | .ips metadata, threads, images, registers and crash classes                                                     | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                                   |
@@ -189,6 +192,8 @@ REA benötigt Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) oder 26+ (>=26.12.1) so
 | APK-Signaturen                      | v1/v2/v3/v3.1-Signer, Zertifikatfingerabdrücke, Schlüsselrotation und Digest-Selbstkonsistenz                   | Integrierte statische Prüfung; `inspect_apk_signature`                                                                                                                          |
 
 Statische JavaScript- und .NET-Untersuchungen lesen die bereitgestellten Dateien, ohne die Anwendung auszuführen. Laufzeitaufzeichnungen führen das gewählte Ziel mit deinen Benutzerrechten aus oder interagieren damit; die jeweiligen Anleitungen beschreiben die Auswirkungen.
+
+Für die Offline-Untersuchung nativer Binärdateien unterstützt REA auch GNU objdump und Rizin, die du selbst bereitstellst. Der [Leitfaden zu Reverse-Engineering-Tools](../reverse-engineering-tools.md) beschreibt die Einrichtung der Provider, CLI-Befehle und Einschränkungen der Evidence. REA installiert oder aktualisiert keinen der beiden Provider.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

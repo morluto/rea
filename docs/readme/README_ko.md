@@ -20,6 +20,8 @@
 
 **[웹사이트](https://rea.tools/ko/) · [가이드](https://rea.tools/ko/guides/) · [사례](https://rea.tools/ko/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord에서 REA 커뮤니티에 참여하세요" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [빠른 시작](#빠른-시작) · [REA의 작동 방식](#rea의-작동-방식) · [분석할 수 있는 대상](#분석할-수-있는-대상) · [사례](#사례) · [RL 환경 만들기](#build-rl-environments) · [자주 묻는 질문](#자주-묻는-질문) · [문서](#문서)
 
 <code>npx rea-agents setup</code>
@@ -158,6 +160,7 @@ REA에는 Node.js 22.x(>=22.23.4), 24.x(>=24.22.1) 또는 26+ (>=26.12.1)와 npm
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields  | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                          |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash    | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                    |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields               | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                     |
+| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O           | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                    |
 | Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                   | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                    |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer   | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                           |
 | Erlang BEAM            | IFF chunks, atoms, exports, and tables                                        | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                |

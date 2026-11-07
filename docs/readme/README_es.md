@@ -20,7 +20,9 @@
 
 **[Sitio web](https://rea.tools/es/) · [Guías](https://rea.tools/es/guides/) · [Casos prácticos](https://rea.tools/es/showcase/)**
 
-[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Herramientas GNU objdump y Rizin](../reverse-engineering-tools.md) · [Documentación](#documentación)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Únete a la comunidad de REA en Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Inicio rápido](#inicio-rápido) · [Cómo funciona REA](#cómo-funciona-rea) · [Qué puedes analizar](#qué-puedes-analizar) · [Casos prácticos](#casos-prácticos) · [Crear entornos de RL](#build-rl-environments) · [Preguntas frecuentes](#preguntas-frecuentes) · [Documentación](#documentación)
 
 <code>npx rea-agents setup</code>
 
@@ -158,6 +160,7 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Bytecode EVM                | Selectores de despacho, desplazamientos en bytes, argumentos inferidos y mutabilidad                                           | Entrada local con bytes sin procesar o representación hexadecimal, en Linux x64; [guía de EVM sin ejecutar](../guides/evm/evm-bytecode.md)                            |
 | Rust binaries               | Embedded cargo-auditable dependency list                                                                                       | [Rust binaries](../rust-binaries.md)                                                                                                                                  |
 | ELF notes                   | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                                | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                          |
+| Binary hardening            | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                            | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                         |
 | Linux kernel modules        | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                    | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                                |
 | Erlang BEAM                 | IFF chunks, atoms, exports, and tables                                                                                         | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                                     |
 | Apple IPS crashes           | .ips metadata, threads, images, registers and crash classes                                                                    | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                         |
@@ -189,6 +192,8 @@ REA requiere Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) o 26+ (>=26.12.1), adem�
 | Firmas APK                  | Firmantes v1/v2/v3/v3.1, huellas de certificados, rotación de claves y coherencia interna de resúmenes                         | Inspección estática integrada; `inspect_apk_signature`                                                                                                                |
 
 La inspección estática de JavaScript y .NET lee los archivos suministrados sin ejecutar la aplicación. La captura en ejecución inicia el objetivo seleccionado o interactúa con él con los permisos de tu usuario; cada guía describe sus efectos.
+
+Para inspeccionar binarios nativos sin conexión, REA también admite GNU objdump y Rizin, que debes proporcionar por tu cuenta. La [guía de herramientas de ingeniería inversa](../reverse-engineering-tools.md) explica la configuración de los proveedores, los comandos de la CLI y las limitaciones de Evidence. REA no instala ni actualiza ninguno de estos proveedores.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

@@ -33,7 +33,7 @@ compiled provider/service modules and catalog metadata were byte-identical to
 baseline main `180ba03bf` at the initial source freeze. This does not prove
 arbitrary function introspection equivalence: custom
 `.listener` properties and raw wrapper re-registration retain the limitations
-documented in [Electron observation](../electron-observation.md).
+documented in [Electron observation](../guides/javascript/electron-observation.md).
 
 ## Unchanged real application and observed scenario
 

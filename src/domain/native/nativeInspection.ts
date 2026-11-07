@@ -2,8 +2,10 @@ import { z } from "zod";
 import { bundleResourceRootSchema } from "../apple/bundleResourceRoot.js";
 import { jsonRecordSchema } from "../jsonRecord.js";
 import { jsonValueSchema } from "../jsonValue.js";
+import { machoSliceEncryptionSchema } from "../apple/machoEncryption.js";
 
 const hexAddress = z.string().regex(/^0x[a-fA-F0-9]+$/u);
+const bytesHex = z.string().regex(/^(?:[0-9a-f]{2})*$/u);
 const coverage = <Schema extends z.ZodType>(item: Schema) =>
   z.object({
     items: z.array(item),
@@ -46,28 +48,70 @@ const permissionSchema = z.object({
   raw: z.string().nullable(),
 });
 const sectionSchema = z.object({
-  segment: z.string(),
-  name: z.string(),
+  segment: z.string().nullable(),
+  segment_bytes_hex: bytesHex
+    .optional()
+    .describe(
+      "Original segment-name bytes before the first NUL; omitted in older Evidence.",
+    ),
+  name: z.string().nullable(),
+  name_bytes_hex: bytesHex
+    .optional()
+    .describe(
+      "Original section-name bytes before the first NUL; omitted in older Evidence.",
+    ),
   address: hexAddress.nullable(),
   size: z.int().min(0).nullable(),
+  size_hex: hexAddress
+    .optional()
+    .describe(
+      "Exact section size when it cannot be represented as a safe JSON integer.",
+    ),
   file_offset: z
     .int()
     .min(0)
     .nullable()
     .describe("Offset from the start of the selected Mach-O slice."),
   alignment: z.int().min(0).nullable(),
+  alignment_exponent: z
+    .int()
+    .min(0)
+    .optional()
+    .describe(
+      "Exact binary alignment exponent when the corresponding byte alignment is not a safe JSON integer.",
+    ),
   flags: z.array(z.string()),
 });
 const segmentSchema = z.object({
-  name: z.string(),
+  name: z.string().nullable(),
+  name_bytes_hex: bytesHex
+    .optional()
+    .describe(
+      "Original segment-name bytes before the first NUL; omitted in older Evidence.",
+    ),
   vm_address: hexAddress.nullable(),
   vm_size: z.int().min(0).nullable(),
+  vm_size_hex: hexAddress
+    .optional()
+    .describe(
+      "Exact VM size when it cannot be represented as a safe JSON integer.",
+    ),
   file_offset: z
     .int()
     .min(0)
     .nullable()
     .describe("Offset from the start of the selected Mach-O slice."),
+  file_offset_hex: hexAddress
+    .optional()
+    .describe(
+      "Exact slice-relative file offset when it cannot be represented as a safe JSON integer.",
+    ),
   file_size: z.int().min(0).nullable(),
+  file_size_hex: hexAddress
+    .optional()
+    .describe(
+      "Exact file size when it cannot be represented as a safe JSON integer.",
+    ),
   maximum_permissions: permissionSchema,
   initial_permissions: permissionSchema,
   sections: coverage(sectionSchema),
@@ -104,7 +148,12 @@ const importSymbolSchema = z.object({
   source: z.string().nullable(),
 });
 const dependencySchema = z.object({
-  path: z.string(),
+  path: z.string().nullable(),
+  path_bytes_hex: bytesHex
+    .optional()
+    .describe(
+      "Original load-command path bytes before the first NUL; omitted in older Evidence.",
+    ),
   kind: z.string(),
   current_version: z.string().nullable(),
   compatibility_version: z.string().nullable(),
@@ -161,9 +210,31 @@ export const inspectMachoSchema = z.object({
   imports: coverage(importSymbolSchema),
   exports: coverage(symbolSchema),
   segments: coverage(segmentSchema),
+  encryption: coverage(machoSliceEncryptionSchema).describe(
+    "LC_ENCRYPTION_INFO(_64) status of every slice, read from load commands only.",
+  ),
   provenance: z.array(nativeCommandInvocationSchema),
   limitations: z.array(z.string()),
 });
+
+/**
+ * Retained inspect_macho Evidence, including results recorded before
+ * `encryption` was reported. Not recorded is unknown, never evidence that no
+ * slice is encrypted.
+ */
+export const retainedInspectMachoSchema = inspectMachoSchema
+  .extend({ encryption: inspectMachoSchema.shape.encryption.optional() })
+  .transform(({ encryption, ...report }) => ({
+    ...report,
+    encryption: encryption ?? {
+      items: [],
+      total: null,
+      exhaustive: false,
+      limitations: [
+        "This inspect_macho Evidence predates encryption reporting; slice encryption status is unknown.",
+      ],
+    },
+  }));
 
 export const inspectSignatureSchema = z.object({
   signed: z.boolean(),

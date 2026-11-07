@@ -824,7 +824,7 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
     set(env, result, "handle", wrap(env, std::move(file)));
     return result;
   }
-  if (operation == L"runtime_write") {
+  if (operation == L"runtime_write" || operation == L"runtime_write_transient") {
     bool isBuffer; check(napi_is_buffer(env, args[2], &isBuffer));
     require(isBuffer, "Private write requires a byte buffer", root.path, ERROR_INVALID_PARAMETER);
     void* bytes; size_t length; check(napi_get_buffer_info(env, args[2], &bytes, &length));
@@ -832,7 +832,20 @@ napi_value filesystemCall(napi_env env, const std::wstring& operation,
     auto file = createPrivateFile(root, wide(env, args[1]));
     writeBytes(file.get(), bytes, static_cast<DWORD>(length), root.path);
     require(FlushFileBuffers(file.get()), "Flush private runtime file failed", root.path);
-    root.immutableFiles.push_back(std::move(file));
+    if (operation == L"runtime_write") {
+      // Retain the write lease with FILE_SHARE_READ only so later opens cannot
+      // acquire write or delete access until runtime_close releases it.
+      root.immutableFiles.push_back(std::move(file));
+    } else {
+      // Close without retaining. Per-job path deletion (and child readFile) can
+      // proceed while the private DACL still protects the staged bytes.
+      try {
+        requireReleased(file, "Close transient runtime file failed", root.path);
+      } catch (...) {
+        parkUnresolved(root, file);
+        throw;
+      }
+    }
     return null(env);
   }
   if (operation == L"runtime_snapshot") {

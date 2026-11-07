@@ -329,6 +329,11 @@ export const documentationSections = [
     text: "Development and verification",
     items: [
       {
+        text: "Settings and recovery",
+        source: "design/limits-and-recovery.md",
+        route: "/design/limits-and-recovery",
+      },
+      {
         text: "MCP tool design",
         source: "development/tool-design.md",
         route: "/tool-design",
@@ -383,6 +388,101 @@ export const documentationSections = [
   {
     text: "Additional guides",
     items: [
+      {
+        text: "Offline API contract inventory",
+        source: "api-contracts.md",
+        route: "/api-contracts",
+      },
+      {
+        text: "Bun standalone executables",
+        source: "bun-standalone.md",
+        route: "/bun-standalone",
+      },
+      {
+        text: "Capability composition and ownership",
+        source: "capability-composition.md",
+        route: "/capability-composition",
+      },
+      {
+        text: ".NET single-file bundles",
+        source: "dotnet-bundles.md",
+        route: "/dotnet-bundles",
+      },
+      {
+        text: "ESP flash images",
+        source: "esp-flash-image.md",
+        route: "/esp-flash-image",
+      },
+      {
+        text: "U-Boot FIT images",
+        source: "fit-images.md",
+        route: "/fit-images",
+      },
+      {
+        text: "Measure MCP catalog costs in Codex",
+        source: "mcp-catalog-evaluation.md",
+        route: "/mcp-catalog-evaluation",
+      },
+      {
+        text: "Offline Playwright traces",
+        source: "playwright-traces.md",
+        route: "/playwright-traces",
+      },
+      {
+        text: "Testing lanes and provider verification",
+        source: "testing-lanes.md",
+        route: "/testing-lanes",
+      },
+      {
+        text: "UF2 and DfuSe images",
+        source: "uf2-dfuse.md",
+        route: "/uf2-dfuse",
+      },
+      {
+        text: "WeChat mini-program wxapkg archives",
+        source: "wxapkg.md",
+        route: "/wxapkg",
+      },
+      {
+        text: "Binary hardening",
+        source: "binary-hardening.md",
+        route: "/binary-hardening",
+      },
+      {
+        text: "Desktop application capture",
+        source: "desktop-application-capture.md",
+        route: "/desktop-application-capture",
+      },
+      {
+        text: "Desktop application export",
+        source: "desktop-application-export.md",
+        route: "/desktop-application-export",
+      },
+      {
+        text: "Desktop application state",
+        source: "desktop-application-state.md",
+        route: "/desktop-application-state",
+      },
+      {
+        text: "Desktop application tasks",
+        source: "desktop-application-tasks.md",
+        route: "/desktop-application-tasks",
+      },
+      {
+        text: "Desktop build computer",
+        source: "desktop-build-computer.md",
+        route: "/desktop-build-computer",
+      },
+      {
+        text: "Desktop build witness",
+        source: "desktop-build-witness.md",
+        route: "/desktop-build-witness",
+      },
+      {
+        text: "iNES containers",
+        source: "ines-containers.md",
+        route: "/ines-containers",
+      },
       {
         text: "Build RL environments with REA",
         source: "agent-environments-quickstart.md",

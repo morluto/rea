@@ -1,4 +1,5 @@
-import { writeFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -79,5 +80,82 @@ cliTest.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
         ]),
       });
     }
+  },
+);
+
+cliTest.skipIf(process.platform !== "darwin" || process.arch !== "arm64")(
+  "retains a linker-generated multiline section name without changing the input",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-macho-multiline-section-");
+    const code = join(root, "main.c");
+    const payload = join(root, "data");
+    const path = join(root, "target");
+    await writeFile(code, "int main(void) { return 0; }\n");
+    await writeFile(payload, "data");
+    execFileSync("/usr/bin/clang", [
+      "-arch",
+      "arm64",
+      "-o",
+      path,
+      code,
+      `-Wl,-sectcreate,__DATA,x\naddr 0x1,${payload}`,
+    ]);
+    const before = await readFile(path);
+    const result = await cli.run({
+      arguments: ["inspect-macho", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr + result.stdout).toBe(0);
+    expect(result.json).toMatchObject({
+      normalized_result: {
+        segments: {
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              sections: expect.objectContaining({
+                items: expect.arrayContaining([
+                  expect.objectContaining({
+                    name: "x\naddr 0x1",
+                    segment: "__DATA",
+                  }),
+                ]),
+              }),
+            }),
+          ]),
+        },
+      },
+    });
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
+
+    const patched = Buffer.from(before);
+    const sectionName = patched.indexOf(Buffer.from("x\naddr 0x1"));
+    expect(sectionName).toBeGreaterThan(0);
+    patched[sectionName] = 0xff;
+    await writeFile(path, patched);
+    const undecodable = await cli.run({
+      arguments: ["inspect-macho", path, "--json"],
+    });
+    expect(undecodable.exitCode, undecodable.stderr + undecodable.stdout).toBe(
+      0,
+    );
+    expect(undecodable.json).toMatchObject({
+      normalized_result: {
+        segments: {
+          items: expect.arrayContaining([
+            expect.objectContaining({
+              sections: expect.objectContaining({
+                items: expect.arrayContaining([
+                  expect.objectContaining({
+                    name: null,
+                    name_bytes_hex: expect.stringMatching(
+                      /^ff0a6164647220307831/u,
+                    ),
+                  }),
+                ]),
+              }),
+            }),
+          ]),
+        },
+      },
+    });
+    expect(Buffer.compare(await readFile(path), patched)).toBe(0);
   },
 );

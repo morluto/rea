@@ -12,7 +12,7 @@ import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js"
 import { renderCliDocument } from "../../../src/cliOutput.js";
 import { safetensorsFixture } from "../../fixtures/model/model.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 afterAll(() => disposeMdItInstance());
 
@@ -95,11 +95,27 @@ cliTest(
       "  leading ": "  leading ",
       leading: "leading",
       "trailing  ": "trailing  ",
+      "\tleading tab": "trailing tab\t",
+      " mixed\t ": " mixed\t ",
+      "\u00a0name": "\u00a0value\u00a0",
+      name: "value",
+      "\u202fname": "\u202fvalue\u202f",
+      "\u2003name": "\u2003value\u2003",
+      "\u2028name": "\u2028value\u2028",
+      "\u2029name": "\u2029value\u2029",
+      "\ufeffname": "\ufeffvalue\ufeff",
+      "\u00a0": "\u00a0",
+      "\u202f\u2003": "\u202f\u2003",
+      " \t\u00a0mixed\u2003\t ": " \t\u00a0mixed\u2003\t ",
+      "internal\u00a0name": "internal\u00a0value",
+      "&#160;name": "&#160;value",
       " ": " ",
       "   ": "   ",
       "": "",
       "  中文🙂  ": "  中文🙂  ",
       " &#32; &copy; <T> a|b ": " &#32; &copy; <T> a|b ",
+      "{.hidden}": "literal {.hidden}",
+      "{name=value}": "{name=value}",
     };
     const row = {
       [literal]: literal,
@@ -169,6 +185,141 @@ cliTest(
 );
 
 cliTest(
+  "renders long internal Unicode whitespace within the CLI deadline",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-markdown-long-whitespace-");
+    const path = join(root, "bundle.json");
+    const literal = `left${"\u00a0\u202f\u2003".repeat(80_000)}right`;
+    const record = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "ordinary-json",
+        parameters: {},
+        result: { rows: [{ [literal]: literal }] },
+      },
+    );
+    const saved = JSON.stringify(createEvidenceBundle([record]));
+    await writeFile(path, saved);
+    // The parent enforces this deadline even if the CLI is stuck in a regexp.
+    const markdown = await cli.run({
+      arguments: [
+        "inspect-evidence-bundle",
+        JSON.stringify({ path, detail: "complete" }),
+        "--filter-output",
+        "records.0.normalized_result",
+        "--format",
+        "md",
+        "--full-output",
+      ],
+      timeoutMs: 20_000,
+    });
+    expect(markdown.exitCode, markdown.stderr).toBe(0);
+    const renderer = await createMarkdownRenderer(root, { linkify: false });
+    // Full output also includes metadata tables; check the Evidence column.
+    const column = tableColumnByHeader(
+      renderer.render(markdown.stdout),
+      literal,
+    );
+    expect(column).toHaveLength(1);
+    expect(column[0] === literal).toBe(true);
+    expect(await readFile(path, "utf8")).toBe(saved);
+  },
+);
+
+cliTest(
+  "preserves capability provider identities in rendered Markdown",
+  async ({ cli }) => {
+    const json = await cli.run({ arguments: ["capabilities", "--json"] });
+    const markdown = await runFileCli(cli, {
+      arguments: ["capabilities", "--format", "md"],
+    });
+    expect(json.exitCode, json.stderr).toBe(0);
+    expect(markdown.exitCode, markdown.stderr).toBe(0);
+    const data = JSON.parse(json.stdout) as {
+      capabilities: { provider: unknown }[];
+    };
+    const renderer = await createMarkdownRenderer(process.cwd(), {
+      linkify: false,
+    });
+    expect(
+      tableColumnByHeader(renderer.render(markdown.stdout), "provider"),
+    ).toEqual(
+      data.capabilities.map(({ provider }) => JSON.stringify(provider)),
+    );
+  },
+);
+
+cliTest(
+  "keeps scalar markers, edge spaces, and emoji-like names literal in rendered reports",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-markdown-literal-markers-");
+    const path = join(root, "bundle.json");
+    const result = {
+      container: "::: details",
+      trailing: "archive ",
+      trailingTab: "archive\t",
+      trailingMixed: "archive \t ",
+      emoji: ":)",
+      shortcuts: ":smile: :D :-( ;) ;-() x-) X-) 8-) B-) <3 &amp;",
+      rows: [{ value: ":)", nested: { path: ";) :smile: 8-)" } }],
+      after: "still visible",
+    };
+    const record = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      { operation: "ordinary-json", parameters: {}, result },
+    );
+    await writeFile(path, JSON.stringify(createEvidenceBundle([record])));
+    const base = [
+      "inspect-evidence-bundle",
+      JSON.stringify({ path, detail: "complete" }),
+      "--filter-output",
+      "records.0.normalized_result",
+    ];
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
+    const json = await cli.run({ arguments: [...base, "--json"] });
+    expect(markdown.exitCode, markdown.stderr).toBe(0);
+    expect(json.exitCode, json.stderr).toBe(0);
+    expect(JSON.parse(json.stdout)).toEqual({
+      records: { "0": { normalized_result: result } },
+    });
+    const renderer = await createMarkdownRenderer(root, { linkify: false });
+    const html = renderer.render(markdown.stdout);
+    const text = (node: DefaultTreeAdapterTypes.Node): string =>
+      node.nodeName === "#text" && "value" in node
+        ? node.value
+        : "childNodes" in node
+          ? node.childNodes.map(text).join("")
+          : "";
+    const children = parseFragment(html).childNodes;
+    for (const [key, value] of Object.entries(result).filter(
+      ([, value]) => typeof value === "string",
+    )) {
+      const index = children.findIndex(
+        (node) =>
+          "tagName" in node &&
+          node.tagName === "h2" &&
+          text(node).replaceAll("\u200b", "").trim().endsWith(`.${key}`),
+      );
+      expect(index, key).toBeGreaterThanOrEqual(0);
+      const body = children.slice(index + 1).find((node) => "tagName" in node);
+      expect(body && "tagName" in body ? body.tagName : undefined, key).toBe(
+        "p",
+      );
+      expect(body ? text(body) : undefined, key).toBe(value);
+    }
+    expect(html).not.toMatch(/<(?:details|ol|li)(?:\s|>)/u);
+    expect(renderedCells(html)).toContain(
+      JSON.stringify(result.rows[0]?.nested),
+    );
+    expect(renderedCells(html)).toContain(":)");
+  },
+);
+
+cliTest(
   "preserves safetensors identifier edge spaces in rendered CLI tables",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-model-edge-spaces-");
@@ -192,7 +343,7 @@ cliTest(
     );
     const base = ["inspect-model-artifact", path, "--detail", "complete"];
     const json = await cli.run({ arguments: [...base, "--json"] });
-    const markdown = await cli.run({
+    const markdown = await runFileCli(cli, {
       arguments: [...base, "--format", "md"],
     });
     expect(json.exitCode, json.stderr).toBe(0);
@@ -229,6 +380,8 @@ cliTest(
       list: [literal],
       bullet: "- literal",
       numbered: "1. literal",
+      numberedBare: "1.",
+      parenBare: "1)",
       rule: "---",
       indented: "    literal\n- next\n# heading",
       nested: { value: 1 },
@@ -245,7 +398,9 @@ cliTest(
       "--filter-output",
       "records.0.normalized_result",
     ];
-    const markdown = await cli.run({ arguments: [...base, "--format", "md"] });
+    const markdown = await runFileCli(cli, {
+      arguments: [...base, "--format", "md"],
+    });
     const json = await cli.run({ arguments: [...base, "--json"] });
     expect(markdown.exitCode, markdown.stderr).toBe(0);
     expect(json.exitCode, json.stderr).toBe(0);
@@ -258,11 +413,17 @@ cliTest(
       renderCliDocument(result, "md", false),
     ]) {
       const html = renderer.render(document);
-      expect(html).toContain(
-        "**literal** [source](wrong) &lt;T&gt; &amp;copy;",
-      );
+      const text = (node: DefaultTreeAdapterTypes.Node): string =>
+        node.nodeName === "#text" && "value" in node
+          ? node.value
+          : "childNodes" in node
+            ? node.childNodes.map(text).join("")
+            : "";
+      expect(text(parseFragment(html))).toContain(literal);
       expect(html).toContain("**key**<br># injected");
       expect(html).toContain("literal<br>- next<br># heading");
+      expect(html).toContain("<p>1.</p>");
+      expect(html).toContain("<p>1)</p>");
       expect(html).not.toMatch(/<(?:strong|em|ul|ol|li|T|pre|hr)(?:\s|>)/u);
       expect(html).not.toContain('href="wrong"');
       expect(html).not.toContain("<h1");

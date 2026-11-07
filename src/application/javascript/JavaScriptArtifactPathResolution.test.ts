@@ -4494,3 +4494,28 @@ describe("package metadata at archive module boundaries", () => {
     },
   );
 });
+
+it("distinguishes an unobserved bare package from builtins and blocked aliases", () => {
+  const files = aliasFiles({
+    "package.json": JSON.stringify({
+      imports: { "#blocked": null, "#builtin": "node:path" },
+    }),
+    "main.js": "",
+  });
+  const resolveName = (declaredPath: string) =>
+    resolve({
+      declaredPath,
+      sourcePath: "main.js",
+      context: "module-specifier",
+      moduleKind: "require",
+      files,
+    });
+  expect(resolveName("outside-package")).toMatchObject({
+    resolution_status: "external",
+    unexamined_module_imports: true,
+  });
+  for (const name of ["node:path", "electron", "#blocked", "#builtin"])
+    expect(resolveName(name), name).not.toHaveProperty(
+      "unexamined_module_imports",
+    );
+});

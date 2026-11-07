@@ -1,8 +1,15 @@
 import { z } from "zod";
-import { readFile, unlink, writeFile, mkdir, truncate } from "node:fs/promises";
+import {
+  readFile,
+  unlink,
+  writeFile,
+  mkdir,
+  truncate,
+  symlink,
+} from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   protobufCaptureDescriptor,
@@ -354,11 +361,18 @@ captureTest(
     await mkdir(directory);
     await writeFile(oversized, "");
     await truncate(oversized, 32 * 1024 * 1024 + 1);
-    for (const [path, reason] of [
+    const failures: Array<readonly [string, string]> = [
       [join(root, "missing.pb"), "invalid_value"],
       [directory, "invalid_format"],
       [oversized, "out_of_range"],
-    ] as const) {
+    ];
+    // A single component exceeds POSIX NAME_MAX. Windows path limits vary by host.
+    if (process.platform !== "win32") {
+      failures.push([join(root, "x".repeat(300)), "invalid_value"]);
+      await symlink("loop", join(root, "loop"));
+      failures.push([join(root, "loop", "descriptor.pb"), "invalid_value"]);
+    }
+    for (const [path, reason] of failures) {
       const response = await call("inspect_web_network_capture", {
         ...args,
         sensitive_values: ["unrelated fixture exclusion"],
@@ -376,6 +390,18 @@ captureTest(
           { path: ["protobuf", "schema", "descriptor_set_path"], reason },
         ],
       });
+      if (path.endsWith("x".repeat(300)))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ENAMETOOLONG"),
+          }),
+        ]);
+      if (path === join(root, "loop", "descriptor.pb"))
+        expect(error.details?.issues).toEqual([
+          expect.objectContaining({
+            message: expect.stringContaining("ELOOP"),
+          }),
+        ]);
       expect(
         retainedCaptureDetailsSchema.parse(error.details).partial_observation
           .kind,
@@ -610,7 +636,7 @@ captureTest.for(
       `application/${framing}`,
     );
     await writeFile(path, original);
-    const response = await cli.run({
+    const options = {
       arguments: [
         "inspect-web-network-capture",
         path,
@@ -621,7 +647,10 @@ captureTest.for(
         "auto",
         "--json",
       ],
-    });
+    };
+    const response = await (name === "valid"
+      ? cli.run(options)
+      : runFileCli(cli, options));
     expect(response.exitCode, response.stdout + response.stderr).toBe(0);
     const evidence = parseEvidence(response.json);
     const report = webNetworkCaptureSchema.parse(evidence.normalized_result);

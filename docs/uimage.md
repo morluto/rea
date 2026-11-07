@@ -9,7 +9,10 @@ The same domain header/table facts and artifact reader serve CLI and MCP.
 The root is an archive with unknown executable architecture. The header's CPU,
 OS, type, compression, load address and entry address are declarations, not proof of
 compatible or executable payloads. Raw numeric identifiers remain available
-alongside names; unrecognized identifiers have the name `unknown`.
+alongside names. Type names cover every image type in the pinned
+`include/image.h`, using U-Boot's `mkimage -T` names; `IH_TYPE_LOADABLE` (22)
+has none and is named `loadable`. Unrecognized identifiers have the name
+`unknown`.
 
 The header's CRC32 and the declared payload's CRC32 must verify before a
 successful inventory. `payload.bin` contains the complete stored payload.

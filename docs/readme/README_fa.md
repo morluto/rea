@@ -20,7 +20,9 @@
 
 **[وب‌سایت](https://rea.tools/fa/) · [راهنماها](https://rea.tools/fa/guides/) · [نمونه‌های عملی](https://rea.tools/fa/showcase/)**
 
-[شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-می‌کند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-می‌توان-تحلیل-کرد) · [نمونه‌های عملی](#نمونه‌های-عملی) · [ساخت محیط‌های RL](#build-rl-environments) · [پرسش‌های متداول](#پرسش‌های-متداول) · [ابزارهای GNU objdump و Rizin](../reverse-engineering-tools.md) · [مستندات](#مستندات)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="به انجمن REA در دیسکورد بپیوندید" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[شروع سریع](#شروع-سریع) · [REA چگونه کار می‌کند؟](#rea-چگونه-کار-می‌کند) · [چه چیزهایی را میتوان تحلیل کرد؟](#چه-چیزهایی-را-می‌توان-تحلیل-کرد) · [نمونه‌های عملی](#نمونه‌های-عملی) · [ساخت محیط‌های RL](#build-rl-environments) · [پرسش‌های متداول](#پرسش‌های-متداول) · [مستندات](#مستندات)
 
 <code>npx rea-agents setup</code>
 
@@ -150,6 +152,7 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | بایت‌کد EVM             | selectorهای dispatch، offsetهای بایتی، آرگومان‌های استنباط‌شده و قابلیت تغییر وضعیت   | دادهٔ خام/hex محلی روی Linux x64؛ [راهنمای EVM آفلاین](../guides/evm/evm-bytecode.md)                                                                        |
 | Rust binaries          | Embedded cargo-auditable dependency list                                            | [Rust binaries](../rust-binaries.md)                                                                                                                       |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                     | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                               |
+| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                 | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                              |
 | Apple IPS crashes      | .ips metadata, threads, images, registers and crash classes                         | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                              |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer         | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                     |
 | Erlang BEAM            | IFF chunks, atoms, exports, and tables                                              | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                          |
@@ -181,6 +184,8 @@ REA به Node.js 22.x (>=22.23.4)، 24.x (>=24.22.1) یا 26+ (>=26.12.1)، به
 | امضاهای APK            | امضاکنندگان v1/v2/v3/v3.1، اثر انگشت گواهی، چرخش کلید و سازگاری داخلی digest        | بررسی ایستای داخلی; `inspect_apk_signature`                                                                                                                |
 
 بررسی ایستای JavaScript و .NET فایل‌های ارائه‌شده را بدون اجرای برنامه می‌خواند. ضبط زمان اجرا، هدف انتخاب‌شده را با مجوزهای کاربری شما اجرا می‌کند یا با آن تعامل دارد؛ آثار این عملیات در راهنمای مربوط به هر نوع ضبط توضیح داده شده‌اند.
+
+برای بررسی آفلاین فایل‌های باینری بومی، REA از GNU objdump و Rizin نیز پشتیبانی می‌کند؛ این ابزارها را باید خودتان فراهم کنید. [راهنمای ابزارهای مهندسی معکوس](../reverse-engineering-tools.md) تنظیم ارائه‌دهندگان، فرمان‌های CLI و محدودیت‌های Evidence را توضیح می‌دهد. REA هیچ‌یک از این دو ارائه‌دهنده را نصب یا به‌روزرسانی نمی‌کند.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 

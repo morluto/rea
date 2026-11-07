@@ -391,7 +391,11 @@ const normalizedInspection = (
   },
   completeness: state.events.completeness.snapshot(),
   frames: [...captured.frames],
-  dom: { total_nodes: captured.dom.total, nodes: [...captured.dom.nodes] },
+  dom: {
+    total_nodes: captured.dom.total,
+    node_value_length_unit: captured.dom.nodeValueLengthUnit,
+    nodes: [...captured.dom.nodes],
+  },
   accessibility: {
     total_nodes: captured.accessibility.total,
     text_capture: captured.accessibility.textCapture,

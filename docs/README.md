@@ -105,6 +105,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 
 ## Development and verification
 
+- [Settings and recovery](design/limits-and-recovery.md)
 - [MCP tool design](development/tool-design.md)
 - [Testing REA](development/testing.md)
 - [Client and agent verification](development/client-verification.md)
@@ -140,6 +141,25 @@ the exact commit messages and references from the release they describe.
 
 ## Additional guides
 
+- [Offline API contract inventory](api-contracts.md)
+- [Bun standalone executables](bun-standalone.md)
+- [Capability composition and ownership](capability-composition.md)
+- [.NET single-file bundles](dotnet-bundles.md)
+- [ESP flash images](esp-flash-image.md)
+- [U-Boot FIT images](fit-images.md)
+- [Measure MCP catalog costs in Codex](mcp-catalog-evaluation.md)
+- [Offline Playwright traces](playwright-traces.md)
+- [Testing lanes and provider verification](testing-lanes.md)
+- [UF2 and DfuSe images](uf2-dfuse.md)
+- [WeChat mini-program wxapkg archives](wxapkg.md)
+- [Binary hardening](binary-hardening.md)
+- [Desktop application capture](desktop-application-capture.md)
+- [Desktop application export](desktop-application-export.md)
+- [Desktop application state](desktop-application-state.md)
+- [Desktop application tasks](desktop-application-tasks.md)
+- [Desktop build computer](desktop-build-computer.md)
+- [Desktop build witness](desktop-build-witness.md)
+- [iNES containers](ines-containers.md)
 - [Build RL environments with REA](agent-environments-quickstart.md)
 - [Agent environments from recorded captures](agent-environments.md)
 - [APK signature schemes](apk-signature.md)

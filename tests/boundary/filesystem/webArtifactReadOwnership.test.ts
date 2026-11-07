@@ -356,7 +356,9 @@ it("preserves both web cleanup owners' resources, diagnostics and recovery actio
       },
     },
   );
-  const projected = [artifacts, resolver].map(projectAnalysisError);
+  const projected = [artifacts, resolver].map((failure) =>
+    projectAnalysisError(failure),
+  );
   await expect(service.close()).rejects.toMatchObject({
     cleanupResources: ["artifact-root", "shared-resource", "resolver-root"],
     diagnostics: { failures: projected },

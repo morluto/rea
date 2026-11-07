@@ -20,6 +20,8 @@
 
 **[Site web](https://rea.tools/) · [Ghiduri](https://rea.tools/guides/) · [Studii de caz](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Alătură-te comunității REA pe Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
 <code>npx rea-agents setup</code>
@@ -198,6 +200,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                                             |
 | Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                                                    |
 | Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                                                        |
+| Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                                                |
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                                                         |
 | Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                                           |
 | Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                                                  |

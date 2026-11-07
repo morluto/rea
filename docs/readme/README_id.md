@@ -20,7 +20,9 @@
 
 **[Situs Web](https://rea.tools/id/) · [Panduan](https://rea.tools/id/guides/) · [Contoh Penggunaan](https://rea.tools/id/showcase/)**
 
-[Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Alat GNU objdump dan Rizin](../reverse-engineering-tools.md) · [Dokumentasi](#dokumentasi)
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Bergabunglah dengan komunitas REA di Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
+[Mulai Cepat](#mulai-cepat) · [Cara Kerja REA](#cara-kerja-rea) · [Hal yang Dapat Anda Analisis](#hal-yang-dapat-anda-analisis) · [Contoh Penggunaan](#contoh-penggunaan) · [Membangun lingkungan RL](#build-rl-environments) · [FAQ](#faq) · [Dokumentasi](#dokumentasi)
 
 <code>npx rea-agents setup</code>
 
@@ -158,13 +160,14 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | PE certificates            | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                          | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                                       |
 | PE imports                 | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                            | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                                 |
 | Artefak WASM               | Validasi, bagian, bentuk WAT import/ekspor yang tepat, dan WAT yang didekode                          | WABT 1.0.42 yang disediakan pemanggil; `inspect_wasm_artifact`                                                                                                |
-| Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                              |
+| Bytecode EVM               | Selector dispatch, offset byte, argumen yang disimpulkan, dan sifat mutabilitas                       | Pembawa data raw/hex lokal di Linux x64; [panduan EVM offline](../guides/evm/evm-bytecode.md)                                                                 |
 | Rust binaries              | Embedded cargo-auditable dependency list                                                              | [Rust binaries](../rust-binaries.md)                                                                                                                          |
 | ELF notes                  | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                       | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                                  |
+| Binary hardening           | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                   | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                                 |
 | Apple IPS crashes          | .ips metadata, threads, images, registers and crash classes                                           | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                                 |
 | Linux kernel modules       | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                           | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                                        |
 | Erlang BEAM                | IFF chunks, atoms, exports, and tables                                                                | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                             |
-| Crash Linux yang direkam   | Catatan mentah, register/sinyal setiap thread yang direkam, dan kandidat pemetaan opsional            | pwntools yang disediakan pemanggil; GDB/pwndbg opsional; [crash yang direkam](../guides/native/recorded-crashes.md)                                           |
+| Crash Linux yang direkam   | Catatan mentah, register/sinyal setiap thread yang direkam, dan kandidat pemetaan opsional            | pwntools yang disediakan pemanggil di Linux x64; GDB/pwndbg opsional; [crash yang direkam](../guides/native/recorded-crashes.md)                              |
 | Instalasi desktop          | Kandidat runtime, berkas pendukung, penanda komponen, dan langkah berikutnya                          | Pemeriksaan direktori dan header terbatas；[Aplikasi desktop](../desktop-applications.md)                                                                     |
 | JavaScript / Electron      | Modul, impor, source map, rute, IPC, dan hubungan add-on native                                       | Node.js dan npm; [analisis aplikasi](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                            |
 | Situs web                  | Struktur halaman, skrip, pengamatan jaringan, dan tangkapan layar yang diminta                        | Peramban berbasis Chrome; [analisis peramban](../guides/web/browser-observation.md)                                                                           |
@@ -191,6 +194,8 @@ Alat tambahan dan dukungan sistem host bergantung pada target yang dianalisis:
 | Tanda tangan APK           | Penanda tangan v1/v2/v3/v3.1, sidik jari sertifikat, rotasi kunci dan konsistensi internal digest     | Pemeriksaan statis bawaan; `inspect_apk_signature`                                                                                                            |
 
 Pemeriksaan JavaScript dan .NET statis membaca berkas yang disediakan tanpa menjalankan aplikasinya. Perekaman runtime menjalankan atau berinteraksi dengan target yang dipilih menggunakan izin pengguna Anda. Setiap panduan runtime menjelaskan dampaknya.
+
+Untuk pemeriksaan biner native secara offline, REA juga mendukung GNU objdump dan Rizin yang Anda sediakan sendiri. [Panduan alat rekayasa balik](../reverse-engineering-tools.md) menjelaskan penyiapan penyedia, perintah CLI, dan keterbatasan Evidence. REA tidak menginstal atau memperbarui kedua penyedia tersebut.
 
 <a id="choosing-a-deep-analysis-provider"></a>
 
