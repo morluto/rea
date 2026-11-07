@@ -29,7 +29,10 @@ import {
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
-import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffects.js";
+import {
+  semanticOpaqueBindingReadMayHaveChanged,
+  semanticOpaqueNameMayHaveChanged,
+} from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticGlobalProcessOrigin,
@@ -172,11 +175,23 @@ const staticExpressionTruthiness = (
   const unwrapped = unwrapJavaScriptExpression(node).node;
   const direct = staticJavaScriptTruthiness(unwrapped);
   if (direct !== undefined) return direct;
+  if (t.isRegExpLiteral(unwrapped) || t.isClassExpression(unwrapped))
+    return true;
   if (t.isUnaryExpression(unwrapped)) {
     if (unwrapped.operator === "void") return false;
+    if (unwrapped.operator === "typeof") return true;
     if (unwrapped.operator === "!") {
       const inner = staticExpressionTruthiness(unwrapped.argument, state);
       return inner === undefined ? undefined : !inner;
+    }
+    if (
+      (unwrapped.operator === "+" || unwrapped.operator === "-") &&
+      t.isNumericLiteral(unwrapped.argument)
+    ) {
+      return (
+        unwrapped.argument.value !== 0 &&
+        !Number.isNaN(unwrapped.argument.value)
+      );
     }
   }
   if (
@@ -294,15 +309,10 @@ export const rejectsEventListener = (
       if (value.operator === "&&") {
         const truthiness = staticExpressionTruthiness(value.left, state);
         if (truthiness === false) {
-          pending.push({ node: value.left, depth: depth + 1 });
-        } else if (truthiness === true) {
-          pending.push({ node: value.right, depth: depth + 1 });
-        } else {
-          pending.push(
-            { node: value.left, depth: depth + 1 },
-            { node: value.right, depth: depth + 1 },
-          );
+          // A falsy value in JavaScript can never be a callable function.
+          continue;
         }
+        pending.push({ node: value.right, depth: depth + 1 });
         continue;
       }
       if (value.operator === "??") {
@@ -347,15 +357,9 @@ export const rejectsEventListener = (
       if (value.operator === "&&=") {
         const truthiness = staticExpressionTruthiness(value.left, state);
         if (truthiness === false) {
-          pending.push({ node: value.left, depth: depth + 1 });
-        } else if (truthiness === true) {
-          pending.push({ node: value.right, depth: depth + 1 });
-        } else {
-          pending.push(
-            { node: value.left, depth: depth + 1 },
-            { node: value.right, depth: depth + 1 },
-          );
+          continue;
         }
+        pending.push({ node: value.right, depth: depth + 1 });
         continue;
       }
       if (value.operator === "??=") {
@@ -688,6 +692,7 @@ export const isProvenNodeEmitter = (
   receiver: t.Expression | t.Super,
   call: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
+  visitedBindings: ReadonlySet<string> = new Set(),
 ): boolean => {
   const unwrapped = unwrapJavaScriptExpression(receiver).node;
   if (
@@ -715,7 +720,13 @@ export const isProvenNodeEmitter = (
   }
   if (!t.isIdentifier(unwrapped)) return false;
   const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
-  if (binding === undefined) return false;
+  if (binding === undefined || visitedBindings.has(binding.bindingId))
+    return false;
+  if (
+    binding.mutable &&
+    semanticOpaqueBindingReadMayHaveChanged(binding, unwrapped, state)
+  )
+    return false;
   const activeBinding = binding.mutable
     ? (() => {
         const read = semanticBindingAtRead(binding, unwrapped, state);
@@ -775,6 +786,14 @@ export const isProvenNodeEmitter = (
         0)
   ) {
     return !hasInheritedListenerMethodOverride(state, "process", call);
+  }
+  if (t.isIdentifier(initNode)) {
+    return isProvenNodeEmitter(
+      initNode,
+      call,
+      state,
+      new Set([...visitedBindings, binding.bindingId]),
+    );
   }
   return isProvenCreationNode(initNode, state, initNode);
 };

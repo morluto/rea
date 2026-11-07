@@ -241,6 +241,12 @@ it.each([
   ["a constant nullish coalescing non-nullish primitive", `1 ?? handler`],
   ["a constant nullish coalescing NaN", `NaN ?? handler`],
   ["a constant nullish coalescing Infinity", `Infinity ?? handler`],
+  ["a RegExp literal short-circuiting logical OR", `/x/ || handler`],
+  ["a positive numeric unary short-circuiting logical OR", `+1 || handler`],
+  [
+    "an unknown logical AND short-circuiting to a non-function",
+    `maybeHandler && 1`,
+  ],
 ])(
   "prunes statically unreachable listener branches on child process: %s",
   (_name, expr) => {
@@ -438,4 +444,46 @@ it("retains partial candidates when child_process namespace escapes to an opaque
       }),
     ]),
   );
+});
+
+it("retains partial candidate when direct eval may replace a mutable child receiver", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    function register(custom) {
+      let child = spawn("worker");
+      eval("child = custom");
+      child.on("exit", 1);
+    }
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("does not emit child listener interactions for an immutable alias to a spawn call", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    const alias = child;
+    alias.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
 });
