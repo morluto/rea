@@ -51,16 +51,24 @@ const record = (recordId: number, xmlBytes = 32): Buffer => {
   return bytes;
 };
 
+const readRecordId = (bytes: Buffer): number =>
+  Number(bytes.readBigUInt64LE(8));
+
 const withTimestamp = (bytes: Buffer, ms: number): Buffer => {
   const ticks = BigInt(ms + 11_644_473_600_000) * 10_000n;
   bytes.writeBigUInt64LE(ticks, 16);
   return bytes;
 };
 
-const chunk = (number: number, records: readonly Buffer[]): Buffer => {
+const chunk = (
+  number: number,
+  records: readonly Buffer[],
+  /** 0x08 is a record number, so a realistic chunk states its first record's id. */
+  statedFirstRecordNumber = records[0] !== undefined ? readRecordId(records[0]) : number,
+): Buffer => {
   const bytes = Buffer.alloc(CHUNK_BYTES);
   bytes.write("ElfChnk\u0000", 0, "latin1");
-  bytes.writeBigUInt64LE(BigInt(number), 8);
+  bytes.writeBigUInt64LE(BigInt(statedFirstRecordNumber), 8);
   let cursor = CHUNK_HEADER_BYTES;
   for (const entry of records) {
     // `subarray` keeps the parent's storage, so copy only the entry's own bytes.
@@ -131,13 +139,27 @@ describe("parseEvtxArchive", () => {
   it("keeps record numbers distinct across wrapped logs", () => {
     // A wrapped log restarts record numbering; provenance must not collide.
     const archive = parsed(
-      evtx([chunk(0, [record(1)]), chunk(4, [record(1)])]),
+      evtx([chunk(1, [record(1)]), chunk(1, [record(1)])]),
     );
     expect(archive.events.map((event) => event.event_record_id)).toEqual([
       1, 1,
     ]);
     expect(archive.events[0]?.event_id).not.toBe(archive.events[1]?.event_id);
-    expect(archive.chunks.map((entry) => entry.chunk_number)).toEqual([0, 4]);
+    // The chunk number is the physical position, never the record number the
+    // header states.
+    expect(archive.chunks.map((entry) => entry.chunk_number)).toEqual([0, 1]);
+  });
+
+  it("numbers chunks by position even when their records start elsewhere", () => {
+    // Intact chunks whose first record is not 1 — a wrapped or mid-stream
+    // export. The header field is a record number, so it must neither rename
+    // the chunk nor raise a mismatch against the physical position.
+    const archive = parsed(evtx([chunk(37, [record(37)]), chunk(38, [record(38)])]));
+    expect(archive.chunks.map((entry) => entry.chunk_number)).toEqual([0, 1]);
+    expect(archive.events.map((event) => event.chunk_number)).toEqual([0, 1]);
+    expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
+      "first-record-number-mismatch",
+    );
   });
 
   it("reports the record header timestamp as the file states it", () => {
@@ -156,10 +178,10 @@ describe("parseEvtxArchive", () => {
     expect(archive.events[0]?.header_timestamp).toBeNull();
   });
 
-  it("reports a chunk whose stated number disagrees with its position", () => {
-    const archive = parsed(evtx([chunk(0, []), chunk(9, [])]));
+  it("reports a chunk whose stated first record disagrees with its first record", () => {
+    const archive = parsed(evtx([chunk(5, [record(9)], 5)]));
     expect(archive.diagnostics.map((entry) => entry.code)).toContain(
-      "chunk-number-mismatch",
+      "first-record-number-mismatch",
     );
   });
 

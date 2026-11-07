@@ -58,7 +58,7 @@ export const evtxDiagnosticSchema = z.strictObject({
     "not-an-evtx-file",
     "invalid-header",
     "invalid-chunk",
-    "chunk-number-mismatch",
+    "first-record-number-mismatch",
     "record-limit-reached",
     "diagnostic-limit-reached",
     "truncated-record",

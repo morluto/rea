@@ -285,16 +285,26 @@ export const parseEvtxArchive = (
       );
       continue;
     }
-    const stated = readCount(chunk, 8);
-    if (stated !== index)
+    // 0x08 is the FIRST EVENT RECORD NUMBER, not a chunk sequence number: an
+    // intact log whose chunks do not start at record 1 (a wrapped file, or one
+    // exported mid-stream) would otherwise be reported as mismatched on every
+    // chunk, and every event's chunk_number would carry a record number. The
+    // physical position is the only chunk number this parser can vouch for, so
+    // the header field is checked against the first record's own id instead.
+    const statedFirstRecordNumber = readCount(chunk, 8);
+    const inventory = readChunk(chunk, index, index, state);
+    if (
+      statedFirstRecordNumber !== null &&
+      inventory.first_event_record_id !== null &&
+      statedFirstRecordNumber !== inventory.first_event_record_id
+    )
       diagnose(
         state,
         index,
         null,
-        "chunk-number-mismatch",
-        `Chunk at position ${index} states number ${stated ?? "beyond 2^53"}.`,
+        "first-record-number-mismatch",
+        `Chunk at position ${index} states its first record is ${statedFirstRecordNumber}, but the first record reads ${inventory.first_event_record_id}.`,
       );
-    const inventory = readChunk(chunk, stated ?? index, index, state);
     chunks.push({
       chunk_number: inventory.chunk_number,
       ordinal: inventory.ordinal,
