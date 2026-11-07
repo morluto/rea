@@ -372,6 +372,9 @@ const escapedClassValues = (
     if (klass === undefined || seenClasses.has(klass)) continue;
     seenClasses.add(klass);
     for (const member of klass.body.body) {
+      const getterKey = t.isClassMethod(member)
+        ? semanticStaticPropertyKey(member.key, member.computed)
+        : null;
       if (
         (t.isClassPrivateProperty(member) ||
           (lookup.kind === "static" && t.isClassProperty(member))) &&
@@ -385,9 +388,8 @@ const escapedClassValues = (
         member.static === (lookup.kind === "static") &&
         !(
           t.isClassMethod(member) &&
-          fields?.definiteNames.has(
-            semanticStaticPropertyKey(member.key, member.computed) ?? "",
-          ) === true
+          getterKey !== null &&
+          fields?.definiteNames.has(getterKey) === true
         )
       )
         for (const { node } of semanticCallableResultExpressions(member))
@@ -551,6 +553,51 @@ const escapedClassValues = (
           callee.property,
           callee.computed,
         );
+        let lexicalFunction = state.parentsByNode.get(callee);
+        while (
+          lexicalFunction !== undefined &&
+          !(
+            t.isFunction(lexicalFunction) &&
+            !t.isArrowFunctionExpression(lexicalFunction)
+          )
+        )
+          lexicalFunction = state.parentsByNode.get(lexicalFunction);
+        const objectOwner =
+          lexicalFunction === undefined
+            ? undefined
+            : state.parentsByNode.get(lexicalFunction);
+        if (
+          t.isThisExpression(receiver) &&
+          methodName !== null &&
+          t.isObjectMethod(lexicalFunction) &&
+          t.isObjectExpression(objectOwner)
+        ) {
+          for (const reference of semanticObjectPropertyReferences(
+            objectOwner,
+            [methodName],
+            state,
+            activeGetters,
+          )) {
+            const method = unwrapJavaScriptExpression(reference.node).node;
+            if (
+              t.isObjectMethod(method) ||
+              t.isFunctionExpression(method) ||
+              t.isArrowFunctionExpression(method)
+            )
+              for (const result of getterResultReferences(
+                { getter: method, owner: objectOwner },
+                reference.path,
+                state,
+                activeGetters,
+                true,
+              )) {
+                if (result.escapes === true) values.push(result);
+                selectedExpressions(result.node, result.path);
+              }
+            else values.push({ ...reference, escapes: true });
+          }
+          continue;
+        }
         let lexicalOwner = state.parentsByNode.get(callee);
         while (lexicalOwner !== undefined && !t.isClass(lexicalOwner))
           lexicalOwner = state.parentsByNode.get(lexicalOwner);
@@ -661,6 +708,38 @@ const escapedClassValues = (
       }
     }
     if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
+      if (t.isSuper(node.object)) {
+        let owner = state.parentsByNode.get(node);
+        while (
+          owner !== undefined &&
+          !t.isClass(owner) &&
+          !t.isObjectMethod(owner) &&
+          !(
+            t.isFunction(owner) &&
+            !t.isArrowFunctionExpression(owner) &&
+            !t.isClassMethod(owner) &&
+            !t.isClassPrivateMethod(owner)
+          )
+        )
+          owner = state.parentsByNode.get(owner);
+        if (t.isClass(owner) && owner.superClass != null)
+          for (const base of semanticClassCandidates(owner.superClass, state))
+            for (const reference of semanticClassPropertyReferences(
+              {
+                owner: base,
+                receiver: lookup.receiver ?? lookup.owner,
+                kind: lookup.kind === "static" ? "static" : "prototype",
+              },
+              [semanticStaticPropertyKey(node.property, node.computed)],
+              state,
+              activeGetters,
+              true,
+            )) {
+              if (reference.escapes === true) values.push(reference);
+              selectedExpressions(reference.node, reference.path);
+            }
+        continue;
+      }
       // Widening the receiver's data values covers every selected descendant.
       // `this` and private fields have already been resolved by the class pass.
       expressions.push(node.object);

@@ -297,6 +297,87 @@ it("considers a replacement before delayed instance-field evaluation", () => {
   ).toBe("unknown");
 });
 describe("getter widening across object and instance ownership", () => {
+  it("follows a super getter even when an instance field hides ordinary lookup", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      class Base { get s() { return new Child(); } }
+      class R extends Base {
+        s = {};
+        get t() { return super.s; }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps an unknown computed getter when the empty-name field exists", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      class R {
+        "" = {};
+        get [name]() { return new Child(); }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps an object getter's method receiver separate from the enclosing class", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        method() { return shared; }
+        child = { method() { return {}; }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("follows a nested instance returned by the object's own method", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { method() { return new Child(); }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("bounds recursive object method results without escaping unrelated objects", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        child = { method() { return this.method(); }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
   it("follows an instance returned by an object getter", () => {
     expect(
       resultValue(`

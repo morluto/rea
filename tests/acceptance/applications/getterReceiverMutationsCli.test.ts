@@ -8,13 +8,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps getter receiver mutations uncertain in exported Evidence through %s",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-getter-receivers-");
-    await writeFile(
-      join(root, "app.mjs"),
-      `
+const GETTER_FIXTURE = `
 export function self() {
   const box = { x: 1, get self() { return this; } };
   box.self.x = 2;
@@ -98,8 +92,31 @@ export function shadowedGetter() {
   new R().a.value = 2;
   return shared.value;
 }
-`,
-    );
+export function superGetter() {
+  const shared = { value: 1 };
+  class Child { get container() { return { alias: shared }; } }
+  class Base { get s() { return new Child(); } }
+  class R extends Base { s = {}; get t() { return super.s; } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+export function computedGetter() {
+  const shared = { value: 1 };
+  class Child { get container() { return { alias: shared }; } }
+  class R { "" = {}; get [name]() { return new Child(); } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+export function objectReceiver() {
+  const shared = { value: 1 };
+  class R { method() { return shared; } child = { method() { return {}; }, get container() { return this.method(); } }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+`;
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps getter receiver mutations uncertain in exported Evidence through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-getter-receivers-");
+    await writeFile(join(root, "app.mjs"), GETTER_FIXTURE);
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
@@ -135,6 +152,9 @@ export function shadowedGetter() {
       ["untouched", "literal"],
       ["nestedObjectGetter", "unknown"],
       ["shadowedGetter", "literal"],
+      ["superGetter", "unknown"],
+      ["computedGetter", "unknown"],
+      ["objectReceiver", "literal"],
     ] as const) {
       const projection = graph.nodes
         .flatMap(({ observations }) => observations)
