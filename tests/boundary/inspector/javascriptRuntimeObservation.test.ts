@@ -29,7 +29,7 @@ import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain
 import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
-import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { createNodeDiscoveryTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 test("reports static-layer Evidence digest failure at its caller path", () => {
   const layer = JAVASCRIPT_RUNTIME_RECONCILIATION_EXAMPLE.static_layers[0];
@@ -915,14 +915,14 @@ test("keeps malformed scriptFailedToParse protocol values in the invalid count",
 });
 
 const runtimeFixture = async () => {
-  const root = await createTestTempDirectory("rea-v8-runtime-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-runtime-");
   const entry = join(root, "entry.js");
   await writeFile(entry, "export const value = 1;\n");
   return { root, entry };
 };
 
 const temporaryFile = async (name: string): Promise<string> => {
-  const root = await createTestTempDirectory("rea-v8-outside-");
+  const root = await createNodeDiscoveryTempDirectory("rea-v8-outside-");
   const path = join(root, name);
   await writeFile(path, "export {};\n");
   return path;

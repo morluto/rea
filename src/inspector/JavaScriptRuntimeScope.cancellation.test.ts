@@ -1,5 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -83,6 +82,7 @@ import { listElectronTargetsInputSchema } from "../domain/javascript/electronObs
 import { V8InspectorProvider } from "./V8InspectorProvider.js";
 import { startFakeCdpBrowser } from "../../tests/fixtures/fakeCdpBrowser.js";
 import { startFakeV8Inspector } from "../../tests/fixtures/inspector/fakeV8Inspector.js";
+import { createNodeDiscoveryTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
 const roots: string[] = [];
 const fixtures: { close(): Promise<void> }[] = [];
@@ -109,7 +109,8 @@ afterEach(async () => {
 });
 
 const targetFile = async (): Promise<string> => {
-  const root = await mkdtemp(join(tmpdir(), "rea-inspector-cancel-"));
+  // Node discovery reports this fixture's path; keep it exactly reportable.
+  const root = await createNodeDiscoveryTempDirectory("rea-inspector-cancel-");
   roots.push(root);
   const path = join(root, "entry.js");
   await writeFile(path, "// inert target file\n");
@@ -117,49 +118,53 @@ const targetFile = async (): Promise<string> => {
   return path;
 };
 
-it("stops Inspector target authorization after the current stat settles", async () => {
-  const path = await targetFile();
-  const extraPath = join(roots[0]!, "second.js");
-  await writeFile(extraPath, "// second inert target file\n");
-  fileAccess.extraPath = extraPath;
-  const fake = await startFakeV8Inspector({
-    targetUrl: pathToFileURL(path).href,
-    additionalTargetUrl: pathToFileURL(extraPath).href,
-    additionalTargetCount: 1,
-  });
-  fixtures.push(fake);
-  const controller = new AbortController();
-  const reason = new Error("cancel after target stat");
-  fileAccess.reason = reason;
-  fileAccess.controller = controller;
-  fileAccess.abortOnStatCall = 2;
+// REA never stats a Node discovery path on Windows, so there is no stat to cancel.
+it.skipIf(process.platform === "win32")(
+  "stops Inspector target authorization after the current stat settles",
+  async () => {
+    const path = await targetFile();
+    const extraPath = join(roots[0]!, "second.js");
+    await writeFile(extraPath, "// second inert target file\n");
+    fileAccess.extraPath = extraPath;
+    const fake = await startFakeV8Inspector({
+      targetUrl: pathToFileURL(path).href,
+      additionalTargetUrl: pathToFileURL(extraPath).href,
+      additionalTargetCount: 1,
+    });
+    fixtures.push(fake);
+    const controller = new AbortController();
+    const reason = new Error("cancel after target stat");
+    fileAccess.reason = reason;
+    fileAccess.controller = controller;
+    fileAccess.abortOnStatCall = 2;
 
-  const result = await new V8InspectorProvider().listTargets(
-    { inspector_endpoint: fake.endpoint },
-    { signal: controller.signal },
-  );
+    const result = await new V8InspectorProvider().listTargets(
+      { inspector_endpoint: fake.endpoint },
+      { signal: controller.signal },
+    );
 
-  expect(result.ok).toBe(false);
-  if (result.ok) throw new Error("Expected Inspector listing cancellation");
-  expect(result.error).toBeInstanceOf(AnalysisCancelledError);
-  expect(result.error.cause).toBe(reason);
-  expect(result.error.diagnostics).toMatchObject({
-    completed_target_inventory: {
-      complete: false,
-      targets_examined: 1,
-      limitations: expect.arrayContaining([
-        "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
-      ]),
-    },
-  });
-  const inventory = record(
-    record(result.error.diagnostics)?.completed_target_inventory,
-  );
-  expect(inventory?.targets_discovered).toBeGreaterThan(0);
-  expect(inventory?.targets).toHaveLength(1);
-  expect(inventory?.targets_discovered).toBe(3);
-  expect(fileAccess.calls).toEqual(["stat", "realpath", "stat"]);
-});
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected Inspector listing cancellation");
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.diagnostics).toMatchObject({
+      completed_target_inventory: {
+        complete: false,
+        targets_examined: 1,
+        limitations: expect.arrayContaining([
+          "Cancellation stopped target authorization; unexamined targets are unknown, not excluded.",
+        ]),
+      },
+    });
+    const inventory = record(
+      record(result.error.diagnostics)?.completed_target_inventory,
+    );
+    expect(inventory?.targets_discovered).toBeGreaterThan(0);
+    expect(inventory?.targets).toHaveLength(1);
+    expect(inventory?.targets_discovered).toBe(3);
+    expect(fileAccess.calls).toEqual(["stat", "realpath", "stat"]);
+  },
+);
 
 it("stops Electron target authorization after the current stat settles", async () => {
   const path = await targetFile();
