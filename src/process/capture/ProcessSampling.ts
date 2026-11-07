@@ -129,7 +129,21 @@ const readPsRowsRaw = async (
 ): Promise<readonly ProcessRow[]> => {
   const { stdout } = await execFileOutput(
     "ps",
-    ["-axo", "pid=,ppid=,pgid=,sess=,command="],
+    // One -o per column: BSD ps treats everything after the first "=" as the
+    // header. FreeBSD names the session id "sid" and has no "sess" keyword.
+    [
+      "-ax",
+      "-o",
+      "pid=",
+      "-o",
+      "ppid=",
+      "-o",
+      "pgid=",
+      "-o",
+      process.platform === "freebsd" ? "sid=" : "sess=",
+      "-o",
+      "command=",
+    ],
     { signal, stopSignal: "SIGTERM" },
   );
   return stdout
