@@ -261,6 +261,23 @@ const accessorOperands = new WeakMap<
   readonly AccessorEffectOperand[]
 >();
 
+/** Expressions a definition runs immediately; deferred bodies and class-receiver initializers stay out. */
+const definitionTimeExpressions = (node: t.Function | t.Class): t.Node[] => {
+  if (t.isObjectMethod(node)) return node.computed ? [node.key] : [];
+  if (!t.isClass(node)) return [];
+  return [
+    ...(node.superClass == null ? [] : [node.superClass]),
+    ...node.body.body.flatMap((member) =>
+      (t.isClassMethod(member) ||
+        t.isClassProperty(member) ||
+        t.isClassAccessorProperty(member)) &&
+      member.computed
+        ? [member.key]
+        : [],
+    ),
+  ];
+};
+
 /** Collect invocation operands once; receiver interpretation belongs to the getter owner. */
 const accessorEffectOperands = (
   method: t.Function,
@@ -274,8 +291,13 @@ const accessorEffectOperands = (
   const writeOnly = new WeakSet<t.Node>();
   while (pending.length > 0) {
     const { node, parent } = pending.pop()!;
-    // Defining a nested callable does not invoke it.
-    if (t.isFunction(node) || t.isClass(node)) continue;
+    // Defining a nested callable does not invoke it, but the definition itself
+    // evaluates heritage and computed keys against the enclosing receiver.
+    if (t.isFunction(node) || t.isClass(node)) {
+      for (const child of definitionTimeExpressions(node).reverse())
+        pending.push({ node: child, parent: node });
+      continue;
+    }
     const write = semanticWriteSiteTarget(node);
     if (write !== null) {
       for (const target of semanticWriteTargets(write)) {

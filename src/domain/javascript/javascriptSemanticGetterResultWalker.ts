@@ -78,6 +78,17 @@ const resultBranches = (node: t.Node): readonly t.Node[] | undefined => {
   return undefined;
 };
 
+/** Heritage and computed keys see the `this` around their definition. */
+const evaluatesInOuterThis = (owner: t.Node, child: t.Node): boolean =>
+  t.isClass(owner)
+    ? child === owner.superClass
+    : (t.isObjectMethod(owner) ||
+        t.isClassMethod(owner) ||
+        t.isClassProperty(owner) ||
+        t.isClassAccessorProperty(owner)) &&
+      owner.computed === true &&
+      child === owner.key;
+
 /** Each walk owns local aliases; getter-to-getter traversal belongs to the query worklist. */
 export class GetterResultWalker {
   readonly #pending: GetterWork[] = [];
@@ -230,13 +241,22 @@ export class GetterResultWalker {
   }
 
   #ownsThis(expression: t.ThisExpression | t.Super): boolean {
-    let owner = this.query.state.parentsByNode.get(expression);
-    while (
-      owner !== undefined &&
-      !t.isClass(owner) &&
-      !(t.isFunction(owner) && !t.isArrowFunctionExpression(owner))
-    )
-      owner = this.query.state.parentsByNode.get(owner);
+    const parents = this.query.state.parentsByNode;
+    let child: t.Node = expression;
+    let owner = parents.get(child);
+    while (owner !== undefined) {
+      if (evaluatesInOuterThis(owner, child)) {
+        // A computed member key runs outside its class, not just its member.
+        const body = parents.get(owner);
+        child = t.isClassBody(body) ? parents.get(body)! : owner;
+      } else if (
+        t.isClass(owner) ||
+        (t.isFunction(owner) && !t.isArrowFunctionExpression(owner))
+      )
+        break;
+      else child = owner;
+      owner = parents.get(child);
+    }
     return owner === this.job.invocation.getter;
   }
 

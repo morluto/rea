@@ -186,6 +186,41 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
   ])("preserves a known literal for %s", (_shape, body) => {
     expect(resultValue(body)).toMatchObject({ status: "literal", value: 1 });
   });
+  it.each([
+    ["class computed method key", "class { [(this.x = 2, 'k')]() {} }"],
+    ["class computed field key", "class { [(this.x = 2, 'k')] = 0; }"],
+    ["superclass expression", "class extends (this.x = 2, Object) {}"],
+    [
+      "nested class key",
+      "class extends (class { [(this.x = 2, 'k')]() {} }) {}",
+    ],
+    ["object method computed key", "({ [(this.x = 2, 'k')]() {} })"],
+  ])("invalidates the receiver after a %s write", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "unknown" });
+  });
+
+  it.each([
+    ["uninvoked class method", "class { method() { this.x = 2; } }"],
+    [
+      "uninvoked computed class method",
+      "class { [(0, 'k')]() { this.x = 2; } }",
+    ],
+    ["uninvoked computed object method", "({ [(0, 'k')]() { this.x = 2; } })"],
+    ["instance field initializer", "class { f = (this.x = 2); }"],
+    ["static field receiver", "class { static s = (this.x = 2); }"],
+    ["static block receiver", "class { static { this.x = 2; } }"],
+  ])("keeps the receiver value through a %s", (_label, result) => {
+    expect(
+      resultValue(
+        `const box = { x: 1, get trigger() { return ${result}; } }; box.trigger; return box.x;`,
+      ),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
   it("terminates recursive receiver getters", () => {
     expect(
       resultValue(
