@@ -5115,6 +5115,14 @@ describe("Ghidra bridge transport selection", () => {
     expect(listed.value.limitations).toEqual(
       expect.arrayContaining([...loopbackTransportLimitations]),
     );
+    for (const capability of ghidra.capabilities()) {
+      expect(capability.limitations).toContain(
+        "Ghidra checkpoints require the Unix socket bridge and cannot be used with authenticated loopback.",
+      );
+      expect(capability.limitations.join(" ")).not.toContain(
+        "set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory",
+      );
+    }
     expect(annotation(ghidra)).toMatchObject({
       available: false,
       reason: LOOPBACK_TRANSPORT_MUTATION_REASON,

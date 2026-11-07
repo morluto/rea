@@ -20,9 +20,12 @@ const providerOperations = Object.freeze([
 ]);
 
 /** Health limitations shared by every Ghidra-backed capability. */
+const checkpointDisabledLimitation =
+  "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).";
+
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
-  "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).",
+  checkpointDisabledLimitation,
   "Cancelling an active Ghidra request terminates its ephemeral database and discards session annotations. The selected target remains open; the next provider query imports the original artifact again.",
 ]);
 
@@ -339,7 +342,10 @@ export const loopbackTransportCapabilities =
     Object.freeze(
       CAPABILITIES.map((capability): CapabilityDescriptor => {
         const limitations = Object.freeze([
-          ...capability.limitations,
+          ...capability.limitations.filter(
+            (limitation) => limitation !== checkpointDisabledLimitation,
+          ),
+          "Ghidra checkpoints require the Unix socket bridge and cannot be used with authenticated loopback.",
           ...loopbackTransportLimitations,
         ]);
         if (!capability.effects.mutatesArtifact)
