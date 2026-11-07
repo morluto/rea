@@ -1331,6 +1331,10 @@ cliTest(
     await symlink("loop-a.gguf", loopB);
     const unresolved = join(root, "unresolved.gguf");
     await symlink(join(real, "child"), unresolved);
+    const blocker = join(root, "blocker");
+    await writeFile(blocker, "not a directory");
+    const misleading = join(root, "misleading.gguf");
+    await symlink(`${blocker}/../real.gguf`, misleading);
 
     const singleResult = await cli.run({
       arguments: ["inspect-model-artifact", single, "--json"],
@@ -1385,6 +1389,17 @@ cliTest(
       details: { path: unresolved, reason: expect.stringContaining("ENOTDIR") },
     });
     expect(JSON.stringify(unresolvedMcp.error)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
+    const misleadingResult = await cli.run({
+      arguments: ["inspect-model-artifact", misleading, "--json"],
+    });
+    expect(misleadingResult.exitCode).toBe(1);
+    expect(misleadingResult.json).toMatchObject({
+      code: "target_unavailable",
+      details: { path: misleading, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(misleadingResult.json)).not.toContain(
       resolvedRegularFileRemediation(real),
     );
 

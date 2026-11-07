@@ -1,17 +1,6 @@
-import { realpath, stat } from "node:fs/promises";
+import { resolveTraversablePath } from "../filesystem/resolveTraversablePath.js";
 import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { artifactSelectedPathErrno } from "./ArtifactFileOperation.js";
-
-/** Canonicalize only a path that native filesystem lookup actually accepts. */
-export const resolveArtifactSourcePath = async (
-  path: string,
-): Promise<string> => {
-  // Darwin realpath can collapse file/.. although opening that spelling fails
-  // with ENOTDIR. Keep both file and directory selections valid here; the
-  // inventory/reader owns format and regular-file admission.
-  await stat(path);
-  return realpath(path);
-};
 
 /** Verify selection spelling independently of canonical descriptor ownership. */
 export const assertArtifactSelectedSource = async (
@@ -31,7 +20,7 @@ export const assertArtifactSelectedSource = async (
     );
   let current: string;
   try {
-    current = await resolveArtifactSourcePath(selectedPath);
+    current = await resolveTraversablePath(selectedPath);
   } catch (cause: unknown) {
     if (artifactSelectedPathErrno(cause) !== undefined) throw changed(cause);
     throw cause;

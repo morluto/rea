@@ -282,6 +282,28 @@ it("retains the known symlink and lookup failure when a target cannot be travers
   expect(isSelectedRegularFileError(failure)).toBe(true);
 });
 
+it("does not canonicalize through a non-directory parent when resolving a symlink", async () => {
+  const root = await createTestTempDirectory(
+    "rea-admission-nondirectory-parent-",
+  );
+  const blocker = join(root, "blocker");
+  const real = join(root, "real.bin");
+  await writeFile(blocker, "not a directory");
+  await writeFile(real, "regular file");
+  const link = join(root, "link");
+  await symlink(`${blocker}/../real.bin`, link);
+  const failure = await openRealFile(link).catch((error: unknown) => error);
+  expect(failure).toBeInstanceOf(RegularFileSymlinkRefusalError);
+  if (!(failure instanceof RegularFileSymlinkRefusalError))
+    throw new Error("Expected symlink refusal");
+  expect(failure).toMatchObject({
+    kind: "unresolved",
+    path: link,
+    lookupCause: { code: "ENOTDIR" },
+  });
+  expect(failure.resolvedPath).toBeUndefined();
+});
+
 it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
   "retains a permission failure while identifying the refused symlink",
   async () => {

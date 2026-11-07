@@ -1,17 +1,11 @@
 import { constants } from "node:fs";
 import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
-import {
-  lstat,
-  open,
-  readlink,
-  realpath,
-  stat,
-  type FileHandle,
-} from "node:fs/promises";
+import { lstat, open, readlink, stat, type FileHandle } from "node:fs/promises";
 
 import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
+import { resolveTraversablePath } from "./resolveTraversablePath.js";
 
 /** Cancellation observed at a file operation's explicit checkpoint. */
 export class RegularFileOperationCancelled extends Error {
@@ -269,7 +263,9 @@ const symlinkRefusal = async (
     return undefined;
   const named = await lstat(path).catch(() => undefined);
   if (named === undefined || !named.isSymbolicLink()) return undefined;
-  const resolved = await realpath(path).catch((error: unknown) => error);
+  const resolved = await resolveTraversablePath(path).catch(
+    (error: unknown) => error,
+  );
   if (resolved instanceof Error) {
     if (Reflect.get(resolved, "code") === "ELOOP")
       return new RegularFileSymlinkRefusalError(path, "loop", {
