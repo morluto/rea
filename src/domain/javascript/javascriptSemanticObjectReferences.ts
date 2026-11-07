@@ -1,33 +1,30 @@
 import * as t from "@babel/types";
+import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   resolveSemanticBindingState,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
-import { semanticReadInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
-  copiedReferencePath,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
-import {
+  isRuntimeJavaScriptClassProperty,
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import {
+  semanticArrayIndex,
   semanticPropertyPathKeyMatches,
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { arrayReferencedValues } from "./javascriptSemanticArrayReferences.js";
+import {
+  SemanticGetterQuery,
+  type GetterQueryJob,
+  type GetterInvocation,
+} from "./javascriptSemanticGetterQueries.js";
+import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalker.js";
 
-export interface JavaScriptSemanticObjectReference {
-  readonly node: t.Node;
-  readonly path: PropertyPath;
-  /** The value may be reached at any depth; consumers record an escape. */
-  readonly escapes?: true;
-  /** The allocation owned by this binding, rather than a read of its prior value. */
-  readonly ownerInitializer?: t.Node;
-}
+import type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
+
+export type { JavaScriptSemanticObjectReference } from "./javascriptSemanticObjectReference.js";
 
 export const semanticClassCandidates = (
   root: t.Node,
@@ -112,7 +109,13 @@ const instanceFieldReferences = (
         ? current.klass.body.body
         : current.klass.body.body.slice(0, before);
     for (const member of [...members].reverse()) {
-      if (!t.isClassProperty(member) || member.static) continue;
+      if (!isRuntimeJavaScriptClassProperty(member) || member.static) continue;
+      if (
+        propertyName !== null &&
+        member.computed &&
+        semanticKnownSymbolKey(member.key, state)
+      )
+        continue;
       const key = semanticStaticPropertyKey(member.key, member.computed);
       if (key !== null && shadowed.has(key)) continue;
       if (key !== null) shadowed.add(key);
@@ -148,10 +151,12 @@ const classPropertyDescriptors = (
   klass: t.ClassDeclaration | t.ClassExpression,
   propertyName: string | null,
   kind: ClassPropertyLookup["kind"],
+  state: JavaScriptSemanticAnalysisState,
   initializedBefore?: t.ClassProperty,
+  accessor: "get" | "set" = "get",
 ) => {
   const isStatic = kind === "static";
-  const selectedGetters: t.ClassMethod[] = [];
+  const selectedAccessors: t.ClassMethod[] = [];
   const selectedMethods: t.ClassMethod[] = [];
   const fields: t.ClassProperty[] = [];
   const indexedMembers: {
@@ -164,10 +169,22 @@ const classPropertyDescriptors = (
       ? -1
       : klass.body.body.indexOf(initializedBefore);
   klass.body.body.forEach((member, index) => {
-    if (before >= 0 && index >= before && t.isClassProperty(member)) return;
+    if (
+      (t.isClassMethod(member) || t.isClassProperty(member)) &&
+      propertyName !== null &&
+      member.computed &&
+      semanticKnownSymbolKey(member.key, state)
+    )
+      return;
+    if (
+      before >= 0 &&
+      index >= before &&
+      isRuntimeJavaScriptClassProperty(member)
+    )
+      return;
     if (
       (t.isClassMethod(member) ||
-        (kind === "static" && t.isClassProperty(member))) &&
+        (kind === "static" && isRuntimeJavaScriptClassProperty(member))) &&
       member.static === isStatic
     )
       indexedMembers.push({
@@ -187,19 +204,19 @@ const classPropertyDescriptors = (
         selectedMethods.push(member);
       if (key === propertyName) break;
     }
-  const uncertainGetters = indexedMembers.filter(
+  const uncertainAccessors = indexedMembers.filter(
     (entry): entry is typeof entry & { member: t.ClassMethod } => {
       const { member, key } = entry;
       return (
         t.isClassMethod(member) &&
-        member.kind === "get" &&
+        member.kind === accessor &&
         (propertyName === null || (member.computed && key === null))
       );
     },
   );
   const getters = matchingMembers.filter(
     (entry): entry is typeof entry & { member: t.ClassMethod } =>
-      t.isClassMethod(entry.member) && entry.member.kind === "get",
+      t.isClassMethod(entry.member) && entry.member.kind === accessor,
   );
   const getter = getters.at(-1);
   const getterIndex = getter?.index ?? -1;
@@ -219,20 +236,20 @@ const classPropertyDescriptors = (
       fields.push(member);
   }
   if (getters.length > 0 && !laterDataMember && getter !== undefined)
-    selectedGetters.push(getter.member);
-  for (const { member, index } of uncertainGetters)
+    selectedAccessors.push(getter.member);
+  for (const { member, index } of uncertainAccessors)
     if (
       !matchingMembers.some(
         ({ member: matching, index: matchingIndex }) =>
           (t.isClassProperty(matching) ||
             (t.isClassMethod(matching) &&
-              (matching.kind === "method" || matching.kind === "get"))) &&
+              (matching.kind === "method" || matching.kind === accessor))) &&
           matchingIndex > index,
       )
     )
-      selectedGetters.push(member);
+      selectedAccessors.push(member);
   return {
-    getters: selectedGetters,
+    accessors: selectedAccessors,
     methods: selectedMethods,
     fields,
     inherits: matchingMembers.length === 0,
@@ -243,562 +260,129 @@ export const semanticClassPropertyReferences = (
   lookup: ClassPropertyLookup,
   selection: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
-  throughUnknownKey = false,
 ): readonly JavaScriptSemanticObjectReference[] => {
-  const root = lookup.owner;
-  const receiver = lookup.receiver ?? root;
-  const [key, ...path] = selection;
-  const propertyName =
-    key == null || typeof key === "object" ? null : String(key);
-  // Widen a second unknown getter hop instead of enumerating getter orderings.
-  if (propertyName === null && throughUnknownKey && !lookup.fieldsOnly)
-    return escapedClassValues(lookup, state, activeGetters);
-  const pending: (t.ClassDeclaration | t.ClassExpression)[] = [root];
-  const seen = new Set<t.Node>();
-  const possibleResults: JavaScriptSemanticObjectReference[] = [];
-  // Instance fields are own properties, including fields initialized by base
-  // constructors. They take precedence over every prototype descriptor.
-  let instanceFields: ReadonlySet<string> = new Set();
-  if (lookup.kind === "instance") {
-    const fields = instanceFieldReferences(
-      root,
-      propertyName,
-      path,
-      state,
-      lookup.initializedBefore,
-    );
-    for (const reference of fields.references) possibleResults.push(reference);
-    instanceFields = fields.definiteNames;
-    if (propertyName !== null && instanceFields.has(propertyName))
-      return possibleResults;
+  const query = new SemanticGetterQuery(state);
+  return query.run(
+    () => classPropertyReferences(lookup, selection, state, { query }),
+    (job) => expandGetterResult(job, query),
+  );
+};
+
+/** Class descriptor selection shares field shadowing and inheritance with reference lookup. */
+export const semanticClassAccessorReferences = (
+  lookup: ClassPropertyLookup,
+  key: PropertyPath[number],
+  state: JavaScriptSemanticAnalysisState,
+  accessor: "get" | "set",
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ClassReferenceWalk(lookup, [key], state, {
+    query: new SemanticGetterQuery(state),
+    accessor,
+  }).run();
+
+class ClassReferenceWalk {
+  readonly #references: JavaScriptSemanticObjectReference[] = [];
+  readonly #pending: (t.ClassDeclaration | t.ClassExpression)[];
+  readonly #seen = new Set<t.Node>();
+  readonly #name: string | null;
+  readonly #path: PropertyPath;
+  #fields: ReadonlySet<string> = new Set();
+
+  constructor(
+    readonly lookup: ClassPropertyLookup,
+    selection: PropertyPath,
+    readonly state: JavaScriptSemanticAnalysisState,
+    readonly context: {
+      readonly query: SemanticGetterQuery;
+      readonly escapes?: boolean;
+      readonly accessor?: "get" | "set";
+    },
+  ) {
+    const [key, ...path] = selection;
+    this.#name = key == null || typeof key === "object" ? null : String(key);
+    this.#path = path;
+    this.#pending = [lookup.owner];
   }
-  for (let cursor = 0; cursor < pending.length; cursor++) {
-    const klass = pending[cursor];
-    if (klass === undefined || seen.has(klass)) continue;
-    seen.add(klass);
+
+  #instanceFields(): boolean {
+    if (this.lookup.kind !== "instance") return false;
+    // Own fields, including inherited constructor fields, suppress prototype descriptors.
+    const fields = instanceFieldReferences(
+      this.lookup.owner,
+      this.#name,
+      this.#path,
+      this.state,
+      this.lookup.initializedBefore,
+    );
+    if (this.context.accessor === undefined)
+      for (const reference of fields.references)
+        this.#references.push(reference);
+    this.#fields = fields.definiteNames;
+    return this.#name !== null && this.#fields.has(this.#name);
+  }
+
+  #getter(
+    klass: t.ClassDeclaration | t.ClassExpression,
+    getter: t.ClassMethod,
+  ): void {
+    const key = semanticStaticPropertyKey(getter.key, getter.computed);
+    if (key !== null && this.#fields.has(key)) return;
+    if (this.context.accessor !== undefined) {
+      this.#references.push({ node: getter, path: [] });
+      return;
+    }
+    this.context.query.schedule(
+      {
+        getter,
+        owner: klass,
+        receiver: this.lookup.receiver ?? this.lookup.owner,
+      },
+      this.#path,
+      this.context.escapes,
+    );
+  }
+
+  #visit(klass: t.ClassDeclaration | t.ClassExpression): void {
     const descriptors = classPropertyDescriptors(
       klass,
-      propertyName,
-      lookup.kind,
-      lookup.initializedBefore,
+      this.#name,
+      this.lookup.kind,
+      this.state,
+      this.lookup.initializedBefore,
+      this.context.accessor,
     );
-    for (const field of descriptors.fields)
+    for (const field of this.context.accessor === undefined
+      ? descriptors.fields
+      : [])
       if (field.value != null)
-        possibleResults.push({ node: field.value, path });
-    for (const getter of lookup.fieldsOnly ? [] : descriptors.getters) {
-      const key = semanticStaticPropertyKey(getter.key, getter.computed);
-      if (key !== null && instanceFields.has(key)) continue;
-      for (const reference of getterResultReferences(
-        { getter, owner: klass, receiver },
-        path,
-        state,
-        activeGetters,
-        throughUnknownKey || propertyName === null,
-      ))
-        possibleResults.push(reference);
+        this.#references.push({ node: field.value, path: this.#path });
+    for (const getter of this.lookup.fieldsOnly ? [] : descriptors.accessors)
+      this.#getter(klass, getter);
+    // Only a definite own descriptor can suppress possible superclass results.
+    if (descriptors.inherits && klass.superClass != null)
+      for (const base of semanticClassCandidates(klass.superClass, this.state))
+        this.#pending.push(base);
+  }
+
+  run(): readonly JavaScriptSemanticObjectReference[] {
+    if (this.#instanceFields()) return this.#references;
+    for (let cursor = 0; cursor < this.#pending.length; cursor++) {
+      const klass = this.#pending[cursor];
+      if (klass === undefined || this.#seen.has(klass)) continue;
+      this.#seen.add(klass);
+      this.#visit(klass);
     }
-    // An exact own descriptor suppresses inherited lookup. Dynamic computed
-    // descriptors may or may not match, so retain possible superclass results.
-    if (
-      descriptors.inherits &&
-      klass.superClass !== null &&
-      klass.superClass !== undefined
-    )
-      for (const base of semanticClassCandidates(klass.superClass, state))
-        pending.push(base);
+    return this.#references;
   }
-  return uniqueReferences(possibleResults);
-};
+}
 
-/** Find methods that can occupy a named class property, including uncertain keys. */
-const classMethodCandidates = (
-  roots: readonly (t.ClassDeclaration | t.ClassExpression)[],
-  name: string,
-  isStatic: boolean,
-  state: JavaScriptSemanticAnalysisState,
-): readonly {
-  owner: t.ClassDeclaration | t.ClassExpression;
-  method: t.ClassMethod;
-}[] => {
-  const pending = [...roots];
-  const seen = new Set<t.Node>();
-  const methods: {
-    owner: t.ClassDeclaration | t.ClassExpression;
-    method: t.ClassMethod;
-  }[] = [];
-  for (let cursor = 0; cursor < pending.length; cursor++) {
-    const owner = pending[cursor];
-    if (owner === undefined || seen.has(owner)) continue;
-    seen.add(owner);
-    const descriptors = classPropertyDescriptors(
-      owner,
-      name,
-      isStatic ? "static" : "prototype",
-    );
-    for (const method of descriptors.methods) methods.push({ owner, method });
-    if (descriptors.inherits && owner.superClass != null)
-      for (const candidate of semanticClassCandidates(owner.superClass, state))
-        pending.push(candidate);
-  }
-  return methods;
-};
-
-/** Widen receiver-resolved fields/getter results once, without enumerating getter paths. */
-const escapedClassValues = (
+const classPropertyReferences = (
   lookup: ClassPropertyLookup,
+  selection: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number>,
-  expandedClasses = new Set<t.Node>(),
-): readonly JavaScriptSemanticObjectReference[] => {
-  const values: JavaScriptSemanticObjectReference[] = [];
-  const classes = [lookup.receiver ?? lookup.owner];
-  expandedClasses.add(lookup.receiver ?? lookup.owner);
-  const seenClasses = new Set<t.Node>();
-  const expressions: t.Node[] = [];
-  const fields =
-    lookup.kind === "instance"
-      ? instanceFieldReferences(
-          lookup.receiver ?? lookup.owner,
-          null,
-          [],
-          state,
-        )
-      : undefined;
-  if (fields !== undefined)
-    for (const reference of fields.references) expressions.push(reference.node);
-  for (let cursor = 0; cursor < classes.length; cursor++) {
-    const klass = classes[cursor];
-    if (klass === undefined || seenClasses.has(klass)) continue;
-    seenClasses.add(klass);
-    for (const member of klass.body.body) {
-      const getterKey = t.isClassMethod(member)
-        ? semanticStaticPropertyKey(member.key, member.computed)
-        : null;
-      if (
-        (t.isClassPrivateProperty(member) ||
-          (lookup.kind === "static" && t.isClassProperty(member))) &&
-        member.static === (lookup.kind === "static") &&
-        member.value != null
-      )
-        expressions.push(member.value);
-      if (
-        (t.isClassMethod(member) || t.isClassPrivateMethod(member)) &&
-        member.kind === "get" &&
-        member.static === (lookup.kind === "static") &&
-        !(
-          t.isClassMethod(member) &&
-          getterKey !== null &&
-          fields?.definiteNames.has(getterKey) === true
-        )
-      )
-        for (const { node } of semanticCallableResultExpressions(member))
-          if (node !== null) expressions.push(node);
-    }
-    if (klass.superClass != null)
-      for (const candidate of semanticClassCandidates(klass.superClass, state))
-        classes.push(candidate);
-  }
-  const seen = new Set<t.Node>();
-  const selectedExpressions = (root: t.Node, path: PropertyPath): void => {
-    const pending: (
-      | { readonly reference: JavaScriptSemanticObjectReference }
-      | { readonly leave: t.Node }
-    )[] = [{ reference: { node: root, path } }];
-    const active = new Set<t.Node>();
-    const visited = new Map<t.Node, Set<string>>();
-    while (pending.length > 0) {
-      const entry = pending.pop();
-      if (entry === undefined) continue;
-      if ("leave" in entry) {
-        active.delete(entry.leave);
-        continue;
-      }
-      const current = entry.reference;
-      const node = unwrapJavaScriptExpression(current.node).node;
-      const key = JSON.stringify(current.path);
-      const paths = visited.get(node) ?? new Set<string>();
-      if (paths.has(key)) continue;
-      if (active.has(node)) {
-        values.push({ node, path: current.path, escapes: true });
-        continue;
-      }
-      paths.add(key);
-      visited.set(node, paths);
-      active.add(node);
-      const children: JavaScriptSemanticObjectReference[] = [];
-      const enqueue = (reference: JavaScriptSemanticObjectReference): void => {
-        children.push(reference);
-      };
-      if (current.path.length === 0) {
-        expressions.push(node);
-      } else if (t.isObjectExpression(node)) {
-        for (const reference of semanticObjectPropertyReferences(
-          node,
-          current.path,
-          state,
-          activeGetters,
-        ))
-          enqueue(reference);
-      } else if (t.isArrayExpression(node)) {
-        for (const reference of arrayReferencedValues(node, current.path)) {
-          enqueue(reference);
-          if (reference.iterableFallbackPath !== undefined)
-            values.push({
-              node: reference.node,
-              path: reference.iterableFallbackPath,
-              escapes: true,
-            });
-        }
-      } else if (t.isConditionalExpression(node)) {
-        enqueue({ node: node.consequent, path: current.path });
-        enqueue({ node: node.alternate, path: current.path });
-      } else if (t.isLogicalExpression(node)) {
-        enqueue({ node: node.left, path: current.path });
-        enqueue({ node: node.right, path: current.path });
-      } else if (t.isSequenceExpression(node)) {
-        const last = node.expressions.at(-1);
-        if (last !== undefined) enqueue({ node: last, path: current.path });
-      } else if (t.isIdentifier(node)) {
-        const binding = resolveSemanticBindingState(state, node, node.name);
-        if (binding === undefined)
-          values.push({ node, path: current.path, escapes: true });
-        else {
-          const origins = semanticReadInitializers(
-            binding,
-            node,
-            state.parentsByNode,
-          );
-          for (const initializer of origins.initializers)
-            enqueue({
-              node: initializer.node,
-              path: [...initializer.projection, ...current.path],
-            });
-          for (const initializer of origins.referenceInitializers)
-            if (!semanticReferenceSourcesInactive(initializer, state)) {
-              const path = copiedReferencePath(
-                initializer,
-                current.path,
-                "escape",
-              );
-              if (path !== null) enqueue({ node: initializer.node, path });
-            }
-        }
-      } else if (t.isNewExpression(node)) {
-        const owners = semanticClassCandidates(node.callee, state);
-        if (owners.length === 0)
-          values.push({ node, path: current.path, escapes: true });
-        else
-          for (const owner of owners)
-            for (const reference of semanticClassPropertyReferences(
-              { owner, kind: "instance" },
-              current.path,
-              state,
-              activeGetters,
-            ))
-              enqueue(reference);
-      } else {
-        values.push({ node, path: current.path, escapes: true });
-      }
-      pending.push({ leave: node });
-      for (let index = children.length - 1; index >= 0; index--) {
-        const reference = children[index];
-        if (reference !== undefined) pending.push({ reference });
-      }
-    }
-  };
-  for (let cursor = 0; cursor < expressions.length; cursor++) {
-    const input = expressions[cursor];
-    if (input === undefined) continue;
-    const node = unwrapJavaScriptExpression(input).node;
-    if (seen.has(node)) continue;
-    seen.add(node);
-    if (t.isThisExpression(node) || t.isSuper(node)) continue;
-    if (t.isIdentifier(node)) {
-      const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding !== undefined) {
-        const origins = semanticReadInitializers(
-          binding,
-          node,
-          state.parentsByNode,
-        );
-        for (const initializer of origins.initializers)
-          selectedExpressions(initializer.node, initializer.projection);
-        for (const initializer of origins.referenceInitializers)
-          if (!semanticReferenceSourcesInactive(initializer, state)) {
-            const path = copiedReferencePath(initializer, [], "escape");
-            if (path !== null) selectedExpressions(initializer.node, path);
-          }
-      }
-    }
-    if (t.isNewExpression(node)) {
-      for (const owner of semanticClassCandidates(node.callee, state))
-        if (!expandedClasses.has(owner))
-          for (const value of escapedClassValues(
-            { owner, kind: "instance" },
-            state,
-            activeGetters,
-            expandedClasses,
-          ))
-            values.push(value);
-    }
-    if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-      const callee = unwrapJavaScriptExpression(node.callee).node;
-      if (
-        t.isMemberExpression(callee) ||
-        t.isOptionalMemberExpression(callee)
-      ) {
-        const receiver = unwrapJavaScriptExpression(callee.object).node;
-        const methodName = semanticStaticPropertyKey(
-          callee.property,
-          callee.computed,
-        );
-        let lexicalFunction = state.parentsByNode.get(callee);
-        while (
-          lexicalFunction !== undefined &&
-          !(
-            t.isFunction(lexicalFunction) &&
-            !t.isArrowFunctionExpression(lexicalFunction)
-          )
-        )
-          lexicalFunction = state.parentsByNode.get(lexicalFunction);
-        const objectOwner =
-          lexicalFunction === undefined
-            ? undefined
-            : state.parentsByNode.get(lexicalFunction);
-        if (
-          t.isThisExpression(receiver) &&
-          methodName !== null &&
-          t.isObjectMethod(lexicalFunction) &&
-          t.isObjectExpression(objectOwner)
-        ) {
-          for (const reference of semanticObjectPropertyReferences(
-            objectOwner,
-            [methodName],
-            state,
-            activeGetters,
-          )) {
-            const method = unwrapJavaScriptExpression(reference.node).node;
-            if (
-              t.isObjectMethod(method) ||
-              t.isFunctionExpression(method) ||
-              t.isArrowFunctionExpression(method)
-            )
-              for (const result of getterResultReferences(
-                { getter: method, owner: objectOwner },
-                reference.path,
-                state,
-                activeGetters,
-                true,
-              )) {
-                if (result.escapes === true) values.push(result);
-                selectedExpressions(result.node, result.path);
-              }
-            else values.push({ ...reference, escapes: true });
-          }
-          continue;
-        }
-        let lexicalOwner = state.parentsByNode.get(callee);
-        while (lexicalOwner !== undefined && !t.isClass(lexicalOwner))
-          lexicalOwner = state.parentsByNode.get(lexicalOwner);
-        if (t.isThisExpression(receiver) && t.isPrivateName(callee.property)) {
-          const owner = lexicalOwner;
-          if (t.isClass(owner))
-            for (const member of owner.body.body)
-              if (
-                t.isClassPrivateMethod(member) &&
-                member.kind === "method" &&
-                member.static === (lookup.kind === "static") &&
-                member.key.id.name === callee.property.id.name
-              )
-                for (const reference of getterResultReferences(
-                  {
-                    getter: member,
-                    owner,
-                    receiver: lookup.receiver ?? lookup.owner,
-                  },
-                  [],
-                  state,
-                  activeGetters,
-                  true,
-                ))
-                  expressions.push(reference.node);
-        }
-        if (
-          (t.isThisExpression(receiver) || t.isSuper(receiver)) &&
-          methodName !== null
-        ) {
-          const roots = t.isThisExpression(receiver)
-            ? [lookup.receiver ?? lookup.owner]
-            : t.isClass(lexicalOwner) && lexicalOwner.superClass != null
-              ? semanticClassCandidates(lexicalOwner.superClass, state)
-              : [];
-          let ownField = false;
-          if (t.isThisExpression(receiver) && lookup.kind === "instance") {
-            const owner = lookup.receiver ?? lookup.owner;
-            const fields = instanceFieldReferences(
-              owner,
-              methodName,
-              [],
-              state,
-            );
-            ownField = fields.definiteNames.has(methodName);
-            const candidates = fields.references.map(
-              (reference) => reference.node,
-            );
-            const visited = new Set<t.Node>();
-            for (let index = 0; index < candidates.length; index++) {
-              const candidate = candidates[index];
-              if (candidate === undefined) continue;
-              const value = unwrapJavaScriptExpression(candidate).node;
-              if (visited.has(value)) continue;
-              visited.add(value);
-              if (t.isIdentifier(value)) {
-                const binding = resolveSemanticBindingState(
-                  state,
-                  value,
-                  value.name,
-                );
-                if (binding !== undefined)
-                  for (const initializer of binding.initializers)
-                    candidates.push(initializer.node);
-              } else if (t.isConditionalExpression(value)) {
-                candidates.push(value.consequent, value.alternate);
-              } else if (t.isLogicalExpression(value)) {
-                candidates.push(value.left, value.right);
-              } else if (t.isSequenceExpression(value)) {
-                const last = value.expressions.at(-1);
-                if (last !== undefined) candidates.push(last);
-              } else if (
-                t.isArrowFunctionExpression(value) ||
-                t.isFunctionExpression(value)
-              ) {
-                for (const reference of getterResultReferences(
-                  { getter: value, owner, receiver: owner },
-                  [],
-                  state,
-                  activeGetters,
-                  true,
-                ))
-                  expressions.push(reference.node);
-              }
-            }
-          }
-          for (const { owner, method } of ownField
-            ? []
-            : classMethodCandidates(
-                roots,
-                methodName,
-                lookup.kind === "static",
-                state,
-              ))
-            for (const reference of getterResultReferences(
-              {
-                getter: method,
-                owner,
-                receiver: lookup.receiver ?? lookup.owner,
-              },
-              [],
-              state,
-              activeGetters,
-              true,
-            ))
-              expressions.push(reference.node);
-        }
-      }
-    }
-    if (t.isMemberExpression(node) || t.isOptionalMemberExpression(node)) {
-      if (t.isSuper(node.object)) {
-        let owner = state.parentsByNode.get(node);
-        while (
-          owner !== undefined &&
-          !t.isClass(owner) &&
-          !t.isObjectMethod(owner) &&
-          !(
-            t.isFunction(owner) &&
-            !t.isArrowFunctionExpression(owner) &&
-            !t.isClassMethod(owner) &&
-            !t.isClassPrivateMethod(owner)
-          )
-        )
-          owner = state.parentsByNode.get(owner);
-        if (t.isClass(owner) && owner.superClass != null)
-          for (const base of semanticClassCandidates(owner.superClass, state))
-            for (const reference of semanticClassPropertyReferences(
-              {
-                owner: base,
-                receiver: lookup.receiver ?? lookup.owner,
-                kind: lookup.kind === "static" ? "static" : "prototype",
-              },
-              [semanticStaticPropertyKey(node.property, node.computed)],
-              state,
-              activeGetters,
-              true,
-            )) {
-              if (reference.escapes === true) values.push(reference);
-              selectedExpressions(reference.node, reference.path);
-            }
-        continue;
-      }
-      // Widening the receiver's data values covers every selected descendant.
-      // `this` and private fields have already been resolved by the class pass.
-      expressions.push(node.object);
-      continue;
-    }
-    if (t.isConditionalExpression(node)) {
-      expressions.push(node.consequent, node.alternate);
-      continue;
-    }
-    if (t.isLogicalExpression(node)) {
-      expressions.push(node.left, node.right);
-      continue;
-    }
-    if (t.isSequenceExpression(node)) {
-      const last = node.expressions.at(-1);
-      if (last !== undefined) expressions.push(last);
-      continue;
-    }
-    if (t.isObjectExpression(node))
-      for (const reference of semanticObjectPropertyReferences(
-        node,
-        [null],
-        state,
-        activeGetters,
-      )) {
-        if (reference.escapes === true) values.push(reference);
-        selectedExpressions(reference.node, reference.path);
-      }
-    if (t.isArrayExpression(node))
-      for (const element of node.elements)
-        if (element !== null)
-          expressions.push(
-            t.isSpreadElement(element) ? element.argument : element,
-          );
-    values.push({ node, path: [], escapes: true });
-  }
-  return uniqueReferences(values);
-};
-
-/** Drop repeated node and path pairs while keeping first-seen order. */
-const uniqueReferences = (
-  references: readonly JavaScriptSemanticObjectReference[],
-): JavaScriptSemanticObjectReference[] => {
-  const seen = new Map<t.Node, Map<t.Node | undefined, Set<string>>>();
-  return references.filter((reference) => {
-    const identity = JSON.stringify([
-      reference.path,
-      reference.escapes ?? false,
-    ]);
-    const owners =
-      seen.get(reference.node) ?? new Map<t.Node | undefined, Set<string>>();
-    const paths = owners.get(reference.ownerInitializer) ?? new Set<string>();
-    if (paths.has(identity)) return false;
-    paths.add(identity);
-    owners.set(reference.ownerInitializer, paths);
-    seen.set(reference.node, owners);
-    return true;
-  });
-};
+  context: { readonly query: SemanticGetterQuery; readonly escapes?: boolean },
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ClassReferenceWalk(lookup, selection, state, context).run();
 
 const objectReceiverReference = (
   object: t.ObjectExpression,
@@ -871,20 +455,6 @@ const objectReceiverReference = (
 // Getter return expressions use the receiver of the property read. Keep that
 // identity when translating `this`, private fields, and superclass reads into
 // the same reference paths used by ordinary member mutations.
-interface GetterInvocation {
-  readonly getter:
-    | t.ObjectMethod
-    | t.ClassMethod
-    | t.ClassPrivateMethod
-    | t.ArrowFunctionExpression
-    | t.FunctionExpression;
-  readonly owner: t.ObjectExpression | t.ClassDeclaration | t.ClassExpression;
-  readonly receiver?:
-    | t.ObjectExpression
-    | t.ClassDeclaration
-    | t.ClassExpression;
-}
-
 /** Follow only data fields whose initializers retain a class receiver. */
 const privateReceiverProjection = (
   receiver: t.ClassDeclaration | t.ClassExpression,
@@ -981,382 +551,366 @@ const privateReceiverProjection = (
   return false;
 };
 
-const getterResultReferences = (
+/** Resolve methods from the lexical super owner or the concrete this receiver. */
+const getterMethodCalls = (
   invocation: GetterInvocation,
-  path: PropertyPath,
+  callee: t.MemberExpression | t.OptionalMemberExpression,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
-  throughUnknownKey = false,
-): readonly JavaScriptSemanticObjectReference[] => {
+): readonly GetterInvocation[] => {
+  const receiverExpression = unwrapJavaScriptExpression(callee.object).node;
   const { getter, owner, receiver = owner } = invocation;
-  const previousLength = activeGetters.get(getter);
-  if (previousLength !== undefined && previousLength <= path.length) return [];
-  // Repeated receiver reads may revisit a getter while consuming a finite
-  // path; recursive getters that preserve or grow that path cannot progress.
-  const active = new Map(activeGetters).set(getter, path.length);
+  if (
+    !t.isClass(owner) ||
+    !t.isClass(receiver) ||
+    !(t.isThisExpression(receiverExpression) || t.isSuper(receiverExpression))
+  )
+    return [];
   const isStatic =
     (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
     getter.static;
-  interface AliasVisit {
-    readonly identity: string;
-    readonly pathLength: number;
-    readonly parent: AliasVisit | undefined;
+  if (t.isPrivateName(callee.property)) {
+    if (!t.isThisExpression(receiverExpression)) return [];
+    return owner.body.body.flatMap((member): GetterInvocation[] =>
+      t.isClassPrivateMethod(member) &&
+      member.kind === "method" &&
+      member.static === isStatic &&
+      member.key.id.name === (callee.property as t.PrivateName).id.name
+        ? [{ getter: member, owner, receiver }]
+        : [],
+    );
   }
-  const pending: {
-    readonly node: t.Node;
-    readonly path: PropertyPath;
-    readonly aliases: AliasVisit | undefined;
-    readonly escapes?: true;
-    readonly privateRead?: {
-      readonly node: t.MemberExpression | t.OptionalMemberExpression;
-      readonly name: string;
-      readonly path: PropertyPath;
-    };
-  }[] = semanticCallableResultExpressions(getter).flatMap(({ node }) =>
-    node === null ? [] : [{ node, path, aliases: undefined }],
-  );
-  const references: JavaScriptSemanticObjectReference[] = [];
-  const expandedAliases = new Map<string, Set<string>>();
-  const getterScope = state.scopeByNode.get(getter)?.scopeId;
-  for (let cursor = 0; cursor < pending.length; cursor++) {
-    const current = pending[cursor];
-    if (current === undefined) break;
-    const { path: remaining } = current;
-    const expression = unwrapJavaScriptExpression(current.node).node;
-    const retain = (reference: JavaScriptSemanticObjectReference): void => {
-      references.push(
-        current.escapes ? { ...reference, escapes: true } : reference,
-      );
-    };
-    const retainPrivateRead = (): void => {
-      if (current.privateRead !== undefined)
-        retain({
-          node: current.privateRead.node,
-          path: current.escapes ? [] : current.privateRead.path,
-        });
-    };
-    if (t.isIdentifier(expression)) {
-      const binding = resolveSemanticBindingState(
-        state,
-        expression,
-        expression.name,
-      );
-      let scope =
-        binding === undefined
-          ? undefined
-          : state.scopesById.get(binding.scopeId);
-      while (scope !== undefined && scope.scopeId !== getterScope) {
-        if (scope.kind === "function" || scope.parentScopeId === null) {
-          scope = undefined;
-          break;
-        }
-        scope = state.scopesById.get(scope.parentScopeId);
-      }
-      if (
-        binding !== undefined &&
-        scope !== undefined &&
-        binding.referenceInitializers.every(
-          (initializer) => initializer.copyKind === undefined,
-        )
-      ) {
-        const identity = JSON.stringify([
-          binding.bindingId,
-          expression.start,
-          expression.end,
-        ]);
-        const known = expandedAliases.get(identity);
-        const key = JSON.stringify([
-          remaining,
-          current.privateRead?.name,
-          current.privateRead?.path,
-          current.escapes,
-        ]);
-        let cyclic = false;
-        let growing = false;
-        if (known !== undefined)
-          for (
-            let visit = current.aliases;
-            visit !== undefined;
-            visit = visit.parent
-          )
-            if (visit.identity === identity) {
-              cyclic = true;
-              growing = remaining.length > visit.pathLength;
-              break;
-            }
-        if (cyclic) {
-          // A repeated alias can select arbitrarily deep children. Revisit its
-          // roots as escapes rather than enumerating iterations or dropping them.
-          if (growing && !current.escapes)
-            pending.push({
-              ...current,
-              path: [],
-              aliases: undefined,
-              escapes: true,
-            });
-          continue;
-        }
-        if (known?.has(key)) continue;
-        const selections = known ?? new Set<string>();
-        selections.add(key);
-        expandedAliases.set(identity, selections);
-        const aliases = {
-          identity,
-          pathLength: remaining.length,
-          parent: current.aliases,
-        };
-        const origins = semanticReadInitializers(
-          binding,
-          expression,
-          state.parentsByNode,
-        );
-        for (const initializer of [
-          ...origins.initializers,
-          ...origins.referenceInitializers.filter(
-            (initializer) =>
-              !semanticReferenceSourcesInactive(initializer, state),
-          ),
-        ])
-          pending.push({
-            ...current,
-            node: initializer.node,
-            path: [...initializer.projection, ...remaining],
-            aliases,
-          });
-        continue;
-      }
-    }
-    if (t.isThisExpression(expression)) {
-      // An outer binding or a nested ordinary function has a different receiver.
-      let ownerNode = state.parentsByNode.get(expression);
-      while (
-        ownerNode !== undefined &&
-        !t.isClass(ownerNode) &&
-        !(t.isFunction(ownerNode) && !t.isArrowFunctionExpression(ownerNode))
-      )
-        ownerNode = state.parentsByNode.get(ownerNode);
-      if (ownerNode !== getter) continue;
-      if (current.privateRead !== undefined && t.isClass(owner)) {
-        if (
-          !t.isClass(receiver) ||
-          !privateReceiverProjection(
-            receiver,
-            owner,
-            remaining,
-            isStatic,
-            state,
-          )
-        ) {
-          retainPrivateRead();
-          continue;
-        }
-        for (const member of owner.body.body)
-          if (
-            t.isClassPrivateProperty(member) &&
-            member.static === isStatic &&
-            member.key.id.name === current.privateRead.name &&
-            member.value != null
-          )
-            retain({
-              node: member.value,
-              path: current.escapes ? [] : current.privateRead.path,
-            });
-        continue;
-      }
-      for (const reference of t.isClass(receiver)
-        ? semanticClassPropertyReferences(
-            { owner: receiver, kind: isStatic ? "static" : "instance" },
-            remaining,
-            state,
-            active,
-            throughUnknownKey,
-          )
-        : objectReceiverReference(receiver, remaining, state))
-        retain(reference);
-      continue;
-    }
+  const name = semanticStaticPropertyKey(callee.property, callee.computed);
+  if (name === null) return [];
+  if (
+    t.isThisExpression(receiverExpression) &&
+    !isStatic &&
+    instanceFieldReferences(receiver, name, [], state).definiteNames.has(name)
+  )
+    return [];
+  const pending = t.isSuper(receiverExpression)
+    ? owner.superClass == null
+      ? []
+      : [...semanticClassCandidates(owner.superClass, state)]
+    : [receiver];
+  const seen = new Set<t.Node>();
+  const calls: GetterInvocation[] = [];
+  for (let index = 0; index < pending.length; index++) {
+    const klass = pending[index];
+    if (klass === undefined || seen.has(klass)) continue;
+    seen.add(klass);
+    const descriptors = classPropertyDescriptors(
+      klass,
+      name,
+      isStatic ? "static" : "prototype",
+      state,
+    );
+    for (const method of descriptors.methods)
+      calls.push({ getter: method, owner: klass, receiver });
+    if (descriptors.inherits && klass.superClass != null)
+      pending.push(...semanticClassCandidates(klass.superClass, state));
+  }
+  return calls;
+};
+
+const expandGetterResult = (
+  job: GetterQueryJob,
+  query: SemanticGetterQuery,
+): void => {
+  const state = query.state;
+  expandSemanticGetterResult(job, query, {
+    classReferences: (lookup, path, escapes) =>
+      classPropertyReferences(lookup, path, state, { query, escapes }),
+    objectReferences: (receiver, path) =>
+      objectReceiverReference(receiver, path, state),
+    privateReceiver: (receiver, owner, path, isStatic) =>
+      privateReceiverProjection(receiver, owner, path, isStatic, state),
+    bases: (node) => semanticClassCandidates(node, state),
+    methodCalls: (invocation, callee) =>
+      getterMethodCalls(invocation, callee, state),
+  });
+};
+
+type ObjectLiteralMember = t.ObjectExpression["properties"][number];
+
+/** Property positions grouped by whether an exact key can reach them. */
+interface ObjectPropertyIndex {
+  /** Spreads, computed keys and `__proto__` data entries reach every key. */
+  readonly keyIndependent: readonly number[];
+  readonly byName: ReadonlyMap<string, readonly number[]>;
+}
+
+// Mutation tracking resolves one key of the same literal per write, so the
+// index removes the per-write scan of every property.
+const propertyIndexes = new WeakMap<t.ObjectExpression, ObjectPropertyIndex>();
+
+const objectPropertyIndex = (node: t.ObjectExpression): ObjectPropertyIndex => {
+  const cached = propertyIndexes.get(node);
+  if (cached !== undefined) return cached;
+  const keyIndependent: number[] = [];
+  const byName = new Map<string, number[]>();
+  node.properties.forEach((property, index) => {
+    const name = t.isSpreadElement(property)
+      ? null
+      : semanticStaticPropertyKey(property.key, property.computed);
     if (
-      t.isMemberExpression(expression) ||
-      t.isOptionalMemberExpression(expression)
+      name === null ||
+      (t.isObjectProperty(property) &&
+        !property.computed &&
+        !property.shorthand &&
+        name === "__proto__")
     ) {
-      if (
-        current.privateRead !== undefined &&
-        t.isPrivateName(expression.property)
-      ) {
-        retainPrivateRead();
-        continue;
-      }
-      if (t.isPrivateName(expression.property) && t.isClass(owner)) {
-        pending.push({
-          ...current,
-          node: expression.object,
-          path: [],
-          privateRead: {
-            node: expression,
-            name: expression.property.id.name,
-            path: remaining,
-          },
-        });
-        continue;
-      }
-      const key = semanticStaticPropertyKey(
-        expression.property,
-        expression.computed,
-      );
-      if (
-        t.isSuper(expression.object) &&
-        t.isClass(owner) &&
-        owner.superClass != null
-      ) {
-        for (const base of semanticClassCandidates(owner.superClass, state))
-          for (const reference of semanticClassPropertyReferences(
-            {
-              owner: base,
-              receiver: t.isClass(receiver) ? receiver : owner,
-              kind: isStatic ? "static" : "prototype",
-            },
-            [key, ...remaining],
-            state,
-            active,
-            throughUnknownKey,
-          ))
-            retain(reference);
-        continue;
-      }
-      pending.push({
-        ...current,
-        node: expression.object,
-        path: [key, ...remaining],
-      });
-    } else if (t.isConditionalExpression(expression))
-      pending.push(
-        { ...current, node: expression.consequent },
-        { ...current, node: expression.alternate },
-      );
-    else if (t.isLogicalExpression(expression))
-      pending.push(
-        { ...current, node: expression.left },
-        { ...current, node: expression.right },
-      );
-    else if (t.isSequenceExpression(expression)) {
-      const last = expression.expressions.at(-1);
-      if (last !== undefined) pending.push({ ...current, node: last });
-    } else if (t.isAssignmentExpression(expression, { operator: "=" }))
-      pending.push({ ...current, node: expression.right });
-    else if (
-      t.isAssignmentExpression(expression) &&
-      ["&&=", "||=", "??="].includes(expression.operator)
-    )
-      pending.push(
-        { ...current, node: expression.left },
-        { ...current, node: expression.right },
-      );
-    else if (current.privateRead !== undefined) retainPrivateRead();
-    else retain({ node: expression, path: remaining });
+      keyIndependent.push(index);
+      return;
+    }
+    const positions = byName.get(name);
+    if (positions === undefined) byName.set(name, [index]);
+    else positions.push(index);
+  });
+  const index = { keyIndependent, byName };
+  propertyIndexes.set(node, index);
+  return index;
+};
+
+/**
+ * Properties in reverse source order that can affect `key`. For an exact key,
+ * another static name only updates bookkeeping for that other name, which
+ * this key never reads, so only same-name and key-independent entries remain.
+ */
+const relevantPropertiesInReverse = (
+  node: t.ObjectExpression,
+  key: PropertyPath[number] | undefined,
+): readonly ObjectLiteralMember[] => {
+  if (typeof key !== "string" && typeof key !== "number")
+    return [...node.properties].reverse();
+  const { keyIndependent, byName } = objectPropertyIndex(node);
+  const named = byName.get(String(key)) ?? [];
+  const relevant: ObjectLiteralMember[] = [];
+  let left = keyIndependent.length - 1;
+  let right = named.length - 1;
+  while (left >= 0 || right >= 0) {
+    const fromLeft =
+      right < 0 ||
+      (left >= 0 && (keyIndependent[left] ?? -1) > (named[right] ?? -1));
+    const position = fromLeft ? keyIndependent[left--] : named[right--];
+    const property =
+      position === undefined ? undefined : node.properties[position];
+    if (property !== undefined) relevant.push(property);
   }
-  return uniqueReferences(references);
+  return relevant;
 };
 
 export const semanticObjectPropertyReferences = (
   node: t.ObjectExpression,
   path: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
-  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
 ): readonly JavaScriptSemanticObjectReference[] => {
-  const [key, ...remaining] = path;
-  const references: JavaScriptSemanticObjectReference[] = [];
-  const overwritten = new Set<string>();
-  const dataOverwritten = new Set<string>();
-  const accessorNames = new Set<string>();
-  const getterNames = new Set<string>();
-  const setterNames = new Set<string>();
-  for (const property of [...node.properties].reverse()) {
-    if (t.isSpreadElement(property)) {
-      const selected = key ?? null;
-      if (typeof selected !== "object" && overwritten.has(String(selected)))
-        continue;
-      references.push({
+  const query = new SemanticGetterQuery(state);
+  return query.run(
+    () => objectPropertyReferences(node, path, query),
+    (job) => expandGetterResult(job, query),
+  );
+};
+
+/** Select accessor descriptors without invoking them or following their return values. */
+export const semanticObjectAccessorReferences = (
+  node: t.ObjectExpression,
+  key: PropertyPath[number],
+  state: JavaScriptSemanticAnalysisState,
+  accessor: "get" | "set",
+  lookup: "prototype" | "own" = "prototype",
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ObjectReferenceWalk(
+    node,
+    [key],
+    new SemanticGetterQuery(state),
+    accessor,
+    lookup,
+  ).run();
+
+class ObjectReferenceWalk {
+  readonly #references: JavaScriptSemanticObjectReference[] = [];
+  readonly #overwritten = new Set<string>();
+  readonly #data = new Set<string>();
+  readonly #accessors = new Set<string>();
+  readonly #getters = new Set<string>();
+  readonly #setters = new Set<string>();
+  readonly #key: PropertyPath[number] | undefined;
+  readonly #remaining: PropertyPath;
+
+  constructor(
+    readonly node: t.ObjectExpression,
+    path: PropertyPath,
+    readonly query: SemanticGetterQuery,
+    readonly accessor?: "get" | "set",
+    readonly accessorLookup: "prototype" | "own" = "prototype",
+  ) {
+    [this.#key, ...this.#remaining] = path;
+  }
+
+  #spreadKey(): PropertyPath[number] {
+    const selected = this.#key ?? null;
+    return typeof selected !== "object"
+      ? selected
+      : {
+          ...selected,
+          excludedKeys: [
+            ...new Set([
+              ...(selected?.excludedKeys ?? []),
+              ...this.#overwritten,
+            ]),
+          ].sort(compareUnicodeCodePoints),
+        };
+  }
+
+  #spread(property: t.SpreadElement): void {
+    const selected = this.#key ?? null;
+    if (typeof selected !== "object" && this.#overwritten.has(String(selected)))
+      return;
+    // Spread creates data properties; the source descriptor is not installed.
+    if (this.accessor === undefined)
+      this.#references.push({
         node: property.argument,
-        path: [
-          typeof selected === "object"
-            ? {
-                ...selected,
-                excludedKeys: [
-                  ...new Set([
-                    ...(selected?.excludedKeys ?? []),
-                    ...overwritten,
-                  ]),
-                ].sort(compareUnicodeCodePoints),
-              }
-            : selected,
-          ...remaining,
-        ],
+        path: [this.#spreadKey(), ...this.#remaining],
+        capturedSelectionAt: property.argument,
+        ownEnumerable: true,
       });
-      if (
-        selected !== null &&
-        typeof selected !== "object" &&
-        t.isObjectExpression(property.argument) &&
-        objectExpressionDefinesKey(property.argument, String(selected))
-      ) {
-        overwritten.add(String(selected));
-        dataOverwritten.add(String(selected));
-      }
-      continue;
-    }
-    const name = semanticStaticPropertyKey(property.key, property.computed);
-    const isGetter = t.isObjectMethod(property) && property.kind === "get";
-    const isSetter = t.isObjectMethod(property) && property.kind === "set";
     if (
-      name !== null &&
-      (isGetter || isSetter
-        ? dataOverwritten.has(name) ||
-          (isGetter ? getterNames.has(name) : setterNames.has(name))
-        : dataOverwritten.has(name) || accessorNames.has(name))
-    )
-      continue;
-    if (name === null || semanticPropertyPathKeyMatches(key ?? null, name)) {
-      if (t.isObjectMethod(property) && property.kind === "get") {
-        for (const reference of getterResultReferences(
-          { getter: property, owner: node },
-          remaining,
-          state,
-          activeGetters,
-        ))
-          references.push(reference);
-      } else if (t.isObjectMethod(property) && property.kind === "set") {
-        // A setter contributes no readable reference. A paired getter is
-        // handled independently when it appears earlier in this object.
-      } else {
-        references.push({
-          node: t.isObjectProperty(property) ? property.value : property,
-          path: remaining,
-        });
-      }
-    }
-    if (name !== null) {
-      if (isGetter) {
-        getterNames.add(name);
-        accessorNames.add(name);
-        overwritten.add(name);
-      } else if (isSetter) {
-        setterNames.add(name);
-        accessorNames.add(name);
-        overwritten.add(name);
-      } else if (
-        !(
-          t.isObjectProperty(property) &&
-          !property.computed &&
-          !property.shorthand &&
-          name === "__proto__"
-        )
-      ) {
-        overwritten.add(name);
-        dataOverwritten.add(name);
-      }
+      selected !== null &&
+      typeof selected !== "object" &&
+      t.isObjectExpression(property.argument) &&
+      objectExpressionDefinesKey(property.argument, String(selected))
+    ) {
+      this.#overwritten.add(String(selected));
+      this.#data.add(String(selected));
     }
   }
-  return references;
-};
+
+  #prototype(
+    property: t.ObjectMethod | t.ObjectProperty,
+    name: string | null,
+  ): boolean {
+    if (
+      !t.isObjectProperty(property) ||
+      property.computed ||
+      property.shorthand ||
+      name !== "__proto__"
+    )
+      return false;
+    const selected = this.#key ?? null;
+    if (this.accessor !== undefined && this.accessorLookup === "own")
+      return true;
+    if (
+      t.isExpression(property.value) &&
+      (selected === null ||
+        typeof selected === "object" ||
+        (typeof selected === "string" &&
+          !objectExpressionDefinesKey(this.node, selected)))
+    )
+      this.#references.push({
+        node: property.value,
+        path: [selected, ...this.#remaining],
+        inherited: true,
+      });
+    return true;
+  }
+
+  #read(
+    property: t.ObjectMethod | t.ObjectProperty,
+    name: string | null,
+  ): void {
+    // An earlier unknown computed key cannot replace a later definite slot.
+    // Spreads obey the same overwrite proof; paired named accessors below
+    // retain their separate getter/setter semantics.
+    if (
+      name === null &&
+      this.#key != null &&
+      typeof this.#key !== "object" &&
+      (t.isObjectMethod(property) && property.kind === (this.accessor ?? "get")
+        ? this.#data.has(String(this.#key)) ||
+          (this.accessor === "set" ? this.#setters : this.#getters).has(
+            String(this.#key),
+          )
+        : this.#overwritten.has(String(this.#key)))
+    )
+      return;
+    if (
+      name !== null &&
+      !semanticPropertyPathKeyMatches(this.#key ?? null, name)
+    )
+      return;
+    if (this.accessor !== undefined) {
+      if (t.isObjectMethod(property) && property.kind === this.accessor)
+        this.#references.push({ node: property, path: [] });
+      return;
+    }
+    if (t.isObjectMethod(property)) {
+      if (property.kind === "get")
+        this.query.schedule(
+          { getter: property, owner: this.node },
+          this.#remaining,
+        );
+      // A paired getter remains readable even when its setter appears later.
+      if (property.kind === "get" || property.kind === "set") return;
+    }
+    this.#references.push({
+      node: t.isObjectProperty(property) ? property.value : property,
+      path: this.#remaining,
+    });
+  }
+
+  #record(name: string, kind: "get" | "set" | "data"): void {
+    this.#overwritten.add(name);
+    if (kind === "data") this.#data.add(name);
+    else {
+      this.#accessors.add(name);
+      (kind === "get" ? this.#getters : this.#setters).add(name);
+    }
+  }
+
+  #visit(property: ObjectLiteralMember): void {
+    if (t.isSpreadElement(property)) {
+      this.#spread(property);
+      return;
+    }
+    if (
+      property.computed &&
+      this.#key !== undefined &&
+      this.#key !== null &&
+      typeof this.#key !== "object" &&
+      semanticKnownSymbolKey(property.key, this.query.state)
+    )
+      return;
+    const name = semanticStaticPropertyKey(property.key, property.computed);
+    if (this.#prototype(property, name)) return;
+    const kind =
+      t.isObjectMethod(property) && property.kind !== "method"
+        ? property.kind
+        : "data";
+    if (
+      name !== null &&
+      (kind === "data"
+        ? this.#data.has(name) || this.#accessors.has(name)
+        : this.#data.has(name) ||
+          (kind === "get" ? this.#getters : this.#setters).has(name))
+    )
+      return;
+    this.#read(property, name);
+    if (name !== null) this.#record(name, kind);
+  }
+
+  run(): readonly JavaScriptSemanticObjectReference[] {
+    for (const property of relevantPropertiesInReverse(this.node, this.#key))
+      this.#visit(property);
+    return this.#references;
+  }
+}
+
+const objectPropertyReferences = (
+  node: t.ObjectExpression,
+  path: PropertyPath,
+  query: SemanticGetterQuery,
+): readonly JavaScriptSemanticObjectReference[] =>
+  new ObjectReferenceWalk(node, path, query).run();
 
 const objectExpressionDefinesKey = (
   root: t.ObjectExpression,
@@ -1388,4 +942,58 @@ const objectExpressionDefinesKey = (
     }
   }
   return false;
+};
+
+export const semanticArrayPropertyReferences = (
+  node: t.ArrayExpression,
+  path: PropertyPath,
+): readonly JavaScriptSemanticObjectReference[] => {
+  const [key, ...remaining] = path;
+  const selected = key ?? null;
+  const selectedIndex =
+    typeof selected === "object" ? null : semanticArrayIndex(selected);
+  if (typeof selected !== "object" && selectedIndex === null) return [];
+  const references: JavaScriptSemanticObjectReference[] = [];
+  let minimumIndex = 0;
+  let uncertainIndex = false;
+  for (const element of node.elements) {
+    if (t.isSpreadElement(element)) {
+      if (selectedIndex === null || selectedIndex >= minimumIndex) {
+        let sourceKey: PropertyPath[number] = null;
+        if (!uncertainIndex) {
+          if (selectedIndex !== null) sourceKey = selectedIndex - minimumIndex;
+          else if (selected !== null && typeof selected === "object")
+            sourceKey = {
+              excludedKeys: selected.excludedKeys.flatMap((name) => {
+                const index = semanticArrayIndex(name);
+                return index === null || index < minimumIndex
+                  ? []
+                  : [String(index - minimumIndex)];
+              }),
+              startIndex: Math.max(
+                0,
+                (selected.startIndex ?? 0) - minimumIndex,
+              ),
+            };
+        }
+        references.push({
+          node: element.argument,
+          path: [sourceKey, ...remaining],
+          capturedSelectionAt: element.argument,
+          iterableFallbackPath: [],
+        });
+      }
+      uncertainIndex = true;
+      continue;
+    }
+    if (
+      element !== null &&
+      (uncertainIndex
+        ? selectedIndex === null || selectedIndex >= minimumIndex
+        : semanticPropertyPathKeyMatches(selected, String(minimumIndex)))
+    )
+      references.push({ node: element, path: remaining });
+    minimumIndex++;
+  }
+  return references;
 };

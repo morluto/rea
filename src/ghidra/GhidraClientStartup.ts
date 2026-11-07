@@ -2,12 +2,13 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 import type { ProviderStartupDeadline } from "../process/ProviderDeadline.js";
 import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
-import type {
-  GhidraSessionError,
-  GhidraSessionErrorOptions,
-  GhidraSessionFailureKind,
+import {
+  GHIDRA_STARTUP_DEADLINE_ELAPSED,
+  type GhidraSessionError,
+  type GhidraSessionFailureFactory,
 } from "./GhidraSessionError.js";
 import type { GhidraSessionInfo } from "./GhidraSessionValues.js";
+import { GhidraAdmissionError } from "./GhidraAdmissionError.js";
 
 /** Inputs needed to complete the post-connection bridge handshake. */
 export interface GhidraStartupHandshakeOptions {
@@ -20,12 +21,7 @@ export interface GhidraStartupHandshakeOptions {
   readonly parseSessionInfo: (
     value: JsonValue,
   ) => Result<GhidraSessionInfo, GhidraSessionError>;
-  readonly failure: (
-    kind: GhidraSessionFailureKind,
-    message: string,
-    cause?: unknown,
-    options?: Pick<GhidraSessionErrorOptions, "timeoutMs" | "remoteCode">,
-  ) => GhidraSessionError;
+  readonly failure: GhidraSessionFailureFactory;
   readonly startupTimeoutMs: number;
 }
 
@@ -42,9 +38,30 @@ export async function completeGhidraStartupHandshake(
     },
   );
   if (!ping.ok) {
-    const failure = options.deadline.signal.aborted
-      ? interruptionFailure(options)
-      : ping.error;
+    const failure =
+      ping.error.kind === "cancelled" &&
+      options.deadline.interruption !== undefined
+        ? interruptionFailure(options)
+        : ping.error;
+    if (
+      failure.kind === "remote" &&
+      (failure.remoteCode === "import_identity_unavailable" ||
+        failure.remoteCode === "import_identity_mismatch")
+    ) {
+      const admitted = options.failure(
+        "admission",
+        failure.message,
+        new GhidraAdmissionError(failure.remoteCode, undefined, {
+          cause: failure,
+        }),
+        { remoteCode: failure.remoteCode },
+      );
+      return err(
+        failure.cleanupFailure === undefined
+          ? admitted
+          : admitted.withCleanupFailure(failure.cleanupFailure),
+      );
+    }
     return err(failure);
   }
   const parsed = options.parseSessionInfo(ping.value);
@@ -64,7 +81,12 @@ const interruptionFailure = (
   options: GhidraStartupHandshakeOptions,
 ): GhidraSessionError =>
   options.deadline.interruption === "cancelled"
-    ? options.failure("cancelled", "Ghidra startup was cancelled")
-    : options.failure("timeout", "Ghidra startup deadline elapsed", undefined, {
+    ? options.failure(
+        "cancelled",
+        "Ghidra startup was cancelled",
+        options.deadline.signal.reason,
+        { cancellation: { reason: options.deadline.signal.reason } },
+      )
+    : options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, undefined, {
         timeoutMs: options.startupTimeoutMs,
       });

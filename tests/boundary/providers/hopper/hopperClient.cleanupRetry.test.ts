@@ -184,6 +184,7 @@ it.each([false, true])(
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     };
     const socket = new Socket();
     onTestFinished(() => {
@@ -393,6 +394,7 @@ it("preserves confirmed document shutdown while retrying owned process cleanup",
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     } satisfies HopperOwnedResources,
     activeRequest: null,
     retainDocument: false,
@@ -457,6 +459,7 @@ it.each([
       processSupervisor: supervisor,
       runtimeRoot,
       shutdownConfirmed: false,
+      externalApplication: undefined,
     };
     const result = await cleanupHopperSession({
       socket: new Socket(),

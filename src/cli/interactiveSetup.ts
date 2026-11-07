@@ -110,6 +110,8 @@ export const renderInteractiveSetupResult = (
   }
   if (result.status === "planned" || result.status === "cancelled") return;
   writeLine(`!  ${result.remediation ?? "Setup needs attention."}`);
+  for (const resource of result.cleanup?.resources ?? [])
+    writeLine(`   Pending cleanup: ${resource}`);
   outro(
     `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,
@@ -273,8 +275,15 @@ const readyAgentClients = (
 const readyProviders = (result: SetupResult): readonly string[] =>
   result.doctor.availableProviders.map(displayProviderId);
 
+/** Product spellings that title case would distort. Lookup ids stay lowercase. */
+const PROVIDER_DISPLAY_NAMES: Readonly<Record<string, string>> = {
+  ida: "IDA",
+  jadx: "JADX",
+};
+
 const displayProviderId = (id: string): string =>
-  id.length === 0 ? id : `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`;
+  PROVIDER_DISPLAY_NAMES[id] ??
+  (id.length === 0 ? id : `${id[0]?.toUpperCase() ?? ""}${id.slice(1)}`);
 
 const humanList = (values: readonly string[]): string => {
   if (values.length < 2) return values[0] ?? "";

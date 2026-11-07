@@ -1,18 +1,23 @@
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
+import type { z } from "zod";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import { javascriptDisplayText } from "../../domain/javascript/javascriptAstValues.js";
 import {
   createJavaScriptSemanticGraphNode,
+  createJavaScriptSemanticGraphUnknown,
   createJavaScriptSemanticGraphRelation,
   JavaScriptSemanticEvidenceContextRegistry,
   javaScriptSemanticNodeId,
 } from "../../domain/javascript/javascriptSemanticGraph.js";
-import type { JavaScriptSemanticGraphNode } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
-import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type {
+  JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
   JavaScriptSemanticGraphUnknown,
+  JavaScriptSemanticUnknownOmission,
+  javaScriptSemanticUnknownInputSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
+import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
@@ -34,6 +39,9 @@ export interface SemanticGraphProjectionState {
   readonly nodes: Map<string, JavaScriptSemanticGraphNode>;
   readonly relations: Map<string, JavaScriptSemanticGraphRelation>;
   readonly unknowns: Map<string, JavaScriptSemanticGraphUnknown>;
+  /** Absolute retained unknown count allowed during this file; null outside admission. */
+  unknownCapacity: number | null;
+  readonly unknownOmissions: Map<string, JavaScriptSemanticUnknownOmission>;
   readonly evidenceContexts: JavaScriptSemanticEvidenceContextRegistry;
   readonly roots: Set<string>;
   /** Byte admission for the source file being projected; absent when adopting. */
@@ -66,6 +74,8 @@ export const createSemanticGraphProjectionState =
     nodes: new Map(),
     relations: new Map(),
     unknowns: new Map(),
+    unknownCapacity: null,
+    unknownOmissions: new Map(),
     evidenceContexts: new JavaScriptSemanticEvidenceContextRegistry(),
     roots: new Set(),
   });
@@ -404,12 +414,48 @@ export const addSemanticGraphRelation = (
   state.relations.set(value.relation_id, value);
 };
 
-/** Retain one unresolved frontier, after the file's nodes when budgeted. */
+/** Aggregate examined omissions without retaining unbounded discarded identities. */
+export const recordSemanticUnknownOmission = (
+  state: SemanticGraphProjectionState,
+  omission: JavaScriptSemanticUnknownOmission,
+): void => {
+  const key = `${omission.family}:${omission.reason}`;
+  const occurrences =
+    (state.unknownOmissions.get(key)?.occurrences ?? 0) + omission.occurrences;
+  if (!Number.isSafeInteger(occurrences))
+    throw new RangeError("Semantic unknown omission count overflow");
+  state.unknownOmissions.set(key, { ...omission, occurrences });
+};
+
+/** Admit unknown provenance only while its independent retained capacity allows it. */
 export const addSemanticGraphUnknown = (
   state: SemanticGraphProjectionState,
-  unknown: JavaScriptSemanticGraphUnknown,
+  input: Omit<
+    z.input<typeof javaScriptSemanticUnknownInputSchema>,
+    "relation_kinds" | "candidate_node_ids"
+  > & {
+    readonly relation_kinds: readonly JavaScriptSemanticGraphRelation["relation"][];
+    readonly candidate_node_ids: readonly string[];
+  },
 ): void => {
   const budget = state.fileBudget;
+  if (
+    state.unknownCapacity !== null &&
+    state.unknowns.size + (budget?.deferredUnknowns.size ?? 0) >=
+      state.unknownCapacity
+  ) {
+    recordSemanticUnknownOmission(state, {
+      family: input.family,
+      reason: input.reason,
+      occurrences: 1,
+    });
+    budget?.omitUnknown(input.family, input.reason);
+    return;
+  }
+  const unknown = createJavaScriptSemanticGraphUnknown(
+    input,
+    state.evidenceContexts,
+  );
   if (
     state.unknowns.has(unknown.unknown_id) ||
     budget?.deferredUnknowns.has(unknown.unknown_id)
@@ -452,19 +498,41 @@ export const finishSemanticFileBudget = (
       retainedFingerprints.push(fingerprint);
   }
   for (const unknown of budget.deferredUnknowns.values()) {
-    if (
-      admitSemanticFact(
-        state,
-        budget,
-        [
-          ...(unknown.node_id === null ? [] : [unknown.node_id]),
-          ...unknown.candidate_node_ids,
-        ],
-        unknown,
-      )
-    ) {
+    let retained = unknown;
+    let admitted = admitSemanticFact(
+      state,
+      budget,
+      [
+        ...(unknown.node_id === null ? [] : [unknown.node_id]),
+        ...unknown.candidate_node_ids,
+      ],
+      unknown,
+    );
+    if (!admitted && budget.nodeLimitReached && !budget.closed) {
+      // Preserve a frontier even when its referenced node could not be kept.
+      // Its source evidence remains intact; unavailable links must not point
+      // at discarded graph identities.
+      const { unknown_id: _id, evidence, ...fields } = unknown;
+      retained = createJavaScriptSemanticGraphUnknown(
+        {
+          ...fields,
+          node_id:
+            unknown.node_id !== null && state.nodes.has(unknown.node_id)
+              ? unknown.node_id
+              : null,
+          candidate_node_ids: unknown.candidate_node_ids.filter((id) =>
+            state.nodes.has(id),
+          ),
+          evidence: state.evidenceContexts.resolve(evidence),
+        },
+        state.evidenceContexts,
+      );
+      budget.releasePending(unknown.unknown_id);
+      admitted = admitSemanticFact(state, budget, [], retained);
+    }
+    if (admitted && !state.unknowns.has(retained.unknown_id)) {
       budget.countUnknown(unknown, true);
-      state.unknowns.set(unknown.unknown_id, unknown);
+      state.unknowns.set(retained.unknown_id, retained);
     }
     budget.releasePending(unknown.unknown_id);
   }
@@ -490,7 +558,7 @@ export const finishSemanticFileBudget = (
     fingerprints: retainedFingerprints,
     coverage: {
       status: truncated ? "truncated" : "complete",
-      graph_byte_budget: truncated ? budget.limit : null,
+      graph_byte_budget: budget.byteLimitReached ? budget.limit : null,
       retained_graph_bytes: budget.used,
       omitted_nodes: budget.incomplete ? null : budget.omittedNodes,
       omitted_relations:
@@ -586,7 +654,5 @@ const applicationLocationKey = (
   [
     artifactSha256,
     path,
-    range === null
-      ? "artifact-path"
-      : `${range.start.line}:${range.start.column}-${range.end.line}:${range.end.column}`,
+    range === null ? "artifact-path" : javascriptSourceRangeKey(range),
   ].join("\u0000");

@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { normalizeWorkflowRun } from "./workflow-run.mjs";
 
 const ARTIFACT_NAME = "ci-full-qualification-v1";
 const MAX_AGE_MS = 24 * 60 * 60 * 1000;
@@ -119,8 +120,8 @@ function admit() {
     // Artifact metadata narrows the search before run lookups. Never scan an
     // unbounded history or treat a missing receipt as a successful qualification.
     for (const artifact of candidates.slice(0, 3)) {
-      const run = api(
-        `repos/${repository}/actions/runs/${artifact.workflow_run.id}`,
+      const run = normalizeWorkflowRun(
+        api(`repos/${repository}/actions/runs/${artifact.workflow_run.id}`),
       );
       // An old run can upload a new artifact when only its gate is rerun.
       // Bound the original run age as well so retries cannot renew stale proof.
@@ -133,7 +134,7 @@ function admit() {
         run.id === artifact.workflow_run.id &&
         run.status === "completed" &&
         run.conclusion === "success" &&
-        run.path === ".github/workflows/ci.yml" &&
+        run.workflowPath?.file === ".github/workflows/ci.yml" &&
         ["schedule", "workflow_dispatch"].includes(run.event) &&
         run.head_sha === head &&
         run.head_branch === branch &&

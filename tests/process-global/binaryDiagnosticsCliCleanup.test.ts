@@ -16,9 +16,14 @@ afterEach(() => {
   process.exitCode = exitCode;
 });
 
-it.each(["layout", "recorded"] as const)(
-  "projects the final owned outcome through the public CLI: %s",
-  async (scenario) => {
+it.each(
+  (["layout", "recorded"] as const).flatMap((scenario) => [
+    { scenario, recovered: false },
+    { scenario, recovered: true },
+  ]),
+)(
+  "projects the final owned outcome through the public CLI: $scenario recovered=$recovered",
+  async ({ scenario, recovered }) => {
     const primary = new AnalysisOutputError(
       "inspect_binary_layout",
       "fixture decoder output overflow",
@@ -35,15 +40,13 @@ it.each(["layout", "recorded"] as const)(
       ["owned-process", "/retained/runtime"],
       { reason: "fixture process inspection still denied" },
     );
-    const inspectAndClose = vi.fn(async () =>
-      err(
-        analysisErrorWithCleanupFailure(
-          primary,
-          cleanup,
-          "inspect_binary_layout",
-        ),
-      ),
-    );
+    const composed = analysisErrorWithCleanupFailure(
+      primary,
+      cleanup,
+      "inspect_binary_layout",
+    ).bindCleanupDependencies([primary, cleanup]);
+    if (recovered) cleanup.resolveCleanup();
+    const inspectAndClose = vi.fn(async () => err(composed));
     const identity = {
       id: "fixture-decoder",
       name: "Fixture decoder",
@@ -90,21 +93,29 @@ it.each(["layout", "recorded"] as const)(
     );
     const output: unknown = JSON.parse(stdout);
     expect(output).toMatchObject({
-      code: "cleanup_incomplete",
+      code: recovered ? "unreadable_output" : "cleanup_incomplete",
       details: {
-        cleanup: "incomplete",
-        resources: ["owned-process", "/retained/runtime"],
+        ...(recovered
+          ? {}
+          : {
+              cleanup: "incomplete",
+              resources: ["owned-process", "/retained/runtime"],
+            }),
         captured_output: {
           stdout: "partial original output",
           stderr: "warning",
           truncated: true,
         },
-        diagnostics: {
+        [recovered ? "cleanup_history" : "diagnostics"]: {
           primary_error: { code: "unreadable_output" },
           cleanup_error: { code: "cleanup_incomplete" },
         },
       },
     });
+    if (recovered) {
+      expect(output).not.toHaveProperty("details.cleanup");
+      expect(output).not.toHaveProperty("details.resources");
+    }
     expect(inspectAndClose).toHaveBeenCalledOnce();
     expect(process.exitCode).toBe(1);
   },

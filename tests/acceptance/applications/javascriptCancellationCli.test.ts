@@ -1,42 +1,35 @@
-import { execFile, spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { expect, it, onTestFinished } from "vitest";
+import { expect } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { processTest } from "../../support/process/processFixture.js";
 
-it("returns a nonzero exit for a streamed JSON analysis failure", async () => {
-  const root = await createTestTempDirectory("rea-cli-js-missing-");
-  const result = await new Promise<{ code: number | string; stdout: string }>(
-    (resolve, reject) => {
-      execFile(
-        process.execPath,
-        [
-          "scripts/rea.mjs",
-          "analyze-javascript-application",
-          join(root, "missing"),
-          "--json",
-        ],
-        (error, stdout) => {
-          if (error !== null && error.code === undefined) {
-            reject(error);
-            return;
-          }
-          resolve({ code: error?.code ?? 0, stdout });
-        },
-      );
-    },
-  );
-  expect(result.code).toBe(1);
-  expect(JSON.parse(result.stdout)).toMatchObject({
-    code: "invalid_request",
-    details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
-  });
-});
+processTest(
+  "returns a nonzero exit for a streamed JSON analysis failure",
+  async ({ processes }) => {
+    const root = await createTestTempDirectory("rea-cli-js-missing-");
+    const result = await processes.run(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "analyze-javascript-application",
+        join(root, "missing"),
+        "--json",
+      ],
+      { timeoutMs: 20_000 },
+    );
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [{ path: ["input_path"], reason: "invalid_value" }] },
+    });
+  },
+);
 
 // `analyze` routes a JavaScript directory to the same workflow and must keep
 // its typed cancellation contract.
-it.skipIf(process.platform === "win32").each([
+processTest.skipIf(process.platform === "win32").for([
   {
     command: "analyze-javascript-application",
     phase: "analyze_javascript_application",
@@ -58,21 +51,44 @@ it.skipIf(process.platform === "win32").each([
     parsedFiles: 1,
   },
 ])(
-  "returns typed cancellation and exit 130 after SIGINT through $command during $phase",
-  async ({ command, phase, parsedFiles }) => {
+  "returns typed cancellation and exit 130 through $command during $phase",
+  async ({ command, phase, parsedFiles }, { processes }) => {
     const root = await createTestTempDirectory("rea-cli-js-cancellation-");
     await writeFile(join(root, "main.js"), "export const observed = 1;\n");
-    const child = spawn(
-      process.execPath,
-      ["scripts/rea.mjs", command, root, "--json"],
-      {
-        stdio: ["ignore", "pipe", "pipe"],
-      },
-    );
-    onTestFinished(() => {
-      if (child.exitCode === null && child.signalCode === null)
-        child.kill("SIGTERM");
-    });
+    const nodeArguments: string[] = [];
+    if (parsedFiles !== null) {
+      // A tiny graph/hash phase may finish before the parent receives stderr.
+      // Invoke the real signal handler synchronously in the owned CLI child at
+      // that progress boundary; the two early-phase cases still use OS SIGINT.
+      const controls = await createTestTempDirectory("rea-cli-cancel-control-");
+      const preload = join(controls, "cancel-at-phase.mjs");
+      await writeFile(
+        preload,
+        `
+        const write = process.stderr.write.bind(process.stderr);
+        let requested = false;
+        process.stderr.write = function(chunk, ...args) {
+          const written = write(chunk, ...args);
+          let update;
+          try { update = JSON.parse(String(chunk)); } catch {}
+          if (!requested && update?.rea_progress?.phase === ${JSON.stringify(phase)}) {
+            requested = true;
+            process.emit("SIGINT");
+          }
+          return written;
+        };
+      `,
+      );
+      nodeArguments.push("--import", preload);
+    }
+    const child = processes.spawn(process.execPath, [
+      ...nodeArguments,
+      "scripts/rea.mjs",
+      command,
+      root,
+      "--json",
+    ]);
+    child.stdin.end();
     let stdout = "",
       partial = "",
       requested = false;
@@ -95,7 +111,7 @@ it.skipIf(process.platform === "win32").each([
           !requested
         ) {
           requested = true;
-          child.kill("SIGINT");
+          if (parsedFiles === null) child.kill("SIGINT");
         }
       }
     });

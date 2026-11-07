@@ -15,16 +15,16 @@ export const keyedArchivePrototypeKeyFixture = async () => {
   <key>$archiver</key><string>NSKeyedArchiver</string>
   <key>$version</key><integer>100000</integer>
   <key>$objects</key><array><string>$null</string><dict>
-    <key >__proto__</key ><string>omitted outer value</string>
+    <key >__proto__</key ><string>recorded outer value</string>
     <key>kept</key><string>a&#13;b&#x85;c&#x2028;d</string>
     <key>&#95;&#95;rea_prototype_key__</key><string>ordinary key</string>
     <key>nested</key><dict>
       <key><![CDATA[__proto__]]><!-- trailing comment --></key>
-      <string>omitted nested value</string>
+      <string>recorded nested value</string>
       <key>value</key><integer>7</integer>
     </dict>
   </dict></array>
-  <key>$top</key><dict><key>root</key><dict>
+  <key>$top</key><dict><key>__proto__</key><dict><key>CF$UID</key><integer>1</integer></dict><key>root</key><dict>
     <key>CF$UID</key><integer>1</integer>
   </dict></dict>
 </dict></plist>`);
@@ -32,27 +32,38 @@ export const keyedArchivePrototypeKeyFixture = async () => {
   return { path, digest: createHash("sha256").update(bytes).digest("hex") };
 };
 
-/** Require original source identity, ordinary values and the exact omission count. */
+/** Require original source identity and every decoded dictionary member. */
 export const expectKeyedArchivePrototypeKeys = (
   value: unknown,
   digest: string,
 ) => {
   const result = keyedArchiveResultSchema.parse(value);
   expect(result.archive_sha256).toBe(digest);
-  expect(result.roots).toEqual({ root: { CF$UID: 1 } });
+  expect(result.roots).toEqual({
+    ["__proto__"]: { CF$UID: 1 },
+    root: { CF$UID: 1 },
+  });
+  expect(Object.hasOwn(result.roots, "__proto__")).toBe(true);
+  expect(result.references).toContainEqual(
+    expect.objectContaining({
+      source: null,
+      path: ["__proto__"],
+      target: 1,
+      status: "resolved",
+    }),
+  );
   expect(result.objects).toHaveLength(2);
   expect(result.objects[1]).toMatchObject({
     id: 1,
     kind: "dictionary",
     value: {
+      ["__proto__"]: "recorded outer value",
       kept: "a\rb\u0085c\u2028d",
       __rea_prototype_key__: "ordinary key",
-      nested: { value: 7 },
+      nested: { ["__proto__"]: "recorded nested value", value: 7 },
     },
   });
-  expect(result.limitations).toContain(
-    "2 dictionary entries keyed __proto__ were omitted because REA results cannot represent that key.",
-  );
-  expect(JSON.stringify(result)).not.toContain("omitted outer value");
-  expect(JSON.stringify(result)).not.toContain("omitted nested value");
+  expect(
+    result.limitations.some((value) => value.includes("keyed __proto__")),
+  ).toBe(false);
 };

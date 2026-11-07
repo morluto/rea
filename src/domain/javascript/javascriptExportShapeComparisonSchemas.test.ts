@@ -1,9 +1,30 @@
 import { expect, it } from "vitest";
 
 import {
+  compareJavaScriptExportShapesInputSchema,
   javaScriptExportShapeComparisonChangeSchema,
   projectedExportReturnShapesSchema,
 } from "./javascriptExportShapeComparisonSchemas.js";
+
+it("accepts exact empty export names in selectors and projections", () => {
+  expect(
+    compareJavaScriptExportShapesInputSchema.shape.left_export_name.safeParse(
+      "",
+    ).success,
+  ).toBe(true);
+  expect(
+    projectedExportReturnShapesSchema.safeParse({
+      ...projectionWithField({
+        path: "/kind",
+        presence: "present",
+        state: "literal",
+        value: "ok",
+        reason: null,
+      }),
+      exported_name: "",
+    }).success,
+  ).toBe(true);
+});
 
 const projectionWithField = (field: unknown) => ({
   semantic_role: "export-return-shapes",

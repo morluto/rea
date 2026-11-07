@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { createIdaMcpConnection } from "../../src/ida/IdaMcpConnection.js";
 
+const launcherEnvironment = (): Readonly<Record<string, string>> => {
+  if (process.platform !== "win32") return {};
+  const systemRoot = process.env.SYSTEMROOT;
+  if (systemRoot === undefined || systemRoot.length === 0)
+    throw new Error("The Windows Node fixture requires its actual SYSTEMROOT.");
+  return { SYSTEMROOT: systemRoot };
+};
+
 describe("IDA startup diagnostics", () => {
   it("preserves the failing launcher's stderr instead of reporting only a closed transport", async () => {
     const connection = createIdaMcpConnection(
@@ -10,7 +18,7 @@ describe("IDA startup diagnostics", () => {
           "-e",
           'process.stderr.write("FATAL: IDA runtime initialization failed\\n", () => process.exit(2));',
         ],
-        env: {},
+        env: launcherEnvironment(),
         mode: "headless",
         timeoutMs: 1000,
       },
@@ -37,7 +45,7 @@ describe("IDA startup diagnostics", () => {
           "-e",
           'process.stderr.write("x".repeat(20000) + "FATAL-END", () => process.exit(2));',
         ],
-        env: {},
+        env: launcherEnvironment(),
         mode: "headless",
         timeoutMs: 1000,
       },
@@ -66,7 +74,7 @@ it("drops a leading partial UTF-8 character from the bounded stderr tail", async
         "-e",
         'process.stderr.write("€".repeat(6000), () => process.exit(2));',
       ],
-      env: {},
+      env: launcherEnvironment(),
       mode: "headless",
       timeoutMs: 1000,
     },
@@ -93,7 +101,7 @@ it("retains an in-budget undecodable leading byte without claiming tail truncati
         "-e",
         "process.stderr.write(Buffer.from([0x80, 0x61, 0x62]), () => process.exit(2));",
       ],
-      env: {},
+      env: launcherEnvironment(),
       mode: "headless",
       timeoutMs: 1000,
     },

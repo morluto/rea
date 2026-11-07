@@ -65,11 +65,19 @@ describe("headless IDA timeout through the one-shot CLI", () => {
       expect(result.json).toMatchObject({
         code: "cleanup_incomplete",
         details: {
-          provider_id: "ida",
           cleanup: "incomplete",
+          execution_failure: "provider_timeout",
+          operation: "procedure_pseudo_code",
+          diagnostics: {
+            startup_operation: "idb_open",
+          },
+          timeout_ms: 500,
           resources: [expect.stringContaining(workspaceRoot)],
           cleanup_error: {
+            code: "cleanup_incomplete",
             details: {
+              provider_id: "ida",
+              operation: "close",
               diagnostics: {
                 upstream_sessions: {
                   state: "unverified",
@@ -88,6 +96,8 @@ describe("headless IDA timeout through the one-shot CLI", () => {
           },
         },
       });
+      // The one-shot CLI exits after its close, so no close_binary retry exists.
+      expect(JSON.stringify(result.json)).not.toContain("retry_cleanup");
     },
   );
 });

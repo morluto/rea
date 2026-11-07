@@ -15,11 +15,11 @@ import {
 } from "../../../src/domain/browserCaptureComparison.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
-import { ToolResultDelivery } from "../../../src/server/toolResult.js";
+import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 
-const delivery = new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
+const delivery = createToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE);
 
 const contract = toolContract("compare_web_captures");
 
@@ -55,8 +55,44 @@ async function capturePassivePair(
   };
 }
 
+function invalidComparisonInputs(
+  passive: Awaited<ReturnType<typeof capturePassivePair>>,
+  scenario: (typeof contract.examples)[number]["input"],
+) {
+  const scenarioCapture = browserScenarioCaptureSchema.parse(
+    scenario.before_scenario,
+  );
+  const runtimeOnlyInvalid = [
+    { before: { inspection: {} }, after: passive.after },
+    { before: passive.before, after: { ...passive.after, webmcp: {} } },
+    { before_scenario: {}, after_scenario: {} },
+    { ...scenario, before_scenario: { ...scenarioCapture, steps: [{}] } },
+  ];
+  const advertisedInvalid = [
+    {},
+    { before: passive.before },
+    { before: { inspection: "{}" }, after: passive.after },
+    {
+      before: passive.before,
+      after: { ...passive.after, webmcp: "{}" },
+    },
+    { before_scenario: "{}", after_scenario: scenarioCapture },
+    { before_scenario: scenario.before_scenario },
+    { ...passive, unexpected: true },
+    {
+      ...scenario,
+      normalization: {
+        rules: [
+          { rule_id: "bad", artifacts: [], match: "x", replacement: "y" },
+        ],
+      },
+    },
+  ];
+  return { advertisedInvalid, runtimeOnlyInvalid };
+}
+
 describe("browser comparison input boundary", () => {
-  it("advertises complete producer captures and agrees with SDK validation on both comparison families", async () => {
+  it("advertises producer captures and agrees with SDK validation on both comparison families", async () => {
     const browser = await startFakeCdpBrowser({ sensitiveShapes: true });
     const server = new McpServer({ name: "capture-input", version: "0" });
     const client = new Client({ name: "capture-input", version: "0" });
@@ -85,6 +121,10 @@ describe("browser comparison input boundary", () => {
         ({ name }) => name === contract.name,
       );
       if (advertised === undefined) throw new Error("Missing comparison tool");
+      // Claude Desktop rejects tools above its 64 KiB per-input-schema limit.
+      expect(
+        Buffer.byteLength(JSON.stringify(advertised.inputSchema)),
+      ).toBeLessThanOrEqual(65_536);
       expect(advertised.inputSchema.type).toBe("object");
       // Anthropic tool input schemas reject root combinators.
       expect(advertised.inputSchema).not.toHaveProperty("anyOf");
@@ -92,24 +132,31 @@ describe("browser comparison input boundary", () => {
       expect(ajv.validateSchema(advertised.inputSchema)).toBe(true);
       const validate = ajv.compile(advertised.inputSchema);
       const passive = await capturePassivePair(provider, browser);
+      const defaultFilledPassive = structuredClone(passive);
+      const fillDefaults = new Ajv2020({
+        strict: false,
+        validateFormats: false,
+        useDefaults: true,
+      }).compile(advertised.inputSchema);
+      expect(fillDefaults(defaultFilledPassive)).toBe(true);
+      expect(defaultFilledPassive).not.toHaveProperty("normalization");
       const scenario = contract.examples[0]?.input;
       if (scenario === undefined) throw new Error("Missing scenario example");
       const withoutNormalization = Object.fromEntries(
         Object.entries(scenario).filter(([key]) => key !== "normalization"),
       );
-      const scenarioCapture = browserScenarioCaptureSchema.parse(
-        scenario.before_scenario,
+      const invalid = invalidComparisonInputs(passive, scenario);
+      // Strict clients reject combinators and dependentRequired, so the
+      // projection states the groups in its description and leaves group
+      // completeness and exclusion to the canonical runtime parser.
+      expect(advertised.inputSchema.description).toContain(
+        "before + after; before_scenario + after_scenario + [normalization]",
       );
-      const invalid = [
-        {},
-        { before: passive.before },
-        { before: { inspection: {} }, after: passive.after },
-        {
-          before: passive.before,
-          after: { ...passive.after, webmcp: {} },
-        },
-        { before_scenario: {}, after_scenario: {} },
-        { before_scenario: scenario.before_scenario },
+      const runtimeOnlyInvalid = [
+        // Complete observations are copied from producer results, not authored
+        // from their declaration. Malformed payloads still fail before effects.
+        ...invalid.runtimeOnlyInvalid,
+        { ...passive, ...scenario },
         { ...passive, normalization: { rules: [] } },
         {
           before_scenario: scenario.before_scenario,
@@ -119,34 +166,21 @@ describe("browser comparison input boundary", () => {
           after_scenario: scenario.after_scenario,
           normalization: { rules: [] },
         },
-        { ...passive, unexpected: true },
-        {
-          ...scenario,
-          before_scenario: { ...scenarioCapture, steps: [{}] },
-        },
-        {
-          ...scenario,
-          normalization: {
-            rules: [
-              { rule_id: "bad", artifacts: [], match: "x", replacement: "y" },
-            ],
-          },
-        },
       ];
-      // The projection leaves group exclusion to the canonical runtime parser.
-      const mixedGroups = [{ ...passive, ...scenario }];
       for (const { input, advertisedValid, runtimeValid } of [
-        ...[passive, scenario, withoutNormalization].map((input) => ({
-          input,
-          advertisedValid: true,
-          runtimeValid: true,
-        })),
-        ...invalid.map((input) => ({
+        ...[passive, defaultFilledPassive, scenario, withoutNormalization].map(
+          (input) => ({
+            input,
+            advertisedValid: true,
+            runtimeValid: true,
+          }),
+        ),
+        ...invalid.advertisedInvalid.map((input) => ({
           input,
           advertisedValid: false,
           runtimeValid: false,
         })),
-        ...mixedGroups.map((input) => ({
+        ...runtimeOnlyInvalid.map((input) => ({
           input,
           advertisedValid: true,
           runtimeValid: false,
@@ -165,6 +199,10 @@ describe("browser comparison input boundary", () => {
         });
         expect(calls - beforeCalls).toBe(runtimeValid ? 1 : 0);
         expect(result.isError === true).toBe(!runtimeValid);
+        if (input === scenario)
+          expect(result.structuredContent).toMatchObject({
+            normalized_result: { overall_status: "unknown" },
+          });
         if (runtimeValid)
           expect(result.structuredContent).toMatchObject({
             operation: contract.name,
@@ -187,9 +225,11 @@ describe("browser comparison input boundary", () => {
       const parsedScenario =
         browserCaptureComparisonInputSchema.parse(withoutNormalization);
       expect(parsedScenario).toHaveProperty("normalization", { rules: [] });
+      // The public example explicitly marks events missing and equality
+      // ineligible; normalization defaults cannot restore uncaptured evidence.
       expect(compareBrowserCaptures(parsedScenario)).toMatchObject({
         comparison_kind: "browser_scenario",
-        overall_status: "unchanged",
+        overall_status: "unknown",
       });
     } finally {
       await Promise.allSettled([

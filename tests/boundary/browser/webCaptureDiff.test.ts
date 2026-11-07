@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import type { WebPageInspection } from "../../../src/domain/browserObservationSchemas.js";
+import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { compareWebCaptures } from "../../../src/domain/webCaptureDiff.js";
 import {
   compareWebCapturesInputSchema,
@@ -202,6 +203,64 @@ afterEach(async () => {
 });
 
 describe("web capture diff", () => {
+  it.each([
+    { missing: "before", changed: false, expected: "unknown" },
+    { missing: "after", changed: false, expected: "unknown" },
+    { missing: "before", changed: true, expected: "changed" },
+    { missing: "after", changed: true, expected: "changed" },
+    { missing: "neither", changed: false, expected: "changed" },
+  ] as const)(
+    "preserves consequential uncertainty: $missing, other change $changed",
+    async ({ missing, changed, expected }) => {
+      const browser = await startFakeCdpBrowser({ webMcpTools: true });
+      browsers.push(browser);
+      const provider = new CdpBrowserProvider();
+      const request = {
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      };
+      const inspection = await provider.inspectPage(
+        inspectWebPageInputSchema.parse(request),
+      );
+      const discovery = await provider.discoverWebMcpTools(
+        discoverWebMcpToolsInputSchema.parse(request),
+      );
+      if (!inspection.ok) throw inspection.error;
+      if (!discovery.ok) throw discovery.error;
+      const before = structuredClone(discovery.value);
+      const after = structuredClone(discovery.value);
+      markSectionsComplete(before, ["webmcp_tools"]);
+      markSectionsComplete(after, ["webmcp_tools"]);
+      const left = before.tools.items[0];
+      const right = after.tools.items[0];
+      if (left === undefined || right === undefined)
+        throw new Error("missing WebMCP registration fixture");
+      left.annotations.consequential = true;
+      right.annotations.consequential = false;
+      if (missing === "before") delete left.annotations.consequential;
+      if (missing === "after") delete right.annotations.consequential;
+      if (changed) right.description += " changed";
+      const result = compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: inspection.value, webmcp: before },
+          after: { inspection: inspection.value, webmcp: after },
+        }),
+      );
+      expect(result.dimensions.webmcp).toMatchObject({
+        status: expected,
+        total_changes: expected === "changed" ? 1 : 0,
+      });
+      if (expected === "changed")
+        expect(result.dimensions.webmcp.changes[0]).toMatchObject({
+          change: "modified",
+        });
+    },
+  );
+});
+
+describe("web capture dimension uncertainty", () => {
   it("reports stable observed changes while preserving unknown dimensions", async () => {
     const browser = await startFakeCdpBrowser();
     browsers.push(browser);
@@ -249,8 +308,9 @@ describe("web capture diff", () => {
       changes: [expect.objectContaining({ change: "removed" })],
     });
     expect(result.dimensions.network).toMatchObject({
-      status: "changed",
-      changes: [expect.objectContaining({ change: "modified" })],
+      status: "unknown",
+      total_changes: 0,
+      changes: [],
     });
     expect(result.dimensions.webmcp).toMatchObject({
       status: "unknown",
@@ -625,6 +685,44 @@ describe("web capture WebSocket payload byte coverage", () => {
 });
 
 describe("web capture diff", () => {
+  it("reports request membership changes when selected body shapes are unavailable", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const before = structuredClone(captured.value);
+    const after = structuredClone(captured.value);
+    const original = before.network.requests[0];
+    if (original === undefined) throw new Error("Missing request fixture");
+    after.network.requests.push({
+      ...structuredClone(original),
+      request_id: `${original.request_id}-added`,
+      url: `${browser.allowedOrigin}/added`,
+    });
+    for (const inspection of [before, after]) {
+      markSectionsComplete(inspection, [
+        "network_requests",
+        "websocket_connections",
+        "websocket_frames",
+      ]);
+      for (const request of inspection.network.requests)
+        request.body_shapes.status = "unavailable";
+    }
+
+    expect(compareNetwork(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+      changes: [expect.objectContaining({ change: "added" })],
+    });
+  });
+
   it.each(["status", "mime_type"] as const)(
     "keeps an independently unavailable HTTP %s unknown",
     async (field) => {
@@ -772,9 +870,416 @@ describe("web capture redirect comparison", () => {
       changes: [expect.objectContaining({ change: "modified" })],
     });
   });
+
+  it.each([
+    ["status", 302],
+    ["mime_type", "text/plain"],
+    ["encoded_data_length", 12],
+  ] as const)(
+    "keeps unavailable redirect %s evidence unknown without suppressing known changes",
+    async (field, knownValue) => {
+      const browser = await startFakeCdpBrowser();
+      browsers.push(browser);
+      const captured = await new CdpBrowserProvider().inspectPage(
+        inspectWebPageInputSchema.parse({
+          cdp_endpoint: browser.endpoint,
+          allowed_origins: [browser.allowedOrigin],
+          target_id: "allowed-page",
+          observation_ms: 0,
+        }),
+      );
+      if (!captured.ok) throw captured.error;
+      const before = structuredClone(captured.value);
+      const beforeRequest = before.network.requests[0];
+      if (beforeRequest === undefined)
+        throw new Error("Missing network request");
+      beforeRequest.redirects = [
+        {
+          url: `${browser.allowedOrigin}/prior`,
+          response_url: `${browser.allowedOrigin}/prior`,
+          method: "GET",
+          resource_type: "Fetch",
+          status: 302,
+          mime_type: "text/plain",
+          encoded_data_length: 12,
+          request_timestamp: 1,
+          redirect_event_timestamp: 2,
+        },
+      ];
+      markSectionsComplete(before, [
+        "network_requests",
+        "websocket_connections",
+        "websocket_frames",
+      ]);
+
+      const compare = (left: typeof before, right: typeof before) =>
+        compareWebCaptures(
+          compareWebCapturesInputSchema.parse({
+            before: { inspection: left },
+            after: { inspection: right },
+          }),
+        ).dimensions.network;
+      for (const missingOnRight of [false, true]) {
+        const known = structuredClone(before);
+        const missing = structuredClone(before);
+        const knownHop = known.network.requests[0]?.redirects?.[0];
+        const missingHop = missing.network.requests[0]?.redirects?.[0];
+        if (knownHop === undefined || missingHop === undefined)
+          throw new Error("Missing redirect fixture");
+        Reflect.set(knownHop, field, knownValue);
+        Reflect.set(missingHop, field, null);
+        const result = missingOnRight
+          ? compare(known, missing)
+          : compare(missing, known);
+        expect(result).toMatchObject({
+          status: "unknown",
+          total_changes: 0,
+          reason: expect.stringContaining("redirect"),
+        });
+        expect(compare(missing, missing)).toMatchObject({
+          status: "unknown",
+          total_changes: 0,
+          reason: expect.stringContaining("redirect"),
+        });
+      }
+
+      const changed = structuredClone(before);
+      const changedHop = changed.network.requests[0]?.redirects?.[0];
+      if (changedHop === undefined) throw new Error("Missing redirect fixture");
+      changedHop.status = 307;
+      expect(compare(before, changed)).toMatchObject({
+        status: "changed",
+        changes: [expect.objectContaining({ change: "modified" })],
+      });
+    },
+  );
 });
 
 describe("web capture diff incomplete inventories", () => {
+  it("compares observed script facts without treating excluded map declarations as absent", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const known = structuredClone(captured.value);
+    markSectionsComplete(known, ["scripts", "source_maps"]);
+    known.completeness.excluded = known.completeness.excluded.filter(
+      (item) => item.section !== "source_maps",
+    );
+    const script = known.scripts.items[0];
+    if (script === undefined) throw new Error("Missing captured script");
+    script.source_map_url = "https://cdn.example.test/app.js.map";
+    script.cdp_hash = "a".repeat(64);
+    script.length = 10;
+    script.is_module = false;
+    script.language = "JavaScript";
+    const excluded = structuredClone(known);
+    excluded.scripts.items[0]!.source_map_url = null;
+    excluded.completeness.policy_filtered_sections.push("source_maps");
+    excluded.completeness.excluded.push({
+      section: "source_maps",
+      reason: "disallowed_origin",
+      count: 1,
+    });
+    const absent = structuredClone(known);
+    absent.scripts.items[0]!.source_map_url = null;
+    const changed = structuredClone(excluded);
+    changed.scripts.items[0]!.cdp_hash = "b".repeat(64);
+    const different = structuredClone(known);
+    different.scripts.items[0]!.source_map_url =
+      "https://cdn.example.test/other.map";
+    const unavailableBody = structuredClone(known);
+    unavailableBody.completeness.unavailable_sections.push("source_maps");
+    const compare = (before: typeof known, after: typeof known) =>
+      compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: before },
+          after: { inspection: after },
+        }),
+      ).dimensions.scripts;
+    for (const [left, right] of [
+      [known, excluded],
+      [excluded, known],
+      [excluded, excluded],
+      [absent, excluded],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+    const repeated = structuredClone(excluded);
+    repeated.scripts.items.push(structuredClone(known.scripts.items[0]!));
+    const completeRepeated = structuredClone(different);
+    completeRepeated.scripts.items.push(
+      structuredClone(different.scripts.items[0]!),
+    );
+    for (const [left, right] of [
+      [repeated, completeRepeated],
+      [completeRepeated, repeated],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
+    const linkedBefore = structuredClone(repeated);
+    linkedBefore.scripts.items[0]!.cdp_hash = "b".repeat(64);
+    const linkedAfter = structuredClone(linkedBefore);
+    linkedAfter.scripts.items[1]!.source_map_url =
+      "https://cdn.example.test/new.map";
+    for (const [left, right] of [
+      [linkedBefore, linkedAfter],
+      [linkedAfter, linkedBefore],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
+    const ambiguous = structuredClone(linkedAfter);
+    ambiguous.scripts.items[0]!.cdp_hash = "a".repeat(64);
+    const ambiguousBefore = structuredClone(linkedBefore);
+    ambiguousBefore.scripts.items[0]!.cdp_hash = "a".repeat(64);
+    expect(compare(ambiguousBefore, ambiguous)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    const incompleteRepeated = structuredClone(repeated);
+    incompleteRepeated.completeness.truncated_sections.push("scripts");
+    expect(compare(incompleteRepeated, completeRepeated)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    const possibleMatch = structuredClone(completeRepeated);
+    possibleMatch.scripts.items[1]!.source_map_url = null;
+    possibleMatch.completeness.policy_filtered_sections.push("source_maps");
+    expect(compare(repeated, possibleMatch)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    for (const reason of [
+      "unsupported_url",
+      "invalid_protocol_value",
+      "resource_budget_exhausted",
+    ] as const) {
+      const omission = structuredClone(absent);
+      omission.completeness.excluded.push({
+        section: "source_maps",
+        reason,
+        count: 1,
+      });
+      expect(compare(known, omission)).toMatchObject({
+        status: "unknown",
+        total_changes: 0,
+      });
+    }
+    for (const [left, right] of [
+      [known, known],
+      [absent, absent],
+      [known, unavailableBody],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "unchanged",
+        total_changes: 0,
+      });
+    for (const [left, right] of [
+      [known, different],
+      [absent, known],
+      [excluded, changed],
+    ] as const)
+      expect(compare(left, right)).toMatchObject({
+        status: "changed",
+        total_changes: 1,
+      });
+  });
+});
+
+describe("web capture diff partial script metadata", () => {
+  it("proves a map change that a different hash or declaration cannot explain", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const known = structuredClone(captured.value);
+    markSectionsComplete(known, ["scripts", "source_maps"]);
+    known.completeness.excluded = known.completeness.excluded.filter(
+      (item) => item.section !== "source_maps",
+    );
+    const script = known.scripts.items[0];
+    if (script === undefined) throw new Error("Missing captured script");
+    script.source_map_url = "https://cdn.example.test/app.js.map";
+    script.cdp_hash = "a".repeat(64);
+    script.length = 10;
+    script.is_module = false;
+    script.language = "JavaScript";
+    const unknownDeclaration = structuredClone(script);
+    unknownDeclaration.cdp_hash = "b".repeat(64);
+    unknownDeclaration.source_map_url = null;
+    const unknownHash = structuredClone(script);
+    unknownHash.cdp_hash = null;
+    unknownHash.source_map_url = "https://cdn.example.test/third.js.map";
+    const before = structuredClone(known);
+    before.scripts.items.push(unknownDeclaration, unknownHash);
+    before.completeness.policy_filtered_sections.push("source_maps");
+    const after = structuredClone(before);
+    after.scripts.items[0]!.source_map_url =
+      "https://cdn.example.test/new.js.map";
+    const compare = (left: typeof known, right: typeof known) =>
+      compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: left },
+          after: { inspection: right },
+        }),
+      ).dimensions.scripts;
+    expect(compare(before, structuredClone(before))).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    expect(compare(before, after)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+  });
+});
+
+describe("web capture diff repeated source-map declarations", () => {
+  it("keeps empty and absent declarations distinct during partial matching", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const template = captured.value.scripts.items[0];
+    if (template === undefined) throw new Error("Missing captured script");
+    const script = (hash: string, declaration: string | null) => ({
+      ...structuredClone(template),
+      cdp_hash: hash,
+      source_map_url: declaration,
+    });
+    const partial = structuredClone(captured.value);
+    const complete = structuredClone(captured.value);
+    for (const value of [partial, complete])
+      markSectionsComplete(value, ["scripts", "source_maps"]);
+    partial.completeness.policy_filtered_sections.push("source_maps");
+    partial.scripts.items = [
+      script("hash-a", ""),
+      script("hash-b", null),
+      script("hash-a", null),
+    ];
+    complete.scripts.items = [
+      script("hash-a", null),
+      script("hash-a", ""),
+      script("hash-b", "https://cdn.example.test/b.js.map"),
+    ];
+    for (const [before, after] of [
+      [partial, complete],
+      [complete, partial],
+    ] as const)
+      expect(
+        compareWebCaptures(
+          compareWebCapturesInputSchema.parse({
+            before: { inspection: before },
+            after: { inspection: after },
+          }),
+        ).dimensions.scripts,
+      ).toMatchObject({ status: "unknown", total_changes: 0 });
+  });
+
+  it("proves differences that declaration counts cannot explain", async () => {
+    const browser = await startFakeCdpBrowser();
+    browsers.push(browser);
+    const captured = await new CdpBrowserProvider().inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        allowed_origins: [browser.allowedOrigin],
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!captured.ok) throw captured.error;
+    const template = captured.value.scripts.items[0];
+    if (template === undefined) throw new Error("Missing captured script");
+    const copies = (count: number, sourceMapUrl: string | null) =>
+      Array.from({ length: count }, () => {
+        const script = structuredClone(template);
+        script.source_map_url = sourceMapUrl;
+        return script;
+      });
+    const inspection = (
+      items: typeof captured.value.scripts.items,
+      omitDeclarations: boolean,
+    ) => {
+      const value = structuredClone(captured.value);
+      markSectionsComplete(value, ["scripts", "source_maps"]);
+      value.scripts.items = items;
+      if (omitDeclarations)
+        value.completeness.policy_filtered_sections.push("source_maps");
+      return value;
+    };
+    const compare = (
+      left: typeof captured.value,
+      right: typeof captured.value,
+    ) =>
+      compareWebCaptures(
+        compareWebCapturesInputSchema.parse({
+          before: { inspection: left },
+          after: { inspection: right },
+        }),
+      ).dimensions.scripts;
+    const map = (name: string) => `https://cdn.example.test/${name}.js.map`;
+    const nineX = inspection(
+      [...copies(9, map("x")), ...copies(1, null)],
+      true,
+    );
+    const tenY = inspection(copies(10, map("y")), false);
+    const sevenA = inspection(
+      [...copies(7, map("a")), ...copies(1, map("b")), ...copies(1, null)],
+      true,
+    );
+    const twelveA = inspection(copies(12, map("a")), false);
+
+    expect(compare(nineX, structuredClone(nineX))).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+    expect(compare(nineX, tenY)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    expect(compare(sevenA, twelveA)).toMatchObject({
+      status: "changed",
+      total_changes: 1,
+    });
+    const repeated = inspection(
+      [...copies(2_000, map("a")), ...copies(1, null)],
+      true,
+    );
+    expect(compare(repeated, structuredClone(repeated))).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+  });
+});
+
+describe("web capture diff script inventory coverage", () => {
   it.each(["truncated_sections", "unavailable_sections"] as const)(
     "does not infer script additions or removals from %s",
     async (section) => {
@@ -826,7 +1331,7 @@ describe("web capture diff incomplete inventories", () => {
       if (script === undefined) throw new Error("Missing captured script");
       script.url = `${script.url}?revision=2`;
       expect(compare(complete, modified).changes).toEqual([
-        expect.objectContaining({ change: "modified" }),
+        expect.objectContaining({ change: "added" }),
       ]);
     },
   );
@@ -904,6 +1409,51 @@ describe("web capture diff semantics and fingerprints", () => {
       status: "changed",
       changes: [expect.objectContaining({ change: "added" })],
     });
+  });
+});
+
+it("keeps historical IndexedDB schema projections uncertain while retaining proven changes", async () => {
+  const browser = await startFakeCdpBrowser();
+  browsers.push(browser);
+  const current = await inspectStorage(browser, true);
+  const legacy = structuredClone(current);
+  const oldSchema = legacy.storage.content_fingerprints.find(
+    ({ scope }) => scope === "indexed_db_schema",
+  );
+  if (oldSchema === undefined)
+    throw new Error("Expected an IndexedDB schema fingerprint");
+  delete oldSchema.projection_version;
+  oldSchema.value_sha256 = "0".repeat(64);
+  for (const [before, after] of [
+    [legacy, current],
+    [current, legacy],
+  ] as const)
+    expect(compareStorage(before, after)).toMatchObject({
+      status: "unknown",
+      total_changes: 0,
+    });
+  expect(compareStorage(legacy, structuredClone(legacy))).toMatchObject({
+    status: "unknown",
+    total_changes: 0,
+  });
+  const changedLegacy = structuredClone(legacy);
+  const changedSchema = changedLegacy.storage.content_fingerprints.find(
+    ({ scope }) => scope === "indexed_db_schema",
+  );
+  if (changedSchema === undefined)
+    throw new Error("Expected an IndexedDB schema fingerprint");
+  changedSchema.value_sha256 = "1".repeat(64);
+  expect(compareStorage(legacy, changedLegacy)).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+    changes: [expect.objectContaining({ change: "modified" })],
+  });
+  const changedKey = structuredClone(current);
+  changedKey.storage.local_storage_keys.push("new-key");
+  expect(compareStorage(legacy, changedKey)).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+    changes: [expect.objectContaining({ change: "added" })],
   });
 });
 

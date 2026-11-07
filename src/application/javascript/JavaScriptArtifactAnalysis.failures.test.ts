@@ -21,7 +21,13 @@ it("summarizes repeated source failures while preserving each file's reason", as
     }),
   );
   const outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
-    { files, containers: [], text_bytes_read: 40, invalid_utf8_files: 0 },
+    {
+      files,
+      containers: [],
+      text_bytes_read: 40,
+      invalid_utf8_files: 0,
+      unavailable_relevant_files: [],
+    },
     {
       analyze: async (file) =>
         err({

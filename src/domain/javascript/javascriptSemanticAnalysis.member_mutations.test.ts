@@ -9,6 +9,67 @@ const resultValue = (body: string) =>
     "result",
   ).returnSites[0]?.value;
 
+it.each([
+  ["field = shared;", "declare field: { mode: string };", "new Derived()"],
+  [
+    "get field() { return shared; }",
+    "declare field: { mode: string };",
+    "new Derived()",
+  ],
+  [
+    "static field = shared;",
+    "declare static field: { mode: string };",
+    "Derived",
+  ],
+  [
+    "static get field() { return shared; }",
+    "declare static field: { mode: string };",
+    "Derived",
+  ],
+])(
+  "follows inherited references past erased class fields: %s",
+  (base, declaration, receiver) => {
+    expect(
+      resultValue(`
+    const shared = { mode: "initial" };
+    class Base { ${base} }
+    class Derived extends Base { ${declaration} }
+    ${receiver}.field.mode = "updated";
+    return shared.mode;
+  `)?.status,
+    ).toBe("unknown");
+  },
+);
+
+it.each(["field;", "field = { mode: 'other' };"])(
+  "preserves a real derived field's shadowing: %s",
+  (field) => {
+    expect(
+      resultValue(`
+      const shared = { mode: "initial" };
+      class Base { field = shared; }
+      class Derived extends Base { ${field} }
+      const instance = new Derived();
+      if (instance.field) instance.field.mode = "updated";
+      return shared.mode;
+    `),
+    ).toEqual({ status: "literal", value: "initial" });
+  },
+);
+
+it("follows inherited references past an abstract field declaration", () => {
+  expect(
+    resultValue(`
+    const shared = { mode: "initial" };
+    class Base { field = shared; }
+    abstract class Derived extends Base { abstract field: { mode: string }; }
+    const Constructor = Derived as unknown as new () => Base;
+    new Constructor().field.mode = "updated";
+    return shared.mode;
+  `)?.status,
+  ).toBe("unknown");
+});
+
 const mutations = [
   'const shared = { mode: "initial" }; const options = { [key]: shared }; options.foo.mode = "updated"; return shared.mode;',
   'const shared = { mode: "initial" }; const original = [shared]; const copy = [...original]; copy[0].mode = "updated"; return shared.mode;',
@@ -162,6 +223,32 @@ describe("JavaScript semantic values after explicit property mutations", () => {
       ),
     ).toEqual({ status: "literal", value: "initial" });
   });
+});
+
+it("invalidates a shared value reached through an object-literal prototype getter", () => {
+  const value = resultValue(`
+    const shared = { x: 1 };
+    const proto = { get v() { return shared; } };
+    const box = { __proto__: proto };
+    box.v.x = 2;
+    return shared.x;
+  `);
+  expect(
+    value?.status === "unknown" ||
+      (value?.status === "literal" && value.value === 2),
+  ).toBe(true);
+});
+
+it("does not follow an object-literal prototype getter past an own property", () => {
+  expect(
+    resultValue(`
+      const shared = { x: 1 };
+      const proto = { get v() { return shared; } };
+      const box = { __proto__: proto, v: { x: 3 } };
+      box.v.x = 2;
+      return shared.x;
+    `),
+  ).toEqual({ status: "literal", value: 1 });
 });
 
 describe("JavaScript semantic mutations through getter results (#1494)", () => {
@@ -839,3 +926,32 @@ describe("results of methods on an escaped receiver", () => {
     });
   }, 30000);
 });
+
+it.each([
+  ["named", "@dec abstract slot: { mode: string };"],
+  ["computed literal", '@dec abstract ["slot"]: { mode: string };'],
+])(
+  "retains the possible inherited alias through a decorated abstract %s field",
+  (_name, field) => {
+    // An emit that erases the field lets this write reach Base.slot. The
+    // analysis must still invalidate shared even if another emit shadows it.
+    const setup = `
+      function dec(...args: unknown[]) {}
+      const shared = { mode: "initial" };
+      class Base { slot = shared; }
+      abstract class Derived extends Base { ${field} }
+      const Constructor = Derived as unknown as new () => Base;
+    `;
+    expect(resultValue(`${setup} return shared.mode;`)).toEqual({
+      status: "literal",
+      value: "initial",
+    });
+    expect(
+      resultValue(`
+        ${setup}
+        new Constructor().slot.mode = "updated";
+        return shared.mode;
+      `),
+    ).toMatchObject({ status: "unknown" });
+  },
+);

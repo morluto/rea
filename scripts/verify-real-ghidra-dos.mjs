@@ -1,6 +1,9 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
-import { requireMcpOperationResult } from "./lib/mcp-verifier-results.mjs";
+import {
+  requireMcpOperationResult,
+  requireMcpOutput,
+} from "./lib/mcp-verifier-results.mjs";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import {
@@ -18,27 +21,29 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import {
-  functionBodySchema,
-  functionDossierSchema,
-} from "../dist/domain/hopperValues.js";
-import { inspectGhidraInstallation } from "../dist/ghidra/GhidraInstallation.js";
+import { functionDossierSchema } from "../dist/domain/native/functionDossier.js";
+import { functionBodySchema } from "../dist/domain/native/functionBody.js";
+import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { buildDosMzFixture } from "../tests/conformance/ghidra/dos-mz-fixture.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 import { verifyGhidraAddressBoundaries } from "./lib/real-ghidra-address-boundaries.mjs";
 
 // This lane intentionally has no game paths, binary seeds or compiler dependency.
 if (process.argv.length !== 2)
   throw new Error("Usage: node scripts/verify-real-ghidra-dos.mjs");
-if (!["linux", "darwin"].includes(process.platform))
-  throw new Error(
-    "verify:ghidra:dos supports Linux/macOS hosts only; Windows P0 is PE x86-64 only.",
-  );
+if (!["linux", "darwin", "win32"].includes(process.platform))
+  throw new Error("verify:ghidra:dos supports Linux, macOS and Windows hosts.");
+// Windows P0 is read-only: annotation and naming edits must be refused.
+const windows = process.platform === "win32";
 if (process.env.GHIDRA_INSTALL_DIR === undefined)
   throw new Error(
     "verify:ghidra:dos prerequisite missing: GHIDRA_INSTALL_DIR (bring your own Ghidra).",
   );
-const installation = inspectGhidraInstallation({
+const installation = await inspectVerifierGhidraInstallation({
   environment: process.env,
   installDir: process.env.GHIDRA_INSTALL_DIR,
   ...(process.env.JAVA_HOME === undefined
@@ -67,6 +72,8 @@ await writeFile(targetPath, fixture.bytes, { mode: 0o600 });
 const sha256 = digest(fixture.bytes);
 const entrypoint = fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const env = {
+  // Windows children need the system environment (SystemRoot, profile paths).
+  ...(windows ? { ...process.env, TMP: runtime, TEMP: runtime } : {}),
   PATH: process.env.PATH ?? "/usr/bin:/bin",
   TMPDIR: runtime,
   REA_LOG_LEVEL: "silent",
@@ -120,6 +127,13 @@ try {
   assert.equal(image.module_bytes, fixture.module_bytes);
   assert.equal(image.entry.linear_address, expected.entry);
   assert.ok(image.checks.every((check) => check.matched));
+  assert.ok(image.observations.relocations.length > 0);
+  assert.ok(
+    image.observations.relocations.every(
+      ({ symbol }) => symbol === null || typeof symbol === "string",
+    ),
+    "Each real Ghidra relocation must record its symbol observation",
+  );
   const cliImage = await cliEvidence("inspect-native-load-image");
   // Snapshot filenames are session-specific. Every measured byte/range/check is stable.
   const stableImage = (value) => ({
@@ -209,7 +223,10 @@ try {
     const resolved = await call("procedure_address", { procedure });
     assert.equal(resolved, procedure, "Flat address round-trip drifted");
     const info = await call("procedure_info", { procedure });
-    const dossierResult = await evidenceCall("analyze_function", { procedure });
+    const dossierResult = await evidenceCall("analyze_function", {
+      procedure,
+      detail: "complete",
+    });
     const dossier = functionDossierSchema.parse(
       dossierResult.normalized_result,
     );
@@ -370,17 +387,37 @@ try {
     arguments: { procedure: "0xffffffffffffffff" },
   });
   assert.equal(invalid.isError, true, "Unmapped address did not fail");
+  // The CLI reads a fresh session, so compare it with MCP before the boundary
+  // helper's temporary rename and restoration.
+  const entryWindow = await call("read_function_instructions", {
+    procedure: identities.entry.address,
+  });
+  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  assert.deepEqual(cliWindow.normalized_result, entryWindow);
   await verifyGhidraAddressBoundaries(
     client,
     identities.entry.address,
     cliEvidence,
+    { mutable: !windows },
   );
-  const cliWindow = await cliEvidence("instructions", identities.entry.address);
+  const entrySymbol = entryWindow.procedure.symbol;
+  assert.ok(entrySymbol != null, "The DOS entry needs observed symbol facts");
+  // Restoring the name is itself a user edit, so Ghidra records user provenance.
+  // Windows P0 refuses edits and never renames, so its entry stays unchanged.
   assert.deepEqual(
-    cliWindow.normalized_result,
     await call("read_function_instructions", {
       procedure: identities.entry.address,
     }),
+    windows
+      ? entryWindow
+      : {
+          ...entryWindow,
+          procedure: {
+            ...entryWindow.procedure,
+            symbol: { ...entrySymbol, source: "user_defined" },
+          },
+        },
+    "Restoring the entry name changed more than its symbol provenance",
   );
   assert.equal(
     digest(await readFile(targetPath)),
@@ -443,7 +480,11 @@ try {
       "The complete body is Ghidra's observed AddressSet, not independently proven historical compiler ownership.",
       "Language/compiler identity is bound by the production authenticated bridge handshake; profile loader is the declared import policy.",
       "Native high-pcode flow is excluded from cross-runtime parity: LOAD/STORE address-space selector constants are process-specific in current Ghidra output. Both dossiers are still strictly parsed.",
-      "Windows P0 remains unsupported for DOS MZ.",
+      ...(windows
+        ? [
+            "Windows P0 is read-only: annotation and naming edits were checked as refused, not exercised.",
+          ]
+        : []),
     ],
   };
 } catch (error) {
@@ -479,12 +520,8 @@ try {
 }
 assert.ok(report, "No DOS proof report was produced");
 const verifierRun = await completeVerifierRun(run);
-if (verifierRun.process_lineage.status === "verified")
-  assert.deepEqual(
-    verifierRun.process_lineage.descendants,
-    [],
-    "Owned descendants survived verifier cleanup",
-  );
+// Windows provider jobs are verified by their native owners, as in the 6502 lane.
+if (!windows) assertVerifierCleanupComplete(verifierRun.process_lineage);
 process.stdout.write(
   `${JSON.stringify({ verifier_run: verifierRun, ...report, cleanup: "complete" })}\n`,
 );
@@ -499,7 +536,7 @@ function hexBytes(bytes) {
 function assertProfile(profile) {
   assert.equal(
     profile.parameters.load_image_evidence,
-    "independent-mz-mapping-relocations-v1",
+    "independent-mz-mapping-relocations-v2",
   );
   assert.equal(
     profile.parameters.function_body_evidence,
@@ -553,7 +590,6 @@ async function call(name, arguments_ = {}) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
   assert.ok(result.structuredContent, `${name} omitted structured result`);
   return requireMcpOperationResult(result, name);
 }
@@ -562,8 +598,7 @@ async function evidenceCall(name, arguments_) {
     { name, arguments: arguments_ },
     { timeout: 240000 },
   );
-  assert.notEqual(result.isError, true, JSON.stringify(result));
-  const evidence = parseEvidence(result.structuredContent);
+  const evidence = parseEvidence(requireMcpOutput(result, name));
   assert.equal(evidence.subject.digest.sha256, sha256);
   assert.equal(evidence.provider.id, "ghidra");
   assertProfile(evidence.analysis_profile);

@@ -3,12 +3,26 @@ export interface ManagedPeFixtureMethod {
   readonly flags?: number;
   readonly implFlags?: number;
   readonly name: string;
+  /** An explicit metadata RVA; zero represents a method without an IL body. */
+  readonly rva?: number;
 }
 
 export interface ManagedPeFixtureOptions {
   readonly cliFlags?: number;
   readonly corruptMetadataSignature?: boolean;
   readonly fieldName?: string;
+  readonly fields?: readonly {
+    readonly name: string;
+    readonly flags?: number;
+    readonly signature?: Buffer;
+  }[];
+  /** Constant rows: HasConstant parent defaults to Field row 1. */
+  readonly constants?: readonly {
+    readonly typeCode: number;
+    readonly padding?: number;
+    readonly parentRaw?: number;
+    readonly value: Buffer;
+  }[];
   readonly ilBody?: Buffer;
   readonly machine?: number;
   readonly metadataValidMaskExtra?: bigint;
@@ -19,6 +33,7 @@ export interface ManagedPeFixtureOptions {
   readonly pinvoke?: {
     readonly importName?: string;
     readonly mappingFlags?: number;
+    readonly memberRow?: number;
     readonly moduleName?: string;
   };
   readonly readyToRun?: boolean;

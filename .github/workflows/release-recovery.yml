@@ -1,0 +1,109 @@
+name: Recover published release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Existing npm and GitHub release version
+        required: true
+        type: string
+      release_run_id:
+        description: Original Release run with successful exact-source qualification and npm publication
+        required: true
+        type: string
+
+concurrency:
+  group: release-recovery-${{ inputs.version }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify existing published package
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      source_sha: ${{ steps.release.outputs.source_sha }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version-file: .nvmrc
+          package-manager-cache: false
+      - run: npm ci
+      - name: Validate original release authority
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RECOVERY_VERSION: ${{ inputs.version }}
+          RECOVERY_RUN_ID: ${{ inputs.release_run_id }}
+        run: node scripts/ci/release-recovery.mjs resolve
+      - name: Check out released metadata
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ steps.release.outputs.source_sha }}
+          path: .cache/release-source
+          persist-credentials: false
+      - name: Download original qualified package
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: verified-release-package
+          run-id: ${{ steps.release.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .cache/verified-package
+      - name: Restore original verifier runtime
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: rea-test-runtime
+          run-id: ${{ steps.release.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: .
+      - name: Match published npm bytes to the qualified package
+        env:
+          RECOVERY_VERSION: ${{ steps.release.outputs.version }}
+          RECOVERY_RUN_ID: ${{ steps.release.outputs.run_id }}
+          RECOVERY_RUN_ATTEMPT: ${{ steps.release.outputs.run_attempt }}
+          RECOVERY_SOURCE_SHA: ${{ steps.release.outputs.source_sha }}
+          RECOVERY_SOURCE_DIRECTORY: .cache/release-source
+          RECOVERY_ARTIFACT_DIRECTORY: .cache/verified-package
+        run: node scripts/ci/release-recovery.mjs verify
+      - name: Rehearse the original qualified tarball
+        env:
+          RECOVERY_VERSION: ${{ steps.release.outputs.version }}
+        run: node scripts/verify-release-artifact.mjs .cache/verified-package/package.tgz "$RECOVERY_VERSION"
+      - name: Verify published CLI, MCP and update
+        env:
+          RECOVERY_VERSION: ${{ steps.release.outputs.version }}
+        run: node scripts/verify-published-package.mjs "$RECOVERY_VERSION"
+      - name: Validate released registry metadata
+        working-directory: .cache/release-source
+        run: npm run mcp-registry:check
+
+  publish-mcp:
+    name: Finish MCP Registry publication
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Check out verified released metadata
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          ref: ${{ needs.verify.outputs.source_sha }}
+          path: .cache/release-source
+          persist-credentials: false
+      - uses: ./.github/actions/publish-mcp
+        with:
+          directory: .cache/release-source

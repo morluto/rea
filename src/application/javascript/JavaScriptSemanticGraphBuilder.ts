@@ -20,11 +20,12 @@ import {
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import type {
   JavaScriptSemanticCallArgument,
+  JavaScriptSemanticCallReturnFlow,
   JavaScriptSemanticIr,
 } from "../../domain/javascript/javascriptSemanticIr.js";
 import { sourceRangesEqual as rangesEqual } from "../../domain/javascript/javascriptStaticAnalysisHelpers.js";
+import { javascriptSourceRangeKey } from "../../domain/javascript/javascriptSourceCoordinates.js";
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
-import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import {
   projectSemanticEvents,
@@ -37,18 +38,32 @@ import {
   projectSemanticRequests,
 } from "./JavaScriptSemanticGraphDataProjection.js";
 import { projectSemanticResources } from "./JavaScriptSemanticGraphResourceProjection.js";
+import { projectSemanticAssignments } from "./JavaScriptSemanticGraphAssignmentProjection.js";
+import { projectSemanticExpressionInfluence } from "./JavaScriptSemanticGraphExpressionProjection.js";
 import { projectSemanticObjects } from "./JavaScriptSemanticGraphObjectProjection.js";
 import { projectSemanticValues } from "./JavaScriptSemanticGraphValueProjection.js";
-import { inferredSemanticEvidenceAt } from "./JavaScriptSemanticGraphEvidence.js";
-import { observedSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  inferredSemanticEvidenceAt,
+  observedSemanticEvidence,
+  unknownSemanticEvidence,
+} from "./JavaScriptSemanticGraphEvidence.js";
+import {
+  RETURNED_REFERENCE_WIDENING_LIMITATION,
+  semanticCoverageResourceLimits,
+  semanticResourceLimitCoverage,
+} from "../../domain/javascript/javascriptSemanticCoverage.js";
+import { semanticResourceLimitReason } from "../../domain/javascript/javascriptSemanticResourceLimits.js";
 import {
   partialApplicationCoverage,
   type ApplicationCoverage,
 } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
-  JAVASCRIPT_SEMANTIC_NODE_MAXIMUM,
+  JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS,
+  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+  JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
   javaScriptAnalysisCoverageLimits,
+  javaScriptSemanticCeilingCoverage,
 } from "../../domain/javascript/javascriptAnalysisResourceControls.js";
 import {
   projectSemanticFunctionFingerprints,
@@ -59,6 +74,7 @@ import {
   projectSemanticFrontiers,
   projectSemanticPromises,
   projectSemanticReturnValues,
+  semanticObjectReadOccurrence,
   type SemanticFlowProjectionContext,
 } from "./JavaScriptSemanticGraphFlowProjection.js";
 import {
@@ -68,7 +84,10 @@ import {
   semanticFamilyStatus,
 } from "./JavaScriptSemanticGraphProjection.js";
 import {
+  constructSemanticGraphNode,
   addSemanticFallbackRoot as addFallbackRoot,
+  addSemanticGraphUnknown,
+  recordSemanticUnknownOmission,
   retainSemanticGraphNode as retainNode,
   addSemanticGraphRelation as addRelation,
   createSemanticGraphProjectionState as emptyState,
@@ -78,18 +97,14 @@ import {
   admitSemanticIndexedFingerprint,
   type SemanticGraphProjectionState as BuilderState,
 } from "./JavaScriptSemanticGraphConstruction.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
+import type {
+  JavaScriptSemanticFileProjection,
+  JavaScriptSemanticProjectionCapacity,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import type { ElectronCallPath } from "../../domain/javascript/electronStaticAnalysisTypes.js";
 import { projectElectronSemanticCallPaths } from "./JavaScriptSemanticGraphElectronProjection.js";
 
-interface BuilderInput {
-  readonly rootArtifactSha256: string;
-  readonly applicationGraph: Pick<
-    JavaScriptApplicationGraph,
-    "graph_id" | "nodes"
-  >;
-  readonly analysis: JavaScriptArtifactAnalysis;
-}
+type ApplicationGraph = Pick<JavaScriptApplicationGraph, "graph_id" | "nodes">;
 
 interface FileContext extends SemanticFlowProjectionContext {
   readonly file: JavaScriptArtifactFile;
@@ -108,46 +123,16 @@ interface FileContext extends SemanticFlowProjectionContext {
   >;
 }
 
-export const buildJavaScriptSemanticGraph = ({
-  rootArtifactSha256,
-  applicationGraph,
-  analysis,
-}: BuilderInput): JavaScriptSemanticGraph => {
-  const projection = createJavaScriptSemanticGraphProjection();
-  for (const analyzed of analysis.files) {
-    if (analyzed.semantic !== null)
-      projection.projectFile(
-        analyzed.file,
-        analyzed.semantic.ir,
-        analyzed.javascript?.electron.call_paths,
-      );
-    else if (
-      !analyzed.file.text.included &&
-      analyzed.file.text.reason === "outside-analysis-scope"
-    )
-      projection.recordUnavailableFile(
-        analyzed.file,
-        "Source was not analyzed because it is outside the caller-selected source_paths.",
-        null,
-        "incomplete-module",
-      );
-  }
-  return projection.finish(rootArtifactSha256, applicationGraph, []);
-};
-
 /** File-local semantic projection that does not retain consumed source IR. */
 export interface JavaScriptSemanticGraphProjection {
-  /**
-   * Semantic nodes the next source may add under the caller-selected node
-   * capacities; null when the caller selected none.
-   */
-  readonly remainingFileNodeBudget: () => number | null;
+  /** Node capacity offered to the next independently analyzed source file. */
+  readonly remainingFileCapacity: () => JavaScriptSemanticProjectionCapacity;
   /** Adopt decoded file-local facts; final validation and proof remain in this realm. */
   readonly adoptFileProjection: (
     file: JavaScriptArtifactFile,
     projection: JavaScriptSemanticFileProjection,
   ) => void;
-  /** Preserve source-bound unknowns for an execution or result-retention failure. */
+  /** Preserve JavaScript-source unknowns; other file kinds have no semantic module. */
   readonly recordUnavailableFile: (
     file: JavaScriptArtifactFile,
     reason: string,
@@ -169,39 +154,75 @@ export interface JavaScriptSemanticGraphProjection {
   /** `budgetLimits` name the limits that offered each truncated file its budget. */
   readonly finish: (
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
-    budgetLimits: ApplicationCoverage["limits"],
+    applicationGraph: ApplicationGraph,
+    budgetLimits?: ApplicationCoverage["limits"],
   ) => JavaScriptSemanticGraph;
   readonly finishImmutableSteps: (
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
-    budgetLimits: ApplicationCoverage["limits"],
+    applicationGraph: ApplicationGraph,
+    budgetLimits?: ApplicationCoverage["limits"],
   ) => Generator<void, JavaScriptSemanticGraph>;
 }
 
-/**
- * Caller-selected semantic node capacities. Omitted capacities do not apply;
- * the serialized Evidence byte budget always does.
- */
-export interface JavaScriptSemanticNodeLimits {
-  readonly totalNodes?: number;
-  readonly fileNodes?: number;
+/** Ceilings whose offered budget actually stopped retention. */
+interface SemanticCeilingReached {
+  total: boolean;
+  perFile: boolean;
 }
+
+/**
+ * Attribute a drop to the ceiling that bound this file's offer.
+ *
+ * The offer is the minimum of the per-file ceiling and the remaining
+ * application room. Only that smaller ceiling stopped retention. When the
+ * two values are equal, both did.
+ */
+const noteSemanticCeilingReached = (
+  reached: SemanticCeilingReached,
+  totalRoom: number,
+  perFileCeiling: number,
+): void => {
+  if (perFileCeiling <= totalRoom) reached.perFile = true;
+  if (totalRoom <= perFileCeiling) reached.total = true;
+};
+
+const semanticUnknownOccurrences = (
+  omissions: ReadonlyMap<string, { readonly occurrences: number }>,
+): number => {
+  let count = 0;
+  for (const omission of omissions.values()) count += omission.occurrences;
+  return count;
+};
 
 /** Accumulate semantic nodes while each source IR is still file-local. */
 export const createJavaScriptSemanticGraphProjection = (
-  capacities: JavaScriptSemanticNodeLimits = {},
+  capacities: {
+    readonly totalNodes?: number;
+    readonly fileNodes?: number;
+    readonly totalUnknowns?: number;
+    readonly fileUnknowns?: number;
+  } = {},
   evidenceBudget?: JavaScriptEvidenceAdmission,
   rootArtifactSha256?: string,
 ): JavaScriptSemanticGraphProjection => {
-  for (const value of [capacities.totalNodes, capacities.fileNodes])
+  const unknownCeiling =
+    capacities.totalUnknowns ??
+    JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknowns;
+  const fileUnknownCeiling =
+    capacities.fileUnknowns ??
+    JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticUnknownsPerFile;
+  for (const value of [
+    ...(capacities.totalNodes === undefined ? [] : [capacities.totalNodes]),
+    ...(capacities.fileNodes === undefined ? [] : [capacities.fileNodes]),
+    unknownCeiling,
+    fileUnknownCeiling,
+  ])
     if (
-      value !== undefined &&
-      (!Number.isSafeInteger(value) ||
-        value < 1 ||
-        value > JAVASCRIPT_SEMANTIC_NODE_MAXIMUM)
+      !Number.isSafeInteger(value) ||
+      value < 1 ||
+      value > JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM
     )
-      throw new RangeError("Semantic graph requires valid node capacities");
+      throw new RangeError("Semantic graph requires valid retained capacities");
   const nodeLimits: ApplicationCoverage["limits"] = [
     ...(capacities.totalNodes === undefined
       ? []
@@ -258,6 +279,25 @@ export const createJavaScriptSemanticGraphProjection = (
   let omittedFiles = 0;
   let resourceTruncatedFiles = 0;
   let unavailableBudgetTruncatedFiles = 0;
+  const nodeCeilingsReached: SemanticCeilingReached = {
+    total: false,
+    perFile: false,
+  };
+  const noteNodeLimit = (sizeBefore: number): void => {
+    const totalRoom =
+      capacities.totalNodes === undefined
+        ? Infinity
+        : capacities.totalNodes - sizeBefore;
+    const fileLimit = capacities.fileNodes ?? Infinity;
+    if (capacities.fileNodes !== undefined && fileLimit <= totalRoom)
+      nodeCeilingsReached.perFile = true;
+    if (capacities.totalNodes !== undefined && totalRoom <= fileLimit)
+      nodeCeilingsReached.total = true;
+  };
+  const unknownCeilingsReached: SemanticCeilingReached = {
+    total: false,
+    perFile: false,
+  };
   const executionLimits = new Map<
     string,
     ApplicationCoverage["limits"][number]
@@ -267,21 +307,43 @@ export const createJavaScriptSemanticGraphProjection = (
     ir: JavaScriptSemanticIr,
     paths: readonly ElectronCallPath[] = [],
   ): Generator<void, void> {
-    const projected = yield* projectBudgetedFileSteps(
-      file,
-      ir,
-      state,
-      new SemanticFileGraphBudget(null, remainingFileNodeBudget()),
-      paths,
+    const nodesBefore = state.nodes.size;
+    const unknownsBefore = state.unknowns.size;
+    const omissionsBefore = semanticUnknownOccurrences(state.unknownOmissions);
+    state.unknownCapacity = Math.min(
+      unknownCeiling,
+      unknownsBefore + fileUnknownCeiling,
     );
-    for (const fingerprint of projected.fingerprints)
-      fingerprints.push(fingerprint);
-    files.push(fileCoverage(file, projected.coverage));
+    try {
+      const budget = new SemanticFileGraphBudget(
+        null,
+        remainingFileNodeBudget(),
+      );
+      const projected = yield* projectBudgetedFileSteps(
+        file,
+        ir,
+        state,
+        budget,
+        paths,
+      );
+      if (budget.nodeLimitReached) noteNodeLimit(nodesBefore);
+      for (const fingerprint of projected.fingerprints)
+        fingerprints.push(fingerprint);
+      files.push(fileCoverage(file, projected.coverage));
+      if (semanticUnknownOccurrences(state.unknownOmissions) > omissionsBefore)
+        noteSemanticCeilingReached(
+          unknownCeilingsReached,
+          unknownCeiling - unknownsBefore,
+          fileUnknownCeiling,
+        );
+    } finally {
+      state.unknownCapacity = null;
+    }
   };
   const finishWithSteps = function* <Value>(
     factory: (input: unknown) => Value,
     rootArtifactSha256: string,
-    applicationGraph: BuilderInput["applicationGraph"],
+    applicationGraph: ApplicationGraph,
     budgetLimits: ApplicationCoverage["limits"],
   ): Generator<void, Value> {
     let finalBudget: SemanticFileGraphBudget | undefined;
@@ -393,10 +455,13 @@ export const createJavaScriptSemanticGraphProjection = (
     }
     const relations = [...state.relations.values()];
     const unknowns = [...state.unknowns.values()];
+    const unknownOmissions = [...state.unknownOmissions.values()];
+    const unknownsDropped = unknownOmissions.length > 0;
     type Family = (typeof JAVASCRIPT_SEMANTIC_RELATION_FAMILIES)[number];
     const retainedByFamily = new Map<Family, number>();
     const unknownsByFamily = new Map<Family, number>();
     const omittedUnknownsByFamily = new Map<Family, number>();
+    const unknownTotalsIncomplete = new Set<Family>();
     for (const relation of relations) {
       yield;
       const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
@@ -412,11 +477,14 @@ export const createJavaScriptSemanticGraphProjection = (
     for (const coverage of files) {
       yield;
       for (const count of coverage.unknowns)
-        omittedUnknownsByFamily.set(
-          count.family,
-          (omittedUnknownsByFamily.get(count.family) ?? 0) +
-            (count.total === null ? 0 : count.total - count.retained),
-        );
+        if (count.total === null) unknownTotalsIncomplete.add(count.family);
+        else
+          omittedUnknownsByFamily.set(
+            count.family,
+            (omittedUnknownsByFamily.get(count.family) ?? 0) +
+              count.total -
+              count.retained,
+          );
     }
     const truncatedFiles = files.filter(
       ({ status }) => status === "truncated",
@@ -433,6 +501,23 @@ export const createJavaScriptSemanticGraphProjection = (
         compareUnicodeCodePoints(left.module_path, right.module_path) ||
         compareUnicodeCodePoints(left.artifact_sha256, right.artifact_sha256),
     );
+    const unknownCeilingCoverage = unknownsDropped
+      ? javaScriptSemanticCeilingCoverage(
+          "unknowns",
+          unknownCeiling,
+          fileUnknownCeiling,
+          unknownCeilingsReached,
+        )
+      : undefined;
+    const nodeCeilingCoverage =
+      nodeCeilingsReached.total || nodeCeilingsReached.perFile
+        ? javaScriptSemanticCeilingCoverage(
+            "nodes",
+            capacities.totalNodes ?? null,
+            capacities.fileNodes ?? null,
+            nodeCeilingsReached,
+          )
+        : undefined;
     const graph = factory({
       schema: "JavaScriptSemanticRelationGraph",
       root_artifact_sha256: rootArtifactSha256,
@@ -453,14 +538,23 @@ export const createJavaScriptSemanticGraphProjection = (
       unknowns,
       coverage: {
         status:
-          truncatedFiles > 0 || unavailableFiles > 0 || omittedFiles > 0
+          truncatedFiles > 0 ||
+          unavailableFiles > 0 ||
+          omittedFiles > 0 ||
+          unknownsDropped
             ? "partial"
             : "unknown",
         truncated:
           truncatedFiles > 0 ||
           resourceTruncatedFiles > 0 ||
           unavailableBudgetTruncatedFiles > 0 ||
-          omittedFiles > 0,
+          omittedFiles > 0 ||
+          nodeCeilingsReached.total ||
+          nodeCeilingsReached.perFile ||
+          unknownsDropped,
+        ...(unknownsDropped
+          ? { omitted_unknown_occurrences: unknownOmissions }
+          : {}),
         omitted_nodes: exactNodes
           ? files.reduce(
               (total, { omitted_nodes: omitted }) => total + (omitted ?? 0),
@@ -475,11 +569,17 @@ export const createJavaScriptSemanticGraphProjection = (
           : null,
         limits: [
           ...executionLimits.values(),
-          ...(truncatedFiles > 0 ||
-          unavailableBudgetTruncatedFiles > 0 ||
-          omittedFiles > 0
-            ? [...budgetLimits, ...nodeLimits]
+          ...(unavailableBudgetTruncatedFiles > 0 ||
+          omittedFiles > 0 ||
+          files.some(
+            (file) =>
+              file.graph_byte_budget !== null ||
+              file.final_shared_graph_byte_budget !== undefined,
+          )
+            ? budgetLimits
             : []),
+          ...(nodeCeilingCoverage?.limits ?? []),
+          ...(unknownCeilingCoverage?.limits ?? []),
         ],
         families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
           family,
@@ -487,14 +587,23 @@ export const createJavaScriptSemanticGraphProjection = (
           retained_relations: retainedByFamily.get(family) ?? 0,
           omitted_relations: truncatedFiles > 0 || !exactNodes ? null : 0,
           retained_unknowns: unknownsByFamily.get(family) ?? 0,
-          omitted_unknowns: exactNodes
-            ? (omittedUnknownsByFamily.get(family) ?? 0)
-            : null,
+          omitted_unknowns:
+            exactNodes && !unknownTotalsIncomplete.has(family)
+              ? (omittedUnknownsByFamily.get(family) ?? 0)
+              : null,
         })),
         ...(omittedFiles === 0 ? {} : { omitted_files: omittedFiles }),
         files: sortedFiles,
       },
       limitations: [
+        ...(nodeCeilingCoverage === undefined
+          ? []
+          : [nodeCeilingCoverage.limitation]),
+        ...(unknownCeilingCoverage === undefined
+          ? []
+          : [
+              `${unknownCeilingCoverage.limitation} Omission coverage counts examined emission occurrences by family and reason, including repeats; it does not count unexamined source frontiers or distinct discarded identities.`,
+            ]),
         "The semantic graph contains static syntax observations and conservative relationship candidates; it does not claim runtime execution.",
         "Local data flow does not claim control-flow-sensitive reaching definitions or arbitrary dynamic property resolution.",
         "Promise ownership covers explicit unshadowed Promise construction, static factories, aggregation, chaining, and await syntax only.",
@@ -516,6 +625,7 @@ export const createJavaScriptSemanticGraphProjection = (
     state.nodes.clear();
     state.relations.clear();
     state.unknowns.clear();
+    state.unknownOmissions.clear();
     state.roots.clear();
     state.evidenceContexts.clear();
     fingerprints.length = 0;
@@ -523,9 +633,16 @@ export const createJavaScriptSemanticGraphProjection = (
     return graph;
   };
   return {
-    remainingFileNodeBudget,
+    remainingFileCapacity: () => ({
+      nodes: remainingFileNodeBudget(),
+      unknowns: Math.min(
+        fileUnknownCeiling,
+        Math.max(0, unknownCeiling - state.unknowns.size),
+      ),
+    }),
     adoptFileProjection: (file, projection) => {
       const offered = remainingFileNodeBudget();
+      const remainingUnknowns = unknownCeiling - state.unknowns.size;
       if (
         offered !== null &&
         projection.nodes.filter(({ node_id }) => !state.nodes.has(node_id))
@@ -534,12 +651,25 @@ export const createJavaScriptSemanticGraphProjection = (
         throw new RangeError(
           "Transferred semantic nodes exceed the offered node capacity",
         );
+      const newUnknowns = projection.unknowns.filter(
+        ({ unknown_id }) => !state.unknowns.has(unknown_id),
+      );
+      if (
+        newUnknowns.length >
+        Math.min(fileUnknownCeiling, unknownCeiling - state.unknowns.size)
+      )
+        throw new RangeError(
+          "Transferred semantic unknowns exceed the offered tree capacity",
+        );
+      if (projection.nodesTruncated) noteNodeLimit(state.nodes.size);
+      for (const omission of projection.omittedUnknownOccurrences ?? [])
+        recordSemanticUnknownOmission(state, omission);
       for (const context of projection.evidenceContexts)
         state.evidenceContexts.adopt(context);
       for (const node of projection.nodes) state.nodes.set(node.node_id, node);
       for (const relation of projection.relations)
         state.relations.set(relation.relation_id, relation);
-      for (const unknown of projection.unknowns)
+      for (const unknown of newUnknowns)
         state.unknowns.set(unknown.unknown_id, unknown);
       for (const root of projection.roots) state.roots.add(root);
       for (const fingerprint of projection.fingerprints)
@@ -556,8 +686,18 @@ export const createJavaScriptSemanticGraphProjection = (
         coverageReservedBytes +=
           Buffer.byteLength(JSON.stringify(coverage)) + 1;
       } else omittedFiles += 1;
+      if ((projection.omittedUnknownOccurrences?.length ?? 0) > 0)
+        noteSemanticCeilingReached(
+          unknownCeilingsReached,
+          remainingUnknowns,
+          fileUnknownCeiling,
+        );
     },
     recordUnavailableFile: (file, reason, limits, unknownReason) => {
+      // Both full and incremental construction enter here. Metadata/native
+      // processing gaps belong to the application graph, never JavaScript IR.
+      if (file.kind !== "javascript") return;
+      const nodesBefore = state.nodes.size;
       const retainedLimits = javaScriptAnalysisCoverageLimits(limits);
       // A new limit row is retained only with this file's admitted facts.
       const newLimits = unseenLimitRows(executionLimits, retainedLimits);
@@ -577,7 +717,23 @@ export const createJavaScriptSemanticGraphProjection = (
         limitations: [reason],
       };
       const unknowns = [];
+      const omissions = [];
+      const remainingUnknowns = unknownCeiling - state.unknowns.size;
+      const allowedUnknowns = Math.max(
+        0,
+        Math.min(fileUnknownCeiling, remainingUnknowns),
+      );
       for (const family of JAVASCRIPT_SEMANTIC_RELATION_FAMILIES) {
+        if (local.unknowns.size >= allowedUnknowns) {
+          omissions.push({ family, reason: unknownReason, occurrences: 1 });
+          unknowns.push({
+            family,
+            reason: unknownReason,
+            total: null,
+            retained: 0,
+          });
+          continue;
+        }
         const unknown = createJavaScriptSemanticGraphUnknown(
           {
             node_id: module?.node_id ?? null,
@@ -606,7 +762,7 @@ export const createJavaScriptSemanticGraphProjection = (
         module_path: file.path,
         artifact_sha256: file.sha256,
         status: "unavailable",
-        graph_byte_budget: budget.closed ? budget.limit : null,
+        graph_byte_budget: budget.byteLimitReached ? budget.limit : null,
         retained_graph_bytes: budget.used,
         omitted_nodes: null,
         omitted_relations: null,
@@ -617,7 +773,8 @@ export const createJavaScriptSemanticGraphProjection = (
         budget.used +
         Buffer.byteLength(JSON.stringify(coverage)) +
         1 +
-        newLimits.bytes;
+        newLimits.bytes +
+        Buffer.byteLength(JSON.stringify(omissions));
       if (evidenceBudget === undefined || evidenceBudget.reserveBytes(bytes)) {
         for (const [key, limit] of newLimits.rows)
           executionLimits.set(key, limit);
@@ -627,6 +784,14 @@ export const createJavaScriptSemanticGraphProjection = (
         for (const [id, node] of local.nodes) state.nodes.set(id, node);
         for (const [id, unknown] of local.unknowns)
           state.unknowns.set(id, unknown);
+        for (const omission of omissions)
+          recordSemanticUnknownOmission(state, omission);
+        if (omissions.length > 0)
+          noteSemanticCeilingReached(
+            unknownCeilingsReached,
+            remainingUnknowns,
+            fileUnknownCeiling,
+          );
         for (const id of local.roots) state.roots.add(id);
         files.push(coverage);
         graphReservedBytes += budget.used;
@@ -634,7 +799,8 @@ export const createJavaScriptSemanticGraphProjection = (
           Buffer.byteLength(JSON.stringify(coverage)) + 1;
       } else omittedFiles += 1;
       unavailableFiles += 1;
-      if (budget.closed) unavailableBudgetTruncatedFiles += 1;
+      if (budget.byteLimitReached) unavailableBudgetTruncatedFiles += 1;
+      if (budget.nodeLimitReached) noteNodeLimit(nodesBefore);
       if (unknownReason === "resource-limit" && retainedLimits.length > 0)
         resourceTruncatedFiles += 1;
     },
@@ -649,7 +815,7 @@ export const createJavaScriptSemanticGraphProjection = (
           createJavaScriptSemanticGraph,
           rootArtifactSha256,
           applicationGraph,
-          budgetLimits,
+          budgetLimits ?? [],
         );
         for (;;) {
           const step = steps.next();
@@ -666,7 +832,7 @@ export const createJavaScriptSemanticGraphProjection = (
           sealTransferredJavaScriptSemanticGraphSteps,
           rootArtifactSha256,
           applicationGraph,
-          budgetLimits,
+          budgetLimits ?? [],
         );
       })(),
   };
@@ -735,11 +901,24 @@ export function* projectJavaScriptSemanticFileSteps(
   file: JavaScriptArtifactFile,
   ir: JavaScriptSemanticIr,
   graphByteBudget: number | null,
-  nodeBudget: number | null,
+  capacity: JavaScriptSemanticProjectionCapacity,
   paths: readonly ElectronCallPath[] = [],
 ): Generator<void, JavaScriptSemanticFileProjection> {
+  if (
+    [capacity.nodes, capacity.unknowns].some(
+      (value) =>
+        value !== null &&
+        (!Number.isSafeInteger(value) ||
+          value < 0 ||
+          value > JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
+    )
+  )
+    throw new RangeError(
+      "File semantic projection requires valid offered retained capacities",
+    );
   const state = emptyState();
-  const budget = new SemanticFileGraphBudget(graphByteBudget, nodeBudget);
+  state.unknownCapacity = capacity.unknowns;
+  const budget = new SemanticFileGraphBudget(graphByteBudget, capacity.nodes);
   const projected = yield* projectBudgetedFileSteps(
     file,
     ir,
@@ -758,6 +937,10 @@ export function* projectJavaScriptSemanticFileSteps(
     unknowns: [...state.unknowns.values()],
     fingerprints: projected.fingerprints,
     coverage: projected.coverage,
+    nodesTruncated: budget.nodeLimitReached,
+    ...(state.unknownOmissions.size > 0
+      ? { omittedUnknownOccurrences: [...state.unknownOmissions.values()] }
+      : {}),
   };
 }
 
@@ -801,6 +984,20 @@ function* projectFileSteps(
   yield;
   const moduleNode = retainModuleRoot(state, file);
   if (moduleNode === null) return [];
+  projectFileResourceLimits({ file, ir, state, moduleNode });
+  for (const location of ir.coverage.widenedReturnedReferences ?? [])
+    addSemanticGraphUnknown(state, {
+      node_id: moduleNode.node_id,
+      family: "data-flow",
+      relation_kinds: ["defines"],
+      reason: "dynamic-property",
+      detail: RETURNED_REFERENCE_WIDENING_LIMITATION,
+      candidate_node_ids: [],
+      evidence: {
+        ...unknownSemanticEvidence(file, location),
+        limitations: [RETURNED_REFERENCE_WIDENING_LIMITATION],
+      },
+    });
   yield* projectElectronSemanticCallPaths(file, paths, state);
   // Node creation keeps source order, which the per-file byte budget relies
   // on; yields between nodes do not change it.
@@ -901,6 +1098,8 @@ function* projectFileSteps(
     returnSiteNodes,
     argumentNodes: new Map(),
     referenceNodes: [],
+    readNodes: [],
+    writeNodes: [],
     callResolutions: new Map(
       ir.callSites.map((call) => [
         call.callSiteId,
@@ -933,6 +1132,32 @@ function* projectFileSteps(
     state.evidenceContexts,
   );
 }
+
+const projectFileResourceLimits = (
+  context: Pick<FileContext, "file" | "ir" | "state" | "moduleNode">,
+): void => {
+  // Query limits describe effects without tagged values; other limits
+  // already project from binding or return-site values and must not be duplicated.
+  for (const limit of semanticCoverageResourceLimits(context.ir.coverage)) {
+    if (limit !== "getter-expansion" && limit !== "alias-selections") continue;
+    addSemanticGraphUnknown(context.state, {
+      node_id: context.moduleNode.node_id,
+      family: "data-flow",
+      relation_kinds: ["defines"],
+      reason: "resource-limit",
+      detail: semanticResourceLimitReason(limit),
+      candidate_node_ids: [],
+      evidence: {
+        ...unknownSemanticEvidence(context.file, null),
+        coverage: partialApplicationCoverage(
+          semanticResourceLimitCoverage([limit]),
+          null,
+        ),
+        limitations: [semanticResourceLimitReason(limit)],
+      },
+    });
+  }
+};
 
 function* createReturnSiteNodes(
   file: JavaScriptArtifactFile,
@@ -973,12 +1198,53 @@ function* createCallSiteNodes(
       call.callerCallableId === null
         ? null
         : (callables.get(call.callerCallableId)?.node_id ?? null);
-    const node = retainNode(state, file, {
-      kind: "call-site",
+    const nodeInput = {
+      kind: "call-site" as const,
       roleKey: `call:${call.callSiteId}`,
       location: call.location,
       label: call.kind,
       functionNodeId: owner,
+    };
+    // Include the complete node and worker JSON envelope before retaining any
+    // arguments. Each entry is charged by its encoded size and comma, so even
+    // worst-case escaping cannot overflow the worker's single-record ceiling.
+    let recordBytes = 0;
+    if (call.arguments.some((argument) => Object.hasOwn(argument, "literal"))) {
+      const baseline = constructSemanticGraphNode(file, nodeInput, state);
+      recordBytes = Buffer.byteLength(
+        `${JSON.stringify({ kind: "node", value: { ...baseline, properties: { arguments: [] } } })}\n`,
+      );
+    }
+    const argumentsValue: JsonValue[] = [];
+    let transferOmitted = 0;
+    for (const argument of call.arguments) {
+      if (!Object.hasOwn(argument, "literal")) continue;
+      const item = {
+        index: argument.index,
+        value: argument.literal ?? null,
+        source_range:
+          argument.valueExpressionLocation === null
+            ? null
+            : {
+                start: { ...argument.valueExpressionLocation.start },
+                end: { ...argument.valueExpressionLocation.end },
+              },
+      };
+      const size =
+        Buffer.byteLength(JSON.stringify(item)) +
+        (argumentsValue.length === 0 ? 0 : 1);
+      if (recordBytes + size > JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES) {
+        transferOmitted += 1;
+        continue;
+      }
+      argumentsValue.push(item);
+      recordBytes += size;
+    }
+    const node = retainNode(state, file, {
+      ...nodeInput,
+      ...(argumentsValue.length === 0
+        ? {}
+        : { properties: { arguments: argumentsValue } }),
     });
     if (node !== null) {
       result.set(call.callSiteId, node);
@@ -990,6 +1256,51 @@ function* createCallSiteNodes(
           relation: "calls",
           resolution: call.resolution === "exact" ? "resolved" : "candidate",
         });
+      if (transferOmitted > 0) {
+        const detail = `${String(transferOmitted)} direct call arguments exceeded the ${String(JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES)}-byte worker transfer record ceiling.`;
+        addSemanticGraphUnknown(state, {
+          node_id: node.node_id,
+          family: "call-flow",
+          relation_kinds: ["argument-to-parameter"],
+          reason: "resource-limit",
+          detail,
+          candidate_node_ids: [],
+          evidence: {
+            ...unknownSemanticEvidence(file, call.location),
+            coverage: partialApplicationCoverage(
+              javaScriptAnalysisCoverageLimits({
+                transfer_record_bytes:
+                  JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+              }),
+              null,
+            ),
+            limitations: [detail],
+          },
+        });
+      }
+      if (
+        call.arguments.some(
+          (argument) => argument.literalResourceLimit === "primitive-bytes",
+        )
+      ) {
+        const limit = "primitive-bytes";
+        addSemanticGraphUnknown(state, {
+          node_id: node.node_id,
+          family: "call-flow",
+          relation_kinds: ["argument-to-parameter"],
+          reason: "resource-limit",
+          detail: semanticResourceLimitReason(limit),
+          candidate_node_ids: [],
+          evidence: {
+            ...unknownSemanticEvidence(file, call.location),
+            coverage: partialApplicationCoverage(
+              semanticResourceLimitCoverage([limit]),
+              null,
+            ),
+            limitations: [semanticResourceLimitReason(limit)],
+          },
+        });
+      }
     }
   }
   return result;
@@ -1012,7 +1323,11 @@ function* projectDefinitionsAndReferences(
       reference.bindingId === null
         ? undefined
         : context.bindingNodes.get(reference.bindingId);
-    if (expression !== null) context.referenceNodes.push(expression);
+    if (expression !== null) {
+      context.referenceNodes.push(expression);
+      if (reference.role === "read") context.readNodes.push(expression);
+      if (reference.role === "write") context.writeNodes.push(expression);
+    }
     if (binding === undefined || expression === null) continue;
     if (reference.role === "read")
       addRelation(context.state, {
@@ -1022,7 +1337,7 @@ function* projectDefinitionsAndReferences(
         resolution: "resolved",
         evidence: inferredSemanticEvidenceAt(context.file, reference.location),
       });
-    else
+    else if (reference.role === "write")
       addRelation(context.state, {
         source: expression,
         target: binding,
@@ -1033,6 +1348,11 @@ function* projectDefinitionsAndReferences(
 }
 
 const projectCalls = (context: FileContext): void => {
+  const expressions = new Set(
+    context.ir.expressionFlows.map((flow) =>
+      javascriptSourceRangeKey(flow.location),
+    ),
+  );
   for (const call of context.ir.callSites) {
     const callNode = context.callSiteNodes.get(call.callSiteId);
     if (callNode === undefined) continue;
@@ -1048,7 +1368,40 @@ const projectCalls = (context: FileContext): void => {
           `${call.callSiteId}\u0000${String(argument.index)}`,
           argumentNode,
         );
-      const references = context.referenceNodesWithin(argument.location);
+      if (!argument.spread && Object.hasOwn(argument, "literal"))
+        addRelation(context.state, {
+          source: argumentNode,
+          target: callNode,
+          relation: "influences",
+          resolution: "resolved",
+        });
+      if (
+        call.resolution !== "exact" &&
+        call.resultUsed &&
+        argumentNode !== null
+      )
+        addSemanticGraphUnknown(context.state, {
+          node_id: argumentNode.node_id,
+          family: "data-flow",
+          relation_kinds: ["influences"],
+          reason: "dynamic-call",
+          detail:
+            "The dynamic call's return dependency on this argument is unknown.",
+          candidate_node_ids: [],
+          evidence: unknownSemanticEvidence(context.file, argument.location),
+        });
+      const references =
+        argument.valueExpressionLocation !== null &&
+        expressions.has(
+          javascriptSourceRangeKey(argument.valueExpressionLocation),
+        )
+          ? []
+          : context
+              .referenceNodesWithin(argument.location)
+              .filter(
+                (reference) =>
+                  reference.function_node_id === callNode.function_node_id,
+              );
       for (const reference of references)
         addRelation(context.state, {
           source: reference,
@@ -1060,6 +1413,15 @@ const projectCalls = (context: FileContext): void => {
               ? "resolved"
               : "candidate",
         });
+      addRelation(context.state, {
+        source: semanticObjectReadOccurrence(
+          context,
+          argument.valueExpressionLocation,
+        ),
+        target: argumentNode,
+        relation: "aliases",
+        resolution: "resolved",
+      });
     }
   }
   for (const flow of context.ir.argumentFlows) {
@@ -1074,20 +1436,46 @@ const projectCalls = (context: FileContext): void => {
       resolution: context.callResolutions.get(flow.callSiteId) ?? "candidate",
     });
   }
-  for (const flow of context.ir.callReturnFlows)
+  const returnFlowsByCallSite = new Map<
+    string,
+    JavaScriptSemanticCallReturnFlow[]
+  >();
+  for (const flow of context.ir.callReturnFlows) {
+    const grouped = returnFlowsByCallSite.get(flow.callSiteId);
+    if (grouped === undefined)
+      returnFlowsByCallSite.set(flow.callSiteId, [flow]);
+    else grouped.push(flow);
     addRelation(context.state, {
       source: context.returnSiteNodes.get(flow.returnSiteId),
       target: context.callSiteNodes.get(flow.callSiteId),
       relation: "returns-to-call",
       resolution: context.callResolutions.get(flow.callSiteId) ?? "candidate",
     });
-  for (const flow of context.ir.callResultFlows)
-    addRelation(context.state, {
-      source: context.callSiteNodes.get(flow.callSiteId),
-      target: context.bindingNodes.get(flow.bindingId),
-      relation: "aliases",
-      resolution: context.callResolutions.get(flow.callSiteId) ?? "candidate",
-    });
+  }
+  for (const flow of context.ir.callResultFlows) {
+    const resolution =
+      context.callResolutions.get(flow.callSiteId) ?? "candidate";
+    const target = context.bindingNodes.get(flow.bindingId);
+    const returns = returnFlowsByCallSite.get(flow.callSiteId) ?? [];
+    // A literal argument may influence the invocation. The assigned value
+    // comes from modeled returns, so an ignored parameter does not reach it.
+    if (returns.length === 0) {
+      addRelation(context.state, {
+        source: context.callSiteNodes.get(flow.callSiteId),
+        target,
+        relation: "aliases",
+        resolution,
+      });
+      continue;
+    }
+    for (const item of returns)
+      addRelation(context.state, {
+        source: context.returnSiteNodes.get(item.returnSiteId),
+        target,
+        relation: "aliases",
+        resolution,
+      });
+  }
   projectSemanticReturnValues(context);
 };
 
@@ -1105,6 +1493,14 @@ const createArgumentNode = (
       ? "spread argument"
       : `argument ${String(argument.index)}`,
     functionNodeId: callNode.function_node_id,
+    ...(!argument.spread && Object.hasOwn(argument, "literal")
+      ? {
+          properties: {
+            literal_argument_value: argument.literal ?? null,
+            literal_argument_call_site_node_id: callNode.node_id,
+          },
+        }
+      : {}),
   });
 
 /** Per-file projection passes, run in this order with a yield between each. */
@@ -1113,7 +1509,9 @@ const FILE_PROJECTION_PASSES: readonly ((
 ) => Iterator<void, void> | void)[] = [
   projectSemanticValues,
   projectSemanticObjects,
+  projectSemanticAssignments,
   projectCalls,
+  projectSemanticExpressionInfluence,
   projectSemanticPromises,
   projectSemanticEvents,
   projectSemanticTimers,

@@ -2,10 +2,7 @@ import { estimateJavaScriptModuleApplicationProjection } from "../domain/javascr
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
-import {
-  analyzeParsedJavaScriptSemanticsSteps,
-  classifyParsedJavaScriptOpenReceiversSteps,
-} from "../domain/javascript/javascriptSemanticAnalysis.js";
+import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/javascriptSemanticAnalysis.js";
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
@@ -27,28 +24,46 @@ import {
 
 const analyze: JavaScriptSourceWorkerAnalyzer = async (
   file,
-  nodeBudget,
+  capacity,
   callbacks,
+  packageType,
+  purpose,
 ) => {
   if (!file.text.included)
     throw new TypeError("JavaScript worker requires decoded source text");
   await callbacks.phase("parse");
-  let parsed = parseJavaScriptSource(file.text.value, file.path);
+  let parsed = parseJavaScriptSource(file.text.value, file.path, packageType);
   if (parsed === null) {
     await callbacks.checkpoint(failedJavaScriptStaticAnalysis(), 0);
     return null;
   }
   await callbacks.phase("static");
-  const receivers = await completeJavaScriptAnalysisSteps(
-    classifyParsedJavaScriptOpenReceiversSteps(parsed),
-  );
   const facts = await completeJavaScriptAnalysisSteps(
-    analyzeParsedJavaScriptStaticSourceSteps(
-      file.text.value,
-      parsed,
-      receivers,
-    ),
+    analyzeParsedJavaScriptStaticSourceSteps(file.text.value, parsed),
   );
+  if (purpose === "preload-discovery") {
+    // Only declarations cross this preliminary pass. The normal pass owns
+    // full static/semantic facts and their result reservations.
+    const empty = failedJavaScriptStaticAnalysis();
+    await callbacks.checkpoint(
+      {
+        ...empty,
+        parse_status: facts.parse_status,
+        parse_error_count: facts.parse_error_count,
+        ...(facts.analysis_coverage === undefined
+          ? {}
+          : { analysis_coverage: facts.analysis_coverage }),
+        visited_ast_nodes: facts.visited_ast_nodes,
+        limitations: facts.limitations,
+        electron: {
+          ...empty.electron,
+          browser_windows: facts.electron.browser_windows,
+        },
+      },
+      0,
+    );
+    return null;
+  }
   const admission = await callbacks.checkpoint(
     facts,
     semanticModuleRootBytes(file),
@@ -67,6 +82,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
+      capacity.nodes ?? undefined,
     ),
   );
   parsed = null;
@@ -107,7 +123,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
             javaScriptApplicationProjectionRetentionBytes(application),
         ),
       ),
-      nodeBudget,
+      capacity,
       facts.electron.call_paths,
     ),
   );

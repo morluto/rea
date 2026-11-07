@@ -12,7 +12,7 @@ export const pwntoolsInputBytesSchema = z
   .string()
   .regex(/^[1-9]\d*$/u, "must be a positive decimal integer")
   .transform(Number)
-  .pipe(z.number().int().safe().max(MAXIMUM_INPUT_BYTES));
+  .pipe(z.int().safe().max(MAXIMUM_INPUT_BYTES));
 
 const CONSTRAINT =
   `REA_PWNTOOLS_MAX_INPUT_BYTES must be a decimal integer from 1 to ` +

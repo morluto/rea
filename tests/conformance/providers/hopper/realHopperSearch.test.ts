@@ -1,6 +1,9 @@
 import { expect, it } from "vitest";
 
-import { verifyHopperStringObjects } from "../../../../scripts/lib/real-hopper-search.mjs";
+import {
+  verifyHopperStringFragments,
+  verifyHopperStringObjects,
+} from "../../../../scripts/lib/real-hopper-search.mjs";
 
 const value = "REA_UTF8_é_😀";
 const address = "0x402020";
@@ -21,6 +24,100 @@ const expectation = {
   symbol: "rea_utf8_literal",
   recognitionOptional: true,
 };
+
+const fragments = [
+  {
+    ...item,
+    value: "REA_",
+    string: { ...item.string, termination: "missing" as const, byte_length: 4 },
+  },
+  {
+    ...item,
+    address: "0x402024",
+    value: value.slice(4),
+    string: { ...item.string, byte_length: bytes.length - 4 },
+  },
+] as const;
+
+const fragmentBytes = async (
+  name: string,
+  args: Record<string, unknown> = {},
+) => {
+  if (name !== "read_bytes") throw new Error(`Unmodeled call: ${name}`);
+  const offset =
+    args.address === expectation.symbol
+      ? 0
+      : Number(BigInt(String(args.address)) - BigInt(address));
+  return {
+    address: `0x${(BigInt(address) + BigInt(offset)).toString(16)}`,
+    complete: true,
+    bytes_hex: bytes
+      .subarray(offset, offset + Number(args.length))
+      .toString("hex"),
+  };
+};
+
+it("verifies contiguous native fragments against the complete source bytes", async () => {
+  const result = await verifyHopperStringFragments(
+    fragmentBytes,
+    fragments,
+    expectation,
+  );
+  expect(result.recognition).toEqual({
+    address,
+    state: "observed",
+    decodedObject: "verified",
+  });
+  expect(result.sourceBytes).toBe(bytes.length);
+});
+
+it("reports unrecognized source bytes without accepting identical text at another address", async () => {
+  const elsewhere = [{ ...item, address: "0x403000" }];
+  const result = await verifyHopperStringFragments(
+    fragmentBytes,
+    elsewhere,
+    expectation,
+  );
+  expect(result.recognition).toEqual({
+    address,
+    state: "not_observed",
+    decodedObject: "unverified",
+  });
+  await expect(
+    verifyHopperStringFragments(fragmentBytes, elsewhere, {
+      ...expectation,
+      recognitionOptional: false,
+    }),
+  ).rejects.toThrow(/typed string fragments/u);
+});
+
+it.each([
+  ["gap", [fragments[0], { ...fragments[1], address: "0x402025" }]],
+  ["overlap", [fragments[0], { ...fragments[1], address: "0x402023" }]],
+  ["missing prefix", [fragments[1]]],
+  ["wrong decoded value", [{ ...item, value: "X" + value.slice(1) }]],
+  ["missing tail", [fragments[0]]],
+])(
+  "rejects %s even when fragment recognition is optional",
+  async (_label, inventory) => {
+    await expect(
+      verifyHopperStringFragments(fragmentBytes, inventory, expectation),
+    ).rejects.toThrow();
+  },
+);
+
+it("rejects incomplete source bytes even with no native string objects", async () => {
+  await expect(
+    verifyHopperStringFragments(
+      async (name: string, args: Record<string, unknown> = {}) => ({
+        ...(await fragmentBytes(name, args)),
+        complete: false,
+      }),
+      [],
+      expectation,
+    ),
+  ).rejects.toThrow();
+});
 
 it("keeps source identity and unknown decoding when the same text exists elsewhere", async () => {
   const report = await verifyHopperStringObjects(

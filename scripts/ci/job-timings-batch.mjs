@@ -103,6 +103,9 @@ export async function collectJobTimingsBatch({
           id: run.id,
           runAttempt: run.run_attempt,
           workflow: workflow.name,
+          event: typeof run.event === "string" ? run.event : null,
+          headBranch:
+            typeof run.head_branch === "string" ? run.head_branch : null,
           conclusion: run.conclusion ?? null,
           createdAt: run.created_at ?? null,
         });

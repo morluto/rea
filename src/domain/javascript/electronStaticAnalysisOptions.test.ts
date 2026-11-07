@@ -1,8 +1,949 @@
+import { runInNewContext } from "node:vm";
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
+import * as t from "@babel/types";
+import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticPropertyReadSources } from "./javascriptSemanticIterationSources.js";
+import {
+  analyzeParsedJavaScriptStaticSource,
+  analyzeJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
+
+describe("Electron constant option evidence", () => {
+  it("keeps mixed constant, inline and unresolved windows in construction order", () => {
+    const analysis = analyzeJavaScriptStaticSource(
+      [
+        'const { BrowserWindow } = require("electron");',
+        "const options = { webPreferences: { sandbox: true } };",
+        "new BrowserWindow(options);",
+        "new BrowserWindow({ webPreferences: { sandbox: false } });",
+        "new BrowserWindow(dynamic);",
+        "new BrowserWindow(options);",
+      ].join("\n"),
+    );
+    expect(
+      analysis.electron.browser_windows.map(
+        ({ location }) => location.start.line,
+      ),
+    ).toEqual([3, 4, 5, 6]);
+    expect(
+      analysis.electron.browser_windows.map(
+        ({ options_status }) => options_status,
+      ),
+    ).toEqual([
+      "object-literal",
+      "object-literal",
+      "dynamic",
+      // The first constructor already received this object; later contents
+      // remain unknown even though the declarations retain their source order.
+      "dynamic",
+    ]);
+  });
+
+  it("resolves local constant options despite an unrelated option write", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      function open() {
+        const preferences = { nodeIntegration: true, contextIsolation: false };
+        const options = { webPreferences: preferences };
+        if (linux) options.icon = "icon.png";
+        new BrowserWindow(options);
+      }
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "contextIsolation",
+            value: { status: "literal", value: false },
+          },
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+        resolution_sources: [expect.any(Object), expect.any(Object)],
+      },
+    ]);
+  });
+
+  it.each([
+    "options.webPreferences.sandbox = false;",
+    "const alias = options.webPreferences; alias.sandbox = false;",
+    "mutate(options);",
+    "const { webPreferences: alias } = options; mutate(alias);",
+    "Object.assign(options, unknown);",
+    "const box = {}; box.options = options; box.options.webPreferences.sandbox = false;",
+    "const box = {}; box.options = options; const saved = box.options; box.options = {}; saved.webPreferences.sandbox = false;",
+    "const values = [options]; values[Symbol.iterator] = input; const box = {}; [box.options] = values; box.options.webPreferences.sandbox = false;",
+    "options = replacement;",
+  ])("keeps changed or escaped constant options unknown: %s", (mutation) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      ${mutation}
+      new BrowserWindow(options);
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "dynamic",
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+        preload_path: null,
+      },
+    ]);
+  });
+
+  it.each([
+    "const box = {}; box.options = options; box.options = { webPreferences: { sandbox: false } }; box.options.webPreferences.sandbox = false;",
+    "let box = { options: { webPreferences: { sandbox: false } } }; const saved = box; box = {}; box.options = options; saved.options.webPreferences.sandbox = false;",
+    "const values = [{ webPreferences: { sandbox: false } }]; values[Symbol.iterator] = input; const box = {}; [box.options] = values; box.options.webPreferences.sandbox = false;",
+  ])(
+    "keeps independent options intact after stored receiver replacement: %s",
+    (mutation) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const options = { webPreferences: { sandbox: true } };
+      ${mutation}
+      new BrowserWindow(options);
+    `);
+      expect(analysis.electron.browser_windows).toMatchObject([
+        {
+          options_status: "object-literal",
+          web_preferences_status: "object-literal",
+          web_preferences: [
+            { name: "sandbox", value: { status: "literal", value: true } },
+          ],
+        },
+      ]);
+    },
+  );
+});
+
+describe("Electron option captures and initialization", () => {
+  it.each([
+    ["inner.current = second;", [true, false], ["object-literal", "dynamic"]],
+    [
+      "source.inner = { current: second };",
+      [false, true],
+      ["dynamic", "object-literal"],
+    ],
+  ] as const)(
+    "preserves shallow-copy capture depth across later writes: %s",
+    (replacement, runtime, statuses) => {
+      const body = `
+      const first = { webPreferences: { sandbox: true } };
+      const second = { webPreferences: { sandbox: true } };
+      const inner = { current: first };
+      const source = { inner };
+      const box = {};
+      ({...box.options} = source);
+      ${replacement}
+      box.options.inner.current.webPreferences.sandbox = false;
+    `;
+      expect(
+        Array.from(
+          runInNewContext(
+            `${body};[first.webPreferences.sandbox, second.webPreferences.sandbox]`,
+          ),
+        ),
+      ).toEqual(runtime);
+      const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      ${body}
+      new BrowserWindow(first);
+      new BrowserWindow(second);
+    `);
+      expect(
+        analysis.electron.browser_windows.map(
+          ({ options_status }) => options_status,
+        ),
+      ).toEqual(statuses);
+      const intact =
+        analysis.electron.browser_windows[statuses.indexOf("object-literal")];
+      expect(intact?.web_preferences).toMatchObject([
+        { name: "sandbox", value: { status: "literal", value: true } },
+      ]);
+    },
+  );
+
+  it.each([
+    "new BrowserWindow(options); const options = { webPreferences: { sandbox: true } };",
+    "const options = alias; const alias = { webPreferences: { sandbox: true } }; new BrowserWindow(options);",
+    "const options = alias; const alias = options; new BrowserWindow(options);",
+    "const options = { webPreferences: { sandbox: true } }; { const options = unknown; new BrowserWindow(options); }",
+    "let options = { webPreferences: { sandbox: true } }; new BrowserWindow(options);",
+  ])("does not invent a constant initializer: %s", (source) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron"); ${source}
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "dynamic",
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      },
+    ]);
+  });
+
+  it("preserves constants selected before later mutation and resolves preload context", () => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const original = { webPreferences: { preload: require("path").join(__dirname, "preload.js"), sandbox: true } };
+      const options = original;
+      new BrowserWindow(options);
+      original.webPreferences.sandbox = false;
+    `);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        preload_path: "preload.js",
+        preload_resolution_context: "filesystem-expression",
+      },
+    ]);
+  });
+});
+
+it("resolves module-level webPreferences used inside a function", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      const webPreferences = { nodeIntegration: true, contextIsolation: false };
+      function createWindow() {
+        return new BrowserWindow({ width: 800, webPreferences });
+      }
+      createWindow();
+    `);
+  const window = analysis.electron.browser_windows[0];
+  expect(window?.web_preferences_status).toBe("object-literal");
+  expect(window?.web_preferences).toEqual(
+    expect.arrayContaining([
+      {
+        name: "nodeIntegration",
+        value: expect.objectContaining({ status: "literal", value: true }),
+      },
+      {
+        name: "contextIsolation",
+        value: expect.objectContaining({ status: "literal", value: false }),
+      },
+    ]),
+  );
+});
+it("keeps a module-level option unresolved when called before initialization", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      const { BrowserWindow } = require("electron");
+      function createWindow() {
+        return new BrowserWindow({ webPreferences });
+      }
+      createWindow();
+      const webPreferences = { nodeIntegration: true };
+    `);
+  expect(analysis.electron.browser_windows[0]).toMatchObject({
+    web_preferences_status: "dynamic",
+    web_preferences: [],
+  });
+});
+it.each([
+  { label: "a direct call", before: "createWindow();", after: "" },
+  {
+    label: "an aliased call",
+    before: "const early = createWindow; early();",
+    after: "",
+  },
+  {
+    label: "a forwarding function",
+    before: "start();",
+    after: "function start() { createWindow(); }",
+  },
+])(
+  "does not initialize a hoisted window function reached by $label",
+  ({ before, after }) => {
+    const source = `
+    const { BrowserWindow } = require("electron");
+    ${before}
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() {
+      return new BrowserWindow({ webPreferences });
+    }
+    ${after}
+  `;
+    expect(() =>
+      runInNewContext(source, {
+        require: () => ({ BrowserWindow: class {} }),
+      }),
+    ).toThrow(/before initialization/);
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+  },
+);
+
+it("resolves a hoisted window function called after module initialization", () => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    function createWindow() {
+      return new BrowserWindow({ webPreferences });
+    }
+    const webPreferences = { nodeIntegration: true };
+    createWindow();
+  `;
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
+  });
+});
+
+it.each([
+  "for (const item of [0])",
+  "for (let index = 0; index < 1; index++)",
+  "while (true)",
+])(
+  "keeps function initialization coverage separate from %s ordering",
+  (loop) => {
+    const source = (early: boolean) => `
+    const { BrowserWindow } = require("electron");
+    ${early ? "createWindow();" : ""}
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() {
+      ${loop} {
+        return new BrowserWindow({ webPreferences });
+      }
+    }
+    ${early ? "" : "createWindow();"}
+  `;
+    const runtime = () => {
+      const context = { require: () => ({ BrowserWindow: class {} }) };
+      return { ...context, window: undefined, self: undefined };
+    };
+    expect(() => runInNewContext(source(false), runtime())).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source(false)).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+    expect(() => runInNewContext(source(true), runtime())).toThrow(
+      /before initialization/,
+    );
+    expect(
+      analyzeJavaScriptStaticSource(source(true)).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+  },
+);
+
+it("keeps class-owned this separate from a global activation", () => {
+  const source = `const { BrowserWindow } = require("electron");
+    class Other { static createWindow() {} static value = this.createWindow(); }
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({webPreferences}); }
+    createWindow();`;
+  expect(() =>
+    runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+  ).not.toThrow();
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
+  });
+});
+
+it.each([32, 64])(
+  "shares guarded subtree summaries across %i nested catches",
+  (size) => {
+    const source =
+      "try {".repeat(size) +
+      "invoke();" +
+      "} catch ({createWindow: start}) {}".repeat(size);
+    const parsed = parseJavaScriptSource(source);
+    expect(parsed).not.toBeNull();
+    if (parsed === null) return;
+    const catches: { node: t.CatchClause; parent: t.TryStatement }[] = [];
+    const blocks: t.BlockStatement[] = [];
+    traverseJavaScriptAst(parsed.program, {
+      enter(node, parent) {
+        if (t.isBlockStatement(node)) blocks.push(node);
+        if (t.isCatchClause(node) && t.isTryStatement(parent))
+          catches.push({ node, parent });
+      },
+    });
+    let reads = 0;
+    for (const block of blocks) {
+      const body = block.body;
+      Object.defineProperty(block, "body", {
+        configurable: true,
+        get() {
+          reads++;
+          return body;
+        },
+      });
+    }
+    for (const { node, parent } of catches)
+      expect(semanticPropertyReadSources(node, parent).length).toBeGreaterThan(
+        0,
+      );
+    expect(reads).toBeLessThanOrEqual(size * 8);
+  },
+);
+
+it.each([
+  "function boot() { this.createWindow(); } boot();",
+  "function boot() { this.createWindow(); } boot.call(globalThis);",
+  "function boot() { const run = () => this.createWindow(); run(); } boot();",
+])("retains caller-owned this uncertainty: %s", (activation) => {
+  for (const early of [true, false]) {
+    const source = `const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({webPreferences}); }
+      ${early ? "" : activation}
+      createWindow();`;
+    const run = () =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) });
+    if (early) expect(run).toThrow(/before initialization/);
+    else expect(run).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "dynamic",
+      web_preferences: [],
+    });
+  }
+});
+
+const CLASSIC_GLOBAL_ACTIVATIONS = [
+  "function boot() { Object.setPrototypeOf(this.Array.prototype, globalThis); } boot(); [].createWindow();",
+  "const box = { get value() { throw globalThis; } }; try { const { value } = box; } catch ({ createWindow: start }) { start(); }",
+  "function fail() { throw globalThis; } try { const box = { [fail()]() {} }; } catch ({ createWindow: start }) { start(); }",
+  "Object.setPrototypeOf(Number.prototype, globalThis); (0).createWindow();",
+  "Object.setPrototypeOf(Boolean.prototype, globalThis); true.createWindow();",
+  "Object.setPrototypeOf(RegExp.prototype, globalThis); /x/.createWindow();",
+  "Object.setPrototypeOf(BigInt.prototype, globalThis); (0n).createWindow();",
+  "Object.assign(Object.prototype, globalThis); (0).createWindow();",
+  "Object.assign(Object.prototype, globalThis); true.createWindow();",
+  "Object.assign(Object.prototype, globalThis); /x/.createWindow();",
+  "Object.setPrototypeOf(globalThis.window.Array.prototype, globalThis); [].createWindow();",
+  "function fail() { throw globalThis; } try { fail``; } catch ({ createWindow: start }) { start(); }",
+  "const box = { get value() { throw globalThis; } }; try { box.value; } catch ({ createWindow: start }) { start(); }",
+  "const { root } = { root: globalThis, createWindow() {} }; const early = root.createWindow; early();",
+  "let root; ({ root } = { root: globalThis, createWindow() {} }); const early = root.createWindow; early();",
+  "const { nested: { root } } = { nested: { root: globalThis }, createWindow() {} }; root.createWindow();",
+  "function fail() { throw globalThis; } try { fail(); } catch ({ createWindow: start }) { start(); }",
+  "function fail() { throw globalThis; } try { if (true) fail(); } catch ({ createWindow: start }) { start(); }",
+  "const args = [globalThis, 'createWindow']; Reflect.get.apply(Reflect, args)();",
+  "const args = [globalThis, 'createWindow']; Reflect.get(...args)();",
+  "Object.assign(Object.prototype, globalThis); ({}).createWindow();",
+  "Object.setPrototypeOf(String.prototype, globalThis); ''.createWindow();",
+  "Object.setPrototypeOf(this.Array.prototype, globalThis); [].createWindow();",
+  "globalThis[`Reflect`].get(globalThis, 'createWindow')();",
+  "Object.extra = 1; function unused() { [].createWindow; } Reflect.get?.(globalThis, 'createWindow')();",
+  "const R = Reflect; R.get(globalThis, 'createWindow')();",
+  "const read = Reflect.get; read(globalThis, 'createWindow')();",
+  "const read = Reflect.get.bind(Reflect); read(globalThis, 'createWindow')();",
+  "const root = []; Object.setPrototypeOf(Array.prototype, globalThis); root.createWindow();",
+  "const root = []; const alias = root; Object.setPrototypeOf(Array.prototype, globalThis); alias.createWindow();",
+  "const root = function(){}; const alias = root; Object.setPrototypeOf(Function.prototype, globalThis); alias.createWindow();",
+  "globalThis.createWindow();",
+  'globalThis["createWindow"]();',
+  "const early = globalThis.createWindow; early();",
+  "globalThis?.createWindow?.();",
+  "window.createWindow();",
+  'self["createWindow"]();',
+  "this.createWindow();",
+  "const root = globalThis; root.createWindow();",
+  "const root = window; const alias = root; alias.createWindow();",
+  "const root = globalThis.window; root.createWindow();",
+  "const { root } = { root: globalThis }; root.createWindow();",
+  "const key = 'createWindow'; globalThis[key]();",
+  "with ({}) { createWindow(); }",
+  "const { createWindow: start } = globalThis; start();",
+  "let start; ({ createWindow: start } = globalThis); start();",
+  "let start; for ({ createWindow: start } of [globalThis]) start();",
+  "for (const { createWindow: start } of [globalThis]) start();",
+  "let start; ({ root: { createWindow: start } } = { root: globalThis }); start();",
+  "const start = (createWindow ||= null); start();",
+  "const root = { __proto__: globalThis }; root.createWindow();",
+  "const root = { ...globalThis }; root.createWindow();",
+  "(0, eval)('createWindow()');",
+  "Function('createWindow()')();",
+  "class C extends (this.Function('createWindow()')(), Object) {}",
+  "({ [this.eval('createWindow()')]() {} });",
+  "Function`createWindow()`();",
+  "Object.setPrototypeOf(Array.prototype, globalThis); [].createWindow();",
+  "Object.extra=1; function unusedArrayRead(){[].createWindow;} Reflect.get(globalThis, 'createWindow')();",
+  "Object.extra=1; function unusedArrayRead(){[].createWindow;} try { throw globalThis; } catch ({ createWindow: start }) { start(); }",
+  "Object.setPrototypeOf(Function.prototype, globalThis); (function(){}).createWindow();",
+  "new Function('createWindow()')();",
+  "this['Function']('createWindow()')();",
+  "const root = {}; const alias = root; Object.setPrototypeOf(root, globalThis); alias.createWindow();",
+  "const root = {}; const alias = root; Object.assign(root, globalThis); alias.createWindow();",
+  "const F = Function.bind(null); new F('createWindow()')();",
+  "Reflect.construct(Function, ['createWindow()'])();",
+  "const root = {}; Object.setPrototypeOf(root, globalThis); root.createWindow();",
+  "const root = {}; Object.assign(root, globalThis); root.createWindow();",
+  "const F = Function; F('createWindow()')();",
+  "Function.call(null, 'createWindow()')();",
+  "Function.apply(null, ['createWindow()'])();",
+  "globalThis.Function('createWindow()')();",
+  "const F = Function.bind(null); F('createWindow()')();",
+  "const noop = () => {}; function unused() { noop(); } (0, eval)('createWindow()');",
+  "const noop = () => {}; (0, eval)(''); function unused() { noop(); } (0, eval)('createWindow()');",
+];
+
+it.each([
+  "",
+  "const root = globalThis;",
+  "const unrelated = { createWindow() {} }; function unusedReceiverRead() { unrelated.createWindow; }",
+  "for (const ignored of [1, 2]) { ({ createWindow() {} }).createWindow; }",
+])("keeps class heritage activation after initialization with %s", (extra) => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    ${extra}
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    class C extends (this.Function('createWindow()')(), Object) {}
+    createWindow();
+  `;
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
+  });
+});
+
+it.each([64, 128])(
+  "bounds own-method key visits for %i repeated reads",
+  (size) => {
+    const source = `const { BrowserWindow } = require('electron');
+      const box = { createWindow() {}, ${Array.from({ length: size }, (_, i) => `p${i}: 0`).join(",")} };
+      ${"box.createWindow; box.unrelated;".repeat(size)}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    const parsed = parseJavaScriptSource(source);
+    if (parsed === null) throw new Error("fixture did not parse");
+    const statement = parsed.program.body[1];
+    if (statement?.type !== "VariableDeclaration")
+      throw new Error("fixture changed");
+    const object = statement.declarations[0]?.init;
+    if (object?.type !== "ObjectExpression") throw new Error("fixture changed");
+    let keyVisits = 0;
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") continue;
+      const key = property.key;
+      Object.defineProperty(property, "key", {
+        configurable: true,
+        get: () => {
+          keyVisits += 1;
+          return key;
+        },
+      });
+    }
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "object-literal" });
+    expect(keyVisits).toBeLessThanOrEqual(32 * (size + 1));
+  },
+);
+
+it.each([64, 128])(
+  "bounds projected property key visits for %i distinct reads",
+  (size) => {
+    const names = Array.from({ length: size }, (_, i) => `p${i}`);
+    const source = `const { BrowserWindow } = require('electron');
+    const { ${names.map((name) => `${name}: { unrelated: ${name} }`).join(",")} } =
+      { ${names.map((name) => `${name}: {}`).join(",")} };
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    createWindow();`;
+    const parsed = parseJavaScriptSource(source);
+    const statement = parsed?.program.body[1];
+    if (parsed === null || statement?.type !== "VariableDeclaration")
+      throw new Error("fixture changed");
+    const object = statement.declarations[0]?.init;
+    if (object?.type !== "ObjectExpression") throw new Error("fixture changed");
+    let keyVisits = 0;
+    for (const property of object.properties) {
+      if (property.type === "SpreadElement") continue;
+      const key = property.key;
+      Object.defineProperty(property, "key", {
+        configurable: true,
+        get: () => {
+          keyVisits += 1;
+          return key;
+        },
+      });
+    }
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "object-literal" });
+    expect(keyVisits).toBeLessThanOrEqual(32 * size);
+  },
+);
+
+it("retains possible global code from a caller-owned receiver", () => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    function boot() { this.Function("createWindow()")(); }
+    boot();
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    createWindow();
+  `;
+  expect(() =>
+    runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+  ).toThrow(/before initialization/);
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+});
+
+describe("Classic-script global function activation", () => {
+  it.each([
+    "const { nested: { value } } = { nested: { value: 1 } };",
+    "let value; ({ nested: { value } } = { nested: { value: 1 } });",
+    "export type { createWindow };",
+    "export { type createWindow };",
+  ])("preserves settings across runtime-independent syntax: %s", (prefix) => {
+    const source = `${prefix === "export { type createWindow };" ? "import { BrowserWindow } from 'electron';" : "const { BrowserWindow } = require('electron');"}
+      ${prefix}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    const parsed = parseJavaScriptSource(source, "fixture.ts");
+    expect(parsed).not.toBeNull();
+    if (parsed === null) throw new Error("fixture did not parse");
+    expect(
+      analyzeParsedJavaScriptStaticSource(source, parsed).electron
+        .browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("retains possible classic activation after an erased type import", () => {
+    const source = `import type { T } from './types';
+      const { BrowserWindow } = require('electron'); globalThis.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    expect(() =>
+      runInNewContext(source.replace("import type { T } from './types';", ""), {
+        require: () => ({ BrowserWindow: class {} }),
+      }),
+    ).toThrow(/before initialization/);
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+  });
+  it("keeps a shadowed Function constructor independent of global activation", () => {
+    const source = `const { BrowserWindow } = require('electron');
+      const Function = () => () => {}; Function('createWindow()')();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();`;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+  it.each(CLASSIC_GLOBAL_ACTIVATIONS)(
+    "keeps early global access unresolved: %s",
+    (activation) => {
+      const body = (early: boolean) => `
+      const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : activation}
+      createWindow();
+    `;
+      const runtime = () => ({ require: () => ({ BrowserWindow: class {} }) });
+      expect(() =>
+        runInNewContext(
+          "globalThis.window = globalThis; globalThis.self = globalThis;" +
+            body(true),
+          runtime(),
+        ),
+      ).toThrow(/before initialization/);
+      expect(() =>
+        runInNewContext(
+          "globalThis.window = globalThis; globalThis.self = globalThis;" +
+            body(false),
+          runtime(),
+        ),
+      ).not.toThrow();
+      expect(
+        analyzeJavaScriptStaticSource(body(true)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+      expect(
+        analyzeJavaScriptStaticSource(body(false)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    "@dec(this.createWindow()) class Decorated {}",
+    "class Decorated { @dec(this.createWindow()) method() {} }",
+  ])(
+    "tracks decorator expressions in the surrounding script: %s",
+    (decorated) => {
+      const source = (early: boolean) => `
+      const { BrowserWindow } = require("electron");
+      function dec() {}
+      ${early ? decorated : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : decorated}
+      createWindow();
+    `;
+      expect(
+        analyzeJavaScriptStaticSource(source(true)).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+      expect(
+        analyzeJavaScriptStaticSource(source(false)).electron
+          .browser_windows[0],
+      ).toMatchObject({ web_preferences_status: "object-literal" });
+    },
+  );
+
+  it("keeps callbacks in hoisted default parameters uncertain", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow(make = () => new BrowserWindow({ webPreferences })) { return make(); }
+    `;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).toThrow(/before initialization/);
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+  });
+});
+
+describe("Classic-script global receiver identity", () => {
+  it("keeps a long flat global alias chain stack safe", () => {
+    const aliases = ["const root0 = globalThis;"];
+    for (let index = 1; index < 6000; index++)
+      aliases.push(
+        "const root" +
+          index +
+          " = root" +
+          (index - 1) +
+          "; root" +
+          index +
+          ".document;",
+      );
+    const source = `
+      const { BrowserWindow } = require("electron");
+      ${aliases.join("\n")}
+      root5999.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({ web_preferences_status: "dynamic", web_preferences: [] });
+  });
+
+  it("does not confuse an unrelated parameter with the module function", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      function helper(createWindow) { createWindow(); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("does not treat an ES module function as a global property", () => {
+    const source = `
+      import { BrowserWindow } from "electron";
+      globalThis.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it.each([
+    "function unused() { other.createWindow; }",
+    "for (const value of [1,2]) { other.createWindow; }",
+    "const alias = other; function unused() { alias.createWindow; }",
+  ])(
+    "preserves no-effect receiver identity across deferred reads: %s",
+    (read) => {
+      const source = `const { BrowserWindow } = require("electron");
+      const other = { createWindow() {} }; ${read}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({webPreferences}); }
+      createWindow();`;
+      expect(() =>
+        runInNewContext(source, {
+          require: () => ({ BrowserWindow: class {} }),
+        }),
+      ).not.toThrow();
+      expect(
+        analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "object-literal",
+        web_preferences: [
+          {
+            name: "nodeIntegration",
+            value: { status: "literal", value: true },
+          },
+        ],
+      });
+    },
+  );
+
+  it.each([
+    "String.prototype.extra = 1; [].createWindow;",
+    "const Reflect = { get() { return () => {}; } }; Reflect.get(globalThis, 'createWindow')();",
+    "Reflect.get({createWindow(){}}, 'createWindow')();",
+    "try { throw {createWindow(){}}; } catch ({createWindow:start}) { start(); }",
+    "Object.extra = 1; function unused() { [].createWindow; }",
+    "Array.extra = 1; function unused() { [].createWindow; }",
+    "Function.extra = 1; function unused() { (function(){}).createWindow; }",
+    "[].createWindow; Object.setPrototypeOf(Array.prototype, globalThis);",
+    "Function.prototype.extra = 1; [].createWindow;",
+  ])("keeps unrelated or later prototype effects isolated: %s", (effect) => {
+    const source = `const { BrowserWindow } = require("electron"); ${effect}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({webPreferences}); }
+      createWindow();`;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+
+  it("keeps unrelated same-named member calls independent", () => {
+    const source = `
+      const { BrowserWindow } = require("electron");
+      const other = { createWindow() {} };
+      let root = other;
+      root = globalThis;
+      root.document;
+      other.createWindow();
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      createWindow();
+    `;
+    expect(() =>
+      runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+    ).not.toThrow();
+    expect(
+      analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+    ).toMatchObject({
+      web_preferences_status: "object-literal",
+      web_preferences: [
+        { name: "nodeIntegration", value: { status: "literal", value: true } },
+      ],
+    });
+  });
+});
 
 describe("Electron option evidence", () => {
+  it.each([
+    '({ webPreferences: { preload: "./preload.js", sandbox: true } } as const)',
+    '{ webPreferences: ({ preload: "./preload.js", sandbox: true } as const) }',
+    '{ webPreferences: { preload: "./preload.js" as const, sandbox: true } }',
+  ])("unwraps type-only wrappers around inline options: %s", (options) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+      import { BrowserWindow } from "electron";
+      new BrowserWindow(${options});
+    `);
+
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      {
+        options_status: "object-literal",
+        web_preferences_status: "object-literal",
+        preload_path: "./preload.js",
+        preload_resolution_context: "module-specifier",
+        web_preferences: [
+          {
+            name: "preload",
+            value: { status: "literal", value: "./preload.js" },
+          },
+          { name: "sandbox", value: { status: "literal", value: true } },
+        ],
+      },
+    ]);
+  });
+
   it("keeps the final explicit preload and service name with unrelated keys", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       const { BrowserWindow, utilityProcess } = require("electron");
@@ -25,16 +966,47 @@ describe("Electron option evidence", () => {
     });
   });
 
-  it("does not read an audio or video preload attribute as a preload script", () => {
+  it.each([
+    ["for initializer", 'for (var electron = require("electron"); false;) {}'],
+    ["do body", 'do { var electron = require("electron"); } while (false);'],
+  ])(
+    "recovers Electron bindings initialized unconditionally in a %s",
+    (_name, declaration) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        `${declaration} new electron.BrowserWindow({webPreferences:{preload:"./preload.js"}});`,
+      );
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toMatchObject([
+        { preload_path: "./preload.js" },
+      ]);
+    },
+  );
+
+  it.each([
+    'for (; false;) { var electron = require("electron"); }',
+    'while (false) { var electron = require("electron"); }',
+    'if (flag) { for (var electron = require("electron"); false;) {} }',
+  ])(
+    "keeps conditionally skipped loop declarations unresolved: %s",
+    (declaration) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        `${declaration} new electron.BrowserWindow({});`,
+      );
+      expect(analysis.electron.browser_windows).toEqual([]);
+    },
+  );
+
+  it("selects proven Electron preloads while ignoring media attributes and unrelated properties", () => {
     const analysis = analyzeJavaScriptStaticSource(`
       jsx("audio", { controls: true, preload: "metadata", src });
       (0, React.createElement)(\`video\`, { preload: "auto" });
       jsx("webview", { preload: "./guest.js" });
-      const options = { preload: "./preload.js" };
+      const options = { preload: "./unrelated.js" };
+      const { BrowserWindow } = require("electron");
+      new BrowserWindow({webPreferences: {preload: "./preload.js"}});
     `);
 
     expect(analysis.role_paths.map(({ path }) => path)).toEqual([
-      "./guest.js",
       "./preload.js",
     ]);
   });
@@ -80,5 +1052,196 @@ describe("Electron option evidence", () => {
         value: expect.objectContaining({ status: "dynamic", value: null }),
       }),
     );
+  });
+});
+
+describe("Electron empty option keys", () => {
+  describe.each([
+    ["plain empty string", '[""]'],
+    ["empty template", "[``]"],
+    ["wrapped empty string", '["" as const]'],
+  ])("unrelated %s option keys", (_label, key) => {
+    it("retains an earlier explicit webPreferences object", () => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        const { BrowserWindow } = require("electron");
+        new BrowserWindow({
+          webPreferences: { preload: "./kept.js", sandbox: true },
+          ${key}: true
+        });
+      `);
+
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.electron.browser_windows).toMatchObject([
+        {
+          web_preferences_status: "object-literal",
+          preload_path: "./kept.js",
+          preload_resolution_context: "module-specifier",
+          web_preferences: [
+            {
+              name: "preload",
+              value: { status: "literal", value: "./kept.js" },
+            },
+            { name: "sandbox", value: { status: "literal", value: true } },
+          ],
+        },
+      ]);
+    });
+
+    it("retains an earlier explicit preload within webPreferences", () => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        const { BrowserWindow } = require("electron");
+        new BrowserWindow({ webPreferences: {
+          preload: "./kept.js", sandbox: true, ${key}: false
+        } });
+      `);
+
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.electron.browser_windows).toMatchObject([
+        {
+          web_preferences_status: "object-literal",
+          preload_path: "./kept.js",
+          preload_resolution_context: "module-specifier",
+          web_preferences: [
+            { name: "", value: { status: "literal", value: false } },
+            {
+              name: "preload",
+              value: { status: "literal", value: "./kept.js" },
+            },
+            { name: "sandbox", value: { status: "literal", value: true } },
+          ],
+        },
+      ]);
+    });
+
+    it("retains an earlier explicit utility-process service name", () => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        const { utilityProcess } = require("electron");
+        utilityProcess.fork("./worker.js", [], {
+          serviceName: "kept", ${key}: true
+        });
+      `);
+
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.parse_status).toBe("complete");
+      expect(analysis.electron.utility_processes).toMatchObject([
+        { module_path: "./worker.js", service_name: "kept" },
+      ]);
+    });
+  });
+
+  it.each([
+    ["dynamic key", "[key]: null"],
+    ["spread", "...options"],
+  ])(
+    "keeps a preceding %s override unknown after an unrelated empty template key",
+    (_label, override) => {
+      const analysis = analyzeJavaScriptStaticSource(`
+        const { BrowserWindow, utilityProcess } = require("electron");
+        new BrowserWindow({
+          webPreferences: { preload: "./maybe.js" },
+          ${override}, [\`\`]: true
+        });
+        new BrowserWindow({ webPreferences: {
+          preload: "./maybe.js", ${override}, [\`\`]: true
+        } });
+        utilityProcess.fork("./worker.js", [], {
+          serviceName: "maybe", ${override}, [\`\`]: true
+        });
+      `);
+
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.parse_status).toBe("partial");
+      expect(analysis.electron.browser_windows).toMatchObject([
+        {
+          web_preferences_status: "dynamic",
+          web_preferences: [],
+          preload_path: null,
+          preload_resolution_context: null,
+        },
+        {
+          web_preferences_status: "object-literal",
+          preload_path: null,
+          preload_resolution_context: null,
+        },
+      ]);
+      expect(analysis.electron.browser_windows[1]?.web_preferences).toEqual(
+        expect.arrayContaining([
+          {
+            name: "",
+            value: { status: "literal", value: true, expression: null },
+          },
+          {
+            name: "preload",
+            value: { status: "literal", value: "./maybe.js", expression: null },
+          },
+          expect.objectContaining({
+            name: expect.stringMatching(/^\[(?:dynamic|spread)@/u),
+            value: expect.objectContaining({ status: "dynamic", value: null }),
+          }),
+        ]),
+      );
+      expect(analysis.electron.utility_processes).toMatchObject([
+        { module_path: "./worker.js", service_name: null },
+      ]);
+    },
+  );
+});
+
+it.each([
+  "function boot({ createWindow: start }) { start(); } boot(globalThis);",
+  "function boot({ createWindow: start } = {}) { start(); } boot(globalThis);",
+])(
+  "retains unresolved caller-supplied parameter property reads: %s",
+  (activation) => {
+    for (const early of [true, false]) {
+      const source = `
+      const { BrowserWindow } = require("electron");
+      ${early ? activation : ""}
+      const webPreferences = { nodeIntegration: true };
+      function createWindow() { return new BrowserWindow({ webPreferences }); }
+      ${early ? "" : activation}
+      createWindow();
+    `;
+      const run = () =>
+        runInNewContext(source, {
+          require: () => ({ BrowserWindow: class {} }),
+        });
+      if (early) expect(run).toThrow(/before initialization/);
+      else expect(run).not.toThrow();
+      // No argument-source or interprocedural activation proof is established.
+      // A default value does not exclude a caller-supplied ambient receiver.
+      expect(
+        analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+      ).toMatchObject({
+        web_preferences_status: "dynamic",
+        web_preferences: [],
+      });
+    }
+  },
+);
+
+it.each([
+  "const Reflect = { get() { return () => {}; } }; const read = Reflect.get; read(globalThis, 'createWindow')();",
+  "const Reflect = { get() { return () => {}; } }; Reflect.get?.(globalThis, 'createWindow')();",
+])("keeps shadowed reflected-call spellings isolated: %s", (activation) => {
+  const source = `
+    const { BrowserWindow } = require("electron");
+    ${activation}
+    const webPreferences = { nodeIntegration: true };
+    function createWindow() { return new BrowserWindow({ webPreferences }); }
+    createWindow();
+  `;
+  expect(() =>
+    runInNewContext(source, { require: () => ({ BrowserWindow: class {} }) }),
+  ).not.toThrow();
+  expect(
+    analyzeJavaScriptStaticSource(source).electron.browser_windows[0],
+  ).toMatchObject({
+    web_preferences_status: "object-literal",
+    web_preferences: [
+      { name: "nodeIntegration", value: { status: "literal", value: true } },
+    ],
   });
 });

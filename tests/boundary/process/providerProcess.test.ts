@@ -18,7 +18,7 @@ import {
   spawnOwnedProviderProcess,
   type ProviderProcessDiagnostic,
 } from "../../../src/process/ProviderProcess.js";
-import { WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON } from "../../../src/process/WindowsAuthority.js";
+import * as nativeLoader from "../../../src/windows/WindowsNativeLoader.js";
 import {
   spawnProviderProcessFixture,
   stopProviderProcessFixture,
@@ -71,12 +71,25 @@ describe("provider process runtime and wait primitives", () => {
   });
 
   it("fails closed for a Windows runtime root without native DACL authority", async () => {
-    await expect(
-      PrivateRuntimeRoot.create({ platform: "win32" }),
-    ).rejects.toMatchObject({
-      code: "private-runtime-root-authority-unavailable",
-      message: WINDOWS_NATIVE_AUTHORITY_UNAVAILABLE_REASON,
-    });
+    const authority = vi
+      .spyOn(nativeLoader, "systemWindowsNativeAuthority")
+      .mockReturnValue({
+        available: false,
+        failureStage: "self-test",
+        reason: "Native DACL self-test failed with Win32 error 145",
+        retryable: true,
+      });
+    try {
+      await expect(
+        PrivateRuntimeRoot.create({ platform: "win32" }),
+      ).rejects.toMatchObject({
+        code: "private-runtime-root-authority-unavailable",
+        message: "Native DACL self-test failed with Win32 error 145",
+        retryable: true,
+      });
+    } finally {
+      authority.mockRestore();
+    }
   });
 
   it("classifies external cancellation during startup", async () => {
@@ -493,7 +506,10 @@ describe("provider process memory limits", () => {
         platform: "linux",
         memoryLimitBytes: 704 * 1024 * 1024,
       }),
-    ).rejects.toThrow("require the Windows Job Object launcher");
+    ).rejects.toMatchObject({
+      _tag: "ProcessAdmissionError",
+      code: "memory_limit_unsupported",
+    });
   });
 });
 

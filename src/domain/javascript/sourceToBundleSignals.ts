@@ -11,6 +11,10 @@ import {
   type SourceToBundleCandidate,
   type SourceToBundleSignal,
 } from "./sourceToBundleComparisonSchemas.js";
+import {
+  javaScriptFileOccurrenceSchema,
+  type JavaScriptFileOccurrence,
+} from "./javascriptArtifactFiles.js";
 import { isDigest } from "../digests.js";
 
 type SourceFile = Extract<
@@ -32,6 +36,8 @@ interface CurrentPath {
 
 interface CurrentProjection {
   readonly node: ApplicationNode;
+  readonly occurrence?: JavaScriptFileOccurrence;
+  readonly representations: readonly string[];
   readonly digests: ReadonlySet<string>;
   readonly paths: readonly CurrentPath[];
 }
@@ -45,6 +51,9 @@ export interface SourceToBundleCandidateIndex {
 }
 
 const RELEVANT_NODE_KINDS = new Set([
+  // Non-JavaScript source files such as JSON are projected as artifacts.
+  // Their content digests and paths still identify historical source files.
+  "artifact",
   "javascript-asset",
   "javascript-module",
   "source-module",
@@ -92,32 +101,32 @@ export const historicalSourceFiles = (
 export const buildSourceToBundleCandidateIndex = (
   nodes: readonly ApplicationNode[],
 ): SourceToBundleCandidateIndex => {
-  const projections = nodes.map(projectCurrentNode);
+  const projections = projectCurrentOccurrences(nodes);
   const byDigest = new Map<string, Set<string>>();
   const byPathSuffix = new Map<string, Set<string>>();
   const byBasename = new Map<string, Set<string>>();
   for (const projection of projections) {
     for (const digest of projection.digests)
-      addIndexValue(byDigest, digest, projection.node.node_id);
+      addIndexValue(byDigest, digest, projectionKey(projection));
     for (const path of projection.paths) {
       for (const suffix of path.allowSuffix
         ? pathSuffixes(path.value)
         : [path.value]) {
-        addIndexValue(byPathSuffix, suffix, projection.node.node_id);
+        addIndexValue(byPathSuffix, suffix, projectionKey(projection));
         const canonical = suffix.normalize("NFC");
         if (canonical !== suffix)
-          addIndexValue(byPathSuffix, canonical, projection.node.node_id);
+          addIndexValue(byPathSuffix, canonical, projectionKey(projection));
       }
       addIndexValue(
         byBasename,
         posix.basename(path.value),
-        projection.node.node_id,
+        projectionKey(projection),
       );
     }
   }
   return {
     nodes: new Map(
-      projections.map((projection) => [projection.node.node_id, projection]),
+      projections.map((projection) => [projectionKey(projection), projection]),
     ),
     byDigest,
     byPathSuffix,
@@ -155,8 +164,10 @@ export const candidateIdsForSource = (
 /** Whether an indexed candidate carries any content digest to compare. */
 export const candidateHasDigest = (
   index: SourceToBundleCandidateIndex,
-  nodeId: string,
-): boolean => (index.nodes.get(nodeId)?.digests.size ?? 0) > 0;
+  candidate: SourceToBundleCandidate,
+): boolean =>
+  (index.nodes.get(sourceToBundleCandidateIdentity(candidate))?.digests.size ??
+    0) > 0;
 
 /** Score one indexed candidate from explicit, caller-visible signals. */
 export const scoreSourceToBundleCandidate = (
@@ -170,12 +181,90 @@ export const scoreSourceToBundleCandidate = (
   const score = signals.reduce((total, signal) => total + signal.weight, 0);
   if (score < 20) return null;
   return {
+    ...(projection.occurrence === undefined
+      ? {}
+      : {
+          current_file_occurrence: projection.occurrence,
+          representation_node_ids: [...projection.representations],
+        }),
     current_node_id: projection.node.node_id,
     current_node_kind: projection.node.kind,
     score,
     confidence: candidateConfidence(signals),
     signals,
   };
+};
+
+const fileOccurrenceKey = (occurrence: JavaScriptFileOccurrence): string =>
+  compositeKey([
+    "file-occurrence",
+    occurrence.container_sha256,
+    occurrence.path,
+    occurrence.sha256,
+  ]);
+const projectionKey = (projection: CurrentProjection): string =>
+  projection.occurrence === undefined
+    ? projection.node.node_id
+    : fileOccurrenceKey(projection.occurrence);
+
+/** Matching and multiplicity share the producing occurrence identity. */
+export const sourceToBundleCandidateIdentity = (
+  candidate: SourceToBundleCandidate,
+): string =>
+  candidate.current_file_occurrence === undefined
+    ? candidate.current_node_id
+    : fileOccurrenceKey(candidate.current_file_occurrence);
+
+const projectCurrentOccurrences = (
+  nodes: readonly ApplicationNode[],
+): CurrentProjection[] => {
+  const groups = new Map<string, CurrentProjection>();
+  for (const node of nodes) {
+    const occurrences = new Map<
+      string,
+      {
+        occurrence: JavaScriptFileOccurrence;
+        observations: ApplicationNode["observations"][number][];
+      }
+    >();
+    for (const observation of node.observations) {
+      const parsed = javaScriptFileOccurrenceSchema.safeParse(
+        observation.properties.file_occurrence,
+      );
+      if (!parsed.success) continue;
+      const key = fileOccurrenceKey(parsed.data);
+      const previous = occurrences.get(key);
+      if (previous === undefined)
+        occurrences.set(key, {
+          occurrence: parsed.data,
+          observations: [observation],
+        });
+      else previous.observations.push(observation);
+    }
+    if (occurrences.size === 0) {
+      groups.set(node.node_id, projectCurrentNode(node));
+      continue;
+    }
+    for (const [key, { occurrence, observations }] of occurrences) {
+      const projected = projectCurrentNode({ ...node, observations });
+      const previous = groups.get(key);
+      groups.set(key, {
+        ...projected,
+        occurrence,
+        node: previous?.node ?? node,
+        representations: [
+          ...new Set([...(previous?.representations ?? []), node.node_id]),
+        ].sort(compareUnicodeCodePoints),
+        digests: new Set([
+          occurrence.sha256,
+          ...projected.digests,
+          ...(previous?.digests ?? []),
+        ]),
+        paths: uniquePaths([...projected.paths, ...(previous?.paths ?? [])]),
+      });
+    }
+  }
+  return [...groups.values()];
 };
 
 const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
@@ -188,7 +277,7 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
       digests.add(node.identity.source_sha256);
   }
   if (node.identity.strategy === "canonical-path")
-    addPath(paths, "canonical-path", node.identity.path);
+    addPath(paths, "canonical-path", node.identity.path, "artifact");
   for (const observation of node.observations) {
     if (node.identity.strategy === "source-map-original") {
       const resolution = observation.source_map_reference?.resolution;
@@ -202,12 +291,31 @@ const projectCurrentNode = (node: ApplicationNode): CurrentProjection => {
       const sourceDigest = observation.properties.source_sha256;
       if (typeof sourceDigest === "string" && isDigest(sourceDigest))
         digests.add(sourceDigest);
-      for (const key of PATH_PROPERTIES)
-        addJsonPath(paths, observation.properties[key]);
+      for (const key of PATH_PROPERTIES) {
+        // A resolved declaration already has an owning artifact-path fact.
+        if (
+          key === "declared_path" &&
+          typeof observation.properties.resolved_path === "string"
+        )
+          continue;
+        addJsonPath(
+          paths,
+          observation.properties[key],
+          key === "resolved_path" ||
+            ((key === "path" || key === "module_path") &&
+              !(
+                typeof observation.properties[key] === "string" &&
+                SCHEME_URL.test(observation.properties[key])
+              ))
+            ? "artifact"
+            : "reference",
+        );
+      }
     }
   }
   return {
     node,
+    representations: [node.node_id],
     digests,
     paths: uniquePaths(paths),
   };
@@ -323,29 +431,40 @@ const matchingUnicodePaths = (
     .map(({ value }) => value);
 };
 
-const addJsonPath = (paths: CurrentPath[], value: unknown): void => {
-  if (typeof value === "string") addPath(paths, "observation-path", value);
+const addJsonPath = (
+  paths: CurrentPath[],
+  value: unknown,
+  format: "artifact" | "reference",
+): void => {
+  if (typeof value === "string")
+    addPath(paths, "observation-path", value, format);
 };
 
 const addPath = (
   paths: CurrentPath[],
   kind: CurrentPathKind,
   raw: string,
+  format: "artifact" | "reference",
 ): void => {
-  const value = normalizeCurrentPath(raw);
+  const value = normalizeCurrentPath(raw, format);
   if (value !== null) paths.push({ kind, value, allowSuffix: true });
 };
 
 const SCHEME_URL = /^[a-z][a-z0-9+.-]*:\/\//iu;
 const SCHEME_URL_PREFIX = /^[a-z][a-z0-9+.-]*:\/\/+/iu;
 
-const normalizeCurrentPath = (raw: string): string | null => {
-  const withoutQuery = SCHEME_URL.test(raw)
-    ? (raw.split(/[?#]/u, 1)[0] ?? "")
-    : raw;
-  const portable = withoutQuery
-    .replace(SCHEME_URL_PREFIX, "")
-    .replaceAll("\\", "/");
+const normalizeCurrentPath = (
+  raw: string,
+  format: "artifact" | "reference",
+): string | null => {
+  const withoutQuery =
+    format === "reference" && SCHEME_URL.test(raw)
+      ? (raw.split(/[?#]/u, 1)[0] ?? "")
+      : raw;
+  const portable =
+    format === "artifact"
+      ? withoutQuery
+      : withoutQuery.replace(SCHEME_URL_PREFIX, "").replaceAll("\\", "/");
   const parts: string[] = [];
   for (const part of portable.split("/")) {
     if (part === "" || part === ".") continue;

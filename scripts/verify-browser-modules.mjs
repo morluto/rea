@@ -2,12 +2,14 @@
 import { access } from "node:fs/promises";
 import { verifyBrowserModules } from "./lib/browser-module-e2e.mjs";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import { requireOrdinaryWindowsVerifierCaller } from "./lib/windows-ordinary-user-verifier.mjs";
 
 const executable = process.env.REA_BROWSER_EXECUTABLE;
 if (!executable)
   throw new Error(
     "verify:browser:modules requires REA_BROWSER_EXECUTABLE for caller-supplied Chromium",
   );
+await requireOrdinaryWindowsVerifierCaller();
 await access(executable);
 const run = createVerifierRun();
 const proof = await verifyBrowserModules(executable, process.argv[2]);

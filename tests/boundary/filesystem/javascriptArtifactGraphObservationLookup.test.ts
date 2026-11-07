@@ -6,17 +6,13 @@ import { expect, it } from "vitest";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
-import {
-  analyzeAndAdoptJavaScriptArtifactFiles,
-  analyzeJavaScriptArtifactFiles,
-} from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
-import {
-  buildImmutableJavaScriptArtifactGraphSteps,
-  buildJavaScriptArtifactGraph,
-} from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
+import { buildImmutableJavaScriptArtifactGraphSteps } from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
 import { err } from "../../../src/domain/result.js";
+import { analyzeArtifactFiles } from "../../fixtures/javascriptArtifactAnalysis.js";
+import { immutableArtifactGraph } from "../../fixtures/javascriptArtifactGraph.js";
 import { createJavaScriptArtifactReader } from "../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
 import type {
   JavaScriptJsonModuleObservation,
@@ -53,7 +49,7 @@ it("keeps per-file failure reasons in the graph while summarizing them globally"
       createJavaScriptSemanticGraphProjection(),
       async () => {},
     );
-    const graph = buildJavaScriptArtifactGraph(
+    const graph = await immutableArtifactGraph(
       snapshot,
       files,
       outcome.analysis,
@@ -147,7 +143,7 @@ it("uses the first structured observation when paths repeat", async () => {
   const reader = createJavaScriptArtifactReader(root, "directory");
   try {
     const files = await readJavaScriptArtifactFiles(reader, snapshot);
-    const analysis = analyzeJavaScriptArtifactFiles(files);
+    const { analysis } = await analyzeArtifactFiles(files);
     const packageObservation = analysis.packages.find(
       ({ path }) => path === "package.json",
     );
@@ -167,17 +163,20 @@ it("uses the first structured observation when paths repeat", async () => {
     )
       throw new TypeError("Expected structured artifact observations");
 
-    const graph = buildJavaScriptArtifactGraph(snapshot, files, {
+    const graph = await immutableArtifactGraph(snapshot, files, {
       ...analysis,
       packages: [
         packageObservation,
         {
           ...packageObservation,
           status: "invalid",
+          main_status: "unavailable",
+          main_entrypoint: null,
           name: null,
           version: null,
           main: null,
-          renderer: null,
+          renderer_declarations: null,
+          renderer_entrypoint: null,
           limitation: "later duplicate",
         } satisfies JavaScriptPackageObservation,
       ],
@@ -229,6 +228,134 @@ it("uses the first structured observation when paths repeat", async () => {
     expect(unavailablePaths).not.toContainEqual({
       path: "app.js.map",
       operation: "parse-local-source-map",
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("preserves unknown omitted-key count for unavailable JSON", async () => {
+  const root = await createTestTempDirectory("rea-unavailable-json-");
+  await Promise.all([
+    writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture" })),
+    writeFile(join(root, "config.json"), Buffer.from([0xff])),
+  ]);
+
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
+
+    const configFile = graph.nodes.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.path === "config.json" && properties.file_kind === "json",
+      ),
+    );
+
+    const configObservation = configFile?.observations.find(
+      ({ properties }) =>
+        properties.path === "config.json" && properties.file_kind === "json",
+    );
+
+    expect(configObservation?.properties).toMatchObject({
+      path: "config.json",
+      text_status: "invalid-utf8",
+      json_parse_status: "unavailable",
+      omitted_json_top_level_keys: null,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("preserves unknown omitted-key count for unselected JSON", async () => {
+  const root = await createTestTempDirectory("rea-unselected-json-");
+
+  await Promise.all([
+    writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture" })),
+    writeFile(join(root, "config.json"), JSON.stringify({ setting: true })),
+  ]);
+
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+
+  try {
+    const files = await readJavaScriptArtifactFiles(
+      reader,
+      snapshot,
+      undefined,
+      ["package.json"],
+    );
+
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
+
+    const configFile = graph.nodes.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.path === "config.json" && properties.file_kind === "json",
+      ),
+    );
+
+    const configObservation = configFile?.observations.find(
+      ({ properties }) =>
+        properties.path === "config.json" && properties.file_kind === "json",
+    );
+
+    expect(configObservation?.properties).toMatchObject({
+      path: "config.json",
+      text_status: "outside-analysis-scope",
+      json_parse_status: null,
+      omitted_json_top_level_keys: null,
+    });
+  } finally {
+    await reader.close();
+  }
+});
+
+it("preserves unknown omitted-key count for unselected uppercase JSON", async () => {
+  const root = await createTestTempDirectory("rea-unselected-uppercase-json-");
+
+  await Promise.all([
+    writeFile(join(root, "package.json"), JSON.stringify({ name: "fixture" })),
+    writeFile(join(root, "config.JSON"), JSON.stringify({ setting: true })),
+  ]);
+
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+
+  try {
+    const files = await readJavaScriptArtifactFiles(
+      reader,
+      snapshot,
+      undefined,
+      ["package.json"],
+    );
+
+    const { analysis } = await analyzeArtifactFiles(files);
+    const graph = await immutableArtifactGraph(snapshot, files, analysis);
+
+    const configFile = graph.nodes.find(({ observations }) =>
+      observations.some(
+        ({ properties }) =>
+          properties.path === "config.JSON" && properties.file_kind === "json",
+      ),
+    );
+
+    const configObservation = configFile?.observations.find(
+      ({ properties }) =>
+        properties.path === "config.JSON" && properties.file_kind === "json",
+    );
+
+    expect(configObservation?.properties).toMatchObject({
+      path: "config.JSON",
+      text_status: "outside-analysis-scope",
+      json_parse_status: null,
+      omitted_json_top_level_keys: null,
     });
   } finally {
     await reader.close();

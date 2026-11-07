@@ -1,5 +1,9 @@
-import type { RelationshipCoverage } from "./relationshipCoverage.js";
-import type { FunctionDossier } from "./hopperValues.js";
+import {
+  relationshipCoverageLimitations,
+  type RelationshipCoverage,
+  type RelationshipDiscoveryStatus,
+} from "./relationshipCoverage.js";
+import type { FunctionDossier } from "./native/functionDossier.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 
 const callerCoveragePrefix = "Callers: ";
@@ -15,25 +19,36 @@ export const combineFunctionRelationshipCoverage = (
     { direction: "callees" as const, coverage: callees },
   ];
   const diagnostics = uniqueSorted(
-    reads.flatMap(({ coverage }) =>
-      coverage !== undefined && "diagnostics" in coverage
-        ? coverage.diagnostics
-        : [],
-    ),
+    reads.flatMap(({ coverage }) => coverage?.diagnostics ?? []),
   );
-  const details = diagnostics.length > 0 ? { diagnostics } : {};
+  const discovery = {
+    ...(callers?.discovery?.callers === undefined
+      ? {}
+      : { callers: callers.discovery.callers }),
+    ...(callees?.discovery?.callees === undefined
+      ? {}
+      : { callees: callees.discovery.callees }),
+  };
+  const details = {
+    ...(diagnostics.length > 0 ? { diagnostics } : {}),
+    ...(Object.keys(discovery).length === 0 ? {} : { discovery }),
+  };
+  const callersLimited = callers?.status !== "complete";
+  const calleesLimited = callees?.status !== "complete";
+  const limited_directions: Extract<
+    RelationshipCoverage,
+    { status: "partial" }
+  >["limited_directions"] = callersLimited
+    ? calleesLimited
+      ? ["callers", "callees"]
+      : ["callers"]
+    : ["callees"];
   const reasons = reads.flatMap(({ direction, coverage }) => {
     const label =
       direction === "callers" ? callerCoveragePrefix : calleeCoveragePrefix;
-    const limitations =
-      coverage === undefined
-        ? ["Provider did not report relationship coverage."]
-        : coverage.status === "unknown"
-          ? [coverage.reason]
-          : coverage.status === "partial"
-            ? coverage.limitations
-            : [];
-    return limitations.map((reason) => `${label}${reason}`);
+    return relationshipCoverageLimitations(coverage).map(
+      (reason) => `${label}${reason}`,
+    );
   });
   if (
     reads.some(
@@ -43,54 +58,88 @@ export const combineFunctionRelationshipCoverage = (
     return {
       status: "unknown",
       reason: uniqueSorted(reasons).join(" "),
+      limited_directions,
       ...details,
     };
   if (reasons.length > 0)
     return {
       status: "partial",
       limitations: uniqueSorted(reasons),
+      limited_directions,
       ...details,
     };
   return { status: "complete", ...details };
 };
 
 /**
- * Whether combined relationship coverage is unknown only on the caller side.
- * The combine helper above prefixes each direction's reasons, so a reason
- * that carries the caller prefix and no callee prefix records observed
- * callees with unobservable callers. Forward (callee-edge) searches stay
- * exhaustive under that caveat; the caller reason remains a limitation.
+ * Forward searches depend on callee coverage. Preserve the historical
+ * unknown-reason encoding when reading observations without explicit directions.
  */
-export const isCallerOnlyUnknownCoverage = (
+export const isCallerOnlyIncompleteCoverage = (
   coverage: RelationshipCoverage,
-): boolean =>
-  coverage.status === "unknown" &&
-  coverage.reason.startsWith(callerCoveragePrefix) &&
-  !coverage.reason.includes(calleeCoveragePrefix);
+): boolean => {
+  if (coverage.status === "complete") return false;
+  if (coverage.limited_directions !== undefined)
+    return !coverage.limited_directions.some(
+      (direction) => direction === "callees",
+    );
+  return (
+    coverage.status === "unknown" &&
+    coverage.reason.startsWith(callerCoveragePrefix) &&
+    !coverage.reason.includes(calleeCoveragePrefix)
+  );
+};
 
-/** Explain why two resolved call sets cannot establish call-set equality. */
-export const functionCallCoverageLimitations = (
+export interface FunctionCallCoverageAssessment {
+  /** Reasons the observed call sets cannot establish equality. */
+  readonly blockers: readonly string[];
+  /** Explicit unresolved outgoing calls, kept separate for forward searches. */
+  readonly unresolvedCallCaveats: readonly string[];
+  /** Provider caveats that remain relevant even with complete coverage. */
+  readonly diagnostics: readonly string[];
+  /** Discovery limits do not invalidate comparisons of the observed sets. */
+  readonly discoveryLimitations: readonly string[];
+  /** Whether all requested call discovery directions are established. */
+  readonly discoveryStatus: RelationshipDiscoveryStatus;
+}
+
+/** Keep observed-set blockers separate from descriptive provider caveats. */
+export const assessFunctionCallCoverage = (
   coverage: RelationshipCoverage | null,
   dossier: Pick<FunctionDossier, "unresolved_calls">,
-): string[] => {
-  const limitations =
-    coverage === null
-      ? ["Provider did not report relationship coverage."]
-      : coverage.status === "unknown"
-        ? [
-            coverage.reason,
-            ...("diagnostics" in coverage ? coverage.diagnostics : []),
-          ]
-        : coverage.status === "partial"
-          ? [
-              ...coverage.limitations,
-              ...("diagnostics" in coverage ? coverage.diagnostics : []),
-            ]
-          : [];
-  limitations.push(
-    ...(dossier.unresolved_calls ?? []).map(
+): FunctionCallCoverageAssessment => {
+  const unresolvedCallCaveats = uniqueSorted(
+    (dossier.unresolved_calls ?? []).map(
       ({ address, reason }) => `Unresolved call at ${address}: ${reason}`,
     ),
   );
-  return uniqueSorted(limitations);
+  const missingDiscovery: string[] = [];
+  const discoveryLimitations: string[] = [];
+  let discoveryStatus: RelationshipDiscoveryStatus = "complete";
+  for (const direction of ["callers", "callees"] as const) {
+    const discovery = coverage?.discovery?.[direction];
+    if (discovery?.status === "partial") discoveryStatus = "partial";
+    else if (discovery?.status !== "complete" && discoveryStatus !== "partial")
+      discoveryStatus = "unknown";
+    if (discovery?.status === "complete") continue;
+    if (discovery?.reason === undefined) missingDiscovery.push(direction);
+    else
+      discoveryLimitations.push(
+        `Static direct-call discovery for ${direction} is ${discovery.status}: ${discovery.reason}`,
+      );
+  }
+  if (missingDiscovery.length > 0)
+    discoveryLimitations.push(
+      `Static direct-call discovery is not established for ${missingDiscovery.join(" and ")}.`,
+    );
+  return {
+    blockers: uniqueSorted([
+      ...relationshipCoverageLimitations(coverage),
+      ...unresolvedCallCaveats,
+    ]),
+    unresolvedCallCaveats,
+    diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
+    discoveryLimitations,
+    discoveryStatus,
+  };
 };

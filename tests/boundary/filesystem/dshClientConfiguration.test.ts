@@ -1,4 +1,5 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +12,7 @@ import {
 } from "yaml";
 
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import {
   configureClientConfiguration,
   inspectClientConfiguration,
@@ -28,7 +29,9 @@ import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment
  * The registration command setup writes on the host running the tests. Windows
  * wraps it in `cmd.exe /d /c`, so the expected entry follows the host too.
  */
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());
@@ -62,9 +65,9 @@ describe("DeepSeek Harness configuration paths", () => {
         configPath: join(home, dshRoot, "cordis.patch.yml"),
         markerPath: join(home, dshRoot),
       });
-      expect(clientSkillDirectories(home, ["dsh"], environment)).toEqual([
-        { client, directory: join(home, agentsRoot, "skills") },
-      ]);
+      expect(
+        clientSkillDirectories(home, ["dsh"], environment).directories,
+      ).toEqual([{ client, directory: join(home, agentsRoot, "skills") }]);
     },
   );
 
@@ -82,9 +85,9 @@ describe("DeepSeek Harness configuration paths", () => {
         configPath: join(root, "cordis.patch.yml"),
         markerPath: root,
       });
-      expect(clientSkillDirectories(home, ["dsh"], environment)).toEqual([
-        { client: "dsh", directory: join(root, "skills") },
-      ]);
+      expect(
+        clientSkillDirectories(home, ["dsh"], environment).directories,
+      ).toEqual([{ client: "dsh", directory: join(root, "skills") }]);
     },
   );
 
@@ -103,7 +106,7 @@ describe("DeepSeek Harness configuration paths", () => {
     expect(
       clientSkillDirectories(join("/home/a"), ["dsh"], {
         DSH_AGENTS_HOME: "/custom/agents",
-      }),
+      }).directories,
     ).toEqual([
       { client: "dsh", directory: resolve("/custom/agents", "skills") },
     ]);
@@ -1704,6 +1707,121 @@ const dshStatus = async (home: string) =>
     })
   ).find(({ client }) => client === "dsh");
 
+describe("DeepSeek Harness runtime environment validation", () => {
+  it.each([
+    ["HOPPER_LOADER_ARGS_JSON", "{"],
+    ["REA_REFERENCE_SECRET_PATTERNS_JSON", '[""]'],
+    ["REA_GHIDRA_COMPILER_SPEC_ID", "borlandcpp"],
+  ])("refuses invalid literal %s before writing", async (setting, value) => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    const original = stringifyYaml([
+      {
+        insert: [
+          { ...entry, config: { ...entry.config, env: { [setting]: value } } },
+        ],
+      },
+    ]);
+    await writeFile(client.configPath, original);
+    expect(await inspectClientConfiguration(client, {}, command)).toMatchObject(
+      { status: "invalid", remediation: expect.stringContaining(setting) },
+    );
+    expect(await dshStatus(home)).toMatchObject({
+      state: "invalid",
+      remediation: expect.stringContaining(setting),
+    });
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "failed" });
+    expect(await readFile(client.configPath, "utf8")).toBe(original);
+    await expect(
+      access(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("keeps an expression-backed companion unknown until a literal override replaces it", async () => {
+    const { home, client } = await harnessClient();
+    const entry = canonicalEntry();
+    const document = parseDocument(
+      stringifyYaml([
+        {
+          insert: [
+            {
+              ...entry,
+              config: {
+                ...entry.config,
+                command: "stale",
+                env: {
+                  REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp",
+                  CALLER_SETTING: "keep",
+                },
+              },
+            },
+          ],
+        },
+      ]),
+    );
+    for (const setting of [
+      "REA_GHIDRA_LANGUAGE_ID",
+      "HOPPER_LOADER_ARGS_JSON",
+    ]) {
+      const expression = document.createNode(`process.env.${setting}`);
+      expression.tag = "tag:yaml.org,2002:js";
+      document.setIn([0, "insert", 0, "config", "env", setting], expression);
+    }
+    const original = document.toString();
+    await writeFile(client.configPath, original);
+    expect(await inspectClientConfiguration(client, {}, command)).toMatchObject(
+      { status: "update" },
+    );
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "configured" });
+    const configured = await readFile(client.configPath, "utf8");
+    expect(configured).toContain("!!js process.env.REA_GHIDRA_LANGUAGE_ID");
+    expect(configured).toContain("!!js process.env.HOPPER_LOADER_ARGS_JSON");
+    expect(configured).toContain("CALLER_SETTING: keep");
+    expect(await dshStatus(home)).toMatchObject({ state: "aligned" });
+    expect(
+      await configureClientConfiguration(client, {}, command),
+    ).toMatchObject({ status: "unchanged" });
+    await expect(
+      inspectClientConfiguration(
+        client,
+        { HOPPER_LOADER_ARGS_JSON: "{" },
+        command,
+      ),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      remediation: expect.stringContaining("HOPPER_LOADER_ARGS_JSON"),
+    });
+    await expect(
+      inspectClientConfiguration(
+        client,
+        { REA_GHIDRA_LANGUAGE_ID: "" },
+        command,
+      ),
+    ).resolves.toMatchObject({
+      status: "invalid",
+      remediation: expect.stringContaining("REA_GHIDRA_LANGUAGE_ID"),
+    });
+    expect(
+      await inspectClientConfiguration(
+        client,
+        {
+          REA_GHIDRA_LANGUAGE_ID: "x86:LE:32:default",
+          HOPPER_LOADER_ARGS_JSON: '[""]',
+        },
+        command,
+      ),
+    ).toMatchObject({ status: "update" });
+    expect(await readFile(client.configPath, "utf8")).toBe(configured);
+    expect(await readFile(`${client.configPath}.rea.backup`, "utf8")).toBe(
+      original,
+    );
+  });
+});
+
 describe("DeepSeek Harness source ownership", () => {
   it.each(["setup", "uninstall"])(
     "preserves unrelated rows in a later externally anchored operation during %s",
@@ -1966,8 +2084,16 @@ describe("DeepSeek Harness ownership and editability", () => {
     const host = systemUninstallHost(home);
     expect(await host.inspectClient(client)).toMatchObject({
       status: "failed",
+      detail: expect.stringContaining(
+        "Expression-backed Cordis IDs have unknown ownership; use literal IDs",
+      ),
     });
-    expect((await host.removeClient(client)).status).toBe("failed");
+    expect(await host.removeClient(client)).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining(
+        "Expression-backed Cordis IDs have unknown ownership; use literal IDs",
+      ),
+    });
     expect(await readFile(client.configPath, "utf8")).toBe(initial);
     await expect(
       readFile(`${client.configPath}.rea.backup`),
@@ -2105,7 +2231,7 @@ describe("DeepSeek Harness ordered selector applicability", () => {
 });
 
 describe("DeepSeek Harness caller node metadata", () => {
-  it.each(["environment", "launcher"])(
+  it.each(["environment", "launcher", "arguments"])(
     "preserves scalar and argument comments during %s repairs",
     async (repair) => {
       const { home, client } = await harnessClient();
@@ -2119,6 +2245,9 @@ describe("DeepSeek Harness caller node metadata", () => {
                 config: {
                   ...entry.config,
                   ...(repair === "launcher" ? { command: "stale" } : {}),
+                  ...(repair === "arguments"
+                    ? { command: "stale", args: ["mcp", "--legacy"] }
+                    : {}),
                   env: { TOKEN: "original" },
                 },
               },
@@ -2147,6 +2276,10 @@ describe("DeepSeek Harness caller node metadata", () => {
       if (!isSeq(args) || !isNode(args.items[0]))
         throw new Error("missing launcher arguments");
       args.items[0].comment = " caller argument";
+      if (repair === "arguments") {
+        if (!isNode(args.items[1])) throw new Error("missing old argument");
+        args.items[1].comment = " removed argument explanation";
+      }
       const initial = yaml.toString();
       await writeFile(client.configPath, initial);
       expect(
@@ -2172,6 +2305,23 @@ describe("DeepSeek Harness caller node metadata", () => {
         expect(text).toContain(`# before ${key}`);
       }
       expect(text).toContain("# caller argument");
+      if (repair === "arguments") {
+        expect(text).toContain("# removed argument explanation");
+        const updatedArgs = parseDocument(text).getIn(
+          [0, "insert", 0, "config", "args"],
+          true,
+        );
+        if (!isSeq(updatedArgs)) throw new Error("missing updated arguments");
+        expect(updatedArgs.commentBefore).toContain(
+          "removed argument explanation",
+        );
+        const mcp = updatedArgs.items.find(
+          (item) => isNode(item) && "value" in item && item.value === "mcp",
+        );
+        expect(isNode(mcp) ? mcp.comment : undefined).toContain(
+          "caller argument",
+        );
+      }
       expect(loadedInserts(text)).toEqual([
         {
           ...entry,
@@ -2326,4 +2476,25 @@ ${row("second-launcher")}`,
       { insert: [{ id: "user-a", name: "plugin-a" }] },
     ]);
   });
+});
+
+it("keeps Cordis YAML syntax failures distinct from unresolved ID ownership", async () => {
+  const { home, client } = await harnessClient();
+  const initial = "- insert: [{id: [unterminated\n";
+  await writeFile(client.configPath, initial);
+  const host = systemUninstallHost(home);
+  try {
+    const inspected = await host.inspectClient(client);
+    expect(inspected).toMatchObject({
+      status: "failed",
+      detail: expect.stringContaining("Invalid or unsupported Cordis YAML"),
+    });
+    expect(inspected?.detail).not.toContain("unknown ownership");
+    expect(await readFile(client.configPath, "utf8")).toBe(initial);
+    await expect(
+      readFile(`${client.configPath}.rea.backup`),
+    ).rejects.toMatchObject({ code: "ENOENT" });
+  } finally {
+    await host.close?.();
+  }
 });

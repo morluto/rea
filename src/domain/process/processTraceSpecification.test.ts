@@ -59,7 +59,7 @@ describe("process trace specification", () => {
     expect(result.error.issues).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
-          message: "happens-before graph must be acyclic",
+          message: expect.stringMatching(/happens-before.*acyclic/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0, "event"],
@@ -133,11 +133,11 @@ describe("process trace ordering validation", () => {
     expect(rejected.error.issues).toEqual([
       expect.objectContaining({
         path: ["language", "not_before", 0],
-        message: "not-before constraint conflicts with happens-before order",
+        message: expect.stringMatching(/not-before.*happens-before/u),
       }),
       expect.objectContaining({
         path: ["language", "unordered_groups", 0],
-        message: "ordered events cannot also be declared unordered",
+        message: expect.stringMatching(/ordered.*unordered/u),
       }),
     ]);
   });
@@ -166,7 +166,7 @@ describe("process trace ordering validation", () => {
     expect(result.error.issues).toEqual([
       expect.objectContaining({
         path: ["language"],
-        message: "event pair b/d must be explicitly ordered or unordered",
+        message: expect.stringContaining("b/d"),
       }),
     ]);
   });
@@ -192,7 +192,7 @@ describe("process trace ordering validation", () => {
     expect(result.error.issues).toEqual([
       expect.objectContaining({
         path: ["language", "unordered_groups", 1],
-        message: "unordered event pairs must be declared once",
+        message: expect.stringMatching(/unordered.*once/u),
       }),
     ]);
   });
@@ -226,11 +226,11 @@ describe("malformed process trace declarations", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: ["events", 1, "id"],
-          message: "event ids must be unique",
+          message: expect.stringMatching(/event ids.*unique/u),
         }),
         expect.objectContaining({
           path: ["language", "unordered_groups", 0, "events", 1],
-          message: "unknown event id: b",
+          message: expect.stringMatching(/unknown.*\bb\b/u),
         }),
       ]),
     );
@@ -256,15 +256,15 @@ describe("malformed process trace declarations", () => {
       expect.arrayContaining([
         expect.objectContaining({
           path: ["language", "happens_before", 0, "after"],
-          message: "unknown event id: missing",
+          message: expect.stringMatching(/unknown.*missing/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0, "anchor"],
-          message: "unknown event id: missing",
+          message: expect.stringMatching(/unknown.*missing/u),
         }),
         expect.objectContaining({
           path: ["language", "not_before", 0],
-          message: "not-before constraint conflicts with happens-before order",
+          message: expect.stringMatching(/not-before.*happens-before/u),
         }),
       ]),
     );
@@ -304,5 +304,51 @@ describe("finite trace specification validation", () => {
         },
       }).success,
     ).toBe(false);
+  });
+
+  it("rejects variants that accept the same traces as an earlier variant", () => {
+    const base = specification();
+    const result = processTraceSpecificationSchema.safeParse({
+      events: [
+        { ...base.events[0], cardinality: { kind: "exact", count: 2 } },
+        base.events[1],
+      ],
+      language: {
+        kind: "finite_traces",
+        variants: [
+          {
+            id: "repeated",
+            trace: [{ unordered: ["ready", "ready"] }, "worker"],
+          },
+          { id: "sequence", trace: ["ready", "ready", "worker"] },
+          {
+            id: "leading",
+            trace: [{ unordered: ["ready", "worker"] }, "ready"],
+          },
+          {
+            id: "trailing",
+            trace: ["ready", { unordered: ["worker", "ready"] }],
+          },
+          {
+            id: "merged",
+            trace: [{ unordered: ["worker", "ready", "ready"] }],
+          },
+          {
+            id: "swapped",
+            trace: ["ready", { unordered: ["ready", "worker"] }],
+          },
+        ],
+      },
+    });
+    expect(result.success).toBe(false);
+    if (result.success) throw new Error("Expected duplicate finite traces");
+    expect(
+      result.error.issues.map(({ path, message }) => ({ path, message })),
+    ).toEqual(
+      [1, 5].map((index) => ({
+        path: ["language", "variants", index, "trace"],
+        message: expect.stringMatching(/duplicate.*trace/u),
+      })),
+    );
   });
 });

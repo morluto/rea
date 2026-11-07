@@ -1,6 +1,5 @@
 import { writeFile, unlink } from "node:fs/promises";
 import { join } from "node:path";
-import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it, onTestFinished } from "vitest";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
@@ -20,14 +19,14 @@ import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarnes
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { closeVerifierResources } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 
 const createHarness = async () => {
   const session = composeBinarySession(new AnalysisProviderRegistry([]), [
     new ManagedStaticProvider(),
   ]);
-  const harness = await createApplicationMcpHarness({ session });
-  onTestFinished(harness.close);
-  return harness;
+  return createApplicationMcpHarness({ session });
 };
 
 it("returns a first-call overview and pages the unchanged source after its file disappears", async () => {
@@ -49,16 +48,13 @@ it("returns a first-call overview and pages the unchanged source after its file 
   const ajv = new Ajv2020({ strict: false, validateFormats: false });
   expect(ajv.validateSchema(definition.inputSchema)).toBe(true);
   expect(ajv.validateSchema(outputSchema)).toBe(true);
-  for (const name of [
-    "inspect_managed_members",
-    "inspect_managed_native_boundaries",
-  ])
-    expect(
-      ajv.validate(catalog.find((x) => x.name === name)!.inputSchema, {
-        path,
-        detail: "summary",
-      }),
-    ).toBe(false);
+  expect(
+    ajv.validate(
+      catalog.find((x) => x.name === "inspect_managed_native_boundaries")!
+        .inputSchema,
+      { path, detail: "summary" },
+    ),
+  ).toBe(false);
   const reply = await client.callTool({
     name: "inspect_managed_artifact",
     arguments: { path, detail: "summary" },
@@ -79,7 +75,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
     parent.normalized_result,
   );
   expect(parent.operation).toBe("inspect_managed_artifact");
-  expect(parent.parameters).toEqual({ path, detail: "summary" });
+  expect(parent.parameters).toEqual({ path });
   expect(receipt.evidence_id).not.toBe(parent.evidence_id);
   expect(receipt.evidence_links).toEqual([parent.evidence_id]);
   const { references, resources, attributes, ...identity } = report;
@@ -100,7 +96,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
       ).structuredContent,
     );
     expect(complete.operation).toBe("inspect_managed_artifact");
-    expect(complete.normalized_result).toEqual(parent.normalized_result);
+    expect(complete.evidence_id).toBe(parent.evidence_id);
   }
   const reused = await client.callTool({
     name: "inspect_managed_native_boundaries",
@@ -138,7 +134,7 @@ it("returns a first-call overview and pages the unchanged source after its file 
       .exportEvidenceBundle()
       .records.find((x) => x.evidence_id === parent.evidence_id),
   ).toEqual(parent);
-  const portable = inspectAnalysisView({
+  const portable = await inspectAnalysisView({
     source: { kind: "inline", evidence: parent },
     view: { kind: "summary" },
   });
@@ -178,7 +174,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     { kind: "summary" },
     { kind: "managed", collection: "attributes", offset: 0, limit: 3 },
   ]) {
-    const result = inspectAnalysisView({
+    const result = await inspectAnalysisView({
       source: { kind: "inline", evidence: historical },
       view,
     });
@@ -212,7 +208,7 @@ it("keeps malformed metadata, empty returned rows and historical null subjects e
     },
   );
   expect(
-    inspectAnalysisView({
+    await inspectAnalysisView({
       source: { kind: "inline", evidence: incompatible },
       view: { kind: "summary" },
     }),
@@ -230,20 +226,29 @@ it("refuses selected delivery before file access when the server cannot retain E
     throw new Error("Deep provider must not start");
   });
   const server = createServer({ kind: "fixed", analysis });
-  const client = new Client({ name: "managed-fixed-delivery", version: "1" });
-  onTestFinished(async () => {
-    await client.close();
-    await server.close();
-    await analysis.close();
+  const mcp = createTestMcp();
+  onTestFinished(() =>
+    closeVerifierResources([
+      () => mcp.close(),
+      async () => {
+        const result = await analysis.close();
+        if (!result.ok) throw result.error;
+      },
+    ]),
+  );
+  const client = await mcp.connect(server, {
+    name: "managed-fixed-delivery",
+    version: "1",
   });
-  const [a, b] = InMemoryTransport.createLinkedPair();
-  await server.connect(b);
-  await client.connect(a);
-  const rejected = await client.callTool({
-    name: "inspect_managed_artifact",
-    arguments: { path: join(directory, "absent.dll"), detail: "summary" },
-  });
-  expect(parseMcpToolError(rejected).error.code).toBe("capability_unavailable");
+  for (const name of ["inspect_managed_artifact", "inspect_managed_members"]) {
+    const rejected = await client.callTool({
+      name,
+      arguments: { path: join(directory, "absent.dll"), detail: "summary" },
+    });
+    expect(parseMcpToolError(rejected).error.code).toBe(
+      "capability_unavailable",
+    );
+  }
   const complete = await client.callTool({
     name: "inspect_managed_artifact",
     arguments: { path },

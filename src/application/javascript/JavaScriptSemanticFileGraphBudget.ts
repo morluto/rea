@@ -44,10 +44,13 @@ export class SemanticFileGraphBudget {
   #pendingBytes = 0;
   #closed = false;
   #incomplete = false;
+  #nodeLimitReached = false;
+  #byteLimitReached = false;
   readonly #chargedContexts = new Set<string>();
   readonly #pendingContexts = new Map<string, number>();
   readonly #omittedNodes = new Set<string>();
   readonly #omittedRelations = new Set<string>();
+  readonly #unknownTotalsIncomplete = new Set<string>();
   readonly #unknownCounts = new Map<
     string,
     {
@@ -81,19 +84,36 @@ export class SemanticFileGraphBudget {
   get incomplete(): boolean {
     return this.#incomplete;
   }
+  get nodeLimitReached(): boolean {
+    return this.#nodeLimitReached;
+  }
+  get byteLimitReached(): boolean {
+    return this.#byteLimitReached;
+  }
   get used(): number {
     return this.#used;
   }
   get unknownCounts() {
     return [...this.#unknownCounts.values()].map((count) => ({
       ...count,
-      total: this.#incomplete ? null : count.total,
+      total:
+        this.#incomplete ||
+        this.#unknownTotalsIncomplete.has(
+          `${count.family}\u0000${count.reason}`,
+        )
+          ? null
+          : count.total,
     }));
   }
 
   /** Skipped projection has unknown totals, rather than manufactured zeroes. */
   markIncomplete(): void {
     this.#incomplete = true;
+  }
+
+  markNodeLimitReached(): void {
+    this.#nodeLimitReached = true;
+    this.markIncomplete();
   }
 
   /**
@@ -119,6 +139,7 @@ export class SemanticFileGraphBudget {
       this.#used + this.#pendingBytes + bytes + contextBytes > this.limit
     ) {
       this.#closed = true;
+      this.#byteLimitReached = true;
       this.markIncomplete();
       return false;
     }
@@ -161,12 +182,17 @@ export class SemanticFileGraphBudget {
         (total, id) => total + (this.#pendingContexts.get(id) ?? 0),
         0,
       );
-    if (
-      (this.nodeLimit !== null && this.#nodes + nodes > this.nodeLimit) ||
-      (this.limit !== null &&
-        this.#used + this.#pendingBytes + bytes - releasedBytes > this.limit)
-    ) {
-      this.#closed = true;
+    const exceedsNodes =
+      this.nodeLimit !== null && this.#nodes + nodes > this.nodeLimit;
+    const exceedsBytes =
+      this.limit !== null &&
+      this.#used + this.#pendingBytes + bytes - releasedBytes > this.limit;
+    if (exceedsNodes || exceedsBytes) {
+      // A node ceiling does not exhaust the independent unknown frontier
+      // capacity. Continue examining the file unless its byte budget ran out.
+      this.#closed = exceedsBytes;
+      this.#nodeLimitReached ||= exceedsNodes;
+      this.#byteLimitReached ||= exceedsBytes;
       this.markIncomplete();
       return false;
     }
@@ -208,6 +234,17 @@ export class SemanticFileGraphBudget {
     if (retained) count.retained += 1;
     else count.total += 1;
     this.#unknownCounts.set(key, count);
+  }
+
+  /** An omitted occurrence does not establish how many distinct frontiers were lost. */
+  omitUnknown(
+    family: JavaScriptSemanticGraphUnknown["family"],
+    reason: JavaScriptSemanticGraphUnknown["reason"],
+  ): void {
+    const key = `${family}\u0000${reason}`;
+    if (!this.#unknownCounts.has(key))
+      this.#unknownCounts.set(key, { family, reason, total: 0, retained: 0 });
+    this.#unknownTotalsIncomplete.add(key);
   }
 
   omitNode(nodeId: string): void {

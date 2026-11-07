@@ -1,134 +1,243 @@
-import { createHash } from "node:crypto";
-import { basename } from "node:path";
-
-import canonicalize from "canonicalize";
-
-import { parseEvidence } from "../evidence.js";
-import { functionDossierSchema } from "../hopperValues.js";
-import { inspectMachoSchema } from "../native/nativeInspection.js";
+import { digestCanonicalValue } from "../canonicalDigest.js";
+import type { Evidence } from "../evidence.js";
+import { machoRuntimeSymbolName } from "../native/machoSymbolName.js";
+import type { ManagedNativeObservationFacts } from "./managedNativeVerificationSource.js";
 import type { ManagedNativeBoundaryInspection } from "./managedArtifact.js";
-import type { JsonValue } from "../jsonValue.js";
-import {
-  pinvokeVerificationSchema,
-  type ManagedNativeVerificationInput,
-  type ManagedNativeVerificationResult,
-  type NativeSymbol,
-  type PinvokeVerification,
+import type {
+  ManagedNativeVerificationResult,
+  NativeSymbol,
+  PinvokeVerification,
 } from "./managedNativeVerificationSchemas.js";
-
-const digest = (value: JsonValue): string => {
-  const serialized = canonicalize(value);
-  if (serialized === undefined)
-    throw new TypeError("Managed/native verification canonicalization failed");
-  return createHash("sha256").update(serialized).digest("hex");
-};
 
 type PinvokeImport = ManagedNativeBoundaryInspection["pinvoke_imports"][number];
 type VerifiedPinvoke = {
   readonly verification: PinvokeVerification;
 };
 
-const moduleName = (
-  evidence: ReturnType<typeof parseEvidence>,
-): string | null => evidence.subject?.name ?? null;
-
-const modulePath = (
-  evidence: ReturnType<typeof parseEvidence>,
-): string | null => evidence.subject?.local_path ?? null;
-
-const symbolsForEvidence = (
-  evidence: ReturnType<typeof parseEvidence>,
-): {
-  readonly supported: boolean;
-  readonly symbols: readonly NativeSymbol[];
-} => {
-  if (evidence.operation === "inspect_macho") {
-    const result = inspectMachoSchema.parse(evidence.normalized_result);
-    return {
-      supported: true,
-      symbols: result.exports.items.map((symbol) => ({
-        evidence_id: evidence.evidence_id,
-        operation: evidence.operation,
-        name: symbol.name,
-        address: symbol.address,
-        module_name: moduleName(evidence),
-        module_path: modulePath(evidence),
-        source: "macho-export" as const,
-      })),
-    };
-  }
-  if (evidence.operation === "analyze_function") {
-    const dossier = functionDossierSchema.parse(evidence.normalized_result);
-    return {
-      supported: true,
-      symbols: [
-        {
-          evidence_id: evidence.evidence_id,
-          operation: evidence.operation,
-          name: dossier.procedure.name,
-          address: dossier.procedure.address,
-          module_name: moduleName(evidence),
-          module_path: modulePath(evidence),
-          source: "function-dossier" as const,
-        },
-      ],
-    };
-  }
-  return { supported: false, symbols: [] };
-};
-
 export const collectNativeSymbols = (
-  observations: readonly ManagedNativeVerificationInput["native_observations"][number][],
+  observations: readonly ManagedNativeObservationFacts[],
 ): {
   readonly symbols: readonly NativeSymbol[];
   readonly accepted: number;
   readonly unsupported: number;
+  readonly moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>;
 } => {
   const symbols: NativeSymbol[] = [];
+  const moduleFormatsByEvidenceId = new Map<string, string | null>();
   let accepted = 0;
   let unsupported = 0;
-  for (const raw of observations) {
-    const evidence = parseEvidence(raw);
-    const extracted = symbolsForEvidence(evidence);
-    if (!extracted.supported) {
+  for (const observation of observations) {
+    moduleFormatsByEvidenceId.set(
+      observation.evidence.evidence_id,
+      observation.evidence.subject?.format ?? null,
+    );
+    if (!observation.supported) {
       unsupported += 1;
     } else {
       accepted += 1;
-      symbols.push(...extracted.symbols);
+      symbols.push(...observation.symbols);
     }
   }
-  return { symbols, accepted, unsupported };
+  return { symbols, accepted, unsupported, moduleFormatsByEvidenceId };
 };
+
+/** P/Invoke resolves a Mach-O export through dlsym, which names it without the symbol-table prefix. */
+const lookupSymbolName = (native: NativeSymbol): string | null =>
+  native.source === "macho-export"
+    ? machoRuntimeSymbolName(native.name)
+    : native.name;
 
 const sameSymbolName = (expected: string, native: NativeSymbol): boolean =>
-  expected ===
-  (native.source === "macho-export" && native.name.startsWith("_")
-    ? native.name.slice(1)
-    : native.name);
+  expected === lookupSymbolName(native);
 
-const normalizeModule = (value: string): string =>
-  basename(value)
-    .toLowerCase()
-    .replace(/\.(dll|dylib|so|node|exe)$/u, "");
+type ModuleCompatibility = "match" | "mismatch" | "unknown";
 
-const nativeModuleIdentities = (value: string): ReadonlySet<string> => {
-  const filename = basename(value).toLowerCase();
-  const stem = normalizeModule(filename);
-  const identities = new Set([stem]);
-  if (/\.(dylib|so)$/u.test(filename) && stem.startsWith("lib"))
-    identities.add(stem.slice("lib".length));
-  return identities;
+const moduleFilename = (
+  value: string,
+  caseSensitive: boolean,
+  format?: string | null,
+): string => {
+  const separators = format === "elf" || format === "mach-o" ? /\//u : /[\\/]/u;
+  const filename = value.split(separators).at(-1) ?? value;
+  return caseSensitive ? filename : filename.toLowerCase();
 };
 
-const moduleCompatible = (
+const isAbsoluteModulePath = (value: string, format?: string | null): boolean =>
+  value.startsWith("/") ||
+  (format === "pe" &&
+    (/^[a-z]:[\\/]/iu.test(value) || value.startsWith("\\\\")));
+
+const hasModulePathSeparator = (
+  value: string,
+  format: string | null,
+): boolean => (format === "pe" ? /[\\/]/u.test(value) : value.includes("/"));
+
+const unixModuleCandidates = (
+  value: string,
+  suffix: ".so" | ".dylib",
+): readonly string[] => {
+  const suffixIndex = value.indexOf(suffix);
+  const containsSuffix =
+    suffixIndex >= 0 &&
+    (suffixIndex + suffix.length === value.length ||
+      value[suffixIndex + suffix.length] === ".");
+  const hasPath = value.includes("/");
+  const libPrefix = (name: string): string | null =>
+    hasPath ? null : `lib${name}`;
+  const suffixedName = `${value}${suffix}`;
+  const libSuffixedName = libPrefix(suffixedName);
+  const libName = libPrefix(value);
+  if (containsSuffix)
+    return [
+      value,
+      ...(libName === null ? [] : [libName]),
+      suffixedName,
+      ...(libSuffixedName === null ? [] : [libSuffixedName]),
+    ];
+  return [
+    suffixedName,
+    ...(libSuffixedName === null ? [] : [libSuffixedName]),
+    value,
+    ...(libName === null ? [] : [libName]),
+  ];
+};
+
+/** Candidate module names documented for each native loader platform. */
+const moduleCandidates = (
+  value: string,
+  format: string | null,
+): readonly string[] => {
+  if (isAbsoluteModulePath(value, format)) return [value];
+  if (format === "pe")
+    return /\.(dll|exe)$/iu.test(value) || value.endsWith(".")
+      ? [value]
+      : [value, `${value}.dll`];
+  if (format === "elf") return unixModuleCandidates(value, ".so");
+  if (format === "mach-o") return unixModuleCandidates(value, ".dylib");
+  return [value];
+};
+
+const plausiblePlatformCandidates = (value: string): readonly string[] => {
+  return [
+    ...new Set([
+      ...moduleCandidates(value, "pe"),
+      ...moduleCandidates(value, "elf"),
+      ...moduleCandidates(value, "mach-o"),
+    ]),
+  ];
+};
+
+const moduleValueCompatibility = (
+  expected: string,
+  observed: string,
+  format: string | null,
+): ModuleCompatibility => {
+  const exactCandidates = moduleCandidates(expected, format);
+  const expectedIsAbsolutePath = isAbsoluteModulePath(expected, format);
+  if (expectedIsAbsolutePath) {
+    const observedIsAbsolutePath = isAbsoluteModulePath(observed, format);
+    if (!observedIsAbsolutePath) {
+      const hasMatchingFilename = exactCandidates.some(
+        (candidate) =>
+          moduleFilename(candidate, format !== "pe", format) ===
+          moduleFilename(observed, format !== "pe", format),
+      );
+      return hasMatchingFilename ? "unknown" : "mismatch";
+    }
+    const fold = format === "pe";
+    const normalize = (path: string) =>
+      fold ? path.replaceAll("\\", "/").toLowerCase() : path;
+    return exactCandidates.some(
+      (candidate) => normalize(candidate) === normalize(observed),
+    )
+      ? "match"
+      : format !== "pe" &&
+          format !== "elf" &&
+          exactCandidates.some(
+            (candidate) =>
+              normalize(candidate).toLowerCase() ===
+              normalize(observed).toLowerCase(),
+          )
+        ? "unknown"
+        : "mismatch";
+  }
+  if (hasModulePathSeparator(expected, format)) {
+    const isObservedAbsolute = isAbsoluteModulePath(observed, format);
+    if (!isObservedAbsolute && exactCandidates.includes(observed))
+      return "match";
+    const normalizePath = (path: string) =>
+      format === "pe" ? path.replaceAll("\\", "/").toLowerCase() : path;
+    if (
+      !isObservedAbsolute &&
+      format === "pe" &&
+      exactCandidates.some(
+        (candidate) => normalizePath(candidate) === normalizePath(observed),
+      )
+    )
+      return "match";
+    if (isObservedAbsolute) {
+      if (
+        exactCandidates.some((candidate) =>
+          normalizePath(observed).endsWith(`/${normalizePath(candidate)}`),
+        )
+      )
+        return "match";
+    }
+    const sameFilename = exactCandidates.some(
+      (candidate) =>
+        moduleFilename(candidate, false, format) ===
+        moduleFilename(observed, false, format),
+    );
+    return sameFilename ? "unknown" : "mismatch";
+  }
+  const observedFilename = moduleFilename(observed, true, format);
+  if (exactCandidates.includes(observedFilename)) return "match";
+  const caseFoldedCandidates = exactCandidates.map((candidate) =>
+    moduleFilename(candidate, false, format),
+  );
+  const observedFolded = moduleFilename(observed, false, format);
+  if (!caseFoldedCandidates.includes(observedFolded)) {
+    if (
+      format !== "pe" &&
+      format !== "elf" &&
+      format !== "mach-o" &&
+      plausiblePlatformCandidates(expected)
+        .map((candidate) => moduleFilename(candidate, false, format))
+        .includes(observedFolded)
+    )
+      return "unknown";
+    return "mismatch";
+  }
+  if (format === "elf") return "mismatch";
+  if (format === "pe") return "match";
+  return "unknown";
+};
+
+const moduleCompatibility = (
   scope: string | null,
   symbol: NativeSymbol,
-): boolean => {
-  if (scope === null) return true;
-  const expected = normalizeModule(scope);
-  return [symbol.module_name, symbol.module_path]
-    .filter((value): value is string => value !== null)
-    .some((value) => nativeModuleIdentities(value).has(expected));
+  format: string | null,
+): ModuleCompatibility => {
+  if (
+    scope === null ||
+    scope.trim().length === 0 ||
+    moduleFilename(scope, false, format).length === 0
+  )
+    return "unknown";
+  const observedValues = isAbsoluteModulePath(scope, format)
+    ? [symbol.module_path]
+    : [symbol.module_name, symbol.module_path];
+  const values = observedValues.filter(
+    (value): value is string =>
+      value !== null && moduleFilename(value, false, format).length > 0,
+  );
+  if (values.length === 0) return "unknown";
+  const results = values.map((value) =>
+    moduleValueCompatibility(scope, value, format),
+  );
+  if (results.includes("match")) return "match";
+  if (results.includes("unknown")) return "unknown";
+  return "mismatch";
 };
 
 const candidateNames = (
@@ -136,11 +245,28 @@ const candidateNames = (
     PinvokeImport,
     "import_name" | "char_set" | "call_convention" | "no_mangle"
   >,
+  nativeFormat: string | null,
 ): readonly string[] => {
+  if (managed.import_name.length === 0) return [];
   const names = new Set<string>([managed.import_name]);
-  if (!managed.no_mangle) {
-    if (managed.char_set === "unicode") names.add(`${managed.import_name}W`);
-    if (managed.char_set === "ansi") names.add(`${managed.import_name}A`);
+  // Unix P/Invoke lookup uses the declared entry point directly, regardless of
+  // marshalling charset or calling convention. Keep Windows decorations local
+  // to PE or an unresolved native platform; metadata flags remain unchanged.
+  if (
+    !managed.no_mangle &&
+    nativeFormat !== "elf" &&
+    nativeFormat !== "mach-o"
+  ) {
+    if (
+      managed.char_set === "unicode" ||
+      (nativeFormat === "pe" && managed.char_set === "auto")
+    )
+      names.add(`${managed.import_name}W`);
+    if (
+      managed.char_set === "ansi" ||
+      (nativeFormat === "pe" && managed.char_set === "not-specified")
+    )
+      names.add(`${managed.import_name}A`);
     if (managed.call_convention === "stdcall") {
       names.add(`_${managed.import_name}`);
       names.add(`_${managed.import_name}@0`);
@@ -165,14 +291,33 @@ interface PinvokeCandidateMatch {
   readonly match: PinvokeMatch;
 }
 
+const pinvokeCandidates = (
+  managed: PinvokeImport,
+  symbols: readonly NativeSymbol[],
+  moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>,
+): readonly NativeSymbol[] => {
+  const namesByFormat = new Map<string | null, readonly string[]>();
+  return symbols.filter((symbol) => {
+    const format = moduleFormatsByEvidenceId.get(symbol.evidence_id) ?? null;
+    let names = namesByFormat.get(format);
+    if (names === undefined) {
+      names = candidateNames(managed, format);
+      namesByFormat.set(format, names);
+    }
+    return names.some((name) => sameSymbolName(name, symbol));
+  });
+};
+
 const matchPinvoke = (
   managed: PinvokeImport,
   symbols: readonly NativeSymbol[],
   supportedNativeEvidence: number,
+  moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>,
 ): PinvokeCandidateMatch => {
-  const names = candidateNames(managed);
-  const allCandidates = symbols.filter((symbol) =>
-    names.some((name) => sameSymbolName(name, symbol)),
+  const allCandidates = pinvokeCandidates(
+    managed,
+    symbols,
+    moduleFormatsByEvidenceId,
   );
   const [first, ...remaining] = allCandidates;
   if (first === undefined)
@@ -190,25 +335,29 @@ const matchPinvoke = (
     };
 
   const candidates: [NativeSymbol, ...NativeSymbol[]] = [first, ...remaining];
+  const moduleRelation = (symbol: NativeSymbol) =>
+    moduleCompatibility(
+      managed.import_scope_name,
+      symbol,
+      moduleFormatsByEvidenceId.get(symbol.evidence_id) ?? null,
+    );
   const exact = candidates.find(
     (symbol) =>
-      managed.import_name === symbol.name &&
-      moduleCompatible(managed.import_scope_name, symbol),
+      managed.import_name === lookupSymbolName(symbol) &&
+      moduleRelation(symbol) === "match",
   );
-  const decorated = candidates.find((symbol) =>
-    moduleCompatible(managed.import_scope_name, symbol),
+  const exactUnknownModule = candidates.find(
+    (symbol) =>
+      managed.import_name === lookupSymbolName(symbol) &&
+      moduleRelation(symbol) === "unknown",
+  );
+  const unknownModule =
+    exactUnknownModule ??
+    candidates.find((symbol) => moduleRelation(symbol) === "unknown");
+  const decorated = candidates.find(
+    (symbol) => moduleRelation(symbol) === "match",
   );
   const selected = exact ?? decorated ?? first;
-  if (!moduleCompatible(managed.import_scope_name, selected))
-    return {
-      match: {
-        status: "contradicted",
-        basis: "module-mismatch",
-        confidence: "unknown",
-        matched_native: selected,
-        candidates,
-      },
-    };
   if (exact !== undefined)
     return {
       match: {
@@ -222,11 +371,36 @@ const matchPinvoke = (
         candidates,
       },
     };
+  // Preserve an exact-name candidate's uncertainty, but an unrelated unknown
+  // module must not displace an observed module match for a decorated name.
+  if (
+    unknownModule !== undefined &&
+    (exactUnknownModule !== undefined || decorated === undefined)
+  )
+    return {
+      match: {
+        status: "unresolved",
+        basis: "module-identity-unknown",
+        confidence: "unknown",
+        matched_native: unknownModule,
+        candidates,
+      },
+    };
+  if (decorated !== undefined)
+    return {
+      match: {
+        basis: "decorated-name-candidate",
+        status: "inferred",
+        confidence: "inferred",
+        matched_native: selected,
+        candidates,
+      },
+    };
   return {
     match: {
-      basis: "decorated-name-candidate",
-      status: "inferred",
-      confidence: "inferred",
+      status: "contradicted",
+      basis: "module-mismatch",
+      confidence: "unknown",
       matched_native: selected,
       candidates,
     },
@@ -234,26 +408,31 @@ const matchPinvoke = (
 };
 
 const pinvokeLimitations = (
-  status: PinvokeVerification["status"],
+  match: PinvokeMatch,
   managed: PinvokeImport,
-): readonly string[] => [
-  ...(managed.import_scope_name === null
+): string[] => [
+  ...(managed.import_scope_name === null ||
+  managed.import_scope_name.trim().length === 0
     ? ["Managed declaration does not name an import scope/module."]
     : []),
-  ...(status === "inferred"
+  ...(match.status === "inferred"
     ? [
         "Native symbol matched a decorated candidate rather than the exact declared import name.",
       ]
     : []),
-  ...(status === "contradicted"
+  ...(match.status === "contradicted"
     ? [
         "A symbol name candidate exists, but the supplied native Evidence module identity does not match the managed import scope.",
       ]
     : []),
-  ...(status === "unresolved"
-    ? [
-        "No supplied native export/function Evidence matched this declared import.",
-      ]
+  ...(match.status === "unresolved"
+    ? match.basis === "module-identity-unknown"
+      ? [
+          "A native name candidate exists, but a required module identity is unavailable; module correspondence is unknown.",
+        ]
+      : [
+          "No supplied native export/function Evidence matched this declared import.",
+        ]
     : []),
 ];
 
@@ -263,8 +442,14 @@ interface VerifyPinvokeContext {
   readonly native: {
     readonly symbols: readonly NativeSymbol[];
     readonly accepted: number;
+    readonly moduleFormatsByEvidenceId: ReadonlyMap<string, string | null>;
   };
 }
+
+type PinvokeVerificationContext = Pick<
+  PinvokeVerification,
+  "item_id" | "managed" | "evidence_links" | "limitations"
+>;
 
 export const verifyPinvoke = ({
   item,
@@ -282,25 +467,33 @@ export const verifyPinvoke = ({
     call_convention: item.call_convention,
     declaration_verification: item.verification,
   };
-  const selection = matchPinvoke(item, native.symbols, native.accepted);
-  const limitations = pinvokeLimitations(selection.match.status, item);
-  return {
-    verification: pinvokeVerificationSchema.parse({
-      item_id: `mnv_pinvoke_${digest({
+  const selection = matchPinvoke(
+    item,
+    native.symbols,
+    native.accepted,
+    native.moduleFormatsByEvidenceId,
+  );
+  const limitations = pinvokeLimitations(selection.match, item);
+  const context: PinvokeVerificationContext = {
+    item_id: `mnv_pinvoke_${digestCanonicalValue(
+      {
         managedEvidenceId,
         token: item.token,
         importName: item.import_name,
         importScope: item.import_scope_name,
         candidates: selection.match.candidates,
-      })}`,
-      managed,
-      ...selection.match,
-      evidence_links: [
-        managedEvidenceId,
-        ...new Set(selection.match.candidates.map(({ evidence_id: id }) => id)),
-      ],
-      limitations,
-    }),
+      },
+      "Managed/native verification",
+    )}`,
+    managed,
+    evidence_links: [
+      managedEvidenceId,
+      ...new Set(selection.match.candidates.map(({ evidence_id: id }) => id)),
+    ],
+    limitations,
+  };
+  return {
+    verification: { ...context, ...selection.match },
   };
 };
 
@@ -317,7 +510,7 @@ const countStatuses = (
 });
 
 interface VerificationResultInput {
-  readonly managedEvidence: ReturnType<typeof parseEvidence>;
+  readonly managedEvidence: Evidence;
   readonly managed: ManagedNativeBoundaryInspection;
   readonly native: {
     readonly symbols: readonly NativeSymbol[];
@@ -325,7 +518,8 @@ interface VerificationResultInput {
     readonly unsupported: number;
   };
   readonly pinvokeImports: readonly PinvokeVerification[];
-  readonly input: ManagedNativeVerificationInput;
+  readonly nativeObservationCount: number;
+  readonly nativeEvidenceIds: readonly string[];
 }
 
 export const buildVerificationResult = ({
@@ -333,14 +527,16 @@ export const buildVerificationResult = ({
   managed,
   native,
   pinvokeImports,
-  input,
+  nativeObservationCount,
+  nativeEvidenceIds,
 }: VerificationResultInput): Omit<
   ManagedNativeVerificationResult,
   "verification_id"
 > => {
   const counts = countStatuses(pinvokeImports);
   const nativeBodyUnresolved = managed.native_implementations.filter(
-    ({ boundary_kind: kind }) => kind !== "pinvoke",
+    ({ boundary_kind: kind }) =>
+      kind !== "pinvoke" && kind !== "runtime-provided",
   ).length;
   const coverage: ManagedNativeVerificationResult["coverage"] = {
     status:
@@ -365,7 +561,7 @@ export const buildVerificationResult = ({
       coverage_state: managed.coverage.state,
     },
     native_observations: {
-      total: input.native_observations.length,
+      total: nativeObservationCount,
       accepted: native.accepted,
       unsupported: native.unsupported,
       symbols: native.symbols.length,
@@ -376,15 +572,15 @@ export const buildVerificationResult = ({
     },
     pinvoke_imports: [...pinvokeImports],
     native_implementations: {
+      runtime_provided: managed.native_implementations.filter(
+        ({ boundary_kind }) => boundary_kind === "runtime-provided",
+      ).length,
       unresolved: nativeBodyUnresolved,
       reason:
         "Managed metadata tokens and RVAs are not translated to native provider addresses by this workflow; C++/CLI, ReadyToRun, and native-body mappings require explicit provider-supported bridge evidence.",
     },
     coverage,
-    evidence_links: [
-      managedEvidence.evidence_id,
-      ...input.native_observations.map(({ evidence_id: id }) => id),
-    ],
+    evidence_links: [managedEvidence.evidence_id, ...nativeEvidenceIds],
     limitations: [
       "P/Invoke verification checks declared import names against supplied native export or function-name Evidence only.",
       "A matching native symbol verifies that a candidate export/function was observed; it does not prove CLR binding, marshaling behavior, call reachability, or runtime loading.",

@@ -1,7 +1,12 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 
-import { browserContext, browserCliError } from "../cliBrowserContext.js";
-import { browserScopeOptions } from "../cliObservationOptions.js";
+import { browserCliError } from "./browserCliError.js";
+import { createBrowserObservationProvider } from "../composition/browserObservation.js";
+import {
+  browserScopeOptions,
+  selectedCommandTimeout,
+} from "../cliObservationOptions.js";
 import {
   captureWebScreenshot,
   compareWebCaptureEvidence,
@@ -17,7 +22,10 @@ import {
 import { compareBrowserScenariosInputSchema } from "../domain/browserScenarioDiffValues.js";
 import { browserScenarioCaptureSchema } from "../domain/browserScenarioCapture.js";
 import { compareWebCapturesInputSchema } from "../domain/webCaptureDiffSchemas.js";
-import { projectInputIssues } from "../domain/inputIssueProjection.js";
+import {
+  analysisInputErrorFromIssues,
+  projectInputIssues,
+} from "../domain/inputIssueProjection.js";
 import { discoverWebMcpToolsInputSchema } from "../domain/webMcpDiscovery.js";
 import {
   captureWebScreenshotInputSchema,
@@ -26,7 +34,11 @@ import {
 import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** Register WebMCP, capture-diff, and screenshot CLI equivalents. */
 export const registerAdvancedBrowserCommands = (
@@ -46,38 +58,49 @@ const registerWebMcp = (
   cli.command(CLI_COMMANDS.discoverWebMcpTools, {
     description: "Passively discover page-declared WebMCP tools",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        discoverWebMcpToolsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: discoverWebMcpToolsInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: z
-        .number()
-        .int()
-        .min(0)
-        .default(100)
-        .describe("Observation duration in milliseconds"),
+      observationMs: cliDecimalField(
+        discoverWebMcpToolsInputSchema.shape.observation_ms,
+      ).describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "discover-webmcp-tools", async () => {
-        const context = browserContext();
-        const input = {
-          cdp_endpoint: args.endpoint,
-          allowed_origins: options.allowedOrigins,
-          target_id: args.targetId,
-          observation_ms: options.observationMs,
-        };
-        const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
-        if (!parsed.success)
-          return inputError(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "discover-webmcp-tools", async () => {
+          const provider = createBrowserObservationProvider();
+          const input = {
+            cdp_endpoint: args.endpoint,
+            allowed_origins: options.allowedOrigins,
+            target_id: args.targetId,
+            observation_ms: options.observationMs,
+            ...selectedCommandTimeout(options.commandTimeoutMs),
+          };
+          const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "discover_webmcp_tools",
+              projectInputIssues(parsed.error.issues, input),
+            );
+          return await finishAnalysisCommand(
+            () => discoverWebMcpTools(provider, parsed.data, { signal }),
+            {
+              close: async () => {
+                await provider.close?.();
+              },
+            },
+            provider.identity().id,
             "discover_webmcp_tools",
-            projectInputIssues(parsed.error.issues, input),
-          );
-        const result = await discoverWebMcpTools(context.provider, parsed.data);
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -152,34 +175,45 @@ const registerScreenshot = (
     description:
       "Capture one visible page viewport within the supplied origin scope",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        captureWebScreenshotInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: captureWebScreenshotInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
     }),
     run: ({ args, options }) =>
-      logCliCommand(logger, "capture-web-screenshot", async () => {
-        const context = browserContext();
-        const input = {
-          cdp_endpoint: args.endpoint,
-          allowed_origins: options.allowedOrigins,
-          target_id: args.targetId,
-        };
-        const parsed = captureWebScreenshotInputSchema.safeParse(input);
-        if (!parsed.success)
-          return inputError(
+      withCommandCancellation((signal) =>
+        logCliCommand(logger, "capture-web-screenshot", async () => {
+          const provider = createBrowserObservationProvider();
+          const input = {
+            cdp_endpoint: args.endpoint,
+            allowed_origins: options.allowedOrigins,
+            target_id: args.targetId,
+            ...selectedCommandTimeout(options.commandTimeoutMs),
+          };
+          const parsed = captureWebScreenshotInputSchema.safeParse(input);
+          if (!parsed.success)
+            return inputError(
+              "capture_web_screenshot",
+              projectInputIssues(parsed.error.issues, input),
+            );
+          return await finishAnalysisCommand(
+            () => captureWebScreenshot(provider, parsed.data, { signal }),
+            {
+              close: async () => {
+                await provider.close?.();
+              },
+            },
+            provider.identity().id,
             "capture_web_screenshot",
-            projectInputIssues(parsed.error.issues, input),
-          );
-        const result = await captureWebScreenshot(
-          context.provider,
-          parsed.data,
-        );
-        return result.ok ? result.value : browserCliError(result.error);
-      }),
+            signal,
+          ).then(projectCliAnalysisResult);
+        }),
+      ),
   });
 };
 
@@ -198,13 +232,9 @@ const registerScreenshotDiff = (
         .describe("Later screenshot artifact JSON or JSON file path"),
     }),
     options: z.object({
-      channelThreshold: z
-        .number()
-        .int()
-        .min(0)
-        .max(255)
-        .default(0)
-        .describe("Per-channel difference threshold for changed pixels"),
+      channelThreshold: cliDecimalField(
+        compareWebScreenshotsInputSchema.shape.channel_threshold,
+      ).describe("Per-channel difference threshold for changed pixels"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare-web-screenshots", async () => {
@@ -223,10 +253,11 @@ const registerScreenshotDiff = (
         const parsed = compareWebScreenshotsInputSchema.safeParse(input);
         if (!parsed.success)
           return browserCliError(
-            new AnalysisInputError(
+            analysisInputErrorFromIssues(
               operation,
+              parsed.error.issues,
+              input,
               { cause: parsed.error },
-              projectInputIssues(parsed.error.issues, input),
             ),
           );
         const result = await compareWebScreenshotEvidence(

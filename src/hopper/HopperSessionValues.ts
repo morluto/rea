@@ -1,3 +1,4 @@
+import { DEFAULT_BRIDGE_MAX_REQUEST_BYTES } from "../config/bridgeMaxRequestBytes.js";
 import { HopperProtocolError } from "../domain/hopperErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, ok, type Result } from "../domain/result.js";
@@ -9,6 +10,9 @@ export const HOPPER_SHUTDOWN_TIMEOUT_MS = 30_000;
 export interface HopperServerInfo {
   readonly name: string;
   readonly version: string;
+  readonly processId: number;
+  /** Bridge request ceiling. An omitted health field means the 16 MiB default. */
+  readonly maxRequestBytes: number;
 }
 
 /** Validate the bridge identity and exact per-launch run identifier. */
@@ -22,9 +26,29 @@ export const parseHopperServerInfo = (
     !Array.isArray(value) &&
     value.name === "REA Hopper bridge" &&
     typeof value.version === "string" &&
+    typeof value.process_id === "number" &&
+    Number.isSafeInteger(value.process_id) &&
+    value.process_id > 0 &&
     value.run_id === expectedRunId
-  )
-    return ok({ name: value.name, version: value.version });
+  ) {
+    const advertised = value.max_request_bytes;
+    const maxRequestBytes =
+      advertised === undefined ? DEFAULT_BRIDGE_MAX_REQUEST_BYTES : advertised;
+    if (
+      typeof maxRequestBytes !== "number" ||
+      !Number.isSafeInteger(maxRequestBytes) ||
+      maxRequestBytes <= 0
+    )
+      return err(
+        new HopperProtocolError("Hopper bridge health result is invalid"),
+      );
+    return ok({
+      name: value.name,
+      version: value.version,
+      processId: value.process_id,
+      maxRequestBytes,
+    });
+  }
   return err(new HopperProtocolError("Hopper bridge health result is invalid"));
 };
 

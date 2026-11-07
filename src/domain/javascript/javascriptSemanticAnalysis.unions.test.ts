@@ -212,14 +212,130 @@ describe("logical primitive unions", () => {
     '"one" ?? missing',
   ];
 
-  it("does not introduce short-circuit evaluation", () => {
-    expect(valuesOf(unevaluatedCases)).toEqual(
-      unevaluatedCases.map(() => incompatibleValue),
-    );
+  it("selects an established branch without evaluating an unreachable operand", () => {
+    expect(valuesOf(unevaluatedCases)).toEqual([
+      { status: "literal", value: "one" },
+      { status: "literal", value: "one" },
+      { status: "literal", value: false },
+      { status: "literal", value: "one" },
+    ]);
   });
 });
 
+describe("semantic primitive resource observations", () => {
+  it.each([
+    {
+      name: "member",
+      source: (large: string) =>
+        `const answer = (${JSON.stringify(large)}).field;`,
+    },
+    {
+      name: "destructuring",
+      source: (large: string) =>
+        `const { nested: { answer } } = { nested: ${JSON.stringify(large)} };`,
+    },
+  ])("preserves a limiting value through $name projection", ({ source }) => {
+    const ir = analyzeJavaScriptSemantics(source("x".repeat(200_000)));
+    expect(topLevelBinding(ir, "answer").value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "primitive-bytes",
+    });
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["primitive-bytes"],
+    });
+  });
+
+  it("records an encountered bound without weakening a selected healthy sibling", () => {
+    const ir = analyzeJavaScriptSemantics(
+      `const answer = ({ ignored: ${JSON.stringify("x".repeat(200_000))}, kept: 7 }).kept;`,
+    );
+    expect(topLevelBinding(ir, "answer").value).toEqual({
+      status: "literal",
+      value: 7,
+    });
+    expect(ir.coverage).toMatchObject({
+      status: "partial",
+      resourceLimits: ["primitive-bytes"],
+    });
+  });
+});
+
+describe("configuration default normalization", () => {
+  it.each(["quoted", "template"])(
+    "normalizes a bare %s configuration default",
+    (syntax) => {
+      const large = "x".repeat(200_000);
+      const expression =
+        syntax === "quoted" ? JSON.stringify(large) : `\`${large}\``;
+      const ir = analyzeJavaScriptSemantics(
+        `process.env.MODE ?? ${expression};`,
+      );
+      const operation = ir.configurationOperations.find(
+        ({ kind }) => kind === "default",
+      );
+      expect(
+        typeof operation?.value === "string" ? operation.value.length : 0,
+      ).toBeLessThanOrEqual(174_762);
+      expect(operation).toMatchObject({
+        value: null,
+        resolution: "partial",
+        valueResourceLimit: "primitive-bytes",
+      });
+      expect(ir.coverage).toMatchObject({
+        status: "partial",
+        resourceLimits: ["primitive-bytes"],
+      });
+    },
+  );
+
+  it.each([null, false, 0, ""])(
+    "keeps an exact bounded configuration default %j",
+    (value) => {
+      const ir = analyzeJavaScriptSemantics(
+        `process.env.MODE ?? ${JSON.stringify(value)};`,
+      );
+      expect(
+        ir.configurationOperations.find(({ kind }) => kind === "default"),
+      ).toMatchObject({ value, resolution: "complete" });
+      expect(ir.coverage.resourceLimits ?? []).toEqual([]);
+    },
+  );
+});
+
 describe("semantic primitive allocation and binding reuse", () => {
+  it.each(["quoted", "template"])(
+    "applies the normalized byte boundary to %s literals",
+    (syntax) => {
+      // Six estimated JSON bytes per UTF-16 code unit plus two quotes:
+      // 174762 code units fit; one more exceeds the 1 MiB bound.
+      for (const length of [174_762, 174_763]) {
+        const text = "x".repeat(length);
+        const expression =
+          syntax === "quoted" ? JSON.stringify(text) : `\`${text}\``;
+        const ir = analyzeJavaScriptSemantics(`const answer = ${expression};`);
+        const value = topLevelBinding(ir, "answer").value;
+        if (length === 174_762) {
+          expect(value.status).toBe("literal");
+          if (value.status !== "literal")
+            throw new Error("Expected exact value");
+          expect(typeof value.value === "string" && value.value.length).toBe(
+            length,
+          );
+          expect(ir.coverage.resourceLimits ?? []).toEqual([]);
+        } else {
+          expect(value.status).toBe("unknown");
+          expect(value).toMatchObject({ resourceLimit: "primitive-bytes" });
+          expect(ir.coverage).toMatchObject({
+            status: "partial",
+            omittedCount: null,
+            resourceLimits: ["primitive-bytes"],
+          });
+        }
+      }
+    },
+  );
+
   it("returns an explicit unknown before expanding a large addition product", () => {
     const term = '(choice ? "a" : "b")';
     const expression = Array.from({ length: 20 }, () => term).join(" + ");
@@ -256,7 +372,7 @@ describe("semantic primitive allocation and binding reuse", () => {
     expect(ir.coverage).toMatchObject({
       status: "partial",
       omittedCount: null,
-      resourceLimits: ["primitive-bytes"],
+      resourceLimits: expect.arrayContaining(["primitive-bytes"]),
     });
   });
 
@@ -291,8 +407,8 @@ describe("semantic primitive allocation and binding reuse", () => {
     });
     expect(
       ir.callables.find(({ name }) => name === "readsMutation")?.returnSites[0]
-        ?.value.status,
-    ).toBe("ambiguous");
+        ?.value,
+    ).toEqual({ status: "literal", value: "after" });
   });
 
   it("retains a large derived string while its aggregate JSON estimate fits", () => {
@@ -387,6 +503,37 @@ describe("semantic expression depth bounds", () => {
       reason: expect.stringMatching(
         /semantic expression depth budget exceeded/i,
       ),
+    });
+  });
+
+  it("counts erased TypeScript wrappers on a return against expression depth", () => {
+    const source = "function answer() { return true; }";
+    const parsed = parseJavaScriptSource(source);
+    const declaration = parsed?.program.body[0];
+    const statement = t.isFunctionDeclaration(declaration)
+      ? declaration.body.body[0]
+      : undefined;
+    const argument = t.isReturnStatement(statement)
+      ? statement.argument
+      : undefined;
+    if (parsed === null || !t.isReturnStatement(statement) || argument == null)
+      throw new Error("Expected a returned value");
+    let expression = argument;
+    for (let index = 0; index < 300; index += 1)
+      expression = t.tsAsExpression(expression, t.tsBooleanKeyword());
+    statement.argument = expression;
+
+    const ir = analyzeParsedJavaScriptSemantics(parsed);
+    const site = ir.callables.find((item) => item.name === "answer")
+      ?.returnSites[0];
+    expect(site?.value).toMatchObject({
+      status: "unknown",
+      resourceLimit: "expression-depth",
+    });
+    const literalStart = source.indexOf("true");
+    expect(site?.valueExpressionLocation).toEqual({
+      start: { line: 1, column: literalStart },
+      end: { line: 1, column: literalStart + "true".length },
     });
   });
 

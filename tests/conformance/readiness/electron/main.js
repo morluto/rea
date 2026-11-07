@@ -26,11 +26,12 @@ app.whenReady().then(() => {
     window.webContents.on("render-process-gone", () => window.reload());
   }
   utilityProcess.fork(require.resolve("./utility.js"));
-  spawn(
+  const child = spawn(
     process.env.REA_ELECTRON_NODE_EXECUTABLE ?? "node",
     ["-e", "setTimeout(() => {}, 100)"],
     { stdio: "ignore" },
   );
+  child.on("error", () => undefined);
   ipcMain.handle("readiness:echo", (_event, value) => ({ value }));
   shell.openExternal("https://blocked.invalid").catch(() => undefined);
 });

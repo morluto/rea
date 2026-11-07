@@ -1,5 +1,9 @@
 import { EvmInterfaceService } from "../application/evm/EvmInterfaceService.js";
-import { EvmoleInterfaceProvider } from "../evm/EvmoleInterfaceProvider.js";
+import {
+  EvmoleInterfaceProvider,
+  evmHostSupported,
+  evmLimiterAvailability,
+} from "../evm/EvmoleInterfaceProvider.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { INSPECT_EVM_INTERFACE_CONTRACT } from "../contracts/evm/evmToolContracts.js";
 
@@ -8,6 +12,8 @@ export const createEvmInterfaceService = (
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): EvmInterfaceService =>
   new EvmInterfaceService(new EvmoleInterfaceProvider(environment));
+
+export { evmHostSupported, evmLimiterAvailability };
 
 /**
  * Static binding of the existing operation, command and fresh service factory.

@@ -13,12 +13,43 @@ type Frame =
     }
   | { kind: "array"; pointer: string; items: unknown[] };
 
+/** Admit each retained parser node before its object or numeric wrapper is allocated. */
+const captureNodeAdmission = (maximumNodes: number | undefined) => {
+  let nodes = 0;
+  return (): void => {
+    nodes++;
+    if (maximumNodes !== undefined && nodes > maximumNodes)
+      throw new CaptureFormatError(
+        "input-limit",
+        "JSON exceeds its parser node representation allowance.",
+      );
+  };
+};
+
+const selectCaptureObjectProperty = (
+  frames: Frame[],
+  key: string,
+  format: string,
+): void => {
+  const frame = frames.at(-1);
+  if (frame?.kind !== "object")
+    throw new TypeError("JSON visitor emitted a property outside an object.");
+  if (frame.members.has(key))
+    throw new CaptureFormatError(
+      "format",
+      `${format} JSON contains duplicate object members.`,
+    );
+  frame.pendingKey = key;
+};
+
 /** Materialize upstream JSON events without duplicate folding, prototype setters or numeric rounding. */
 export const parseCaptureJson = (
   text: string,
-  format: "HAR" | "qlog",
+  format: "HAR" | "qlog" | "Playwright trace",
+  maximumNodes?: number,
 ): unknown => {
   const frames: Frame[] = [];
+  const admitNode = captureNodeAdmission(maximumNodes);
   let result: unknown;
   const valuePointer = (): string => {
     const parent = frames.at(-1);
@@ -29,11 +60,15 @@ export const parseCaptureJson = (
       ? parent.pointer
       : `${parent.pointer}/${parent.pendingKey.replaceAll("~", "~0").replaceAll("/", "~1")}`;
   };
-  const checkDepth = (): void => {
-    if (frames.length > WEB_NETWORK_CAPTURE_LIMITS.depth)
+  // The document root is container level 1. Admit a container only while
+  // its own level stays within the budget; values inside an admitted
+  // container add no level, so empty and scalar-bearing containers agree.
+  const admitContainer = (): void => {
+    admitNode();
+    if (frames.length >= WEB_NETWORK_CAPTURE_LIMITS.depth)
       throw new CaptureFormatError(
         "input-limit",
-        `${format} exceeds the 64-level complete-evidence nesting budget.`,
+        `${format} exceeds the 64-level complete-evidence nesting budget. This release has no runtime override.`,
         valuePointer(),
       );
   };
@@ -50,11 +85,19 @@ export const parseCaptureJson = (
       delete parent.pendingKey;
     }
   };
+  const endContainer = (kind: "object" | "array"): void => {
+    const frame = frames.pop();
+    if (frame?.kind !== kind)
+      throw new TypeError(`JSON visitor ended an unexpected ${kind}.`);
+    append(
+      frame.kind === "object" ? Object.fromEntries(frame.members) : frame.items,
+    );
+  };
   visit(
     text,
     {
       onObjectBegin: () => {
-        checkDepth();
+        admitContainer();
         frames.push({
           kind: "object",
           pointer: valuePointer(),
@@ -62,39 +105,17 @@ export const parseCaptureJson = (
         });
       },
       onObjectProperty: (key) => {
-        // Prototype-named members are kept as ordinary own properties: the
-        // members map keys them without prototype setters, and
-        // Object.fromEntries materializes them as own data properties.
-        const frame = frames.at(-1);
-        if (frame?.kind !== "object")
-          throw new TypeError(
-            "JSON visitor emitted a property outside an object.",
-          );
-        if (frame.members.has(key))
-          throw new CaptureFormatError(
-            "format",
-            `${format} JSON contains duplicate object members.`,
-          );
-        frame.pendingKey = key;
+        admitNode();
+        selectCaptureObjectProperty(frames, key, format);
       },
-      onObjectEnd: () => {
-        const frame = frames.pop();
-        if (frame?.kind !== "object")
-          throw new TypeError("JSON visitor ended an unexpected object.");
-        append(Object.fromEntries(frame.members));
-      },
+      onObjectEnd: () => endContainer("object"),
       onArrayBegin: () => {
-        checkDepth();
+        admitContainer();
         frames.push({ kind: "array", pointer: valuePointer(), items: [] });
       },
-      onArrayEnd: () => {
-        const frame = frames.pop();
-        if (frame?.kind !== "array")
-          throw new TypeError("JSON visitor ended an unexpected array.");
-        append(frame.items);
-      },
+      onArrayEnd: () => endContainer("array"),
       onLiteralValue: (value: unknown, offset, length) => {
-        checkDepth();
+        admitNode();
         if (typeof value === "number")
           append(new LosslessNumber(text.slice(offset, offset + length)));
         else if (

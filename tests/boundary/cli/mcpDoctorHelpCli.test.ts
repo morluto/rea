@@ -4,6 +4,47 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
+describe("MCP doctor output routing boundary", () => {
+  workspaceCliTest(
+    "keeps output options from selecting the CLI-derived MCP doctor",
+    async ({ cli }) => {
+      for (const arguments_ of [
+        ["mcp", "doctor", "--json"],
+        ["--json", "mcp", "doctor"],
+        ["mcp", "--json", "doctor"],
+        ["--format", "json", "mcp", "doctor"],
+        ["mcp", "--format", "json", "doctor"],
+        ["--format=json", "mcp", "doctor"],
+        ["mcp", "--format=json", "doctor"],
+        ["--full-output", "mcp", "--json", "doctor"],
+      ]) {
+        const result = await cli.run({
+          arguments: arguments_,
+          environment: { REA_MCP_DOCTOR_DEADLINE_MS: "0" },
+        });
+        expect(result.exitCode, arguments_.join(" ")).toBe(1);
+        const report = {
+          healthy: false,
+          adapter: "production-stdio",
+          checks: [
+            expect.objectContaining({
+              name: "REA_MCP_DOCTOR_DEADLINE_MS",
+              ok: false,
+            }),
+          ],
+        };
+        expect(result.json).toMatchObject(
+          arguments_.includes("--full-output")
+            ? { ok: false, error: report }
+            : report,
+        );
+        expect(result.stderr).toBe("");
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
 describe("MCP doctor help boundary", () => {
   workspaceCliTest(
     "answers the advertised help option instead of validating it",
@@ -19,6 +60,10 @@ describe("MCP doctor help boundary", () => {
         expect(result.stdout).toContain("Usage: rea mcp doctor [options]");
         expect(result.stdout).toContain("--format <toon|json|yaml|md|jsonl>");
         expect(result.stdout).toContain("--full-output");
+        expect(result.stdout).toContain("current runtime");
+        expect(result.stdout).toContain(
+          "registered command or launch environment",
+        );
         // Help returns before the diagnostic session starts, so no report
         // envelope and no startup diagnostics are produced.
         expect(result.stdout).not.toContain("healthy");
@@ -83,4 +128,99 @@ describe("MCP doctor help boundary", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
+
+  workspaceCliTest(
+    "reports an absent or empty --format value as a missing output value",
+    async ({ cli }) => {
+      const message =
+        "--format requires a value, as in --format <value> or --format=<value>.";
+      for (const arguments_ of [
+        ["mcp", "doctor", "--format"],
+        ["mcp", "doctor", "--format="],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result).toMatchObject({
+          exitCode: 1,
+          stdout: `code: MISSING_OUTPUT_VALUE\nmessage: "${message}"\n`,
+        });
+      }
+      for (const arguments_ of [
+        ["mcp", "doctor", "--json", "--format"],
+        ["mcp", "doctor", "--json", "--format="],
+      ]) {
+        const result = await cli.run({ arguments: arguments_ });
+        expect(result.exitCode).toBe(1);
+        expect(JSON.parse(result.stdout)).toEqual({
+          code: "MISSING_OUTPUT_VALUE",
+          message,
+        });
+      }
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
 });
+
+describe("MCP doctor timing boundary", () => {
+  workspaceCliTest(
+    "reports doctor timing on stderr while preserving JSON output",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--json", "--timings"],
+      });
+      expect([0, 1]).toContain(result.exitCode);
+      expect(JSON.parse(result.stdout)).toHaveProperty("healthy");
+      const lines = result.stderr.trim().split("\n");
+      expect(lines).toHaveLength(1);
+      const record: unknown = JSON.parse(lines[0]!);
+      expect(record).toMatchObject({
+        rea_timings: { version: 1, command_ms: expect.any(Number) },
+      });
+      const duration = (record as { rea_timings: { command_ms: number } })
+        .rea_timings.command_ms;
+      expect(Number.isFinite(duration)).toBe(true);
+      expect(duration).toBeGreaterThanOrEqual(0);
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+
+  workspaceCliTest(
+    "does not treat a --format value as the timing flag",
+    async ({ cli }) => {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--format", "--timings"],
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toContain("Invalid output format: --timings");
+      expect(result.stderr).toBe("");
+    },
+    CLI_INTEGRATION_TIMEOUT_MS,
+  );
+});
+
+workspaceCliTest(
+  "accepts the same timing spellings as the ordinary CLI",
+  async ({ cli }) => {
+    for (const [flag, enabled] of [
+      ["--no-timings", false],
+      ["--timings=false", false],
+      ["--timings=true", true],
+      ["--timings=other", false],
+      ["--timings=", false],
+    ] as const) {
+      const result = await cli.run({
+        arguments: ["mcp", "doctor", "--json", flag],
+      });
+      expect(result.exitCode, result.stdout).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        healthy: true,
+        adapter: "production-stdio",
+      });
+      if (enabled)
+        expect(JSON.parse(result.stderr)).toMatchObject({
+          rea_timings: { version: 1, command_ms: expect.any(Number) },
+        });
+      else expect(result.stderr).toBe("");
+    }
+  },
+  CLI_INTEGRATION_TIMEOUT_MS,
+);

@@ -1,15 +1,21 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { Cli, z } from "incur";
 import { createWebRuntimeService } from "../composition/webRuntime.js";
-import { browserCliError } from "../cliBrowserContext.js";
+import { cliDomainInput } from "./domainInput.js";
+import { observeWebExecutionInputSchema } from "../domain/webExecution.js";
+import { inspectWebEventListenersInputSchema } from "../domain/webEventListeners.js";
+import { browserCliError } from "./browserCliError.js";
 import {
   browserScopeOptions,
-  observationDuration,
+  selectedCommandTimeout,
 } from "../cliObservationOptions.js";
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
+import { cliDecimalField } from "./options.js";
 import type { Logger } from "pino";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
 /** CLI progress exposes the actual armed point on stderr without corrupting JSON results. */
 const runtimeProgress: ProgressReporter = {
@@ -27,28 +33,44 @@ export const registerWebRuntimeCommands = (
     description:
       "Observe precise page execution; resets counters and temporarily disables optimization",
     args: z.object({
-      endpoint: z.string().describe("Existing loopback browser CDP endpoint"),
-      targetId: z
-        .string()
-        .describe("Selected page target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        observeWebExecutionInputSchema.shape.cdp_endpoint,
+      ).describe("Existing loopback browser CDP endpoint"),
+      targetId: observeWebExecutionInputSchema.shape.target_id.describe(
+        "Selected page target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: observationDuration(10_000, 1),
+      observationMs: cliDecimalField(
+        observeWebExecutionInputSchema.shape.observation_ms,
+      ).describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "observe-web-execution", async () => {
-          const result = await createWebRuntimeService().observe(
+          const service = createWebRuntimeService();
+          return await finishAnalysisCommand(
+            () =>
+              service.observe(
+                {
+                  cdp_endpoint: args.endpoint,
+                  target_id: args.targetId,
+                  allowed_origins: options.allowedOrigins,
+                  observation_ms: options.observationMs,
+                  ...selectedCommandTimeout(options.commandTimeoutMs),
+                },
+                { progress: runtimeProgress, signal },
+              ),
             {
-              cdp_endpoint: args.endpoint,
-              target_id: args.targetId,
-              allowed_origins: options.allowedOrigins,
-              observation_ms: options.observationMs,
+              close: async () => {
+                await service.provider.close?.();
+              },
             },
-            { progress: runtimeProgress, signal },
-          );
-          return result.ok ? result.value : browserCliError(result.error);
+            service.provider.identity().id,
+            "observe_web_execution",
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -56,28 +78,42 @@ export const registerWebRuntimeCommands = (
     description:
       "Inspect native listener source locations on the first main-document CSS match",
     args: z.object({
-      endpoint: z.string().describe("Existing loopback browser CDP endpoint"),
-      targetId: z
-        .string()
-        .describe("Selected page target ID from list-browser-targets"),
-      selector: z
-        .string()
-        .describe("Native CSS selector; inspect the first main-document match"),
+      endpoint: cliDomainInput(
+        inspectWebEventListenersInputSchema.shape.cdp_endpoint,
+      ).describe("Existing loopback browser CDP endpoint"),
+      targetId: inspectWebEventListenersInputSchema.shape.target_id.describe(
+        "Selected page target ID from list-browser-targets",
+      ),
+      selector: inspectWebEventListenersInputSchema.shape.selector.describe(
+        "Native CSS selector; inspect the first main-document match",
+      ),
     }),
     options: z.object({ ...browserScopeOptions }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "inspect-web-event-listeners", async () => {
-          const result = await createWebRuntimeService().inspect(
+          const service = createWebRuntimeService();
+          return await finishAnalysisCommand(
+            () =>
+              service.inspect(
+                {
+                  cdp_endpoint: args.endpoint,
+                  target_id: args.targetId,
+                  selector: args.selector,
+                  allowed_origins: options.allowedOrigins,
+                  ...selectedCommandTimeout(options.commandTimeoutMs),
+                },
+                { signal },
+              ),
             {
-              cdp_endpoint: args.endpoint,
-              target_id: args.targetId,
-              selector: args.selector,
-              allowed_origins: options.allowedOrigins,
+              close: async () => {
+                await service.provider.close?.();
+              },
             },
-            { signal },
-          );
-          return result.ok ? result.value : browserCliError(result.error);
+            service.provider.identity().id,
+            "inspect_web_event_listeners",
+            signal,
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });

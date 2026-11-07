@@ -1,6 +1,7 @@
 import type { Segment } from "./AppleMachoSelection.js";
 import { issue } from "./AppleDispatchDecodeFacts.js";
 import type { DecodeIssue } from "./AppleDispatchDecodeFacts.js";
+import { decodeMachoName, type MachoName } from "./AppleMachoNames.js";
 
 /** Where a Mach-O stores pointer fixups, from its load commands. */
 export interface FixupCommands {
@@ -17,8 +18,8 @@ export interface FixupCommands {
     readonly size: number;
     readonly stream: "bind" | "weak" | "lazy";
   }[];
-  /** Install names of dependent dylibs, in library-ordinal order. */
-  readonly dylibs: readonly string[];
+  /** Lossless install names of dependent dylibs, in library-ordinal order. */
+  readonly dylibs: readonly MachoName[];
 }
 
 /** One decoded pointer: a rebase to an in-image address or a bind to a symbol. */
@@ -27,11 +28,32 @@ export type DecodedPointer =
   | {
       readonly kind: "bind";
       readonly symbol: string;
+      /** Producer stream, which is part of lookup identity for weak binds. */
+      readonly binding_source: "chained" | "bind" | "weak" | "lazy";
+      /** Signed dyld library ordinal; 0 and negative values are special scopes. */
+      readonly library_ordinal: number;
       readonly library: string | null;
       readonly weak: boolean;
       readonly addend: bigint;
     }
-  | { readonly kind: "unsupported"; readonly reason: string };
+  | {
+      readonly kind: "unsupported";
+      readonly reason: string;
+      /** Source bind facts survive when a byte name has no lossless text projection. */
+      readonly binding?: Import;
+    };
+
+/** Pointer-slot outcome, including whether a rebase was actually applied. */
+export type PointerResolution =
+  | { readonly kind: "raw"; readonly target: bigint }
+  | { readonly kind: "rebase"; readonly target: bigint }
+  | Exclude<DecodedPointer, { readonly kind: "rebase" }>
+  | {
+      readonly kind: "unknown";
+      /** Preserved on-disk word; not an authoritative in-image target. */
+      readonly raw: bigint;
+      readonly reason: string;
+    };
 
 /** Pointer decoding for one Mach-O slice. */
 export interface PointerFixups {
@@ -40,14 +62,24 @@ export interface PointerFixups {
   readonly formats: readonly string[];
   readonly failures: readonly string[];
   readonly issues: readonly DecodeIssue[];
-  /** Fixup segments or bind streams this reader walked. */
+  /** Chained segments, legacy rebase streams, or bind streams this reader walked. */
   readonly examined: number;
-  /** Fully decoded fixup segments or bind streams, in the same units as `examined`. */
+  /** Chained segments without observed decode failures, plus structurally parsed
+   * legacy opcode streams, in the same units as `examined`. Legacy location
+   * coverage survives unavailable name text, which is qualified by `issues`.
+   */
   readonly decoded: number;
-  /** Rebase opcode bytes present in the load command and not decoded. */
+  /** Declared legacy opcode streams examined by this owner. */
+  readonly legacyRebaseStreams: number;
+  readonly legacyBindStreams: number;
+  /** Bytes in rebase streams that could not be completely decoded. */
   readonly unreadRebaseBytes: number;
+  /** Unresolved legacy writes intersecting a scalar span, including incomplete
+   * legacy applicability. Chained pointer values still require decode().
+   */
+  hasUnresolvedLegacyBytes(address: bigint, size: number): boolean;
   /** Decode the pointer stored at `address` whose raw 64-bit value is `raw`. */
-  decode(address: bigint, raw: bigint): DecodedPointer;
+  decode(address: bigint, raw: bigint): PointerResolution;
 }
 
 const POINTER_FORMATS: Readonly<Record<number, string>> = {
@@ -64,42 +96,112 @@ const bits = (value: bigint, from: number, width: number): bigint =>
 const signed = (value: bigint, width: number): bigint =>
   value >= 1n << BigInt(width - 1) ? value - (1n << BigInt(width)) : value;
 
-interface Import {
-  readonly symbol: string;
-  readonly library: string | null;
-  readonly weak: boolean;
-  readonly addend: bigint;
-}
+type SymbolName =
+  | { readonly symbol: string }
+  | { readonly symbol: null; readonly symbol_bytes_base64: string };
+
+type LibraryName =
+  | { readonly library: string | null; readonly library_bytes_base64?: never }
+  | { readonly library: null; readonly library_bytes_base64: string };
+
+type Import = SymbolName &
+  LibraryName & {
+    readonly binding_source: "chained" | "bind" | "weak" | "lazy";
+    readonly library_ordinal: number;
+    readonly weak: boolean;
+    readonly addend: bigint;
+  };
 
 interface BindRun {
   readonly start: bigint;
   count: bigint;
   readonly stride: bigint;
-  readonly binding: Import;
+  readonly binding:
+    | {
+        readonly kind: "bind";
+        readonly value: Import & { readonly symbol: string };
+      }
+    | Extract<DecodedPointer, { readonly kind: "unsupported" }>;
 }
 
-/** Library ordinal to install name; 0 and negative ordinals are special lookups. */
-const libraryName = (
+interface BindFacts {
+  readonly runs: readonly BindRun[];
+  readonly failures: readonly string[];
+  readonly issues: readonly DecodeIssue[];
+  readonly examined: number;
+  readonly decoded: number;
+  /** All opcode locations are known, independently of name text availability. */
+  readonly complete: boolean;
+}
+
+/** Resolve only valid dylib ordinals; preserve special scopes as raw ordinals. */
+const libraryFacts = (
   ordinal: number,
-  dylibs: readonly string[],
-): string | null => {
-  if (ordinal > 0) return dylibs[ordinal - 1] ?? null;
-  return null;
+  dylibs: FixupCommands["dylibs"],
+): LibraryName => {
+  if (!Number.isSafeInteger(ordinal) || ordinal < -3)
+    throw new RangeError(`Unsupported dylib ordinal ${String(ordinal)}`);
+  if (ordinal > 0) {
+    const name = dylibs[ordinal - 1];
+    if (name === undefined)
+      throw new RangeError(
+        `Dylib ordinal ${ordinal} exceeds the ${dylibs.length} declared dependencies`,
+      );
+    return typeof name === "string"
+      ? { library: name }
+      : { library: null, library_bytes_base64: name.bytes_base64 };
+  }
+  return { library: null };
 };
 
-const cString = (bytes: Buffer, offset: number, end: number): string => {
+/** dyld names are NUL-terminated bytes; text projection must never replace their identity. */
+const symbolName = (bytes: Buffer): SymbolName => {
+  const name = decodeMachoName(bytes);
+  return typeof name === "string"
+    ? { symbol: name }
+    : { symbol: null, symbol_bytes_base64: name.bytes_base64 };
+};
+
+const cString = (bytes: Buffer, offset: number, end: number): SymbolName => {
   const stop = bytes.indexOf(0, offset);
   if (offset < 0 || offset >= end || stop < 0 || stop >= end)
     throw new RangeError("Fixup symbol name is outside the symbol pool");
-  return bytes.toString("utf8", offset, stop);
+  return symbolName(bytes.subarray(offset, stop));
 };
+
+const resolvedBind = (
+  imported: Import,
+  addend: bigint,
+): Exclude<DecodedPointer, { readonly kind: "rebase" }> =>
+  imported.symbol === null || imported.library_bytes_base64 !== undefined
+    ? {
+        kind: "unsupported",
+        reason:
+          imported.symbol === null
+            ? "Fixup symbol bytes cannot be represented losslessly as UTF-8 text"
+            : "Dylib install-name bytes cannot be represented losslessly as UTF-8 text",
+        binding: { ...imported, addend: imported.addend + addend },
+      }
+    : { kind: "bind", ...imported, addend: imported.addend + addend };
+
+const sameImport = (left: Import, right: Import): boolean =>
+  left.symbol === right.symbol &&
+  (left.symbol !== null ||
+    right.symbol !== null ||
+    left.symbol_bytes_base64 === right.symbol_bytes_base64) &&
+  left.binding_source === right.binding_source &&
+  left.library_ordinal === right.library_ordinal &&
+  left.library === right.library &&
+  left.library_bytes_base64 === right.library_bytes_base64 &&
+  left.weak === right.weak &&
+  left.addend === right.addend;
 
 const readImport = (
   data: {
     readonly bytes: Buffer;
     readonly base: number;
     readonly end: number;
-    readonly dylibs: readonly string[];
+    readonly dylibs: FixupCommands["dylibs"];
   },
   header: {
     readonly offset: number;
@@ -127,12 +229,14 @@ const readImport = (
     const ordinal =
       encodedOrdinal > 0xfff0 ? encodedOrdinal - 0x10000 : encodedOrdinal;
     return {
-      symbol: cString(
+      ...cString(
         bytes,
         base + header.symbols + Number(bits(word, 32, 32)),
         end,
       ),
-      library: libraryName(ordinal, dylibs),
+      binding_source: "chained",
+      library_ordinal: ordinal,
+      ...libraryFacts(ordinal, dylibs),
       weak: bits(word, 16, 1) === 1n,
       addend: bytes.readBigInt64LE(at + 8),
     };
@@ -142,8 +246,10 @@ const readImport = (
   const ordinal =
     encodedOrdinal > 0xf0 ? encodedOrdinal - 0x100 : encodedOrdinal;
   return {
-    symbol: cString(bytes, base + header.symbols + (word >>> 9), end),
-    library: libraryName(ordinal, dylibs),
+    ...cString(bytes, base + header.symbols + (word >>> 9), end),
+    binding_source: "chained",
+    library_ordinal: ordinal,
+    ...libraryFacts(ordinal, dylibs),
     weak: ((word >>> 8) & 1) === 1,
     addend: header.format === 2 ? BigInt(bytes.readInt32LE(at + 4)) : 0n,
   };
@@ -163,7 +269,7 @@ export const decodeChainedPointer = (
         : imports[Number(ordinal)];
     if (target === undefined)
       throw new RangeError(`Chained bind ordinal ${ordinal} has no import`);
-    return { kind: "bind", ...target, addend: target.addend + addend };
+    return resolvedBind(target, addend);
   };
   if (format === 2 || format === 6) {
     if (bits(raw, 63, 1) === 1n)
@@ -195,7 +301,7 @@ export const decodeChainedPointer = (
 interface FixupImage {
   readonly bytes: Buffer;
   readonly segments: readonly Segment[];
-  readonly dylibs: readonly string[];
+  readonly dylibs: FixupCommands["dylibs"];
   readonly baseAddress: bigint;
 }
 
@@ -262,7 +368,8 @@ const readChainedPage = (
 const chainedFixups = (
   image: FixupImage,
   range: { readonly offset: number; readonly size: number },
-  unreadRebaseBytes: number,
+  rebases: RebaseFacts,
+  binds: BindFacts,
 ): PointerFixups => {
   const { bytes, segments, dylibs, baseAddress } = image;
   const base = range.offset;
@@ -391,18 +498,22 @@ const chainedFixups = (
       ranges.map(({ format }) => POINTER_FORMATS[format] ?? `format-${format}`),
     ),
   ];
-  const issues = ranges.flatMap(({ format, segment }) =>
-    POINTER_FORMATS[format] === undefined
-      ? [
-          issue(
-            "pointer_fixups",
-            "unsupported_pointer_format",
-            `Unsupported chained pointer format ${format}`,
-            `0x${segment.address.toString(16)}`,
-          ),
-        ]
-      : [],
-  );
+  const issues = [
+    ...rebases.issues,
+    ...binds.issues,
+    ...ranges.flatMap(({ format, segment }) =>
+      POINTER_FORMATS[format] === undefined
+        ? [
+            issue(
+              "pointer_fixups",
+              "unsupported_pointer_format",
+              `Unsupported chained pointer format ${format}`,
+              `0x${segment.address.toString(16)}`,
+            ),
+          ]
+        : [],
+    ),
+  ];
   const examinedViews = new Map<string, boolean>();
   const decodedRanges = new Set<number>();
   for (const [chainIndex, chain] of ranges.entries()) {
@@ -440,17 +551,85 @@ const chainedFixups = (
     if (complete) decodedRanges.add(chainIndex);
   }
   const failures = issues.map(({ message }) => message);
+  const applicabilityFailures = [...rebases.failures, ...binds.failures];
+  const applicabilityComplete = rebases.complete && binds.complete;
+  const recordPointerFailure = (
+    reason: string,
+    address: bigint,
+    chainIndex: number,
+  ): void => {
+    const location = `0x${address.toString(16)}`;
+    if (
+      !issues.some(
+        (entry) =>
+          entry.code === "chained_pointer_decode_failed" &&
+          entry.location === location,
+      )
+    ) {
+      issues.push(
+        issue(
+          "pointer_fixups",
+          "chained_pointer_decode_failed",
+          reason,
+          location,
+        ),
+      );
+      failures.push(reason);
+    }
+    decodedRanges.delete(chainIndex);
+  };
   return {
     kind: "chained",
     formats,
     failures,
     issues,
-    examined: Math.max(ranges.length, 1),
+    examined: Math.max(ranges.length, 1) + rebases.examined + binds.examined,
     get decoded() {
-      return ranges.length === 0 ? 1 : decodedRanges.size;
+      return (
+        (ranges.length === 0 ? 1 : decodedRanges.size) +
+        rebases.decoded +
+        binds.decoded
+      );
     },
-    unreadRebaseBytes,
+    legacyRebaseStreams: rebases.examined,
+    legacyBindStreams: binds.examined,
+    unreadRebaseBytes: rebases.unreadBytes,
+    hasUnresolvedLegacyBytes: (address, size) =>
+      hasUnresolvedLegacyBytes(segments, rebases, binds, address, size),
     decode(address, raw) {
+      const rawPointer = (): PointerResolution =>
+        applicabilityComplete
+          ? { kind: "raw", target: raw }
+          : {
+              kind: "unknown",
+              raw,
+              reason: `LC_DYLD_INFO pointer-fixup applicability was not completely decoded: ${applicabilityFailures.join("; ")}`,
+            };
+      const legacyBind = resolveLegacyBind(binds.runs, address);
+      const legacyRebase = resolveLegacyRebase(
+        segments,
+        rebases.membership,
+        address,
+        raw,
+      );
+      if (legacyBind?.kind === "unsupported") return legacyBind;
+      if (legacyBind !== undefined && legacyRebase !== undefined)
+        return {
+          kind: "unsupported",
+          reason: `Both bind and rebase records target pointer location 0x${address.toString(16)}`,
+        };
+      if (legacyBind !== undefined && !rebases.complete)
+        return {
+          kind: "unknown",
+          raw,
+          reason: `Legacy rebase opcodes could overlap this bind location: ${rebases.failures.join("; ")}`,
+        };
+      if (legacyRebase !== undefined && !binds.complete)
+        return {
+          kind: "unknown",
+          raw,
+          reason: `Legacy bind opcodes could overlap this rebase location: ${binds.failures.join("; ")}`,
+        };
       const chainIndex = ranges.findIndex(
         ({ segment }) =>
           address >= segment.address &&
@@ -458,12 +637,14 @@ const chainedFixups = (
       );
       const chain = ranges[chainIndex];
       // Pointers outside fixup segments, such as in __TEXT, are stored plainly.
-      if (chain === undefined) return { kind: "rebase", target: raw };
+      if (chain === undefined)
+        return legacyBind ?? legacyRebase ?? rawPointer();
       const within = Number(address - chain.segment.address);
       const page = Math.floor(within / chain.pageSize);
-      if (page >= chain.pageCount) return { kind: "rebase", target: raw };
+      if (page >= chain.pageCount)
+        return legacyBind ?? legacyRebase ?? rawPointer();
       const start = bytes.readUInt16LE(chain.pageStarts + page * 2);
-      if (start === 0xffff) return { kind: "rebase", target: raw };
+      if (start === 0xffff) return legacyBind ?? legacyRebase ?? rawPointer();
       if (POINTER_FORMATS[chain.format] === undefined)
         return {
           kind: "unsupported",
@@ -473,72 +654,345 @@ const chainedFixups = (
         const facts = pageFacts(chain, page, start);
         const at = within % chain.pageSize;
         const locations = facts.locations;
-        if (((locations[at >>> 3] ?? 0) & (1 << (at & 7))) !== 0)
-          return decodeChainedPointer(raw, chain.format, baseAddress, imports);
+        if (((locations[at >>> 3] ?? 0) & (1 << (at & 7))) !== 0) {
+          if (
+            legacyBind !== undefined ||
+            legacyRebase !== undefined ||
+            !applicabilityComplete
+          ) {
+            if (legacyBind !== undefined || legacyRebase !== undefined)
+              return {
+                kind: "unsupported",
+                reason: `Both chained and legacy fixup records target pointer location 0x${address.toString(16)}`,
+              };
+            return {
+              kind: "unknown",
+              raw,
+              reason: `Incomplete legacy fixup streams could overlap chained pointer location 0x${address.toString(16)}: ${applicabilityFailures.join("; ")}`,
+            };
+          }
+          const decoded = decodeChainedPointer(
+            raw,
+            chain.format,
+            baseAddress,
+            imports,
+          );
+          if (decoded.kind === "unsupported")
+            recordPointerFailure(decoded.reason, address, chainIndex);
+          return decoded;
+        }
         if (
           facts.failure !== undefined &&
           (facts.lastOffset === undefined || at > facts.lastOffset)
         )
           throw new RangeError(facts.failure);
-        return { kind: "rebase", target: raw };
+        return legacyBind ?? legacyRebase ?? rawPointer();
       } catch (cause: unknown) {
         const reason = cause instanceof Error ? cause.message : String(cause);
-        const location = `0x${address.toString(16)}`;
-        if (
-          !issues.some(
-            (entry) =>
-              entry.code === "chained_pointer_decode_failed" &&
-              entry.location === location,
-          )
-        ) {
-          issues.push(
-            issue(
-              "pointer_fixups",
-              "chained_pointer_decode_failed",
-              reason,
-              location,
-            ),
-          );
-          failures.push(reason);
-        }
-        decodedRanges.delete(chainIndex);
+        recordPointerFailure(reason, address, chainIndex);
         return { kind: "unsupported", reason };
       }
     },
   };
 };
 
-const uleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
+const uleb = (
+  bytes: Buffer,
+  cursor: { at: number },
+  end: number,
+  stream: "bind" | "rebase" = "bind",
+  rebaseWork?: { workRemaining: number },
+): bigint => {
   let value = 0n;
-  let shift = 0n;
+  let shift = 0;
   for (;;) {
-    if (cursor.at >= end) throw new RangeError("Truncated bind opcode operand");
+    if (cursor.at >= end)
+      throw new RangeError(`Truncated ${stream} opcode operand`);
+    if (rebaseWork !== undefined) {
+      if (rebaseWork.workRemaining === 0)
+        throw new RangeError(
+          "Legacy rebase parsing exceeded the source-derived work budget",
+        );
+      rebaseWork.workRemaining--;
+    }
     const byte = bytes[cursor.at++] ?? 0;
-    value |= BigInt(byte & 0x7f) << shift;
-    shift += 7n;
+    const slice = byte & 0x7f;
+    if ((shift === 63 && slice > 1) || (shift === 64 && slice !== 0))
+      throw new RangeError(`Oversized ${stream} opcode operand`);
+    if (shift < 64) value |= BigInt(slice) << BigInt(shift);
+    // Padding may extend the encoding, but never the represented integer.
+    shift = Math.min(64, shift + 7);
     if ((byte & 0x80) === 0) return value;
-    if (shift > 63n) throw new RangeError("Oversized bind opcode operand");
   }
+};
+
+interface RebaseFacts {
+  /** Two-bit state per source byte; allocated lazily only for emitted rebases. */
+  readonly membership: Uint8Array | null;
+  readonly failures: readonly string[];
+  readonly issues: readonly DecodeIssue[];
+  readonly examined: number;
+  readonly decoded: number;
+  readonly unreadBytes: number;
+  readonly complete: boolean;
+}
+
+const REBASE_POINTER_SIZE = 8n;
+const REBASE_POINTER = 1;
+const REBASE_NON_POINTER = 2;
+const REBASE_CONFLICT = 3;
+
+const markRebaseLocation = (
+  index: { bitmap: Uint8Array | null; workRemaining: number },
+  fileOffset: number,
+  type: number,
+  fileBytes: number,
+): void => {
+  index.bitmap ??= new Uint8Array(Math.ceil(fileBytes / 4));
+  const at = Math.floor(fileOffset / 4);
+  const shift = (fileOffset % 4) * 2;
+  const previous = ((index.bitmap[at] ?? 0) >> shift) & 3;
+  const next = previous === 0 || previous === type ? type : REBASE_CONFLICT;
+  index.bitmap[at] =
+    ((index.bitmap[at] ?? 0) & ~(3 << shift)) | (next << shift);
+};
+
+/** Interpret one bounded LC_DYLD_INFO rebase stream into file-backed membership. */
+const readRebaseStream = (
+  image: FixupImage,
+  range: FixupCommands["rebases"][number],
+  index: { bitmap: Uint8Array | null; workRemaining: number },
+): void => {
+  const { bytes, segments } = image;
+  const end = range.offset + range.size;
+  if (
+    !Number.isSafeInteger(range.offset) ||
+    !Number.isSafeInteger(range.size) ||
+    range.offset < 0 ||
+    range.size < 0 ||
+    !Number.isSafeInteger(end) ||
+    end > bytes.length
+  )
+    throw new RangeError("Rebase opcodes exceed the target");
+  const cursor = { at: range.offset };
+  let segmentIndex = -1;
+  let segmentOffset = 0n;
+  let type = 0;
+  const addRun = (count: bigint, skip: bigint): void => {
+    if (count === 0n) return;
+    if (type === 0 || type > 3)
+      throw new RangeError(`Unsupported legacy rebase type ${type}`);
+    const segment = segments[segmentIndex];
+    if (segment === undefined)
+      throw new RangeError("Rebase location has no selected segment");
+    const stride = REBASE_POINTER_SIZE + skip;
+    const lastOffset = segmentOffset + (count - 1n) * stride;
+    if (segmentOffset < 0n || lastOffset + REBASE_POINTER_SIZE > segment.size)
+      throw new RangeError("Rebase expansion leaves its file-backed segment");
+    if (!Number.isSafeInteger(segment.offset) || segment.offset < 0)
+      throw new RangeError("Rebase segment file offset is invalid");
+    const firstFileOffset = BigInt(segment.offset) + segmentOffset;
+    if (
+      firstFileOffset < 0n ||
+      lastOffset + BigInt(segment.offset) + REBASE_POINTER_SIZE >
+        BigInt(bytes.length)
+    )
+      throw new RangeError("Rebase location exceeds the source file");
+    const fact = type === 1 ? REBASE_POINTER : REBASE_NON_POINTER;
+    const admitted =
+      count < BigInt(index.workRemaining) ? count : BigInt(index.workRemaining);
+    for (let indexOffset = 0n; indexOffset < admitted; indexOffset++) {
+      const fileOffset = Number(firstFileOffset + indexOffset * stride);
+      markRebaseLocation(index, fileOffset, fact, bytes.length);
+    }
+    index.workRemaining -= Number(admitted);
+    if (admitted < count)
+      throw new RangeError(
+        "Legacy rebase opcode and expansion work exceeded the source-derived budget",
+      );
+    // dyld advances after the final record too; that cursor may legally be
+    // one past the segment because it is only bounds-checked on the next emit.
+    segmentOffset += count * stride;
+  };
+  while (cursor.at < end) {
+    if (index.workRemaining === 0)
+      throw new RangeError(
+        "Legacy rebase parsing exceeded the source-derived work budget",
+      );
+    index.workRemaining--;
+    const byte = bytes[cursor.at++] ?? 0;
+    const immediate = byte & 0x0f;
+    switch (byte & 0xf0) {
+      case 0x00: // REBASE_OPCODE_DONE; up to 15 trailing bytes are alignment.
+        if (end - cursor.at > 15)
+          throw new RangeError(
+            "Rebase opcodes terminated before the stream end",
+          );
+        cursor.at = end;
+        break;
+      case 0x10: // REBASE_OPCODE_SET_TYPE_IMM
+        type = immediate;
+        break;
+      case 0x20: {
+        // REBASE_OPCODE_SET_SEGMENT_AND_OFFSET_ULEB
+        if (segments[immediate] === undefined)
+          throw new RangeError("Rebase segment index is out of range");
+        segmentIndex = immediate;
+        segmentOffset = uleb(bytes, cursor, end, "rebase", index);
+        break;
+      }
+      case 0x30: // REBASE_OPCODE_ADD_ADDR_ULEB
+        segmentOffset += uleb(bytes, cursor, end, "rebase", index);
+        break;
+      case 0x40: // REBASE_OPCODE_ADD_ADDR_IMM_SCALED
+        segmentOffset += BigInt(immediate) * REBASE_POINTER_SIZE;
+        break;
+      case 0x50: // REBASE_OPCODE_DO_REBASE_IMM_TIMES
+        addRun(BigInt(immediate), 0n);
+        break;
+      case 0x60: {
+        // REBASE_OPCODE_DO_REBASE_ULEB_TIMES
+        const count = uleb(bytes, cursor, end, "rebase", index);
+        addRun(count, 0n);
+        break;
+      }
+      case 0x70: {
+        // REBASE_OPCODE_DO_REBASE_ADD_ADDR_ULEB
+        addRun(1n, 0n);
+        segmentOffset += uleb(bytes, cursor, end, "rebase", index);
+        break;
+      }
+      case 0x80: {
+        // REBASE_OPCODE_DO_REBASE_ULEB_TIMES_SKIPPING_ULEB
+        const count = uleb(bytes, cursor, end, "rebase", index);
+        const skip = uleb(bytes, cursor, end, "rebase", index);
+        addRun(count, skip);
+        break;
+      }
+      default:
+        throw new RangeError(
+          `Unsupported rebase opcode 0x${byte.toString(16)}`,
+        );
+    }
+  }
+};
+
+/** Read loader-owned membership without interpreting a stored pointer word. */
+const legacyRebaseState = (
+  segments: readonly Segment[],
+  membership: Uint8Array | null,
+  address: bigint,
+): number | Extract<PointerResolution, { readonly kind: "unsupported" }> => {
+  if (membership === null) return 0;
+  let fileOffset: number | undefined;
+  for (const segment of segments) {
+    const relative = address - segment.address;
+    if (relative < 0n || relative + REBASE_POINTER_SIZE > segment.size)
+      continue;
+    if (fileOffset !== undefined)
+      return {
+        kind: "unsupported",
+        reason: `Ambiguous segments map legacy rebase pointer location 0x${address.toString(16)}`,
+      };
+    const mapped = BigInt(segment.offset) + relative;
+    if (mapped < 0n || mapped > BigInt(Number.MAX_SAFE_INTEGER))
+      return {
+        kind: "unsupported",
+        reason: "Legacy rebase file offset exceeds the safe integer range",
+      };
+    fileOffset = Number(mapped);
+  }
+  if (fileOffset === undefined) return 0;
+  const at = Math.floor(fileOffset / 4);
+  const shift = (fileOffset % 4) * 2;
+  return ((membership[at] ?? 0) >> shift) & 3;
+};
+
+const resolveLegacyRebase = (
+  segments: readonly Segment[],
+  membership: Uint8Array | null,
+  address: bigint,
+  raw: bigint,
+): PointerResolution | undefined => {
+  const state = legacyRebaseState(segments, membership, address);
+  if (typeof state !== "number") return state;
+  if (state === 0) return undefined;
+  if (state === REBASE_POINTER) return { kind: "rebase", target: raw };
+  return {
+    kind: "unsupported",
+    reason:
+      state === REBASE_CONFLICT
+        ? `Conflicting legacy rebase kinds target pointer location 0x${address.toString(16)}`
+        : "Legacy non-pointer rebase is not a 64-bit metadata pointer",
+  };
+};
+
+const parseLegacyRebases = (
+  image: FixupImage,
+  streams: FixupCommands["rebases"],
+): RebaseFacts => {
+  // Dyld does not require pointer alignment here, so up to one starting byte
+  // per source byte is possible. Bound opcode scanning plus slot visits by 2N.
+  const workBudget = Math.min(Number.MAX_SAFE_INTEGER, image.bytes.length * 2);
+  const index: { bitmap: Uint8Array | null; workRemaining: number } = {
+    bitmap: null,
+    workRemaining: workBudget,
+  };
+  const failures: string[] = [];
+  let decoded = 0;
+  let unreadBytes = 0;
+  for (const stream of streams) {
+    try {
+      readRebaseStream(image, stream, index);
+      decoded++;
+    } catch (cause: unknown) {
+      failures.push(
+        `rebase opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+      unreadBytes += stream.size;
+    }
+  }
+  return {
+    membership: index.bitmap,
+    failures,
+    issues: failures.map((message) =>
+      issue("pointer_fixups", "rebase_stream_decode_failed", message),
+    ),
+    examined: streams.length,
+    decoded,
+    unreadBytes,
+    complete: failures.length === 0,
+  };
 };
 
 const sleb = (bytes: Buffer, cursor: { at: number }, end: number): bigint => {
   let value = 0n;
-  let shift = 0n;
+  let shift = 0;
   let byte = 0;
   do {
     if (cursor.at >= end) throw new RangeError("Truncated bind opcode operand");
     byte = bytes[cursor.at++] ?? 0;
-    value |= BigInt(byte & 0x7f) << shift;
-    shift += 7n;
-  } while ((byte & 0x80) !== 0 && shift <= 63n);
-  return (byte & 0x40) !== 0 ? value - (1n << shift) : value;
+    const slice = byte & 0x7f;
+    if (
+      (shift === 63 && slice !== 0 && slice !== 0x7f) ||
+      (shift === 64 && slice !== (value < 0n ? 0x7f : 0))
+    )
+      throw new RangeError("Oversized bind opcode operand");
+    if (shift < 64)
+      value = BigInt.asIntN(64, value | (BigInt(slice) << BigInt(shift)));
+    shift = Math.min(64, shift + 7);
+  } while ((byte & 0x80) !== 0);
+  return shift < 64 && (byte & 0x40) !== 0
+    ? value - (1n << BigInt(shift))
+    : value;
 };
 
 /** Registers of the `LC_DYLD_INFO` bind state machine. */
 interface BindState {
   ordinal: number;
+  ordinalFailure: string | null;
   segmentIndex: number;
-  symbol: string;
+  symbol: SymbolName;
   weak: boolean;
   addend: bigint;
   address: bigint;
@@ -557,18 +1011,29 @@ const setBindRegister = (
   switch (byte & 0xf0) {
     case 0x10:
       state.ordinal = immediate;
+      state.ordinalFailure = null;
       return true;
     case 0x20:
-      state.ordinal = Number(uleb(bytes, cursor, end));
+      {
+        const ordinal = uleb(bytes, cursor, end);
+        if (ordinal > BigInt(Number.MAX_SAFE_INTEGER)) {
+          state.ordinal = 0;
+          state.ordinalFailure = `Dylib ordinal ${ordinal} exceeds the safe integer range`;
+        } else {
+          state.ordinal = Number(ordinal);
+          state.ordinalFailure = null;
+        }
+      }
       return true;
     case 0x30:
       state.ordinal = immediate === 0 ? 0 : immediate - 16;
+      state.ordinalFailure = null;
       return true;
     case 0x40: {
       const stop = bytes.indexOf(0, cursor.at);
       if (stop < 0 || stop >= end)
         throw new RangeError("Unterminated bind symbol");
-      state.symbol = bytes.toString("utf8", cursor.at, stop);
+      state.symbol = symbolName(bytes.subarray(cursor.at, stop));
       state.weak = (immediate & 0x1) !== 0;
       cursor.at = stop + 1;
       return true;
@@ -609,8 +1074,9 @@ const readBindStream = (
   const cursor = { at: range.offset };
   const state: BindState = {
     ordinal: 0,
+    ordinalFailure: null,
     segmentIndex: -1,
-    symbol: "",
+    symbol: { symbol: "" },
     weak: false,
     addend: 0n,
     address: 0n,
@@ -629,30 +1095,56 @@ const readBindStream = (
     if (count === 0n) return;
     preflightRun(count, skip);
     const stride = 8n + skip;
-    const binding: Import = {
-      symbol: state.symbol,
-      library:
-        range.stream === "weak"
-          ? null
-          : libraryName(state.ordinal, image.dylibs),
-      weak: state.weak,
-      addend: state.addend,
-    };
+    let binding: BindRun["binding"];
+    try {
+      if (state.ordinalFailure !== null)
+        throw new RangeError(state.ordinalFailure);
+      const resolvedLibrary = libraryFacts(state.ordinal, image.dylibs);
+      const decoded = resolvedBind(
+        {
+          ...state.symbol,
+          binding_source: range.stream,
+          library_ordinal: state.ordinal,
+          ...(range.stream === "weak" ? { library: null } : resolvedLibrary),
+          weak: state.weak,
+          addend: state.addend,
+        },
+        0n,
+      );
+      binding =
+        decoded.kind === "bind" ? { kind: "bind", value: decoded } : decoded;
+    } catch (cause: unknown) {
+      binding = {
+        kind: "unsupported",
+        reason: cause instanceof Error ? cause.message : String(cause),
+      };
+    }
     const previous = binds.at(-1);
+    const sameBinding = (
+      left: BindRun["binding"],
+      right: BindRun["binding"],
+    ) =>
+      left.kind === "unsupported" && right.kind === "unsupported"
+        ? left.reason === right.reason &&
+          (left.binding === undefined || right.binding === undefined
+            ? left.binding === right.binding
+            : sameImport(left.binding, right.binding))
+        : left.kind === "bind" && right.kind === "bind"
+          ? sameImport(left.value, right.value)
+          : false;
     if (
       previous !== undefined &&
       previous.stride === stride &&
       previous.start + previous.count * stride === state.address &&
-      previous.binding.symbol === binding.symbol &&
-      previous.binding.library === binding.library &&
-      previous.binding.weak === binding.weak &&
-      previous.binding.addend === binding.addend
+      sameBinding(previous.binding, binding)
     ) {
       previous.count += count;
     } else {
       binds.push({ start: state.address, count, stride, binding });
     }
-    state.address += count * stride;
+    // The dyld bind stream advances addresses modulo 64 bits; ld uses -8 to
+    // bind the current pointer slot again with DO_BIND_ADD_ADDR_ULEB.
+    state.address = (state.address + count * stride) & 0xffffffffffffffffn;
   };
   while (cursor.at < end) {
     const byte = bytes[cursor.at++] ?? 0;
@@ -687,6 +1179,114 @@ const readBindStream = (
   }
 };
 
+const resolveLegacyBind = (
+  runs: readonly BindRun[],
+  address: bigint,
+): PointerResolution | undefined => {
+  let match: BindRun | undefined;
+  for (const run of runs) {
+    const distance = address - run.start;
+    if (
+      distance >= 0n &&
+      distance % run.stride === 0n &&
+      distance / run.stride < run.count
+    ) {
+      if (match !== undefined)
+        return {
+          kind: "unsupported",
+          reason: `Ambiguous bind records target pointer location 0x${address.toString(16)}`,
+        };
+      match = run;
+    }
+  }
+  return match === undefined
+    ? undefined
+    : match.binding.kind === "unsupported"
+      ? match.binding
+      : { kind: "bind", ...match.binding.value };
+};
+
+const parseLegacyBinds = (
+  image: FixupImage,
+  streams: FixupCommands["binds"],
+): BindFacts => {
+  const runs: BindRun[] = [];
+  const failures: string[] = [];
+  let decoded = 0;
+  for (const stream of streams) {
+    try {
+      readBindStream(image, stream, runs);
+      decoded++;
+    } catch (cause: unknown) {
+      failures.push(
+        `${stream.stream} bind opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
+  }
+  const complete = failures.length === 0;
+  const issues = failures.map((message) =>
+    issue("pointer_fixups", "bind_stream_decode_failed", message),
+  );
+  for (const run of runs) {
+    if (run.binding.kind !== "unsupported" || run.binding.binding === undefined)
+      continue;
+    issues.push(
+      issue(
+        "pointer_fixups",
+        run.binding.binding.symbol === null
+          ? "bind_symbol_text_unavailable"
+          : "bind_library_text_unavailable",
+        run.binding.reason,
+        `0x${run.start.toString(16)}`,
+      ),
+    );
+    failures.push(run.binding.reason);
+  }
+  return {
+    runs,
+    failures,
+    issues,
+    examined: streams.length,
+    decoded,
+    complete,
+  };
+};
+
+/** Query retained legacy facts; never expand bind runs or read scalar padding. */
+const hasUnresolvedLegacyBytes = (
+  segments: readonly Segment[],
+  rebases: RebaseFacts,
+  binds: BindFacts,
+  address: bigint,
+  size: number,
+): boolean => {
+  if (size <= 0) return false;
+  if (!rebases.complete || !binds.complete) return true;
+  const first = address - 7n;
+  const end = address + BigInt(size);
+  for (const run of binds.runs) {
+    // An eight-byte bind overlaps [address,end) exactly when its start is
+    // in [address-7,end). Find the first such member without expanding it.
+    const index =
+      first <= run.start
+        ? 0n
+        : (first - run.start + run.stride - 1n) / run.stride;
+    if (index < run.count && run.start + index * run.stride < end) return true;
+  }
+  if (rebases.membership !== null)
+    for (let slot = first; slot < end; slot++) {
+      const state = legacyRebaseState(segments, rebases.membership, slot);
+      // Text rebases own four bytes; conflicting kinds may include a pointer.
+      if (
+        typeof state !== "number" ||
+        state === REBASE_CONFLICT ||
+        (state === REBASE_NON_POINTER && slot + 4n > address)
+      )
+        return true;
+    }
+  return false;
+};
+
 /** Build pointer decoding for one slice from its fixup load commands. */
 export const parsePointerFixups = (
   bytes: Buffer,
@@ -695,14 +1295,22 @@ export const parsePointerFixups = (
   baseAddress: bigint,
 ): PointerFixups => {
   const image = { bytes, segments, dylibs: commands.dylibs, baseAddress };
-  const unreadRebaseBytes = commands.rebases.reduce(
-    (total, rebase) => total + rebase.size,
-    0,
-  );
+  const rebases = parseLegacyRebases(image, commands.rebases);
+  const binds = parseLegacyBinds(image, commands.binds);
   if (commands.chained !== null) {
-    return chainedFixups(image, commands.chained, unreadRebaseBytes);
+    return chainedFixups(image, commands.chained, rebases, binds);
   }
-  if (commands.binds.length === 0)
+  const applicabilityFailures = [...rebases.failures, ...binds.failures];
+  const applicabilityComplete = rebases.complete && binds.complete;
+  const rawPointer = (raw: bigint): PointerResolution =>
+    applicabilityComplete
+      ? { kind: "raw", target: raw }
+      : {
+          kind: "unknown",
+          raw,
+          reason: `LC_DYLD_INFO pointer-fixup applicability was not completely decoded: ${applicabilityFailures.join("; ")}`,
+        };
+  if (commands.binds.length === 0 && commands.rebases.length === 0)
     return {
       kind: "none",
       formats: [],
@@ -710,52 +1318,54 @@ export const parsePointerFixups = (
       issues: [],
       examined: 0,
       decoded: 0,
-      unreadRebaseBytes,
-      decode: (_address, raw) => ({ kind: "rebase", target: raw }),
+      legacyRebaseStreams: 0,
+      legacyBindStreams: 0,
+      unreadRebaseBytes: 0,
+      hasUnresolvedLegacyBytes: () => false,
+      decode: (_address, raw) => rawPointer(raw),
     };
-  const binds: BindRun[] = [];
-  const failures: string[] = [];
-  let decoded = 0;
-  for (const stream of commands.binds)
-    try {
-      readBindStream(image, stream, binds);
-      decoded++;
-    } catch (cause: unknown) {
-      failures.push(
-        `${stream.stream} bind opcodes: ${cause instanceof Error ? cause.message : String(cause)}`,
-      );
-    }
+  const failures = [...rebases.failures, ...binds.failures];
+  const issues = [...rebases.issues, ...binds.issues];
   return {
     kind: "dyld-info",
     formats: [],
     failures,
-    issues: failures.map((message) =>
-      issue("pointer_fixups", "bind_stream_decode_failed", message),
-    ),
-    examined: commands.binds.length,
-    decoded,
-    unreadRebaseBytes,
+    issues,
+    examined: binds.examined + rebases.examined,
+    decoded: binds.decoded + rebases.decoded,
+    legacyRebaseStreams: rebases.examined,
+    legacyBindStreams: binds.examined,
+    unreadRebaseBytes: rebases.unreadBytes,
+    hasUnresolvedLegacyBytes: (address, size) =>
+      hasUnresolvedLegacyBytes(segments, rebases, binds, address, size),
     decode(address, raw) {
-      let match: BindRun | undefined;
-      for (const run of binds) {
-        const { start, count, stride } = run;
-        const distance = address - start;
-        if (
-          distance >= 0n &&
-          distance % stride === 0n &&
-          distance / stride < count
-        ) {
-          if (match !== undefined)
-            return {
-              kind: "unsupported",
-              reason: `Ambiguous bind records target pointer location 0x${address.toString(16)}`,
-            };
-          match = run;
-        }
-      }
-      return match === undefined
-        ? { kind: "rebase", target: raw }
-        : { kind: "bind", ...match.binding };
+      const match = resolveLegacyBind(binds.runs, address);
+      const rebase = resolveLegacyRebase(
+        segments,
+        rebases.membership,
+        address,
+        raw,
+      );
+      if (match?.kind === "unsupported") return match;
+      if (match !== undefined && rebase !== undefined)
+        return {
+          kind: "unsupported",
+          reason: `Both bind and rebase records target pointer location 0x${address.toString(16)}`,
+        };
+      if (match !== undefined && !rebases.complete)
+        return {
+          kind: "unknown",
+          raw,
+          reason: `Legacy rebase opcodes could overlap this bind location: ${rebases.failures.join("; ")}`,
+        };
+      if (match !== undefined) return match;
+      if (rebase !== undefined && !binds.complete)
+        return {
+          kind: "unknown",
+          raw,
+          reason: `Legacy bind opcodes could overlap this rebase location: ${binds.failures.join("; ")}`,
+        };
+      return rebase ?? rawPointer(raw);
     },
   };
 };
