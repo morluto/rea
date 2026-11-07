@@ -31,7 +31,11 @@ export const adbHostFileName = (
   if (!devicePath.startsWith("/"))
     return { ok: false, reason: "not_absolute_path" };
   const fileName = devicePath.slice(devicePath.lastIndexOf("/") + 1);
-  if ((platform === "win32" ? fileName.length : Buffer.byteLength(fileName, "utf8")) > 255)
+  if (
+    (platform === "win32"
+      ? fileName.length
+      : Buffer.byteLength(fileName, "utf8")) > 255
+  )
     return { ok: false, reason: "file_name_too_long" };
   if (fileName === "." || fileName === "..")
     return { ok: false, reason: "dot_segment" };

@@ -595,9 +595,41 @@ exit 1`,
   await expect(lstat(join(root, "pull-ran"))).rejects.toThrow();
 });
 
+it("reports both path failures for the same Package Manager entry", async () => {
+  const { binary, root } = await writeAdbStub(
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "-T" ] && [ "$5" = "pm" ]; then printf '%s\\n' 'package:/data/My App/..'; exit 0; fi
+if [ "$1" = "-s" ] && [ "$3" = "pull" ]; then : > '${join(root, "pull-ran")}'; exit 0; fi
+exit 1`,
+  );
+  const projected = await refusedBy(providerOver(binary), {
+    operation: "pull_adb_package",
+    input: {
+      serial: "emulator-5554",
+      package: "com.example",
+      output_directory: join(root, "pulls"),
+    },
+  });
+  expect(projected.details).toMatchObject({
+    reason: "unsafe_device_path",
+    diagnostics: {
+      rejected_paths: [
+        {
+          device_path: "/data/My App/..",
+          reason: "unsupported_protocol_character",
+          additional_reasons: ["dot_segment"],
+        },
+      ],
+    },
+  });
+  expect(projected.message).toContain("both Package Manager");
+  expect(projected.message).not.toContain("other path");
+  await expect(readFile(join(root, "pull-ran"))).rejects.toThrow();
+});
+
 it("reports both path policies for mixed host and protocol refusals", async () => {
   const { binary, root } = await writeAdbStub(
-    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+    (root) => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
 if [ "$1" = "-s" ] && [ "$4" = "-T" ] && [ "$5" = "pm" ]; then printf '%s\\n' 'package:/data/app/x/' 'package:/data/app/y/My App/base.apk'; exit 0; fi
 if [ "$1" = "-s" ] && [ "$3" = "pull" ]; then : > '${join(root, "pull-ran")}'; exit 0; fi
 exit 1`,

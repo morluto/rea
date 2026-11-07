@@ -130,7 +130,8 @@ existing analysis families directly, for example
   refusals return `unreadable_output` with `retryable: false`, keep the
   `pm path` output in `details.captured_output`, and name the refusal in
   `details.reason`. `unsafe_device_path` lists every refused entry in
-  `details.diagnostics.rejected_paths` as `{device_path, reason}`;
+  `details.diagnostics.rejected_paths` as `{device_path, reason}`, with
+  `additional_reasons` when the same path also fails host filename validation;
   `duplicate_local_destination` reports the shared `file_name` and both
   `device_paths`; `local_destination_unavailable` reports the `device_path`,
   `file_name`, and the filesystem `error_code` (`EEXIST` when the

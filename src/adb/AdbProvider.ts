@@ -440,8 +440,16 @@ interface PmPathRefusalContext {
 const unsafePackagePathsError = (
   { operation, packageName, capturedOutput }: PmPathRefusalContext,
   rejected: readonly [
-    { readonly device_path: string; readonly reason: string },
-    ...{ readonly device_path: string; readonly reason: string }[],
+    {
+      readonly device_path: string;
+      readonly reason: string;
+      readonly additional_reasons?: readonly string[];
+    },
+    ...{
+      readonly device_path: string;
+      readonly reason: string;
+      readonly additional_reasons?: readonly string[];
+    }[],
   ],
 ): AnalysisOutputError => {
   const [first] = rejected;
@@ -453,7 +461,9 @@ const unsafePackagePathsError = (
     ({ reason }) => reason === "unsupported_protocol_character",
   );
   const hasHostFileNameRefusal = rejected.some(
-    ({ reason }) => reason !== "unsupported_protocol_character",
+    ({ reason, additional_reasons }) =>
+      reason !== "unsupported_protocol_character" ||
+      (additional_reasons?.length ?? 0) > 0,
   );
   const mixedRefusal = hasPackageManagerPolicyRefusal && hasHostFileNameRefusal;
   const userMessage = mixedRefusal
@@ -471,10 +481,15 @@ const unsafePackagePathsError = (
         : HOST_PATH_REFUSAL_REMEDIATION,
     diagnostics: {
       package_name: packageName,
-      rejected_paths: rejected.map(({ device_path, reason }) => ({
-        device_path,
-        reason,
-      })),
+      rejected_paths: rejected.map(
+        ({ device_path, reason, additional_reasons }) => ({
+          device_path,
+          reason,
+          ...(additional_reasons === undefined
+            ? {}
+            : { additional_reasons: [...additional_reasons] }),
+        }),
+      ),
     },
   });
 };

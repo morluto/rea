@@ -384,9 +384,18 @@ it("rejects invalid tool input before reaching the provider", async () => {
   expect(text).toContain("Invalid arguments for tool inspect_adb_device");
 });
 
-it.skipIf(process.platform === "win32")(
-  "projects refused pm path entries with structured diagnostics to MCP callers",
-  async () => {
+it.skipIf(process.platform === "win32").each([
+  ["/data/app/x/..", { reason: "dot_segment" }],
+  [
+    "/data/My App/..",
+    {
+      reason: "unsupported_protocol_character",
+      additional_reasons: ["dot_segment"],
+    },
+  ],
+])(
+  "projects refused pm path %s with structured diagnostics to MCP callers",
+  async (devicePath, rejection) => {
     const root = await mkdtemp(join(tmpdir(), "rea-adb-mcp-pm-path-"));
     onTestFinished(() => rm(root, { recursive: true, force: true }));
     const adb = join(root, "adb");
@@ -399,7 +408,7 @@ if [ "$1" = "version" ]; then
   exit 0
 fi
 if [ "$1" = "-s" ] && [ "$3" = "shell" ] && [ "$4" = "-T" ] && [ "$5" = "pm" ] && [ "$6" = "path" ]; then
-  printf '%s\\n' 'package:/data/app/x/base.apk' 'package:/data/app/x/..'
+  printf '%s\\n' 'package:/data/app/x/base.apk' 'package:${devicePath}'
   exit 0
 fi
 if [ "$1" = "-s" ] && [ "$3" = "pull" ]; then : > '${pullLog}'; fi
@@ -456,16 +465,14 @@ exit 1
         reason: "unsafe_device_path",
         diagnostics: {
           package_name: "com.hostile",
-          rejected_paths: [
-            { device_path: "/data/app/x/..", reason: "dot_segment" },
-          ],
+          rejected_paths: [{ device_path: devicePath, ...rejection }],
         },
         captured_output: {
-          stdout: expect.stringContaining("package:/data/app/x/..") as unknown,
+          stdout: expect.stringContaining(`package:${devicePath}`) as unknown,
         },
       },
     });
-    expect(projected.message).toContain('"/data/app/x/.." (dot_segment)');
+    expect(projected.message).toContain(JSON.stringify(devicePath));
     await expect(lstat(pullLog)).rejects.toThrow(/ENOENT/u);
     await expect(lstat(output)).rejects.toThrow(/ENOENT/u);
   },

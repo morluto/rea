@@ -292,6 +292,17 @@ describe("parsePmPathOutput", () => {
     ]);
   });
 
+  it("retains both protocol and host filename refusals for one selected path", () => {
+    const devicePath = "/data/My App/..";
+    expect(parsePmPathOutput(`package:${devicePath}\n`).rejectedPaths).toEqual([
+      {
+        device_path: devicePath,
+        reason: "unsupported_protocol_character",
+        additional_reasons: ["dot_segment"],
+      },
+    ]);
+  });
+
   it("retains malformed lines including surrounding whitespace", () => {
     expect(
       parsePmPathOutput(" package:/data/app/pkg/base.apk \n").unparsedLines,
@@ -304,6 +315,10 @@ it("bounds display expansion while keeping the parsed rejected path intact", () 
   expect(displayDevicePath(devicePath).length).toBeLessThan(1100);
   expect(displayDevicePath(devicePath)).toContain("(excerpt)");
   expect(parsePmPathOutput(`package:${devicePath}\n`).rejectedPaths).toEqual([
-    { device_path: devicePath, reason: "unsupported_protocol_character" },
+    {
+      device_path: devicePath,
+      reason: "unsupported_protocol_character",
+      additional_reasons: ["unsupported_character"],
+    },
   ]);
 });

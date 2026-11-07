@@ -243,6 +243,7 @@ export const parsePmPathOutput = (
   rejectedPaths: readonly {
     device_path: string;
     reason: AdbPackagePathRejectionReason;
+    additional_reasons?: readonly AdbHostFileNameReason[];
   }[];
   unparsedLines: readonly string[];
 } => {
@@ -250,6 +251,7 @@ export const parsePmPathOutput = (
   const rejectedPaths: {
     device_path: string;
     reason: AdbPackagePathRejectionReason;
+    additional_reasons?: readonly AdbHostFileNameReason[];
   }[] = [];
   const unparsedLines: string[] = [];
   for (const rawLine of stdout.split("\n")) {
@@ -259,6 +261,7 @@ export const parsePmPathOutput = (
       continue;
     }
     const devicePath = rawLine.slice("package:".length);
+    const validated = adbHostFileName(devicePath);
     if (
       /[\s\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Default_Ignorable_Code_Point}\p{Noncharacter_Code_Point}]/u.test(
         devicePath,
@@ -267,10 +270,10 @@ export const parsePmPathOutput = (
       rejectedPaths.push({
         device_path: devicePath,
         reason: "unsupported_protocol_character",
+        ...(validated.ok ? {} : { additional_reasons: [validated.reason] }),
       });
       continue;
     }
-    const validated = adbHostFileName(devicePath);
     if (!validated.ok) {
       rejectedPaths.push({
         device_path: devicePath,
