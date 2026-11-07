@@ -336,6 +336,11 @@ const finalizeArtifactAnalysis = <
 >(
   state: MutableArtifactAnalysis<SemanticIr>,
 ): JavaScriptArtifactAnalysis<SemanticIr> => {
+  const failedFiles = state.files.filter(
+    ({ analysis_failure, application_projection_failure }) =>
+      analysis_failure !== undefined ||
+      application_projection_failure !== undefined,
+  ).length;
   return {
     files: state.files,
     packages: state.packages,
@@ -349,12 +354,11 @@ const finalizeArtifactAnalysis = <
     limitations: [
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
-      ...state.files.flatMap(
-        ({ analysis_failure, application_projection_failure }) =>
-          [analysis_failure, application_projection_failure].flatMap(
-            (failure) => (failure === undefined ? [] : [failure.reason]),
-          ),
-      ),
+      ...(failedFiles === 0
+        ? []
+        : [
+            `${String(failedFiles)} source file(s) have analysis or application projection failures; inspect the application graph's per-file parse-scope observations for available details.`,
+          ]),
     ],
   };
 };
