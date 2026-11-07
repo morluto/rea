@@ -113,9 +113,9 @@ const unusable = ({ ota_seq, ota_state }: EspOtaRecord): boolean =>
  * Derive the app partition the bootloader would select, as
  * `select_partition_number` and `bootloader_utility_get_selected_boot_partition`
  * do without app rollback or anti-rollback:
- * - a table `esp_partition_table_verify` rejects (an MD5 mismatch or a
- *   second MD5 entry): none, because loading it fails and the bootloader
- *   resets;
+ * - a table `esp_partition_table_verify` rejects (an MD5 mismatch, a
+ *   second MD5 entry, or partitions following the MD5 entry): none, because
+ *   loading it fails and the bootloader resets;
  * - no otadata partition, or one at offset 0: the factory index
  *   (`no-otadata`), whether or not a factory app is declared;
  * - an otadata partition smaller than two sectors: none, because
