@@ -52,7 +52,10 @@ export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
 
 /** Next step when one MCP frame cannot carry a complete retained session bundle. */
-export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with get_evidence_bundle and detail: summary, selecting a limit and following page.next_offset; then read selected complete records with detail: records and an exact evidence_id, or inspect compatible records through inspect_analysis_view using an exact Evidence reference. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry the selected metadata rows. */
+export const MCP_TRANSPORT_EVIDENCE_SUMMARY = `Request fewer metadata rows with get_evidence_bundle detail: summary, the same filters and offset, and a smaller limit; follow page.next_offset after each successful page. A single metadata row larger than one response still needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;

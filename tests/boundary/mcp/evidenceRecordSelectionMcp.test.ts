@@ -2,12 +2,19 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterAll, expect, it } from "vitest";
 import { z } from "zod";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { MCP_TRANSPORT_EVIDENCE_RECORDS } from "../../../src/domain/analysisErrorPresentation.js";
+import {
+  MCP_TRANSPORT_EVIDENCE_RECORDS,
+  MCP_TRANSPORT_EVIDENCE_SUMMARY,
+} from "../../../src/domain/analysisErrorPresentation.js";
 import {
   EVIDENCE_RECORD_SELECTION_LIMIT,
   EVIDENCE_RECORD_SELECTION_LIMITATIONS,
+  EVIDENCE_SUMMARY_SELECTION_LIMIT,
+  evidenceBundleSummarySchema,
   evidenceRecordSelectionSchema,
+  type EvidenceRecordFilters,
 } from "../../../src/domain/evidenceRecordSummary.js";
 import { createToolResultDelivery } from "../../../src/server/toolResult.js";
 import { createApplicationMcpHarness } from "../../fixtures/applicationMcpHarness.js";
@@ -222,14 +229,14 @@ it("selects the same records after importing an exported bundle", async () => {
   ).toEqual([annotatedB]);
 });
 
-it("keeps canonical bundle and summary contracts distinct from record pages", async () => {
+it("keeps canonical bundle delivery distinct from record and metadata pages", async () => {
   const { reply } = await connect();
   for (const [args, path] of [
     [
       { detail: "complete", filters: { operation: "trace_feature" } },
       "filters",
     ],
-    [{ detail: "summary", limit: 1 }, "limit"],
+    [{ detail: "complete", limit: 1 }, "limit"],
     [{ detail: "complete", offset: 0 }, "offset"],
     [{ limit: 1 }, "limit"],
   ] as const)
@@ -241,6 +248,9 @@ it("keeps canonical bundle and summary contracts distinct from record pages", as
     });
   expect(
     parseMcpToolError(await reply({ detail: "records", limit: 0 })),
+  ).toMatchObject({ error: { code: "invalid_request" } });
+  expect(
+    parseMcpToolError(await reply({ detail: "summary", limit: 0 })),
   ).toMatchObject({ error: { code: "invalid_request" } });
   const summary = await reply({
     detail: "summary",
@@ -283,4 +293,193 @@ it("guides an oversized record page toward a smaller selection", async () => {
     (await select({ filters: { evidence_id: annotatedA.evidence_id } }))
       .selection.records,
   ).toEqual([annotatedA]);
+});
+
+it("pages metadata discovery when complete records and the full summary exceed the response budget", async () => {
+  const records = Array.from({ length: 96 }, (_, index) =>
+    createEvidence(target("c"), GHIDRA, {
+      operation: "procedure_pseudo_code",
+      parameters: { procedure: `0x${(0x1000 + index).toString(16)}` },
+      result: "x".repeat(32 * 1024),
+    }),
+  );
+  const { reply, session } = await connect({
+    maximumResponseBytes: 16 * 1024,
+    records,
+  });
+  const overflow = parseMcpToolError(await reply({ detail: "summary" })).error;
+  expect(overflow.code).toBe("resource_constraint");
+  expect(overflow.remediation?.action).toContain(
+    MCP_TRANSPORT_EVIDENCE_SUMMARY,
+  );
+  expect(
+    parseMcpToolError(await reply({ detail: "records", limit: 1 })).error.code,
+  ).toBe("resource_constraint");
+
+  const discovered: string[] = [];
+  let offset: number | null = 0;
+  while (offset !== null) {
+    const response = await reply({ detail: "summary", offset, limit: 7 });
+    expect(response.isError, JSON.stringify(response)).not.toBe(true);
+    expect(Buffer.byteLength(JSON.stringify(response))).toBeLessThan(16 * 1024);
+    const summary = z
+      .object({ result: evidenceBundleSummarySchema })
+      .parse(response.structuredContent).result;
+    expect(summary).toMatchObject({
+      total_retained_records: records.length,
+      matching_records: records.length,
+      page: {
+        offset,
+        limit: 7,
+        next_offset: offset + 7 < records.length ? offset + 7 : null,
+      },
+    });
+    expect(summary.records.length).toBeLessThanOrEqual(7);
+    for (const record of summary.records) {
+      expect(record).not.toHaveProperty("normalized_result");
+      expect(record).not.toHaveProperty("raw_result");
+      discovered.push(record.evidence_id);
+    }
+    offset = summary.page?.next_offset ?? null;
+  }
+  expect(discovered).toEqual(
+    canonical(records).map(({ evidence_id }) => evidence_id),
+  );
+  expect(session.exportEvidenceBundle().records).toEqual(canonical(records));
+});
+
+it.each(["full", "compact"] as const)(
+  "pages filtered metadata without changing summary totals or the unpaged result (%s)",
+  async (profile) => {
+    const selectedProfile = createAnalysisProfile(GHIDRA, { mode: "selected" });
+    const otherProfile = createAnalysisProfile(GHIDRA, { mode: "other" });
+    const native = (
+      letter: string,
+      analysisProfile: ReturnType<typeof createAnalysisProfile>,
+      procedure: string,
+      evidenceLinks: readonly string[] = [],
+    ) =>
+      createEvidence(target(letter), GHIDRA, {
+        operation: "analyze_function",
+        parameters: { procedure },
+        result: { procedure: { address: procedure, name: "entry" } },
+        analysisProfile,
+        evidenceLinks,
+      });
+    const first = native("a", selectedProfile, "0x1000", [
+      pseudocode.evidence_id,
+      unretainedSource.evidence_id,
+      unretainedSource.evidence_id,
+    ]);
+    const second = native("a", selectedProfile, "0x1000");
+    const third = native("a", otherProfile, "0x2000");
+    const fourth = native("b", selectedProfile, "0x1000");
+    const records = [third, fourth, pseudocode, second, first, trace];
+    const { client, reply } = await connect({ profile, records });
+    const { tools } = await client.listTools();
+    const advertised = tools.find(
+      ({ name }) => name === "get_evidence_bundle",
+    )!;
+    const validation = schemaValidation.assertions;
+    const summary = async (options: Record<string, unknown> = {}) => {
+      const args = { detail: "summary", ...options };
+      expect(validation.validate(advertised.inputSchema, args)).toBe(true);
+      const response = await reply(args);
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      expect(
+        validation.validate(
+          advertised.outputSchema!,
+          response.structuredContent,
+        ),
+        JSON.stringify(validation.errors),
+      ).toBe(true);
+      return z
+        .object({ result: evidenceBundleSummarySchema })
+        .parse(response.structuredContent).result;
+    };
+    const filters = {
+      operation: "analyze_function",
+      target_sha256: target("a").sha256,
+      analysis_profile_digest: selectedProfile.digest,
+      procedure_address: "0x1000",
+    };
+    const cases: readonly (readonly [
+      EvidenceRecordFilters,
+      readonly Record_[],
+    ])[] = [
+      [{ evidence_id: first.evidence_id }, [first]],
+      [{ operation: "analyze_function" }, [first, second, third, fourth]],
+      [
+        { target_sha256: target("a").sha256 },
+        [first, second, third, pseudocode, trace],
+      ],
+      [
+        { analysis_profile_digest: selectedProfile.digest },
+        [first, second, fourth],
+      ],
+      [{ procedure_address: "0x1000" }, [first, second, fourth]],
+      [filters, [first, second]],
+      [{ operation: "absent" }, []],
+    ];
+    for (const [selectedFilters, matching] of cases) {
+      const complete = await summary({ filters: selectedFilters });
+      expect(complete).not.toHaveProperty("page");
+      expect(complete.records.map(({ evidence_id }) => evidence_id)).toEqual(
+        canonical(matching).map(({ evidence_id }) => evidence_id),
+      );
+      const paged = await summary({ filters: selectedFilters, limit: 1 });
+      expect(paged).toEqual({
+        ...complete,
+        records: complete.records.slice(0, 1),
+        page: {
+          offset: 0,
+          limit: 1,
+          next_offset: matching.length > 1 ? 1 : null,
+        },
+      });
+    }
+    const complete = await summary({ filters });
+    expect(complete).toMatchObject({
+      total_retained_records: records.length,
+      matching_records: 2,
+      direct_links: 2,
+      missing_direct_links: 1,
+    });
+    for (const offset of [1, 2, Number.MAX_SAFE_INTEGER])
+      expect(await summary({ filters, offset, limit: 1 })).toEqual({
+        ...complete,
+        records: complete.records.slice(offset, offset + 1),
+        page: { offset, limit: 1, next_offset: null },
+      });
+    expect(await summary({ filters, offset: 0 })).toEqual({
+      ...complete,
+      page: {
+        offset: 0,
+        limit: EVIDENCE_SUMMARY_SELECTION_LIMIT,
+        next_offset: null,
+      },
+    });
+    expect(await summary({ filters })).toEqual(complete);
+  },
+);
+
+it("keeps export recovery when a single metadata row exceeds the response budget", async () => {
+  const large = createEvidence(target("c"), GHIDRA, {
+    operation: "analyze_function",
+    parameters: {},
+    result: { procedure: { address: "0x1000", name: "x".repeat(32 * 1024) } },
+  });
+  const { reply, session } = await connect({
+    maximumResponseBytes: 16 * 1024,
+    records: [large],
+  });
+  const overflow = parseMcpToolError(
+    await reply({ detail: "summary", limit: 1 }),
+  ).error;
+  expect(overflow.code).toBe("resource_constraint");
+  expect(overflow.remediation?.action).toContain(
+    MCP_TRANSPORT_EVIDENCE_SUMMARY,
+  );
+  expect(overflow.remediation?.action).toContain("export_evidence_bundle");
+  expect(session.exportEvidenceBundle().records).toEqual([large]);
 });

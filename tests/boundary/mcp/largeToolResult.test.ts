@@ -9,6 +9,7 @@ import { describe, expect, it } from "vitest";
 import { z } from "zod";
 
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
+import { MCP_TRANSPORT_EVIDENCE_SUMMARY } from "../../../src/domain/analysisErrorPresentation.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import {
   createEvidence,
@@ -167,7 +168,7 @@ describe("MCP response budget recovery", () => {
     );
   });
 
-  it("keeps export advice when the evidence summary itself exceeds the budget", () => {
+  it("offers metadata pagination and export when the evidence summary exceeds the budget", () => {
     const tight = createToolResultDelivery(2048);
     const delivered = tight.toCallToolResult(
       ok({
@@ -181,7 +182,7 @@ describe("MCP response budget recovery", () => {
         error: z.object({ remediation: z.object({ action: z.string() }) }),
       })
       .parse(delivered.structuredContent).error.remediation.action;
-    expect(action).not.toContain("get_evidence_bundle and detail: summary");
+    expect(action).toContain(MCP_TRANSPORT_EVIDENCE_SUMMARY);
     expect(action).toContain("export_evidence_bundle");
     expect(action).toContain("caller-selected path");
     expect(action).toContain("or use complete CLI JSON output");

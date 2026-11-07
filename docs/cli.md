@@ -756,6 +756,23 @@ position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
 
+To discover records in a saved bundle without returning their payloads, page
+its metadata with `inspect-evidence-bundle`:
+
+```bash
+rea inspect-evidence-bundle '{"path":"/absolute/path/to/evidence/bundle.json","detail":"summary","filters":{"operation":"analyze_function"},"offset":0,"limit":64}' --json
+```
+
+Rows follow canonical Evidence ID order after filtering. Pass `page.next_offset`
+as the next `offset` until it is null, keeping the file and filters unchanged.
+`matching_records` and direct-link counts cover all matching records, including
+those outside the page. Supplying either paging field enables a page, with
+defaults of offset 0 and limit 64; omitting both preserves the complete summary
+without a `page` field. Use a discovered `evidence_id` with `detail: "records"`
+to read that complete record, or with `inspect-analysis-view` for a supported
+projection. The command still reads and authenticates the complete selected
+bundle before producing the metadata page.
+
 Atomic Evidence output stages on the selected destination's filesystem. If the
 OS pathname ceiling prevents its internal staging name, REA retries in a shorter
 ancestor on that same filesystem and removes the unused stage. Existing output

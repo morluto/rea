@@ -17,6 +17,10 @@ export const evidenceRecordFiltersSchema = z.strictObject({
 export type EvidenceRecordFilters = z.infer<typeof evidenceRecordFiltersSchema>;
 
 const countSchema = z.int().nonnegative();
+
+/** Default metadata page size when the caller explicitly selects paging. */
+export const EVIDENCE_SUMMARY_SELECTION_LIMIT = 64;
+
 const nativeMetadataSchema = z.object({
   procedure: z.object({ address: z.string(), name: z.string().nullish() }),
   native_value_flow: z.unknown().optional(),
@@ -51,10 +55,12 @@ export const evidenceBundleSummarySchema = z.strictObject({
   kind: z.literal("evidence-bundle-summary"),
   filters: z.record(z.string(), z.string()),
   total_retained_records: countSchema,
-  matching_records: countSchema,
+  matching_records: countSchema.describe(
+    "Every matching record, including records outside the selected metadata page.",
+  ),
   unknown_revisions: countSchema,
   direct_links: countSchema.describe(
-    "Distinct evidence_links of each matching record; detail links names them.",
+    "Distinct evidence_links of every matching record, including records outside the selected metadata page; detail links names them.",
   ),
   missing_direct_links: countSchema.describe(
     "Those direct links whose records this session or bundle does not retain. Zero establishes no transitive closure or analysis coverage.",
@@ -73,6 +79,16 @@ export const evidenceBundleSummarySchema = z.strictObject({
       native_dossier: nativeSummarySchema,
     }),
   ),
+  page: z
+    .strictObject({
+      offset: countSchema,
+      limit: z.int().positive(),
+      next_offset: countSchema.nullable(),
+    })
+    .exactOptional()
+    .describe(
+      "Present only when offset or limit is supplied. Metadata rows follow matching Evidence ID order; matching-record and link totals cover every match.",
+    ),
 });
 export type EvidenceBundleSummary = z.infer<typeof evidenceBundleSummarySchema>;
 
@@ -130,7 +146,7 @@ function* matchingEvidenceRecords(
   filters: EvidenceRecordFilters,
 ): Generator<{
   readonly evidence: Evidence;
-  readonly native: z.infer<typeof nativeSummarySchema>;
+  readonly native: z.infer<typeof nativeSummarySchema> | undefined;
 }> {
   for (const evidence of bundle.records) {
     if (
@@ -144,10 +160,13 @@ function* matchingEvidenceRecords(
         filters.analysis_profile_digest !== evidence.analysis_profile?.digest)
     )
       continue;
-    const native = nativeSummary(evidence);
+    const native =
+      filters.procedure_address === undefined
+        ? undefined
+        : nativeSummary(evidence);
     if (
       filters.procedure_address !== undefined &&
-      (!native.available ||
+      (native?.available !== true ||
         filters.procedure_address !== native.procedure_address)
     )
       continue;
@@ -163,9 +182,17 @@ const directLinksOf = ({ evidence_links: links }: Evidence): string[] =>
 export const summarizeEvidenceBundle = (
   bundle: EvidenceBundle,
   filters: EvidenceRecordFilters = {},
+  options: {
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
+  } = {},
 ): EvidenceBundleSummary => {
+  const paged = options.offset !== undefined || options.limit !== undefined;
+  const offset = options.offset ?? 0;
+  const limit = options.limit ?? EVIDENCE_SUMMARY_SELECTION_LIMIT;
   const records: EvidenceBundleSummary["records"] = [];
   const retained = new Set(bundle.records.map(({ evidence_id: id }) => id));
+  let matchingRecords = 0;
   let directLinks = 0;
   let missingDirectLinks = 0;
   for (const { evidence, native } of matchingEvidenceRecords(bundle, filters)) {
@@ -173,6 +200,10 @@ export const summarizeEvidenceBundle = (
       directLinks += 1;
       if (!retained.has(link)) missingDirectLinks += 1;
     }
+    const selected =
+      !paged || (matchingRecords >= offset && records.length < limit);
+    matchingRecords += 1;
+    if (!selected) continue;
     records.push({
       evidence_id: evidence.evidence_id,
       subject: evidence.subject,
@@ -183,18 +214,30 @@ export const summarizeEvidenceBundle = (
       analysis_profile_digest: evidence.analysis_profile?.digest ?? null,
       retention: "complete-record",
       limitation_count: evidence.limitations.length,
-      native_dossier: native,
+      native_dossier: native ?? nativeSummary(evidence),
     });
   }
   return {
     kind: "evidence-bundle-summary",
     filters: selectedFilters(filters),
     total_retained_records: bundle.records.length,
-    matching_records: records.length,
+    matching_records: matchingRecords,
     unknown_revisions: bundle.unknowns.length,
     direct_links: directLinks,
     missing_direct_links: missingDirectLinks,
     records,
+    ...(paged
+      ? {
+          page: {
+            offset,
+            limit,
+            next_offset:
+              offset + records.length < matchingRecords
+                ? offset + records.length
+                : null,
+          },
+        }
+      : {}),
   };
 };
 
