@@ -269,14 +269,13 @@ describe("capability failure retry disposition", () => {
     "preserves the producer's $retryable disposition",
     ({ options, retryable, category }) => {
       const reason = "Native self-test failed with a sharing violation";
-      const projected = projectAnalysisError(
-        new AnalysisCapabilityUnavailableError(
-          "fixture-provider",
-          "inspect",
-          reason,
-          options,
-        ),
+      const error = new AnalysisCapabilityUnavailableError(
+        "fixture-provider",
+        "inspect",
+        reason,
+        options,
       );
+      const projected = projectAnalysisError(error);
       expect(projected).toMatchObject({
         code: "capability_unavailable",
         category,
@@ -287,8 +286,8 @@ describe("capability failure retry disposition", () => {
         expect(projected.message).toBe(
           "Required runtime controls are unavailable for this attempt.",
         );
-        expect(projected.remediation.action).toContain(
-          "retry the same analysis",
+        expect(projected.remediation.action).toBe(
+          analysisErrorRemediationAction(error),
         );
       }
       expect(analysisErrorProjectionSchema.safeParse(projected).success).toBe(
@@ -311,6 +310,38 @@ describe("capability failure retry disposition", () => {
         ),
       ).message,
     ).toBe("Selected runtime diagnostic");
+  });
+
+  it("uses generic recovery only when no more specific recovery exists", () => {
+    const project = (options: {
+      fallbackRemediationAction?: string;
+      remediationAction?: string;
+      retryable?: boolean;
+    }) =>
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture",
+          "inspect",
+          "unavailable",
+          options,
+        ),
+      );
+    expect(
+      project({ fallbackRemediationAction: "Generic" }).remediation.action,
+    ).toBe("Generic");
+    expect(
+      project({
+        fallbackRemediationAction: "Generic",
+        remediationAction: "Specific",
+      }).remediation.action,
+    ).toBe("Specific");
+    const retry = project({ retryable: true });
+    const retryWithFallback = project({
+      fallbackRemediationAction: "Generic",
+      retryable: true,
+    });
+    expect(retryWithFallback.retryable).toBe(true);
+    expect(retryWithFallback.remediation.action).toBe(retry.remediation.action);
   });
 
   it("retains cleanup ownership before allowing a transient operation to retry", () => {
