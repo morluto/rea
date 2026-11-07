@@ -6,6 +6,19 @@ import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
+it("keeps a nested phone number that resembles an epoch timestamp", () => {
+  const before =
+    '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact></doc>';
+  const after =
+    '<doc><contact name="old"><phone><country>+1</country><number>2125550100</number></phone></contact><contact name="new"><phone><country>+1</country><number>2025550123</number></phone></contact></doc>';
+  const file = xmlDraft(before, after);
+  expect(file.suggested).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ value: "+12025550123" }),
+    ]),
+  );
+});
+
 it("omits oversized added attributes while retaining shorter checks and reporting the omitted pointer", () => {
   const before = '<doc><item name="old" note="old"/></doc>';
   const after = `<doc><item name="old" note="old"/><item name="new" note="${"x".repeat(100_000)}" wording="edited"/></doc>`;
