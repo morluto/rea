@@ -85,29 +85,44 @@ const comparisonUnknownInput = (
   leftIds: readonly string[],
   rightIds: readonly string[],
   comparisonEvidenceId: string,
-): RecordUnknownInput | undefined =>
-  functionUnknownInput({
-    status: comparison.status,
-    dimensions: comparison.dimensions
-      .filter(({ status }) =>
-        comparison.status === "unknown"
-          ? status === "unknown"
-          : status === "changed",
-      )
-      .map(({ dimension }) => dimension),
+): RecordUnknownInput | undefined => {
+  const discoveryUnresolved = comparison.dimensions.some(
+    ({ dimension, discovery_status }) =>
+      dimension === "calls" && discovery_status !== "complete",
+  );
+  const status =
+    comparison.status === "unchanged" && discoveryUnresolved
+      ? "unknown"
+      : comparison.status;
+  const dimensions = comparison.dimensions
+    .filter(
+      ({ dimension, status: dimensionStatus }) =>
+        (status === "unknown"
+          ? dimensionStatus === "unknown"
+          : dimensionStatus === "changed") ||
+        (dimension === "calls" && discoveryUnresolved),
+    )
+    .map(({ dimension }) => dimension);
+  return functionUnknownInput({
+    status,
+    dimensions,
+    discoveryUnresolved,
     leftIds,
     rightIds,
     comparisonEvidenceId,
   });
+};
 
 const functionUnknownInput = ({
   status,
   dimensions,
+  discoveryUnresolved,
   leftIds,
   rightIds,
   comparisonEvidenceId,
 }: {
   status: ReturnType<typeof compareFunctions>["status"];
+  discoveryUnresolved: boolean;
   dimensions: readonly ReturnType<
     typeof compareFunctions
   >["dimensions"][number]["dimension"][];
@@ -122,7 +137,7 @@ const functionUnknownInput = ({
   const contradictingIds = rightIds.filter((id) => !leftIds.includes(id));
   const contradictory = status === "changed";
   return {
-    question: `Function comparison is ${status} (comparison ${comparisonEvidenceId})`,
+    question: `Function comparison is ${status}${discoveryUnresolved ? "; call discovery is not fully established" : ""} (comparison ${comparisonEvidenceId})`,
     severity: status === "changed" ? "medium" : "high",
     domain: "function-comparison",
     comparison_conclusion_scope: {

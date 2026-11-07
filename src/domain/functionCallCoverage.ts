@@ -1,6 +1,7 @@
 import {
   relationshipCoverageLimitations,
   type RelationshipCoverage,
+  type RelationshipDiscoveryStatus,
 } from "./relationshipCoverage.js";
 import type { FunctionDossier } from "./native/functionDossier.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
@@ -98,6 +99,8 @@ export interface FunctionCallCoverageAssessment {
   readonly diagnostics: readonly string[];
   /** Discovery limits do not invalidate comparisons of the observed sets. */
   readonly discoveryLimitations: readonly string[];
+  /** Whether all requested call discovery directions are established. */
+  readonly discoveryStatus: RelationshipDiscoveryStatus;
 }
 
 /** Keep observed-set blockers separate from descriptive provider caveats. */
@@ -112,8 +115,12 @@ export const assessFunctionCallCoverage = (
   );
   const missingDiscovery: string[] = [];
   const discoveryLimitations: string[] = [];
+  let discoveryStatus: RelationshipDiscoveryStatus = "complete";
   for (const direction of ["callers", "callees"] as const) {
     const discovery = coverage?.discovery?.[direction];
+    if (discovery?.status === "partial") discoveryStatus = "partial";
+    else if (discovery?.status !== "complete" && discoveryStatus !== "partial")
+      discoveryStatus = "unknown";
     if (discovery?.status === "complete") continue;
     if (discovery?.reason === undefined) missingDiscovery.push(direction);
     else
@@ -133,5 +140,6 @@ export const assessFunctionCallCoverage = (
     unresolvedCallCaveats,
     diagnostics: uniqueSorted(coverage?.diagnostics ?? []),
     discoveryLimitations,
+    discoveryStatus,
   };
 };

@@ -1,3 +1,4 @@
+import { Ajv2020 } from "ajv/dist/2020.js";
 import { expect, it } from "vitest";
 
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -33,6 +34,127 @@ const sourceWithCoverage = (
       relationshipCoverage,
     },
   );
+};
+
+const expectAdvertisedComparisonSchema = async (
+  client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
+  payload: unknown,
+) => {
+  const advertised = (await client.listTools()).tools.find(
+    ({ name }) => name === "compare_functions",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("compare_functions did not advertise its output schema");
+  const outputSchema: Record<string, unknown> = advertised.outputSchema;
+  const validator = new Ajv2020({ strict: false, validateFormats: false });
+  expect(validator.validateSchema(outputSchema)).toBe(true);
+  const validate = validator.compile(outputSchema);
+  expect(validate(payload), JSON.stringify(validate.errors)).toBe(true);
+};
+
+const expectDiscoveryConsumers = async (
+  client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
+  comparison: ReturnType<typeof parseEvidence>,
+  label: "partial" | "unreported" | "complete",
+) => {
+  const unknowns = await client.callTool({
+    name: "list_unknowns",
+    arguments: { domain: "function-comparison" },
+  });
+  expect(unknowns.isError).not.toBe(true);
+  const unknownItems = (
+    unknowns.structuredContent as { result: { items: unknown[] } }
+  ).result.items;
+  if (label === "complete") expect(unknownItems).toHaveLength(0);
+  else
+    expect(unknownItems).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          comparison_conclusion_scope: expect.objectContaining({
+            comparison_evidence_id: comparison.evidence_id,
+            dimensions: expect.arrayContaining(["calls"]),
+          }),
+        }),
+      ]),
+    );
+  const changed = await client.callTool({
+    name: "find_changed_behavior",
+    arguments: { comparisons: [comparison] },
+  });
+  expect(changed.isError, JSON.stringify(changed.structuredContent)).not.toBe(
+    true,
+  );
+  const changedEvidence = parseEvidence(changed.structuredContent);
+  const findings = (
+    changedEvidence.normalized_result as { findings: { items: unknown[] } }
+  ).findings.items;
+  if (label === "complete") expect(findings).toHaveLength(0);
+  else
+    expect(findings).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          dimension: "calls",
+          classification: "unresolved_branch",
+        }),
+      ]),
+    );
+};
+
+const expectHistoricalDiscovery = async (
+  session: ReturnType<typeof createTestBinarySession>,
+  client: Awaited<ReturnType<typeof createApplicationMcpHarness>>["client"],
+  comparison: ReturnType<typeof parseEvidence>,
+) => {
+  const current = functionComparisonResultSchema.parse(
+    comparison.normalized_result,
+  );
+  const historical = createEvidence(undefined, comparison.provider, {
+    predicateType: comparison.predicate_type,
+    operation: comparison.operation,
+    parameters: comparison.parameters,
+    result: {
+      ...current,
+      dimensions: current.dimensions.map((dimension) => {
+        if (dimension.dimension !== "calls") return dimension;
+        const { discovery_status: _discovery, ...historicalDimension } =
+          dimension;
+        return { ...historicalDimension, limitations: [] };
+      }),
+    },
+    confidence: comparison.confidence,
+    authority: comparison.authority,
+    limitations: comparison.limitations,
+    evidenceLinks: comparison.evidence_links,
+  });
+  expect(session.recordEvidence(historical).ok).toBe(true);
+  const prior = await verify(
+    (name, arguments_) => client.callTool({ name, arguments: arguments_ }),
+    historical,
+    ["calls"],
+  );
+  expect(prior.normalized_result).toMatchObject({
+    claims: {
+      items: [{ status: "unknown", observed_status: "unchanged" }],
+    },
+  });
+  const historicalChanged = await client.callTool({
+    name: "find_changed_behavior",
+    arguments: { comparisons: [historical] },
+  });
+  expect(historicalChanged.isError).not.toBe(true);
+  expect(
+    parseEvidence(historicalChanged.structuredContent).normalized_result,
+  ).toMatchObject({
+    findings: {
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          dimension: "calls",
+          classification: "unresolved_branch",
+        }),
+      ]),
+    },
+  });
+  expect(session.evidenceById(historical.evidence_id)).toEqual(historical);
 };
 
 it.each(["full", "compact"] as const)(
@@ -93,6 +215,11 @@ it.each(["full", "compact"] as const)(
       });
       if (compared.isError) throw new Error(JSON.stringify(compared));
       const comparison = parseEvidence(compared.structuredContent);
+      if (label === "partial")
+        await expectAdvertisedComparisonSchema(
+          client,
+          compared.structuredContent,
+        );
       expect(comparison.normalized_result).toMatchObject({
         dimensions: expect.arrayContaining([
           expect.objectContaining({
@@ -110,6 +237,7 @@ it.each(["full", "compact"] as const)(
           }),
         ]),
       });
+      await expectDiscoveryConsumers(client, comparison, label);
       const result = await verify(
         (name, arguments_) => client.callTool({ name, arguments: arguments_ }),
         comparison,
@@ -135,43 +263,8 @@ it.each(["full", "compact"] as const)(
           ],
         },
       });
-      if (label === "unreported") {
-        const current = functionComparisonResultSchema.parse(
-          comparison.normalized_result,
-        );
-        const historical = createEvidence(undefined, comparison.provider, {
-          predicateType: comparison.predicate_type,
-          operation: comparison.operation,
-          parameters: comparison.parameters,
-          result: {
-            ...current,
-            dimensions: current.dimensions.map((dimension) =>
-              dimension.dimension === "calls"
-                ? { ...dimension, limitations: [] }
-                : dimension,
-            ),
-          },
-          confidence: comparison.confidence,
-          authority: comparison.authority,
-          limitations: comparison.limitations,
-          evidenceLinks: comparison.evidence_links,
-        });
-        expect(session.recordEvidence(historical).ok).toBe(true);
-        const prior = await verify(
-          (name, arguments_) =>
-            client.callTool({ name, arguments: arguments_ }),
-          historical,
-          ["calls"],
-        );
-        expect(prior.normalized_result).toMatchObject({
-          claims: {
-            items: [{ status: "unknown", observed_status: "unchanged" }],
-          },
-        });
-        expect(session.evidenceById(historical.evidence_id)).toEqual(
-          historical,
-        );
-      }
+      if (label === "unreported")
+        await expectHistoricalDiscovery(session, client, comparison);
     }
   },
 );
@@ -256,6 +349,27 @@ it("keeps an observed call-set difference without claiming a verified difference
         ]),
       }),
     ]),
+  });
+  const changed = await client.callTool({
+    name: "find_changed_behavior",
+    arguments: { comparisons: [comparison] },
+  });
+  expect(changed.isError).not.toBe(true);
+  expect(
+    parseEvidence(changed.structuredContent).normalized_result,
+  ).toMatchObject({
+    findings: {
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          dimension: "calls",
+          classification: "derived_relationship",
+        }),
+        expect.objectContaining({
+          dimension: "calls",
+          classification: "unresolved_branch",
+        }),
+      ]),
+    },
   });
   const result = await verify(
     (name, arguments_) => client.callTool({ name, arguments: arguments_ }),

@@ -131,6 +131,10 @@ empty facet can declare it available so observed absence remains comparable.
 Call comparison additionally retains the Evidence relationship coverage
 checks. Its call status compares the provider-observed sets; discovery
 limitations stay on that dimension even when the observed sets match or differ.
+The calls dimension's `discovery_status` records whether discovery is complete,
+partial, or unknown across both sides and directions; older comparisons may omit
+it. Incomplete or unreported discovery also remains a residual unknown and an
+unresolved `find_changed_behavior` finding, including when observed sets match.
 A structural reconstruction claim about calls remains unknown unless both
 directions have established static direct-call discovery. An independent
 observed change in another dimension can still fail an overall claim. Ghidra and Hopper declare their observed dossier facets and complete
@@ -2012,6 +2016,7 @@ bundle import/export; it does not include those view and settings tools.
 | Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
 | Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
 | Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Native analysis of a known function               | `session,enhanced,application`                            | open a binary, analyze a known function, page retained pseudocode, and export Evidence; add `direct` for focused procedure search or assembly                |
 | Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
 | Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
 | Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
