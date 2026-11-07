@@ -1007,15 +1007,38 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
   });
 });
 
+const createDeferredGate = (): {
+  readonly promise: Promise<void>;
+  readonly open: () => void;
+} => {
+  let open = (): void => undefined;
+  const promise = new Promise<void>((resolve) => {
+    open = resolve;
+  });
+  return { promise, open };
+};
+
+const holdProgressStep = (
+  step: number,
+  entered: () => void,
+  release: Promise<void>,
+) => ({
+  async report(update: { readonly completed: number }) {
+    if (update.completed === step) {
+      entered();
+      await release;
+    }
+  },
+});
+
 it("isolates concurrent target sessions on one shared browser socket when a shorter call detaches first", async () => {
   const browser = await startFakeCdpBrowser();
   trackBrowser(browser);
   const provider = new CdpBrowserProvider();
   const controller = new AbortController();
-  let notifyObservationArmed = (): void => undefined;
-  const observationArmed = new Promise<void>((resolve) => {
-    notifyObservationArmed = resolve;
-  });
+  const observationArmed = createDeferredGate();
+  const inspectionHeld = createDeferredGate();
+  const peersGate = createDeferredGate();
   let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
   let inspecting: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
   let capturing:
@@ -1026,20 +1049,15 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       observeWebSessionInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
         target_id: "allowed-page",
-        observation_ms: 140,
+        observation_ms: 1,
       }),
       {
         signal: controller.signal,
-        progress: {
-          report(update) {
-            if (update.completed === 1) notifyObservationArmed();
-            return Promise.resolve();
-          },
-        },
+        progress: holdProgressStep(1, observationArmed.open, peersGate.promise),
       },
     );
     await awaitAcknowledgement(
-      observationArmed,
+      observationArmed.promise,
       observing,
       "shared browser-socket observation start",
     );
@@ -1048,10 +1066,19 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       inspectWebPageInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
         target_id: "allowed-page",
-        observation_ms: 80,
+        observation_ms: 0,
       }),
-      { signal: controller.signal },
+      {
+        signal: controller.signal,
+        progress: holdProgressStep(2, inspectionHeld.open, peersGate.promise),
+      },
     );
+    await awaitAcknowledgement(
+      inspectionHeld.promise,
+      inspecting,
+      "shared browser-socket inspection hold",
+    );
+
     capturing = provider.captureScreenshot(
       captureWebScreenshotInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
@@ -1059,21 +1086,17 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       }),
       { signal: controller.signal },
     );
-
     const screenshot = await capturing;
     if (!screenshot.ok) throw screenshot.error;
     expect(screenshot.value.artifact.media_type).toBe("image/png");
     const detachesAfterScreenshot = browser.commands
       .filter((command) => command.method === "Target.detachFromTarget")
       .map((command) => command.params.sessionId);
-    expect(detachesAfterScreenshot).toHaveLength(1);
-    const detachedScreenshotSession = detachesAfterScreenshot[0];
-    expect(typeof detachedScreenshotSession).toBe("string");
-    expect(detachedScreenshotSession).not.toBe("session-1");
+    expect(detachesAfterScreenshot).toEqual(["session-3"]);
 
     browser.emitEvent({
       method: "Page.navigatedWithinDocument",
-      sessionId: String(detachedScreenshotSession),
+      sessionId: "session-3",
       params: {
         frameId: "frame-main",
         url: `${browser.allowedOrigin}/ignored-detached-peer`,
@@ -1091,7 +1114,17 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
         timestamp: 41,
       },
     });
+    // Round-trip over the shared WebSocket so both queued server frames are
+    // processed in FIFO order before releasing the held peer operations.
+    const barrier = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+      }),
+      { signal: controller.signal },
+    );
+    if (!barrier.ok) throw barrier.error;
 
+    peersGate.open();
     const [inspected, observed] = await Promise.all([inspecting, observing]);
     if (!inspected.ok) throw inspected.error;
     if (!observed.ok) throw observed.error;
@@ -1129,6 +1162,7 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
       "session-3",
     ]);
   } finally {
+    peersGate.open();
     controller.abort(new Error("test teardown"));
     await Promise.allSettled([observing, inspecting, capturing]);
     await provider.close();

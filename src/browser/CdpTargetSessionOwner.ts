@@ -15,6 +15,8 @@ import type { ExecutionOptions } from "../application/AnalysisProvider.js";
 
 /** Typed ownership facts shared by transport errors and their adapter projections. */
 class CdpTransportCleanupFailure extends ProviderCleanupError {
+  readonly transportCause: unknown;
+
   constructor(
     readonly cleanupLeases: readonly AnalysisCleanupLease[],
     failure: {
@@ -28,9 +30,20 @@ class CdpTransportCleanupFailure extends ProviderCleanupError {
       operation: failure.operation,
       cause: failure.cause,
     });
+    this.transportCause = failure.cause;
     new AnalysisCleanupLeaseGroup(this, cleanupLeases);
   }
 }
+
+interface ComposedConnectCleanupFailure {
+  readonly primary: AnalysisError;
+  readonly cleanupFailure: AnalysisError;
+}
+
+const composedConnectCleanupFailures = new WeakMap<
+  AnalysisError,
+  ComposedConnectCleanupFailure
+>();
 
 /** Bind a translated error without interpreting diagnostic cause chains. */
 export const bindCdpTransportCleanup = <Failure extends AnalysisError>(
@@ -442,11 +455,17 @@ export class CdpTargetSessionOwner {
         if (
           cause instanceof AnalysisError &&
           cleanupCause instanceof AnalysisError
-        )
-          throw bindCdpTransportCleanup(
+        ) {
+          const combined = bindCdpTransportCleanup(
             cleanupCause,
             analysisErrorWithCleanupFailure(cause, cleanupCause, operation),
           );
+          composedConnectCleanupFailures.set(combined, {
+            primary: cause,
+            cleanupFailure: cleanupCause,
+          });
+          throw combined;
+        }
         throw new AggregateError(
           [cause, cleanupCause],
           `CDP operation ${operation} failed during handshake and cleanup remains incomplete.`,
@@ -658,29 +677,32 @@ const rebindPendingConnectFailure = (
       ? rebound.bindCleanupDependencies([cause])
       : rebound;
   }
-  if (
-    cause instanceof AnalysisError &&
-    cause.cleanupPrimary !== undefined &&
-    cause.cause instanceof AggregateError
-  ) {
-    const [, cleanupFailure] = cause.cause.errors;
-    const reboundPrimary = rebindPendingConnectFailure(
-      cause.cleanupPrimary,
-      waiter,
-    );
-    if (
-      reboundPrimary instanceof AnalysisError &&
-      cleanupFailure instanceof AnalysisError &&
-      reboundPrimary !== cause.cleanupPrimary
-    ) {
-      return bindCdpTransportCleanup(
-        cleanupFailure,
-        analysisErrorWithCleanupFailure(
-          reboundPrimary,
-          cleanupFailure,
-          waiter.operation,
-        ),
+  if (cause instanceof AnalysisError) {
+    const composed = composedConnectCleanupFailures.get(cause);
+    if (composed !== undefined) {
+      const reboundPrimary = rebindPendingConnectFailure(
+        composed.primary,
+        waiter,
       );
+      if (
+        reboundPrimary instanceof AnalysisError &&
+        reboundPrimary !== composed.primary
+      ) {
+        const reboundComposed = bindCdpTransportCleanup(
+          composed.cleanupFailure,
+          analysisErrorWithCleanupFailure(
+            reboundPrimary,
+            composed.cleanupFailure,
+            waiter.operation,
+          ),
+        );
+        composedConnectCleanupFailures.set(reboundComposed, {
+          primary: reboundPrimary,
+          cleanupFailure: composed.cleanupFailure,
+        });
+        return reboundComposed;
+      }
+      return cause;
     }
   }
   if (
@@ -691,7 +713,7 @@ const rebindPendingConnectFailure = (
       resources: cause.cleanupResources,
       operation: waiter.operation,
       diagnostics: cause.diagnostics ?? {},
-      cause: cause.cause,
+      cause: cause.transportCause,
     });
   }
   return cause;
