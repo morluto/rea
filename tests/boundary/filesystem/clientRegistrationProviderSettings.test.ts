@@ -254,17 +254,17 @@ it("folds recorded environment names on Windows", () => {
     environmentKey: "env",
     legacyServers: {},
   } as const;
-  expect(recordedProviderSettings(parsed, selected, "win32")).toEqual({
+  expect(recordedProviderSettings(parsed, undefined, selected, "win32")).toEqual({
     unrecorded: ["GHIDRA_INSTALL_DIR"],
     differing: [],
     unresolved: [],
   });
-  expect(recordedProviderSettings(parsed, selected, "linux")).toEqual({
+  expect(recordedProviderSettings(parsed, undefined, selected, "linux")).toEqual({
     unrecorded: ["GHIDRA_INSTALL_DIR", "JAVA_HOME"],
     differing: [],
     unresolved: [],
   });
-  expect(recordedProviderSettings(parsed, {}, "linux")).toBeUndefined();
+  expect(recordedProviderSettings(parsed, undefined, {}, "linux")).toBeUndefined();
 });
 
 it("does not treat a map it could not read as absent", () => {
@@ -279,6 +279,7 @@ it("does not treat a map it could not read as absent", () => {
         environmentKey: "env",
         legacyServers: {},
       },
+      undefined,
       selected,
       "linux",
     ),
