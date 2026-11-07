@@ -178,6 +178,18 @@ const staticExpressionTruthiness = (
   if (direct !== undefined) return direct;
   if (t.isRegExpLiteral(unwrapped) || t.isClassExpression(unwrapped))
     return true;
+  if (t.isTemplateLiteral(unwrapped)) {
+    if (
+      unwrapped.quasis.some(
+        (q) => (q.value.raw ?? q.value.cooked ?? "").length > 0,
+      )
+    ) {
+      return true;
+    }
+    if (unwrapped.expressions.length === 0) {
+      return false;
+    }
+  }
   if (t.isUnaryExpression(unwrapped)) {
     if (unwrapped.operator === "void") return false;
     if (unwrapped.operator === "typeof") return true;
@@ -217,7 +229,7 @@ const staticExpressionNullishness = (
     return true;
   if (t.isUnaryExpression(unwrapped)) {
     if (unwrapped.operator === "void") return true;
-    if (["+", "-", "~", "!", "typeof"].includes(unwrapped.operator))
+    if (["+", "-", "~", "!", "typeof", "delete"].includes(unwrapped.operator))
       return false;
   }
   if (
@@ -250,6 +262,66 @@ const staticExpressionNullishness = (
 };
 
 /**
+ * Flatten statically known array spreads to locate the argument occupying
+ * parameter position `targetIndex`.
+ */
+export function* flattenCallArguments(
+  args: readonly (
+    | t.Expression
+    | t.SpreadElement
+    | t.JSXNamespacedName
+    | t.ArgumentPlaceholder
+  )[],
+): Generator<
+  | t.Expression
+  | t.SpreadElement
+  | t.JSXNamespacedName
+  | t.ArgumentPlaceholder
+  | undefined
+> {
+  for (const arg of args) {
+    if (t.isSpreadElement(arg)) {
+      const unwrapped = unwrapJavaScriptExpression(arg.argument).node;
+      if (t.isArrayExpression(unwrapped)) {
+        for (const element of unwrapped.elements) {
+          if (element === null) {
+            yield undefined;
+          } else if (t.isSpreadElement(element)) {
+            yield* flattenCallArguments([element]);
+          } else {
+            yield element;
+          }
+        }
+        continue;
+      }
+    }
+    yield arg;
+  }
+}
+
+export const resolvePositionalArgument = (
+  args: readonly (
+    | t.Expression
+    | t.SpreadElement
+    | t.JSXNamespacedName
+    | t.ArgumentPlaceholder
+  )[],
+  targetIndex: number,
+):
+  | t.Expression
+  | t.SpreadElement
+  | t.JSXNamespacedName
+  | t.ArgumentPlaceholder
+  | undefined => {
+  let index = 0;
+  for (const arg of flattenCallArguments(args)) {
+    if (index === targetIndex) return arg;
+    index += 1;
+  }
+  return undefined;
+};
+
+/**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
  * anything is registered or removed when it is omitted or is a value that can
  * never be a function. An identifier, a call result, a class expression or a
@@ -275,13 +347,13 @@ export const rejectsEventListener = (
         current.node.argument,
       ).node;
       if (t.isArrayExpression(unwrappedArg)) {
-        if (unwrappedArg.elements.length === 0) {
-          // An empty array spread (...[]) supplies no arguments at all;
-          // in call position, omitting the listener throws ERR_INVALID_ARG_TYPE.
+        const flattened = [...flattenCallArguments([current.node])];
+        if (flattened.length === 0) {
+          // An empty array spread (...[] or ...[...[]]) supplies no listener.
           continue;
         }
-        const first = unwrappedArg.elements[0];
-        if (first === null) {
+        const first = flattened[0];
+        if (first === undefined) {
           continue;
         }
         if (t.isExpression(first) || t.isSpreadElement(first)) {
@@ -840,7 +912,9 @@ const collectEvent = (
   const kind = eventKind(method);
   const eventArgument = node.arguments[0];
   const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
-  const listenerArgument = listenerMethod ? node.arguments[1] : undefined;
+  const listenerArgument = listenerMethod
+    ? resolvePositionalArgument(node.arguments, 1)
+    : undefined;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
@@ -973,9 +1047,12 @@ const nodeBuiltinTimerMethod = (
 const schedulesWithNonFunctionCallback = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
-): boolean =>
-  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  rejectsEventListener(node.arguments[0], state);
+): boolean => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return false;
+  const callback = resolvePositionalArgument(node.arguments, 0);
+  return rejectsEventListener(callback, state);
+};
 
 const collectTimer = (input: TimerCollectionInput): void => {
   const { node, ownerCallableId, state, output, ancestors } = input;

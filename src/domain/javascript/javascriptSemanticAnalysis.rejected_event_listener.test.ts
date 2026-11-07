@@ -559,3 +559,70 @@ it("retains child listener interaction when spread provides a callable function"
     ]),
   );
 });
+
+it.each([
+  ["trailing argument after empty spread", `...[], () => {}`],
+  ["nested empty spread before callable", `...[...[], () => {}]`],
+])("retains valid listener across empty spreads: %s", (_name, args) => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${args});
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+});
+
+it("retains imported timer when empty spread precedes callback", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { setTimeout } from "node:timers";
+    setTimeout(...[], () => {});
+  `);
+  expect(ir.timerOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "schedule",
+        method: "setTimeout",
+      }),
+    ]),
+  );
+});
+
+it("drops child listener when delete expression short-circuits nullish coalescing", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const obj = {};
+    const child = spawn("worker");
+    child.on("exit", (delete obj.value) ?? handler);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("drops child listener when non-empty template literal short-circuits logical OR", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", \`not-a-listener\` || handler);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});

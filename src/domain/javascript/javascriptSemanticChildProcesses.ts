@@ -33,6 +33,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   isProvenNodeEmitter,
   rejectsEventListener,
+  resolvePositionalArgument,
 } from "./javascriptSemanticAsyncEffects.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
@@ -220,7 +221,10 @@ const childInteraction = (
   const classification = classifyInteraction(method, node.arguments[0]);
   if (classification === null) return null;
   const { kind, interactionMethod, eventName } = classification;
-  const listener = node.arguments[1];
+  const listener =
+    kind === "listener"
+      ? resolvePositionalArgument(node.arguments, 1)
+      : undefined;
   let rejectedNodeListener = false;
   if (kind === "listener" && rejectsEventListener(listener, state)) {
     if (isProvenNodeEmitter(member.object, node, state)) return null;
