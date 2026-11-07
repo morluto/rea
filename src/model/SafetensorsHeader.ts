@@ -202,6 +202,7 @@ const pointer = (value: string): string =>
 export const readSafetensorsHeader = async (
   reader: ModelHeaderReader,
   first: Buffer,
+  lengthSuffix?: Buffer,
 ): Promise<{
   version: null;
   byte_order: "little";
@@ -218,7 +219,7 @@ export const readSafetensorsHeader = async (
   // ZIP's four-byte signature is also a valid little-endian header length.
   const zip = first.equals(Buffer.from([0x50, 0x4b, 3, 4]));
   if ((pickle || zip) && reader.size < 9) rejectPickle();
-  const second = await reader.take(4);
+  const second = lengthSuffix ?? (await reader.take(4));
   reader.excludeSafetensorsLengthPrefix();
   const length =
     BigInt(first.readUInt32LE()) + (BigInt(second.readUInt32LE()) << 32n);
@@ -230,7 +231,7 @@ export const readSafetensorsHeader = async (
   )
     rejectPickle();
   if (brace !== 0x7b)
-    rejectModel("File does not contain a GGUF or safetensors header");
+    rejectModel("File does not contain a GGUF, safetensors or ORTM header");
   if (length > BigInt(Number.MAX_SAFE_INTEGER))
     throw new ModelFormatFailure(
       "capacity",
@@ -280,7 +281,10 @@ export const readSafetensorsHeader = async (
       });
     }
   }
-  const tensors: ModelTensor[] = [];
+  const tensors: (ModelTensor & {
+    data_offset: number;
+    file_offset: number;
+  })[] = [];
   const unknownTypes = new Set<string>();
   const tensor_data_offset = 8 + size;
   const names = Object.keys(root)

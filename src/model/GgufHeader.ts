@@ -331,7 +331,8 @@ export class GgufHeader {
     if (!keys.has("general.alignment")) progress?.onAlignment(alignment);
     progress?.onMetadataComplete();
     progress?.onTensorsStarted();
-    const tensors: ModelArtifactPartialTensor[] = [];
+    const tensors: (ModelArtifactPartialTensor & { data_offset: number })[] =
+      [];
     const names = new Set<string>();
     const limitations = new Set<string>();
     const note = (message: string): void => {
@@ -423,7 +424,10 @@ export class GgufHeader {
         rejectModel(`GGUF tensor ${tensor.name} range is outside the file`);
       tensor.file_offset = Number(offset);
     }
-    const completeTensors: ModelTensor[] = tensors.map((tensor) => ({
+    const completeTensors: (ModelTensor & {
+      data_offset: number;
+      file_offset: number;
+    })[] = tensors.map((tensor) => ({
       ...tensor,
       file_offset: tensor.file_offset!,
       storage_validation:
