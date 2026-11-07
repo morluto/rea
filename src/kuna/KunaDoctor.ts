@@ -32,17 +32,6 @@ export const KUNA_DOCTOR_SETTINGS = [
   "REA_KUNA_PROJECT_TIMEOUT_MS",
   "REA_KUNA_TIMEOUT_MS",
   "REA_KUNA_JOBS",
-  "PATH",
-] as const;
-
-/** Settings a registration may carry; only those the caller set explicitly. */
-const REGISTRATION_SETTINGS = [
-  "REA_KUNA_COMMAND",
-  "REA_KUNA_CACHE_DIR",
-  "REA_KUNA_CACHE_MAX_BYTES",
-  "REA_KUNA_PROJECT_TIMEOUT_MS",
-  "REA_KUNA_TIMEOUT_MS",
-  "REA_KUNA_JOBS",
 ] as const;
 
 /** Project Kuna readiness into the doctor contract without writing anything. */
@@ -158,7 +147,7 @@ export const inspectKunaProvider = async (
     available: cache.ok,
     providerVersion: value.version,
     registrationEnvironment: Object.fromEntries(
-      REGISTRATION_SETTINGS.flatMap((name) => {
+      KUNA_DOCTOR_SETTINGS.flatMap((name) => {
         const setting = environment[name];
         return setting === undefined ? [] : [[name, setting]];
       }),

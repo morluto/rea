@@ -839,3 +839,39 @@ test("keeps a known provider configuration when only its Java setting is unresol
     await host.close?.();
   }
 });
+
+test("probes Kuna when only the unused client PATH is unresolved", async () => {
+  const home = await createTestTempDirectory("rea-dsh-doctor-kuna-path-");
+  const kuna = join(home, "kuna");
+  await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
+  await mkdir(join(home, ".dsh"), { recursive: true });
+  await writeFile(
+    join(home, ".dsh/cordis.patch.yml"),
+    [
+      "- insert:",
+      "    - id: rea-mcp",
+      '      name: "@deepseek-ai/dsh-mcp-client"',
+      "      config:",
+      "        serverName: rea",
+      "        transport: stdio",
+      "        command: rea",
+      "        args: [mcp]",
+      "        env:",
+      "          PATH: !!js caller.path",
+      `          REA_KUNA_COMMAND: ${JSON.stringify(kuna)}`,
+      `          REA_KUNA_CACHE_DIR: ${JSON.stringify(join(home, "cache"))}`,
+      "",
+    ].join("\n"),
+  );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    const inspections = await host.providerInspections?.(["dsh"]);
+    expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+      configured: true,
+      available: true,
+      providerVersion: "1.833",
+    });
+  } finally {
+    await host.close?.();
+  }
+});
