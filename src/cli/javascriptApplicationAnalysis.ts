@@ -11,6 +11,13 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import { javaScriptSourcePathsSchema } from "../domain/javascript/javascriptSourceSelection.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
+import {
+  AnalysisError,
+  type AnalysisCallerLifetime,
+} from "../domain/analysisErrorBase.js";
+import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
+import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 
 const OPERATION = "analyze_javascript_application";
 
@@ -50,13 +57,15 @@ export const cliJavaScriptSourcePaths = async (
 };
 
 /**
- * One parked JavaScript worker for one CLI host. A healthy worker stays
- * parked between that host's commands. Independent hosts do not share it.
+ * JavaScript resources for one CLI host. Reusable hosts park healthy workers;
+ * invocation hosts finalize them before returning analysis. Hosts do not share scopes.
  */
 export class CliJavaScriptAnalysisHost {
   #retainedScope: ArtifactResourceScope | undefined;
-  /** One shutdown shared by the exit callback and the dispatch `finally`. */
+  /** Concurrent callers share one shutdown attempt; failed close stays retryable. */
   #closing: Promise<void> | undefined;
+
+  constructor(readonly callerLifetime: AnalysisCallerLifetime = "continuing") {}
 
   scope(): ArtifactResourceScope {
     this.#retainedScope ??= new ArtifactResourceScope();
@@ -114,7 +123,7 @@ export const runCliJavaScriptApplicationAnalysis = async (
     { minimumIntervalMs: 0 },
   );
   const resources = host.scope();
-  const result = await analyzeJavaScriptApplication(input, resources, {
+  let result = await analyzeJavaScriptApplication(input, resources, {
     environment,
     progress,
     ...(signal === undefined ? {} : { signal }),
@@ -127,21 +136,44 @@ export const runCliJavaScriptApplicationAnalysis = async (
       cause,
       "JavaScript application resources",
     );
-    const failure = new ProviderCleanupError(
-      JAVASCRIPT_APPLICATION_PROVIDER.id,
-      cleanup.resources,
-      { reason: cleanup.reason },
-      { cause, operation: "analyze_javascript_application" },
-    );
-    return cliError(
-      result.ok
+    const failure =
+      cause instanceof AnalysisError
+        ? cause
+        : new ProviderCleanupError(
+            JAVASCRIPT_APPLICATION_PROVIDER.id,
+            cleanup.resources,
+            { reason: cleanup.reason },
+            { cause, operation: "analyze_javascript_application" },
+          );
+    bindArtifactFileCleanup(cause, failure);
+    if (result.ok) failure.retainPartialObservation(result.value);
+    result = {
+      ok: false,
+      error: result.ok
         ? failure
         : analysisErrorWithCleanupFailure(
             result.error,
             failure,
             "analyze_javascript_application",
-          ),
+          ).bindCleanupDependencies([result.error, failure]),
+    };
+  }
+  if (host.callerLifetime === "invocation") {
+    const finalized = await finishAnalysisCommand(
+      async () => result,
+      host,
+      JAVASCRIPT_APPLICATION_PROVIDER.id,
+      OPERATION,
+      signal ?? new AbortController().signal,
     );
+    return delivery === undefined
+      ? projectCliAnalysisResult(finalized)
+      : publishCliAnalysisEvidence(finalized, {
+          ...delivery,
+          providerId: JAVASCRIPT_APPLICATION_PROVIDER.id,
+          operation: OPERATION,
+          signal: signal ?? new AbortController().signal,
+        });
   }
   const finalized = result.ok
     ? result

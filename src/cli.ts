@@ -94,7 +94,10 @@ import {
   closeCliGuidanceResources,
   registerGuidanceCommands,
 } from "./cli/guidanceCommands.js";
-import { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
+import {
+  closeCliJavaScriptResources,
+  CliJavaScriptAnalysisHost,
+} from "./cli/javascriptApplicationAnalysis.js";
 import { registerGuidedWorkflowCommands } from "./cli/guidedWorkflowCommands.js";
 
 /** Close every process-owned resource used by CLI commands. */
@@ -122,8 +125,16 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
+  lifecycle: {
+    /** Executable one-shot delivery; embedded command registries retain worker reuse. */
+    readonly finalizeJavaScriptAnalysis?: boolean;
+  } = {},
 ): CliInstance => {
   const environment = snapshotEnvironment(selectedEnvironment);
+  const javascriptAnalysis =
+    lifecycle.finalizeJavaScriptAnalysis === true
+      ? new CliJavaScriptAnalysisHost("invocation")
+      : undefined;
   const analysis = createDirectAnalysis(environment);
   // The executable reports an invalid level before every command except doctor.
   // Doctor keeps going so its readiness report can name REA_LOG_LEVEL.
@@ -188,6 +199,7 @@ export const createCli = (
         logger,
         analysis.runDirectAnalysis,
         environment,
+        javascriptAnalysis,
       ),
     // Enhanced workflows are MCP tools. Their CLI entry points live with core analysis.
     enhanced: () => undefined,
@@ -231,7 +243,10 @@ export const createCli = (
       registerAdvancedBrowserCommands(cli, logger);
       registerBrowserScenarioCommands(cli, logger, environment);
     },
-    electron: () => registerElectronCommands(cli, logger, environment),
+    electron: () =>
+      registerElectronCommands(cli, logger, environment, {
+        javascriptAnalysis,
+      }),
     "javascript-runtime": () =>
       registerJavaScriptRuntimeObservationCommands(cli, logger, environment),
     application: () => {

@@ -22,6 +22,7 @@ import type { CliInstance } from "./types.js";
 import {
   cliJavaScriptSourcePaths,
   runCliJavaScriptApplicationAnalysis,
+  type CliJavaScriptAnalysisHost,
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
@@ -54,8 +55,15 @@ export const registerCoreBinaryCommands = (
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
-  registerOverviewCommands(cli, logger, runDirectAnalysis, environment);
+  registerOverviewCommands(
+    cli,
+    logger,
+    runDirectAnalysis,
+    environment,
+    javascriptAnalysis,
+  );
   registerDecompileCommand(cli, logger, runDirectAnalysis);
   registerDecompileDirectoryCommand(cli, logger, runDirectAnalysis);
   registerFunctionCommand(cli, logger, runDirectAnalysis);
@@ -70,6 +78,7 @@ const registerOverviewCommands = (
   logger: Logger,
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
   environment: Readonly<Record<string, string | undefined>>,
+  javascriptAnalysis?: CliJavaScriptAnalysisHost,
 ): void => {
   const overviewOptions = z.object({
     snapshot: snapshotSelectionOption,
@@ -129,6 +138,8 @@ const registerOverviewCommands = (
               },
               environment,
               signal,
+              undefined,
+              javascriptAnalysis,
             );
           }),
         );

@@ -39,8 +39,38 @@ import type {
   ProcessOwnershipBaseline,
   ProcessRunTokenObservation,
   ProcessTableEntry,
+  ProcessInspectionDiagnostic,
 } from "./ProcessOwnership.js";
 import type { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+
+/** The native inspector owns command identity and error classification. */
+export class ProcessTableInspectionError extends Error {
+  readonly _tag = "ProcessTableInspectionError";
+  readonly inspection: ProcessInspectionDiagnostic;
+
+  constructor(command: string, arguments_: readonly string[], cause: unknown) {
+    const reason = errorMessage(cause);
+    super(`${command} process-table inspection failed: ${reason}`, { cause });
+    this.name = "ProcessTableInspectionError";
+    const code =
+      cause instanceof Error && "code" in cause ? cause.code : undefined;
+    const syscall =
+      cause instanceof Error && "syscall" in cause ? cause.syscall : undefined;
+    this.inspection = {
+      capability: "process_table",
+      command,
+      arguments: [...arguments_],
+      system_code:
+        typeof code === "string" ||
+        (typeof code === "number" && Number.isSafeInteger(code))
+          ? code
+          : null,
+      syscall: typeof syscall === "string" ? syscall : null,
+      reason,
+      remediation_action: `Ensure ${command} is available on the selected PATH and the host context permits it to execute and read the process table. Review the reported retained resources; cleanup remains unverified until the owning runtime confirms release.`,
+    };
+  }
+}
 
 /** Observe multiple groups from one process snapshot and one token batch. */
 export const observeOwnedProcessGroups = async (
@@ -1218,15 +1248,16 @@ export const createSystemProcessOwnershipHost = (
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
-    const { stdout } = await execFileOutput(
-      "ps",
-      ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
-      {
-        env: hostEnvironment,
-        stopSignal: "SIGTERM",
-        ...(signal === undefined ? {} : { signal }),
-      },
-    );
+    const command = "ps";
+    const arguments_ = ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="];
+    const { stdout } = await execFileOutput(command, arguments_, {
+      env: hostEnvironment,
+      stopSignal: "SIGTERM",
+      ...(signal === undefined ? {} : { signal }),
+    }).catch((cause: unknown) => {
+      if (isExpectedAbort(cause, signal)) throw cause;
+      throw new ProcessTableInspectionError(command, arguments_, cause);
+    });
     return stdout
       .split("\n")
       .map((line) =>

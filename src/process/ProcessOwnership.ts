@@ -5,6 +5,7 @@ import { setTimeout as delay } from "node:timers/promises";
 
 import {
   errorMessage,
+  ProcessTableInspectionError,
   readNativeProcessIdentityMap,
   readProcessOwnershipFacts,
   reobserveUnavailableTokenFacts,
@@ -275,6 +276,18 @@ export interface ProcessCleanupFailure {
   readonly reason: string;
   readonly failures?: readonly ProcessOwnershipValidationFailure[];
   readonly unverified?: readonly OwnershipSweepUnverifiedProcess[];
+  readonly inspection?: ProcessInspectionDiagnostic;
+}
+
+/** Facts from the owner of a failed process-table command, without its environment. */
+export interface ProcessInspectionDiagnostic {
+  readonly capability: "process_table";
+  readonly command: string;
+  readonly arguments: readonly string[];
+  readonly system_code: string | number | null;
+  readonly syscall: string | null;
+  readonly reason: string;
+  readonly remediation_action: string;
 }
 
 /** Token-verified liveness result used by post-root-exit settlement. */
@@ -387,6 +400,9 @@ export const cleanupOwnedProcessGroup = async (
     return {
       cleaned: false,
       reason: `process table could not be inspected: ${processTable.reason}`,
+      ...(processTable.inspection === undefined
+        ? {}
+        : { inspection: processTable.inspection }),
     };
   const plan = await createOwnedCleanupPlan(
     ownership,
@@ -524,6 +540,9 @@ export const verifyNoTokenOwnedProcesses = async (
     return {
       cleaned: false,
       reason: `process table could not be inspected: ${processTable.reason}`,
+      ...(processTable.inspection === undefined
+        ? {}
+        : { inspection: processTable.inspection }),
     };
   const scan = await scanTokenOwnedProcesses(
     processTable.processes,
@@ -555,7 +574,11 @@ const readLiveProcessTable = async (
       readonly available: true;
       readonly processes: readonly ProcessTableEntry[];
     }
-  | { readonly available: false; readonly reason: string }
+  | {
+      readonly available: false;
+      readonly reason: string;
+      readonly inspection?: ProcessInspectionDiagnostic;
+    }
 > => {
   try {
     return {
@@ -563,7 +586,13 @@ const readLiveProcessTable = async (
       processes: liveProcesses(await host.listProcesses()),
     };
   } catch (cause: unknown) {
-    return { available: false, reason: errorMessage(cause) };
+    return {
+      available: false,
+      reason: errorMessage(cause),
+      ...(cause instanceof ProcessTableInspectionError
+        ? { inspection: cause.inspection }
+        : {}),
+    };
   }
 };
 
@@ -925,7 +954,13 @@ const settleLauncherExit = async (
         classified.kind === "escaped" ? classified.groupIds : [],
     };
   }
-  return { cleaned: false, reason };
+  return {
+    cleaned: false,
+    reason,
+    ...(!refreshed.available && refreshed.inspection !== undefined
+      ? { inspection: refreshed.inspection }
+      : {}),
+  };
 };
 
 const createOwnedCleanupPlan = async (
