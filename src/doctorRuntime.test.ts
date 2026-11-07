@@ -840,7 +840,7 @@ test("keeps a known provider configuration when only its Java setting is unresol
   }
 });
 
-test("probes Kuna when only the unused client PATH is unresolved", async () => {
+it("probes Kuna when only the unused client PATH is unresolved", async () => {
   const home = await createTestTempDirectory("rea-dsh-doctor-kuna-path-");
   const kuna = join(home, "kuna");
   await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", { mode: 0o700 });
@@ -875,3 +875,44 @@ test("probes Kuna when only the unused client PATH is unresolved", async () => {
     await host.close?.();
   }
 });
+
+test.skipIf(process.platform !== "win32")(
+  "reports Kuna's Windows limitation when the client PATH is unresolved",
+  async () => {
+    const home = await createTestTempDirectory("rea-dsh-doctor-kuna-windows-");
+    await mkdir(join(home, ".dsh"), { recursive: true });
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        "          PATH: !!js caller.path",
+        `          REA_KUNA_COMMAND: ${JSON.stringify(join(home, "kuna.exe"))}`,
+        "",
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({ HOME: home, USERPROFILE: home });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+        configured: true,
+        available: false,
+        checks: [
+          expect.objectContaining({
+            code: "unsupported_host",
+            classification: "unsupported_host",
+          }),
+        ],
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
