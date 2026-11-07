@@ -250,6 +250,7 @@ describe("provider selection over MCP", () => {
     expect(structured(unsupported)).toMatchObject({
       error: {
         code: "capability_unavailable",
+        message: expect.stringContaining("read_bytes"),
         details: { provider_id: "beta", operation: "read_bytes" },
         remediation: {
           action: undeclaredOperationGuidance("read_bytes"),
@@ -257,6 +258,9 @@ describe("provider selection over MCP", () => {
       },
     });
     const remediation = undeclaredOperationGuidance("read_bytes");
+    expect(parseMcpToolError(unsupported).error.message).not.toContain(
+      remediation,
+    );
     expect(remediation).toMatch(
       /binary_session.*complete.*open_binary.*provider_id/u,
     );
@@ -908,6 +912,89 @@ it.each([true, false])(
     });
   },
 );
+
+it("keeps containing-function recovery for undeclared comment facets", async () => {
+  directory = await createTestTempDirectory("rea-undeclared-comment-facet-");
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const selected = candidate("beta", starts);
+  const identity = selected.identity();
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...selected,
+        capabilities: () => [
+          capability(identity),
+          {
+            ...capability(identity),
+            operation: "resolve_containing_procedure",
+          },
+        ],
+        createClient: (_target, profile) => ({
+          execute: async (operation) =>
+            ok(
+              createAnalysisExecution(
+                operation === "resolve_containing_procedure"
+                  ? {
+                      query_address: "0x1001",
+                      found: true,
+                      procedure: {
+                        address: "0x1000",
+                        name: "entry",
+                        classification: null,
+                        body: { available: false, reason: "not recorded" },
+                      },
+                    }
+                  : "entry",
+                profile?.provider ?? identity,
+              ),
+            ),
+          close: async () => ok(null),
+        }),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "undeclared-comment-facet", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "beta" },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const reply = await mcp.callTool({
+    name: "inspect_address_context",
+    arguments: { address: "0x1001", document: "fixture" },
+  });
+  expect(reply.isError).not.toBe(true);
+  expect(structured(reply)).toMatchObject({
+    result: {
+      comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      inline_comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      bookmarks: {
+        state: "unavailable",
+        remediation: expect.stringContaining("open_binary"),
+      },
+    },
+  });
+});
 
 const candidate = (
   id: string,

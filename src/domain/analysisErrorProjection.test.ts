@@ -311,6 +311,32 @@ describe("capability failure retry disposition", () => {
     ).toBe("Selected runtime diagnostic");
   });
 
+  it("uses generic recovery only when no more specific recovery exists", () => {
+    const project = (options: {
+      fallbackRemediationAction: string;
+      remediationAction?: string;
+      retryable?: boolean;
+    }) =>
+      projectAnalysisError(
+        new AnalysisCapabilityUnavailableError(
+          "fixture",
+          "inspect",
+          "unavailable",
+          options,
+        ),
+      ).remediation.action;
+    expect(project({ fallbackRemediationAction: "Generic" })).toBe("Generic");
+    expect(
+      project({
+        fallbackRemediationAction: "Generic",
+        remediationAction: "Specific",
+      }),
+    ).toBe("Specific");
+    expect(
+      project({ fallbackRemediationAction: "Generic", retryable: true }),
+    ).toContain("retry the same analysis");
+  });
+
   it("retains cleanup ownership before allowing a transient operation to retry", () => {
     expect(
       projectAnalysisError(
