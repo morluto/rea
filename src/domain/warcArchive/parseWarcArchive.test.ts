@@ -585,6 +585,113 @@ describe("embedded HTTP messages", () => {
   });
 });
 
+describe("embedded HTTP resource and URL boundaries", () => {
+  it("does not spend the retained-entry budget on discarded HTTP messages", () => {
+    const omitted = record(
+      "response",
+      [],
+      `HTTP/1.1 200 OK\r\n${"A: x\r\n".repeat(2_001)}\r\n`,
+    );
+    const readable = record(
+      "response",
+      [],
+      "HTTP/1.1 200 OK\r\nX-Keep: yes\r\n\r\n",
+    );
+    const archive = parsed(omitted.repeat(51) + readable);
+    expect(archive.records).toHaveLength(52);
+    expect(archive.records.at(-1)?.http?.headers).toEqual([
+      { name: "X-Keep", value: "yes" },
+    ]);
+    expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
+      "archive-header-limit-reached",
+    );
+  });
+
+  it("does not spend the retained-entry budget on transient WARC fields", () => {
+    const fields = Array.from(
+      { length: 18_000 },
+      (_, index) => [`X-${index}`, "v"] as const,
+    );
+    const archive = parsed(
+      record("resource", fields).repeat(6) + record("resource", []),
+      { maxDecodedBytes: 2 * 1024 * 1024 },
+    );
+    expect(archive.records).toHaveLength(7);
+    expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
+      "archive-header-limit-reached",
+    );
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("redacts URL userinfo without treating a backslash in the path as authority", () => {
+    const url =
+      "https://fixture-user:fixture-pass@example.test\\@other.test/path";
+    const archive = parsed(
+      record(
+        "request",
+        [["WARC-Target-URI", url]],
+        `GET ${url} HTTP/1.1\r\nReferer: ${url}\r\n\r\n`,
+      ),
+    );
+    const expected = "https://[redacted]@example.test\\@other.test/path";
+    expect(archive.records[0]?.target_uri).toBe(expected);
+    expect(archive.records[0]?.http?.request_target).toBe(expected);
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Referer", value: expected },
+    ]);
+    expect(JSON.stringify(archive)).not.toMatch(/fixture-user|fixture-pass/u);
+  });
+
+  it("does not infer an ambiguous credential from a literal marker in data", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [],
+        "HTTP/1.1 200 OK\r\nX-Note: [redacted: ambiguous URL credentials]\r\n\r\n",
+      ),
+    );
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it.each(["https://@example.test/path", "https://:@example.test/path"])(
+    "preserves an empty URL userinfo marker in %s",
+    (url) => {
+      const archive = parsed(
+        record(
+          "request",
+          [["WARC-Target-URI", url]],
+          `GET ${url} HTTP/1.1\r\n\r\n`,
+        ),
+      );
+      expect(archive.records[0]?.target_uri).toBe(url);
+      expect(archive.records[0]?.http?.request_target).toBe(url);
+      expect(archive.source_coverage.status).toBe("complete-within-scope");
+    },
+  );
+
+  it("withholds URLs whose credential span is ambiguous and reports partial coverage", () => {
+    const url = "https:\\\\fixture-user:fixture-pass@example.test/path";
+    const archive = parsed(
+      record(
+        "request",
+        [["WARC-Target-URI", url]],
+        `GET ${url} HTTP/1.1\r\n\r\n`,
+      ),
+    );
+    expect(archive.records[0]?.target_uri).toBe(
+      "[redacted: ambiguous URL credentials]",
+    );
+    expect(archive.records[0]?.http?.request_target).toBe(
+      "[redacted: ambiguous URL credentials]",
+    );
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "url-credentials-ambiguous",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(JSON.stringify(archive)).not.toMatch(/fixture-user|fixture-pass/u);
+  });
+});
+
 describe("embedded HTTP message inventory", () => {
   it("decodes a request line as a request rather than a status", () => {
     const archive = parsed(

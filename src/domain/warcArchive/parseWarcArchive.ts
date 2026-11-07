@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { gunzipSync } from "node:zlib";
 import { ok, type Result } from "../result.js";
+import { parseRecordedTransportUrl } from "../recordedTransportUrl.js";
 import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
   WARC_ARCHIVE_HEADER_BLOCK_BYTES,
@@ -91,28 +92,33 @@ const HTTP_URL_HEADERS = new Set([
   "referer",
   "origin",
 ]);
+const AMBIGUOUS_URL = "[redacted: ambiguous URL credentials]";
+interface RedactionState {
+  ambiguousUrl: boolean;
+}
 
 /** Preserve the selected URL spelling while withholding explicit authority credentials. */
-const withoutUrlUserInfo = (value: string): string => {
-  const prefix = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.exec(value)?.[0];
-  if (prefix === undefined) return value;
-  try {
-    const url = new URL(value);
-    if (url.username === "" && url.password === "") return value;
-  } catch {
-    return value;
+const withoutUrlUserInfo = (
+  value: string,
+  redaction: RedactionState,
+): string => {
+  const { credentials } = parseRecordedTransportUrl(value);
+  if (credentials === "ambiguous") {
+    redaction.ambiguousUrl = true;
+    return AMBIGUOUS_URL;
   }
-  const from = prefix.length;
-  const tail = value.slice(from);
-  const end = tail.search(/[/?#]/u);
-  const authority = end === -1 ? tail : tail.slice(0, end);
-  const at = authority.lastIndexOf("@");
-  return at < 0 ? value : `${prefix}[redacted]@${tail.slice(at + 1)}`;
+  if (
+    credentials === null ||
+    ["", ":"].includes(value.slice(credentials.start, credentials.end - 1))
+  )
+    return value;
+  return `${value.slice(0, credentials.start)}[redacted]@${value.slice(credentials.end)}`;
 };
 
 const sanitizedMalformedHeader = (
   text: string,
   previousSensitive: boolean,
+  redaction: RedactionState,
 ): string => {
   const colon = text.indexOf(":");
   const name = colon > 0 ? text.slice(0, colon) : "";
@@ -125,7 +131,7 @@ const sanitizedMalformedHeader = (
     const value = text.slice(colon + 1);
     const start = value.search(/[^ \t]/u);
     if (start >= 0)
-      return `${name}:${value.slice(0, start)}${withoutUrlUserInfo(value.slice(start))}`;
+      return `${name}:${value.slice(0, start)}${withoutUrlUserInfo(value.slice(start), redaction)}`;
   }
   if (/^[ \t]/u.test(text) && previousSensitive)
     return "[redacted continuation]";
@@ -176,6 +182,7 @@ const readHeaderBlock = (
   data: Buffer,
   start: number,
   budget: HeaderBudget,
+  redaction: RedactionState,
 ): HeaderBlockResult => {
   const versionLine = findLineEnd(data, start);
   if (versionLine === null) return { block: null, limit: null };
@@ -223,11 +230,12 @@ const readHeaderBlock = (
     if (malformedLine || first === undefined) {
       if (fields.size + malformed.length >= WARC_ARCHIVE_HEADER_FIELDS)
         return { block: null, limit: "block-fields" };
-      if (budget.remaining === 0)
+      if (malformedLine && malformed.length >= budget.remaining)
         return { block: null, limit: "archive-fields" };
-      budget.remaining -= 1;
       if (malformedLine)
-        malformed.push(sanitizedMalformedHeader(text, previousSensitive));
+        malformed.push(
+          sanitizedMalformedHeader(text, previousSensitive, redaction),
+        );
       else fields.set(name, text.slice(colon + 1).trim());
     }
     if (!/^[ \t]/u.test(text))
@@ -425,6 +433,7 @@ const readHttpMessage = (
   payload: Buffer,
   recordType: string,
   budget: HeaderBudget,
+  redaction: RedactionState,
 ): HttpRead => {
   const limit = Math.min(payload.length, HTTP_START_LINE_BYTES);
   if (recordType !== "request" && recordType !== "response")
@@ -448,6 +457,8 @@ const readHttpMessage = (
   let headerBytes = startLine.end;
   let terminated = false;
   let previousSensitive = false;
+  let entries = 0;
+  let budgetExceeded = false;
   // The block ends at the first empty line. `headerBytes` is measured against
   // the same window, so an unterminated block is reported rather than guessed.
   while (cursor < payload.length) {
@@ -460,20 +471,25 @@ const readHttpMessage = (
       terminated = true;
       break;
     }
-    if (fields.length + malformed.length >= HTTP_HEADER_FIELDS)
+    if (entries >= HTTP_HEADER_FIELDS)
       return { message: null, omission: "header-block-limit" };
     if (line.end > HTTP_HEADER_BLOCK_BYTES)
       return { message: null, omission: "header-block-limit" };
-    if (budget.remaining === 0)
-      return { message: null, omission: "archive-header-limit" };
-    budget.remaining -= 1;
+    entries += 1;
+    if (entries > budget.remaining) {
+      budgetExceeded = true;
+      cursor = line.end;
+      continue;
+    }
     const text = payload.toString("latin1", cursor, line.contentEnd);
     const colon = text.indexOf(":");
     const name = colon > 0 ? text.slice(0, colon) : "";
     const sensitive = SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase());
     const continuation = /^[ \t]/u.test(text);
     if (colon <= 0 || !TOKEN.test(name))
-      malformed.push(sanitizedMalformedHeader(text, previousSensitive));
+      malformed.push(
+        sanitizedMalformedHeader(text, previousSensitive, redaction),
+      );
     else {
       const value = text.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/gu, "");
       fields.push({
@@ -481,7 +497,7 @@ const readHttpMessage = (
         value: sensitive
           ? null
           : HTTP_URL_HEADERS.has(name.toLowerCase())
-            ? withoutUrlUserInfo(value)
+            ? withoutUrlUserInfo(value, redaction)
             : value,
       });
     }
@@ -491,13 +507,17 @@ const readHttpMessage = (
   }
   if (!terminated)
     return { message: null, omission: "unterminated-header-block" };
+  if (budgetExceeded)
+    return { message: null, omission: "archive-header-limit" };
+  budget.remaining -= entries;
   const framingDeclared = fields.some(
     (field) =>
       field.name.toLowerCase() === "content-length" ||
       field.name.toLowerCase() === "transfer-encoding",
   );
   const target = "request_target" in parsed ? parsed.request_target : null;
-  const safeTarget = target === null ? null : withoutUrlUserInfo(target);
+  const safeTarget =
+    target === null ? null : withoutUrlUserInfo(target, redaction);
   const targetOffset =
     target === null
       ? -1
@@ -702,7 +722,8 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
         "trailing-bytes",
         `${nextVersion - searchFrom} unexpected byte(s) between records.`,
       );
-    const header = readHeaderBlock(data, nextVersion, budget);
+    const redaction: RedactionState = { ambiguousUrl: false };
+    const header = readHeaderBlock(data, nextVersion, budget, redaction);
     if (header.block === null) {
       const resume = resumeAfterUnreadableHeader(
         header,
@@ -728,10 +749,12 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
       );
       break;
     }
+    budget.remaining -= header.block.malformed.length;
     const step = readOneRecord(data, header.block, nextVersion, {
       ordinal,
       diagnostic,
       budget,
+      redaction,
     });
     records.push(step.record);
     if (step.nextCursor === null) break;
@@ -756,9 +779,10 @@ const readOneRecord = (
     readonly ordinal: number;
     readonly diagnostic: DiagnosticSink;
     readonly budget: HeaderBudget;
+    readonly redaction: RedactionState;
   },
 ): RecordStep => {
-  const { ordinal, diagnostic, budget } = context;
+  const { ordinal, diagnostic, budget, redaction } = context;
   for (const line of block.malformed)
     diagnostic(
       ordinal,
@@ -784,6 +808,7 @@ const readOneRecord = (
         payloadBytes: 0,
         payload: Buffer.alloc(0),
         budget,
+        redaction,
       }),
       nextCursor: null,
     };
@@ -805,6 +830,7 @@ const readOneRecord = (
     payloadBytes,
     payload,
     budget,
+    redaction,
   });
   // An omission is only reported when the payload promised an HTTP message, so
   // an ordinary body reads as `http: null` without a diagnostic per record.
@@ -822,6 +848,12 @@ const readOneRecord = (
       ordinal,
       "invalid-header-line",
       `The HTTP header block contains ${record.http.malformed_header_lines.length} malformed line(s).`,
+    );
+  if (redaction.ambiguousUrl)
+    diagnostic(
+      ordinal,
+      "url-credentials-ambiguous",
+      "A URL was withheld because its credential span could not be identified safely.",
     );
   return {
     record,
@@ -842,15 +874,17 @@ const buildRecord = (
     readonly payloadBytes: number;
     readonly payload: Buffer;
     readonly budget: HeaderBudget;
+    readonly redaction: RedactionState;
   },
 ): WarcRecord => {
-  const { block, offset, ordinal, payloadBytes, payload, budget } = input;
+  const { block, offset, ordinal, payloadBytes, payload, budget, redaction } =
+    input;
   const type = block.fields.get("warc-type") ?? "";
   const version = block.version;
   const contentLength = parseNonNegativeInt(block.fields.get("content-length"));
   const hasPayload = payloadBytes > 0;
   const http = hasPayload
-    ? readHttpMessage(payload, type, budget)
+    ? readHttpMessage(payload, type, budget, redaction)
     : { message: null, omission: null };
 
   return {
@@ -869,7 +903,7 @@ const buildRecord = (
     warc_date: block.fields.get("warc-date") ?? null,
     warc_record_id: block.fields.get("warc-record-id") ?? null,
     target_uri: block.fields.has("warc-target-uri")
-      ? withoutUrlUserInfo(block.fields.get("warc-target-uri")!)
+      ? withoutUrlUserInfo(block.fields.get("warc-target-uri")!, redaction)
       : null,
     content_type: block.fields.get("content-type") ?? null,
     content_length: contentLength,

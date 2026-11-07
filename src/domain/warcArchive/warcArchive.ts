@@ -172,6 +172,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "http-start-line-invalid",
     "http-header-block-unterminated",
     "archive-header-limit-reached",
+    "url-credentials-ambiguous",
     "invalid-version-line",
     "invalid-version-limit-reached",
   ]),

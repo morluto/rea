@@ -104,6 +104,7 @@ for an archive-wide fact) and a stable code:
 | `http-start-line-invalid`         | the start line is neither a request line nor a status line            |
 | `http-header-block-unterminated`  | the header block has no terminating empty line                        |
 | `archive-header-limit-reached`    | the archive-wide header entry allowance was reached                   |
+| `url-credentials-ambiguous`       | a URL was withheld because its credential span was ambiguous          |
 
 A record whose header block cannot be read ends the scan, because the next
 record's offset cannot be established without inventing one. Records read before
@@ -120,7 +121,7 @@ that point are still reported and counted.
 These are resource allowances, not WARC or HTTP format limits. The decoded
 stream is bounded during inflation, and each record header is bounded before
 fields and diagnostics are collected. A header exceeding 8 KiB per line,
-1 MiB total, or 20000 retained fields and malformed lines stops the scan with partial coverage. Across the archive, 100000 WARC and HTTP header entries may be collected; reaching the allowance stops the inventory with partial coverage. An archive that expands past
+1 MiB total, or 20000 retained fields and malformed lines stops the scan with partial coverage. Across the archive, at most 100000 HTTP header entries and malformed WARC header lines are retained; reaching the allowance stops the inventory with partial coverage. Discarded messages do not spend that retained-output allowance. An archive that expands past
 `max_decoded_bytes` is reported instead of exhausting memory.
 
 ## Identity
