@@ -103,8 +103,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    The export runs inside the computer with `--seed-checkpoint seed
    --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. A task larger than 96 KiB as REA passes it to the
-   computer is refused before anything runs. It also passes `--synthetic-seed`, since the agent
+   all pass on the seed. It also passes `--synthetic-seed`, since the agent
    made the seed for the task, so the README does not call it the user's real
    data. When the seed holds exactly one document and the app's desktop entry
    takes files, the bundle's app opens that document at launch. A file moved
