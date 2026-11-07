@@ -774,7 +774,7 @@ describe("evaluateTaskChecks whole text", () => {
     expect(missing?.passed).toBe(false);
     expect(missing?.undecided).toBe(true);
     expect(missing?.description).toBe(
-      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown",
+      "the view of Documents/cut.xml is truncated, so what it leaves out is unknown (/root/children/2)",
     );
     const zipped = outcome({
       kind: "text_equals",
