@@ -700,3 +700,39 @@ it.each([
 ] as const)("keeps the acquisition for a falsy encoding: %s", (call) => {
   expect(streamAcquisitionsFor(call)).toHaveLength(1);
 });
+/**
+ * `encoding` truthiness is a separate question from the numeric bounds. Measured on
+ * Node 24.22.1:
+ *
+ *   {encoding: !1}        -> false, skipped          -> stream
+ *   {encoding: !0}        -> true,  refused          -> THREW ERR_INVALID_ARG_VALUE
+ *   {encoding: ~-1}       -> 0,     skipped          -> stream
+ *   {encoding: ~0}        -> -1,    refused          -> THREW
+ *   {encoding: typeof 1}  -> "number", refused       -> THREW
+ *   {encoding: `utf8`}                               -> stream
+ *   {encoding: `ut${"f8"}`}                          -> stream (interpolated, undecided)
+ *   {encoding: `nope${"x"}`}                         -> THREW, but undecided here
+ */
+it.each([
+  [`fs.createReadStream(p, {encoding: !1})`],
+  [`fs.createReadStream(p, {encoding: ~-1})`],
+  [`fs.createReadStream(p, {encoding: \`utf8\`})`],
+  [`fs.createReadStream(p, {encoding: \`ut\${"f8"}\`})`],
+  [`fs.createReadStream(p, {encoding: \`nope\${"x"}\`})`],
+] as const)(
+  "keeps the acquisition for a skipped or undecided encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toHaveLength(1);
+  },
+);
+
+it.each([
+  [`fs.createReadStream(p, {encoding: !0})`],
+  [`fs.createReadStream(p, {encoding: ~0})`],
+  [`fs.createReadStream(p, {encoding: typeof 1})`],
+] as const)(
+  "emits no acquisition for a truthy non-string encoding: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);

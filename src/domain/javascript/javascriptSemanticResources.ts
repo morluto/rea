@@ -11,7 +11,9 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   isNullishJavaScriptSyntax,
+  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
+  staticJavaScriptTruthiness,
   staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
@@ -283,13 +285,64 @@ const rejectsStreamOptionsLiteral = (
 };
 
 /**
+ * Truthiness of a stream-option value, including forms the shared reader leaves open.
+ *
+ * `staticJavaScriptTruthiness` covers literals, but a unary result is also exactly
+ * readable here: measured on Node 24.22.1, `!1` is `false` and `~-1` is `0`, both
+ * skipped, while `!0`, `~0` and `typeof 1` are truthy and refused. An unshadowed
+ * `Infinity` is truthy and `NaN` is falsy, matching their values.
+ */
+const encodingTruthiness = (
+  value: t.Node,
+  context: DataEffectTraversalContext,
+): boolean | undefined => {
+  const shared = staticJavaScriptTruthiness(value);
+  if (shared !== undefined) return shared;
+  // A shorthand method and a class expression are both objects at runtime, so they are
+  // truthy like the function and object literals the shared reader already covers.
+  if (t.isObjectMethod(value) || t.isClassExpression(value)) return true;
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity")
+  )
+    return isUnmodifiedGlobalReference(value, context.state, value.name)
+      ? value.name === "Infinity"
+      : undefined;
+  if (!t.isUnaryExpression(value)) return undefined;
+  // `typeof` and `delete` always produce a non-empty string or a boolean, and `void`
+  // is `undefined`.
+  if (value.operator === "typeof" || value.operator === "delete") return true;
+  if (value.operator === "void") return false;
+  // `!` over an exactly readable operand is the negation of its truthiness.
+  if (value.operator === "!") {
+    const operand = encodingTruthiness(
+      unwrapJavaScriptExpression(value.argument).node,
+      context,
+    );
+    return operand === undefined ? undefined : !operand;
+  }
+  // `-`, `+` and `~` chains resolve to a number exactly, so `~0` is `-1` and truthy
+  // while `~-1` is `0` and falsy. A non-finite result is truthy except for `NaN`.
+  const number = unaryOperandNumber(value, context, 0);
+  if (number === undefined) return undefined;
+  return number !== 0 && !Number.isNaN(number);
+};
+
+/**
  * Whether a stream `encoding` member is one Node's `Buffer` refuses.
  *
  * Node skips the member when it is falsy and otherwise requires a string `Buffer`
- * accepts. Measured on Node 24.22.1: `0`, `-0`, `""`, `false`, `0n` and `NaN` are all
- * skipped, while `-1`, `1.5`, `Infinity`, `-Infinity`, `{}`, `[]` and a method all throw
- * `ERR_INVALID_ARG_VALUE`. `NaN` is falsy, so it is skipped like the other zero-ish
- * values rather than refused.
+ * accepts. Truthiness and the string check are separate questions from the numeric
+ * bounds the other members use, so this reads them separately instead of reusing the
+ * index rules — a boolean or a unary result can be falsy and therefore skipped.
+ *
+ * Measured on Node 24.22.1: `0`, `-0`, `""`, `false`, `0n`, `NaN`, `!1` (which is
+ * `false`), `~-1` (which is `0`) and a `void` member are all skipped, while `-1`, `1.5`,
+ * `Infinity`, `-Infinity`, `{}`, `[]`, `!0`, `typeof 1` and a method all throw
+ * `ERR_INVALID_ARG_VALUE`.
+ *
+ * An interpolated template stays undecided: `` `ut${"f8"}` `` produces a valid encoding,
+ * so its shape alone does not prove a throw.
  */
 const rejectsStreamEncoding = (
   options: t.ObjectExpression,
@@ -306,15 +359,13 @@ const rejectsStreamEncoding = (
       : undefined;
   if (text !== undefined && text !== null)
     return text.length > 0 && !BUFFER_ENCODINGS.has(text.toLowerCase());
-  if (t.isBooleanLiteral(value)) return value.value;
-  if (t.isBigIntLiteral(value)) return ![0n, -0n].includes(BigInt(value.value));
-  const numeric = streamMemberValue(value, context);
-  if (numeric === undefined) return false;
-  if (numeric.kind === "absent") return false;
-  // Everything else that is exactly readable is truthy and not a string, so Node's
-  // truthiness gate lets it through to the encoding check, which refuses it.
-  if (numeric.kind === "refused") return true;
-  return numeric.value !== 0 && !Number.isNaN(numeric.value);
+  const truthiness = encodingTruthiness(value, context);
+  if (truthiness === undefined) return false;
+  // A falsy member never reaches Node's check, whatever its type.
+  if (!truthiness) return false;
+  // A truthy string was decided by the encoding set above; only a truthy non-string
+  // reaches here, and Node refuses every one of those.
+  return !t.isStringLiteral(value) && !t.isTemplateLiteral(value);
 };
 
 /**
