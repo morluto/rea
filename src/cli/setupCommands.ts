@@ -16,6 +16,7 @@ import {
 import { isUpdateFailure } from "../application/UpdateFailure.js";
 import {
   confirmInteractiveSetup,
+  promptSetupPreferences,
   renderSetupDryRun,
   renderInteractiveSetupResult,
   renderSetupProgress,
@@ -97,6 +98,30 @@ const registerSetupCommand = (
         .boolean()
         .default(false)
         .describe("Use sequential accessible setup prompts"),
+      runtime: z
+        .enum(["node", "bun"])
+        .optional()
+        .describe(
+          "JavaScript runtime to use for agent registrations (node or bun)",
+        ),
+      pythonRunner: z
+        .enum(["standard", "uv", "none"])
+        .optional()
+        .describe(
+          "Python environment to connect for analysis tools (standard, uv, or none)",
+        ),
+      quick: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Run quick setup with upstream defaults without prompting for profile",
+        ),
+      custom: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Force custom setup prompts for runtime and Python environment",
+        ),
     }),
     alias: { yes: "y" },
     run: ({ options, formatExplicit }) =>
@@ -214,6 +239,10 @@ interface SetupCommandOptions {
   readonly skill?: boolean | undefined;
   readonly dryRun: boolean;
   readonly accessible: boolean;
+  readonly runtime?: "node" | "bun" | undefined;
+  readonly pythonRunner?: "standard" | "uv" | "none" | undefined;
+  readonly quick: boolean;
+  readonly custom: boolean;
 }
 
 const runSetupCommand = async (
@@ -226,6 +255,50 @@ const runSetupCommand = async (
   const { options } = input;
   const interactive = setupIsInteractive(options, input.formatExplicit);
   const hasExplicitScope = setupHasExplicitScope(options);
+
+  let selectedRuntime = options.runtime;
+  let selectedPythonRunner = options.pythonRunner;
+
+  if (
+    interactive &&
+    !options.quick &&
+    (options.custom ||
+      (options.runtime === undefined && options.pythonRunner === undefined))
+  ) {
+    const preferences = await promptSetupPreferences(options.accessible);
+    if (preferences === undefined) {
+      return {
+        status: "cancelled" as const,
+        plannedActions: [],
+        appliedActions: [],
+        clients: {},
+        doctor: {
+          healthy: false,
+          environment_healthy: false,
+          availableProviders: [],
+          scope: {
+            mode: "explicit" as const,
+            clients: [],
+            providers: [],
+            skill: false,
+            target: null,
+          },
+        },
+        clientStates: [],
+      };
+    }
+    selectedRuntime = preferences.runtime;
+    selectedPythonRunner = preferences.pythonRunner;
+  }
+
+  let uvPythonPath: string | undefined;
+  if (selectedPythonRunner === "uv") {
+    const { resolveUvPythonPath } = await import(
+      "../application/SetupPythonEnvironment.js"
+    );
+    uvPythonPath = resolveUvPythonPath(environment);
+  }
+
   const [{ runSetup }, { systemSetupHost }, { createSystemDoctorHost }] =
     await Promise.all([
       import("../application/Setup.js"),
@@ -233,8 +306,19 @@ const runSetupCommand = async (
       import("../doctorRuntime.js"),
     ]);
   const result = await runSetup(
-    setupRunOptions(input, interactive, hasExplicitScope),
-    systemSetupHost(createSystemDoctorHost(environment), environment),
+    setupRunOptions(
+      input,
+      interactive,
+      hasExplicitScope,
+      selectedRuntime,
+      selectedPythonRunner,
+      uvPythonPath,
+    ),
+    systemSetupHost(
+      createSystemDoctorHost(environment),
+      environment,
+      selectedRuntime !== undefined ? { runtime: selectedRuntime } : undefined,
+    ),
     interactive
       ? (actions, context) =>
           confirmInteractiveSetup(actions, options.accessible, context)
@@ -259,6 +343,9 @@ const setupRunOptions = (
   },
   interactive: boolean,
   hasExplicitScope: boolean,
+  runtime?: "node" | "bun",
+  pythonRunner?: "standard" | "uv" | "none",
+  uvPythonPath?: string,
 ): SetupOptions => {
   const { options } = input;
   const agentIntegrationSelected =
@@ -275,6 +362,9 @@ const setupRunOptions = (
     dryRun: options.dryRun,
     allDetectedClients: options.allDetected,
     proposeHopper: interactive || options.installHopper,
+    ...(runtime !== undefined ? { runtime } : {}),
+    ...(pythonRunner !== undefined ? { pythonRunner } : {}),
+    ...(uvPythonPath !== undefined ? { uvPythonPath } : {}),
     ...(hasSelectedClients ? { clientIds: options.client } : {}),
     ...(options.skillClient.length > 0
       ? { skillClientIds: options.skillClient }

@@ -139,6 +139,15 @@ const runSetupWorkflow = async (
       ...providerEnvironment,
       REA_MCP_TOOL_FAMILIES: options.toolFamilies,
     };
+  if (options.pythonRunner === "uv")
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_PYTHON_RUNNER: "uv",
+      ...(options.uvPythonPath !== undefined &&
+      providerEnvironment.REA_PWNTOOLS_PYTHON === undefined
+        ? { REA_PWNTOOLS_PYTHON: options.uvPythonPath }
+        : {}),
+    };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
     options.clientIds === undefined &&
