@@ -522,6 +522,7 @@
 * **ghidra:** guide recovery from unresolved procedure selectors ([#8470](https://github.com/morluto/rea/issues/8470)) ([103684b](https://github.com/morluto/rea/commit/103684bce1971f25414f7e8dd879069720f6c315))
 * **ghidra:** honor current directory in PATH discovery ([81adb89](https://github.com/morluto/rea/commit/81adb8977a2df1b84b628aed9317719e6df91fd8))
 * **ghidra:** keep a changed existing project's refusal typed through launch ([#8273](https://github.com/morluto/rea/issues/8273)) ([39172ca](https://github.com/morluto/rea/commit/39172ca2e191763a87bedf889b1f970befd5d96c))
+* **ghidra:** make checkpoint workflows discoverable ([#9246](https://github.com/morluto/rea/issues/9246)) ([8eff651](https://github.com/morluto/rea/commit/8eff651270337a043389acda13e9b14e4d3777da))
 * **ghidra:** mark empty xrefs results as unresolved, not unreferenced ([#8831](https://github.com/morluto/rea/issues/8831)) ([d7df9df](https://github.com/morluto/rea/commit/d7df9df3393f77c78a76a06144ff4f515d5db928))
 * **ghidra:** match startup-timeout guidance to the project mode ([#8114](https://github.com/morluto/rea/issues/8114)) ([ca7d1c3](https://github.com/morluto/rea/commit/ca7d1c3750b244364b60cf2253c2c8c481b6dea7)), closes [#3751](https://github.com/morluto/rea/issues/3751)
 * **ghidra:** omit duplicate load-image result ([#7777](https://github.com/morluto/rea/issues/7777)) ([a965cba](https://github.com/morluto/rea/commit/a965cbab06fcdecc6918e77e4d299ea91e8ef41c))
