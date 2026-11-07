@@ -1,5 +1,7 @@
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { isCompletedCloseFailure } from "../domain/analysisCloseCompletedError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import { err, type Result } from "../domain/result.js";
 import type { GhidraRequestOptions } from "./GhidraClientTypes.js";
@@ -174,10 +176,18 @@ export class GhidraRequestQueue {
         return err(
           this.#withUnexpectedCleanupRejection(primary, cleanup.cause),
         );
+      if (cleanup.value.ok) return err(primary);
+      const closeFailure = cleanup.value.error;
+      // A close that released every resource and failed only later (diagnostic
+      // export) is not unconfirmed cleanup: keep it as a diagnostic fact so the
+      // outcome does not tell the caller to retry retained cleanup.
       return err(
-        cleanup.value.ok
-          ? primary
-          : primary.withCleanupFailure(cleanup.value.error),
+        isCompletedCloseFailure(closeFailure)
+          ? primary.withDiagnostics({
+              ...primary.diagnostics,
+              client_close_failure: projectAnalysisError(closeFailure),
+            })
+          : primary.withCleanupFailure(closeFailure),
       );
     } finally {
       entry.options.signal?.removeEventListener("abort", onAbort);

@@ -9,6 +9,7 @@ import {
   type ProviderIdentity,
 } from "../AnalysisProvider.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCloseCompletedError } from "../../domain/analysisCloseCompletedError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { err, ok } from "../../domain/result.js";
 import { CompositeProvider } from "./CompositeProvider.js";
@@ -338,3 +339,63 @@ it.each([1, 2])(
     for (const child of children) expect(child.close).toHaveBeenCalledTimes(3);
   },
 );
+
+it("reports a completed export failure while retaining a sibling's real cleanup failure", async () => {
+  const left = failingProvider("provider-left", "address_name", "left-db");
+  const right = failingProvider("provider-right", "procedure_info", "right-db");
+  const exportFailure = new AnalysisCloseCompletedError(
+    "provider-left",
+    "diagnostic_export",
+  );
+  left.close.mockResolvedValue(err(exportFailure));
+  const client = new CompositeProvider([
+    left.provider,
+    right.provider,
+  ]).createClient(executableTarget);
+  await client.execute("address_name", {});
+  await client.execute("procedure_info", {});
+  const first = await client.close();
+  if (first.ok) throw new Error("Expected sibling cleanup failure");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toEqual(["right-db"]);
+  expect(first.error.diagnostics).toMatchObject({
+    failures: [
+      { provider_id: "provider-left" },
+      { provider_id: "provider-right" },
+    ],
+  });
+  right.close.mockResolvedValue(ok(null));
+  expect(await client.close()).toEqual(ok(null));
+  expect(left.close).toHaveBeenCalledTimes(1);
+  expect(right.close).toHaveBeenCalledTimes(2);
+});
+
+it("reports multiple post-close failures without inventing pending cleanup", async () => {
+  const left = failingProvider("provider-left", "address_name", "left-db");
+  const right = failingProvider("provider-right", "procedure_info", "right-db");
+  const leftError = new AnalysisCloseCompletedError(
+    "provider-left",
+    "diagnostic_export",
+  );
+  const rightError = new AnalysisCloseCompletedError(
+    "provider-right",
+    "diagnostic_export",
+  );
+  left.close.mockResolvedValue(err(leftError));
+  right.close.mockResolvedValue(err(rightError));
+  const client = new CompositeProvider([
+    left.provider,
+    right.provider,
+  ]).createClient(executableTarget);
+  await client.execute("address_name", {});
+  await client.execute("procedure_info", {});
+  const first = await client.close();
+  expect(first).toEqual(err(leftError));
+  expect(leftError.cleanupIncomplete).toBe(false);
+  expect(leftError.diagnostics).toMatchObject({
+    additional_close_failures: [{ provider_id: "provider-right" }],
+  });
+  expect(await client.close()).toEqual(ok(null));
+  expect(left.close).toHaveBeenCalledTimes(1);
+  expect(right.close).toHaveBeenCalledTimes(1);
+});

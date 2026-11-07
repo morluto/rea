@@ -30,6 +30,7 @@ export interface AppConfig {
   readonly ghidraLanguageOverride?: GhidraLanguageOverride;
   readonly ghidraDisabledAnalyzers?: readonly string[];
   readonly ghidraSeedFile?: string;
+  readonly ghidraDiagnosticsDir?: string;
   readonly ghidraExistingProject?: GhidraProjectSelection;
   /** Opt-in storage for checkpoints of REA-owned Ghidra Programs. */
   readonly ghidraCheckpointDirectory?: string;

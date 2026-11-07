@@ -68,6 +68,7 @@ import {
   prepareSessionExecution,
 } from "./BinarySessionExecution.js";
 import { closeAnalysisClient } from "../AnalysisClientCleanup.js";
+import { isCompletedCloseFailure } from "../../domain/analysisCloseCompletedError.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 import { analysisErrorWithCancellation } from "../../domain/analysisErrorCancellation.js";
@@ -113,6 +114,10 @@ const sessionCleanupFailure = (
   cleanup: AnalysisError,
   operation: string,
 ): AnalysisError => {
+  if (isCompletedCloseFailure(cleanup))
+    return primary.retainSecondaryFailure(cleanup, {
+      client_close_failure: projectAnalysisError(cleanup),
+    });
   const failure = analysisErrorWithCleanupFailure(primary, cleanup, operation);
   return cleanup.cleanupIncomplete
     ? failure.bindCleanupDependencies([primary, cleanup])
@@ -652,13 +657,13 @@ export class BinarySession
         this.#clearRuntimeAvailability();
         if (isAborted(options.signal))
           return err(
-            analysisErrorWithCleanupFailure(
+            sessionCleanupFailure(
               new AnalysisCancelledError("open_binary", {
                 cause: options.signal?.reason,
               }),
               closed.error,
               "open_binary",
-            ).bindCleanupDependencies([closed.error]),
+            ),
           );
         return closed;
       }
@@ -1169,7 +1174,12 @@ export class BinarySession
         resourceFailure,
         "close_binary",
       );
-      if (closed.error.cleanupIncomplete && resourceFailure.cleanupIncomplete)
+      // A completed close owns nothing, but the resource owner still does.
+      if (
+        (closed.error.cleanupIncomplete ||
+          isCompletedCloseFailure(closed.error)) &&
+        resourceFailure.cleanupIncomplete
+      )
         combined.bindCleanupDependencies([closed.error, resourceFailure]);
       return err(combined);
     }
@@ -1258,7 +1268,7 @@ export class BinarySession
         },
       },
     );
-    if (closed.ok) {
+    if (closed.ok || isCompletedCloseFailure(closed.error)) {
       for (const failure of pending.failures)
         if (!failure.hasCleanupOwner) failure.resolveCleanup();
       this.#pendingCleanup = undefined;
@@ -1278,8 +1288,10 @@ export class BinarySession
       run,
       onCleanupFailure === undefined ? {} : { onCleanupFailure },
     );
-    if (!closed.ok)
-      return sessionCleanupFailure(primary, closed.error, "open_binary");
+    if (!closed.ok) {
+      primary = sessionCleanupFailure(primary, closed.error, "open_binary");
+      if (!isCompletedCloseFailure(closed.error)) return primary;
+    }
     return this.#restoreAfterFailedOpen(previous, primary);
   }
 

@@ -13,6 +13,7 @@ import {
   AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { AnalysisCloseCompletedError } from "../../domain/analysisCloseCompletedError.js";
 import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { resolvedAnalysisError } from "../../domain/analysisErrorBase.js";
@@ -450,4 +451,128 @@ it("retries only unresolved prerequisite and native owners across mixed cleanup 
     denyChild = false;
     await client.close();
   }
+});
+
+it("returns a post-close export failure without retaining a released client", async () => {
+  const failure = new AnalysisCloseCompletedError(
+    "controlled",
+    "diagnostic_export",
+  );
+  let closes = 0;
+  const client = new DeferredAnalysisClient(
+    async () =>
+      child(async () => {
+        closes++;
+        return err(failure);
+      }),
+    identity.id,
+  );
+  expect((await client.execute("health", {})).ok).toBe(true);
+  const notifications: unknown[] = [];
+  expect(
+    await client.close({
+      onCleanupFailure: (error) => notifications.push(error),
+    }),
+  ).toEqual(err(failure));
+  expect(notifications).toEqual([]);
+  expect(failure.cleanupIncomplete).toBe(false);
+  expect(await client.close()).toEqual(ok(null));
+  expect(closes).toBe(1);
+});
+
+it("preserves a completed-close failure after an earlier cleanup retry", async () => {
+  const cleanup = new ProviderCleanupError(identity.id, ["process"], {
+    reason: "still running",
+  });
+  const exportFailure = new AnalysisCloseCompletedError(
+    identity.id,
+    "diagnostic_export",
+  );
+  let closes = 0;
+  const client = new DeferredAnalysisClient(
+    async () =>
+      child(async () => {
+        closes++;
+        return closes === 1 ? err(cleanup) : err(exportFailure);
+      }),
+    identity.id,
+  );
+  expect((await client.execute("health", {})).ok).toBe(true);
+  const first = await client.close();
+  if (first.ok) throw new Error("Expected incomplete cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(await client.close()).toEqual(err(exportFailure));
+  expect(first.error.cleanupIncomplete).toBe(false);
+  expect(await client.close()).toEqual(ok(null));
+  expect(closes).toBe(2);
+});
+
+it("does not treat a completed-close marker with live cleanup dependencies as released", async () => {
+  const cleanup = new ProviderCleanupError(identity.id, ["process"], {
+    reason: "still running",
+  });
+  const failure = new AnalysisCloseCompletedError(
+    identity.id,
+    "diagnostic_export",
+    {
+      cleanup: { reason: "still running", resources: ["process"] },
+    },
+  );
+  failure.bindCleanupDependencies([cleanup]);
+  let closes = 0;
+  const client = new DeferredAnalysisClient(
+    async () =>
+      child(async () => {
+        closes++;
+        return closes === 1 ? err(failure) : ok(null);
+      }),
+    identity.id,
+  );
+  expect((await client.execute("health", {})).ok).toBe(true);
+  const first = await client.close();
+  if (first.ok) throw new Error("Expected incomplete cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(await client.close()).toEqual(ok(null));
+  expect(closes).toBe(2);
+});
+
+it("keeps prerequisite cleanup ownership when client release reports a completed export failure", async () => {
+  let denied = true;
+  const prerequisite = new ProviderCleanupError(identity.id, ["prerequisite"], {
+    reason: "held",
+  });
+  const exportFailure = new AnalysisCloseCompletedError(
+    identity.id,
+    "diagnostic_export",
+    {
+      diagnostics: { diagnostics_export_path: "/export" },
+    },
+  );
+  let closes = 0;
+  const client = new DeferredAnalysisClient(async (_signal, resources) => {
+    resources.retain(
+      {
+        close: async () => {
+          if (denied) throw prerequisite;
+          prerequisite.resolveCleanup();
+        },
+      },
+      "prerequisite",
+    );
+    return child(async () => {
+      closes++;
+      return err(exportFailure);
+    });
+  }, identity.id);
+  const result = await client.execute("health", {});
+  if (result.ok) throw new Error("Expected prerequisite cleanup failure");
+  expect(result.error.cleanupIncomplete).toBe(true);
+  expect(result.error.cleanupResources).toEqual(["prerequisite"]);
+  expect(result.error.diagnostics).toMatchObject({
+    client_close_failure: { details: { operation: "diagnostic_export" } },
+  });
+  denied = false;
+  expect(await client.close()).toEqual(ok(null));
+  expect(result.error.cleanupIncomplete).toBe(false);
+  expect(closes).toBe(1);
 });

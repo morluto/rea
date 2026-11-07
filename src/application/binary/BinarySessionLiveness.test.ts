@@ -19,6 +19,8 @@ import {
 } from "../AnalysisProvider.js";
 import { createAnalysisProfile } from "../../domain/analysisProfile.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { ProviderCleanupError } from "../../domain/providerCleanupError.js";
+import { AnalysisCloseCompletedError } from "../../domain/analysisCloseCompletedError.js";
 import type { ProviderOperationHealth } from "../../domain/providerOperationHealth.js";
 import { err, ok } from "../../domain/result.js";
 import { buildCapabilityInventory } from "../CapabilityInventory.js";
@@ -663,3 +665,40 @@ const killableDeepProvider = (options: {
     },
   };
 };
+
+it("returns an export failure after releasing the session without scheduling cleanup retry", async () => {
+  const { session, deep } = openSession();
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  const child = deep.created[0];
+  if (child === undefined) throw new Error("Expected provider child");
+  const failure = new AnalysisCloseCompletedError("deep", "diagnostic_export");
+  let closes = 0;
+  child.close = async () => {
+    closes++;
+    return err(failure);
+  };
+  expect(await session.close()).toEqual(err(failure));
+  expect(await session.close()).toEqual(ok(null));
+  expect(closes).toBe(1);
+});
+
+it("ties a completed export failure to a resource owner that still holds cleanup", async () => {
+  const { session, deep } = openSession();
+  expect((await session.open(process.execPath)).ok).toBe(true);
+  expect((await session.execute("address_name", {})).ok).toBe(true);
+  const child = deep.created[0];
+  if (child === undefined) throw new Error("Expected provider child");
+  child.close = async () =>
+    err(new AnalysisCloseCompletedError("deep", "diagnostic_export"));
+  const resource = new ProviderCleanupError("deep", ["file"], {
+    reason: "busy",
+  });
+  session.closeFileResources = async () => err(resource);
+  const closed = await session.close();
+  if (closed.ok) throw new Error("Expected close failure");
+  expect(closed.error.cleanupIncomplete).toBe(true);
+  session.closeFileResources = async () => ok(null);
+  resource.resolveCleanup();
+  expect(closed.error.cleanupIncomplete).toBe(false);
+});
