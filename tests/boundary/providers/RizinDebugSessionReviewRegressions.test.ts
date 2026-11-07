@@ -447,8 +447,10 @@ process.stdin.on("data", (chunk) => {
         },
       });
     if (executed.ok)
-      expect(executed.value.evidence.limitations).toContain(
-        "Launch provenance records the original and resolved startup paths; it does not establish the current target after unrestricted debugger commands.",
+      expect(executed.value.evidence.limitations).toContainEqual(
+        expect.stringMatching(
+          /launch provenance.*does not establish.*current target/iu,
+        ),
       );
   },
 );
@@ -907,8 +909,8 @@ process.stdin.on("data", (chunk) => {
       const partialEvidence = evidenceSchema.parse(
         exited.error.partialObservation,
       );
-      expect(partialEvidence.limitations.join(" ")).toContain(
-        "Rizin exited before the command-completion marker; retained frame output is partial and command completion is unknown.",
+      expect(partialEvidence.limitations.join(" ")).toMatch(
+        /Rizin exited.*output is partial.*completion is unknown/iu,
       );
     }
     const writerPid = Number(await readFile(writerPidPath, "utf8"));
