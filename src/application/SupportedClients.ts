@@ -1,6 +1,6 @@
 import { dirname, isAbsolute, join, posix, resolve, win32 } from "node:path";
 import { fileURLToPath } from "node:url";
-import { existsSync, lstatSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, realpathSync } from "node:fs";
 import { err, ok, type Result } from "../domain/result.js";
 import {
   HermesClientPathError,
@@ -536,9 +536,21 @@ const normalizePathIdentity = (
 ): string => {
   const pathModule = platform === "win32" ? win32 : posix;
   const resolved = pathModule.resolve(path);
-  return platform === "win32" || platform === "darwin"
-    ? resolved.toLowerCase()
-    : resolved;
+  if (platform === "win32") {
+    try {
+      return realpathSync.native(resolved).toLowerCase();
+    } catch {
+      return resolved.toLowerCase();
+    }
+  }
+  if (platform === "darwin") {
+    try {
+      return realpathSync.native(resolved);
+    } catch {
+      return resolved;
+    }
+  }
+  return resolved;
 };
 
 /**

@@ -891,13 +891,25 @@ describe("OpenCode activation provenance across layers", () => {
       const projectDir = await createTestTempDirectory(
         "rea-opencode-case-cwd-",
       );
+      const configPath = join(projectDir, "opencode.json");
+      await writeFile(configPath, "{}\n");
       const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
       try {
-        const clients = supportedClients(home, "win32", {
+        const matchingClients = supportedClients(home, "win32", {
           OPENCODE_CONFIG: join(projectDir.toLowerCase(), "opencode.json"),
         });
-        const opencode = clients.find(({ name }) => name === "opencode");
-        expect(opencode?.projectConfigPaths).toBeUndefined();
+        const matchingOpenCode = matchingClients.find(
+          ({ name }) => name === "opencode",
+        );
+        expect(matchingOpenCode?.projectConfigPaths).toBeUndefined();
+
+        const distinctClients = supportedClients(home, "win32", {
+          OPENCODE_CONFIG: join(home, "opencode.json"),
+        });
+        const distinctOpenCode = distinctClients.find(
+          ({ name }) => name === "opencode",
+        );
+        expect(distinctOpenCode?.projectConfigPaths).toEqual([configPath]);
       } finally {
         cwd.mockRestore();
       }

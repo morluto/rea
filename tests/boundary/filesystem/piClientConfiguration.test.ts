@@ -476,13 +476,23 @@ describe("Pi project-scoped discovery and overrides", () => {
     async () => {
       const home = await createTestTempDirectory("rea-pi-case-home-");
       const projectDir = await createTestTempDirectory("rea-pi-case-cwd-");
+      const projectConfigDir = join(projectDir, ".pi");
+      await mkdir(projectConfigDir, { recursive: true });
+      const configPath = join(projectConfigDir, "mcp.json");
+      await writeFile(configPath, "{}\n");
       const cwd = vi.spyOn(process, "cwd").mockReturnValue(projectDir);
       try {
-        const clients = supportedClients(home, "win32", {
+        const matchingClients = supportedClients(home, "win32", {
           PI_CODING_AGENT_DIR: join(projectDir.toLowerCase(), ".pi"),
         });
-        const pi = clients.find(({ name }) => name === "pi");
-        expect(pi?.projectConfigPaths).toBeUndefined();
+        const matchingPi = matchingClients.find(({ name }) => name === "pi");
+        expect(matchingPi?.projectConfigPaths).toBeUndefined();
+
+        const distinctClients = supportedClients(home, "win32", {
+          PI_CODING_AGENT_DIR: join(home, ".pi"),
+        });
+        const distinctPi = distinctClients.find(({ name }) => name === "pi");
+        expect(distinctPi?.projectConfigPaths).toEqual([configPath]);
       } finally {
         cwd.mockRestore();
       }
