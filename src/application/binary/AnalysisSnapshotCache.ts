@@ -144,6 +144,14 @@ export const isSourceEvidenceRetainable = (
     descriptor.effects.mayWriteFilesystem === false) &&
   descriptor.effects.changesPermissions === false;
 
+/** Explicit independent decompiles must run even if a snapshot has a matching entry. */
+export const requestsFreshIndependentDecompile = (
+  operation: string,
+  parameters: Readonly<Record<string, JsonValue>>,
+): boolean =>
+  operation === "procedure_pseudo_code" &&
+  parameters.analysis === "independent_fresh";
+
 /** Whether an observation can additionally be replayed as a snapshot. */
 export const isSnapshotCacheable = (
   operation: AnalysisOperation,
@@ -151,6 +159,7 @@ export const isSnapshotCacheable = (
   parameters: Readonly<Record<string, JsonValue>>,
   context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
+  !requestsFreshIndependentDecompile(operation, parameters) &&
   isSourceEvidenceRetainable(operation, descriptor, parameters, {
     snapshotContext: context,
   }) &&

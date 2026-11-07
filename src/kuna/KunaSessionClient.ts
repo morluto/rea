@@ -108,6 +108,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import { kunaQueryFailureForCaller } from "./KunaQueryErrors.js";
+import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 
 /** How often a request waiting on the project export reports that it still waits. */
 const WAIT_PROGRESS_INTERVAL_MS = 10_000;
@@ -173,6 +174,7 @@ interface SingleFunctionText {
 
 interface Answer {
   readonly result: JsonValue;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly source: AnswerSource | null;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly locations: readonly EvidenceLocation[];
@@ -542,7 +544,8 @@ export class KunaSessionClient implements AnalysisClient {
           }),
         );
       if (
-        operation === "procedure_pseudo_code" ||
+        (operation === "procedure_pseudo_code" &&
+          parameters.analysis !== "independent_fresh") ||
         operation === "procedure_assembly" ||
         operation === "analyze_function"
       )
@@ -698,14 +701,21 @@ export class KunaSessionClient implements AnalysisClient {
       },
       {
         ...(sourceDescriptor === undefined ? {} : { sourceDescriptor }),
+        ...(answer.pseudocodeAbsence === undefined
+          ? {}
+          : { pseudocodeAbsence: answer.pseudocodeAbsence }),
         // Kuna's identity is in the analysis profile; the raw result records
         // only where file-backed text came from.
         ...(source === null &&
+        answer.pseudocodeAbsence === undefined &&
         answer.referenceSource === undefined &&
         answer.stringSource === undefined
           ? {}
           : {
               rawResult: {
+                ...(answer.pseudocodeAbsence === undefined
+                  ? {}
+                  : { pseudocode_absence: answer.pseudocodeAbsence }),
                 ...(source === null
                   ? {}
                   : {
@@ -848,6 +858,33 @@ export class KunaSessionClient implements AnalysisClient {
           limitations: classification,
         });
       case "procedure_pseudo_code": {
+        if (parameters.analysis === "independent_fresh") {
+          const signal =
+            options.signal === undefined
+              ? this.#session.signal
+              : AbortSignal.any([options.signal, this.#session.signal]);
+          const standalone = await this.#singleFunction(
+            operation,
+            selected.address,
+            installation,
+            signal,
+            true,
+          );
+          if (standalone === EXPORT_READY)
+            throw new Error(
+              "Independent decompilation unexpectedly yielded to project",
+            );
+          if (!standalone.ok) return standalone;
+          return ok({
+            result: standalone.value,
+            source: { kind: "single-function" },
+            locations,
+            limitations: [
+              "This is a fresh independent single-function decompile; it does not use the project export's whole-program prototypes.",
+              ...classification,
+            ],
+          });
+        }
         const pseudocode = await this.#pseudocode(
           operation,
           selected,
@@ -1323,7 +1360,14 @@ export class KunaSessionClient implements AnalysisClient {
           );
           if (!text.ok) return text;
           return ok({
-            ...text.value,
+            result: text.value.result,
+            limitations: text.value.limitations,
+            ...(text.value.pseudocodeAbsence === undefined
+              ? {}
+              : { pseudocodeAbsence: text.value.pseudocodeAbsence }),
+            ...(text.value.files === undefined
+              ? {}
+              : { files: text.value.files }),
             source: { kind: "project-export", project: reader.project },
           });
         } catch (cause: unknown) {
@@ -1503,10 +1547,13 @@ export class KunaSessionClient implements AnalysisClient {
     address: string,
     installation: KunaInstallation,
     signal: AbortSignal,
+    independent = false,
   ): Promise<SingleFunctionOutcome> {
     const prepared = await this.#commands.prepare();
     if (!prepared.ok) return prepared;
-    const admitted = await this.#admitSingleFunction(signal);
+    const admitted = independent
+      ? await this.#runSlots.acquire(signal)
+      : await this.#admitSingleFunction(signal);
     if (admitted === EXPORT_READY) return admitted;
     if (admitted === undefined)
       return err(
@@ -1653,7 +1700,7 @@ export class KunaSessionClient implements AnalysisClient {
         pseudocode:
           text === null
             ? unavailable(
-                pseudocode.value.limitations.at(-1) ??
+                pseudocode.value.unavailableReason ??
                   "Kuna did not supply pseudocode.",
               )
             : { available: true },

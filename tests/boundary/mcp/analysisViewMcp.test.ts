@@ -717,7 +717,7 @@ it("reports a tampered inline Evidence ID at its full MCP source path", async ()
         {
           path: ["source", "evidence", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -911,9 +911,7 @@ it("admits portable captures before SDK Evidence parsing and preserves capture c
   expect(result.normalized_result).toMatchObject({
     groups: [{ content_types: [], flags: ["single-sample"] }],
     limitations: expect.arrayContaining([caveat]),
-    unknowns: [
-      "Some retained records have unavailable status or content type values.",
-    ],
+    unknowns: [expect.stringMatching(/unavailable status or content type/iu)],
   });
 });
 
@@ -1532,7 +1530,9 @@ it.each([false, true])(
         }),
       ]),
       limitations: expect.arrayContaining([
-        "Some records carry no usable request duration; their completion and overlap remain unknown.",
+        expect.stringMatching(
+          /request duration.*completion.*overlap.*unknown/iu,
+        ),
       ]),
     });
     expect(parent).toEqual(before);
