@@ -1615,7 +1615,7 @@ describe("exportDesktopApplication launch document", () => {
       expect(result.normalized_result).toMatchObject({
         seed_files: expect.arrayContaining([
           "Documents/today.txt",
-          `${target}/MuseScore3.ini`,
+          ".config/MuseScore/MuseScore3.ini",
         ]),
       });
       expect(module).toContain(
