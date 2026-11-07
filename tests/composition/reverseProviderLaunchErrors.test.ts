@@ -566,7 +566,12 @@ it("uses platform-aware recovery without /proc when Darwin baseline capture reje
       expect(projected.code).toBe("capability_unavailable");
       expect(projected.details).toMatchObject({
         provider_id: "process-ownership",
+        diagnostics: {
+          boundary: "process-ownership",
+          admission_code: "identity_snapshot_unavailable",
+        },
       });
+      expect(projected.details?.diagnostics).not.toHaveProperty("system_code");
       expect(projected.remediation.action).toContain(
         processOwnershipAdmissionRecovery(
           "identity_snapshot_unavailable",
@@ -618,6 +623,11 @@ it("preserves Darwin baseline_unavailable admission failure without blaming conf
       expect(projected.code).toBe("capability_unavailable");
       expect(projected.details).toMatchObject({
         provider_id: "process-ownership",
+        diagnostics: {
+          boundary: "process-ownership",
+          admission_code: "baseline_unavailable",
+          system_code: "ENOENT",
+        },
       });
       expect(projected.remediation.action).toContain(
         processOwnershipAdmissionRecovery("baseline_unavailable", "darwin"),
@@ -702,7 +712,14 @@ it.each(["identity_snapshot_unavailable", "baseline_unavailable"] as const)(
         expect(projected.code).toBe("capability_unavailable");
         expect(projected.details).toMatchObject({
           provider_id: "process-ownership",
+          diagnostics: {
+            boundary: "process-ownership",
+            admission_code: code,
+          },
         });
+        expect(projected.details?.diagnostics).not.toHaveProperty(
+          "system_code",
+        );
         expect(projected.message).toContain(code);
         expect(projected.remediation.action).toContain(
           processOwnershipAdmissionRecovery(code, "linux"),
@@ -744,7 +761,12 @@ it("preserves Linux process ownership admission failure in baseline capture with
       expect(projected.code).toBe("capability_unavailable");
       expect(projected.details).toMatchObject({
         provider_id: "process-ownership",
+        diagnostics: {
+          boundary: "process-ownership",
+          admission_code: "identity_snapshot_unavailable",
+        },
       });
+      expect(projected.details?.diagnostics).not.toHaveProperty("system_code");
       expect(projected.message).toContain("identity_snapshot_unavailable");
       expect(projected.remediation.action).toContain(
         processOwnershipAdmissionRecovery(

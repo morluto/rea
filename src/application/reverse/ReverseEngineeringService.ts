@@ -639,11 +639,7 @@ export class ReverseEngineeringService {
           : cause instanceof OwnedOutputFailure &&
               cause.cause instanceof ProcessAdmissionError
             ? cause.cause
-            : typeof cause === "object" &&
-                cause !== null &&
-                Reflect.get(cause, "_tag") === "ProcessAdmissionError"
-              ? (cause as ProcessAdmissionError)
-              : undefined;
+            : undefined;
       if (earlyFailure === undefined && admissionFailure !== undefined) {
         const provider =
           operation === "inspect_with_objdump" ? "objdump" : "rizin";
@@ -675,10 +671,10 @@ export class ReverseEngineeringService {
             remediationAction: `${recovery} ${setting} does not need to change.`,
             diagnostics: {
               boundary: "process-ownership",
-              system_code: admissionSystemCode ?? admissionFailure.code,
+              admission_code: admissionFailure.code,
               ...(admissionSystemCode === undefined
                 ? {}
-                : { admission_code: admissionFailure.code }),
+                : { system_code: admissionSystemCode }),
             },
             ...ownedCleanupOptions(cause),
           },
@@ -1276,12 +1272,6 @@ const darwinPreparationError = (
   cause: unknown,
 ): DarwinProcessOwnershipInspectionError | undefined => {
   if (cause instanceof DarwinProcessOwnershipInspectionError) return cause;
-  if (
-    typeof cause === "object" &&
-    cause !== null &&
-    Reflect.get(cause, "name") === "DarwinProcessOwnershipInspectionError"
-  )
-    return cause as DarwinProcessOwnershipInspectionError;
   if (
     cause instanceof OwnedCommandFailure &&
     cause.preparationFailure !== undefined
