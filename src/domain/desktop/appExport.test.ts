@@ -568,6 +568,32 @@ describe("capturedHomePath outside the home", () => {
     expect(path(`${home}/settings/work-journal`)).toBe(
       ".config/app/work-journal",
     );
+  });
+
+  it("keeps a neighbor of a selected directory recorded as a directory", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/.config/app`,
+            physical: `${home}/settings`,
+            kind: "directory",
+          },
+          {
+            path: `${home}/settings/work`,
+            physical: `${home}/settings/work`,
+            kind: "directory",
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/work-journal`)).toBe(
+      ".config/app/work-journal",
+    );
     expect(path(`${home}/settings/work/notes.txt`)).toBe(
       "settings/work/notes.txt",
     );

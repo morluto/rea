@@ -370,6 +370,8 @@ export const desktopApplicationCaptureSchema = z.strictObject({
         z.strictObject({
           path: z.string().min(1),
           physical: z.string().min(1),
+          /** Whether the walked path is a directory; absent from captures written before it was recorded. */
+          kind: z.enum(["file", "directory"]).optional(),
         }),
       )
       .optional(),
