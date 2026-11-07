@@ -5,6 +5,7 @@ import { expect, it } from "vitest";
 
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
+import { V8_CODE_CACHE_TOOL_CONTRACTS } from "../../../src/contracts/v8/v8CodeCacheToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
@@ -13,6 +14,7 @@ const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...WEB_SCRIPT_TOOL_CONTRACTS,
   ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  ...V8_CODE_CACHE_TOOL_CONTRACTS,
 ];
 
 const PATH_FIELDS = {
@@ -20,6 +22,7 @@ const PATH_FIELDS = {
   inspect_elf_notes: ["path"],
   inspect_kernel_module: ["path"],
   inspect_byte_entropy: ["path"],
+  inspect_v8_code_cache: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
   recover_javascript_sources: ["path", "output_directory", "additional_paths"],
 } as const;
@@ -108,6 +111,7 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "inspect_elf_notes.path",
     "inspect_kernel_module.path",
     "inspect_byte_entropy.path",
+    "inspect_v8_code_cache.path",
     "export_web_scripts.capture_path",
     "export_web_scripts.output_directory",
     "recover_javascript_sources.path",
