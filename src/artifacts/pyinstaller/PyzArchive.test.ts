@@ -1,6 +1,6 @@
 import { pythonPycFixture } from "../../python/PythonPyc.fixture.js";
 import { parsePythonPyc } from "../../python/PythonPycParser.js";
-import { inspectPythonPycInputSchema } from "../../domain/python/pythonPyc.js";
+import { pythonPycLimitsSchema } from "../../domain/python/pythonPyc.js";
 import { createHash } from "node:crypto";
 import { open, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -203,7 +203,7 @@ it.each([
         bytes: pyc.length,
         sha256: createHash("sha256").update(pyc).digest("hex"),
       },
-      inspectPythonPycInputSchema.parse({ path: "/fixtures/module.pyc" }),
+      pythonPycLimitsSchema.parse({}),
     );
     expect(standalone.header.python_version).toBe(version);
     const image = pyzArchive({
