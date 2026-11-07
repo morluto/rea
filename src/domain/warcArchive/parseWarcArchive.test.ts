@@ -97,20 +97,44 @@ describe("parseWarcArchive", () => {
     expect(first.archive_id).toBe(second.archive_id);
   });
 
-  it("reports the embedded HTTP status line without decoding bodies", () => {
+  it("decodes the embedded HTTP response header block without retaining the body", () => {
+    const payload =
+      "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\nmissing";
     const archive = parsed(
       record(
         "response",
         [["WARC-Target-URI", "https://example.test/a"]],
-        "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\n\r\nmissing",
+        payload,
       ),
     );
-    expect(archive.records[0]?.http).toEqual({
+    const http = archive.records[0]?.http;
+    expect(http).toMatchObject({
+      start_line: "HTTP/1.1 404 Not Found",
+      version: "1.1",
+      method: null,
+      request_target: null,
       status_code: 404,
       reason_phrase: "Not Found",
-      header_bytes: "HTTP/1.1 404 Not Found\r\n".length,
+      header_bytes:
+        "HTTP/1.1 404 Not Found\r\nContent-Type: text/plain\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\n"
+          .length,
+      body_bytes: "missing".length,
+      body_framing_declared: false,
     });
-    expect(archive.source_coverage.http_bodies).toBe("not-decoded");
+    // Repeats are kept in archive order rather than collapsed to one value.
+    expect(http?.headers).toEqual([
+      { name: "Content-Type", value: "text/plain" },
+      { name: "Set-Cookie", value: "a=1" },
+      { name: "Set-Cookie", value: "b=2" },
+    ]);
+    expect(archive.source_coverage).toMatchObject({
+      scope: "record-headers-and-http-headers",
+      payloads: "header-block-only",
+      http_headers: "decoded",
+      http_bodies: "not-decoded",
+    });
+    expect(archive.summary.http_messages).toBe(1);
+    expect(archive.diagnostics).toEqual([]);
   });
 
   it("lists unknown record types instead of dropping them", () => {
@@ -402,7 +426,7 @@ describe("response status line", () => {
     expect(archive.records[0]?.http).toBeNull();
   });
 
-  it("bounds the status line before decoding it", () => {
+  it("bounds the start line before decoding it", () => {
     const padded = `HTTP/1.1 200${" ".repeat(9000)}ok\r\n\r\n`;
     const archive = parsed(
       record("response", [["WARC-Record-ID", "<urn:1>"]], padded),
@@ -410,9 +434,10 @@ describe("response status line", () => {
     expect(archive.records[0]?.http).toBeNull();
     // `http: null` alone cannot tell this apart from a body, so the ceiling is
     // named and coverage becomes partial rather than "complete-within-scope".
-    expect(archive.records[0]?.http_status_line_over_ceiling).toBe(true);
+    expect(archive.records[0]?.http_start_line_over_ceiling).toBe(true);
+    expect(archive.records[0]?.http_omitted).toBe("start-line-limit");
     expect(archive.diagnostics).toEqual([
-      expect.objectContaining({ code: "http-status-line-limit-reached" }),
+      expect.objectContaining({ code: "http-start-line-limit-reached" }),
     ]);
     expect(archive.source_coverage.status).toBe("partial");
   });
@@ -423,7 +448,7 @@ describe("response status line", () => {
       record("response", [["WARC-Record-ID", "<urn:1>"]], html),
     );
     expect(archive.records[0]?.http).toBeNull();
-    expect(archive.records[0]?.http_status_line_over_ceiling).toBe(false);
+    expect(archive.records[0]?.http_start_line_over_ceiling).toBe(false);
     expect(archive.diagnostics).toEqual([]);
   });
 
@@ -439,6 +464,7 @@ describe("response status line", () => {
       ),
     );
     expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_omitted).toBe("malformed-start-line");
   });
 
   it("keeps the reason phrase and rejects an out-of-range status", () => {
@@ -461,6 +487,112 @@ describe("response status line", () => {
       ),
     );
     expect(bad.records[0]?.http).toBeNull();
+  });
+});
+
+describe("embedded HTTP messages", () => {
+  it("decodes a request line as a request rather than a status", () => {
+    const archive = parsed(
+      record(
+        "request",
+        [["WARC-Target-URI", "https://example.test/a?q=1"]],
+        "GET /a?q=1 HTTP/2\r\nHost: example.test\r\nAccept: */*\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.http).toMatchObject({
+      start_line: "GET /a?q=1 HTTP/2",
+      version: "2",
+      method: "GET",
+      request_target: "/a?q=1",
+      status_code: null,
+      reason_phrase: null,
+      body_bytes: 0,
+      body_framing_declared: false,
+    });
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Host", value: "example.test" },
+      { name: "Accept", value: "*/*" },
+    ]);
+    expect(archive.diagnostics).toEqual([]);
+  });
+
+  it("reports declared body framing without interpreting it", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Target-URI", "https://example.test/a"]],
+        "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n",
+      ),
+    );
+    const http = archive.records[0]?.http;
+    expect(http?.body_framing_declared).toBe(true);
+    // The chunked body is counted as bytes present; it is not decoded.
+    expect(http?.body_bytes).toBe("5\r\nhello\r\n0\r\n\r\n".length);
+    expect(archive.source_coverage.http_bodies).toBe("not-decoded");
+  });
+
+  it("keeps a malformed header line as a diagnostic instead of a field", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1 200 OK\r\nNoColonHere\r\nContent-Type: text/html\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Content-Type", value: "text/html" },
+    ]);
+    expect(archive.records[0]?.http?.malformed_header_lines).toEqual([
+      "NoColonHere",
+    ]);
+  });
+
+  it("omits an unterminated header block instead of reading the body as headers", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n<html>",
+      ),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_omitted).toBe("unterminated-header-block");
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "http-header-block-unterminated" }),
+    ]);
+    expect(archive.summary.http_omitted).toBe(1);
+  });
+
+  it("does not read a payload outside request and response records", () => {
+    const archive = parsed(
+      record(
+        "resource",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "GET /looks-like-a-request HTTP/1.1\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_omitted).toBeNull();
+    expect(archive.diagnostics).toEqual([]);
+  });
+
+  it("stops at the header block ceiling instead of reading a huge payload", () => {
+    const fields = Array.from(
+      { length: 2100 },
+      (_, index) => `X-Pad-${index}: v`,
+    ).join("\r\n");
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        `HTTP/1.1 200 OK\r\n${fields}\r\n\r\nbody`,
+      ),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_omitted).toBe("header-block-limit");
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "http-header-block-limit-reached" }),
+    ]);
   });
 });
 

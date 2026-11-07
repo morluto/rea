@@ -11,19 +11,45 @@ version line, `WARC-Type`, `WARC-Date`, `WARC-Record-ID`, `WARC-Target-URI`,
 `Content-Type`, the declared `Content-Length`, `WARC-Block-Digest`,
 `WARC-Payload-Digest`, `WARC-IP-Address`, `WARC-Profile`,
 `WARC-Segment-Number` and the byte extent the record actually occupies.
-`response` records also carry the embedded HTTP status line.
+`request` and `response` records also carry their embedded HTTP start line and
+header block.
 
-A status line is read only from the first 8 KiB of the payload. A payload that
-begins `HTTP/` and whose status line exceeds that ceiling keeps `http: null`,
-sets `http_status_line_over_ceiling: true` and reports an
-`http-status-line-limit-reached` diagnostic, so a skipped status line is never
-reported as an ordinary non-HTTP body. The ceiling is a resource allowance, not
-an HTTP limit.
+A start line is read only within the first 8 KiB of the payload. A payload that
+promises an HTTP message but exceeds a ceiling keeps `http: null`, sets
+`http_omitted` to the reason, and reports a diagnostic, so an omitted message is
+never reported as an ordinary non-HTTP body. The ceilings are resource
+allowances, not HTTP limits.
 
-Record payloads, further HTTP headers and HTTP bodies are not decoded. Declared
-digests are reported as written and are not verified. Records are not linked to
-each other by `WARC-Record-ID` or payload digest. A `revisit` record stays a
-record; it is not resolved to the response it refers to.
+```json
+{
+  "start_line": "HTTP/1.1 404 Not Found",
+  "version": "1.1",
+  "method": null,
+  "request_target": null,
+  "status_code": 404,
+  "reason_phrase": "Not Found",
+  "headers": [{ "name": "Content-Type", "value": "text/plain" }],
+  "malformed_header_lines": [],
+  "header_bytes": 78,
+  "body_bytes": 7,
+  "body_framing_declared": false
+}
+```
+
+A request names its `method` and `request_target` instead. Header fields keep the
+order and repeats the archive wrote, because a response may legitimately carry
+several `Set-Cookie` or `Warning` fields. `body_bytes` counts the payload bytes
+after the header block; the body itself is neither retained nor interpreted, and
+`body_framing_declared` only says whether a `Content-Length` or
+`Transfer-Encoding` field is present. A malformed header line is kept in
+`malformed_header_lines` rather than dropped, and a header block that never
+reaches its terminating empty line is omitted as `unterminated-header-block`
+instead of having body bytes read as fields.
+
+HTTP bodies, content codings and trailers are not decoded. Declared digests are
+reported as written and are not verified. Records are not linked to each other by
+`WARC-Record-ID` or payload digest. A `revisit` record stays a record; it is not
+resolved to the response it refers to.
 
 Unknown `WARC-Type` values stay in the list with `record_type_known: false`
 instead of being dropped, so an archive whose vocabulary is newer than this
@@ -31,9 +57,10 @@ reader still inventories completely.
 
 ## Sources and coverage
 
-`source_coverage` states what the inventory examined. `payloads` and
-`http_bodies` are always `not-decoded`, `digests` is always `not-verified`, and
-`related_records` is always `not-linked`. `status` is `complete-within-scope`
+`source_coverage` states what the inventory examined. `scope` is
+`record-headers-and-http-headers`, `payloads` is `header-block-only` and
+`http_headers` is `decoded`; `http_bodies` is always `not-decoded`, `digests` is
+always `not-verified`, and `related_records` is always `not-linked`. `status` is `complete-within-scope`
 only when every record in the decoded stream was read; a limit, a truncated
 record or a malformed header makes it `partial` and each cause appears in
 `diagnostics`.
@@ -53,20 +80,24 @@ diagnostic and no records, rather than a silent empty result.
 Each diagnostic carries the ordinal of the record that produced it (or `null`
 for an archive-wide fact) and a stable code:
 
-| code                            | meaning                                                               |
-| ------------------------------- | --------------------------------------------------------------------- |
-| `not-a-warc-stream`             | the decoded bytes do not begin a WARC record                          |
-| `truncated-record`              | the header block or the declared payload is incomplete                |
-| `unsupported-compression`       | the gzip member could not be decoded                                  |
-| `invalid-header-line`           | a header line is not a single field                                   |
-| `invalid-content-length`        | the record has no usable `Content-Length`                             |
-| `record-limit-reached`          | inventory stopped at `max_records`                                    |
-| `decoded-size-limit-reached`    | decompression would exceed `max_decoded_bytes`                        |
-| `trailing-bytes`                | bytes between or after records are not a WARC record                  |
-| `header-line-limit-reached`     | a header line exceeds 8 KiB                                           |
-| `header-block-limit-reached`    | a header exceeds 1 MiB or 20000 retained fields and malformed lines   |
-| `diagnostic-limit-reached`      | further diagnostics were omitted after 10000                          |
-| `invalid-version-limit-reached` | inventory stopped after 10000 version lines with no parseable version |
+| code                              | meaning                                                               |
+| --------------------------------- | --------------------------------------------------------------------- |
+| `not-a-warc-stream`               | the decoded bytes do not begin a WARC record                          |
+| `truncated-record`                | the header block or the declared payload is incomplete                |
+| `unsupported-compression`         | the gzip member could not be decoded                                  |
+| `invalid-header-line`             | a header line is not a single field                                   |
+| `invalid-content-length`          | the record has no usable `Content-Length`                             |
+| `record-limit-reached`            | inventory stopped at `max_records`                                    |
+| `decoded-size-limit-reached`      | decompression would exceed `max_decoded_bytes`                        |
+| `trailing-bytes`                  | bytes between or after records are not a WARC record                  |
+| `header-line-limit-reached`       | a header line exceeds 8 KiB                                           |
+| `header-block-limit-reached`      | a header exceeds 1 MiB or 20000 retained fields and malformed lines   |
+| `diagnostic-limit-reached`        | further diagnostics were omitted after 10000                          |
+| `invalid-version-limit-reached`   | inventory stopped after 10000 version lines with no parseable version |
+| `http-start-line-limit-reached`   | an embedded HTTP start line exceeds 8 KiB                             |
+| `http-header-block-limit-reached` | an HTTP header block exceeds 64 KiB, 8 KiB per line or 2000 fields    |
+| `http-start-line-invalid`         | the start line is neither a request line nor a status line            |
+| `http-header-block-unterminated`  | the header block has no terminating empty line                        |
 
 A record whose header block cannot be read ends the scan, because the next
 record's offset cannot be established without inventing one. Records read before

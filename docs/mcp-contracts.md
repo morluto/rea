@@ -596,11 +596,11 @@ for source identities, parser allowances, supported scope and CLI publication.
 `inspect_warc_archive` lists the records of one local WARC or WARC.gz file
 without contacting a target, replaying a request or executing archived content.
 Record headers, declared lengths, digests and record types are reported in
-archive order, and response records carry their embedded HTTP status line.
-Payloads, further HTTP headers and HTTP bodies are not decoded, declared digests
-are not verified and records are not linked. Unknown record types stay listed.
-Truncated records, malformed headers and invalid lengths remain diagnostics
-instead of ending the inventory silently. See
+archive order, and request and response records carry their embedded HTTP start
+line and header block. HTTP bodies are not decoded, declared digests are not
+verified and records are not linked. Unknown record types stay listed. Truncated
+records, malformed headers and invalid lengths remain diagnostics instead of
+ending the inventory silently. See
 [offline WARC archives](warc-archives.md) for identities, compression handling
 and resource bounds.
 

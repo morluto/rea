@@ -35,7 +35,8 @@ it("binds the published archive bytes to Evidence", async () => {
     expect(result.value.evidence.operation).toBe("inspect_warc_archive");
     expect(value.summary.responses).toBe(1);
     expect(value.records[0]?.http?.status_code).toBe(200);
-    expect(value.source_coverage.payloads).toBe("not-decoded");
+    expect(value.source_coverage.payloads).toBe("header-block-only");
+    expect(value.source_coverage.http_headers).toBe("decoded");
   } finally {
     await resources.close();
   }

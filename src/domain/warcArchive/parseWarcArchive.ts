@@ -5,11 +5,17 @@ import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
   WARC_ARCHIVE_HEADER_BLOCK_BYTES,
   WARC_ARCHIVE_HEADER_FIELDS,
-  WARC_ARCHIVE_HTTP_STATUS_LINE_BYTES as HTTP_STATUS_LINE_BYTES,
+  WARC_ARCHIVE_HTTP_HEADER_BLOCK_BYTES as HTTP_HEADER_BLOCK_BYTES,
+  WARC_ARCHIVE_HTTP_HEADER_FIELDS as HTTP_HEADER_FIELDS,
+  WARC_ARCHIVE_HTTP_START_LINE_BYTES as HTTP_START_LINE_BYTES,
   WARC_ARCHIVE_MAX_DIAGNOSTICS,
   WARC_ARCHIVE_MAX_INVALID_VERSIONS,
   type WarcArchive,
   type WarcArchiveArtifact,
+  type WarcDiagnosticCode,
+  type WarcHttpHeader,
+  type WarcHttpMessage,
+  type WarcHttpOmission,
   type WarcRecord,
 } from "./warcArchive.js";
 
@@ -154,97 +160,251 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
   }
 };
 
-interface HttpFacts {
-  readonly status_code: number;
-  readonly reason_phrase: string | null;
-  readonly header_bytes: number;
-}
-
 const isDigit = (byte: number) => byte >= 0x30 && byte <= 0x39;
 const isSpace = (byte: number) => byte === 0x20 || byte === 0x09;
 
+/** RFC 9110 token characters plus the obsolete separators WARC-era captures wrote. */
+const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
+
 /**
- * Decode only the embedded response status line; headers and body stay undecoded.
+ * Read `HTTP/` and a decimal major, optional `.minor`, ending at `limit`.
  *
  * Read positionally rather than with `/^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s+(.*))?$/`:
  * that expression let `\s+` and `(.*)` backtrack over the same spaces, so a
- * status line with a long run of blanks and an invalid reason phrase cost
- * quadratic time — 32,000 spaces took 1.43 s synchronously, blocking the MCP
- * server and cancellation. Every step here advances the cursor.
+ * start line with a long run of blanks cost quadratic time — 32,000 spaces took
+ * 1.43 s synchronously, blocking the MCP server and cancellation. Every step
+ * here advances the cursor.
  */
-/** Read `HTTP/` and a decimal major, optional `.minor`. */
-const readHttpVersion = (payload: Buffer, limit: number): number | null => {
-  const prefix = payload.toString("latin1", 0, Math.min(5, limit));
-  if (prefix !== "HTTP/") return null;
-  let cursor = 5;
-  const skipDigits = () => {
-    const from = cursor;
-    while (cursor < limit && isDigit(payload[cursor] ?? -1)) cursor += 1;
-    return cursor - from;
-  };
-  if (skipDigits() === 0) return null;
-  if (cursor < limit && payload[cursor] === 0x2e) {
-    cursor += 1;
-    if (skipDigits() === 0) return null;
-  }
-  return cursor;
-};
-
-/** Skip mandatory spaces, then read exactly three digits within 100–599. */
-const readHttpStatusCode = (
-  payload: Buffer,
+const readHttpVersion = (
+  line: string,
   from: number,
-  limit: number,
-): { code: number; cursor: number } | null => {
-  let cursor = from;
-  const spacesFrom = cursor;
-  while (cursor < limit && isSpace(payload[cursor] ?? -1)) cursor += 1;
-  if (cursor === spacesFrom) return null;
-  let code = 0;
-  for (let index = 0; index < 3; index += 1) {
-    const byte = payload[cursor + index] ?? -1;
-    if (!isDigit(byte)) return null;
-    code = code * 10 + byte - 0x30;
+): { version: string; cursor: number } | null => {
+  if (line.slice(from, from + 5) !== "HTTP/") return null;
+  let cursor = from + 5;
+  const digitsFrom = cursor;
+  while (cursor < line.length && isDigitChar(line[cursor] ?? "")) cursor += 1;
+  if (cursor === digitsFrom) return null;
+  if (cursor < line.length && line[cursor] === ".") {
+    cursor += 1;
+    const minorFrom = cursor;
+    while (cursor < line.length && isDigitChar(line[cursor] ?? "")) cursor += 1;
+    if (cursor === minorFrom) return null;
   }
-  if (code < 100 || code > 599) return null;
-  cursor += 3;
-  if (cursor < limit && !isSpace(payload[cursor] ?? -1)) return null;
-  return { code, cursor };
+  return { version: line.slice(from + 5, cursor), cursor };
 };
 
-/** A payload that begins `HTTP/` and so promises a status line. */
-const HTTP_PREFIX_BYTES = Buffer.from("HTTP/", "latin1");
-const startsLikeHttpStatusLine = (payload: Buffer): boolean =>
-  payload.length >= HTTP_PREFIX_BYTES.length &&
-  payload.subarray(0, HTTP_PREFIX_BYTES.length).equals(HTTP_PREFIX_BYTES);
+const isDigitChar = (character: string) => character >= "0" && character <= "9";
 
-const readHttpStatus = (payload: Buffer): HttpFacts | null => {
-  const line = findLineEnd(payload, 0);
-  if (line === null) return null;
-  if (line.contentEnd > HTTP_STATUS_LINE_BYTES) return null;
-  const limit = line.contentEnd;
-  const afterVersion = readHttpVersion(payload, limit);
-  if (afterVersion === null) return null;
-  const status = readHttpStatusCode(payload, afterVersion, limit);
-  if (status === null) return null;
-  let reasonFrom = status.cursor;
-  let reasonEnd = limit;
-  while (reasonFrom < reasonEnd && isSpace(payload[reasonFrom] ?? -1))
+/** Skip mandatory whitespace, then read a status code and optional reason phrase. */
+const readHttpStatusLine = (
+  line: string,
+): Pick<
+  WarcHttpMessage,
+  "version" | "status_code" | "reason_phrase"
+> | null => {
+  const version = readHttpVersion(line, 0);
+  if (version === null) return null;
+  let cursor = version.cursor;
+  const spacesFrom = cursor;
+  while (
+    cursor < line.length &&
+    (line[cursor] === " " || line[cursor] === "\t")
+  )
+    cursor += 1;
+  if (cursor === spacesFrom) return null;
+  // RFC 9110 fixed the code at three digits; a capture that wrote fewer is not
+  // a status line this reader should reinterpret as one.
+  const codeText = line.slice(cursor, cursor + 3);
+  if (!/^[0-9]{3}$/.test(codeText)) return null;
+  const statusCode = Number(codeText);
+  if (statusCode < 100 || statusCode > 599) return null;
+  cursor += 3;
+  if (cursor < line.length && line[cursor] !== " " && line[cursor] !== "\t")
+    return null;
+  // Trim the separator runs without a backtracking expression for the same
+  // reason the version reader is positional.
+  let reasonFrom = cursor;
+  while (
+    reasonFrom < line.length &&
+    (line[reasonFrom] === " " || line[reasonFrom] === "\t")
+  )
     reasonFrom += 1;
-  while (reasonEnd > reasonFrom && isSpace(payload[reasonEnd - 1] ?? -1))
+  let reasonEnd = line.length;
+  while (
+    reasonEnd > reasonFrom &&
+    (line[reasonEnd - 1] === " " || line[reasonEnd - 1] === "\t")
+  )
     reasonEnd -= 1;
-  // `findLineEnd` strips one trailing CR, so any CR left in the content is a
-  // bare one that ended the line early; the reader used to keep it inside the
-  // reason phrase and hand out facts for a line that is not well formed.
-  for (let index = reasonFrom; index < reasonEnd; index += 1)
-    if (payload[index] === 0x0d) return null;
+  const reasonPhrase =
+    reasonEnd > reasonFrom ? line.slice(reasonFrom, reasonEnd) : null;
+  // `findLineEnd` strips only the CR of a CRLF, so a CR left inside the line is
+  // a bare one that ended the line early; a capture with one is not a status
+  // line this reader should hand out facts for.
+  if (reasonPhrase !== null && reasonPhrase.includes("\r")) return null;
   return {
-    status_code: status.code,
-    reason_phrase:
-      reasonEnd > reasonFrom
-        ? payload.toString("utf8", reasonFrom, reasonEnd)
-        : null,
-    header_bytes: line.end,
+    version: version.version,
+    status_code: statusCode,
+    reason_phrase: reasonPhrase,
+  };
+};
+
+/** Read a request line: method, request target, and version. */
+const readHttpRequestLine = (
+  line: string,
+): Pick<WarcHttpMessage, "version" | "method" | "request_target"> | null => {
+  const firstSpace = line.indexOf(" ");
+  if (firstSpace <= 0) return null;
+  const method = line.slice(0, firstSpace);
+  if (!TOKEN.test(method)) return null;
+  let targetFrom = firstSpace;
+  while (targetFrom < line.length && line[targetFrom] === " ") targetFrom += 1;
+  const targetEnd = line.indexOf(" ", targetFrom);
+  if (targetEnd === -1) return null;
+  const requestTarget = line.slice(targetFrom, targetEnd);
+  if (requestTarget.length === 0) return null;
+  let versionFrom = targetEnd;
+  while (versionFrom < line.length && line[versionFrom] === " ")
+    versionFrom += 1;
+  const version = readHttpVersion(line, versionFrom);
+  if (version === null) return null;
+  return {
+    version: version.version,
+    method,
+    request_target: requestTarget,
+  };
+};
+
+/** A payload that begins `HTTP/` or an apparent method token and so promises a message. */
+const HTTP_PREFIX = "HTTP/";
+const looksLikeHttpMessage = (payload: Buffer, limit: number): boolean => {
+  const head = payload.toString("latin1", 0, Math.min(limit, 64));
+  if (head.startsWith(HTTP_PREFIX)) return true;
+  const space = head.indexOf(" ");
+  if (space <= 0) return false;
+  return TOKEN.test(head.slice(0, space));
+};
+
+interface HttpRead {
+  readonly message: WarcHttpMessage | null;
+  readonly omission: WarcHttpOmission | null;
+}
+
+/**
+ * One reason each, so a skipped message names what stopped the reader instead of
+ * eight records sharing one generic sentence. `start-line-limit` and
+ * `header-block-limit` are reader allowances, not damage: an intact archive can
+ * hit them, and saying so keeps the diagnostic from sending anyone hunting for
+ * a corrupt file.
+ */
+const HTTP_OMISSION_DIAGNOSTICS: Record<
+  WarcHttpOmission,
+  {
+    readonly code: WarcDiagnosticCode;
+    readonly message: (offset: number, reason: WarcHttpOmission) => string;
+  }
+> = {
+  "start-line-limit": {
+    code: "http-start-line-limit-reached",
+    message: (offset) =>
+      `The HTTP start line at decoded offset ${offset} exceeds ${HTTP_START_LINE_BYTES} bytes; its method, target or status code was not read.`,
+  },
+  "header-block-limit": {
+    code: "http-header-block-limit-reached",
+    message: (offset) =>
+      `The HTTP header block at decoded offset ${offset} exceeds ${HTTP_HEADER_BLOCK_BYTES} bytes, ${HTTP_START_LINE_BYTES} bytes per line or ${HTTP_HEADER_FIELDS} fields; the message was not represented.`,
+  },
+  "malformed-start-line": {
+    code: "http-start-line-invalid",
+    message: (offset) =>
+      `The payload at decoded offset ${offset} begins like an HTTP message but its start line is not a request line or a status line.`,
+  },
+  "unterminated-header-block": {
+    code: "http-header-block-unterminated",
+    message: (offset) =>
+      `The HTTP header block at decoded offset ${offset} ends without the empty line that terminates it.`,
+  },
+};
+
+/**
+ * Decode the embedded HTTP start line and header block. The body is not read:
+ * `body_bytes` states how much of the record's payload follows the block, and
+ * framing headers are reported as written rather than interpreted.
+ *
+ * The start line and every header line are read from one bounded window of the
+ * payload, so a record that declares a gigabyte of body costs the same as one
+ * that declares nothing.
+ */
+const readHttpMessage = (payload: Buffer, recordType: string): HttpRead => {
+  const limit = Math.min(payload.length, HTTP_START_LINE_BYTES);
+  if (recordType !== "request" && recordType !== "response")
+    return { message: null, omission: null };
+  if (!looksLikeHttpMessage(payload, limit))
+    return { message: null, omission: null };
+  const startLine = findLineEnd(payload, 0);
+  if (startLine === null) return { message: null, omission: null };
+  if (startLine.contentEnd > HTTP_START_LINE_BYTES)
+    return { message: null, omission: "start-line-limit" };
+  const startText = payload.toString("latin1", 0, startLine.contentEnd);
+  const parsed =
+    recordType === "response"
+      ? readHttpStatusLine(startText)
+      : readHttpRequestLine(startText);
+  if (parsed === null)
+    return { message: null, omission: "malformed-start-line" };
+  let cursor = startLine.end;
+  const fields: WarcHttpHeader[] = [];
+  const malformed: string[] = [];
+  let headerBytes = startLine.end;
+  let terminated = false;
+  // The block ends at the first empty line. `headerBytes` is measured against
+  // the same window, so an unterminated block is reported rather than guessed.
+  while (cursor < payload.length) {
+    const line = findLineEnd(payload, cursor);
+    if (line === null) break;
+    if (line.contentEnd - cursor > HTTP_START_LINE_BYTES)
+      return { message: null, omission: "header-block-limit" };
+    if (line.contentEnd === cursor) {
+      headerBytes = line.end;
+      terminated = true;
+      break;
+    }
+    if (fields.length + malformed.length >= HTTP_HEADER_FIELDS)
+      return { message: null, omission: "header-block-limit" };
+    if (line.end > HTTP_HEADER_BLOCK_BYTES)
+      return { message: null, omission: "header-block-limit" };
+    const text = payload.toString("utf8", cursor, line.contentEnd);
+    const colon = text.indexOf(":");
+    if (colon <= 0 || !TOKEN.test(text.slice(0, colon))) malformed.push(text);
+    else
+      fields.push({
+        name: text.slice(0, colon),
+        value: text.slice(colon + 1).trim(),
+      });
+    headerBytes = line.end;
+    cursor = line.end;
+  }
+  if (!terminated)
+    return { message: null, omission: "unterminated-header-block" };
+  const framingDeclared = fields.some(
+    (field) =>
+      field.name.toLowerCase() === "content-length" ||
+      field.name.toLowerCase() === "transfer-encoding",
+  );
+  return {
+    omission: null,
+    message: {
+      start_line: startText,
+      version: parsed.version,
+      method: "method" in parsed ? parsed.method : null,
+      request_target: "request_target" in parsed ? parsed.request_target : null,
+      status_code: "status_code" in parsed ? parsed.status_code : null,
+      reason_phrase: "reason_phrase" in parsed ? parsed.reason_phrase : null,
+      headers: fields,
+      malformed_header_lines: malformed,
+      header_bytes: headerBytes,
+      body_bytes: Math.max(payload.length - headerBytes, 0),
+      body_framing_declared: framingDeclared,
+    },
   };
 };
 
@@ -516,13 +676,16 @@ const readOneRecord = (
     payloadBytes,
     payload,
   });
-  // Only a status line that began like HTTP and exceeded the ceiling lost
-  // facts; an ordinary body reads as `http: null` without a diagnostic.
-  if (record.http_status_line_over_ceiling)
+  // An omission is only reported when the payload promised an HTTP message, so
+  // an ordinary body reads as `http: null` without a diagnostic per record.
+  if (record.http_omitted !== null)
     diagnostic(
       ordinal,
-      "http-status-line-limit-reached",
-      `The response payload at decoded offset ${offset} begins an HTTP status line longer than ${HTTP_STATUS_LINE_BYTES} bytes; its status code and reason phrase were not read.`,
+      HTTP_OMISSION_DIAGNOSTICS[record.http_omitted].code,
+      HTTP_OMISSION_DIAGNOSTICS[record.http_omitted].message(
+        offset,
+        record.http_omitted,
+      ),
     );
   return {
     record,
@@ -545,16 +708,11 @@ const buildRecord = (
   const type = block.fields.get("warc-type") ?? "";
   const version = block.version;
   const contentLength = parseNonNegativeInt(block.fields.get("content-length"));
-  const isResponse = type === "response" && payloadBytes > 0;
-  const http = isResponse ? readHttpStatus(payload) : null;
-  // `http: null` alone cannot tell a non-HTTP payload from a status line the
-  // reader skipped at its ceiling; only the latter lost facts, and only it is
-  // reported, so an ordinary body does not carry a diagnostic per record.
-  const statusLineOverCeiling =
-    isResponse &&
-    http === null &&
-    startsLikeHttpStatusLine(payload) &&
-    (findLineEnd(payload, 0)?.contentEnd ?? 0) > HTTP_STATUS_LINE_BYTES;
+  const hasPayload = payloadBytes > 0;
+  const http = hasPayload
+    ? readHttpMessage(payload, type)
+    : { message: null, omission: null };
+
   return {
     record_id: digestOf(
       "warc_record",
@@ -581,8 +739,9 @@ const buildRecord = (
     segment_number: parseNonNegativeInt(
       block.fields.get("warc-segment-number"),
     ),
-    http,
-    http_status_line_over_ceiling: statusLineOverCeiling,
+    http: http.message,
+    http_omitted: http.omission,
+    http_start_line_over_ceiling: http.omission === "start-line-limit",
     malformed_header_lines: [...block.malformed],
   };
 };
@@ -643,7 +802,8 @@ const limitationsFor = (
   status: "complete-within-scope" | "partial",
 ) => {
   const limitations = [
-    "Only record headers are read; record payloads, embedded HTTP headers beyond the response status line, and HTTP bodies are not decoded.",
+    "Embedded HTTP request and response header blocks are decoded; HTTP bodies, chunked or compressed content codings, and trailers are not.",
+    "Record payload bytes outside the HTTP header block are counted but not retained, so no body content reaches the result.",
     "Declared digests are reported as written and are not verified against payload bytes.",
     "Records are not linked to each other by WARC-Record-ID or payload digest.",
     "No target URI is fetched and no archived script, link or resource is executed.",
@@ -699,13 +859,16 @@ export const parseWarcArchive = (
         responses: 0,
         requests: 0,
         revisits: 0,
+        http_messages: 0,
+        http_omitted: 0,
         malformed_headers: 0,
         diagnostics: 1,
       },
       source_coverage: {
-        scope: "record-headers",
+        scope: "record-headers-and-http-headers",
         status: "partial",
-        payloads: "not-decoded",
+        payloads: "header-block-only",
+        http_headers: "decoded",
         http_bodies: "not-decoded",
         digests: "not-verified",
         related_records: "not-linked",
@@ -747,13 +910,19 @@ export const parseWarcArchive = (
       revisits: stream.records.filter(
         (record) => record.record_type === "revisit",
       ).length,
+      http_messages: stream.records.filter((record) => record.http !== null)
+        .length,
+      http_omitted: stream.records.filter(
+        (record) => record.http_omitted !== null,
+      ).length,
       malformed_headers: malformedHeaders,
       diagnostics: stream.diagnostics.length,
     },
     source_coverage: {
-      scope: "record-headers",
+      scope: "record-headers-and-http-headers",
       status,
-      payloads: "not-decoded",
+      payloads: "header-block-only",
+      http_headers: "decoded",
       http_bodies: "not-decoded",
       digests: "not-verified",
       related_records: "not-linked",
