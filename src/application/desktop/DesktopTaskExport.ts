@@ -1,5 +1,6 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  isPointerCheck,
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
@@ -147,8 +148,7 @@ const targetProblem = (
     if (named !== undefined)
       return `names ${named}, the capture host's name or user, which the export removes from the seed`;
   }
-  if (check.kind !== "value_equals" && check.kind !== "value_absent")
-    return undefined;
+  if (!isPointerCheck(check)) return undefined;
   return [views.seed, views.end].some(
     (at) => at.get(check.file)?.format === "text",
   )

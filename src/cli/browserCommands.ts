@@ -26,6 +26,7 @@ import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
 import { cliDomainInput } from "./domainInput.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
   browserPageInspectionOptions,
@@ -177,12 +178,16 @@ const registerBundleAnalysis = (
         .boolean()
         .default(false)
         .describe("Fetch source maps referenced by captured scripts"),
-      maxHeapMb: analyzeWebBundleInputSchema.shape.max_heap_mb,
-      analysisTimeoutMs: analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
-      totalAnalysisTimeoutMs:
+      maxHeapMb: cliDecimalField(analyzeWebBundleInputSchema.shape.max_heap_mb),
+      analysisTimeoutMs: cliDecimalField(
+        analyzeWebBundleInputSchema.shape.analysis_timeout_ms,
+      ),
+      totalAnalysisTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.total_analysis_timeout_ms,
-      sourceMapFetchTimeoutMs:
+      ),
+      sourceMapFetchTimeoutMs: cliDecimalField(
         analyzeWebBundleInputSchema.shape.source_map_fetch_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

@@ -35,6 +35,7 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
 import type { Logger } from "pino";
 import { cliDomainInput } from "./domainInput.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -66,12 +67,9 @@ const registerWebMcp = (
     }),
     options: z.object({
       ...browserScopeOptions,
-      observationMs: z
-        .number()
-        .int()
-        .min(0)
-        .default(100)
-        .describe("Observation duration in milliseconds"),
+      observationMs: cliDecimalField(
+        discoverWebMcpToolsInputSchema.shape.observation_ms,
+      ).describe("Observation duration in milliseconds"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -234,13 +232,9 @@ const registerScreenshotDiff = (
         .describe("Later screenshot artifact JSON or JSON file path"),
     }),
     options: z.object({
-      channelThreshold: z
-        .number()
-        .int()
-        .min(0)
-        .max(255)
-        .default(0)
-        .describe("Per-channel difference threshold for changed pixels"),
+      channelThreshold: cliDecimalField(
+        compareWebScreenshotsInputSchema.shape.channel_threshold,
+      ).describe("Per-channel difference threshold for changed pixels"),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, "compare-web-screenshots", async () => {
