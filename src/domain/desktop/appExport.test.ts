@@ -522,4 +522,28 @@ describe("capturedHomePath outside the home", () => {
       "Documents/books.db-journal",
     );
   });
+
+  it("keeps a database's own name for its log when a parent folder moves", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/.config/app`, physical: `${home}/settings` },
+          {
+            path: `${home}/settings/book.db`,
+            physical: `${home}/settings/book.db`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/book.db`)).toBe("settings/book.db");
+    expect(path(`${home}/settings/book.db-wal`)).toBe("settings/book.db-wal");
+    expect(path(`${home}/settings/book.db-journal`)).toBe(
+      "settings/book.db-journal",
+    );
+    expect(path(`${home}/settings/other.txt`)).toBe(".config/app/other.txt");
+  });
 });

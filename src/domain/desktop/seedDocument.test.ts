@@ -218,6 +218,35 @@ describe("openSeedDocument settings spelling", () => {
     });
   });
 
+  it("leaves a command wrapper and an encoding option unchanged when the folder moves", () => {
+    expect(
+      openSeedDocument(
+        ["env", "GDK_BACKEND=x11", "geany", "--encoding=UTF-8", "report.md"],
+        {
+          ...AT_HOME,
+          workingDirectory: `${HOME}/work`,
+          launchDirectory: `${HOME}/.config/vendor`,
+          exec: "geany %f",
+          documents: [".config/vendor/report.md"],
+          isDocument: (path) => path === ".config/vendor/report.md",
+          spell: (path) =>
+            path === "work" || path.startsWith("work/")
+              ? `.config/vendor${path.slice("work".length)}`
+              : path,
+        },
+      ),
+    ).toEqual({
+      argv: [
+        "env",
+        "GDK_BACKEND=x11",
+        "geany",
+        "--encoding=UTF-8",
+        `${HOME}/.config/vendor/report.md`,
+      ],
+      opens: { kind: "captured" },
+    });
+  });
+
   it("resolves a relative note in the captured directory when that directory moves", () => {
     expect(
       openSeedDocument(["editor", "note.txt"], {
