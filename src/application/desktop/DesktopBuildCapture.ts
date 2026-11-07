@@ -393,6 +393,9 @@ export class DesktopBuildCapture {
     signal: AbortSignal,
   ): Promise<Result<ExportedBuild, AnalysisError>> {
     const run = this.#run;
+    const ends = input.tasks.map(
+      ({ end_checkpoint: end }) => end ?? END_CHECKPOINT,
+    );
     if (
       run?.stopped === undefined ||
       !run.checkpoints.has(SEED_CHECKPOINT) ||
@@ -403,6 +406,15 @@ export class DesktopBuildCapture {
           EXPORT,
           `Export needs a stopped capture with ${SEED_CHECKPOINT} and ${END_CHECKPOINT} checkpoints; capture with start_build_capture, mark both and stop it.`,
           "Capture with start_build_capture, mark seed and end, then call stop_build_capture.",
+        ),
+      );
+    const untaken = ends.filter((end) => !run.checkpoints.has(end));
+    if (untaken.length > 0)
+      return err(
+        refused(
+          EXPORT,
+          `The capture took no checkpoint named ${untaken.join(" or ")}; its checkpoints are ${[...run.checkpoints].join(", ")}.`,
+          "Give each task the end checkpoint marked once its change was saved.",
         ),
       );
     run.exports += 1;

@@ -807,9 +807,7 @@ It refuses a task whose every check passes on the seed, and a check that fails
 on the end state, with that check's reason. Only a failure on what the seed's
 view shows counts: a task whose checks fail on the seed only because a view
 could not be read or may have left out what they look for, such as a line past
-the 5,000 a text view keeps, is refused, naming each failure. A capture yields
-one task, so the option is taken once. The result's `task` names the task, its
-number of checks and those that fail on what the seed shows. A refused task
+the 5,000 a text view keeps, is refused, naming each failure. A refused task
 writes no bundle.
 
 The bundle then holds, besides the app and `tasks/smoke.json`:
@@ -818,7 +816,7 @@ The bundle then holds, besides the app and `tasks/smoke.json`:
 | ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------- |
 | `tasks/<name>.json`                | Deploy the app, deploy the agent and its skills, record the screen, prompt the agent, run the verifier, stop recording |
 | `artifacts/<name>-check/verify.py` | Reads the app's `data/get` through the computer and evaluates the checks, one result per check                         |
-| `evals/<env>.toml`                 | The task, so a run of the bundle runs it; the smoke task runs with `--task smoke`                                      |
+| `evals/<env>.toml`                 | Every task, so a run of the bundle runs them all; the smoke task runs with `--task smoke`                              |
 
 The verifier finds the app among the computer's child environments, calls its
 `data/get` under the run's grant of the computer's control token, and reads
@@ -826,8 +824,35 @@ the `state` data part. It reads again until the app's files settle, as
 [grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved)
 describes, and each result's `settled` says whether they did, and `read_cut`
 whether the bound cut a read still running. It raises when the app cannot be reached, so the run
-fails rather than scoring the agent. The README lists the task, its prompt, its
+fails rather than scoring the agent. The README lists each task, its prompt, its
 checks and the recipe below.
+
+### Several tasks
+
+One capture can yield several tasks: repeat `--task`, one file per task, each
+with its own name. Do each task's change on top of the last one in the same
+capture and take a checkpoint once it is saved; the first task's end is the
+end checkpoint, and `--task-end NAME=CHECKPOINT`, repeatable, names another
+task's. Each task is checked at its own end, so a task whose check fails there
+is refused, naming the task and the checkpoint, even when it passes at the
+last one; its checks should not read what a later task changes. A checkpoint
+named `near-NAME`, when the capture took one, is that task's near miss: a
+plausible wrong edit on top of its change, such as a typo. The export refuses
+the task unless one of its checks fails on what the near miss's views show.
+
+```sh
+rea export-desktop-application ./notes-capture ./notes-bundle \
+  --seed-checkpoint seed --end-checkpoint end \
+  --task add-eggs.json --task add-bread.json --task-end add-bread=end-add-bread
+```
+
+Two tasks of one name, a `--task-end` naming none of the tasks or not in
+`NAME=CHECKPOINT` form, and a checkpoint the capture did not take once at or
+after the seed are refused. The result's `tasks` lists each task: its name,
+its number of checks, its end checkpoint, those that fail on what the seed
+shows, and its near miss's checkpoint, or null, with those that fail there.
+`describe-desktop-application-task` drafts a later task from the end before
+it: `--seed-checkpoint end --end-checkpoint end-add-bread`.
 
 ## Solve rate
 

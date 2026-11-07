@@ -197,7 +197,7 @@ describe("documents saved gzip-compressed", () => {
     expect(result.normalized_result).toMatchObject({
       scrubbed_files: [SEED],
       unscrubbed_files: [],
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
     });
     const shipped = await readFile(join(directory, SEED));
     expect([...shipped.subarray(0, 4)]).toEqual([0x1f, 0x8b, 8, 0]);
@@ -294,7 +294,7 @@ describe("documents saved gzip-compressed", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["rent"] },
+      tasks: [{ failing_on_seed: ["rent"] }],
     });
     const shipped = await readFile(join(directory, SEED));
     expect(openStateDocument(BUDGET, shipped)).toMatchObject({

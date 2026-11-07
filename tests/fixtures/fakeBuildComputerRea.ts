@@ -119,8 +119,9 @@ elif command == "describe-desktop-application-task":
     with open(output(args[0], "DRAFT")) as handle:
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
-    with open(option(args, "--task")) as handle:
-        note("tasks.jsonl", json.load(handle))
+    for path in options(args, "--task"):
+        with open(path) as handle:
+            note("tasks.jsonl", json.load(handle))
     with open(output(args[0], "EXPORT")) as handle:
         printed = handle.read()
     if "code" not in json.loads(printed):

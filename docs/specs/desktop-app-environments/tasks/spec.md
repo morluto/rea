@@ -2,7 +2,8 @@
 
 ## Outcome
 
-Each capture yields one agentenv task in its exported bundle. An agent writes
+Each capture yields one agentenv task in its exported bundle, or several,
+as [several tasks](../several-tasks/spec.md) describes. An agent writes
 the task's prompt and declarative checks from the change the capture
 recorded; REA validates the task against the capture and keeps it only if its
 checks fail on the seed and pass on the captured end state. The bundle runs
@@ -69,7 +70,8 @@ never runs code the agent wrote.
 - `export-desktop-application --task FILE` evaluates the checks on the state
   view's first versions (the seed) and last versions (the end), refuses a
   task whose every check passes on the seed and a check that fails at the end,
-  and refuses more than one task file. It writes `tasks/NAME.json` (deploy_env,
+  and, before [several tasks](../several-tasks/spec.md), refused more than
+  one task file. It writes `tasks/NAME.json` (deploy_env,
   deploy_agent, add_skills, start_computer_recording, prompt_agent,
   env_outcome_verifier, end_computer_recording),
   `artifacts/NAME-check/verify.py` and `evals/ENV.toml` naming the task, and a
@@ -89,4 +91,3 @@ never runs code the agent wrote.
   outside the owned paths.
 - No timestamp detection beyond ISO 8601 and `asctime` date-times; other volatile values
   are left to the author.
-- No more than one task per capture.

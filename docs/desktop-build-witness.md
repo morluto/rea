@@ -7,13 +7,13 @@ it writes, and then witnesses the task in a fresh computer of that bundle.
 REA runs its own capture, task draft and export inside the build computer and
 grades the witness with the same checks the exported verifier runs.
 
-| Tool                       | What it does                                                                                |
-| -------------------------- | ------------------------------------------------------------------------------------------- |
-| `start_build_capture`      | Downloads the package lists as the computer's user and launches the app under REA's capture |
-| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's counts and the files that changed        |
-| `stop_build_capture`       | Stops the capture and returns its checkpoints and the task draft between `seed` and `end`   |
-| `export_build_environment` | Exports the bundle with the agent's task inside the computer and copies it to a folder here |
-| `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness  |
+| Tool                       | What it does                                                                                                             |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------ |
+| `start_build_capture`      | Downloads the package lists as the computer's user and launches the app under REA's capture                              |
+| `mark_build_checkpoint`    | Takes a named checkpoint and returns the capture's counts and the files that changed                                     |
+| `stop_build_capture`       | Stops the capture and returns its checkpoints and the task drafts, from `seed` to `end` and on to each `end-<task name>` |
+| `export_build_environment` | Exports the bundle with the agent's tasks inside the computer and copies it to a folder here                             |
+| `check_build_task`         | Grades a task against the app's live state; with a `stage`, files the check in the witness                               |
 
 Like the computer tools, these are MCP-only and act on a `computer_id` from
 `start_build_computer`.
@@ -104,12 +104,19 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    environment nor package), and checks
    that hold after the change and not on the seed, from the suggestions,
    `values` and any `guards` worth keeping.
-7. `export_build_environment` with the task and a new or empty `directory`.
+7. `export_build_environment` with the tasks and a new or empty `directory`.
+   Each task is `{"task", "end_checkpoint"}`, its end `end` by default; a
+   later task's change made on top of the last, and marked `end-<task name>`,
+   is checked there, and `stop_build_capture`'s `later_drafts` drafts it from
+   the end before it. A checkpoint `near-<task name>` taken after a near miss
+   of that task's change must fail one of its checks. An end the capture did
+   not take is refused before anything runs.
    The export runs inside the computer with `--seed-checkpoint seed
-   --end-checkpoint end`, so it seeds what was saved at `seed`, scrubs the
+   --end-checkpoint end` and each task's `--task-end`, so it seeds what was
+   saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. A task larger than 96 KiB as REA passes it to the
-   computer is refused before anything runs. It also passes `--synthetic-seed`, since the agent
+   all pass on the seed. Tasks larger than 96 KiB in all as REA passes them to the
+   computer are refused before anything runs. It also passes `--synthetic-seed`, since the agent
    made the seed for the task, so the README does not call it the user's real
    data. When the seed holds exactly one document and the app's desktop entry
    takes files, the bundle's app opens that document at launch. A file moved
@@ -290,7 +297,10 @@ folder something else wrote into, the witness keeps its stages: check the
 stage that ended it again, with the same task, and REA writes the record
 without checking again. Once it is saved, the same check returns the saved
 record again, so a record saved as its call was cancelled is not lost. A
-computer is witnessed once; witness again from a fresh computer.
+computer is witnessed once; witness again from a fresh computer. A bundle of
+several tasks is witnessed one task per fresh computer: the seed stage
+refuses a task whose steps and verifier differ from the bundle's for that
+task's name, so each task's record shows that task alone from the seed.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)
 for scope and verification.

@@ -202,7 +202,7 @@ describe("exportDesktopApplication with a task's seed", () => {
     );
     if (kept instanceof Error) throw kept;
     expect(kept.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["row"] },
+      tasks: [{ failing_on_seed: ["row"] }],
     });
   });
 
@@ -228,7 +228,7 @@ describe("exportDesktopApplication with a task's seed", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: { checks: 2, failing_on_seed: ["notes"] },
+      tasks: [{ checks: 2, failing_on_seed: ["notes"] }],
     });
   });
 
@@ -279,11 +279,16 @@ describe("exportDesktopApplication with a task", () => {
 
     if (result instanceof Error) throw result;
     expect(result.normalized_result).toMatchObject({
-      task: {
-        name: "note-milk",
-        checks: 3,
-        failing_on_seed: ["milk", "check-2", "check-3"],
-      },
+      tasks: [
+        {
+          name: "note-milk",
+          checks: 3,
+          end_checkpoint: "edited",
+          failing_on_seed: ["milk", "check-2", "check-3"],
+          near_checkpoint: null,
+          failing_on_near: [],
+        },
+      ],
     });
     const steps = JSON.parse(
       await readFile(join(directory, "tasks/note-milk.json"), "utf8"),
@@ -321,8 +326,11 @@ describe("exportDesktopApplication with a task", () => {
 
   it.each([
     [
-      [task([]), task([])],
-      "2 task files were given; a capture yields one task.",
+      [
+        task([{ kind: "lines_present", file: NOTE, lines: ["milk"] }]),
+        task([{ kind: "lines_present", file: NOTE, lines: ["milk"] }]),
+      ],
+      'Two tasks are named "note-milk"',
     ],
     ["{", "is not valid UTF-8 JSON"],
     ["\uFEFF{}", "Save the file as UTF-8 without a byte-order mark"],

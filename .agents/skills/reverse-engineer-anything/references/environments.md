@@ -378,7 +378,8 @@ Write the task as JSON with a `name`, the `prompt` and the `checks`, then run
 the task only when its checks fail on the seed and all pass on the captured
 end state. A refusal names the check: one that fails on the end state does not
 match what the user left; "every check already passes on the seed" means no
-check captures the change.
+check captures the change. For several tasks from one capture, repeat
+`--task` and name each later task's end with `--task-end NAME=CHECKPOINT`.
 
 When the export refuses an application that no apt repository installs, ask
 the user for the `.deb` file they installed it from and capture with

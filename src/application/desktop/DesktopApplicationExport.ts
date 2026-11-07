@@ -67,7 +67,11 @@ import {
 import { withRetainedContent } from "./DesktopRetainedContent.js";
 import { planLaunch, seedModes, seedVersions } from "./DesktopExportLaunch.js";
 import { selectStateEnds } from "./DesktopStateVersions.js";
-import { admitDesktopTask, type AdmittedTask } from "./DesktopTaskExport.js";
+import {
+  admitDesktopTasks,
+  type AdmittedTasks,
+  type TaskSummary,
+} from "./DesktopTaskExport.js";
 
 const OPERATION = "export_desktop_application";
 /** Largest seed file the export copies; the state view reads only 64 MiB. */
@@ -78,15 +82,17 @@ export interface DesktopExportRequest {
   readonly capture: string;
   readonly directory: string;
   readonly name: string | undefined;
-  /** Task files to validate and add; a capture yields at most one. */
+  /** Task files to validate and add, each checked at its own end. */
   readonly tasks: readonly string[];
+  /** `NAME=CHECKPOINT` for each task checked at a checkpoint other than the end checkpoint. */
+  readonly taskEnds?: readonly string[] | undefined;
   /** Where the computer downloads the captured package file from, for an application installed from one. */
   readonly packageUrl?: string | undefined;
   /** Packages installed beside the application, such as a runtime piece a build request named. */
   readonly extraPackages?: readonly string[] | undefined;
   /** The checkpoint the seed is taken at; the baseline when omitted. */
   readonly seedCheckpoint?: string | undefined;
-  /** The checkpoint a task's end state is read at; the last when omitted. */
+  /** The checkpoint a task's end state is read at unless it names its own; the last when omitted. */
   readonly endCheckpoint?: string | undefined;
   /** The seed was made for the task, as in a build computer, rather than taken from the user's own data. */
   readonly syntheticSeed?: boolean | undefined;
@@ -110,7 +116,7 @@ export interface DesktopExportResult {
   readonly dconf_groups: number;
   readonly files: readonly string[];
   readonly limitations: readonly string[];
-  readonly task: AdmittedTask["summary"] | null;
+  readonly tasks: readonly TaskSummary[];
 }
 
 const isRecord = (
@@ -275,7 +281,7 @@ const SCRUB_LIMITATION =
 /** The bundle's generated files, the class module flagged when its dconf keys hold the identity, and its README, made once the seeds' scrub is known. */
 const bundleText = (
   plan: DesktopAppExportPlan,
-  admitted: AdmittedTask | undefined,
+  admitted: AdmittedTasks | undefined,
   dconfHoldsIdentity: boolean,
 ) => {
   const environment = `envs/${plan.name}`;
@@ -409,9 +415,9 @@ const runExport = async (
           (content) => shippedSeedViews(content, copies, identity, signal),
           SEED_MAX_BYTES,
         );
-  const admitted = await admitDesktopTask(
-    request.tasks,
-    { ...plan, files, identity, ends, seedViews },
+  const admitted = await admitDesktopTasks(
+    { paths: request.tasks, ends: request.taskEnds ?? [] },
+    { ...plan, files, identity, ends, checkpoints, seedViews },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);
@@ -463,7 +469,7 @@ const runExport = async (
       ...copies.map((copy) => copy.path),
     ],
     limitations,
-    task: admitted?.summary ?? null,
+    tasks: admitted?.summaries ?? [],
   };
   return { result, captureEvidenceId: evidence.evidence_id, unclosed };
 };
@@ -487,6 +493,7 @@ export const exportDesktopApplication = async (
         capture_evidence_id: captureEvidenceId,
         named: request.name !== undefined,
         tasks: request.tasks.length,
+        task_ends: [...(request.taskEnds ?? [])],
         package_url: request.packageUrl !== undefined,
         extra_packages: [...(request.extraPackages ?? [])],
         seed_checkpoint: request.seedCheckpoint ?? null,

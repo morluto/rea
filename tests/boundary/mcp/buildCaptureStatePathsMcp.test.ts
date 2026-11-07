@@ -84,7 +84,7 @@ const exportTo = async (
     name: "export_build_environment",
     arguments: {
       computer_id: id,
-      task: TASK,
+      tasks: [{ task: TASK }],
       directory: join(await createTestTempDirectory("build-out-"), "notes"),
     },
   });
@@ -107,7 +107,9 @@ it("makes a file named in state_paths the app's document, which the draft covers
     (await exportTo(client, id)).structuredContent,
   );
   expect(exported.seed_files).toContain(DOCUMENT);
-  expect(exported.task).toMatchObject({ name: TASK.name });
+  expect(exported.tasks).toEqual([
+    expect.objectContaining({ name: TASK.name, end_checkpoint: "end" }),
+  ]);
 });
 
 it("says why a draft has no files when the app's document is not recognized, and the export names state_paths", async () => {

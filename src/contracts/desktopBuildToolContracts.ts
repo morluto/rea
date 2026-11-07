@@ -10,9 +10,14 @@ import {
   MAX_BUILD_STATE_PATHS,
   SEED_CHECKPOINT,
 } from "../domain/desktop/buildCapture.js";
-import { draftNoteSchema } from "../domain/desktop/appTaskDraftNotes.js";
-import { draftValueSchema } from "../domain/desktop/appTaskDraftValues.js";
 import { WITNESS_STAGES } from "../domain/desktop/buildWitness.js";
+import {
+  draftSchema,
+  EXAMPLE_LATER_TASK,
+  EXAMPLE_TASK,
+  exportedTaskSchema,
+  MAX_BUILD_TASKS,
+} from "./desktopBuildTaskSchemas.js";
 import {
   COMPUTER_ACTIONS,
   computerActionInputSchema,
@@ -22,11 +27,7 @@ import {
   desktopCheckpointSchema,
   MAX_ACKNOWLEDGED_FILES,
 } from "../domain/desktop/desktopCapture.js";
-import {
-  jsonObjectSchema,
-  jsonValueSchema,
-  type JsonValue,
-} from "../domain/jsonValue.js";
+import { jsonObjectSchema } from "../domain/jsonValue.js";
 import { absoluteLocalPathStringSchema } from "../domain/localPath.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
@@ -38,14 +39,6 @@ const driverResult = jsonObjectSchema
     "The driver's structured result, such as frame_id, width and height; null when it returned none.",
   );
 const EXAMPLE_ID = "00000000-0000-4000-8000-000000000001";
-const EXAMPLE_TASK: Readonly<Record<string, JsonValue>> = {
-  name: "add-eggs",
-  prompt:
-    "In Mousepad, add eggs to the shopping list in Documents/todo.txt and save it.",
-  checks: [
-    { kind: "lines_present", file: "Documents/todo.txt", lines: ["eggs"] },
-  ],
-};
 const checkResult = z.strictObject({
   id: z.string(),
   passed: z.boolean(),
@@ -272,7 +265,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "mark_build_checkpoint",
     ...toolContractMetadata("mark_build_checkpoint"),
     kind: "application",
-    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those a window title named first, then those under state_paths and those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused.`,
+    description: `Take a named checkpoint of the app's state in the capture under way and wait for the capture to acknowledge it, with its counts (entries walked, paths changed since the checkpoint before, files retained) and up to ${String(MAX_ACKNOWLEDGED_FILES)} of the files that changed, those a window title named first, then those under state_paths and those the app held open, caches last, so you can see which file a save wrote. Mark ${SEED_CHECKPOINT} once the seed is saved and ${END_CHECKPOINT} once the change is; a name already taken is refused. For several tasks, make each later task's change on top and mark ${END_CHECKPOINT}-<task name> once it is saved; then, for any task, make a near miss of its change, save it and mark near-<task name>, which the export requires to fail one of that task's checks.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       name: buildCheckpointNameSchema,
@@ -314,7 +307,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "stop_build_capture",
     ...toolContractMetadata("stop_build_capture"),
     kind: "application",
-    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed; the changes lie outside the owned paths, listed with their roles; the app saved its change only in dconf, which no check reads; a dconf database changed that REA could not read; or REA recognized no document: capture again with state_paths naming the file, or make a change the app saves in a file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
+    description: `Stop the capture: the app is closed and the capture finishes inside the computer. Returns its checkpoints, the package and sources it found, its limitations and, when ${SEED_CHECKPOINT} and ${END_CHECKPOINT} were marked, the task draft between them, with one draft in later_drafts per later task's ${END_CHECKPOINT}-<task name> checkpoint, from the end checkpoint before it: the files that changed under the paths the bundle owns, each with its net change and, for XML files, archives, JSON and key files, the values it added, changed and removed (before and after, at the pointers a check names them by); suggested checks; and guards, optional checks that the rest stays as it was. Notes say why a draft is empty (nothing changed; the changes lie outside the owned paths, listed with their roles; the app saved its change only in dconf, which no check reads; a dconf database changed that REA could not read; or REA recognized no document: capture again with state_paths naming the file, or make a change the app saves in a file) or why a file's suggestions are thin (only position names the change, it is all view state, its text is too long, or its view is cut or unreadable). Write the task from the draft, its prompt in the user's words, and give it to export_build_environment.`,
     inputSchema: z.strictObject({ computer_id: computerId }),
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -334,43 +327,19 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         sources: strings,
       }),
       limitations: strings,
-      draft: z
-        .strictObject({
-          seed_checkpoint: z.string(),
-          end_checkpoint: z.string(),
-          files: z.array(
-            z.strictObject({
-              file: z.string(),
-              role: z.string(),
-              change: jsonValueSchema,
-              values: z
-                .array(draftValueSchema)
-                .describe(
-                  "The values the change added, changed and removed, ready to copy into a check: what a check can name first, then what only position reaches, then noise; at most 20 entries and 8 KB a file and 24 KB a draft. Only XML files, archives, JSON and key files have values: a text file's or SQLite database's change already lists its lines and rows.",
-                ),
-              values_cut: z
-                .boolean()
-                .describe("Whether a limit left values out."),
-            }),
-          ),
-          task: z.strictObject({
-            name: z.string(),
-            prompt: z.string(),
-            checks: z.array(jsonObjectSchema),
-          }),
-          guards: z
-            .array(jsonObjectSchema)
-            .describe(
-              "Optional checks that the rest keeps its seed value, which the end holds too: a field on like siblings, one that varies among them before a default they all share; the text an addition kept; a text file's lines beside its new one. Add those worth keeping to the task's checks.",
-            ),
-          notes: z
-            .array(draftNoteSchema)
-            .describe(
-              "Why the draft has no files, or why a file's suggested checks are thin; empty when neither.",
-            ),
-        })
-        .nullable(),
+      draft: draftSchema.nullable(),
       draft_refusal: z.string().optional(),
+      later_drafts: z
+        .array(
+          z.strictObject({
+            end_checkpoint: z.string(),
+            draft: draftSchema.nullable(),
+            draft_refusal: z.string().optional(),
+          }),
+        )
+        .describe(
+          `One draft per later task's ${END_CHECKPOINT}-<task name> checkpoint taken after ${END_CHECKPOINT}, from the end checkpoint before it, so it shows only that task's change; empty for one task.`,
+        ),
     }),
     examples: [
       { title: "Stop and draft the task", input: { computer_id: EXAMPLE_ID } },
@@ -380,10 +349,25 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "export_build_environment",
     ...toolContractMetadata("export_build_environment"),
     kind: "application",
-    description: `Export the stopped capture as an agentenv computer app bundle with the given task, inside the computer, seeded at ${SEED_CHECKPOINT} and checked at ${END_CHECKPOINT}, then copy the bundle to a new or empty folder on this host, every file checked against its digest. A task the export refuses, such as a check that already passes on the seed, is an error naming why. Witness the bundle next: start_build_computer from the folder and check_build_task.`,
+    description: `Export the stopped capture as an agentenv computer app bundle with the given tasks, inside the computer, seeded at ${SEED_CHECKPOINT}, each task checked at its own end checkpoint, ${END_CHECKPOINT} by default, and at its near miss near-<task name> when the capture took one, then copy the bundle to a new or empty folder on this host, every file checked against its digest. The bundle's eval lists every task. A task the export refuses, such as a check that already passes on the seed, or a near miss every check passes, is an error naming the task and why, and no bundle is written. Witness each task next, each on a fresh computer: start_build_computer from the folder and check_build_task.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
-      task: desktopTaskSchema,
+      tasks: z
+        .array(
+          z.strictObject({
+            task: desktopTaskSchema,
+            end_checkpoint: buildCheckpointNameSchema
+              .optional()
+              .describe(
+                `The checkpoint marked once this task's change was saved: ${END_CHECKPOINT} by default, ${END_CHECKPOINT}-<task name> for a later task.`,
+              ),
+          }),
+        )
+        .min(1)
+        .max(MAX_BUILD_TASKS)
+        .describe(
+          "The tasks, each with its own name; the first is usually the one checked at end.",
+        ),
       directory: absoluteLocalPathStringSchema.describe(
         "A new or empty folder on this host for the bundle.",
       ),
@@ -399,8 +383,11 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
       environment: z.string(),
       files: z.int().nonnegative(),
       bytes: z.int().nonnegative(),
-      // The export's task summary: its name, checks and those failing on the seed.
-      task: jsonValueSchema,
+      tasks: z
+        .array(exportedTaskSchema)
+        .describe(
+          "Each task the export kept: its checks, its end checkpoint, those failing on the seed and those failing at its near miss.",
+        ),
       seed_files: strings,
       scrubbed_files: strings,
       // gzip seeds compressed again only to clear their headers, their documents as captured.
@@ -413,7 +400,15 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
         title: "Export the bundle with the task",
         input: {
           computer_id: EXAMPLE_ID,
-          task: EXAMPLE_TASK,
+          tasks: [{ task: EXAMPLE_TASK }],
+          directory: "/tmp/mousepad-bundle",
+        },
+      },
+      {
+        title: "Export two tasks, the second checked at its own end",
+        input: {
+          computer_id: EXAMPLE_ID,
+          tasks: [{ task: EXAMPLE_TASK }, EXAMPLE_LATER_TASK],
           directory: "/tmp/mousepad-bundle",
         },
       },

@@ -40,10 +40,16 @@ export interface CapturedInstall {
   readonly extraPackages?: readonly string[];
 }
 
+/** A task the export takes with the checkpoint it is checked at. */
+export interface BuildTaskAtEnd {
+  readonly task: unknown;
+  readonly end_checkpoint: string;
+}
+
 /**
  * What the real CLI writes for a capture made between seed and end, by
- * default `seedEndCapture`: the draft, and the export with BUILD_TASK, which
- * must succeed unless `exportRefused`.
+ * default `seedEndCapture`: the draft, and the export with BUILD_TASK, or
+ * `tasks` each at its end checkpoint, which must succeed unless `exportRefused`.
  */
 const realCliOutputs = async (
   install: CapturedInstall | undefined,
@@ -51,7 +57,12 @@ const realCliOutputs = async (
   {
     exportRefused = false,
     extraContent = [],
-  }: { exportRefused?: boolean; extraContent?: readonly string[] } = {},
+    tasks = [{ task: BUILD_TASK, end_checkpoint: "end" }],
+  }: {
+    exportRefused?: boolean;
+    extraContent?: readonly string[];
+    tasks?: readonly BuildTaskAtEnd[];
+  } = {},
 ) => {
   const capture = await writeCaptureFolder(
     install?.package === undefined
@@ -64,8 +75,13 @@ const realCliOutputs = async (
     [EDITED_NOTE, ...extraContent],
   );
   const work = await createTestTempDirectory("build-cli-");
-  const task = join(work, "task.json");
-  await writeFile(task, JSON.stringify(BUILD_TASK));
+  const taskFiles = await Promise.all(
+    tasks.map(async ({ task }, index) => {
+      const path = join(work, `task-${String(index)}.json`);
+      await writeFile(path, JSON.stringify(task));
+      return path;
+    }),
+  );
   const bundle = join(work, "bundle");
   const draft = await serveCli([
     "describe-desktop-application-task",
@@ -77,8 +93,13 @@ const realCliOutputs = async (
     "export-desktop-application",
     capture,
     bundle,
-    "--task",
-    task,
+    ...taskFiles.flatMap((path) => ["--task", path]),
+    ...(tasks.length === 1
+      ? []
+      : tasks.flatMap(({ task, end_checkpoint }) => [
+          "--task-end",
+          `${(task as { name: string }).name}=${end_checkpoint}`,
+        ])),
     ...ENDS,
     "--synthetic-seed",
     ...(install?.packageUrl === undefined
@@ -113,7 +134,8 @@ const realCliOutputs = async (
  * package, the archive's `notes`, and names the packages the real export
  * installs beside it; `screenshotDelaysMs` delays the computer's
  * screenshots in order. `recorded` replaces what the capture records, with
- * `exportRefused` when its export refuses BUILD_TASK, and `extraContent` the
+ * `exportRefused` when its export refuses BUILD_TASK, or `tasks` in its
+ * place, and `extraContent` the
  * retained bytes it holds beyond the note's; `selected` is what it records
  * when given exactly the `--state-path` of `path`, under the home.
  */
@@ -126,6 +148,7 @@ export const buildCaptureFakes = async (
     readonly recorded?: DesktopApplicationCapture;
     readonly exportRefused?: boolean;
     readonly extraContent?: readonly string[];
+    readonly tasks?: readonly BuildTaskAtEnd[];
     readonly selected?: {
       readonly path: string;
       readonly recorded: DesktopApplicationCapture;
@@ -139,6 +162,7 @@ export const buildCaptureFakes = async (
     ...(options.extraContent === undefined
       ? {}
       : { extraContent: options.extraContent }),
+    ...(options.tasks === undefined ? {} : { tasks: options.tasks }),
   });
   const rea = await fakeBuildComputerRea(outputs);
   const chosen = options.selected;

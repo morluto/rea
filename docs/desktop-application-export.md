@@ -20,8 +20,10 @@ part (`org.xfce.mousepad` gives `mousepad`), or else the whole id without a
 trailing version (`glabels-3.0` gives `glabels`), with an `app-` prefix when
 that name would not be a portable bundle name (for example all digits). The
 output directory must be new or empty. `--task` adds a task an agent wrote for
-the capture, once REA has validated it against the capture; see
-[desktop application tasks](desktop-application-tasks.md). `--package-url`
+the capture, once REA has validated it against the capture; repeat it for
+several tasks, each checked at its own end checkpoint, which
+`--task-end NAME=CHECKPOINT` names; see
+[desktop application tasks](desktop-application-tasks.md#several-tasks). `--package-url`
 says where the computer downloads the package of an application installed from
 a `.deb` file; see [Applications from a .deb file](#applications-from-a-deb-file).
 `--extra-package NAME`, repeatable, installs another Ubuntu 24.04 archive
@@ -65,7 +67,7 @@ Evidence; the bundle itself is complete.
 | `envs/<name>/apt-keys/`          | The signing key of each vendor apt repository the app installs from                                |
 | `envs/<name>/install-package.sh` | With `--package-url`: the run script that installs the downloaded package with dpkg                |
 | `tasks/smoke.json`               | A task that deploys the app                                                                        |
-| `tasks/<task>.json`              | With `--task`: the agent's task, its verifier in `artifacts/` and the eval in `evals/`             |
+| `tasks/<task>.json`              | With `--task`: each of the agent's tasks, its verifier in `artifacts/` and the eval in `evals/`    |
 | `README.md`                      | What was exported, from which capture, and what to keep in mind                                    |
 
 The class file is `<name>_app.py` with hyphens as underscores, for example

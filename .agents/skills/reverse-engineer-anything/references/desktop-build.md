@@ -330,10 +330,22 @@ the first source that has the app:
 4. Only once the seed is saved, `mark_build_checkpoint` with name `seed`.
 5. Make the change the task asks for, as a user would, and save it.
 6. Only once the change is saved, `mark_build_checkpoint` with name `end`.
+   For more tasks in this environment, make each next task's change on top
+   of the last as a user would, save it, and mark `end-<task name>`, such as
+   `end-add-bread`. Each task is checked at its own end, so its checks must
+   not read what a later task changes, and a solving agent starts each from
+   the seed, so a task must not need an earlier one done first.
+   Then, for each task you can, make a near miss of its change on top, a
+   plausible wrong edit such as a typo or a wrong number, save it and mark
+   `near-<task name>`: the export refuses a task whose near miss passes every
+   check. Take the near misses after the last end, since each later draft
+   starts from the end before it.
 7. `stop_build_capture`. Read `draft.files` (each file that changed, with
    its net change and its `values`), `draft.task.checks` (suggested
-   checks), `draft.guards`, `draft.notes` and `limitations`. When `draft`
-   is null, read `draft_refusal` first: a missing `seed` or `end`
+   checks), `draft.guards`, `draft.notes` and `limitations`; each
+   `later_drafts` entry is the same for one later task, from the end
+   checkpoint before its own, so it shows only that task's change. When
+   `draft` is null, read `draft_refusal` first: a missing `seed` or `end`
    checkpoint means capturing again on a new build computer, while a failed
    draft command names its own cause to fix. When `draft.files` is empty,
    `draft.notes` says why:
@@ -371,7 +383,8 @@ the first source that has the app:
 
 ## Write the task
 
-Write `{"name", "prompt", "checks"}` from the draft and what you did.
+Write `{"name", "prompt", "checks"}` from the draft and what you did, one
+per task, each with its own name.
 
 - `name`: lowercase letters, digits and hyphens, not `smoke`.
 - `prompt`: what the requester wants, in their words and the app's terms,
@@ -469,16 +482,22 @@ The kinds and pointer rules are in
 
 ## Export
 
-`export_build_environment` with `task` and `directory`, the absolute path of
-a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. The
+`export_build_environment` with `tasks` and `directory`, the absolute path of
+a new or empty folder here, such as `<home>/rea-builds/poster/bundle`. Each
+entry of `tasks` is `{"task": ..., "end_checkpoint": ...}`: leave
+`end_checkpoint` out for the task checked at `end`, and give
+`end-<task name>` for each later one. The
 export seeds what was saved at `seed`, replaces the computer's host name,
 `user@host` and home path (a bare user name, such as AbiWord's author
-`user`, stays), and checks the task against `seed` and `end`. It refuses a task
-unless at least one check fails on the seed and every check passes at the
-end, and says why, such as a pointer that names nothing at the end. A
+`user`, stays), and checks each task against `seed`, its own end and its
+`near-<task name>` when you took one. It refuses a task
+unless at least one check fails on the seed, every check passes at its
+end and one fails at its near miss, and says which task and why, such as a
+pointer that names nothing at the end. A
 check that the rest is untouched passes on the seed too, which is fine. On
 a refusal, fix the task and export again, into another folder if that one
-is no longer empty. Keep
+is no longer empty. The bundle's eval lists every task, so a run of the
+bundle runs them all. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
 
@@ -511,8 +530,9 @@ again from it.
 
 ## Witness
 
-Witness in a fresh computer of the bundle, from the prompt, as a solving
-agent would. Do not replay the build's actions or coordinates, and do not
+Witness each task in its own fresh computer of the bundle, from the prompt,
+as a solving agent would; a computer is witnessed once, so the steps below
+repeat for each task, each with its own record folder. Do not replay the build's actions or coordinates, and do not
 check between stages to steer the edit: a solving agent never sees the
 checks. Give every `check_build_task` the task exactly as exported.
 
@@ -556,7 +576,7 @@ result and decide:
 - `after_reset` passed: the reset did not restore the seed. Report it as a
   limitation.
 
-Stop after three witnesses and report what still fails.
+Stop after three witnesses of a task and report what still fails.
 
 ## Solver runs
 
@@ -581,9 +601,9 @@ is left.
 Report:
 
 - the bundle path and the environment name;
-- the task's name and prompt;
+- each task's name, prompt and end checkpoint;
 - each check, and why it proves the edit and fails the near miss;
-- each witness stage with its result, the verdict, and the paths of
+- each task's witness stages with their results, the verdict, and the paths of
   `witness.json` and the recording;
 - the seed's contents: `seed_files` and what each holds;
 - `scrubbed_files` and `unscrubbed_files`; an unscrubbed file still names

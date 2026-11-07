@@ -357,7 +357,7 @@ describe("paragraphs split into runs", () => {
     ]);
     if (whole.result instanceof Error) throw whole.result;
     expect(whole.result.normalized_result).toMatchObject({
-      task: { failing_on_seed: ["check-1", "check-2"] },
+      tasks: [{ failing_on_seed: ["check-1", "check-2"] }],
     });
 
     const first = await exportTask(folder, [

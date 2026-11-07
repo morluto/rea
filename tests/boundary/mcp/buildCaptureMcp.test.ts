@@ -120,7 +120,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     (
       await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory,
       })
     ).structuredContent,
@@ -138,7 +138,7 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     environment: "notes",
     files: (await files(directory)).length,
     seed_files: [".config/notes/settings.ini", "Documents/today.txt"],
-    task: { name: "add-eggs", failing_on_seed: [expect.any(String)] },
+    tasks: [{ name: "add-eggs", failing_on_seed: [expect.any(String)] }],
   });
   expect(await rea.notes("tasks.jsonl")).toEqual([TASK]);
 
@@ -308,7 +308,7 @@ it("refuses a task too large for one command argument before the export runs in 
       name: "export_build_environment",
       arguments: {
         computer_id: id,
-        task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) },
+        tasks: [{ task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) } }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
       },
     }),
@@ -349,7 +349,7 @@ it("refuses capture steps out of order and a capture of a bundle's computer", as
     (
       await call("export_build_environment", {
         computer_id: id,
-        task: TASK,
+        tasks: [{ task: TASK }],
         directory: join(await createTestTempDirectory("build-out-"), "b"),
       })
     ).error.message,
