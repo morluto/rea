@@ -1,0 +1,7 @@
+{
+  "sha256": "dee916cd36d106a2ac12dca8a7cd49865235da5935c988cf61a288796fa6b6d4",
+  "bytes": 2785,
+  "identifiers": 92,
+  "decoder_calls": 26,
+  "provenance": "Generated with javascript-obfuscator 4.2.2 default options from a small authored sample (functions, class, template string); formatted with the repository formatter after generation; no source bundle was committed."
+}
