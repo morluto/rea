@@ -52,7 +52,10 @@ application is already open, or if the window list cannot be read. A launch
 beside a running instance can hand off to it, and that instance's unsaved
 state would be missing from the baseline. It then records the starting state,
 launches the application in its own process group with a run token in its
-environment, and reads commands from stdin, one per line:
+environment, and reads commands from stdin, one per line. The application gets
+REA's environment without the `AGENTENV_*` variables an agent environment sets,
+such as its control token: an app the exported computer launches never has
+them, and an app captured inside a computer must not hold a credential to it.
 
 | Line                                        | Effect                                                      |
 | ------------------------------------------- | ----------------------------------------------------------- |
@@ -64,6 +67,15 @@ An unnamed checkpoint is named `checkpoint-<ms>` after its time in the
 session. A name that repeats an earlier checkpoint, or is one of the capture's
 own names (`baseline`, `stop`, `time-limit`, `exit`), is refused with a
 progress line on stderr; no checkpoint is taken and the session continues.
+
+Name the checkpoints a later step reads by what they mark. The
+[export](desktop-application-export.md) seeds the bundle from the baseline
+unless `--seed-checkpoint` names another, and a
+[task](desktop-application-tasks.md) is checked against the last checkpoint
+unless `--end-checkpoint` names another. So one capture can build a seed and
+then the change: launch the app, create and save the document, send
+`checkpoint seed`, make the edit and save it, send `checkpoint end`, then
+`stop`.
 
 The session also finishes when the launched process has exited and the
 application's processes and windows are all gone in two consecutive samples,
@@ -122,7 +134,13 @@ command makes it private (mode 0700). It holds:
   distinct content.
 
 The Evidence operation is `capture_desktop_application` and its predicate type
-is `rea.desktop-application-capture`. Its result has four parts.
+is `rea.desktop-application-capture`. Its `host` names the platform,
+architecture, display and home directory, and the host's name (`hostname`)
+and the user's (`user`), which captured state can hold, as in a mail
+template's `ada@e81232be457d`; the export removes them from the bundle. A
+capture written before they were recorded has neither, and one is left out
+when the system cannot say, as for a user with no passwd entry. The rest of
+the result has four parts.
 
 **Application.** The desktop entry (id, path, name, `Exec`, icon,
 `StartupWMClass`, categories, MIME types), the launch command and working
@@ -132,7 +150,39 @@ architecture and the apt sources that list the installed version, with the
 origin (`o=`) apt reports for each source in `source_origins`, such as `Ubuntu`
 for the Ubuntu archive and its mirrors or `LP-PPA-<name>` for a PPA; an empty
 source list means the version came from a local `.deb` or the package lists
-are missing, which `package_lists_present` tells apart.
+are missing, which `package_lists_present` tells apart. apt's lists folder,
+and the trusted keys below, are where `apt-config` resolves
+`Dir::State::Lists`, `Dir::Etc::TrustedParts` and `Dir::Etc::Trusted` under
+`Dir`, so an `APT_CONFIG` file that moves them is followed: on a computer
+without lists, an ordinary user can run `apt-get update` with an `APT_CONFIG`
+naming writable `Dir::State::Lists` and `Dir::Cache` folders and capture with
+the same `APT_CONFIG`. Without `apt-config`, or when it fails, they are
+`/var/lib/apt/lists`, `/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`.
+
+The Debian package is the one `dpkg-query -S` names as the owner of the
+desktop entry the capture launched, or else of the executable, since the
+entry's package is what installs the application: LibreOffice Writer's entry
+belongs to `libreoffice-writer`, while the `/usr/bin/libreoffice` it runs
+belongs to `libreoffice-common`, which does not bring Writer with it. When the
+two differ, `executable_package` names the executable's package, which the
+export installs beside the entry's, since the entry's package need not depend
+on it (`vim-common` owns Vim's entry but does not depend on `vim`).
+`executable_package_reason` says why the computer could not install it by
+name, by the rule for library packages below: neither the Ubuntu 24.04 archive
+nor a vendor repository the export declares offers it, or `apt-cache policy`
+did not say. When a package owns the entry but none owns its program, such as
+a `~/.local/bin/<name>` found first on `PATH`, the entry's package is recorded
+without `executable_package`, and `executable_package_reason` says no package
+owns the program, so the export refuses rather than install a package that
+does not bring it. A program link that dpkg does not own counts as owned when
+dpkg owns the file it resolves to, as an alternatives link does. An
+`--executable` launch, or an entry no package owns, such as
+one in `~/.local/share/applications`, records the executable's package. When
+`dpkg-query` does not finish or exits with an error for the executable or the
+entry, the package is `unknown` and the limitations say which path, since a
+failed lookup is not proof that no package owns it. The sources, vendor
+repositories and `--package-file` match below are the recorded package's; the
+library walk still reads the executable.
 
 Each source whose origin is not `Ubuntu` is also recorded in
 `apt_repositories`. `apt-get indextargets` names the sources file entry apt
@@ -148,24 +198,30 @@ and in `apt-get indextargets` and `apt-cache policy` output alike, so entries
 match whether or not apt prints it, and sets `uri_credentials_removed` on a repository whose URI held
 one (a capture written before this was recorded omits the field). The key is
 found by verification, not by name: the candidates are the
-entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in
-`/etc/apt/trusted.gpg.d` and `/etc/apt/trusted.gpg`, and each is checked with
+entry's `signed-by` keyrings, or else every `.gpg` and `.asc` key in apt's trusted
+parts folder and its trusted keyring, and each is checked with
 `gpgv` against the release's `InRelease` (or `Release` with `Release.gpg`)
-beside its index in apt's lists folder. A key counts when gpgv reports a
-valid signature by it and no bad, expired, revoked or unverifiable signature
-by it, whatever gpgv's exit status: a release also signed by a key the host
-lacks makes gpgv fail. Each candidate is copied, an armored key decoded to a
-binary keyring, into a private temporary folder that is removed afterwards; a
-folder REA cannot remove fails the capture with the folder as its cleanup
-resource. The key that verifies is recorded in `signing_key` with its path,
+beside its index in apt's lists folder. A deb822 entry whose `Signed-By` field
+holds the armored key itself, as `add-apt-repository ppa:<owner>/<name>`
+writes it on Ubuntu 24.04, has that key as its only candidate, as apt trusts
+no other for it: REA reads the field's continuation lines as deb822 writes
+them, a `.` line standing for an empty one, from the key block's `BEGIN` line
+to its last `END` line, and records the key's path as the entry's sources
+file. A key counts when gpgv reports a valid signature by it and no bad,
+expired, revoked or unverifiable signature by it, whatever gpgv's exit status:
+a release also signed by a key the host lacks makes gpgv fail. Each candidate
+is copied, an armored key decoded to a binary keyring, into a private
+temporary folder that is removed afterwards; a folder REA cannot remove
+fails the capture with the folder as its cleanup resource. The key that
+verifies is recorded in `signing_key` with its path,
 SHA-256, format (`binary` or `armored`) and primary fingerprint, and its bytes
 are retained under `content/`. A key file holding one key is retained as it
 is; from one holding several, such as a legacy `/etc/apt/trusted.gpg`, only
 the transferable key with the verifying fingerprint is retained, in binary, so
 the bundle trusts no other key. When no candidate verifies, `gpgv` is
-missing, apt holds no signed release, no sources entry matches, the entry's
-`Signed-By` holds the key itself, or the key is larger than
-`--max-file-bytes` or the content budget, `signing_key` is null and
+missing, apt holds no signed release, no sources entry matches, the key the
+entry's `Signed-By` holds does not verify the release, or the key is larger
+than `--max-file-bytes` or the content budget, `signing_key` is null and
 `signing_key_reason` says why. Ubuntu Pro's ESM repositories (origins such as
 `UbuntuESMApps`, host `esm.ubuntu.com`) are not checked: apt reaches them only
 with the host's Ubuntu Pro credentials, which a computer does not have.
@@ -187,7 +243,12 @@ listed, and neither is the application's own package. One batched
 recorded vendor repository with a verified key offers, in any component its
 sources entry lists, since the export declares them all; the rest, such as
 packages from a PPA or a local `.deb`, are listed in
-`uninstallable_library_packages`. Sonames found nowhere are listed in
+`uninstallable_library_packages`. The same query checks `executable_package`.
+Each recorded repository's `supplies` lists the kept packages, and the
+executable's package, that the archive does not offer and its package files
+list, so the export can leave out those only a repository it does not declare
+supplies, such as one whose key the content budget later dropped. Sonames
+found nowhere are listed in
 `missing_libraries`, and libraries no package owns in `unpackaged_libraries`.
 `library_packages_reason` says why the lists are incomplete: the executable is
 not an ELF image (a launcher script, for example), `ldconfig`, `dpkg-query` or
@@ -223,7 +284,10 @@ the fuse sentinel in their binary or a `resources/app.asar` beside it. State
 directories are the XDG config, data, state and cache folders and the
 dot-folder named after the package, the executable, the desktop entry's full
 id and its last part, and the entry's name, with whether each existed at the
-start. Dotfiles in the home named after the application (`.<name>rc`, or
+start. A folder in those places whose name is one of these in another letter
+case joins them, such as GIMP's `~/.config/GIMP` for the `gimp` package; only
+the whole name is compared, so `~/.config/GIMPshop` does not. Dotfiles in the
+home named after the application (`.<name>rc`, or
 `.<name>` followed by `-`, `.` or `_`, for a name of three or more characters)
 that exist at the start join them, since an application may only read such a
 file during the capture. A `flatpak run` launch is named after its application

@@ -18,8 +18,8 @@ export interface AptSourceStanza {
   readonly architectures: readonly string[];
   /** Keyring paths and key fingerprints the entry is signed by. */
   readonly signedBy: readonly string[];
-  /** Whether Signed-By holds a key block rather than paths or fingerprints. */
-  readonly inlineKey: boolean;
+  /** The armored key block Signed-By holds in place of paths or fingerprints; null when it holds none. */
+  readonly inlineKey: string | null;
 }
 
 /** One `deb` entry of an apt sources file for one URI and suite. */
@@ -55,6 +55,22 @@ export const withoutCredentials = (uri: string): string =>
 export const withoutCredentialsIn = (text: string): string =>
   text.replace(/(?<scheme>[a-z][a-z0-9+.-]*:\/\/)[^\s/]*@/giu, "$<scheme>");
 
+/**
+ * The key block a deb822 Signed-By field holds, as apt writes it to a key
+ * file: each line stripped and a `.` line made empty, from its BEGIN line to
+ * its last END line; null when the field holds no key block.
+ */
+const inlineKeyBlock = (value: string): string | null => {
+  if (!value.includes(ARMOR_BEGIN)) return null;
+  const lines = value.split("\n").map((line) => {
+    const stripped = line.trim();
+    return stripped === "." ? "" : stripped;
+  });
+  const begin = Math.max(lines.indexOf(ARMOR_BEGIN), 0);
+  const end = lines.lastIndexOf(ARMOR_END);
+  return `${lines.slice(begin, end < begin ? lines.length : end + 1).join("\n")}\n`;
+};
+
 /** Whether a suite as an entry writes it is a target's release, which apt leaves empty for the flat suite `/`. */
 const isRelease = (suite: string, release: string): boolean =>
   suite === release || (suite === "/" && release === "");
@@ -69,7 +85,7 @@ const stanza = (
   },
 ): AptSourceStanza => {
   const signedBy = fields.options.get("signed-by") ?? "";
-  const inlineKey = signedBy.includes(ARMOR_BEGIN);
+  const inlineKey = inlineKeyBlock(signedBy);
   const uris = fields.uris.map(withoutCredentials);
   return {
     ...at,
@@ -80,7 +96,7 @@ const stanza = (
     suites: fields.suites,
     components: fields.components,
     architectures: listValues(fields.options.get("arch")),
-    signedBy: inlineKey ? [] : listValues(signedBy),
+    signedBy: inlineKey === null ? listValues(signedBy) : [],
     inlineKey,
   };
 };
@@ -290,6 +306,33 @@ export const declaredPackageFiles = (
       .map((target) => target.description),
   );
 };
+
+/** The packages of `supplied` whose declared sources include one of the repository's package files, sorted. */
+export const repositorySupplies = (
+  repository: Pick<AptRepository, "uri" | "suite" | "components">,
+  supplied: ReadonlyMap<string, readonly string[]>,
+  targets: readonly AptIndexTarget[],
+): readonly string[] => {
+  const files = declaredPackageFiles([repository], targets);
+  return [...supplied]
+    .filter(([, sources]) => sources.some((source) => files.has(source)))
+    .map(([name]) => name)
+    .sort();
+};
+
+/** The `NAME='value'` lines `apt-config shell` prints, by name; apt writes a quote in a value as `'\''`. */
+export const parseAptConfigShell = (
+  output: string,
+): ReadonlyMap<string, string> =>
+  new Map(
+    output.split("\n").flatMap((line) => {
+      const match = /^(?<name>[A-Za-z_]\w*)='(?<value>.*)'$/u.exec(line);
+      const { name, value } = match?.groups ?? {};
+      return name === undefined || value === undefined
+        ? []
+        : [[name, value.replaceAll(`'\\''`, "'")] as const];
+    }),
+  );
 
 const QUOTED = new Set('\\|{}[]<>"^~_=!@#$%^&*');
 

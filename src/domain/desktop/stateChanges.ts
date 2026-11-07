@@ -1,5 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopStateFormat } from "./stateFormats.js";
+import { memberLookup, pairMembers } from "./viewPointer.js";
+import { zipLeavesOut } from "./zipView.js";
 
 const MAX_LISTED = 100;
 
@@ -57,54 +59,98 @@ const ownEntry = (value: JsonValue): string => {
   return isRecord(value) ? "{}" : JSON.stringify(value);
 };
 
-/** The member a pointer segment names, the way JSON pointers resolve it. */
-const memberOf = (value: JsonValue, key: string): JsonValue | undefined => {
-  if (Array.isArray(value))
-    return String(Number(key)) === key ? value[Number(key)] : undefined;
-  return isRecord(value) && Object.hasOwn(value, key) ? value[key] : undefined;
+/** How a walk matches array members: by selector rather than position, and whether it notes a missing value's members too. */
+interface WalkOptions {
+  readonly keyed?: boolean;
+  readonly outermost?: boolean;
+}
+
+/** What a walk notes, and how; `older` when it walks the earlier version against the later one. */
+interface Noting extends WalkOptions {
+  readonly missing: Found;
+  readonly changed?: Found;
+  readonly older?: boolean;
+}
+
+/** Each member's key and the other version's member it pairs with, one to one, both walks pairing alike. */
+const keyedMembers = (
+  from: readonly JsonValue[],
+  other: JsonValue | undefined,
+  older: boolean,
+) => {
+  const others = Array.isArray(other) ? other : [];
+  const pairing = older ? pairMembers(others, from) : pairMembers(from, others);
+  const side = older ? pairing.older : pairing.newer;
+  const lookup = memberLookup(other);
+  return side.keys.map((key, index) => {
+    const partner = side.partners[index];
+    // Once the array became another type, a member's counterpart is what its pointer names there.
+    if (!Array.isArray(other)) return { key, counterpart: lookup(key) };
+    return {
+      key,
+      counterpart: partner === undefined ? undefined : others[partner],
+    };
+  });
 };
 
 /**
  * Walk `from` in document order against `other`, noting each value `other`
  * lacks in `missing` and, when given, each whose own entry differs in
- * `changed`. One path is shared, so memory follows depth, not the document.
+ * `changed`. One path is shared, so memory follows depth, not the document;
+ * a keyed walk also holds the member keys of the arrays along it.
  */
 const walk = (
   from: JsonValue,
   other: JsonValue | undefined,
   path: PointerPath,
-  into: { readonly missing: Found; readonly changed?: Found },
+  into: Noting,
 ): void => {
-  if (other === undefined) note(into.missing, path);
-  else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
+  if (other === undefined) {
+    note(into.missing, path);
+    if (into.outermost === true) return;
+  } else if (into.changed !== undefined && ownEntry(from) !== ownEntry(other))
     note(into.changed, path);
-  const visit = (key: string, item: JsonValue) => {
+  const visit = (key: string, item: JsonValue, counterpart?: JsonValue) => {
     const segment = escapePointer(key);
     path.segments.push(segment);
     path.length += segment.length + 1;
-    walk(
-      item,
-      other === undefined ? undefined : memberOf(other, key),
-      path,
-      into,
-    );
+    walk(item, counterpart, path, into);
     path.segments.pop();
     path.length -= segment.length + 1;
   };
-  if (Array.isArray(from))
-    from.forEach((item, index) => visit(String(index), item));
-  else if (isRecord(from))
-    for (const [key, item] of Object.entries(from)) visit(key, item);
+  if (Array.isArray(from) && into.keyed === true) {
+    const members = keyedMembers(from, other, into.older === true);
+    from.forEach((item, index) => {
+      const member = members[index];
+      if (member !== undefined) visit(member.key, item, member.counterpart);
+    });
+  } else if (Array.isArray(from)) {
+    const lookup = memberLookup(other);
+    from.forEach((item, index) =>
+      visit(String(index), item, lookup(String(index))),
+    );
+  } else if (isRecord(from)) {
+    // The keys go to the lookup together, so an array compared with an object is searched once per field set.
+    const lookup = memberLookup(other, Object.keys(from));
+    for (const [key, item] of Object.entries(from))
+      visit(key, item, lookup(key));
+  }
 };
 
-/** Values added, removed and changed between two JSON documents, by JSON pointer. */
+/**
+ * Values added, removed and changed between two JSON documents, by JSON
+ * pointer; keyed, array members are paired one to one by the selectors naming
+ * them, so an inserted member does not shift the ones after it.
+ */
 const compareTrees = (
   before: JsonValue,
   after: JsonValue,
+  options: WalkOptions = {},
 ): DesktopStateDifference => {
   const [added, removed, changed] = [found(), found(), found()];
-  walk(after, before, { segments: [], length: 0 }, { missing: added, changed });
-  walk(before, after, { segments: [], length: 0 }, { missing: removed });
+  const start = () => ({ segments: [], length: 0 });
+  walk(after, before, start(), { ...options, missing: added, changed });
+  walk(before, after, start(), { ...options, missing: removed, older: true });
   return {
     kind: "values",
     added: added.listed,
@@ -199,6 +245,24 @@ const unreadTables = (view: JsonValue): string[] =>
     .filter(([, table]) => isRecord(table) && typeof table.error === "string")
     .map(([name]) => name);
 
+/** A nullable SQLite primary key cannot identify a row on its own. */
+export const sqliteRowIdentity = (
+  columns: readonly JsonValue[],
+  key: readonly JsonValue[],
+  row: readonly JsonValue[],
+): { value: string; keyed: boolean } => {
+  const indexes = key.map((column) => columns.indexOf(column));
+  const keyed =
+    indexes.length > 0 &&
+    indexes.every(
+      (index) => index >= 0 && row[index] !== null && row[index] !== undefined,
+    );
+  return {
+    value: JSON.stringify(keyed ? indexes.map((index) => row[index]) : row),
+    keyed,
+  };
+};
+
 /**
  * `table:key` → row for SQLite views, keyed by primary key when there is one.
  * Tables unread in either version are skipped, so their rows are not misreported.
@@ -212,18 +276,13 @@ const rowEntries = (
     if (skipped.has(name) || !isRecord(table) || !Array.isArray(table.rows))
       continue;
     const columns = Array.isArray(table.columns) ? table.columns : [];
-    const keyColumns = (
-      Array.isArray(table.primary_key) ? table.primary_key : []
-    )
-      .map((column) => columns.indexOf(column))
-      .filter((index) => index >= 0);
+    const keyColumns = Array.isArray(table.primary_key)
+      ? table.primary_key
+      : [];
     const seen = new Map<string, number>();
     for (const row of table.rows) {
       if (!Array.isArray(row)) continue;
-      const identity =
-        keyColumns.length > 0
-          ? JSON.stringify(keyColumns.map((index) => row[index] ?? null))
-          : JSON.stringify(row);
+      const identity = sqliteRowIdentity(columns, keyColumns, row).value;
       // Rows without a key are compared as a multiset of whole rows.
       const occurrence = seen.get(identity) ?? 0;
       seen.set(identity, occurrence + 1);
@@ -257,9 +316,11 @@ export const diffStateViews = (
   const difference = compareViews(format, before, after);
   // Only REA's own readers write coverage flags; JSON and key files are data.
   const flagged = format === "text" || format === "xml" || format === "sqlite";
-  return flagged && (truncatedView(before) || truncatedView(after))
-    ? { ...difference, complete: false }
-    : difference;
+  const partial =
+    format === "zip"
+      ? zipLeavesOut(before) || zipLeavesOut(after)
+      : flagged && (truncatedView(before) || truncatedView(after));
+  return partial ? { ...difference, complete: false } : difference;
 };
 
 const compareViews = (
@@ -273,6 +334,8 @@ const compareViews = (
     case "json":
     case "xml":
       return compareTrees(before, after);
+    case "zip":
+      return compareTrees(before, after, { keyed: true });
     case "keyfile":
     case "dconf":
       return compareMaps("keys", keyEntries(before), keyEntries(after));
@@ -288,3 +351,13 @@ const compareViews = (
       return compareMaps("content", new Map(), new Map());
   }
 };
+
+/**
+ * How two views differ by name-addressed pointer, a member added or removed
+ * whole noted once, without its contents: an archive's entries, or an XML tree.
+ */
+export const diffNamedMembers = (
+  before: JsonValue,
+  after: JsonValue,
+): DesktopStateDifference =>
+  compareTrees(before, after, { keyed: true, outermost: true });
