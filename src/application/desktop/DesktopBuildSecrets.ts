@@ -1,4 +1,7 @@
-import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { ArtifactResourceRetryFailure } from "../../artifacts/ArtifactResourceScope.js";
+import { bindArtifactFileCleanup } from "../../artifacts/ArtifactFileOperation.js";
 import type { BuildSource } from "../../domain/desktop/appBuild.js";
 import {
   AnalysisCancelledError,
@@ -35,21 +38,56 @@ const ACT = "act_on_build_computer";
 export class DesktopBuildSecrets {
   /** Every value each handle named while this server ran, an earlier one still held by the app after the person changed it. */
   readonly #seen = new Map<string, Set<string>>();
+  readonly #resources = new ArtifactResourceScope();
 
   constructor(readonly directory: string) {}
+
+  #cleanupFailure(cause: ArtifactResourceRetryFailure): AnalysisError {
+    const error = new ProviderAdapterError(
+      AGENTENV_PROVIDER,
+      "build_secret_file",
+      {
+        userMessage: "Could not close retained build secret files.",
+        cleanup: {
+          reason: "Secret file close failed.",
+          resources: cause.cleanup?.resources ?? [],
+        },
+      },
+    );
+    bindArtifactFileCleanup(cause, error);
+    return error;
+  }
+
+  async #run<T>(operation: () => Promise<T>): Promise<T> {
+    try {
+      return await this.#resources.run(operation);
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactResourceRetryFailure)
+        throw this.#cleanupFailure(cause);
+      throw cause;
+    }
+  }
 
   /** A handle's value, read afresh from its file, a setting's up to a withheld file's size, even empty; a refusal names the file, never its text. */
   async resolve(
     handle: string,
     use: "typed" | "setting" = "typed",
-  ): Promise<Result<string, string>> {
-    const read = await readBuildSecretFile(
-      this.directory,
-      handle,
-      use === "setting"
-        ? { maxCharacters: MAX_SETTING_CHARACTERS, minCharacters: 0 }
-        : {},
-    );
+  ): Promise<Result<string, string | AnalysisError>> {
+    let read: Result<string, string>;
+    try {
+      read = await this.#run(() =>
+        readBuildSecretFile(this.directory, handle, {
+          ...(use === "setting"
+            ? { maxCharacters: MAX_SETTING_CHARACTERS, minCharacters: 0 }
+            : {}),
+          resources: this.#resources,
+          onCloseFailureValue: (value) => this.#remember(handle, value),
+        }),
+      );
+    } catch (cause: unknown) {
+      if (cause instanceof AnalysisError) return err(cause);
+      throw cause;
+    }
     if (read.ok) this.#remember(handle, read.value);
     return read;
   }
@@ -57,8 +95,20 @@ export class DesktopBuildSecrets {
   /** Keep a withheld file's bytes, in base64, as the secret `handle` names, for a witness to supply. */
   async keep(handle: string, bytes: Buffer): Promise<void> {
     const value = bytes.toString("base64");
-    await writeBuildSecretFile(this.directory, handle, value);
     this.#remember(handle, value);
+    await this.#run(() =>
+      writeBuildSecretFile(this.directory, handle, value, this.#resources),
+    );
+  }
+
+  async close(): Promise<void> {
+    try {
+      await this.#resources.close();
+    } catch (cause: unknown) {
+      if (cause instanceof ArtifactResourceRetryFailure)
+        throw this.#cleanupFailure(cause);
+      throw cause;
+    }
   }
 
   #remember(handle: string, value: string): void {
@@ -87,15 +137,19 @@ export class DesktopBuildSecrets {
   /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(): Promise<KnownSecret[]> {
     const handles = await listBuildSecretHandles(this.directory);
-    const read = await Promise.all(
-      handles.map(async (handle) => ({
+    const read: { handle: string; file: Result<string, string> }[] = [];
+    for (const handle of handles)
+      read.push({
         handle,
-        file: await readBuildSecretFile(this.directory, handle, {
-          searchOnly: true,
-          maxCharacters: MAX_SETTING_CHARACTERS,
-        }),
-      })),
-    );
+        file: await this.#run(() =>
+          readBuildSecretFile(this.directory, handle, {
+            searchOnly: true,
+            maxCharacters: MAX_SETTING_CHARACTERS,
+            resources: this.#resources,
+            onCloseFailureValue: (value) => this.#remember(handle, value),
+          }),
+        ),
+      });
     const known = this.#known();
     const held = new Set(
       known.map(({ handle, value }) => `${handle}\0${value}`),
@@ -167,11 +221,13 @@ export const typeSecret = async (
   if (!value.ok)
     return refusal(
       "refused",
-      new AnalysisInputError(ACT, {
-        userMessage: `REA did not type the secret ${handle}: ${value.error}`,
-        remediationAction: `Ask the person to write the secret, and nothing else, in ${secrets.directory}/${handle} on this host, readable only by them (chmod 600), then type it again. Never ask for the secret itself.`,
-        conformsToInputContract: true,
-      }),
+      value.error instanceof AnalysisError
+        ? value.error
+        : new AnalysisInputError(ACT, {
+            userMessage: `REA did not type the secret ${handle}: ${value.error}`,
+            remediationAction: `Ask the person to write the secret, and nothing else, in ${secrets.directory}/${handle} on this host, readable only by them (chmod 600), then type it again. Never ask for the secret itself.`,
+            conformsToInputContract: true,
+          }),
     );
   let answer: DriverResult;
   try {
@@ -211,12 +267,14 @@ export const settingsEnvironment = async (
     const value = await secrets.resolve(handle, "setting");
     if (!value.ok)
       return err(
-        new AnalysisInputError("start_build_computer", {
-          userMessage: `REA cannot supply ${variable}: ${value.error}`,
-          remediationAction:
-            "Name the handle the export's withheld_files gives, or ask the person to write the value, the file's bytes in base64, in that secret's file.",
-          conformsToInputContract: true,
-        }),
+        value.error instanceof AnalysisError
+          ? value.error
+          : new AnalysisInputError("start_build_computer", {
+              userMessage: `REA cannot supply ${variable}: ${value.error}`,
+              remediationAction:
+                "Name the handle the export's withheld_files gives, or ask the person to write the value, the file's bytes in base64, in that secret's file.",
+              conformsToInputContract: true,
+            }),
       );
     values[variable] = value.value;
   }

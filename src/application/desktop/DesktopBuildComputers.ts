@@ -619,6 +619,18 @@ export class DesktopBuildComputers {
     const failures = results.flatMap((result) =>
       result.ok ? [] : [result.error],
     );
+    try {
+      await this.#secrets.close();
+    } catch (cause: unknown) {
+      failures.push(
+        cause instanceof AnalysisError
+          ? cause
+          : new ProviderAdapterError(AGENTENV_PROVIDER, "close_build_secrets", {
+              cause,
+              userMessage: "Could not close build secret files.",
+            }),
+      );
+    }
     if (failures.length > 0)
       throw new AggregateError(
         failures,

@@ -9,7 +9,14 @@ import {
 } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 
+import {
+  ArtifactFileCleanupFailure,
+  bindArtifactFileCleanup,
+  withArtifactFileHandle,
+} from "../artifacts/ArtifactFileOperation.js";
+import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { homeDirectoryFromEnvironment } from "../config/homeDirectory.js";
+import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import {
   buildSecretHandleSchema,
   MAX_SECRET_CHARACTERS,
@@ -36,6 +43,31 @@ export const buildSecretsDirectory = (
 const errorCode = (cause: unknown): unknown =>
   (cause as { code?: unknown } | null)?.code;
 
+/** Transfer the descriptor lease without retaining secret values in the error. */
+const secretFileCleanupFailure = (
+  path: string,
+  cause: ArtifactFileCleanupFailure,
+  refusal?: string,
+): ProviderAdapterError => {
+  const outcome = cause.fileCleanupFailure.outcome;
+  const code = outcome.kind === "failed" ? errorCode(outcome.cause) : undefined;
+  const operationFailure =
+    outcome.kind !== "failed"
+      ? undefined
+      : typeof code === "string" && /^E[A-Z0-9]{1,15}$/u.test(code)
+        ? `The secret file operation failed (${code}).`
+        : "The secret file operation failed.";
+  const error = new ProviderAdapterError("rea-desktop", "build_secret_file", {
+    userMessage:
+      refusal === undefined && operationFailure === undefined
+        ? `Could not close the secret file ${path}.`
+        : `${refusal ?? operationFailure} The secret file could not be closed.`,
+    cleanup: { reason: "Secret file close failed.", resources: [path] },
+  });
+  bindArtifactFileCleanup(cause, error);
+  return error;
+};
+
 /** Why the folder cannot hold secrets REA reads, or undefined: it must be a real folder, not a link. */
 const folderRefusal = async (
   directory: string,
@@ -61,10 +93,14 @@ export const readBuildSecretFile = async (
     searchOnly = false,
     maxCharacters = MAX_SECRET_CHARACTERS,
     minCharacters,
+    resources,
+    onCloseFailureValue,
   }: {
     readonly searchOnly?: boolean;
     readonly maxCharacters?: number;
     readonly minCharacters?: number;
+    readonly resources?: ArtifactResourceScope;
+    readonly onCloseFailureValue?: (value: string) => void;
   } = {},
 ): Promise<Result<string, string>> => {
   const path = join(directory, handle);
@@ -74,6 +110,7 @@ export const readBuildSecretFile = async (
   if (folder !== undefined)
     return err(`The secret ${handle} has no file: ${folder}.`);
   let file: FileHandle;
+  let result: Result<string, string> | undefined;
   try {
     // No link is followed, and a FIFO in its place cannot hold the open.
     file = await open(
@@ -90,31 +127,61 @@ export const readBuildSecretFile = async (
     );
   }
   try {
-    const stats = await file.stat();
-    if (!stats.isFile()) return err(`${path} is not a regular file.`);
-    if (process.getuid !== undefined && stats.uid !== process.getuid())
-      return err(`${path} belongs to another user.`);
-    if (!searchOnly && (stats.mode & 0o077) !== 0)
-      return err(
-        `${path} can be read by other users; make it readable only by its owner with chmod 600.`,
+    await withArtifactFileHandle(
+      path,
+      file,
+      resources,
+      undefined,
+      async (file) => {
+        const stats = await file.stat();
+        if (!stats.isFile()) {
+          result = err(`${path} is not a regular file.`);
+          return;
+        }
+        if (process.getuid !== undefined && stats.uid !== process.getuid()) {
+          result = err(`${path} belongs to another user.`);
+          return;
+        }
+        if (!searchOnly && (stats.mode & 0o077) !== 0) {
+          result = err(
+            `${path} can be read by other users; make it readable only by its owner with chmod 600.`,
+          );
+          return;
+        }
+        if (stats.size > maxFileBytes(maxCharacters)) {
+          result = err(`${path} is larger than one secret.`);
+          return;
+        }
+        const bytes = await file.readFile();
+        let text: string;
+        try {
+          text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+        } catch {
+          result = err(`${path} is not UTF-8 text.`);
+          return;
+        }
+        const value = text.replace(/\r?\n$/u, "");
+        const refusal = secretValueRefusal(value, maxCharacters, minCharacters);
+        result =
+          refusal === undefined
+            ? ok(value)
+            : err(`The secret in ${path} cannot be typed: ${refusal}.`);
+      },
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure) {
+      if (result?.ok) onCloseFailureValue?.(result.value);
+      throw secretFileCleanupFailure(
+        path,
+        cause,
+        result?.ok === false ? result.error : undefined,
       );
-    if (stats.size > maxFileBytes(maxCharacters))
-      return err(`${path} is larger than one secret.`);
-    const bytes = await file.readFile();
-    let text: string;
-    try {
-      text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
-    } catch {
-      return err(`${path} is not UTF-8 text.`);
     }
-    const value = text.replace(/\r?\n$/u, "");
-    const refusal = secretValueRefusal(value, maxCharacters, minCharacters);
-    return refusal === undefined
-      ? ok(value)
-      : err(`The secret in ${path} cannot be typed: ${refusal}.`);
-  } finally {
-    await file.close();
+    throw cause;
   }
+  if (result === undefined)
+    throw new Error(`Secret file read did not complete: ${path}`);
+  return result;
 };
 
 /** The handles the folder holds files for; none when it is missing or unreadable. */
@@ -133,6 +200,7 @@ export const writeBuildSecretFile = async (
   directory: string,
   handle: string,
   value: string,
+  resources?: ArtifactResourceScope,
 ): Promise<void> => {
   await mkdir(directory, { recursive: true, mode: 0o700 });
   const refusal = await folderRefusal(directory);
@@ -146,10 +214,20 @@ export const writeBuildSecretFile = async (
     0o600,
   );
   try {
-    await file.chmod(0o600);
-    await file.writeFile(value);
-  } finally {
-    await file.close();
+    await withArtifactFileHandle(
+      join(directory, handle),
+      file,
+      resources,
+      undefined,
+      async (file) => {
+        await file.chmod(0o600);
+        await file.writeFile(value);
+      },
+    );
+  } catch (cause: unknown) {
+    if (cause instanceof ArtifactFileCleanupFailure)
+      throw secretFileCleanupFailure(join(directory, handle), cause);
+    throw cause;
   }
   await chmod(directory, 0o700);
 };
