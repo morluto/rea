@@ -430,4 +430,20 @@ describe("capturedHomePath", () => {
     expect(path(`${physical}/app.conf`)).toBe(".config/vendor/app.conf");
     expect(path(`${home}/Documents/note.txt`)).toBe("Documents/note.txt");
   });
+
+  it("maps a database selected through a link together with its write-ahead log", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/.config/app.db`, physical: `${home}/data/app.db` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+    expect(path(`${home}/data/app.db`)).toBe(".config/app.db");
+    expect(path(`${home}/data/app.db-wal`)).toBe(".config/app.db-wal");
+    expect(path(`${home}/data/app.db-journal`)).toBe(".config/app.db-journal");
+  });
 });

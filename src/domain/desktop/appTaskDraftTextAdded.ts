@@ -2,8 +2,8 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 
 /** The shortest added text a check looks for: shorter text is too likely to be found elsewhere. */
 const MIN_ADDED_CHARS = 3;
-/** Guards of the text an addition kept, when the addition split it. */
-const MAX_KEPT_GUARDS = 2;
+/** Guards of the lines an addition kept. Each line stands alone, so an insertion elsewhere still passes. */
+const MAX_KEPT_GUARDS = 8;
 
 /** Whether a character starts or ends a line: none, or a line break. */
 const edge = (character: string | undefined) =>
@@ -70,12 +70,14 @@ export const addedTextChecks = (
     before.includes(added)
   )
     return undefined;
-  const whole = before.trim();
-  const kept = after.includes(whole)
-    ? [whole]
-    : [grown.head.trim(), grown.tail.trim()]
-        .filter((text) => text.length >= MIN_ADDED_CHARS)
-        .slice(0, MAX_KEPT_GUARDS);
+  const kept = [
+    ...new Set(
+      before
+        .split(/\r?\n/u)
+        .map((line) => line.trim())
+        .filter((line) => line.length >= MIN_ADDED_CHARS),
+    ),
+  ].slice(0, MAX_KEPT_GUARDS);
   return {
     check: { kind: "text_contains", file, pointer, value: added },
     guards: kept.map((value) => ({

@@ -108,14 +108,17 @@ const dconfKeysChange = (
   const unread = [baseline, final].find(
     (version) =>
       version.present &&
-      version.sha256 !== null &&
-      (version.view_error !== null || version.format !== "dconf"),
+      (version.sha256 === null ||
+        version.view_error !== null ||
+        version.format !== "dconf"),
   );
   if (unread !== undefined)
     return {
       error:
-        unread.view_error ??
-        `read as ${unread.format ?? "an unknown format"}, not a dconf database`,
+        unread.sha256 === null
+          ? (unread.view_error ?? "content not retained")
+          : (unread.view_error ??
+            `read as ${unread.format ?? "an unknown format"}, not a dconf database`),
     };
   const keys = diffStateViews(
     "dconf",

@@ -281,7 +281,7 @@ describe("draftDesktopApplicationTask notes on dconf", () => {
 });
 
 describe("draftDesktopApplicationTask notes on a dconf database the capture kept no copy of", () => {
-  it("compares the app's dconf keys at the end with none, rather than calling the database unreadable, when the capture kept no copy of it from the start", async () => {
+  it("keeps a dconf database unknown when the capture kept no copy of its starting bytes", async () => {
     /** As the recorder writes it: the first walk keeps no copy of the database, so its change has no starting digest. */
     const unkept = (after: string): DesktopApplicationCapture => {
       const written = change(database, {
@@ -313,13 +313,13 @@ describe("draftDesktopApplicationTask notes on a dconf database the capture kept
       dconfReaders,
     );
 
-    expect(saved.notes.map(({ code }) => code)).toEqual([
-      "uncheckable_changes",
-    ]);
+    expect(saved.notes.map(({ code }) => code)).toEqual(["unreadable_changes"]);
+    expect(saved.notes[0]?.error).toContain("content not retained");
     expect(saved.notes[0]?.files).toEqual([
       { file: ".config/dconf/user", role: "application_state" },
     ]);
-    // The database holds none of the app's keys at the end, so none of them changed.
-    expect(desktop.notes.map(({ code }) => code)).toEqual(["no_change"]);
+    expect(desktop.notes.map(({ code }) => code)).toEqual([
+      "unreadable_changes",
+    ]);
   });
 });
