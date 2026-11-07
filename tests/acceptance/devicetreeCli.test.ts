@@ -6,6 +6,7 @@ import { toolContract } from "../../src/contracts/toolContracts.js";
 import { createEvidence } from "../../src/domain/evidence.js";
 import {
   cells,
+  dtString,
   devicetreeFixture,
 } from "../../src/firmware/devicetree/Devicetree.fixture.js";
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
@@ -265,3 +266,83 @@ for (const [name, build, flags, code] of [
     expect(result.json).toMatchObject({ code });
   });
 }
+
+cliTest(
+  "reports the legacy chosen console through the CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-cli-legacy-console-");
+    const path = join(root, "board.dtb");
+    const value = "serial0:115200n8";
+    await writeFile(
+      path,
+      devicetreeFixture({
+        name: "",
+        children: [
+          {
+            name: "chosen",
+            properties: { "linux,stdout-path": dtString(value) },
+          },
+        ],
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["inspect-devicetree", path, "--json"],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const report = toolContract("inspect_devicetree").outputSchema.parse(
+      result.json,
+    ).normalized_result;
+    if (!("nodes" in report)) throw new Error("Expected complete report");
+    expect(report.summary.stdout_path).toBe(value);
+    expect(report.nodes[1]?.properties[0]).toMatchObject({
+      name: "linux,stdout-path",
+      hex: dtString(value).toString("hex"),
+      derived: { strings: [value], confidence: "derived" },
+    });
+  },
+);
+
+cliTest(
+  "keeps a large malformed console raw through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-dtb-cli-raw-console-");
+    const path = join(root, "board.dtb");
+    const raw = Buffer.alloc(9 * 1024 * 1024, 0x41);
+    const bytes = devicetreeFixture({
+      name: "",
+      children: [{ name: "chosen", properties: { "linux,stdout-path": raw } }],
+    });
+    await writeFile(path, bytes);
+    const result = await cli.run({
+      arguments: [
+        "inspect-devicetree",
+        path,
+        "--max-file-bytes",
+        "16777216",
+        "--json",
+      ],
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const call = await cli.sharedMcpCall!();
+    const response = await call("inspect_devicetree", {
+      path,
+      max_file_bytes: 16777216,
+    });
+    expect(response.isError).not.toBe(true);
+    for (const value of [result.json, response.structuredContent]) {
+      const report =
+        toolContract("inspect_devicetree").outputSchema.parse(
+          value,
+        ).normalized_result;
+      if (!("nodes" in report)) throw new Error("Expected complete report");
+      expect(report.summary.stdout_path).toBeNull();
+      expect(report.nodes[1]?.properties[0]).toMatchObject({
+        bytes: raw.length,
+        hex: raw.subarray(0, 256).toString("hex"),
+        truncated: true,
+        derived: { strings: null },
+      });
+    }
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+  },
+);

@@ -214,10 +214,14 @@ export const parseDevicetree = (
       const raw = bytes.subarray(cursor, cursor + length);
       // Only binding-independent standard strings and single-cell declarations are decoded.
       const stringProperty =
-        ["compatible", "model", "status", "bootargs", "stdout-path"].includes(
-          name,
-        ) || owner.node.path === "/aliases";
-      if (stringProperty) admit(raw.length * 4);
+        [
+          "compatible",
+          "model",
+          "status",
+          "bootargs",
+          "stdout-path",
+          "linux,stdout-path",
+        ].includes(name) || owner.node.path === "/aliases";
       let strings: string[] | null = null;
       if (
         stringProperty &&
@@ -225,6 +229,8 @@ export const parseDevicetree = (
         raw.at(-1) === 0 &&
         raw.subarray(0, -1).every((c) => c === 0 || (c >= 0x20 && c <= 0x7e))
       ) {
+        // Only valid strings allocate a decoded representation.
+        admit(raw.length * 4);
         // Count entries before split allocates its array and individual strings.
         let entries = 0;
         for (const byte of raw) if (byte === 0) entries++;
@@ -233,8 +239,7 @@ export const parseDevicetree = (
           (owner.node.path === "/" && name === "compatible") ||
           (entries === 1 &&
             ((owner.node.path === "/" && name === "model") ||
-              (owner.node.path === "/chosen" &&
-                ["bootargs", "stdout-path"].includes(name)) ||
+              (owner.node.path === "/chosen" && name === "bootargs") ||
               owner.node.path === "/aliases"));
         // Summary values serialize again, including quotes, commas and escapes.
         if (repeatedInSummary) admit(raw.length * 2 + entries * 3 + 2);
@@ -280,6 +285,13 @@ export const parseDevicetree = (
     const s = prop(path, name)?.derived.strings;
     return s?.length === 1 ? (s[0] ?? null) : null;
   };
+  // Selection waits for all properties so source order cannot affect the budget.
+  const stdoutName =
+    prop("/chosen", "stdout-path") === undefined
+      ? "linux,stdout-path"
+      : "stdout-path";
+  const stdoutPath = singleString("/chosen", stdoutName);
+  if (stdoutPath !== null) admit((stdoutPath.length + 1) * 2 + 5);
   const handles = new Map<number, string | null>();
   const limitations = [
     "Raw property previews are limited to 256 bytes; offsets and lengths identify complete values in the hashed artifact.",
@@ -397,7 +409,7 @@ export const parseDevicetree = (
       compatible: prop("/", "compatible")?.derived.strings ?? null,
       model: singleString("/", "model"),
       bootargs: singleString("/chosen", "bootargs"),
-      stdout_path: singleString("/chosen", "stdout-path"),
+      stdout_path: stdoutPath,
       aliases: (byPath.get("/aliases")?.properties ?? []).map((p) => ({
         name: p.name,
         path: singleString("/aliases", p.name),

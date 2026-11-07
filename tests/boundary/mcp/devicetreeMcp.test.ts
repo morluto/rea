@@ -264,3 +264,72 @@ mcpTest("rejects relative paths and unsupported versions", async ({ mcp }) => {
     await session.close();
   }
 });
+
+mcpTest(
+  "retains the legacy console in the MCP report and property view",
+  async ({ mcp }) => {
+    const session = createTestBinarySession(() => {
+      throw new Error("DTB inspection must not start an engine");
+    });
+    const client = await mcp.connect(createDtbServer(session));
+    try {
+      const root = await createTestTempDirectory("rea-dtb-mcp-legacy-console-");
+      const path = join(root, "board.dtb");
+      const value = "serial0:115200n8";
+      await writeFile(
+        path,
+        devicetreeFixture({
+          name: "",
+          children: [
+            {
+              name: "chosen",
+              properties: { "linux,stdout-path": dtString(value) },
+            },
+          ],
+        }),
+      );
+      const response = await client.callTool({
+        name: "inspect_devicetree",
+        arguments: { path },
+      });
+      expect(response.isError, JSON.stringify(response)).not.toBe(true);
+      const evidence = toolContract("inspect_devicetree").outputSchema.parse(
+        response.structuredContent,
+      );
+      const report = evidence.normalized_result;
+      if (!("nodes" in report)) throw new Error("Expected complete report");
+      expect(report.summary.stdout_path).toBe(value);
+      await unlink(path);
+      const page = await client.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: evidence.evidence_id,
+          },
+          view: {
+            kind: "devicetree",
+            collection: "properties",
+            path: "/chosen",
+            offset: 0,
+            limit: 1,
+          },
+        },
+      });
+      expect(page.isError, JSON.stringify(page)).not.toBe(true);
+      expect(page.structuredContent).toMatchObject({
+        normalized_result: {
+          items: [
+            {
+              name: "linux,stdout-path",
+              hex: dtString(value).toString("hex"),
+              derived: { strings: [value] },
+            },
+          ],
+        },
+      });
+    } finally {
+      await session.close();
+    }
+  },
+);

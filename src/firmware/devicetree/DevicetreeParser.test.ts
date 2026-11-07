@@ -7,6 +7,7 @@ import {
 import { DevicetreeLimitFailure, parseDevicetree } from "./DevicetreeParser.js";
 import {
   cells,
+  dtString,
   devicetreeFixture,
   type FixtureNode,
 } from "./Devicetree.fixture.js";
@@ -21,6 +22,56 @@ const parse = (b: Buffer, limits = {}) =>
     inspectDevicetreeInputSchema.parse({ path: "/board.dtb", ...limits }),
   );
 describe("flattened devicetree", () => {
+  it.each([
+    [
+      "legacy only",
+      undefined,
+      dtString("serial0:115200n8"),
+      "serial0:115200n8",
+    ],
+    [
+      "canonical wins",
+      dtString("/serial@2000"),
+      dtString("serial0"),
+      "/serial@2000",
+    ],
+    ["empty canonical wins", dtString(""), dtString("serial0"), ""],
+    [
+      "malformed canonical blocks fallback",
+      Buffer.alloc(0),
+      dtString("serial0"),
+      null,
+    ],
+    [
+      "ambiguous canonical blocks fallback",
+      dtString("a\0b"),
+      dtString("serial0"),
+      null,
+    ],
+    [
+      "unterminated legacy remains unknown",
+      undefined,
+      Buffer.from("serial0"),
+      null,
+    ],
+    ["missing console remains unknown", undefined, undefined, null],
+  ])("derives stdout-path: %s", (_label, canonical, legacy, expected) => {
+    const properties: Record<string, Buffer> = {};
+    if (canonical !== undefined) properties["stdout-path"] = canonical;
+    if (legacy !== undefined) properties["linux,stdout-path"] = legacy;
+    const report = parse(
+      devicetreeFixture({
+        name: "",
+        children: [{ name: "chosen", properties }],
+      }),
+    );
+    expect(report.summary.stdout_path).toBe(expected);
+    if (legacy !== undefined) {
+      expect(
+        report.nodes[1]?.properties.find((p) => p.name === "linux,stdout-path"),
+      ).toMatchObject({ hex: legacy.toString("hex"), bytes: legacy.length });
+    }
+  });
   it.each([16, 17])(
     "decodes v%s with derived facts and unresolved references",
     (version) => {
@@ -315,3 +366,77 @@ it("bounds repeated reference paths before Evidence serialization", () => {
   expect(bytes.length).toBeLessThan(100_000);
   expect(() => parse(bytes)).toThrow("decoded representation");
 });
+
+it.each([true, false])(
+  "does not reserve an unselected legacy console summary (legacy first: %s)",
+  (legacyFirst) => {
+    const legacy = Buffer.alloc(6 * 1024 * 1024, 0x22);
+    legacy[legacy.length - 1] = 0;
+    for (const canonical of [dtString("serial0"), Buffer.alloc(0)]) {
+      const entries: [string, Buffer][] = [
+        ["stdout-path", canonical],
+        ["linux,stdout-path", legacy],
+      ];
+      if (legacyFirst) entries.reverse();
+      const report = parse(
+        devicetreeFixture({
+          name: "",
+          children: [
+            { name: "chosen", properties: Object.fromEntries(entries) },
+          ],
+        }),
+        { max_file_bytes: 16777216 },
+      );
+      expect(report.summary.stdout_path).toBe(
+        canonical.length ? "serial0" : null,
+      );
+      expect(
+        report.nodes[1]?.properties.find((p) => p.name === "linux,stdout-path")
+          ?.derived.strings?.[0]?.length,
+      ).toBe(legacy.length - 1);
+    }
+  },
+);
+
+it.each(["linux,stdout-path", "stdout-path", "bootargs", "compatible"])(
+  "does not charge undecodable %s as retained text",
+  (name) => {
+    for (const terminated of [false, true]) {
+      const raw = Buffer.alloc(9 * 1024 * 1024, 0x41);
+      if (terminated) {
+        raw[0] = 0xff;
+        raw[raw.length - 1] = 0;
+      }
+      const report = parse(
+        devicetreeFixture({
+          name: "",
+          children: [{ name: "chosen", properties: { [name]: raw } }],
+        }),
+        { max_file_bytes: 16777216 },
+      );
+      expect(report.nodes[1]?.properties[0]).toMatchObject({
+        bytes: raw.length,
+        truncated: true,
+        derived: { strings: null },
+      });
+      expect(report.summary.stdout_path).toBeNull();
+    }
+  },
+);
+
+it.each(["stdout-path", "linux,stdout-path"])(
+  "still charges the selected %s summary",
+  (name) => {
+    const raw = Buffer.alloc(6 * 1024 * 1024, 0x22);
+    raw[raw.length - 1] = 0;
+    expect(() =>
+      parse(
+        devicetreeFixture({
+          name: "",
+          children: [{ name: "chosen", properties: { [name]: raw } }],
+        }),
+        { max_file_bytes: 16777216 },
+      ),
+    ).toThrow(new DevicetreeLimitFailure("decoded_bytes"));
+  },
+);
