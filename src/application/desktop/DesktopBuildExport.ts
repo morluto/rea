@@ -4,6 +4,12 @@ import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
+import { counted } from "../../domain/desktop/appExportUnowned.js";
+import {
+  redactSecrets,
+  secretsIn,
+  type KnownSecret,
+} from "../../domain/desktop/buildSecrets.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
@@ -61,6 +67,21 @@ export type ExportedBuild = {
   readonly limitations: string[];
 };
 
+/** The refusal of a bundle whose files hold secrets: each secret's handle and the files, the values in their names redacted. */
+const secretsRefusal = (
+  holding: readonly { readonly path: string; readonly handles: string[] }[],
+  secrets: readonly KnownSecret[],
+  directory: string,
+) => {
+  const handles = [...new Set(holding.flatMap(({ handles: found }) => found))];
+  const found = secrets.filter(({ handle }) => handles.includes(handle));
+  return refused(
+    EXPORT,
+    `The bundle holds the secret ${handles.join(", ")} in ${counted(holding.map(({ path }) => redactSecrets(path, found)))}, so REA wrote none of it to ${directory}: no bundle may hold a secret.`,
+    "Keep the secret out of the seed: delete the file that holds it in the app before marking seed, or capture again on a new build computer without it, then export again.",
+  );
+};
+
 /**
  * Bring the bundle back straight into the caller's new or empty folder, each
  * checked answer written before the next is fetched; a failure leaves no
@@ -69,12 +90,16 @@ export type ExportedBuild = {
 const writeBundle = async (
   computer: ControlledComputer,
   bundle: string,
-  directory: string,
+  {
+    directory,
+    secrets,
+  }: { readonly directory: string; readonly secrets: readonly KnownSecret[] },
   signal: AbortSignal,
 ): Promise<
   Result<{ readonly files: number; readonly bytes: number }, AnalysisError>
 > => {
   let fetched = { files: 0, bytes: 0 };
+  const holding: { path: string; handles: string[] }[] = [];
   const unclosed = await writeOutputTree(
     directory,
     async (tree) => {
@@ -83,6 +108,17 @@ const writeBundle = async (
         bundle,
         {
           file: async (file) => {
+            // A file holding a secret is kept back, and the bundle refused once all are read.
+            const handles = [
+              ...new Set([
+                ...secretsIn(Buffer.from(file.path), secrets),
+                ...secretsIn(file.bytes, secrets),
+              ]),
+            ];
+            if (handles.length > 0) {
+              holding.push({ path: file.path, handles });
+              return;
+            }
             await tree.write(
               file.path,
               Readable.from([file.bytes]),
@@ -93,6 +129,7 @@ const writeBundle = async (
         },
         signal,
       );
+      if (holding.length > 0) throw secretsRefusal(holding, secrets, directory);
     },
     { operation: EXPORT, field: "directory" },
     signal,
@@ -123,6 +160,8 @@ export const exportBuild = async (
     readonly packageUrl?: string;
     /** The packages the request named beside the app, which the bundle installs beside it too. */
     readonly extraPackages: readonly string[];
+    /** The secrets no bundle may hold. */
+    readonly secrets: readonly KnownSecret[];
   },
   request: BuildExportRequest,
   signal: AbortSignal,
@@ -183,7 +222,7 @@ export const exportBuild = async (
     const written = await writeBundle(
       computer,
       bundle,
-      request.directory,
+      { directory: request.directory, secrets: capture.secrets },
       signal,
     );
     if (!written.ok) return written;

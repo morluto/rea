@@ -32,6 +32,7 @@ import {
   type WitnessStage,
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
@@ -197,13 +198,22 @@ export class DesktopBuildWitness {
    */
   readonly #recordingRequest = `rea-witness:${randomUUID()}`;
 
-  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. */
+  readonly #bundle: string | undefined;
+  readonly #redact: (value: JsonValue) => JsonValue;
+
+  /** `bundle` is the folder the computer was started from, if it was; the witness takes only the task it holds. `redact` puts known secrets' handles in place of their values in the record. */
   constructor(
     private readonly computer: WitnessedComputer,
     private readonly actions: ReadonlyActionLog,
     private readonly settle: BuildSettle = SETTLE_TIMING,
-    private readonly bundle?: string,
-  ) {}
+    options: {
+      readonly bundle?: string | undefined;
+      readonly redact?: (value: JsonValue) => JsonValue;
+    } = {},
+  ) {
+    this.#bundle = options.bundle;
+    this.#redact = options.redact ?? ((value) => value);
+  }
 
   async check(
     input: {
@@ -350,7 +360,10 @@ export class DesktopBuildWitness {
       this.computer,
       witness,
       this.actions,
-      signal,
+      {
+        signal,
+        redact: this.#redact,
+      },
     );
     if (!record.ok) return record;
     witness.state = "saved";
@@ -471,9 +484,9 @@ export class DesktopBuildWitness {
         ),
       );
     const differs =
-      this.bundle === undefined
+      this.#bundle === undefined
         ? undefined
-        : await bundleTaskDifference(this.bundle, task, signal);
+        : await bundleTaskDifference(this.#bundle, task, signal);
     if (differs !== undefined)
       return err(
         refused(

@@ -3,11 +3,13 @@ import { z } from "zod";
 import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
+import { buildSecretHandleSchema } from "./buildSecrets.js";
 
 /**
- * Actions on a build computer: each but `reset` is forwarded to the driver
- * as its `computer_<action>` tool; `reset` restores the app's data to its
- * seed with `data/reset`.
+ * Actions on a build computer: each but `reset` and `type_secret` is
+ * forwarded to the driver as its `computer_<action>` tool; `type_secret`
+ * types the value its handle names with `computer_type`, and `reset`
+ * restores the app's data to its seed with `data/reset`.
  */
 export const COMPUTER_ACTIONS = [
   "screenshot",
@@ -15,6 +17,7 @@ export const COMPUTER_ACTIONS = [
   "drag",
   "scroll",
   "type",
+  "type_secret",
   "key",
   "wait",
   "reset",
@@ -45,6 +48,7 @@ const ACTION_FIELDS: Readonly<Record<ComputerAction, readonly string[]>> = {
     ...POINTER,
   ],
   type: ["text", "screenshot"],
+  type_secret: ["secret"],
   key: ["keys", "repeat", "screenshot"],
   wait: ["ms", "screenshot"],
   reset: ["screenshot"],
@@ -112,6 +116,11 @@ export const computerActionInputSchema = z.strictObject({
   direction: z.enum(["up", "down", "left", "right"]).optional(),
   amount: z.int().positive().optional().describe("scroll: notches."),
   text: z.string().optional().describe("type: \\n presses Enter, \\t Tab."),
+  secret: buildSecretHandleSchema
+    .optional()
+    .describe(
+      "type_secret: the handle of a secret, the name of a file the person wrote in REA's build-secrets folder on this host; REA types its value, which no result shows.",
+    ),
   keys: z
     .array(z.string().min(1))
     .min(1)
@@ -183,13 +192,17 @@ export const w3cKeys = (keys: readonly string[]): string[] =>
     ONE_CHARACTER.test(key) ? [key] : key.split(/\+(?!$)/u).map(w3cKey),
   );
 
-/** The tool and arguments for an action, `data/reset` for a reset, or the first field the action does not take. */
+/** The tool and arguments for an action, `data/reset` for a reset, or the first field it does not take or, for a secret's handle, lacks. */
 export const driverCall = (
   action: ComputerAction,
   fields: Readonly<Record<string, JsonValue | undefined>>,
 ): Result<
   { readonly tool: string; readonly arguments: Record<string, JsonValue> },
-  { readonly field: string; readonly accepted: readonly string[] }
+  {
+    readonly field: string;
+    readonly accepted: readonly string[];
+    readonly missing?: true;
+  }
 > => {
   const accepted = ACTION_FIELDS[action];
   const given = Object.entries(fields).flatMap(([name, value]) =>
@@ -197,6 +210,8 @@ export const driverCall = (
   );
   const refused = given.find(([name]) => !accepted.includes(name))?.[0];
   if (refused !== undefined) return err({ field: refused, accepted });
+  if (action === "type_secret" && fields.secret === undefined)
+    return err({ field: "secret", accepted, missing: true });
   const translated = Object.fromEntries(
     given.map(([name, value]) => [
       name,
@@ -206,7 +221,12 @@ export const driverCall = (
     ]),
   );
   return ok({
-    tool: action === "reset" ? "data/reset" : `computer_${action}`,
+    tool:
+      action === "reset"
+        ? "data/reset"
+        : action === "type_secret"
+          ? "computer_type"
+          : `computer_${action}`,
     arguments: translated,
   });
 };

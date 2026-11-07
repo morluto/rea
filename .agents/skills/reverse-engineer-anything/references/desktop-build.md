@@ -48,9 +48,12 @@ Stop, say what you need and wait only for:
 - a licence the app or its installer asks someone to accept: never accept it
   yourself; name it and where to read it, and go on only once the person
   says they accept it;
-- credentials: they may only be typed as handles you never see, and the
-  build tools have none yet, so say the app needs a sign-in and stop. Never
-  ask for a password in chat;
+- credentials: ask the person to write each secret, and nothing else, in a
+  file named after a handle you choose, such as `keepassxc-master`, in
+  `~/.config/rea/build-secrets/` on this host (under `$XDG_CONFIG_HOME` when
+  it is set), readable only by them (`chmod 600`), and wait until they say it
+  is there; then type it with `type_secret` (see Drive the app). Never ask
+  for a password or key in chat, and never read, list or print that folder;
 - a signed-in state in the seed: ask before seeding one;
 - an install this flow cannot do, below.
 
@@ -124,6 +127,14 @@ the first source that has the app:
   close it while capturing; the capture ends when the app exits. When the
   app is closed at any other time, open it from Applications → Other → the
   environment's name.
+- Type a secret with `{"action": "type_secret", "secret": "<handle>"}`,
+  only into a field that masks what is typed: check in a screenshot that it
+  is a password field, which shows dots. A screenshot shows any field that
+  shows its text, such as many licence-key boxes, so never type a secret into
+  one: say the app needs a secret the build cannot type unseen, and stop.
+  `type_secret` takes no `screenshot`; look with a `wait` after it. A refusal
+  names the secret's file and what is wrong with it: tell the person, never
+  the value.
 - Prefer shortcuts and typing to long pointer paths: `key` takes `keys`, an
   array holding one chord's keys, such as
   `{"action": "key", "keys": ["Control", "s"]}`, and `type` turns `\n` into
@@ -478,7 +489,9 @@ unless at least one check fails on the seed and every check passes at the
 end, and says why, such as a pointer that names nothing at the end. A
 check that the rest is untouched passes on the seed too, which is fine. On
 a refusal, fix the task and export again, into another folder if that one
-is no longer empty. Keep
+is no longer empty. A refusal naming a secret's handle means a file of the
+bundle holds that secret, most often an app's sign-in or licence state in
+the seed: do not work around it, but report it and stop. Keep
 `seed_files`, `scrubbed_files`, `unscrubbed_files` and `limitations` for the
 report.
 

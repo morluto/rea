@@ -1,5 +1,6 @@
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { BuildRequest } from "../../domain/desktop/appBuild.js";
+import type { KnownSecret } from "../../domain/desktop/buildSecrets.js";
 import {
   BUILD_PACKAGE_FILE,
   extraPackagesOf,
@@ -131,9 +132,12 @@ export class DesktopBuildCapture {
   /** What the request named beside the app, which the export installs too, so a package file's dependencies outlive an install by name. */
   readonly #extraPackages: readonly string[];
 
+  /** `secrets` lists the secrets no exported bundle may hold. */
   constructor(
     private readonly computer: ControlledComputer,
     request: BuildRequest | undefined,
+    private readonly secrets: () => Promise<readonly KnownSecret[]> = () =>
+      Promise.resolve([]),
   ) {
     this.#entry = request?.desktop_entry;
     this.#packageFile =
@@ -415,6 +419,7 @@ export class DesktopBuildCapture {
           ? {}
           : { packageUrl: this.#packageFile.url }),
         extraPackages: this.#extraPackages,
+        secrets: await this.secrets(),
       },
       input,
       signal,

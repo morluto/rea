@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import { driverCall, w3cKeys } from "./computerActions.js";
+import {
+  computerActionInputSchema,
+  driverCall,
+  w3cKeys,
+} from "./computerActions.js";
 
 describe("computer actions", () => {
   it("translates model key spellings to W3C names and keeps W3C names and characters", () => {
@@ -66,6 +70,39 @@ describe("computer actions", () => {
       ok: false,
       error: { field: "x", accepted: ["text", "screenshot"] },
     });
+  });
+
+  it("types a secret by its handle alone, with no screenshot and no text", () => {
+    expect(driverCall("type_secret", { secret: "keepassxc-master" })).toEqual({
+      ok: true,
+      value: {
+        tool: "computer_type",
+        arguments: { secret: "keepassxc-master" },
+      },
+    });
+    expect(
+      driverCall("type_secret", {
+        secret: "keepassxc-master",
+        screenshot: true,
+      }),
+    ).toEqual({
+      ok: false,
+      error: { field: "screenshot", accepted: ["secret"] },
+    });
+    expect(
+      driverCall("type_secret", { secret: "keepassxc-master", text: "x" }),
+    ).toEqual({ ok: false, error: { field: "text", accepted: ["secret"] } });
+    expect(driverCall("type_secret", {})).toEqual({
+      ok: false,
+      error: { field: "secret", accepted: ["secret"], missing: true },
+    });
+    expect(
+      computerActionInputSchema.safeParse({
+        computer_id: "00000000-0000-4000-8000-000000000001",
+        action: "type_secret",
+        secret: "../passwd",
+      }).success,
+    ).toBe(false);
   });
 
   it("resets the app's data rather than calling a driver tool, taking only a screenshot afterwards", () => {

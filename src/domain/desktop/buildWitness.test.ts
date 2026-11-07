@@ -192,6 +192,20 @@ describe("build witness rules", () => {
 });
 
 describe("build witness edits", () => {
+  it("takes a typed secret as an edit, as typed text is", () => {
+    const seed = [staged("seed", 0)];
+    expect(admit(seed, "after_edit", [action("type_secret")])).toEqual({
+      ok: true,
+      value: 1,
+    });
+    expect(
+      admit(seed, "after_edit", [action("type_secret", "refused")]),
+    ).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("type_secret"),
+    });
+  });
+
   it("never takes a reset as the edit or the near miss", () => {
     const seed = [staged("seed", 0)];
     // An edit made only of a reset, or undone by one, is no edit.

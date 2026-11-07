@@ -205,7 +205,14 @@ export const writeWitnessRecord = async (
   computer: RecordedComputer,
   witness: EndedWitness,
   log: Pick<ReadonlyActionLog, "entries" | "dropped">,
-  signal: AbortSignal,
+  {
+    signal,
+    redact = (value) => value,
+  }: {
+    readonly signal: AbortSignal;
+    /** Puts each known secret's handle in place of its value in what the record holds. */
+    readonly redact?: (value: JsonValue) => JsonValue;
+  },
 ): Promise<Result<WitnessRecord, AnalysisError>> => {
   const actions = log.entries.map(
     ({ truncated_arguments: cut, ...entry }): RecordedAction =>
@@ -218,7 +225,7 @@ export const writeWitnessRecord = async (
     signal,
   );
   const failed = witness.stages.find((stage) => !stage.held);
-  const result = {
+  const recorded = {
     verdict: failed === undefined ? ("held" as const) : ("failed" as const),
     failed_stage: failed?.stage ?? null,
     task: { name: witness.task.name, sha256: witness.digest },
@@ -227,10 +234,14 @@ export const writeWitnessRecord = async (
     actions_dropped: dropped,
     recording,
   };
+  // Redacting keeps every string a string, so the record keeps its shape.
+  const result = redact(
+    recorded as unknown as JsonValue,
+  ) as unknown as typeof recorded;
   const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
     predicateType: "rea.desktop-build-witness",
     operation: CHECK,
-    parameters: { task: witness.task.name, stages: witness.stages.length },
+    parameters: { task: result.task.name, stages: witness.stages.length },
     result: result as unknown as JsonValue,
     confidence: "observed",
     authority: "controlled-replay",
@@ -240,7 +251,7 @@ export const writeWitnessRecord = async (
         ? [`The recording is missing: ${recording.error}`]
         : []),
       ...logLimitations(actions, dropped),
-      ...unsettledLimitation(witness.stages),
+      ...unsettledLimitation(result.stages),
     ],
   });
   const files = [

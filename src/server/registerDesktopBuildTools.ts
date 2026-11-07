@@ -68,7 +68,30 @@ const withHeartbeat = async <Value>(
   }
 };
 
-/** Registration of one build tool: the server, its logger and the tool's contract. */
+/** How results show secrets typed on this server's build computers: by their handles. */
+type Redactor = Pick<DesktopBuildComputers, "redactText" | "redactJson">;
+
+/** A result with each typed secret's value replaced by its handle, in its text and structured content; images pass as they are. */
+const redacted = (
+  result: CallToolResult,
+  redact: Redactor,
+): CallToolResult => ({
+  ...result,
+  content: result.content.map((block) =>
+    block.type === "text"
+      ? { ...block, text: redact.redactText(block.text) }
+      : block,
+  ),
+  ...(result.structuredContent === undefined
+    ? {}
+    : {
+        structuredContent: redact.redactJson(
+          result.structuredContent as JsonValue,
+        ) as Record<string, unknown>,
+      }),
+});
+
+/** Registration of one build tool: the server, its logger, the tool's contract and how its results show typed secrets. */
 interface Registration<Schema extends z.ZodType> {
   readonly server: EvidenceMcpServer;
   readonly logger: Logger;
@@ -76,11 +99,12 @@ interface Registration<Schema extends z.ZodType> {
     readonly name: string;
     readonly inputSchema: Schema;
   };
+  readonly redact: Redactor;
 }
 
 /** Register a tool whose result carries a forwarded driver answer, such as a screenshot, after REA's JSON. */
 const registerForwarded = <Schema extends z.ZodType>(
-  { server, logger, contract }: Registration<Schema>,
+  { server, logger, contract, redact }: Registration<Schema>,
   run: (
     input: z.output<Schema>,
     context: ServerContext,
@@ -91,24 +115,31 @@ const registerForwarded = <Schema extends z.ZodType>(
     applicationToolRegistrationOptions(contract),
     async (raw: unknown, context: ServerContext): Promise<CallToolResult> => {
       const input = admit(contract, raw);
-      if (!input.ok) return server.delivery.toCallToolResult(input, contract);
+      if (!input.ok)
+        return redacted(
+          server.delivery.toCallToolResult(input, contract),
+          redact,
+        );
       const result = await logToolExecution(logger, contract.name, () =>
         run(input.value, context),
       );
-      return result.ok
-        ? server.delivery.toForwardedToolResult(
-            ok(result.value.value),
-            contract,
-            result.value.content,
-          )
-        : server.delivery.toCallToolResult(result, contract);
+      return redacted(
+        result.ok
+          ? server.delivery.toForwardedToolResult(
+              ok(result.value.value),
+              contract,
+              result.value.content,
+            )
+          : server.delivery.toCallToolResult(result, contract),
+        redact,
+      );
     },
   );
 };
 
 /** Register a tool with a plain JSON result. */
 const registerPlain = <Schema extends z.ZodType>(
-  { server, logger, contract }: Registration<Schema>,
+  { server, logger, contract, redact }: Registration<Schema>,
   run: (
     input: z.output<Schema>,
     context: ServerContext,
@@ -119,21 +150,31 @@ const registerPlain = <Schema extends z.ZodType>(
     applicationToolRegistrationOptions(contract),
     async (raw: unknown, context: ServerContext): Promise<CallToolResult> => {
       const input = admit(contract, raw);
-      if (!input.ok) return server.delivery.toCallToolResult(input, contract);
-      return server.delivery.toCallToolResult(
-        await logToolExecution(logger, contract.name, () =>
-          run(input.value, context),
+      if (!input.ok)
+        return redacted(
+          server.delivery.toCallToolResult(input, contract),
+          redact,
+        );
+      return redacted(
+        server.delivery.toCallToolResult(
+          await logToolExecution(logger, contract.name, () =>
+            run(input.value, context),
+          ),
+          contract,
         ),
-        contract,
+        redact,
       );
     },
   );
 };
 
-/** Register the build computer session tools and the build steps on them on the REA MCP server. */
+/** Register the build computer session tools and the build steps on them on the REA MCP server; no result shows a typed secret's value. */
 export const registerDesktopBuildTools = (
   server: EvidenceMcpServer,
-  computers: Pick<DesktopBuildComputers, "start" | "act" | "close" | "steps">,
+  computers: Pick<
+    DesktopBuildComputers,
+    "start" | "act" | "close" | "steps" | "redactText" | "redactJson"
+  >,
   logger: Logger,
 ): void => {
   const tool = <Name extends Parameters<typeof toolContract>[0]>(
@@ -142,6 +183,7 @@ export const registerDesktopBuildTools = (
     server,
     logger,
     contract: toolContract(name),
+    redact: computers,
   });
   const steps = new DesktopBuildSteps(computers);
   registerForwarded(tool("start_build_computer"), (input, context) =>

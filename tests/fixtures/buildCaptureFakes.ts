@@ -115,7 +115,8 @@ const realCliOutputs = async (
  * screenshots in order. `recorded` replaces what the capture records, with
  * `exportRefused` when its export refuses BUILD_TASK, and `extraContent` the
  * retained bytes it holds beyond the note's; `selected` is what it records
- * when given exactly the `--state-path` of `path`, under the home.
+ * when given exactly the `--state-path` of `path`, under the home;
+ * `serverEnv` adds to the REA server's environment.
  */
 export const buildCaptureFakes = async (
   options: {
@@ -130,6 +131,7 @@ export const buildCaptureFakes = async (
       readonly path: string;
       readonly recorded: DesktopApplicationCapture;
     };
+    readonly serverEnv?: Readonly<Record<string, string>>;
   } = {},
 ) => {
   const outputs = await realCliOutputs(options.install, options.recorded, {
@@ -172,6 +174,7 @@ export const buildCaptureFakes = async (
   const client = await connectBuildServer({
     ...runner.environment,
     REA_BUILD_COMPUTER_REA_ARCHIVE: payload,
+    ...options.serverEnv,
   });
   return { rea, outputs, computer, client };
 };

@@ -238,7 +238,7 @@ that fails after it, such as on a failed read of the app's state or a lost
 reply to the recording's start, can be asked again, and asks for the
 recording under the same id, which the computer answers with the recording
 it already began. The stages come in order. The edit and the near miss each
-need an applied click, drag, scroll, type or key since the stage before, with
+need an applied click, drag, scroll, type, typed secret or key since the stage before, with
 no reset after the last of them, since a reset puts the seed back rather than
 changing the app; `after_reset` needs the reset as the last change, and a
 reset that leaves any check unlike on the seed fails the witness, its

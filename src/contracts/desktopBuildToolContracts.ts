@@ -32,6 +32,9 @@ import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 
 const computerId = z.uuid().describe("The id start_build_computer returned.");
+/** Where the person writes a secret's file, as the tools name it. */
+const BUILD_SECRETS_FOLDER =
+  "$XDG_CONFIG_HOME/rea/build-secrets/<handle>, or ~/.config/rea/build-secrets/<handle>";
 const driverResult = jsonObjectSchema
   .nullable()
   .describe(
@@ -181,7 +184,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "act_on_build_computer",
     ...toolContractMetadata("act_on_build_computer"),
     kind: "application",
-    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; a drag's path takes 2 to 50 points; a screenshot with region does not capture the screen again, it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
+    description: `Drive the app on a build computer: one action, ${COMPUTER_ACTIONS.join(", ")}. Each but reset and type_secret is sent to the computer's computer_<action> tool with the fields given, which are the driver's own arguments; type_secret types into the focused field the value of the secret its handle names, a file the person wrote in REA's build-secrets folder on this host (${BUILD_SECRETS_FOLDER}), readable only by them: no result, log or record shows the value, only the handle, so it takes no screenshot, and the field must be one that masks what is typed, since a later screenshot shows the screen; reset restores the app's data to its seed with data/reset, which relaunches the app, and returns once the computer is ready again; a screenshot asked of it that then fails leaves the reset done, its result naming why in screenshot_error. Points are pixels of the latest frame, so take a screenshot first, or space norm on a 0..norm_scale grid; count 2 double-clicks; a drag's path takes 2 to 50 points; a screenshot with region does not capture the screen again, it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first; keys names one chord in W3C names, and spellings such as ctrl+s are translated. Returns the driver's content unchanged, its images included, and its structured result; an action's screenshot is taken at once, so after one that opens a menu or a window, take it with a wait instead; a refusal, such as a stale frame, is an error with the computer's message. Each action is logged on the computer. Actions, capture steps and checks on one computer run one at a time, in the order they arrive; computers run side by side.`,
     inputSchema: computerActionInputSchema,
     outputSchema: z.strictObject({
       computer_id: z.uuid(),
@@ -213,6 +216,14 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
           computer_id: EXAMPLE_ID,
           action: "key",
           keys: ["Control", "s"],
+        },
+      },
+      {
+        title: "Type a password the person put in a secret's file",
+        input: {
+          computer_id: EXAMPLE_ID,
+          action: "type_secret",
+          secret: "keepassxc-master",
         },
       },
     ],
@@ -380,7 +391,7 @@ export const DESKTOP_BUILD_TOOL_CONTRACTS = [
     name: "export_build_environment",
     ...toolContractMetadata("export_build_environment"),
     kind: "application",
-    description: `Export the stopped capture as an agentenv computer app bundle with the given task, inside the computer, seeded at ${SEED_CHECKPOINT} and checked at ${END_CHECKPOINT}, then copy the bundle to a new or empty folder on this host, every file checked against its digest. A task the export refuses, such as a check that already passes on the seed, is an error naming why. Witness the bundle next: start_build_computer from the folder and check_build_task.`,
+    description: `Export the stopped capture as an agentenv computer app bundle with the given task, inside the computer, seeded at ${SEED_CHECKPOINT} and checked at ${END_CHECKPOINT}, then copy the bundle to a new or empty folder on this host, every file checked against its digest. A bundle whose file names or contents hold a secret from REA's build-secrets folder, as it is, in UTF-16, hex, base64, URL encoding or inside a gzip file, is refused and written nowhere, the error naming the secrets' handles and the files. A task the export refuses, such as a check that already passes on the seed, is an error naming why. Witness the bundle next: start_build_computer from the folder and check_build_task.`,
     inputSchema: z.strictObject({
       computer_id: computerId,
       task: desktopTaskSchema,

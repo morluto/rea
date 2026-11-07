@@ -38,6 +38,7 @@ import {
   resolveBuildComputerEnvironment,
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
+import { buildSecretsDirectory } from "../../desktop/BuildSecretFiles.js";
 import type { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
@@ -46,6 +47,7 @@ import {
 } from "./DesktopBuildActionLog.js";
 import { seededLockFiles, writeRequestBundle } from "./DesktopBuildBundle.js";
 import { DesktopBuildCapture } from "./DesktopBuildCapture.js";
+import { DesktopBuildSecrets, typeSecret } from "./DesktopBuildSecrets.js";
 import type { BuildSettle } from "./DesktopBuildSettle.js";
 import { DesktopBuildTurns } from "./DesktopBuildTurns.js";
 import { DesktopBuildWitness } from "./DesktopBuildWitness.js";
@@ -172,14 +174,20 @@ const reset = async (
   };
 };
 
+/** What every computer of one server shares: how checks settle and the secrets typed on them. */
+interface SharedSettings {
+  readonly settle: BuildSettle;
+  readonly secrets: DesktopBuildSecrets;
+}
+
 /** A live computer as REA holds it: its action log, its capture and witness, and the turns all its calls take. */
 const liveComputer = (
   computer: AgentEnvComputer,
   workspace: PrivateRuntimeRoot | undefined,
   source: BuildSource,
-  settle: BuildSettle,
+  { settle, secrets }: SharedSettings,
 ): HeldComputer => {
-  const actions = new BuildComputerActionLog();
+  const actions = new BuildComputerActionLog(secrets.redact);
   const turns = new DesktopBuildTurns();
   return {
     computer,
@@ -191,13 +199,12 @@ const liveComputer = (
       capture: new DesktopBuildCapture(
         computer,
         source.kind === "request" ? source : undefined,
+        () => secrets.all(),
       ),
-      witness: new DesktopBuildWitness(
-        computer,
-        actions,
-        settle,
-        source.kind === "bundle" ? source.path : undefined,
-      ),
+      witness: new DesktopBuildWitness(computer, actions, settle, {
+        bundle: source.kind === "bundle" ? source.path : undefined,
+        redact: secrets.redactJson,
+      }),
       turns,
     },
     turns,
@@ -284,13 +291,25 @@ const startFailure = (
 export class DesktopBuildComputers {
   readonly #computers = new Map<string, HeldComputer>();
   readonly #starts = new Set<PendingStart>();
+  readonly #secrets: DesktopBuildSecrets;
+  readonly #shared: SharedSettings;
   #closed = false;
 
   constructor(
     private readonly environment: Readonly<NodeJS.ProcessEnv>,
-    private readonly settle: BuildSettle = SETTLE_TIMING,
+    settle: BuildSettle = SETTLE_TIMING,
     private readonly defaults: BuildComputerDefaults = {},
-  ) {}
+  ) {
+    this.#secrets = new DesktopBuildSecrets(buildSecretsDirectory(environment));
+    this.#shared = { settle, secrets: this.#secrets };
+  }
+
+  /** Text with each secret typed on this server's computers replaced by its handle. */
+  readonly redactText = (text: string): string => this.#secrets.redact(text);
+
+  /** A JSON value with each secret typed on this server's computers replaced by its handle. */
+  readonly redactJson = (value: JsonValue): JsonValue =>
+    this.#secrets.redactJson(value);
 
   async start(
     input: {
@@ -391,7 +410,7 @@ export class DesktopBuildComputers {
             );
       this.#computers.set(
         id,
-        liveComputer(computer, target.workspace, source, this.settle),
+        liveComputer(computer, target.workspace, source, this.#shared),
       );
       return ok({
         value: {
@@ -415,7 +434,7 @@ export class DesktopBuildComputers {
               ? undefined
               : () => owner.release(),
         workspace: target.workspace,
-        actions: new BuildComputerActionLog(),
+        actions: new BuildComputerActionLog(this.#secrets.redact),
         steps: undefined,
         turns: new DesktopBuildTurns(),
         closing: true,
@@ -446,12 +465,18 @@ export class DesktopBuildComputers {
         new AnalysisInputError(
           ACT,
           {
-            userMessage: `${action} does not take ${call.error.field}; it takes ${call.error.accepted.join(", ")}.`,
+            userMessage:
+              call.error.missing === true
+                ? `${action} needs ${call.error.field}.`
+                : `${action} does not take ${call.error.field}; it takes ${call.error.accepted.join(", ")}.`,
           },
           [
             {
               path: [call.error.field],
-              reason: "unknown_argument",
+              reason:
+                call.error.missing === true
+                  ? "missing_argument"
+                  : "unknown_argument",
               expected: [...call.error.accepted],
             },
           ],
@@ -475,7 +500,30 @@ export class DesktopBuildComputers {
     signal: AbortSignal,
   ): Promise<Result<Acted, AnalysisError>> {
     const { id, action } = call;
+    // A secret is logged by its handle; only the computer receives its value.
     const logged = held.actions.begin(action, call.tool, call.arguments);
+    if (action === "type_secret") {
+      const typed = await typeSecret(
+        this.#secrets,
+        computer,
+        String(call.arguments.secret),
+        signal,
+      );
+      logged.settle(typed.outcome);
+      return typed.result.ok
+        ? ok({
+            value: {
+              computer_id: id,
+              action,
+              action_index: logged.index,
+              result: typed.result.value,
+            },
+            content: [
+              { type: "text", text: `${String(typed.result.value.summary)}.` },
+            ],
+          })
+        : typed.result;
+    }
     let result: DriverResult;
     try {
       result =

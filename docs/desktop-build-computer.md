@@ -253,16 +253,17 @@ progress and waits for them before closing every computer.
 `act_on_build_computer` takes `computer_id`, an `action` and the driver's own
 arguments for `computer_<action>`, which REA passes through:
 
-| `action`     | Arguments                                                               |
-| ------------ | ----------------------------------------------------------------------- |
-| `screenshot` | `region`, `format` (`png` or `jpeg`), `quality`                         |
-| `click`      | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
-| `drag`       | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
-| `scroll`     | `direction`, `x`, `y`, `amount`, `modifiers`                            |
-| `type`       | `text`, where `\n` presses Enter and `\t` Tab                           |
-| `key`        | `keys`, one chord pressed in order, and `repeat`                        |
-| `wait`       | `ms`                                                                    |
-| `reset`      | `screenshot`                                                            |
+| `action`      | Arguments                                                               |
+| ------------- | ----------------------------------------------------------------------- |
+| `screenshot`  | `region`, `format` (`png` or `jpeg`), `quality`                         |
+| `click`       | `x`, `y`, `button`, `count` (2 double-clicks), `modifiers`              |
+| `drag`        | `path` of 2 to 50 `[x, y]` points, `button`, `duration_ms`, `modifiers` |
+| `scroll`      | `direction`, `x`, `y`, `amount`, `modifiers`                            |
+| `type`        | `text`, where `\n` presses Enter and `\t` Tab                           |
+| `type_secret` | `secret`, the handle of a secret's file; see [Secrets](#secrets)        |
+| `key`         | `keys`, one chord pressed in order, and `repeat`                        |
+| `wait`        | `ms`                                                                    |
+| `reset`       | `screenshot`                                                            |
 
 `reset` is not a driver tool: REA calls the app's `data/reset`, which restores
 the bundle's seed and relaunches the app, then waits until the computer's
@@ -310,6 +311,56 @@ REA's own request id, and the segments fetched through the driver's `data/get`
 one at a time, each read within its manifest size and checked against it) are
 what the witness records; they are not tools of their own. A recording larger
 than a quarter of the V8 heap is refused before any segment is read.
+
+## Secrets
+
+An app that asks for a password, a licence key or a sign-in gets it from a
+secret the person keeps on the build host, which the agent types by its
+handle without seeing it. The person writes the secret, and nothing else, in
+a file named after its handle in REA's build-secrets folder:
+`$XDG_CONFIG_HOME/rea/build-secrets/<handle>`, or
+`~/.config/rea/build-secrets/<handle>` when `XDG_CONFIG_HOME` is unset or
+relative. A handle is lowercase letters, digits, dot, dash and underscore,
+starting with a letter or digit, up to 63 characters.
+
+```bash
+mkdir -p ~/.config/rea/build-secrets && chmod 700 ~/.config/rea/build-secrets
+( umask 077 && cat > ~/.config/rea/build-secrets/keepassxc-master )
+```
+
+`act_on_build_computer` with `{"action": "type_secret", "secret": "keepassxc-master"}`
+reads the file afresh and types its value into the focused field with the
+driver's `computer_type`. REA refuses the file unless it is a regular file,
+not a symbolic link, in a folder that is not one, owned by the server's user
+and readable by no one else (`chmod 600`), and its text, without one final
+line break, is UTF-8 of 8 to 1024 characters with no control character. A
+refusal names the file and why, never its text.
+
+- The result says `Typed the secret <handle>` with whether the driver
+  delivered it; it carries none of the driver's own words, and a refusal or
+  failure is REA's own message, since the driver's could quote the value.
+  `type_secret` takes no `screenshot`: look with a `wait` afterwards.
+- The action log, and so `witness.json`, records the action as
+  `{"secret": "<handle>"}`. Any string the log keeps, and every string in the
+  witness record and in the build tools' results, has each secret typed on
+  this server, in any text spelling the scan below knows, replaced by
+  `<secret:<handle>>`.
+- `export_build_environment` refuses a bundle whose file names or contents
+  hold any secret the folder holds, typed or not, readable by others or not:
+  as it is, escaped in JSON, in UTF-16 of either byte order, in hex, in base64
+  at any alignment and in either alphabet, URL-encoded, or inside a gzip file.
+  It writes nothing to the folder and names each secret's handle and the
+  files, a value in a file's name shown by its handle.
+
+Secrets stay unseen only where the app masks what is typed: screenshots and
+the witness's recording are images, which REA cannot redact. Type a secret
+only into a field that shows dots, such as a password field, and never into
+one that shows its text, such as many licence-key fields. Seeds and drafts
+are searched only for the spellings above: a zip archive's compressed
+entries, and a token an app derives from a secret, such as a session token
+after a sign-in, are not found. The agent's own shell on the build host can
+read the folder, so a client that should never see a secret also denies its
+tools that folder, for example with Claude Code's permission rules.
 
 ## Close
 
