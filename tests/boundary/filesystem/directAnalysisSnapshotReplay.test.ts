@@ -961,6 +961,11 @@ describe("direct analysis composed snapshot replay", () => {
         { snapshotPath: fixture.snapshotPath },
       ).then(projectCliAnalysisResult);
       expect(first).toMatchObject({ operation: scenario.tool });
+      if (scenario.tool === "trace_feature")
+        expect(parseEvidence(first).analysis_profile?.parameters).toMatchObject({
+          workflow_revision: 8,
+          source_limitations: "provider-operation-caveats-v1",
+        });
       const callsAfterFirst = [...fixture.calls];
       const startsAfterFirst = [...fixture.starts];
       const loaded = await readAnalysisSnapshot(fixture.snapshotPath);
