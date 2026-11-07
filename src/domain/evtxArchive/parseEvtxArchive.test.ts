@@ -74,6 +74,7 @@ const chunk = (
   bytes.writeBigUInt64LE(BigInt(statedFirstRecordNumber), 0x18);
   let cursor = CHUNK_HEADER_BYTES;
   for (const entry of records) {
+    bytes.writeUInt32LE(cursor, 0x2c);
     // `subarray` keeps the parent's storage, so copy only the entry's own bytes.
     entry.copy(bytes, cursor, 0, entry.length);
     cursor += entry.length;
@@ -338,17 +339,38 @@ describe("parseEvtxArchive chunk headers", () => {
     expect(archive.source_coverage.status).toBe("partial");
   });
 
-  it("allows zero padding but reports unexpected bytes before free space", () => {
+  it("ignores stale records after the declared last record", () => {
     const padded = chunk(1, [record(7)]);
     const end = padded.readUInt32LE(0x30);
-    padded.writeUInt32LE(end + 8, 0x30);
-    expect(parsed(evtx([padded])).source_coverage.status).toBe(
-      "complete-within-scope",
+    const stale = record(8);
+    stale.copy(padded, end);
+    padded.writeUInt32LE(end + stale.length, 0x30);
+    const archive = parsed(evtx([padded]));
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([7]);
+    expect(archive.source_coverage.status).toBe("complete-within-scope");
+  });
+  it("reports invalid and unreachable last-record offsets", () => {
+    const invalid = chunk(1, [record(7)]);
+    invalid.writeUInt32LE(100, 0x2c);
+    const invalidResult = parsed(evtx([invalid]));
+    expect(invalidResult.events).toEqual([]);
+    expect(invalidResult.source_coverage.status).toBe("partial");
+    const unreachable = chunk(1, [record(7), record(8)]);
+    unreachable.writeUInt32LE(CHUNK_HEADER_BYTES + 1, 0x2c);
+    const unreachableResult = parsed(evtx([unreachable]));
+    expect(unreachableResult.events).toEqual([]);
+    expect(unreachableResult.source_coverage.status).toBe("partial");
+  });
+
+  it("keeps the readable prefix when a declared live record has bad magic", () => {
+    const damaged = chunk(1, [record(7), record(8)]);
+    damaged.writeUInt32LE(0, damaged.readUInt32LE(0x2c));
+    const archive = parsed(evtx([damaged]));
+    expect(archive.events.map((event) => event.event_record_id)).toEqual([7]);
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "truncated-record",
     );
-    padded[end] = 1;
-    const damaged = parsed(evtx([padded]));
-    expect(damaged.events.map((event) => event.event_record_id)).toEqual([7]);
-    expect(damaged.source_coverage.status).toBe("partial");
+    expect(archive.source_coverage.status).toBe("partial");
   });
   it("evaluates the chunk header checksum", () => {
     // An intact chunk is `matched`, not `mismatched`: EVTX signs the header

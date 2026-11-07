@@ -129,30 +129,47 @@ const readChunk = (
       `Invalid free-space offset ${freeSpaceOffset}; the record region is unknown.`,
     );
   const recordLimit = validOffset ? freeSpaceOffset : CHUNK_HEADER_BYTES;
-  while (cursor < recordLimit) {
+  const lastRecordOffset = chunk.readUInt32LE(0x2c);
+  const empty =
+    lastRecordOffset === 0 &&
+    chunk.subarray(CHUNK_HEADER_BYTES, recordLimit).every((byte) => byte === 0);
+  const validLast =
+    lastRecordOffset >= CHUNK_HEADER_BYTES &&
+    lastRecordOffset + RECORD_HEADER_BYTES <= recordLimit;
+  if (validOffset && !empty && !validLast)
+    diagnose(
+      state,
+      chunkNumber,
+      startOrdinal,
+      "invalid-chunk",
+      `Invalid last-record offset ${lastRecordOffset}; the record region is unknown.`,
+    );
+  while (validLast && cursor <= lastRecordOffset) {
     if (
       cursor + RECORD_HEADER_BYTES > recordLimit ||
       chunk.readUInt32LE(cursor) !== RECORD_MAGIC
     ) {
-      // Archived logs may pad the remainder of the used area with zeroes.
-      if (chunk.subarray(cursor, recordLimit).some((byte) => byte !== 0))
-        diagnose(
-          state,
-          chunkNumber,
-          startOrdinal + events,
-          "truncated-record",
-          `Unexpected bytes at byte ${cursor} before the chunk's free space.`,
-        );
-      break;
-    }
-    const size = chunk.readUInt32LE(cursor + 4);
-    if (size < RECORD_HEADER_BYTES || cursor + size > recordLimit) {
       diagnose(
         state,
         chunkNumber,
         startOrdinal + events,
         "truncated-record",
-        `Record at byte ${cursor} declares ${size} bytes but only ${recordLimit - cursor} remain before the chunk's free space.`,
+        `Unexpected bytes at byte ${cursor} before the chunk's free space.`,
+      );
+      break;
+    }
+    const size = chunk.readUInt32LE(cursor + 4);
+    if (
+      size < RECORD_HEADER_BYTES ||
+      cursor + size > recordLimit ||
+      (cursor < lastRecordOffset && cursor + size > lastRecordOffset)
+    ) {
+      diagnose(
+        state,
+        chunkNumber,
+        startOrdinal + events,
+        "truncated-record",
+        `Record at byte ${cursor} declares ${size} bytes, inconsistent with the declared last-record or free-space offset.`,
       );
       break;
     }

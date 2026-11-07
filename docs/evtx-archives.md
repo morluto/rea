@@ -39,9 +39,10 @@ A wrapped log leaves stale bytes after its last record. Those bytes are not
 reported as a truncation, and they do not discard the events the chunk did
 contain.
 
-An invalid free-space offset leaves the live record region unknown, so the
-chunk's records are skipped and coverage is partial. An incomplete final chunk
-is also reported and skipped. Zero padding before free space is accepted.
+The chunk's last-record offset bounds the last record's start, and the
+free-space offset bounds its end. Bytes after the last record are not
+inventoried. Invalid or inconsistent offsets leave the live region unknown and
+make coverage partial. An incomplete final chunk is also reported and skipped.
 
 ## Structure and bounds
 
