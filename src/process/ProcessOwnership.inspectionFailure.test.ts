@@ -74,6 +74,85 @@ it("retains inspection failure on the launcher-exit refresh without replacing th
   expect(signalGroup).not.toHaveBeenCalled();
 });
 
+it("retains the denied inspector when the pre-signal process-table refresh fails", async () => {
+  inspect.mockReset();
+  inspect.mockResolvedValueOnce({ stdout: "100 1 100 501 S fixture\n" });
+  inspect.mockRejectedValueOnce(
+    Object.assign(new Error("spawn EPERM"), {
+      code: "EPERM",
+      syscall: "spawn ps",
+    }),
+  );
+  const native = createSystemProcessOwnershipHost("linux", {});
+  const signalGroup = vi.fn();
+  const signalPid = vi.spyOn(process, "kill").mockReturnValue(true);
+  try {
+    const result = await cleanupOwnedProcessGroup(
+      { leaderPid: 100, processGroupId: 100, runId: "fixture" },
+      {
+        listProcesses: native.listProcesses,
+        environment: async () => ({ REA_PROCESS_RUN_ID: "fixture" }),
+        signalGroup,
+      },
+    );
+    expect(inspect).toHaveBeenCalledTimes(2);
+    expect(signalGroup).not.toHaveBeenCalled();
+    expect(signalPid).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      cleaned: false,
+      reason:
+        "process ownership could not be revalidated: ps process-table inspection failed: spawn EPERM",
+      inspection: {
+        capability: "process_table",
+        command: "ps",
+        arguments: ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
+        system_code: "EPERM",
+        syscall: "spawn ps",
+        reason: "spawn EPERM",
+        remediation_action: expect.stringContaining("selected PATH"),
+      },
+    });
+    if (result.cleaned) throw new Error("Expected unverified cleanup");
+    expect(result.inspection?.system_code).toBe("EPERM");
+  } finally {
+    signalPid.mockRestore();
+  }
+});
+
+it("keeps unclassified revalidation failures unchanged without inferring inspector facts", async () => {
+  const signalGroup = vi.fn();
+  const listProcesses = vi
+    .fn()
+    .mockResolvedValueOnce([
+      {
+        pid: 100,
+        parentPid: 1,
+        processGroupId: 100,
+        state: "S",
+        command: "fixture",
+      },
+    ])
+    .mockRejectedValueOnce(
+      Object.assign(new Error("custom inspector failure"), { code: "EPERM" }),
+    );
+  expect(
+    await cleanupOwnedProcessGroup(
+      { leaderPid: 100, processGroupId: 100, runId: "fixture" },
+      {
+        listProcesses,
+        environment: async () => ({ REA_PROCESS_RUN_ID: "fixture" }),
+        signalGroup,
+      },
+    ),
+  ).toEqual({
+    cleaned: false,
+    reason:
+      "process ownership could not be revalidated: custom inspector failure",
+  });
+  expect(listProcesses).toHaveBeenCalledTimes(2);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
 it("keeps caller cancellation distinct from an inspection refusal", async () => {
   const controller = new AbortController();
   const reason = new Error("caller stopped inspection");

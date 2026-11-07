@@ -1218,6 +1218,9 @@ const revalidateOwnedProcessGroup = async (
       return {
         cleaned: false,
         reason: `process ownership could not be revalidated: ${errorMessage(cause)}`,
+        ...(cause instanceof ProcessTableInspectionError
+          ? { inspection: cause.inspection }
+          : {}),
       };
     }
     const { failures, validatedMembers } = await processOwnershipFailures(
