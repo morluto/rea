@@ -32,6 +32,7 @@ import {
 } from "../../domain/evtxArchive/evtxArchiveQuery.js";
 import { parseEvtxArchive } from "../../domain/evtxArchive/parseEvtxArchive.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -89,6 +90,11 @@ const readFailure = (
       return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
         cause,
       });
+    if (isSelectedRegularFileError(cause))
+      return inputFailure(
+        `Selected event log could not be read (${cause.code}): ${input.path}`,
+        cause,
+      );
   }
   return new ArtifactOperationError(
     operation,
