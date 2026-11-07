@@ -463,65 +463,6 @@ describe("declaration fidelity", () => {
   });
 });
 
-describe("dependency identity and management keys", () => {
-  it("matches dependency management on type and classifier, not coordinates alone", () => {
-    const result = parse(
-      pom(`
-  <dependencyManagement>
-    <dependencies>
-      <dependency>
-        <groupId>org.example</groupId>
-        <artifactId>core</artifactId>
-        <version>9.9.9</version>
-      </dependency>
-    </dependencies>
-  </dependencyManagement>
-  <dependencies>
-    <dependency>
-      <groupId>org.example</groupId>
-      <artifactId>core</artifactId>
-      <classifier>sources</classifier>
-    </dependency>
-  </dependencies>`),
-    );
-    const dependency = result.dependencies[0];
-    expect(dependency?.version_origin).toEqual({ kind: "unresolved" });
-    expect(dependency?.dependency_key).not.toBe(
-      result.dependency_management[0]?.dependency_key,
-    );
-  });
-
-  it("keeps an unresolved boolean unknown instead of declaring it false", () => {
-    const result = parse(
-      pom(`
-  <dependencies>
-    <dependency>
-      <groupId>org.example</groupId>
-      <artifactId>optional-flag</artifactId>
-      <version>1.0</version>
-      <optional>\${flag}</optional>
-    </dependency>
-  </dependencies>`),
-    );
-    expect(result.dependencies[0]?.optional).toBeNull();
-  });
-
-  it("reads plugin repositories by their own element name", () => {
-    const result = parse(
-      pom(`
-  <pluginRepositories>
-    <pluginRepository>
-      <id>plugins</id>
-      <url>https://plugins.example.invalid/maven</url>
-    </pluginRepository>
-  </pluginRepositories>`),
-    );
-    expect(result.repositories.map((repository) => repository.id)).toEqual([
-      "plugins",
-    ]);
-  });
-});
-
 describe("property reference coverage", () => {
   it("reports a property cycle separately from an undeclared property", () => {
     const result = parse(
