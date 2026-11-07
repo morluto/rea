@@ -21,6 +21,7 @@ import { createByteEntropyService } from "../composition/binaryDiagnostics.js";
 import { registerElfNotesTool } from "./registerElfNotesTool.js";
 import { registerAppleIpsTool } from "./registerAppleIpsTool.js";
 import { registerKernelModuleTool } from "./registerKernelModuleTool.js";
+import { registerElfDependenciesTool } from "./registerElfDependenciesTool.js";
 import { registerPeLoadConfigTool } from "./registerPeLoadConfigTool.js";
 import { registerBinaryHardeningTool } from "./registerBinaryHardeningTool.js";
 import { registerPeCertificatesTool } from "./registerPeCertificatesTool.js";
@@ -218,6 +219,7 @@ export const createServer = (
     elfNotes,
     appleIps,
     kernelModule,
+    elfDependencies,
     peLoadConfig,
     binaryHardening,
     peCertificates,
@@ -482,6 +484,14 @@ export const createServer = (
         kernelModule,
         toolLogger,
         recordEvidence,
+        analysisAdmission,
+      );
+      registerElfDependenciesTool(
+        server,
+        elfDependencies,
+        toolLogger,
+        recordEvidence,
+        evidenceById,
         analysisAdmission,
       );
       registerPeLoadConfigTool(

@@ -295,6 +295,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_apple_ips: evidence,
   inspect_devicetree: evidence,
   inspect_kernel_module: evidence,
+  inspect_elf_dependencies: evidence,
   inspect_pe_load_config: evidence,
   inspect_binary_hardening: evidence,
   inspect_analysis_view: evidence,

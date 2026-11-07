@@ -17,6 +17,7 @@ const fileCommands = [
   "inspect-model-artifact",
   "inspect-elf-notes",
   "inspect-kernel-module",
+  "inspect-elf-dependencies",
   "inspect-byte-entropy",
   "inspect-pe-resources",
   "inspect-pe-certificates",

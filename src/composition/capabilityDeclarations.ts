@@ -29,6 +29,7 @@ import {
   BINARY_HARDENING_PROVIDER,
   BYTE_ENTROPY_PROVIDER,
   DEVICETREE_PROVIDER,
+  ELF_DEPENDENCIES_PROVIDER,
   ELF_NOTES_PROVIDER,
   HARMONY_APPLICATION_PROVIDER,
   JAVASCRIPT_APPLICATION_PROVIDER,
@@ -251,6 +252,11 @@ export const CAPABILITY_DECLARATIONS = {
         "inspect_electron_page",
         "list_electron_targets",
       ]),
+    ],
+  },
+  elfDependencies: {
+    providers: [
+      providerBinding(ELF_DEPENDENCIES_PROVIDER, ["inspect_elf_dependencies"]),
     ],
   },
   elfNotes: {
