@@ -12,6 +12,7 @@ import {
   analysisViewResultSchema,
   inspectAnalysisViewInputSchema,
 } from "../../../src/domain/analysisView/analysisView.js";
+import { XREFS_ADDRESS_PAGE_LIMITATION } from "../../../src/domain/analysisView/nativeObservationView.js";
 import { NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS } from "../../../src/domain/native/nativeObservation.js";
 import { connectGhidraMcp } from "./ghidraMcpHarness.js";
 import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
@@ -138,6 +139,9 @@ it("delivers native primitive and graph summaries with exact retained parents an
       },
       coverage: { total: 1, exhausted: true },
     });
+    expect(
+      analysisViewResultSchema.parse(page.normalized_result).unknowns,
+    ).toContain(XREFS_ADDRESS_PAGE_LIMITATION);
     const caveats = await call("inspect_analysis_view", {
       source,
       view: { kind: "native-context", facet: "limitations" },
