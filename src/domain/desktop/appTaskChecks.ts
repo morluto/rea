@@ -383,7 +383,12 @@ const textVerdict = (
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
   if (problem !== undefined) return fail(problem);
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
-  if (located.kind === "none") return noValue(at, located);
+  const truncated = zip
+    ? zipLeavesOutAt(read.view, check.pointer)
+    : read.truncated;
+  // A child past the kept nodes of a cut view may still hold the text.
+  if (located.kind === "none")
+    return truncated ? undecided(check.file) : noValue(at, located);
   const found = located.value;
   if (
     typeof found === "string"
@@ -394,9 +399,6 @@ const textVerdict = (
       `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
     );
   // A text node is whole; an element's text is whole only if its view left nothing out.
-  const truncated = zip
-    ? zipLeavesOutAt(read.view, check.pointer)
-    : read.truncated;
   if (typeof found !== "string" && truncated) return undecided(check.file);
   return comparedText(check, at, elementText(found));
 };

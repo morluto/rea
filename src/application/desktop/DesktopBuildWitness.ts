@@ -27,7 +27,7 @@ import {
   stageExpectation,
   stageVerdict,
   unrestoredChecks,
-  unreadSeedDifferences,
+  unreadResetChecks,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
@@ -267,7 +267,7 @@ export class DesktopBuildWitness {
     if (verdict === "undecided") {
       const unreadSeed =
         stage === "after_reset"
-          ? unreadSeedDifferences(witness.stages, results).map(
+          ? unreadResetChecks(witness.stages, results).map(
               (result) => result.id,
             )
           : [];
@@ -278,7 +278,7 @@ export class DesktopBuildWitness {
               result.undecided === true ? [result.description] : [],
             ),
             ...unreadSeed.map(
-              (id) => `${id} was not readable when the seed was filed`,
+              (id) => `${id} could not be compared with the seed`,
             ),
           ].join("; ")}). Nothing was filed.`,
           `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
