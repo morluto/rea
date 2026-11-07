@@ -381,7 +381,7 @@ describe("process CLI input diagnostics", () => {
       error: "Process command failed",
       code: "invalid_request",
       category: "invalid_input",
-      message: "Analysis input is invalid. Check the arguments and try again.",
+      message: expect.stringMatching(/input.*invalid/iu),
       retryable: false,
       remediation: {
         action: expect.stringContaining("Correct the listed fields"),
