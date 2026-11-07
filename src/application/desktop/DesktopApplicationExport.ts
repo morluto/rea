@@ -530,16 +530,28 @@ export const exportDesktopApplication = async (
     ].flatMap(({ release, ...written }) =>
       release === undefined ? [] : [{ ...written, release }],
     );
-    const [first, ...rest] = open;
-    if (first === undefined) return evidence;
-    const error = writtenWithOpenHandles(
-      { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what: first.what },
-      first.directory,
-      first.release,
-      evidence,
+    if (open.length === 0) return evidence;
+    const failures = open.map(({ what, directory, release }) =>
+      writtenWithOpenHandles(
+        { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what },
+        directory,
+        release,
+        evidence,
+      ),
     );
-    for (const { release } of rest) release.lease.bindCleanupError(error);
-    return error;
+    if (failures.length === 1) return failures[0]!;
+    const combined = new ProviderAdapterError(DESKTOP_PROVIDER.id, OPERATION, {
+      userMessage:
+        "The bundle and withheld copy were written, but their output handles could not be closed.",
+      partialObservation: evidence,
+      cleanup: {
+        reason: "Output handles could not be closed.",
+        resources: open.map(({ directory }) => directory),
+      },
+    });
+    for (const failure of failures) combined.retainSecondaryFailure(failure);
+    combined.bindCleanupDependencies(failures);
+    return combined;
   } catch (cause: unknown) {
     return desktopOperationFailure(cause, signal, OPERATION, "Desktop export");
   }

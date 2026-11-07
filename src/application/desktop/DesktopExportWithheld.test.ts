@@ -238,6 +238,48 @@ it("retains the bundle cleanup owner when a later withheld copy fails", async ()
   });
 });
 
+it.each(["bundle", "copy"] as const)(
+  "retains both published output owners when %s closes first",
+  async (first) => {
+    const release = ArtifactResourceScope.prototype.release;
+    const failures: Extract<ArtifactCleanupAttempt, { kind: "failed" }>[] = [];
+    vi.spyOn(ArtifactResourceScope.prototype, "release").mockImplementation(
+      async function (this: ArtifactResourceScope, owner) {
+        const outcome = await release.call(this, owner);
+        if (outcome.kind === "failed") failures.push(outcome);
+        return outcome;
+      },
+    );
+    const original = SafeOutputTree.prototype.closeHandles;
+    vi.spyOn(SafeOutputTree.prototype, "closeHandles")
+      .mockRejectedValueOnce(new Error("bundle close failed"))
+      .mockRejectedValueOnce(new Error("copy close failed"))
+      .mockImplementation(original);
+    const { result, directory, withheldCopy } = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+    });
+    if (!(result instanceof AnalysisError))
+      throw new Error("expected cleanup failure");
+    expect(result.cleanupResources).toEqual(
+      expect.arrayContaining([directory, withheldCopy]),
+    );
+    const bundle = failures.find(({ owner }) => owner.resource === directory);
+    const copy = failures.find(({ owner }) => owner.resource === withheldCopy);
+    if (bundle === undefined || copy === undefined)
+      throw new Error("expected both owners");
+    await (first === "bundle" ? bundle : copy).lease.release();
+    expect(result.cleanupIncomplete).toBe(true);
+    expect(result.cleanupResources).toEqual([
+      first === "bundle" ? withheldCopy : directory,
+    ]);
+    await (first === "bundle" ? copy : bundle).lease.release();
+    expect(result.cleanupIncomplete).toBe(false);
+    expect(projectAnalysisError(result)).toMatchObject({
+      details: { partial_observation: { normalized_result: { directory } } },
+    });
+  },
+);
+
 describe("exportDesktopApplication of withheld sign-in state", () => {
   it("leaves a withheld file out of the seed, declares it a secret setting from the environment and copies it aside", async () => {
     const { result, directory, withheldCopy } = await exportWithheld({
