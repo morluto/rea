@@ -71,7 +71,11 @@ const capturedLaunchPaths = (
     remember(selected.physical);
   }
   for (const file of files.values()) remember(file.path);
-  return (path) => captured.has(path);
+  const known = [...captured];
+  // A settings folder between a selected root and a captured file is a path
+  // too. An option value that merely resolves under the home is not.
+  return (path) =>
+    captured.has(path) || known.some((file) => isWithinAny(file, [path]));
 };
 
 /** The launch command, opening the seed's one document when the app takes files. */
