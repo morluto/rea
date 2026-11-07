@@ -57,13 +57,17 @@ describe("published witness cleanup", () => {
       throw new Error("still open");
     }, ["/tmp/witness"]);
     lease.bindCleanupError(published);
-    const again = await retryPublishedCleanup(published, async () => {
+    const failClose = async () => {
       throw new Error("still open");
-    });
+    };
+    const again = await retryPublishedCleanup(published, failClose);
+    const third = await retryPublishedCleanup(published, failClose);
     expect(again.ok).toBe(false);
-    if (again.ok) return;
+    expect(third.ok).toBe(false);
+    if (again.ok || third.ok) return;
     expect(again.error).toBe(published);
-    expect(again.error.cleanup?.resources).toEqual(["/tmp/witness"]);
+    expect(third.error).toBe(published);
+    expect(published.cleanup?.resources).toEqual(["/tmp/witness"]);
     expect(lease.released).toBe(false);
   });
 });
