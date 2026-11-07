@@ -77,10 +77,16 @@ test("keeps each Kuna no-pseudocode observation's limitations on its batch item"
     const broken = await direct("broken");
     const importSlot = await direct("puts");
     expect(broken.normalized_result).toBeNull();
+    expect(broken.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "provider-failure" },
+    });
     expect(broken.limitations).toContain(
       "Kuna could not decompile this function: Flow exceeded maximum instructions",
     );
     expect(importSlot.normalized_result).toBeNull();
+    expect(importSlot.raw_result).toMatchObject({
+      pseudocode_absence: { kind: "not-in-export" },
+    });
 
     const batch = parseEvidence(
       (
