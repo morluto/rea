@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from "node:path";
+import { z } from "zod";
 import { isPathWithinRoot } from "./localPath.js";
 import {
   jsonObjectSchema,
@@ -159,6 +160,13 @@ const mapDeclaredPaths = (
     value,
   );
 
+// Keep the same field names as the public Evidence envelope in validation errors.
+const observationJsonSchema = z.object({
+  parameters: jsonObjectSchema,
+  raw_result: jsonValueSchema.nullable(),
+  normalized_result: jsonValueSchema,
+});
+
 /**
  * Maps the exact filesystem fields declared by the Evidence producer.
  */
@@ -200,12 +208,17 @@ export const redactEvidenceObservationPaths = (
   }
 
   // Admit the original values before mapping, including scalar results.
+  const admitted = observationJsonSchema.parse({
+    parameters: observation.parameters,
+    raw_result: observation.rawResult ?? null,
+    normalized_result: observation.result,
+  });
   const newParameters = mapDeclaredPaths(
-    jsonObjectSchema.parse(observation.parameters),
+    admitted.parameters,
     observation.logicalPathFields?.parameters ?? [],
     mapString,
   ) as Record<string, JsonValue>;
-  const originalResult = jsonValueSchema.parse(observation.result);
+  const originalResult = admitted.normalized_result;
   const mappedResult = mapDeclaredPaths(
     originalResult,
     observation.logicalPathFields?.result ?? [],
@@ -218,7 +231,7 @@ export const redactEvidenceObservationPaths = (
     observation.rawResult === undefined || observation.rawResult === null
       ? observation.rawResult
       : mapDeclaredPaths(
-          jsonValueSchema.parse(observation.rawResult),
+          admitted.raw_result,
           observation.logicalPathFields?.rawResult ?? [],
           mapString,
         );

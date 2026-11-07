@@ -246,28 +246,65 @@ it.each([
   ({ field, prefix }) => {
     const invalid = { nested: { value: undefined } };
     let failure: unknown;
-    try {
-      createEvidence(TARGET, PROVIDER, {
-        operation: "inspect",
-        parameters: {},
-        result: true,
-        [field]: invalid,
+    for (const options of [undefined, { logicalRoot: { root: "/tmp" } }]) {
+      try {
+        createEvidence(
+          TARGET,
+          PROVIDER,
+          {
+            operation: "inspect",
+            parameters: {},
+            result: true,
+            [field]: invalid,
+          },
+          options,
+        );
+      } catch (cause: unknown) {
+        failure = cause;
+      }
+
+      expect(failure).toMatchObject({
+        name: "ZodError",
+        issues: [
+          {
+            path: [prefix],
+            message: expect.stringContaining("JSON"),
+          },
+        ],
       });
+      failure = undefined;
+    }
+    expect(Object.hasOwn(invalid.nested, "value")).toBe(true);
+    expect(invalid.nested.value).toBeUndefined();
+  },
+);
+
+it.each([
+  { field: "parameters", value: null, prefix: "parameters" },
+  { field: "result", value: undefined, prefix: "normalized_result" },
+])(
+  "preserves the Evidence field for invalid $field with logical mapping",
+  ({ field, value, prefix }) => {
+    let failure: unknown;
+    try {
+      createEvidence(
+        TARGET,
+        PROVIDER,
+        {
+          operation: "inspect",
+          parameters: {},
+          result: true,
+          [field]: value,
+        },
+        { logicalRoot: { root: "/tmp" } },
+      );
     } catch (cause: unknown) {
       failure = cause;
     }
-
     expect(failure).toMatchObject({
       name: "ZodError",
-      issues: [
-        {
-          path: [prefix],
-          message: expect.stringContaining("JSON"),
-        },
-      ],
+      issues: [{ path: [prefix] }],
     });
-    expect(Object.hasOwn(invalid.nested, "value")).toBe(true);
-    expect(invalid.nested.value).toBeUndefined();
   },
 );
 
