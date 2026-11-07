@@ -1427,6 +1427,17 @@ not needed for the make step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
+If you would rather not build the decompiler, or the source build fails on
+your toolchain, a prebuilt arm64 pair compiled from the same
+`Ghidra_12.1.4_build` tag is published at
+<https://github.com/qsnbdwdx/ghidra-macos-arm64>. It is third-party and not
+maintained by this project: the same `rea doctor --json` check above is the
+acceptance test, and that repository publishes SHA256 sums for both binaries.
+
+This substitutes only the Ghidra native build. REA itself still compiles its
+own macOS Swift helpers with `xcrun swiftc`, so this is not a route to running
+REA on a host without Xcode Command Line Tools.
+
 ### Reuse an existing Ghidra project
 
 For repeated investigations, select an expanded local project marker with
