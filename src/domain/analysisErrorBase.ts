@@ -402,6 +402,8 @@ import type { WebArtifactAcquisition } from "./webArtifactAcquisition.js";
 
 /** Provider-neutral evidence collected before a typed analysis failure. */
 export type AnalysisPartialObservation =
+  | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
+  | { readonly kind: "retained-evidence"; readonly evidence_id: string }
   | GraphqlContract
   | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
