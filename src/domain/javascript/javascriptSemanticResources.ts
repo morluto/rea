@@ -27,6 +27,7 @@ import {
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
 import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
+import { SEMANTIC_EXPRESSION_DEPTH_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -476,16 +477,141 @@ const acquisitionMethod = (
 const resourceCandidateId = (candidate: ResourceCandidate): string =>
   `resource:acquire:${String(candidate.node.start ?? -1)}:${String(candidate.node.end ?? -1)}`;
 
+/** One exactly evaluated first argument of a `net`/`tls` socket call. */
+type ExactSocketArgument =
+  | { readonly kind: "number"; readonly value: number }
+  | { readonly kind: "string"; readonly value: string }
+  | { readonly kind: "boolean"; readonly value: boolean }
+  | { readonly kind: "null" }
+  | { readonly kind: "undefined" }
+  | { readonly kind: "bigint" };
+
+/** ECMAScript ToBoolean of an exact argument; a BigInt's digits are not read. */
+const socketArgumentTruthiness = (
+  operand: ExactSocketArgument,
+): boolean | undefined => {
+  switch (operand.kind) {
+    case "number":
+      return operand.value !== 0 && !Number.isNaN(operand.value);
+    case "string":
+      return operand.value.length > 0;
+    case "boolean":
+      return operand.value;
+    case "null":
+    case "undefined":
+      return false;
+    case "bigint":
+      return undefined;
+  }
+};
+
+/** ECMAScript ToNumber of an exact argument; strings and BigInts stay undecided. */
+const socketArgumentNumber = (
+  operand: ExactSocketArgument,
+): number | undefined => {
+  switch (operand.kind) {
+    case "number":
+      return operand.value;
+    case "boolean":
+      return Number(operand.value);
+    case "null":
+      return 0;
+    case "undefined":
+      return NaN;
+    case "string":
+    case "bigint":
+      return undefined;
+  }
+};
+
 /**
- * `net` and `tls` validate a numeric port before creating a socket, so a
- * literal port outside `[0, 65535]`, a fractional, non-finite, BigInt, boolean
- * or `null` first argument throws synchronously and no socket exists. A string
- * is a Unix socket path and an object may carry a path, so only an exactly
- * readable non-port literal is decided. `""` is a path with no length, which
- * Node also rejects.
- *
- * `undefined` and an empty object throw `ERR_MISSING_ARGS`, but those are a
- * missing option rather than a bad port, so they stay undecided here.
+ * Apply one unary operator with runtime semantics: `-0` stays negative zero,
+ * `~` truncates to a signed 32-bit integer, `!` and `typeof` change the type,
+ * and `void` yields `undefined`. `-` and `~` keep a BigInt a BigInt, while `+`
+ * on a BigInt throws before the call and `delete`/`throw` are not evaluated;
+ * those stay undecided.
+ */
+const unarySocketArgument = (
+  operator: t.UnaryExpression["operator"],
+  operand: ExactSocketArgument,
+): ExactSocketArgument | undefined => {
+  switch (operator) {
+    case "!": {
+      const truthy = socketArgumentTruthiness(operand);
+      return truthy === undefined
+        ? undefined
+        : { kind: "boolean", value: !truthy };
+    }
+    case "typeof":
+      return {
+        kind: "string",
+        value: operand.kind === "null" ? "object" : operand.kind,
+      };
+    case "void":
+      return { kind: "undefined" };
+    case "-":
+    case "+":
+    case "~": {
+      if (operand.kind === "bigint")
+        return operator === "+" ? undefined : operand;
+      const value = socketArgumentNumber(operand);
+      if (value === undefined) return undefined;
+      return {
+        kind: "number",
+        value: operator === "-" ? -value : operator === "~" ? ~value : value,
+      };
+    }
+    default:
+      return undefined;
+  }
+};
+
+/**
+ * Evaluate a socket call's first argument only when its syntax commits to one
+ * runtime value: a literal, an unshadowed `NaN` or `Infinity`, or a unary
+ * operator over such a value. Everything else stays undecided.
+ */
+const exactSocketArgument = (
+  node: t.Node,
+  context: DataEffectTraversalContext,
+  depth: number,
+): ExactSocketArgument | undefined => {
+  const unwrapped = unwrapJavaScriptExpression(node);
+  const remaining = depth - unwrapped.depth - 1;
+  if (remaining < 0) {
+    context.state.valueResourceLimits.add("expression-depth");
+    return undefined;
+  }
+  const value = unwrapped.node;
+  if (t.isStringLiteral(value)) return { kind: "string", value: value.value };
+  if (t.isNumericLiteral(value)) return { kind: "number", value: value.value };
+  if (t.isBooleanLiteral(value)) return { kind: "boolean", value: value.value };
+  if (t.isNullLiteral(value)) return { kind: "null" };
+  if (t.isBigIntLiteral(value)) return { kind: "bigint" };
+  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
+  if (
+    t.isIdentifier(value) &&
+    (value.name === "NaN" || value.name === "Infinity") &&
+    isUnmodifiedGlobalReference(value, context.state, value.name)
+  )
+    return { kind: "number", value: value.name === "NaN" ? NaN : Infinity };
+  if (t.isUnaryExpression(value)) {
+    const operand = exactSocketArgument(value.argument, context, remaining);
+    return operand === undefined
+      ? undefined
+      : unarySocketArgument(value.operator, operand);
+  }
+  return undefined;
+};
+
+/**
+ * `net` and `tls` validate the first argument before creating a socket, so an
+ * exactly known value that Node rejects means no socket exists: a number that
+ * is fractional, non-finite or outside `[0, 65535]`, a boolean, `null` or
+ * BigInt, or `""` (a path with no length). Negative zero is the accepted port
+ * `0`. A non-empty string is a Unix socket path and an object may carry a
+ * path, so those stay undecided, as does `undefined`, whose `ERR_MISSING_ARGS`
+ * is a missing option rather than a bad port.
  */
 const rejectsSocketPortLiteral = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -493,35 +619,28 @@ const rejectsSocketPortLiteral = (
 ): boolean => {
   const port = node.arguments[0];
   if (port === undefined || t.isSpreadElement(port)) return false;
-  const value = unwrapJavaScriptExpression(port).node;
-  if (t.isStringLiteral(value)) return value.value.length === 0;
-  if (
-    t.isNullLiteral(value) ||
-    t.isBigIntLiteral(value) ||
-    t.isBooleanLiteral(value)
-  )
-    return true;
-  if (t.isNumericLiteral(value))
-    return (
-      !Number.isInteger(value.value) || value.value < 0 || value.value > 65535
-    );
-  // `NaN` and `Infinity` are unshadowed globals, and neither is a port.
-  if (
-    t.isIdentifier(value) &&
-    (value.name === "NaN" || value.name === "Infinity") &&
-    isUnmodifiedGlobalReference(value, context.state, value.name)
-  )
-    return true;
-  // `-1` and `-1.5` are unary expressions over numeric literals: always out of
-  // range because a port is never negative.
-  if (t.isUnaryExpression(value)) {
-    const operand = unwrapJavaScriptExpression(value.argument).node;
-    return (
-      t.isNumericLiteral(operand) &&
-      (value.operator === "-" || !Number.isInteger(operand.value))
-    );
+  const argument = exactSocketArgument(
+    port,
+    context,
+    SEMANTIC_EXPRESSION_DEPTH_LIMIT,
+  );
+  if (argument === undefined) return false;
+  switch (argument.kind) {
+    case "number":
+      return (
+        !Number.isInteger(argument.value) ||
+        argument.value < 0 ||
+        argument.value > 65535
+      );
+    case "string":
+      return argument.value.length === 0;
+    case "undefined":
+      return false;
+    case "boolean":
+    case "null":
+    case "bigint":
+      return true;
   }
-  return false;
 };
 
 /** Only `net`/`tls` sockets take a port in argument 0. */
