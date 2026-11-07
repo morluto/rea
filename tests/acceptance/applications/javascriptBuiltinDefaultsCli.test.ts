@@ -71,6 +71,17 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     fs.createReadStream("input", { fd: new Handle() });
   `,
   );
+  await writeFile(
+    join(root, "validator.cjs"),
+    `
+    const fs = require("node:fs");
+    fs.createReadStream("before", { encoding: new String("utf8") });
+    Buffer.isEncoding = () => true;
+    const read = fs.createReadStream("input", { encoding: new String("utf8") });
+    read.close();
+    fs.createReadStream("invalid", { encoding: "nope" });
+  `,
+  );
   const { stdout } = await execute(
     process.execPath,
     ["scripts/rea.mjs", "analyze-javascript-application", root, "--json"],
@@ -90,8 +101,13 @@ it("keeps prototype-intercepted streams and rejects boxed options through CLI an
     resources.filter(({ identity }) => identity.module_path === "boxed.cjs"),
   ).toHaveLength(1);
   expect(
+    resources.filter(
+      ({ identity }) => identity.module_path === "validator.cjs",
+    ),
+  ).toHaveLength(1);
+  expect(
     graph.relations.filter(({ relation }) => relation === "releases"),
-  ).toHaveLength(2);
+  ).toHaveLength(3);
   const { client, call } = await connectLocalToolsMcp();
   const response = await call("analyze_javascript_application", {
     input_path: root,

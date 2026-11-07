@@ -92,7 +92,12 @@ export const collectJavaScriptSemanticResources = (
       ) ||
         !builtinSharedPrototypeUnmodified(
           "fs",
-          [candidate.method === "createReadStream" ? "FileReadStream" : "FileWriteStream", "prototype"],
+          [
+            candidate.method === "createReadStream"
+              ? "FileReadStream"
+              : "FileWriteStream",
+            "prototype",
+          ],
           candidate.node,
           state,
         ) ||
@@ -109,7 +114,10 @@ export const collectJavaScriptSemanticResources = (
         ) ||
         !builtinSharedPrototypeUnmodified(
           "stream",
-          [candidate.method === "createReadStream" ? "Readable" : "Writable", "prototype"],
+          [
+            candidate.method === "createReadStream" ? "Readable" : "Writable",
+            "prototype",
+          ],
           candidate.node,
           state,
         ))
@@ -349,14 +357,18 @@ const rejectsStreamOptionsLiteral = (
       return true;
   }
   if (
-    (readStream || streamEncodingValidatorUnmodified(node, context.state)) &&
-    rejectsStreamEncoding(value, context)
+    rejectsStreamEncoding(
+      value,
+      context,
+      readStream,
+      streamEncodingValidatorUnmodified(node, context.state),
+    )
   )
     return true;
   return false;
 };
 
-/** Node's write-stream encoding validation consults the mutable Buffer predicate. */
+/** Stream option admission consults the mutable Buffer predicate. */
 const streamEncodingValidatorUnmodified = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -451,6 +463,8 @@ const encodingTruthiness = (
 const rejectsStreamEncoding = (
   options: t.ObjectExpression,
   context: DataEffectTraversalContext,
+  readStream: boolean,
+  validatorUnmodified: boolean,
 ): boolean => {
   const read = staticObjectProperty(options, "encoding");
   if (read.status !== "explicit") return false;
@@ -462,7 +476,15 @@ const rejectsStreamEncoding = (
       ? value.quasis[0]?.value.cooked
       : undefined;
   if (text !== undefined && text !== null)
-    return text.length > 0 && !BUFFER_ENCODINGS.has(text.toLowerCase());
+    return (
+      (readStream || validatorUnmodified) &&
+      text.length > 0 &&
+      !BUFFER_ENCODINGS.has(text.toLowerCase())
+    );
+  // Read streams also construct a StringDecoder. An invalid literal encoding
+  // still fails there after Buffer.isEncoding is replaced, but a truthy object
+  // can normalize to a valid encoding, so its shape alone proves nothing then.
+  if (!validatorUnmodified) return false;
   const truthiness = encodingTruthiness(value, context);
   if (truthiness === undefined) return false;
   // A falsy member never reaches Node's check, whatever its type.
