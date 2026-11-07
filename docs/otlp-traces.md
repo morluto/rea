@@ -53,3 +53,7 @@ an operation did not occur.
 File admission is 32 MiB by default (`max_file_bytes`) and the export-level span
 allowance is 50,000. Exceeding either is reported as a diagnostic and as a
 limitation; it never silently shortens the inventory without saying so.
+
+Diagnostics retain the first 1000 findings in processing order, sorted by ID
+for display. If more occur, a limitation gives the omitted count; later findings
+are counted without retaining or hashing them.

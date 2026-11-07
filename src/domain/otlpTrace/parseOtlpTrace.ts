@@ -378,9 +378,22 @@ const resourceServiceName = (resource: Json): string | null => {
   return null;
 };
 
+/** Retain a bounded prefix before constructing diagnostic messages and hashes. */
+class ProblemCollector {
+  readonly retained: Problem[] = [];
+  omitted = 0;
+
+  add(create: () => Problem): void {
+    if (this.retained.length >= OTLP_TRACE_MAX_DIAGNOSTICS) {
+      this.omitted += 1;
+      return;
+    }
+    this.retained.push(create());
+  }
+}
+
 type Walked = {
   spans: OtlpSpan[];
-  problems: Problem[];
   redactedAttributes: number;
   droppedRecords: number;
   spansTruncated: boolean;
@@ -391,10 +404,10 @@ type Walked = {
 const walkResourceSpans = (
   envelope: unknown,
   budget: { spans: number },
+  problems: ProblemCollector,
 ): { walked: Walked; unsupported: boolean } => {
   const walked: Walked = {
     spans: [],
-    problems: [],
     redactedAttributes: 0,
     droppedRecords: 0,
     spansTruncated: false,
@@ -409,11 +422,11 @@ const walkResourceSpans = (
   ] of envelope.resourceSpans.entries()) {
     if (!isRecord(resourceSpans)) {
       walked.droppedRecords += 1;
-      walked.problems.push({
+      problems.add(() => ({
         code: "invalid-record",
         pointer: `/resourceSpans/${resourceIndex}`,
         message: `Resource group at /resourceSpans/${resourceIndex} is not an object and was not inventoried.`,
-      });
+      }));
       continue;
     }
     const serviceName = resourceServiceName(resourceSpans.resource);
@@ -425,21 +438,21 @@ const walkResourceSpans = (
     if (resourceSpans.scopeSpans === undefined) continue;
     if (!Array.isArray(resourceSpans.scopeSpans)) {
       walked.droppedRecords += 1;
-      walked.problems.push({
+      problems.add(() => ({
         code: "invalid-record",
         pointer: `/resourceSpans/${resourceIndex}/scopeSpans`,
         message: `Resource group at /resourceSpans/${resourceIndex} carries a scopeSpans value that is not an array; its spans were not inventoried.`,
-      });
+      }));
       continue;
     }
     for (const [scopeIndex, scopeSpans] of resourceSpans.scopeSpans.entries()) {
       if (!isRecord(scopeSpans)) {
         walked.droppedRecords += 1;
-        walked.problems.push({
+        problems.add(() => ({
           code: "invalid-record",
           pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}`,
           message: `Scope group at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} is not an object and was not inventoried.`,
-        });
+        }));
         continue;
       }
       const scopeRecord = isRecord(scopeSpans.scope)
@@ -453,21 +466,21 @@ const walkResourceSpans = (
       if (scopeSpans.spans === undefined) continue;
       if (!Array.isArray(scopeSpans.spans)) {
         walked.droppedRecords += 1;
-        walked.problems.push({
+        problems.add(() => ({
           code: "invalid-record",
           pointer: `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/spans`,
           message: `Scope at /resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex} carries a spans value that is not an array; its spans were not inventoried.`,
-        });
+        }));
         continue;
       }
       for (const [spanIndex, record] of scopeSpans.spans.entries()) {
         const pointer = `/resourceSpans/${resourceIndex}/scopeSpans/${scopeIndex}/spans/${spanIndex}`;
         if (!isRecord(record)) {
           walked.droppedRecords += 1;
-          walked.problems.push({
+          problems.add(() => ({
             code: "invalid-record",
             message: `Span entry at ${pointer} is not an object and was not inventoried.`,
-          });
+          }));
           continue;
         }
         const parsed = parseSpan(
@@ -480,12 +493,12 @@ const walkResourceSpans = (
         );
         if (!parsed.ok) {
           walked.droppedRecords += 1;
-          walked.problems.push(...parsed.problems);
+          for (const problem of parsed.problems) problems.add(() => problem);
           continue;
         }
         if (budget.spans > OTLP_TRACE_MAX_SPANS) {
           walked.spansTruncated = true;
-          walked.problems.push(...parsed.problems);
+          for (const problem of parsed.problems) problems.add(() => problem);
           continue;
         }
         walked.spans.push(parsed.span);
@@ -494,7 +507,7 @@ const walkResourceSpans = (
           ...parsed.span.resource_attributes,
         ].filter((attribute) => attribute.redacted).length;
         if (parsed.attributesDropped > 0) walked.attributesTruncated = true;
-        walked.problems.push(...parsed.problems);
+        for (const problem of parsed.problems) problems.add(() => problem);
       }
     }
   }
@@ -524,7 +537,8 @@ export const parseOtlpTrace = (
   artifact: OtlpTraceArtifact,
 ): { ok: true; value: OtlpTrace } | { ok: false; problem: string } => {
   const budget = { spans: 0 };
-  const { walked, unsupported } = walkResourceSpans(document, budget);
+  const problems = new ProblemCollector();
+  const { walked, unsupported } = walkResourceSpans(document, budget, problems);
   if (unsupported)
     return {
       ok: false,
@@ -532,9 +546,7 @@ export const parseOtlpTrace = (
         "The document is not an OTLP JSON trace export with a resourceSpans array.",
     };
   const byId = new Map<string, OtlpSpan>();
-  const diagnostics: OtlpDiagnostic[] = walked.problems.map((problem) =>
-    diagnostic(problem.code, problem.pointer ?? "", problem.message),
-  );
+
   // A parent link is only meaningful inside its own trace: the same span id may
   // legitimately appear under different trace ids, and a parent recorded only
   // in another trace is not this span's parent.
@@ -543,13 +555,11 @@ export const parseOtlpTrace = (
   for (const span of walked.spans) {
     const key = spanKey(span.trace_id, span.span_id);
     if (byId.has(key)) {
-      diagnostics.push(
-        diagnostic(
-          "duplicate-span-id",
-          span.source_pointer,
-          `Span id ${span.span_id} appears more than once within trace ${span.trace_id}; the later record at ${span.source_pointer} is retained and the earlier one remains recorded here only.`,
-        ),
-      );
+      problems.add(() => ({
+        code: "duplicate-span-id",
+        pointer: span.source_pointer,
+        message: `Span id ${span.span_id} appears more than once within trace ${span.trace_id}; the later record at ${span.source_pointer} is retained and the earlier one remains recorded here only.`,
+      }));
     }
     byId.set(key, span);
   }
@@ -560,24 +570,19 @@ export const parseOtlpTrace = (
     const parent = span.parent_span_id;
     if (parent === null || parent === "0000000000000000") continue;
     if (parent === span.span_id)
-      diagnostics.push(
-        diagnostic(
-          "self-parent",
-          span.source_pointer,
-          `Span ${span.span_id} names itself as its parent.`,
-        ),
-      );
+      problems.add(() => ({
+        code: "self-parent",
+        pointer: span.source_pointer,
+        message: `Span ${span.span_id} names itself as its parent.`,
+      }));
     else if (!byId.has(spanKey(span.trace_id, parent)))
       orphanParents.set(spanKey(span.trace_id, parent), parent);
   }
   for (const [key, parent] of orphanParents) {
-    diagnostics.push(
-      diagnostic(
-        "missing-parent",
-        "",
-        `Parent span id ${parent} is referenced but not present in trace ${key.slice(0, key.indexOf(":"))}; its children remain parented to an unrecorded span.`,
-      ),
-    );
+    problems.add(() => ({
+      code: "missing-parent",
+      message: `Parent span id ${parent} is referenced but not present in trace ${key.slice(0, key.indexOf(":"))}; its children remain parented to an unrecorded span.`,
+    }));
   }
   // A span whose recorded parent link is unreadable is not a root: it may be a
   // damaged child, so only a span that declares no parent counts as a root.
@@ -623,20 +628,17 @@ export const parseOtlpTrace = (
     for (const visited of path) state.set(visited, 2);
   }
   for (const id of cycles)
-    diagnostics.push(
-      diagnostic(
-        "cycle",
-        "",
-        `Span ${id} participates in a parent cycle; the recorded links are preserved and no ordering is derived from them.`,
-      ),
-    );
-  const diagnosticsTruncated = diagnostics.length > OTLP_TRACE_MAX_DIAGNOSTICS;
+    problems.add(() => ({
+      code: "cycle",
+      message: `Span ${id} participates in a parent cycle; the recorded links are preserved and no ordering is derived from them.`,
+    }));
+  const diagnostics = problems.retained.map((problem) =>
+    diagnostic(problem.code, problem.pointer ?? "", problem.message),
+  );
   diagnostics.sort((left, right) =>
     compareUnicodeCodePoints(left.diagnostic_id, right.diagnostic_id),
   );
-  const boundedDiagnostics = diagnosticsTruncated
-    ? diagnostics.slice(0, OTLP_TRACE_MAX_DIAGNOSTICS)
-    : diagnostics;
+
   return {
     ok: true,
     value: {
@@ -651,7 +653,7 @@ export const parseOtlpTrace = (
       roots,
       // A file of malformed groups reaches here with no spans at all, so the
       // span allowance cannot bound it; cap the diagnostics and say so.
-      diagnostics: boundedDiagnostics,
+      diagnostics,
       summary: {
         spans: walked.spans.length,
         roots: roots.length,
@@ -672,7 +674,7 @@ export const parseOtlpTrace = (
             .filter((name): name is string => name !== null),
         ).size,
         redacted_attributes: walked.redactedAttributes,
-        diagnostics: boundedDiagnostics.length,
+        diagnostics: diagnostics.length,
       },
       source_coverage: {
         scope: "single-caller-supplied-export",
@@ -694,9 +696,9 @@ export const parseOtlpTrace = (
               `Some spans carry more attributes than the ${OTLP_TRACE_MAX_ATTRIBUTES_PER_SPAN}-attribute per-span allowance; the dropped count is reported per span.`,
             ]
           : []),
-        ...(diagnosticsTruncated
+        ...(problems.omitted > 0
           ? [
-              `The export produced more than ${OTLP_TRACE_MAX_DIAGNOSTICS} diagnostics; only the first ${OTLP_TRACE_MAX_DIAGNOSTICS} by diagnostic id are reported and the rest are dropped.`,
+              `${problems.omitted} diagnostic${problems.omitted === 1 ? " was" : "s were"} omitted after the first ${OTLP_TRACE_MAX_DIAGNOSTICS} findings in processing order.`,
             ]
           : []),
         ...(walked.resourceAttributesTruncated

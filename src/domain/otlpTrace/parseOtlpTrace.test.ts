@@ -556,8 +556,30 @@ describe("parseOtlpTrace diagnostic bound", () => {
     });
     expect(report.diagnostics).toHaveLength(1_000);
     expect(report.summary.diagnostics).toBe(1_000);
+    expect(
+      report.diagnostics.some(
+        (entry) => entry.source_pointer === "/resourceSpans/999",
+      ),
+    ).toBe(true);
+    expect(
+      report.diagnostics.some(
+        (entry) => entry.source_pointer === "/resourceSpans/1000",
+      ),
+    ).toBe(false);
     expect(report.limitations.join(" ")).toContain(
-      "only the first 1000 by diagnostic id are reported",
+      "200 diagnostics were omitted",
     );
+  });
+
+  it("counts later graph diagnostics after the shared allowance is full", () => {
+    const report = parse({
+      resourceSpans: [
+        ...Array.from({ length: 1_000 }, () => null),
+        { scopeSpans: [{ spans: [span({}), span({})] }] },
+      ],
+    });
+    expect(report.diagnostics).toHaveLength(1_000);
+    expect(report.spans).toHaveLength(2);
+    expect(report.limitations.join(" ")).toContain("1 diagnostic was omitted");
   });
 });
