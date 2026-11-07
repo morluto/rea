@@ -46,9 +46,7 @@ describe("draftTaskFiles noise", () => {
   it("leaves view state, renumbered ids, volatile values and times out of a document's suggestions when an edit is there, noting each in values", () => {
     const file = xmlDraft(workbook(SEED), workbook(EDITED));
 
-    expect(file.suggested.map(pointerOf)).toEqual([
-      `${CELLS}[@Col=3][@Row=2]/children/0`,
-    ]);
+    expect(file.suggested.map(pointerOf)).toEqual([`${CELLS}[@Col=3][@Row=2]`]);
     const noted = (note: string) =>
       file.values
         .filter((value) => value.note === note)
@@ -81,6 +79,27 @@ describe("draftTaskFiles noise", () => {
     // The edit leads, noise last.
     expect(file.values[0]?.note).toBeUndefined();
     expect(file.notes).toEqual([]);
+  });
+
+  it("keeps a formula edit when the cell's ExprID changes too", () => {
+    const sheet = (march: string, formula: string, id: string) =>
+      `<Workbook><Sheet><Cells><Cell Row="2" Col="3">${march}</Cell><Cell Row="5" Col="3" ExprID="${id}">${formula}</Cell></Cells></Sheet></Workbook>`;
+    const file = xmlDraft(
+      sheet("405.1", "=sum(C2:C4)", "2"),
+      sheet("437.8", "=sum(C2:C5)", "4"),
+    );
+    const shown = file.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+
+    expect(shown).toContain("=sum(C2:C5)");
+    expect(
+      file.values
+        .filter(({ note }) => note === "renumbered")
+        .map(({ pointer }) => pointer),
+    ).toEqual([
+      "/root/children/[name=Sheet]/children/[name=Cells]/children/[name=Cell][@Row=5]/attributes/ExprID",
+    ]);
   });
 
   it("keeps an edit that follows more noise than a file has room for checks", () => {
@@ -260,7 +279,7 @@ describe("draftTaskFiles upkeep in an archive", () => {
     view: xml(view),
     view_error: null,
   });
-  const archive = (content: string, styles: string) => ({
+  const archive = (content: string, text: string, heading = text) => ({
     entries: [
       entry(
         "content.xml",
@@ -268,7 +287,7 @@ describe("draftTaskFiles upkeep in an archive", () => {
       ),
       entry(
         "styles.xml",
-        `<styles><style name="Default">${styles}</style></styles>`,
+        `<styles><style name="Text">${text}</style><style name="Heading">${heading}</style></styles>`,
       ),
     ],
     entry_count: 2,
@@ -282,9 +301,9 @@ describe("draftTaskFiles upkeep in an archive", () => {
     return file;
   };
   const filled =
-    "/entries/[name=styles.xml]/view/root/children/[name=style]/children/[name=props]/attributes/tab-stop";
+    "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/tab-stop";
 
-  it("demotes attributes an entry's elements only gained while another entry holds the edit", () => {
+  it("demotes an attribute several elements gained while another entry holds the edit", () => {
     const file = drafted(
       archive("Spring Sale", "<props/>"),
       archive("Summer Sale", `<props tab-stop="0in"/>`),
@@ -304,7 +323,25 @@ describe("draftTaskFiles upkeep in an archive", () => {
       archive("Spring Sale", `<props tab-stop="0in"/>`),
     );
 
-    expect(file.suggested.map(pointerOf)).toEqual([filled]);
-    expect(file.values.map(({ note }) => note)).toEqual([undefined]);
+    expect(file.suggested.map(pointerOf)).toEqual([
+      filled,
+      filled.replace("[@name=Text]", "[@name=Heading]"),
+    ]);
+    expect(file.values.map(({ note }) => note)).toEqual([undefined, undefined]);
+  });
+
+  it("keeps a font size added to one style when the document text changed too", () => {
+    const file = drafted(
+      archive("Spring Sale", "<props/>"),
+      archive("Summer Sale", `<props font-size="12pt"/>`, "<props/>"),
+    );
+    const size =
+      "/entries/[name=styles.xml]/view/root/children/[name=style][@name=Text]/children/[name=props]/attributes/font-size";
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/entries/[name=content.xml]/view/root/children/[name=body]/children/[name=p]",
+      size,
+    ]);
+    expect(file.values.every(({ note }) => note === undefined)).toBe(true);
   });
 });
