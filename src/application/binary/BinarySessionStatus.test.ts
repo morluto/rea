@@ -230,6 +230,7 @@ const expectedRouteCapabilities: ProviderCapabilitySet[] = [
         available: false,
         reason: "Runtime operation failure",
         availability_code: null,
+        runtime_unavailable: true,
       },
       {
         operations: ["read_bytes"],
@@ -257,6 +258,7 @@ const expectedExpandedRouteCapabilities = [
     available: false,
     reason: "Runtime operation failure",
     availability_code: null,
+    runtime_unavailable: true,
     effects: MUTATING_EFFECTS,
     limitations: ["Shared limitation"],
   },
