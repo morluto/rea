@@ -218,7 +218,8 @@ const childInteraction = (
   const member = dataEffectMemberCallee(node);
   if (member === null) return null;
   const method = semanticStaticPropertyName(member.property, member.computed);
-  const classification = classifyInteraction(method, node.arguments[0]);
+  const eventArgument = resolvePositionalArgument(node.arguments, 0, state);
+  const classification = classifyInteraction(method, eventArgument);
   if (classification === null) return null;
   const { kind, interactionMethod, eventName } = classification;
   const listener =
@@ -226,7 +227,12 @@ const childInteraction = (
       ? resolvePositionalArgument(node.arguments, 1, state)
       : undefined;
   let rejectedNodeListener = false;
-  if (kind === "listener" && rejectsEventListener(listener, state)) {
+  if (
+    kind === "listener" &&
+    !t.isSpreadElement(eventArgument) &&
+    !t.isSpreadElement(listener) &&
+    rejectsEventListener(listener, state)
+  ) {
     if (isProvenNodeEmitter(member.object, node, state)) return null;
     rejectedNodeListener = true;
   }

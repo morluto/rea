@@ -225,11 +225,16 @@ it.each([
 
 it.each([
   ["a leading spread", `e.on(...args, 1)`, "on"],
-  ["a leading spread with a literal array", `e.on(...["x", fn], 1)`, "on"],
   ["a leading spread on once", `e.once(...args, 0)`, "once"],
 ] as const)("keeps the event operation for %s", (_name, call, method) => {
   expect(eventsFor(call)).toEqual([
     { kind: "register", method, eventName: null },
+  ]);
+});
+
+it("keeps the event operation and resolves event name for a leading spread with a literal array", () => {
+  expect(eventsFor(`e.on(...["x", fn], 1)`)).toEqual([
+    { kind: "register", method: "on", eventName: "x" },
   ]);
 });
 
@@ -667,4 +672,52 @@ it("retains candidate and records resource limit when nested spreads exceed dept
   `);
   expect(ir.coverage.resourceLimits ?? []).toContain("expression-depth");
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+});
+
+it("drops child listener when template literal short-circuits nullish coalescing", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", \`bad\` ?? handler);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("drops child listener and event operation when leading spread resolves to invalid listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on(...["exit", 1]);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains child listener and event operation when leading spread resolves to valid listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on(...["exit", () => {}]);
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
 });

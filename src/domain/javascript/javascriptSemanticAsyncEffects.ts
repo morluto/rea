@@ -258,7 +258,8 @@ const staticExpressionNullishness = (
     t.isFunctionExpression(unwrapped) ||
     t.isArrowFunctionExpression(unwrapped) ||
     t.isClassExpression(unwrapped) ||
-    t.isRegExpLiteral(unwrapped)
+    t.isRegExpLiteral(unwrapped) ||
+    t.isTemplateLiteral(unwrapped)
   )
     return false;
   return undefined;
@@ -334,6 +335,10 @@ export const resolvePositionalArgument = (
   let index = 0;
   for (const arg of flattenCallArguments(args, 0, state)) {
     if (index === targetIndex) return arg;
+    if (t.isSpreadElement(arg)) {
+      // An unexpanded dynamic spread shifts all subsequent argument positions unpredictably.
+      return arg;
+    }
     index += 1;
   }
   return undefined;
@@ -940,17 +945,17 @@ const collectEvent = (
   );
   if (method === undefined) return;
   const kind = eventKind(method);
-  const eventArgument = node.arguments[0];
+  const eventArgument = resolvePositionalArgument(node.arguments, 0, state);
   const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
   const listenerArgument = listenerMethod
     ? resolvePositionalArgument(node.arguments, 1, state)
     : undefined;
-  // A leading spread shifts the runtime argument positions, so argument 1 is not
-  // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
-  // trailing `1`.
+  // A dynamic or unexpanded spread shifts the runtime argument positions or leaves
+  // the callback uncertain; only reject when both arguments were resolved.
   const invalidNodeListener =
     listenerMethod &&
     !t.isSpreadElement(eventArgument) &&
+    !t.isSpreadElement(listenerArgument) &&
     rejectsEventListener(listenerArgument, state);
   if (invalidNodeListener && isProvenNodeEmitter(member.object, node, state))
     return;
