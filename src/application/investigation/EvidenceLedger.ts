@@ -15,7 +15,11 @@ import {
 } from "../../domain/analysisErrorCore.js";
 import { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import { UnknownRegistryError } from "../../domain/unknownRegistryError.js";
-import { isImmutableEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  isImmutableEvidence,
+  evidenceDisplayMetadataAgree,
+  type Evidence,
+} from "../../domain/evidence.js";
 import { freezeJsonSnapshot } from "../../domain/immutableJson.js";
 import { safeParseImmutableEvidence } from "../../domain/evidenceValidation.js";
 import {
@@ -159,7 +163,7 @@ export class EvidenceLedger {
         continue;
       }
       if (existing === evidence) continue;
-      if (!displayMetadataAgree(existing, evidence)) {
+      if (!evidenceDisplayMetadataAgree(existing, evidence)) {
         recordChanges.set(evidence.evidence_id, evidence);
         replacements.push({
           kind: "metadata",
@@ -722,8 +726,3 @@ const readLedgerEvidence = (
 
 const unknownRevisionKey = (unknown: ResidualUnknown): string =>
   `${unknown.unknown_id}:${String(unknown.revision)}`;
-
-const displayMetadataAgree = (left: Evidence, right: Evidence): boolean =>
-  left.subject?.name === right.subject?.name &&
-  left.subject?.local_path === right.subject?.local_path &&
-  left.caller_input_path === right.caller_input_path;
