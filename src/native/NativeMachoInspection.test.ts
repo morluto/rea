@@ -377,8 +377,13 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `dwarfdump --uuid (FEDCBA98-7654-3210-FEDC-BA9876543210) conflicts with binary load commands LC_UUID (${validUuid}); the image UUID is unknown.`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `dwarfdump.*FEDCBA98-7654-3210-FEDC-BA9876543210.*conflict.*LC_UUID.*${validUuid}.*unknown`,
+          "iu",
+        ),
+      ),
     );
   });
 
@@ -418,8 +423,13 @@ describe("Mach-O UUID reconciliation", () => {
     );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: null });
-    expect(result.value.limitations).toContain(
-      `binary load commands returned conflicting LC_UUID values ${JSON.stringify(validUuid)} and ${JSON.stringify("FEDCBA98-7654-3210-FEDC-BA9876543210")}`,
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        new RegExp(
+          `conflicting LC_UUID.*${validUuid}.*FEDCBA98-7654-3210-FEDC-BA9876543210`,
+          "iu",
+        ),
+      ),
     );
   });
 

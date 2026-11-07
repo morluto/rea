@@ -487,8 +487,8 @@ class GdbProtocolFailureError extends Error {
   }
 }
 
-/** @internal Convert an unknown boundary failure without dropping non-Error values. */
-export const gdbErrorMessage = (cause: unknown): string =>
+/** Convert an unknown boundary failure without dropping non-Error values. */
+const gdbErrorMessage = (cause: unknown): string =>
   cause instanceof Error ? cause.message : String(cause);
 
 interface GdbSession {
@@ -2443,7 +2443,7 @@ export const commandMayChangeInferiorOutput = (command: string): boolean => {
 };
 
 /** Await a serialized command turn, preserving the caller's cancellation reason. */
-export const waitForGdbCommandTurn = (
+const waitForGdbCommandTurn = (
   previous: Promise<void>,
   signal?: AbortSignal,
 ): Promise<void> => {

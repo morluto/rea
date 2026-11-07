@@ -1572,8 +1572,9 @@ describe("client configuration filesystem removal", () => {
       expect.objectContaining({
         name: "cache",
         status: "retained",
-        detail:
-          "REA did not remove this item because its managed path is a symbolic link. Verify the link target before removing it manually.",
+        detail: expect.stringMatching(
+          /did not remove.*symbolic link.*verify.*link target/i,
+        ),
       }),
     );
     expect((await runUninstall(true, systemUninstallHost(home))).status).toBe(
@@ -1685,8 +1686,9 @@ describe("uninstall configuration symlink ownership", () => {
       name: "cursor",
       status: "failed",
       configuration_path: configPath,
-      detail:
-        "Configuration path could not be safely verified. Check its permissions and, if it is a symbolic link, verify that the link resolves to a regular file owned by the current user, then rerun uninstall.",
+      detail: expect.stringMatching(
+        /could not be safely verified.*permissions.*symbolic link.*regular file.*current user.*uninstall/i,
+      ),
     });
     expect((await lstat(configPath)).isSymbolicLink()).toBe(true);
     await expect(

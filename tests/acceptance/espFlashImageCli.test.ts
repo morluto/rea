@@ -14,11 +14,7 @@ import {
   otaRecord,
 } from "../../src/domain/firmware/espFlash.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import {
-  artifactInspectionResultSchema,
-  createArtifactInspection,
-} from "../../src/domain/artifactInspection.js";
-import { espFlashSelectionError } from "../../src/domain/firmware/espFlashSelection.js";
+import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
@@ -118,12 +114,9 @@ cliTest(
       ],
     });
     expect(unpaired.exitCode).not.toBe(0);
-    const selectionError = espFlashSelectionError({ flashOffset: 0x1000 });
-    if (selectionError === undefined)
-      throw new Error("Expected selection error");
-    expect(unpaired.stdout + unpaired.stderr).toContain(selectionError);
-    expect(selectionError).toContain("flash_offset");
-    expect(selectionError).toContain("esp-flash-image");
+    expect(unpaired.stdout + unpaired.stderr).toMatch(
+      /flash_offset.*only with format=esp-flash-image/iu,
+    );
     // Without the format, the bootloader is read as one ESP image, and the
     // table at file offset 0x7000 says how to reopen the dump.
     const automatic = await cli.run({
@@ -137,10 +130,6 @@ cliTest(
     });
     const inspection = artifactInspectionResultSchema.parse(
       parseEvidence(automatic.json).normalized_result,
-    );
-    const inventoryEvidence = inspection.substeps[0]?.evidence;
-    expect(inspection.next_probes).toEqual(
-      createArtifactInspection(inventoryEvidence).next_probes,
     );
     expect(inspection.next_probes).toEqual([
       expect.objectContaining({

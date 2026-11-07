@@ -1176,6 +1176,10 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(exited.remediation.action).toBe(
       analysisErrorRemediationAction(exitedError),
     );
+    expect(exited.message).toMatch(
+      /Hopper exited.*search_strings.*exit code 7/iu,
+    );
+    expect(exited.remediation.action).toMatch(/close_binary.*open.*retry/iu);
 
     const unknownError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -1194,6 +1198,12 @@ describe("analysis error projection: operational diagnostics", () => {
     expect(unknown.remediation.action).toBe(
       analysisErrorRemediationAction(unknownError),
     );
+    expect(unknown.message).toMatch(
+      /could not determine.*busy, exited, or unreachable/iu,
+    );
+    expect(unknown.remediation.action).toMatch(
+      /provider_operation_health.*before retrying or restarting/iu,
+    );
 
     const unreachableError = new HopperProcessError(null, {
       operation: "search_strings",
@@ -1211,6 +1221,12 @@ describe("analysis error projection: operational diagnostics", () => {
       message: analysisErrorUserMessage(unreachableError),
       remediation: { action: analysisErrorRemediationAction(unreachableError) },
     });
+    expect(unreachable.message).toMatch(
+      /unreachable.*process exit was not observed/iu,
+    );
+    expect(unreachable.remediation.action).toMatch(
+      /close_binary.*Evidence and Unknown history.*export_evidence_bundle/iu,
+    );
   });
 });
 
@@ -1384,8 +1400,8 @@ it("preserves ordinary configuration recovery and projects a producer-owned sess
       remediationAction: "Repair the running session, then retry.",
     }),
   );
-  expect(original.remediation.action).toBe(
-    "Correct REA_EXAMPLE in the environment that starts REA (your shell or the MCP client's registration), then rerun.",
+  expect(original.remediation.action).toMatch(
+    /correct.*REA_EXAMPLE.*environment.*shell.*MCP.*registration.*rerun/iu,
   );
   expect(repairing).toEqual({
     ...original,

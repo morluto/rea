@@ -140,7 +140,7 @@ type AvailabilityModeResult =
     });
 
 /** Recovery when unavailable modes require different actions. */
-export const MULTI_MODE_REMEDIATION =
+const MULTI_MODE_REMEDIATION =
   "No mode is currently advertised as available. Inspect each mode's missing operations and remediation.";
 type AvailabilityContext = {
   readonly name: string;

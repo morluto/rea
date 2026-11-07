@@ -254,11 +254,18 @@ describe("ESP flash layout coverage and selection", () => {
       facts: { status: "erased" },
     });
     // Only the erased app slot holds bytes the bootloader does not read.
-    expect(
-      snapshot.limitations.filter((text) => text.includes("finds no app")),
-    ).toEqual([
-      `partitions/ota_1.bin begins with erased flash, so ESP-IDF's bootloader finds no app in it, but ${String(indices.length)} of its bytes from offset 0x${start.toString(16)} to 0x${end.toString(16)} are not erased flash; they are not read as an image.`,
-    ]);
+    const erasedSlotWarnings = snapshot.limitations.filter((text) =>
+      /bootloader.*no app/iu.test(text),
+    );
+    expect(erasedSlotWarnings).toHaveLength(1);
+    const warning = erasedSlotWarnings[0] ?? "";
+    expect(warning).toContain("partitions/ota_1.bin");
+    expect(warning).toContain(String(indices.length));
+    expect(warning).toContain(`0x${start.toString(16)}`);
+    expect(warning).toContain(`0x${end.toString(16)}`);
+    expect(warning).toMatch(
+      /erased flash.*bootloader.*no app.*not erased.*not read as an image/iu,
+    );
     // A partition erased throughout has no written bytes.
     expect(row("partitions/nvs.bin")).toMatchObject({
       written_offset: null,

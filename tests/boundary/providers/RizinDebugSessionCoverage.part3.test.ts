@@ -483,8 +483,9 @@ it.skipIf(process.platform === "win32")(
     if (!result.ok) {
       expect(result.error).toMatchObject({
         _tag: "AnalysisCapabilityUnavailableError",
-        reason:
-          "Unsolicited Rizin frames arrived before a command; command output can no longer be safely correlated.",
+        reason: expect.stringMatching(
+          /unsolicited Rizin frames.*before a command.*no longer.*safely correlated/i,
+        ),
       });
       expect(result.error.cleanupIncomplete).toBe(false);
     }

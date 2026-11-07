@@ -153,7 +153,7 @@ export const BUN_LATEST_VERSION_COMMAND: readonly string[] = [
 ];
 
 /** npm view arguments for dist-tags.latest, scoped to the owning prefix when known. */
-export const npmLatestVersionCommand = (
+const npmLatestVersionCommand = (
   installation: NpmInstallation | undefined,
 ): readonly string[] => [
   "npm",
@@ -171,7 +171,7 @@ export const npmLatestVersionCommand = (
  * Read one latest version from `npm view --json`.
  * npm 11 emits a JSON string. npm 12 emits that string as a one-element array.
  */
-export const parseNpmLatestVersion = (
+const parseNpmLatestVersion = (
   metadata: string,
 ): Result<string, string> => {
   const decoded = safeParseJson(metadata);
@@ -193,7 +193,7 @@ const nonemptyVersion = (value: string): string | undefined =>
   value.length === 0 ? undefined : value;
 
 /** Classify `npm view` or `bun info` output as a version or a lookup failure. */
-export const npmReleaseLookup = (
+const npmReleaseLookup = (
   response: Result<string, string>,
 ): Result<string, ReleaseLookupFailure> => {
   if (!response.ok) return err({ kind: "unavailable", detail: response.error });

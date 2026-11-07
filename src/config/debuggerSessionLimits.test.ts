@@ -21,10 +21,6 @@ import {
   DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
   DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
   DEBUGGER_MAX_SESSIONS_SETTING,
-  debuggerCommandDeadlineConstraint,
-  debuggerMaxCommandOutputBytesConstraint,
-  debuggerMaxPendingCommandsConstraint,
-  debuggerMaxSessionsConstraint,
   parseDebuggerSessionLimits,
   resolveDebuggerSessionLimits,
 } from "./debuggerSessionLimits.js";
@@ -93,30 +89,59 @@ it("accepts one in-range override for each shared debugger cap", () => {
 });
 
 it.each([
-  [DEBUGGER_COMMAND_DEADLINE_SETTING, "0", debuggerCommandDeadlineConstraint],
-  [DEBUGGER_MAX_SESSIONS_SETTING, "65", debuggerMaxSessionsConstraint],
+  [
+    DEBUGGER_COMMAND_DEADLINE_SETTING,
+    "0",
+    MINIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    MAXIMUM_DEBUGGER_COMMAND_DEADLINE_MS,
+    120_000,
+    "ms",
+  ],
+  [
+    DEBUGGER_MAX_SESSIONS_SETTING,
+    "65",
+    MINIMUM_DEBUGGER_MAX_SESSIONS,
+    MAXIMUM_DEBUGGER_MAX_SESSIONS,
+    8,
+    "sessions",
+  ],
   [
     DEBUGGER_MAX_PENDING_COMMANDS_SETTING,
     "00",
-    debuggerMaxPendingCommandsConstraint,
+    MINIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    MAXIMUM_DEBUGGER_MAX_PENDING_COMMANDS,
+    16,
+    "commands",
   ],
   [
     DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_SETTING,
     String(MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES + 1),
-    debuggerMaxCommandOutputBytesConstraint,
+    MINIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    MAXIMUM_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES,
+    16 * 1024 * 1024,
+    "bytes",
   ],
 ])(
   "rejects invalid %s at the setting boundary",
-  (setting, value, constraint) => {
+  (setting, value, minimum, maximum, defaultValue, unit) => {
     const parsed = parseDebuggerSessionLimits({ [setting]: value });
     if (parsed.ok) throw new Error(`${setting} was accepted`);
     expect(parsed.error).toBeInstanceOf(ConfigurationError);
-    expect(parsed.error.settings).toEqual([{ setting, constraint }]);
+    expect(parsed.error.settings).toHaveLength(1);
+    const detail = parsed.error.settings[0];
+    if (!detail) throw new Error("missing setting guidance");
+    expect(detail.setting).toBe(setting);
+    expect(detail.constraint).toContain(setting);
+    expect(detail.constraint).toMatch(/positive decimal integer/i);
+    expect(detail.constraint).toContain(String(minimum));
+    expect(detail.constraint).toContain(String(maximum));
+    expect(detail.constraint).toContain(String(defaultValue));
+    expect(detail.constraint).toContain(unit);
     const startup = parseEnvironment({ [setting]: value });
     if (startup.ok) throw new Error(`${setting} was accepted at startup`);
     expect(projectAnalysisError(startup.error)).toMatchObject({
       code: "configuration_invalid",
-      details: { settings: [{ setting, constraint }] },
+      details: { settings: [detail] },
     });
   },
 );
@@ -229,6 +254,10 @@ it("refuses an invalid GDB deadline before a session starts", () => {
         environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
       }),
   ).toThrow(ConfigurationError);
+  const parsed = parseDebuggerSessionLimits({
+    [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0",
+  });
+  if (parsed.ok) throw new Error("invalid deadline was accepted");
   try {
     new GdbSessionManager({
       environment: { [DEBUGGER_COMMAND_DEADLINE_SETTING]: "0" },
@@ -238,12 +267,7 @@ it("refuses an invalid GDB deadline before a session starts", () => {
     expect(projectAnalysisError(error)).toMatchObject({
       code: "configuration_invalid",
       details: {
-        settings: [
-          {
-            setting: DEBUGGER_COMMAND_DEADLINE_SETTING,
-            constraint: debuggerCommandDeadlineConstraint,
-          },
-        ],
+        settings: parsed.error.settings,
       },
     });
   }

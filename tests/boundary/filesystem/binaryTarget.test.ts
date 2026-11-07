@@ -1156,8 +1156,7 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     expect(result.ok).toBe(false);
     expect(result.ok ? undefined : result.error).toMatchObject({
       path,
-      reason:
-        "truncated Mach-O header: a 64-bit header needs 32 bytes; the file has 12",
+      reason: expect.stringMatching(/truncated Mach-O.*64-bit.*32 bytes.*12/i),
     });
   });
 

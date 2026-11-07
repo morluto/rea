@@ -708,9 +708,14 @@ process.stdin.on("data", (chunk) => {
       controller.signal,
     );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    controller.abort();
+    const reason = { source: "cancelled while queued" };
+    controller.abort(reason);
     const third = manager.execute(started.value.session_id, "third");
-    expect((await second).ok).toBe(false);
+    const cancelled = await second;
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
     expect((await first).ok).toBe(true);
     expect((await third).ok).toBe(true);
     await expect(readFile(overlapPath, "utf8")).rejects.toThrow();

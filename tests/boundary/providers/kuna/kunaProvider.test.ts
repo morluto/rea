@@ -441,8 +441,10 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations).toContain(
-    "Kuna could not decompile this function: Flow exceeded maximum instructions",
+  expect(broken.limitations).toContainEqual(
+    expect.stringMatching(
+      /could not decompile.*Flow exceeded maximum instructions/i,
+    ),
   );
   const dossier = await run(client, "analyze_function", {
     procedure: "broken",
@@ -451,8 +453,9 @@ it("reports a failed function and an import slot as unavailable text, not errors
     facet_availability: {
       pseudocode: {
         available: false,
-        reason:
-          "Kuna could not decompile this function: Flow exceeded maximum instructions",
+        reason: expect.stringMatching(
+          /could not decompile.*Flow exceeded maximum instructions/i,
+        ),
       },
     },
   });

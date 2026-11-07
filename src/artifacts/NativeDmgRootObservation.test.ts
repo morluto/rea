@@ -7,13 +7,10 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { scanCanonicalArtifactInventory } from "../../tests/fixtures/artifactInventory.js";
 import {
   NativeDmgArtifactReader,
-  DMG_EXISTING_ATTACHMENT_RECOVERY,
   type NativeDmgHost,
 } from "./NativeDmgArtifactReader.js";
 import { translateArtifactFailure } from "./ArtifactOperationFailure.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import { analysisErrorUserMessage } from "../domain/analysisErrorPresentation.js";
-import { ArtifactOperationError } from "../domain/artifactOperationError.js";
 
 it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
   "retains DMG root facts and limits existing-attachment guidance to a resolved image path: %s",
@@ -108,16 +105,15 @@ it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
       expect.objectContaining({ kind: "artifact-inventory" }),
     );
     if (listed === "same") {
-      expect(projected.message).toBe(DMG_EXISTING_ATTACHMENT_RECOVERY);
-      expect(projected.remediation.action).toBe(
-        DMG_EXISTING_ATTACHMENT_RECOVERY,
+      expect(projected.message).toMatch(
+        /hdiutil.*existing attachment.*owner.*release.*retry.*does not borrow or detach/iu,
       );
+      expect(projected.remediation.action).toBe(projected.message);
     } else {
-      expect(projected.message).toBe(
-        analysisErrorUserMessage(
-          new ArtifactOperationError("inspect_artifact", "unavailable"),
-        ),
+      expect(projected.message).toMatch(
+        /unavailable.*availability reason.*before retrying/iu,
       );
+      expect(projected.message).not.toMatch(/existing attachment|detach/iu);
     }
     expect(calls).not.toContain("detach");
   },

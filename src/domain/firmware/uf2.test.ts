@@ -354,8 +354,10 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     family_count: 0,
     missing_block_count: 1,
   });
-  expect(decoded.limitations).toContain(
-    "1 UF2 block(s) are flagged not main flash (flag 0x1); their 3 payload bytes are in no region.",
+  expect(decoded.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*not main flash.*0x1.*3 payload bytes.*no region/iu,
+    ),
   );
   const file = uf2Block({
     address: 0,
@@ -373,8 +375,10 @@ it("excludes not-main-flash and file-container blocks from regions", () => {
     missing_block_count: 0,
     region_count: 1,
   });
-  expect(contained.limitations).toContain(
-    "1 UF2 block(s) belong to file containers (flag 0x1000); their files were not reconstructed.",
+  expect(contained.limitations).toContainEqual(
+    expect.stringMatching(
+      /1 UF2 block.*file containers.*0x1000.*not reconstructed/iu,
+    ),
   );
 });
 

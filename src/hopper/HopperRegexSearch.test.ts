@@ -323,7 +323,7 @@ it("returns cancellation when the caller aborts after the regex worker settles",
   regexMatch.afterSettle = () => controller.abort(reason);
   const search = new HopperRegexSearch({
     callTool: async () =>
-      ok([{ address: "0x1000", value: "fixture" }] as never),
+      ok([{ address: "0x1000", value: "fixture" }]),
   });
   try {
     const result = await search.execute(

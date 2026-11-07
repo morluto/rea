@@ -96,16 +96,16 @@ const constraintFor = (admission: DebuggerAdmissionLimit): string =>
       : ""
   }`;
 
-export const debuggerCommandDeadlineConstraint = constraintFor(
+const debuggerCommandDeadlineConstraint = constraintFor(
   DEFAULT_DEBUGGER_COMMAND_DEADLINE,
 );
-export const debuggerMaxSessionsConstraint = constraintFor(
+const debuggerMaxSessionsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_SESSIONS_LIMIT,
 );
-export const debuggerMaxPendingCommandsConstraint = constraintFor(
+const debuggerMaxPendingCommandsConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_PENDING_COMMANDS_LIMIT,
 );
-export const debuggerMaxCommandOutputBytesConstraint = constraintFor(
+const debuggerMaxCommandOutputBytesConstraint = constraintFor(
   DEFAULT_DEBUGGER_MAX_COMMAND_OUTPUT_BYTES_LIMIT,
 );
 

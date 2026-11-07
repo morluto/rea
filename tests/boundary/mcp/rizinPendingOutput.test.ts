@@ -97,23 +97,92 @@ test.each([
 );
 
 test.each([
-  { mode: "exit", maximum: 10, invalid: true, expected: "first\n�A" },
-  { mode: "cancel", maximum: 9, invalid: true, expected: "first\n�" },
-  { mode: "exit", maximum: 9, invalid: false, expected: "first\n�" },
-  { mode: "cancel", maximum: 8, invalid: true, expected: "first" },
+  {
+    mode: "exit",
+    maximum: 10,
+    invalid: true,
+    expected: "first\n�A",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 9,
+    invalid: true,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "exit",
+    maximum: 9,
+    invalid: false,
+    expected: "first\n�",
+    payload: null,
+  },
+  {
+    mode: "cancel",
+    maximum: 8,
+    invalid: true,
+    expected: "first",
+    payload: null,
+  },
+  { mode: "exit", maximum: 3, invalid: false, expected: "", payload: "🚀🚀X" },
+  {
+    mode: "exit",
+    maximum: 4,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 7,
+    invalid: false,
+    expected: "🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 8,
+    invalid: false,
+    expected: "🚀🚀",
+    payload: "🚀🚀X",
+  },
+  {
+    mode: "exit",
+    maximum: 5,
+    invalid: false,
+    expected: "中",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 6,
+    invalid: false,
+    expected: "中文",
+    payload: "中文X",
+  },
+  {
+    mode: "exit",
+    maximum: 3,
+    invalid: false,
+    expected: "hel",
+    payload: "hello",
+  },
 ])(
   "bounds pending UTF-8 after $mode (budget: $maximum, invalid: $invalid)",
-  async ({ mode, maximum, invalid, expected }) => {
+  async ({ mode, maximum, invalid, expected, payload }) => {
     const controller = new AbortController();
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         if (!text.includes("!echo __REA_COMMAND_COMPLETE_")) return;
         control.output(
-          Buffer.concat([
-            Buffer.from("first\0"),
-            invalid ? Buffer.from([0xff]) : Buffer.from("�"),
-            Buffer.from("ABCDEFGHIJKLM"),
-          ]),
+          payload === null
+            ? Buffer.concat([
+                Buffer.from("first\0"),
+                invalid ? Buffer.from([0xff]) : Buffer.from("�"),
+                Buffer.from("ABCDEFGHIJKLM"),
+              ])
+            : Buffer.from(payload),
         );
         if (mode === "exit") control.exit();
         else controller.abort();

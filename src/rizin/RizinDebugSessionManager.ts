@@ -1824,7 +1824,7 @@ const waitForCommandFrames = async (
   }
 };
 
-export const truncateUtf8 = (value: string, maximumBytes: number): string => {
+const truncateUtf8 = (value: string, maximumBytes: number): string => {
   if (maximumBytes <= 0) return "";
   // A UTF-16 code unit needs at most three UTF-8 bytes. Buffer.write stops
   // before a partial character; only decode bytes it actually initialized.

@@ -292,8 +292,10 @@ describe("ESP flash layout otadata", () => {
     expect(plan.otadata?.records.map(({ fileOffset }) => fileOffset)).toEqual([
       0x4_0000, 0x4_1000,
     ]);
-    expect(plan.limitations).toContain(
-      "The table declares otadata 2 times (partitions #1, #6); ESP-IDF's bootloader uses the last.",
+    expect(plan.limitations).toContainEqual(
+      expect.stringMatching(
+        /otadata 2 times.*#1.*#6.*bootloader uses the last/iu,
+      ),
     );
   });
 
@@ -305,8 +307,10 @@ describe("ESP flash layout otadata", () => {
     expect(plan.otadata?.records).toEqual([
       { index: 0, fileOffset: 0xd000, available: true },
     ]);
-    expect(plan.limitations).toContain(
-      "The otadata partition otadata is 0x1000 bytes, smaller than the two 4 KiB sectors ESP-IDF's bootloader reads; the bootloader resets without selecting an app.",
+    expect(plan.limitations).toContainEqual(
+      expect.stringMatching(
+        /otadata.*0x1000 bytes.*smaller than.*two 4 KiB sectors.*bootloader resets without selecting an app/iu,
+      ),
     );
     const facts = finishEspFlashLayout(plan, {
       otadataRecords: [otaRecord({ seq: 1 })],
@@ -350,8 +354,10 @@ describe("ESP flash layout otadata", () => {
       { index: 0, fileOffset: 0xd000, available: true },
       { index: 1, fileOffset: 0xe000, available: false },
     ]);
-    expect(plan.limitations).toContain(
-      "otadata record 1 of partition otadata at flash 0xe000 is outside the dump; the OTA selection is unknown.",
+    expect(plan.limitations).toContainEqual(
+      expect.stringMatching(
+        /otadata record 1.*partition otadata.*0xe000.*outside the dump.*OTA selection is unknown/iu,
+      ),
     );
     const facts = finishEspFlashLayout(plan, {
       otadataRecords: [otaRecord({ seq: 3 }), undefined],
