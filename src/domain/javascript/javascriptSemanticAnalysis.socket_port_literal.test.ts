@@ -565,3 +565,44 @@ it("still defers to slot 2 for the global undefined", () => {
     ),
   ).toBe(0);
 });
+/**
+ * An object literal can carry a socket's stream methods through a non-computed
+ * `__proto__` setter, and `tls` then wraps it instead of connecting. Measured on
+ * Node 24.22.1 with an invalid port:
+ *
+ *   {__proto__: stream}            -> TLSSocket (the port is never read)
+ *   {__proto__: stream, extra: 1}  -> TLSSocket
+ *   {}                             -> THREW TypeError
+ *   {__proto__: null}              -> THREW TypeError
+ *   {__proto__: {}}                -> THREW TypeError
+ *   {__proto__: 5}                 -> THREW TypeError
+ *   {["__proto__"]: stream}        -> THREW TypeError (a computed key is an own property)
+ *
+ * So an object literal leaves the answer open only when its prototype value is not
+ * exactly readable.
+ */
+const socketIn = (call: string) =>
+  analyzeJavaScriptSemantics(
+    `import tls from "node:tls";\nfunction g(p, stream) { ${call}; }`,
+  ).resourceOperations.filter(({ kind }) => kind === "acquire").length;
+
+it.each([
+  [`tls.connect({ port: -1, socket: { __proto__: stream } })`],
+  [`tls.connect({ port: -1, socket: { __proto__: stream, extra: 1 } })`],
+  [`tls.connect({ port: -1, socket: { __proto__: deep } })`],
+] as const)(
+  "keeps a socket literal that may inherit stream methods: %s",
+  (call) => {
+    expect(socketIn(call)).toBe(1);
+  },
+);
+
+it.each([
+  [`tls.connect({ port: -1, socket: {} })`],
+  [`tls.connect({ port: -1, socket: { __proto__: null } })`],
+  [`tls.connect({ port: -1, socket: { __proto__: {} } })`],
+  [`tls.connect({ port: -1, socket: { __proto__: 5 } })`],
+  [`tls.connect({ port: -1, socket: { ["__proto__"]: stream } })`],
+] as const)("emits no acquisition for a decided socket literal: %s", (call) => {
+  expect(socketIn(call)).toBe(0);
+});
