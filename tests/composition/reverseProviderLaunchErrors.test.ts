@@ -10,6 +10,7 @@ import {
   DARWIN_PROCESS_OWNERSHIP_REMEDIATION,
   LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   LinuxOwnedProcessPrerequisiteError,
+  createSystemProcessOwnershipHost,
   processOwnershipAdmissionRecovery,
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
@@ -762,6 +763,105 @@ it("preserves Linux process ownership admission failure in baseline capture with
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+it("restricts Linux process ownership prerequisite remediation to missing ps and preserves system error codes", async () => {
+  const eioError = Object.assign(new Error("ps EIO"), { code: "EIO" });
+  const psMissing = Object.assign(new Error("spawn ps ENOENT"), {
+    code: "ENOENT",
+  });
+  const epermError = Object.assign(new Error("spawn ps EPERM"), {
+    code: "EPERM",
+  });
+
+  let currentError: Error = eioError;
+  const host = createSystemProcessOwnershipHost(
+    "linux",
+    {},
+    {
+      execFileOutput: async () => {
+        throw currentError;
+      },
+    },
+  );
+
+  currentError = eioError;
+  await expect(host.captureBaseline?.()).rejects.toMatchObject({
+    _tag: "ProcessAdmissionError",
+    code: "baseline_unavailable",
+    detail: { system_code: "EIO" },
+  });
+
+  currentError = epermError;
+  await expect(host.captureBaseline?.()).rejects.toMatchObject({
+    _tag: "ProcessAdmissionError",
+    code: "baseline_unavailable",
+    detail: { system_code: "EPERM" },
+  });
+
+  currentError = psMissing;
+  await expect(host.captureBaseline?.()).rejects.toBeInstanceOf(
+    LinuxOwnedProcessPrerequisiteError,
+  );
+});
+
+it.each(["EIO", "EPERM"] as const)(
+  "preserves system error code (%s) on Linux baseline capture without blaming procps/PATH or objdump command",
+  async (systemCode) => {
+    const { directory } = await createArtifact();
+    const command = resolve(directory, "configured-objdump");
+    const systemError = Object.assign(new Error(`spawn ps ${systemCode}`), {
+      code: systemCode,
+      path: "ps",
+      syscall: "spawn ps",
+    });
+    const captureSpy = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockRejectedValue(
+        new ProcessAdmissionError(
+          "baseline_unavailable",
+          { system_code: systemCode },
+          { cause: systemError },
+        ),
+      );
+    const service = new TestReverseEngineeringService({
+      environment: { REA_OBJDUMP_COMMAND: command },
+    });
+    try {
+      const result = await service.inspectWithObjdump({
+        operation: "architectures",
+      });
+      expect(result.ok).toBe(false);
+      if (!result.ok) {
+        const projected = projectAnalysisError(result.error);
+        expect(projected.code).toBe("capability_unavailable");
+        expect(projected.details).toMatchObject({
+          provider_id: "process-ownership",
+          diagnostics: {
+            boundary: "process-ownership",
+            system_code: systemCode,
+          },
+        });
+        expect(projected.remediation.action).toContain(
+          processOwnershipAdmissionRecovery(
+            "baseline_unavailable",
+            "linux",
+            systemCode,
+          ),
+        );
+        expect(projected.remediation.action).not.toContain("procps");
+        expect(projected.remediation.action).not.toContain("PATH");
+        expect(projected.remediation.action).toContain(
+          "REA_OBJDUMP_COMMAND does not need to change",
+        );
+      }
+      expect(service.observedLaunchFailures()).toEqual({});
+    } finally {
+      captureSpy.mockRestore();
+      await service.close();
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
 
 it("preserves target-read permission diagnostics before provider launch", async () => {
   let launches = 0;

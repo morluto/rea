@@ -651,21 +651,34 @@ export class ReverseEngineeringService {
           operation === "inspect_with_objdump"
             ? "REA_OBJDUMP_COMMAND"
             : "REA_RIZIN_COMMAND";
+        const rawSystemCode =
+          admissionFailure.detail?.system_code ??
+          (typeof admissionFailure.cause === "object" &&
+          admissionFailure.cause !== null
+            ? (execFileOutputFailure(admissionFailure.cause)?.code ??
+              commandFailureCode(admissionFailure.cause))
+            : undefined);
+        const admissionSystemCode =
+          typeof rawSystemCode === "string" ? rawSystemCode : undefined;
         const recovery = processOwnershipAdmissionRecovery(
           admissionFailure.code,
           systemProcessOwnershipHost.platform ?? process.platform,
+          admissionSystemCode,
         );
         earlyFailure = new AnalysisCapabilityUnavailableError(
           "process-ownership",
           "prepare_owned_process",
-          `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}: ${admissionFailure.message}`,
+          `Process ownership admission failed (${admissionFailure.code}${admissionSystemCode === undefined ? "" : `, ${admissionSystemCode}`}) before starting ${provider}: ${admissionFailure.message}`,
           {
             cause,
-            userMessage: `Process ownership admission failed (${admissionFailure.code}) before starting ${provider}.`,
+            userMessage: `Process ownership admission failed (${admissionFailure.code}${admissionSystemCode === undefined ? "" : `, ${admissionSystemCode}`}) before starting ${provider}.`,
             remediationAction: `${recovery} ${setting} does not need to change.`,
             diagnostics: {
               boundary: "process-ownership",
-              system_code: admissionFailure.code,
+              system_code: admissionSystemCode ?? admissionFailure.code,
+              ...(admissionSystemCode === undefined
+                ? {}
+                : { admission_code: admissionFailure.code }),
             },
             ...ownedCleanupOptions(cause),
           },

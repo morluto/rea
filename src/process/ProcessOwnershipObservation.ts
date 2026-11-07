@@ -1185,8 +1185,11 @@ export const createSystemProcessOwnershipHost = (
     readonly darwinModuleCachePath?: string;
     /** Deadline for Darwin ownership-helper compilation. */
     readonly compileTimeoutMs?: number;
+    /** Subprocess output execution seam for testing process listing failures. */
+    readonly execFileOutput?: typeof execFileOutput;
   } = {},
 ): ProcessOwnershipHost => {
+  const runExecFileOutput = options.execFileOutput ?? execFileOutput;
   const darwinModuleCachePath =
     options.darwinModuleCachePath ??
     hostEnvironment.REA_DARWIN_MODULE_CACHE_PATH;
@@ -1223,7 +1226,7 @@ export const createSystemProcessOwnershipHost = (
       : undefined;
   const listProcesses = async (signal?: AbortSignal) => {
     if (platform === "win32") return [];
-    const { stdout } = await execFileOutput(
+    const { stdout } = await runExecFileOutput(
       "ps",
       ["-axo", "pid=,ppid=,pgid=,uid=,stat=,command="],
       {
@@ -1453,11 +1456,19 @@ export const createSystemProcessOwnershipHost = (
           HOST_SPAWN_CAPACITY_CODES.has(Reflect.get(cause, "code") as string))
       )
         throw cause;
-      if (platform === "linux")
+      const rawCode =
+        failure?.code ??
+        (typeof cause === "object" && cause !== null
+          ? Reflect.get(cause, "code")
+          : undefined);
+      const systemCode = typeof rawCode === "string" ? rawCode : undefined;
+      if (platform === "linux" && systemCode === "ENOENT")
         throw new LinuxOwnedProcessPrerequisiteError(cause);
-      throw new ProcessAdmissionError("baseline_unavailable", undefined, {
-        cause,
-      });
+      throw new ProcessAdmissionError(
+        "baseline_unavailable",
+        systemCode === undefined ? undefined : { system_code: systemCode },
+        { cause },
+      );
     }
   };
   const captureBaseline = async (
@@ -1539,7 +1550,7 @@ export const createSystemProcessOwnershipHost = (
           environment.REA_PROCESS_RUN_ID = observation.runId;
         return environment;
       }
-      const { stdout } = await execFileOutput(
+      const { stdout } = await runExecFileOutput(
         "ps",
         ["eww", "-p", String(pid)],
         {
@@ -1707,6 +1718,7 @@ export const processOwnershipAdmissionRecovery = (
   code: string,
   platform: NodeJS.Platform = systemProcessOwnershipHost.platform ??
     process.platform,
+  systemCode?: string,
 ): string => {
   if (code === "identity_snapshot_unavailable")
     return platform === "darwin"
@@ -1716,10 +1728,17 @@ export const processOwnershipAdmissionRecovery = (
     return platform === "darwin"
       ? "Ensure the host process table reports the running REA process under ps, then retry."
       : "Ensure the host process table reports the running REA process under /proc or ps, then retry.";
-  if (code === "baseline_unavailable")
+  if (code === "baseline_unavailable") {
+    if (systemCode === "ENOENT")
+      return platform === "darwin"
+        ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
+        : LINUX_PROCESS_OWNERSHIP_REMEDIATION;
+    if (systemCode !== undefined)
+      return `Verify host process table inspection can execute ps (${systemCode}) before launching captured children, then retry.`;
     return platform === "darwin"
       ? "Ensure ps is available on PATH and process ownership inspection is supported on macOS before launching captured children."
       : "Ensure process ownership inspection is supported on the host platform before launching captured children.";
+  }
   return "Verify host process ownership inspection prerequisites before retrying.";
 };
 
