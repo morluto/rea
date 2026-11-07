@@ -6,6 +6,8 @@ import { expect, it } from "vitest";
 import { JAVASCRIPT_RECOVERY_TOOL_CONTRACTS } from "../../../src/contracts/javascript/javascriptRecoveryToolContracts.js";
 import { BINARY_DIAGNOSTICS_TOOL_CONTRACTS } from "../../../src/contracts/native/binaryDiagnosticsToolContracts.js";
 import { WEB_SCRIPT_TOOL_CONTRACTS } from "../../../src/contracts/webScriptToolContracts.js";
+import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "../../../src/contracts/playwrightTraceToolContracts.js";
+import { PYTHON_PYC_TOOL_CONTRACTS } from "../../../src/contracts/python/pythonPycToolContracts.js";
 import { RequestTrackingMcpServer } from "../../../src/server/RequestTrackingMcpServer.js";
 import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
@@ -13,6 +15,8 @@ const CONTRACTS = [
   ...BINARY_DIAGNOSTICS_TOOL_CONTRACTS,
   ...WEB_SCRIPT_TOOL_CONTRACTS,
   ...JAVASCRIPT_RECOVERY_TOOL_CONTRACTS,
+  ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...PYTHON_PYC_TOOL_CONTRACTS,
 ];
 
 const PATH_FIELDS = {
@@ -22,6 +26,9 @@ const PATH_FIELDS = {
   inspect_byte_entropy: ["path"],
   export_web_scripts: ["capture_path", "output_directory"],
   recover_javascript_sources: ["path", "output_directory", "additional_paths"],
+  inspect_devicetree: ["path"],
+  inspect_playwright_trace: ["path"],
+  inspect_python_pyc: ["path"],
 } as const;
 
 const absoluteFile =
@@ -113,5 +120,8 @@ it("rejects one relative path field at a time on tools/list", async () => {
     "recover_javascript_sources.path",
     "recover_javascript_sources.output_directory",
     "recover_javascript_sources.additional_paths",
+    "inspect_devicetree.path",
+    "inspect_playwright_trace.path",
+    "inspect_python_pyc.path",
   ]);
 });

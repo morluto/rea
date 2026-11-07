@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathStringSchema,
+  localPathStringSchema,
+} from "../localPath.js";
 
 export const PYTHON_PYC_HEADER_BYTES = 16;
 export const PYTHON_PYC_HASH_BASED = 0x1;
@@ -71,7 +74,7 @@ export const PYTHON_PYC_LIMIT_MAXIMA = {
 } as const;
 
 export const inspectPythonPycInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to the selected CPython .pyc file",
   ),
   max_file_bytes: z
