@@ -313,6 +313,9 @@ describe("Windows private runtime transient write", () => {
       expect(WINDOWS_NATIVE_ARTIFACT_REMEDIATION).toContain(
         "from this exact source checkout",
       );
+      // Because REA caches native admission for the process lifetime, the
+      // runtime refusal must tell operators to restart after rebuilding.
+      expect(remediation).toContain("stop and restart the REA host");
     } finally {
       await runtime.close();
     }
