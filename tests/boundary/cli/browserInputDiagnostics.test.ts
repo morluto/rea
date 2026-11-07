@@ -1,10 +1,48 @@
 import { describe, expect } from "vitest";
+import type { z } from "zod";
 
+import {
+  inspectWebPageInputSchema,
+  listBrowserTargetsInputSchema,
+} from "../../../src/domain/browserObservation.js";
+import { listJavaScriptRuntimeTargetsInputSchema } from "../../../src/domain/javascript/javascriptRuntimeObservation.js";
+import { analyzeWebBundleInputSchema } from "../../../src/domain/webBundleAnalysis.js";
+import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { workspaceCliTest as cliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const malformedEndpoint = "not a url";
 const browserEndpoint = "http://127.0.0.1:9222";
 const inspectorEndpoint = "http://127.0.0.1:9229";
+
+/** The domain schema owns custom issue text. Tests compare the CLI to that issue. */
+const schemaIssue = (
+  schema: z.ZodType,
+  value: unknown,
+  path: readonly (string | number)[],
+) => {
+  const parsed = schema.safeParse(value);
+  if (parsed.success)
+    throw new Error(`domain schema accepted ${path.join(".")}`);
+  const issue = parsed.error.issues.find(
+    (item) => item.path.join(".") === path.join("."),
+  );
+  if (issue === undefined)
+    throw new Error(
+      `domain schema omitted ${path.join(".")}: ${JSON.stringify(parsed.error.issues)}`,
+    );
+  return issue;
+};
+
+const malformedEndpointInput = (operation: string) =>
+  operation === "list_browser_targets"
+    ? { cdp_endpoint: malformedEndpoint }
+    : {
+        cdp_endpoint: malformedEndpoint,
+        target_id: "target",
+        ...(operation === "analyze_web_bundle"
+          ? { include_script_sources: true }
+          : {}),
+      };
 
 const invalidInputs = [
   {
@@ -15,15 +53,8 @@ const invalidInputs = [
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
-      message: "Invalid CDP endpoint URL",
     },
-  },
-  {
-    command: "inspect-web-page",
-    arguments: [browserEndpoint, ""],
-    operation: "inspect_web_page",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    schema: listBrowserTargetsInputSchema,
   },
   {
     command: "analyze-web-bundle",
@@ -33,33 +64,8 @@ const invalidInputs = [
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
-      message: "Invalid CDP endpoint URL",
     },
-  },
-  {
-    command: "observe-web-session",
-    arguments: [browserEndpoint, ""],
-    operation: "observe_web_session",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
-  },
-  {
-    command: "list-javascript-runtime-targets",
-    arguments: [""],
-    operation: "list_javascript_runtime_targets",
-    error: "JavaScript runtime observation failed",
-    issue: {
-      path: ["inspector_endpoint"],
-      reason: "out_of_range",
-      minimum: 1,
-    },
-  },
-  {
-    command: "observe-javascript-runtime",
-    arguments: [inspectorEndpoint, ""],
-    operation: "observe_javascript_runtime",
-    error: "JavaScript runtime observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    schema: analyzeWebBundleInputSchema,
   },
   {
     command: "discover-webmcp-tools",
@@ -69,15 +75,36 @@ const invalidInputs = [
     issue: {
       path: ["cdp_endpoint"],
       reason: "invalid_value",
-      message: "Invalid CDP endpoint URL",
     },
+    schema: discoverWebMcpToolsInputSchema,
+  },
+];
+
+const parserRejections = [
+  {
+    command: "inspect-web-page",
+    arguments: [browserEndpoint, ""],
+    path: "targetId",
+  },
+  {
+    command: "observe-web-session",
+    arguments: [browserEndpoint, ""],
+    path: "targetId",
+  },
+  {
+    command: "list-javascript-runtime-targets",
+    arguments: [""],
+    path: "endpoint",
+  },
+  {
+    command: "observe-javascript-runtime",
+    arguments: [inspectorEndpoint, ""],
+    path: "targetId",
   },
   {
     command: "capture-web-screenshot",
     arguments: [browserEndpoint, ""],
-    operation: "capture_web_screenshot",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    path: "targetId",
   },
 ] as const;
 
@@ -97,6 +124,15 @@ describe("inspection branch diagnostics", () => {
         environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
       });
       expect(result.exitCode).toBe(1);
+      const owner = schemaIssue(
+        inspectWebPageInputSchema,
+        {
+          cdp_endpoint: malformedEndpoint,
+          target_id: "target",
+          include_script_sources: flags.includes("--include-script-sources"),
+        },
+        ["cdp_endpoint"],
+      );
       expect(result.json).toMatchObject({
         code: "invalid_request",
         details: {
@@ -105,7 +141,7 @@ describe("inspection branch diagnostics", () => {
             {
               path: ["cdp_endpoint"],
               reason: "invalid_value",
-              message: "Invalid CDP endpoint URL",
+              message: owner.message,
             },
           ],
         },
@@ -124,6 +160,11 @@ describe("browser and Inspector CLI input diagnostics", () => {
         environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
       });
 
+      const owner = schemaIssue(
+        input.schema,
+        malformedEndpointInput(input.operation),
+        input.issue.path,
+      );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         error: input.error,
@@ -141,7 +182,9 @@ describe("browser and Inspector CLI input diagnostics", () => {
         },
         details: {
           operation: input.operation,
-          issues: expect.arrayContaining([input.issue]),
+          issues: expect.arrayContaining([
+            { ...input.issue, message: owner.message },
+          ]),
         },
       });
       expect(result.stdout).not.toContain(malformedEndpoint);
@@ -163,6 +206,15 @@ describe("browser and Inspector CLI input diagnostics", () => {
         environment: { ...workspace.environment, REA_LOG_LEVEL: "debug" },
       });
 
+      const owner = schemaIssue(
+        command === "list-browser-targets"
+          ? listBrowserTargetsInputSchema
+          : listJavaScriptRuntimeTargetsInputSchema,
+        command === "list-browser-targets"
+          ? { cdp_endpoint: endpoint }
+          : { inspector_endpoint: endpoint },
+        [field],
+      );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -171,8 +223,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
             {
               path: [field],
               reason: "invalid_value",
-              message:
-                "CDP endpoint must be an explicit-port HTTP URL on 127.0.0.1 or ::1",
+              message: owner.message,
             },
           ],
         },
@@ -183,7 +234,9 @@ describe("browser and Inspector CLI input diagnostics", () => {
       expect(output).not.toContain("rea-diagnostic-secret");
     },
   );
+});
 
+describe("browser correction facts", () => {
   cliTest(
     "retains authored cross-field correction guidance",
     async ({ cli, workspace }) => {
@@ -199,6 +252,16 @@ describe("browser and Inspector CLI input diagnostics", () => {
         environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
       });
 
+      const owner = schemaIssue(
+        inspectWebPageInputSchema,
+        {
+          cdp_endpoint: browserEndpoint,
+          target_id: "target",
+          include_script_sources: false,
+          include_storage_fingerprints: true,
+        },
+        ["include_storage_fingerprints"],
+      );
       expect(result.exitCode).toBe(1);
       expect(result.json).toMatchObject({
         code: "invalid_request",
@@ -208,7 +271,7 @@ describe("browser and Inspector CLI input diagnostics", () => {
             {
               path: ["include_storage_fingerprints"],
               reason: "invalid_value",
-              message: "Storage fingerprints require storage key capture",
+              message: owner.message,
             },
           ]),
         },
@@ -231,7 +294,14 @@ describe("browser and Inspector CLI input diagnostics", () => {
         details: {
           operation: "compare_web_captures",
           issues: expect.arrayContaining([
-            expect.objectContaining({ reason: expect.any(String) }),
+            expect.objectContaining({
+              path: ["before", "inspection"],
+              reason: "missing_argument",
+            }),
+            expect.objectContaining({
+              path: ["after", "inspection"],
+              reason: "missing_argument",
+            }),
           ]),
         },
       });
@@ -256,6 +326,29 @@ describe("browser and Inspector CLI input diagnostics", () => {
             code: "invalid_type",
             missing: true,
             expected: "string",
+          },
+        ],
+      });
+    },
+  );
+});
+
+describe("empty browser and Inspector selectors", () => {
+  cliTest.for(parserRejections)(
+    "$command rejects an empty selector in argument parsing",
+    async (input, { cli, workspace }) => {
+      const result = await cli.run({
+        arguments: [input.command, ...input.arguments, "--json"],
+        cwd: workspace.root,
+        environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          {
+            code: "too_small",
+            path: input.path,
           },
         ],
       });

@@ -1,3 +1,8 @@
+import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
+import {
+  graphqlContractViewContextSchema,
+  graphqlContractViewItemsSchema,
+} from "./graphqlContractView.js";
 import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
 import {
   playwrightTraceViewContextSchema,
@@ -1049,7 +1054,10 @@ export const playwrightTracePageViewResultSchema = z.strictObject({
 export const apiContractSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
   parent_operation: z.literal("inspect_api_contract"),
-  summary: apiContractViewContextSchema,
+  summary: z.union([
+    apiContractViewContextSchema,
+    graphqlContractViewContextSchema,
+  ]),
 });
 export const apiContractPageViewResultSchema = z.strictObject({
   ...viewResultBase,
@@ -1059,6 +1067,13 @@ export const apiContractPageViewResultSchema = z.strictObject({
   parent_operation: z.literal("inspect_api_contract"),
   view: apiContractViewRequestSchema,
   items: apiContractViewItemsSchema,
+});
+export const graphqlContractPageViewResultSchema = z.strictObject({
+  ...viewResultBase,
+  ...graphqlContractViewContextSchema.shape,
+  parent_operation: z.literal("inspect_api_contract"),
+  view: graphqlContractViewRequestSchema,
+  items: graphqlContractViewItemsSchema,
 });
 export const endpointComparisonSummaryViewResultSchema = z.strictObject({
   ...summaryViewResultBase,
@@ -1207,6 +1222,7 @@ export const analysisViewResultSchema = z.discriminatedUnion("kind", [
   sourceToBundlePageViewResultSchema,
   endpointComparisonPageViewResultSchema,
   apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
   featureTraceViewResultSchema,
   batchDecompileViewResultSchema,
   z.strictObject({

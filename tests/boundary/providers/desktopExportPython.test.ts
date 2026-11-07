@@ -91,13 +91,14 @@ it("keeps JSON Lines holding a number it cannot read exactly as text, as REA doe
   const files = [
     ["events.jsonl", lines],
     ["events.json", lines],
+    ["events.JSON", "42"],
     ["big.json", '{"id":9007199254740993}'],
     ["long.json", `{"id":${"9".repeat(5000)}}`],
   ] as const;
 
   const formats = pythonFormats(files);
 
-  expect(formats).toEqual(["text", "text", "json", "json"]);
+  expect(formats).toEqual(["text", "text", "json", "json", "json"]);
   expect(formats).toEqual(
     files.map(([name, text]) =>
       detectStateFormat(name, new TextEncoder().encode(text)),
@@ -422,7 +423,7 @@ it("spells infinite and negative-zero SQLite reals as REA's SQLite reader does",
       "-I",
       "-B",
       "-c",
-      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v) for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
+      `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_cell(v, "utf-8") for v in (math.inf, -math.inf, -0.0, 0.0, 1.5)]))`,
     ],
     { encoding: "utf8" },
   );
