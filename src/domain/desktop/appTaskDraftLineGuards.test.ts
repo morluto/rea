@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { draftOf, statePath } from "./appTaskDraft.fixture.js";
 import { textView } from "./stateFormats.js";
+import { evaluateTaskChecks } from "./appTaskChecks.js";
 
 const FILE = "Documents/trip.txt";
 
@@ -31,6 +32,42 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
     expect(file.suggested).toEqual([
       { kind: "lines_present", file: FILE, lines: [translation] },
     ]);
+  });
+
+  it("keeps an escaped quote inside ordinary text", () => {
+    const translation = 'msgstr "Set \\\"created=2025550123 and save"';
+    const file = drafted('msgid "Hello"', `msgid "Hello"\n${translation}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [translation] },
+    ]);
+  });
+
+  it("checks an XML text fallback without freezing a timestamp after a literal backslash", () => {
+    const opening = '<!DOCTYPE map [<!ENTITY title "Map">]>\n<map>\n';
+    const node = (time: string) =>
+      `<node TEXT="C:\\work\\" CREATED="${time}"/>`;
+    const before = `${opening}</map>`;
+    const after = `${opening}${node("1793955250671")}\n</map>`;
+    const file = drafted(before, after);
+    const results = evaluateTaskChecks(
+      file.suggested.map((check, index) => ({ ...check, id: `c${index}` })),
+      new Map([
+        [
+          FILE,
+          {
+            format: "text" as const,
+            view: textView(`${opening}${node("1793955259999")}\n</map>`),
+          },
+        ],
+      ]),
+    );
+    expect(file.suggested).toEqual([
+      expect.objectContaining({
+        kind: "line_count",
+        contains: '<node TEXT="C:\\work\\" CREATED="',
+      }),
+    ]);
+    expect(results.map(({ passed }) => passed)).toEqual([true]);
   });
 
   it("keeps long ordinary text as a whole line", () => {

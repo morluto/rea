@@ -1,6 +1,6 @@
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { isBookkeepingName, isVolatileValue } from "./appTaskDraftNoise.js";
-import type { FileNote } from "./appTaskDraftFileNotes.js";
+import { textOpensXml, type FileNote } from "./appTaskDraftFileNotes.js";
 
 /** Lines a text file's guard names, and how far from the added line it looks for them when it has no like sibling. */
 const MAX_GUARD_LINES = 2;
@@ -103,7 +103,7 @@ export const lineGuards = (
 const TOKEN = /[\p{L}\d_-]+/gu;
 
 /** Where a line's first value the app generates starts: a UUID, an epoch time, or an id such as Freeplane's `ID_329023692`; -1 when it holds none. */
-const volatileAt = (line: string): number => {
+const volatileAt = (line: string, xmlQuotes: boolean): number => {
   let end = 0;
   let quote: string | undefined;
   let previous: string | undefined;
@@ -116,7 +116,7 @@ const volatileAt = (line: string): number => {
         : undefined;
     for (let at = 0; at < gap.length; at += 1) {
       const character = gap[at];
-      if (character === "\\" && quote !== undefined) {
+      if (character === "\\" && quote !== undefined && !xmlQuotes) {
         at += 1;
       } else if (character === quote) {
         quote = undefined;
@@ -162,11 +162,17 @@ export const addedLineChecks = (
 ): { readonly checks: DesktopTaskCheckInput[]; readonly notes: FileNote[] } => {
   const holding = (all: readonly string[], text: string) =>
     all.filter((line) => line.includes(text)).length;
-  const classified = added.map((line) => ({ line, at: volatileAt(line) }));
+  const xmlQuotes = textOpensXml(lines.after);
+  const classified = added.map((line) => ({
+    line,
+    at: volatileAt(line, xmlQuotes),
+  }));
   const whole = classified.filter(({ at }) => at < 0).map(({ line }) => line);
   const prefixes = new Set<string>();
   let unnamed = 0;
-  for (const { line, at } of classified.filter(({ at }) => counted && at >= 0)) {
+  for (const { line, at } of classified.filter(
+    ({ at }) => counted && at >= 0,
+  )) {
     const prefix = line.slice(0, at).trimStart();
     const equals = holding(lines.after, prefix);
     if (
