@@ -1645,6 +1645,13 @@ bytes and returns the `integrity_contradictions` records for the extracted
 files. An active ASAR unpacked entry whose companion file is absent cannot be
 materialized; extraction fails as `unavailable` with that logical path.
 
+Extraction syncs each new output file and verifies its size and digest by
+reading back through the acquired descriptor before closing it. Descriptor and
+pathname identity checks remain separate, and the directory lineage is checked
+again after close. A failed read or close retains the existing handle owner for
+cleanup; an existing destination is never overwritten. This avoids reopening
+each freshly written file without removing physical readback verification.
+
 A container can also declare a checksum over its own bytes; today that is the
 DFU suffix CRC of a DfuSe file. A mismatch is a contradiction of the root
 occurrence (logical path `.`), recorded as a `dfu-crc32` pair. Under
