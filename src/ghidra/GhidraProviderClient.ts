@@ -1,10 +1,12 @@
 import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
 import { MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS } from "../domain/analysisResourceLimits.js";
 import { z } from "zod";
+import { analysisClientFailureForOperation } from "../providers/AnalysisClientFailure.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import { artifactFilePrimaryFacts } from "../artifacts/ArtifactFileOperation.js";
 import { fileURLToPath } from "node:url";
@@ -62,7 +64,7 @@ import {
   AnalysisTimeoutError,
   resourceConstraintRecovery,
 } from "../domain/analysisErrorCore.js";
-import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import { AnalysisError } from "../domain/analysisErrorBase.js";
 import type { RelationshipCoverage } from "../domain/relationshipCoverage.js";
 import {
   providerRetryAction,
@@ -109,6 +111,7 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  type GhidraSessionSource,
   ghidraEmptyXrefsLimitation,
   ghidraEmptyIncomingReferencesLimitation,
   ghidraEmptyDossierIncomingLimitation,
@@ -147,6 +150,7 @@ export type GhidraProviderClientFactory = (
     Pick<
       GhidraClient,
       | "callToolIfReady"
+      | "checkpointRestore"
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
@@ -288,6 +292,22 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return err(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const checkpoint = ghidraCheckpointSelectionSchema
+    .optional()
+    .safeParse(committedProfile.parameters.owned_checkpoint);
+  if (
+    !checkpoint.success ||
+    (config.ghidraCheckpointDirectory !== undefined) !==
+      (checkpoint.data !== undefined)
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve REA_GHIDRA_CHECKPOINT_DIR into the analysis profile before opening the session.",
+        },
+      }),
+    );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
     ? ghidraPspExtensionSchema.safeParse(
@@ -378,6 +398,12 @@ export const createGhidraProviderClient = (input: {
   const projection: GhidraProjection = {
     limits: config,
     programName: project?.program_name,
+    source:
+      project !== undefined
+        ? "existing-project"
+        : checkpoint.data !== undefined
+          ? "owned-checkpoint"
+          : "fresh-import",
   };
   const seedProfile = ghidraSeedCommitmentSchema
     .optional()
@@ -556,6 +582,7 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const client = clientFactory({
+    ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
@@ -789,18 +816,30 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
-  const sessionLimitations = (): readonly string[] => [
-    ...providerLimitations,
-    ...targetLimitations,
-    ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
-    ...softFloatLimitations,
-    ...riscvCallingConventionLimitations,
-    ...ghidraExtensionLimitations(extensions),
-    ...seedLimitations,
-    ...disabledAnalyzerLimitations,
-    ...pdbLimitations,
-    ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
-  ];
+  const sessionLimitations = (): readonly string[] => {
+    const restored = client.checkpointRestore?.();
+    return [
+      ...(restored === undefined
+        ? []
+        : restored === null
+          ? [
+              "Created the initial owned Ghidra Program from the executable and saved its analysis checkpoint; metadata edits are saved on normal close.",
+            ]
+          : [
+              `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
+            ]),
+      ...providerLimitations,
+      ...targetLimitations,
+      ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
+      ...softFloatLimitations,
+      ...riscvCallingConventionLimitations,
+      ...ghidraExtensionLimitations(extensions),
+      ...seedLimitations,
+      ...disabledAnalyzerLimitations,
+      ...pdbLimitations,
+      ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
+    ];
+  };
   const nativeAotOwner =
     target.format === "pe"
       ? new GhidraNativeAotSnapshotOwner({
@@ -828,7 +867,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       limitations: [
-        ...limitationsFor(operation, project !== undefined),
+        ...limitationsFor(operation, projection.source),
         ...(observation.limitations ?? []),
         ...sessionLimitations(),
       ],
@@ -925,7 +964,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             limitations: [
-              ...ghidraHealthLimitations(project !== undefined),
+              ...ghidraHealthLimitations(projection.source),
               ...sessionLimitations(),
             ],
           }),
@@ -1165,6 +1204,7 @@ type GhidraProjectionLimits = Pick<
 interface GhidraProjection {
   readonly limits: GhidraProjectionLimits;
   readonly programName: string | undefined;
+  readonly source: GhidraSessionSource;
 }
 
 const projectSessionError = (
@@ -1193,7 +1233,7 @@ const projectSessionError = (
 const projectPrimarySessionError = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
-  { limits, programName }: GhidraProjection,
+  { limits, programName, source }: GhidraProjection,
   health?: ProviderOperationHealth,
   request?: Readonly<Record<string, JsonValue>>,
 ): AnalysisError => {
@@ -1205,6 +1245,22 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  if (failure.kind === "checkpoint") {
+    if (failure.cause instanceof AnalysisError)
+      return analysisClientFailureForOperation(
+        failure.cause,
+        "ghidra",
+        operation,
+      );
+    return new ConfigurationError(failure.message, {
+      ...context,
+      settings: [
+        { setting: "REA_GHIDRA_CHECKPOINT_DIR", constraint: failure.message },
+      ],
+      remediationAction:
+        "Preserve the checkpoint directory. Correct the reported file, permission or competing-session problem, then reopen the target. Select a new checkpoint directory only if you explicitly want fresh analysis.",
+    });
+  }
   // Launch-time copies, such as the verified existing-project copy, report a
   // changed source as the launcher's primary failure; read it through the
   // launch wrapper so the refusal keeps its typed projection.
@@ -1260,7 +1316,7 @@ const projectPrimarySessionError = (
     const remediationAction = unavailable
       ? "Select a Ghidra program whose imported identity can be verified, or investigate the missing identity in Ghidra. Configure a different project or program when starting REA. REA did not fall back to a fresh import."
       : "Select a target matching the configured program and retry, or configure a matching project or program when starting REA. Resolve any reported cleanup before reopening. REA did not fall back to a fresh import.";
-    if (limits.ghidraExistingProject !== undefined)
+    if (source === "existing-project")
       return new ConfigurationError(constraint, {
         ...context,
         settings: [{ setting: "REA_GHIDRA_PROJECT_PATH", constraint }],
@@ -1319,7 +1375,7 @@ const projectPrimarySessionError = (
       default:
         recovery =
           "Use list_procedures or search_procedures (CLI: `rea search <path> <pattern> --kind procedures --provider ghidra --json`) to inspect the current Ghidra inventory and choose an observed name or address. An absent entry does not prove the function is absent from the artifact." +
-          (limits.ghidraExistingProject !== undefined
+          (source === "existing-project"
             ? " The selected project's previous analysis completeness is unknown. To explicitly request a separate fresh import, start a new REA process without REA_GHIDRA_PROJECT_PATH and REA_GHIDRA_PROGRAM_NAME; that analysis will not include the selected project's annotations or other edits."
             : "");
     }
@@ -1361,7 +1417,7 @@ const projectPrimarySessionError = (
         failure,
         "Only the decompiler failed for this procedure.",
         GHIDRA_SESSION_RETAINED,
-        limits.ghidraExistingProject !== undefined,
+        source,
       ),
       remediationAction:
         "Call analyze_function (CLI: `rea function`) for the same procedure. It returns assembly, callers, callees, references and basic blocks from the Ghidra listing and records this decompiler failure under facet_availability.pseudocode. Repeating the unchanged decompile request is not expected to succeed.",
@@ -1378,11 +1434,11 @@ const projectPrimarySessionError = (
       failure,
       "Only this procedure's decompilation was stopped.",
       GHIDRA_SESSION_RETAINED,
-      limits.ghidraExistingProject !== undefined,
+      source,
     );
     const recovery = ghidraDecompileTimeoutRecovery(
       limits.ghidraDecompileTimeoutSeconds,
-      limits.ghidraExistingProject !== undefined,
+      source,
     );
     return new AnalysisTimeoutError(
       operation,
@@ -1417,7 +1473,7 @@ const projectPrimarySessionError = (
       failure,
       undefined,
       GHIDRA_ANNOTATIONS_RETAINED,
-      limits.ghidraExistingProject !== undefined,
+      source,
     );
     return new AnalysisResourceConstraintError(
       operation,
@@ -1503,7 +1559,7 @@ const projectPrimarySessionError = (
       remediationAction: GHIDRA_RESTRICTED_TEMP_REMEDIATION,
     });
   const killed = projectSigkill(operation, failure, context, {
-    restart: exitedProviderMessage(operation, failure, health),
+    restart: exitedProviderMessage(operation, failure, health, source),
     uncertainty,
   });
   if (killed !== undefined) return killed;
@@ -1511,10 +1567,7 @@ const projectPrimarySessionError = (
     const timeoutMs = failure.timeoutMs ?? startupTimeoutMs;
     const guidance =
       failure.message === GHIDRA_STARTUP_DEADLINE_ELAPSED
-        ? ghidraStartupTimeoutGuidance(
-            timeoutMs,
-            limits.ghidraExistingProject !== undefined,
-          )
+        ? ghidraStartupTimeoutGuidance(timeoutMs, source)
         : undefined;
     return new AnalysisTimeoutError(operation, timeoutMs, {
       ...context,
@@ -1529,7 +1582,7 @@ const projectPrimarySessionError = (
           }),
     });
   }
-  const exited = exitedProviderMessage(operation, failure, health);
+  const exited = exitedProviderMessage(operation, failure, health, source);
   if (exited !== undefined)
     return new ProviderAdapterError("ghidra", operation, {
       ...context,
@@ -1708,10 +1761,12 @@ export const GHIDRA_ANNOTATIONS_RETAINED =
   "The active analysis session and annotations remain available.";
 
 /** What a new Ghidra session repeats in the configured startup mode. */
-const ghidraSessionRestart = (existingProject: boolean): string =>
-  existingProject
+const ghidraSessionRestart = (source: GhidraSessionSource): string =>
+  source === "existing-project"
     ? "copies and opens the selected REA_GHIDRA_PROJECT_PATH project again, without import or auto-analysis"
-    : "repeats import and analysis";
+    : source === "owned-checkpoint"
+      ? "restores the last saved Program from REA_GHIDRA_CHECKPOINT_DIR; if initial analysis never completed, it must finish once before a checkpoint exists"
+      : "repeats import and analysis";
 
 /**
  * Decompile-deadline recovery for each caller lifetime. A finished invocation
@@ -1720,7 +1775,7 @@ const ghidraSessionRestart = (existingProject: boolean): string =>
  */
 export const ghidraDecompileTimeoutRecovery = (
   seconds: number,
-  existingProject: boolean,
+  source: GhidraSessionSource,
 ): {
   readonly remediationAction: string;
   readonly continuingRemediationAction: string;
@@ -1729,7 +1784,7 @@ export const ghidraDecompileTimeoutRecovery = (
     seconds < MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS
       ? `Set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS above ${String(seconds)} seconds (maximum ${String(MAX_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)}), or unset it to leave decompilation unbounded,`
       : `REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS is already at its maximum of ${String(seconds)} seconds; unset it to leave decompilation unbounded`
-  } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(existingProject)}. Use \`rea function\` for this procedure's listing facts without pseudocode.`,
+  } in the environment of a new REA invocation, then rerun the command. That invocation starts a new Ghidra session and ${ghidraSessionRestart(source)}. Use \`rea function\` for this procedure's listing facts without pseudocode.`,
   continuingRemediationAction:
     "Use analyze_function (CLI: `rea function`) for listing facts. Call update_analysis_settings with setting ghidra.decompile_timeout_seconds and action set to raise the per-function deadline for the next operation on this Program. For CLI or future REA processes, set REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS. Set the MCP tool-call deadline to cover startup and the full call; earlier cancellation closes the session. `rea setup` estimates deadlines for new Codex/Kimi registrations and preserves existing positive values; edit existing deadlines yourself.",
 });
@@ -1743,7 +1798,7 @@ const ghidraRequestOutcome = (
   failure: GhidraSessionError,
   requestScope: string | undefined,
   retainedSession: string,
-  existingProject: boolean,
+  source: GhidraSessionSource,
 ): {
   readonly userMessage: string;
   readonly continuingCallerGuidance?: { readonly userMessage: string };
@@ -1758,7 +1813,7 @@ const ghidraRequestOutcome = (
   return {
     userMessage: `${detail} ${
       failure.cleanupFailure === undefined
-        ? `The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and ${ghidraSessionRestart(existingProject)}.`
+        ? `The request was also cancelled before the failure settled, so REA closed the Ghidra session; the next request starts a new session and ${ghidraSessionRestart(source)}.`
         : "The request was also cancelled, and Ghidra session shutdown left cleanup unconfirmed. Close the target to retry retained cleanup before starting another Ghidra session."
     }`,
   };
@@ -1839,7 +1894,7 @@ const projectSigkill = (
 /** Name the settings that change Ghidra's startup deadline for the configured startup mode. */
 export const ghidraStartupTimeoutGuidance = (
   timeoutMs: number,
-  existingProject: boolean,
+  source: GhidraSessionSource,
 ) => {
   const remediation = (continuing: boolean): string => {
     const raise = continuing
@@ -1852,9 +1907,11 @@ export const ghidraStartupTimeoutGuidance = (
       ? " The MCP client's tool-call deadline must also allow startup and the query."
       : "";
     const reopen = continuing ? "Reopening" : "Each invocation";
-    return existingProject
+    return source === "existing-project"
       ? `Large projects can need longer: ${raise}. Existing-project mode does not run auto-analysis, so analyzer settings do not shorten this startup. ${retry}${client}`
-      : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; for repeated work on the same native ELF, PE or Mach-O binary on a POSIX host, analyze it once into a Ghidra project and set REA_GHIDRA_PROJECT_PATH to reuse that analysis.${client}`;
+      : source === "owned-checkpoint"
+        ? `Checkpoint startup can need longer: ${raise}. Restoring a saved Program skips auto-analysis; initial analysis and its first checkpoint must complete once. ${retry} Keep REA_GHIDRA_CHECKPOINT_DIR to recover the last successful save. Analyzer overrides require explicitly disabling checkpoint mode.${client}`
+        : `Large binaries can need longer: ${raise}; REA_GHIDRA_DISABLED_ANALYZERS can skip selected expensive analyzers with reduced coverage. ${retry} ${reopen} repeats import from scratch; for repeated work on the same native ELF, PE or Mach-O binary on a POSIX host, analyze it once into a Ghidra project and set REA_GHIDRA_PROJECT_PATH to reuse that analysis.${client}`;
   };
   return {
     limit: analysisSettingLimit(
@@ -1862,9 +1919,12 @@ export const ghidraStartupTimeoutGuidance = (
       timeoutMs,
       undefined,
     ),
-    userMessage: existingProject
-      ? `Ghidra did not finish copying and opening the selected project within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`
-      : `Ghidra did not finish importing and analyzing the target within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
+    userMessage:
+      source === "existing-project"
+        ? `Ghidra did not finish copying and opening the selected project within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`
+        : source === "owned-checkpoint"
+          ? `Ghidra did not finish checkpoint restore or initial analysis and saving within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`
+          : `Ghidra did not finish importing and analyzing the target within its configured ${String(timeoutMs)} ms startup deadline (REA_GHIDRA_STARTUP_TIMEOUT_MS).`,
     remediationAction: remediation(false),
     continuingCallerGuidance: { remediationAction: remediation(true) },
   };
@@ -1875,6 +1935,7 @@ const exitedProviderMessage = (
   operation: AnalysisOperation,
   failure: GhidraSessionError,
   health: ProviderOperationHealth | undefined,
+  source: GhidraSessionSource,
 ): string | undefined => {
   if (failure.kind !== "process" && failure.kind !== "protocol")
     return undefined;
@@ -1887,5 +1948,5 @@ const exitedProviderMessage = (
     health.state === "exited"
       ? `exited${health.exitCode === null ? "" : ` with code ${String(health.exitCode)}`}`
       : "became unreachable";
-  return `The Ghidra provider for this session ${observed} before ${operation} could complete. Call open_binary for the same target to start a new Ghidra session, then retry; session-only annotations from the previous provider are not retained.`;
+  return `The Ghidra provider for this session ${observed} before ${operation} could complete. Call open_binary for the same target to start a new Ghidra session, then retry; ${source === "owned-checkpoint" ? "the last successful checkpoint is restored, and later unsaved annotations are not retained" : "session-only annotations from the previous provider are not retained"}.`;
 };

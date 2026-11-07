@@ -381,6 +381,28 @@ operation's full ordered list. Candidate capabilities, returned with complete
 detail, describe possible providers. Top-level session capabilities describe the current route, and
 `analysis_provider_binding` identifies the selected provider.
 
+## Continue editable Ghidra analysis across processes
+
+For a task spanning agent sessions, check `binary_session` after selecting
+Ghidra: the current provider's `capabilities[].shared_limitations` states whether
+Program checkpoints are enabled or the session is ephemeral. Successful native
+queries distinguish initial analysis from an actually restored packed Program;
+do not infer that restoration happened merely because checkpoint mode is enabled.
+
+In ephemeral mode, choose a private absolute directory and set
+`REA_GHIDRA_CHECKPOINT_DIR` in the environment starting REA. Restart the MCP server
+after changing that launch configuration; no current tool call or runtime
+analysis-setting update enables it. Stock ELF/PE/Mach-O imports on Linux/macOS
+are supported; see the [checkpoint setup and limitations](https://github.com/morluto/rea/blob/main/docs/installation.md#automatically-checkpoint-an-owned-ghidra-program).
+
+With the setting enabled, normal opens restore compatible saved Programs
+automatically. Initial completed analysis is saved, and `close_binary` saves
+later metadata edits; no separate save/restore tool is needed. Repair a reported
+save failure and retry close. Cancellation or process failure can lose edits
+after the last successful save; unfinished initial analysis cannot resume.
+Keep the same checkpoint configuration for later processes. Evidence/Unknown
+history and immutable REA query snapshots have separate persistence workflows.
+
 ## Reuse caller-selected Ghidra analysis
 
 When the caller supplies an expanded project, configure `REA_GHIDRA_PROJECT_PATH`
@@ -404,7 +426,7 @@ When the error names `ghidra.startup_timeout_ms`, call
 `update_analysis_settings` with `action: "set"` and a larger value within the
 reported bounds. Resolve retained cleanup before the next startup attempt.
 No REA restart is needed; an already accepted startup keeps its original
-budget. A new attempt repeats import. Preserve useful Evidence before closing
+budget. Follow the error's session-specific restart guidance, and preserve useful Evidence before closing
 and reopening the target when remediation requires that lifecycle step.
 
 For a per-function timeout, update `ghidra.decompile_timeout_seconds` and retry
@@ -660,7 +682,7 @@ numbering gaps leave coverage unknown; a DfuSe suffix CRC mismatch follows
 ### Function annotations in Ghidra
 
 Fresh-import sessions admit annotations; existing-project reuse is read-only.
-Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic and session-scoped; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits until close. CLI `annotate-native-function` returns the updated analysis before discarding the session. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
+Use `annotate_native_function` for one function name and/or entry comments, with at least one explicit change. Review its annotation readback and refreshed dossier inline. Changes are atomic; empty comments clear them, omitted fields preserve them. Later MCP calls observe edits. Normal close saves them when owned Program checkpoint mode is enabled; ephemeral mode discards them. CLI `annotate-native-function` follows the same setting when closing after its updated result. Select the [checkpoint workflow](#continue-editable-ghidra-analysis-across-processes) before edits that must survive a later process. Original executable bytes are unchanged; edits invalidate immutable snapshots. Windows P0 does not admit database mutations. For naming only, `set_address_name` / `set_addresses_names` also work with Ghidra: they name function entries or data addresses (primary labels) and return compact per-address success booleans instead of a dossier. Ghidra rejects batch addresses that request the same name or a name another selected address holds; `raw_result.failures` gives each failure's reason.
 
 For `compare_functions`, obtain `analyze_function` Evidence before and after the
 edit while the MCP session is open; annotation Evidence is not a comparison
