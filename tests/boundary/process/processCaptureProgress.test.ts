@@ -321,6 +321,13 @@ itWithCaptureCapability(
         TMPDIR: missingTempRoot,
         TMP: missingTempRoot,
         TEMP: missingTempRoot,
+        // Select per-process Darwin preparation so a warm shared helper cannot
+        // bypass the unavailable temporary storage this case exercises.
+        REA_DARWIN_MODULE_CACHE_PATH: join(
+          missingTempRoot,
+          "..",
+          "module-cache",
+        ),
       },
     });
 
