@@ -13,6 +13,8 @@ import { expect, onTestFinished, test, vi } from "vitest";
 
 const adbTestHooks = vi.hoisted(() => ({
   afterScreencap: undefined as (() => void) | undefined,
+  versionProbeFailure: undefined as Error | undefined,
+  digestCheckFailure: undefined as Error | undefined,
 }));
 
 vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
@@ -23,9 +25,20 @@ vi.mock("../process/ExecFileOutput.js", async (importOriginal) => {
     execFileBytes: async (
       ...arguments_: Parameters<typeof actual.execFileBytes>
     ) => {
+      const failure = adbTestHooks.digestCheckFailure;
+      if (failure !== undefined && arguments_[1].includes("sha256sum"))
+        throw failure;
       const result = await actual.execFileBytes(...arguments_);
       if (arguments_[1].includes("exec-out")) adbTestHooks.afterScreencap?.();
       return result;
+    },
+    execFileOutput: async (
+      ...arguments_: Parameters<typeof actual.execFileOutput>
+    ) => {
+      const failure = adbTestHooks.versionProbeFailure;
+      if (failure !== undefined && arguments_[1].includes("version"))
+        throw failure;
+      return actual.execFileOutput(...arguments_);
     },
   };
 });
@@ -224,6 +237,36 @@ fi`,
   if (result.ok) return;
   expect(result.error._tag).toBe("AnalysisProtocolError");
   expect(result.error.message).toContain(malformedLine);
+});
+
+it("lists a USB device adb has no permission to open alongside online devices", async () => {
+  const { binary } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "devices" ]; then
+  printf 'List of devices attached\\n'
+  printf '07ef9c2a               no permissions; see [http://developer.android.com/tools/device.html] usb:1-1 transport_id:4\\n'
+  printf 'emulator-5554          device transport_id:1\\n'
+  exit 0
+fi`,
+  );
+  const result = await evidenceResult(providerOver(binary), {
+    operation: "list_adb_devices",
+    input: {},
+  });
+  expect(result.devices).toEqual([
+    {
+      serial: "07ef9c2a",
+      state: "no permissions",
+      transport: "usb",
+      product: null,
+      model: null,
+      device: null,
+      transport_id: 4,
+      kind: "physical",
+      kind_basis: "usb_transport",
+    },
+    expect.objectContaining({ serial: "emulator-5554", state: "device" }),
+  ]);
 });
 
 it("lists rescue and detached transports alongside online devices", async () => {
@@ -609,6 +652,45 @@ it("reports a missing selected binary as a capability gap with recovery", async 
     provider_id: "adb",
     reason: expect.stringContaining("not found") as unknown,
   });
+});
+
+it("reports exhausted host capacity at the version probe as a retryable constraint", async () => {
+  const { binary } = await writeAdbStub(() => VERSION_BLOCK);
+  adbTestHooks.versionProbeFailure = Object.assign(new Error("spawn EMFILE"), {
+    code: "EMFILE",
+    syscall: `spawn ${binary}`,
+    spawnFailed: true,
+    stdout: "",
+    stderr: "",
+    signal: null,
+    killed: false,
+  });
+  onTestFinished(() => {
+    adbTestHooks.versionProbeFailure = undefined;
+  });
+  // The readiness operation runs the same probe as the device operations.
+  for (const operation of ["inspect_adb_client", "list_adb_devices"] as const) {
+    const projected = await refusedBy(providerOver(binary), {
+      operation,
+      input: {},
+    });
+    expect(projected).toMatchObject({
+      code: "resource_constraint",
+      retryable: true,
+      remediation: {
+        action: expect.stringContaining("does not need to change") as unknown,
+      },
+      details: {
+        diagnostics: {
+          selected_binary: binary,
+          path_source: "environment",
+          filesystem_error: "EMFILE",
+        },
+      },
+    });
+    // One remediation, carried by the constraint rather than its diagnostics.
+    expect(projected.details?.diagnostics).not.toHaveProperty("remediation");
+  }
 });
 
 it("reports relative adb configuration as an actionable refusal", async () => {
@@ -1204,6 +1286,52 @@ exit 1`,
     );
   },
 );
+
+it("keeps a completed push as a receipt when host capacity stops its digest check", async () => {
+  const { binary, root } = await writeAdbStub(
+    () => `if [ "$1" = "version" ]; then ${VERSION_BLOCK}; exit 0; fi
+if [ "$1" = "-s" ] && [ "$4" = "test" ]; then exit 1; fi
+if [ "$1" = "-s" ] && [ "$3" = "push" ]; then exit 0; fi
+exit 1`,
+  );
+  adbTestHooks.digestCheckFailure = Object.assign(new Error("spawn EMFILE"), {
+    code: "EMFILE",
+    syscall: `spawn ${binary}`,
+    spawnFailed: true,
+    stdout: "",
+    stderr: "",
+    signal: null,
+    killed: false,
+  });
+  onTestFinished(() => {
+    adbTestHooks.digestCheckFailure = undefined;
+  });
+  const localFile = join(root, "payload.bin");
+  await writeFile(localFile, "push-payload");
+  const result = await providerOver(binary).execute({
+    operation: "push_adb_file",
+    input: {
+      serial: "emulator-5554",
+      local_path: localFile,
+      device_path: "/data/local/tmp/payload.bin",
+      overwrite: false,
+    },
+  });
+  // A retryable error would invite a repeat that overwrite=false then refuses.
+  if (!result.ok)
+    throw new Error(JSON.stringify(projectAnalysisError(result.error)));
+  expect(result.value.result).toMatchObject({
+    sha256: PUSHED_DIGEST,
+    device_sha256: null,
+    device_digest_source: "unavailable",
+  });
+  expect(
+    result.value.limitations.some(
+      (line) =>
+        line.includes("EMFILE") && line.includes("not device-side verified"),
+    ),
+  ).toBe(true);
+});
 
 it("pushes the same private bytes that its reported digest identifies", async () => {
   const { binary, root } = await writeAdbStub(

@@ -130,7 +130,9 @@ export const systemSetupHost = (
   const { homeDirectory } = doctorHost;
   const macHopperHost =
     platform === "darwin"
-      ? systemMacHopperInstallHost(homeDirectory, environment)
+      ? systemMacHopperInstallHost(homeDirectory, environment, () =>
+          doctorHost.macosVersion(),
+        )
       : undefined;
   const resources = new ArtifactResourceScope();
   const linuxDistribution = () => doctorHost.linuxDistribution();

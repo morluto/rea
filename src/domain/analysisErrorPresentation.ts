@@ -1,4 +1,5 @@
 import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
+import { knownArgumentMistakeRemediation } from "./inputArgumentGuidance.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -55,6 +56,10 @@ export const MCP_TRANSPORT_EVIDENCE_DISCOVERY = `Discover retained records with 
 
 /** Next step when one MCP frame cannot carry a selected page of complete records. */
 export const MCP_TRANSPORT_EVIDENCE_RECORDS = `Request fewer records with get_evidence_bundle detail: records, a smaller limit or an exact evidence_id filter; inspect compatible records in pages through inspect_analysis_view. A single record larger than one response needs export. ${MCP_TRANSPORT_EVIDENCE_EXPORT}`;
+
+/** Next step when one MCP frame cannot carry a selected page of link rows. */
+export const MCP_TRANSPORT_EVIDENCE_LINKS =
+  "Request fewer rows with get_evidence_bundle detail: links, a smaller limit or an exact evidence_id filter, then follow next_offset.";
 
 /** Name the next step that is true for how long the caller keeps REA's runtime and session. */
 export const analysisErrorRemediationAction = (
@@ -210,11 +215,18 @@ export const analysisErrorRemediationAction = (
         ? `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`
         : analysisErrorUserMessage(error))
     );
-  if (error instanceof AnalysisInputError)
-    return (
-      error.remediationAction ??
-      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`
+  if (error instanceof AnalysisInputError) {
+    const mistakeRemediation = knownArgumentMistakeRemediation(
+      error.operation,
+      error.issues,
     );
+    const baseAction =
+      error.remediationAction ??
+      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+    return mistakeRemediation === undefined
+      ? baseAction
+      : `${mistakeRemediation} ${baseAction}`;
+  }
   if (
     error instanceof AnalysisOutputError &&
     error.remediationAction !== undefined

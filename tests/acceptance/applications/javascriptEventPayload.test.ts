@@ -162,3 +162,64 @@ cliTest(
   },
   120_000,
 );
+
+cliTest(
+  "traces a retained empty literal endpoint by its preserved value",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-empty-endpoint-seed-");
+    await writeFile(
+      join(root, "main.js"),
+      'export const load = async () => (await fetch("")).json();\n',
+    );
+    const analyzed = await cli.run({
+      arguments: [
+        "analyze-javascript-application",
+        root,
+        "--artifact-format",
+        "directory",
+        "--json",
+      ],
+      timeoutMs: 60_000,
+    });
+    expect(analyzed.exitCode, analyzed.stderr).toBe(0);
+    const application = toolContract(
+      "analyze_javascript_application",
+    ).outputSchema.parse(analyzed.json);
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      application.normalized_result,
+    ).semantic_graph;
+    // Analysis keeps the complete literal endpoint, here the empty string.
+    const retained = new Set(
+      graph.nodes
+        .filter(
+          (node) =>
+            (node.kind === "request" || node.kind === "response") &&
+            node.properties.endpoint === "",
+        )
+        .map((node) => node.node_id),
+    );
+    expect(retained.size).toBeGreaterThan(0);
+    const request = join(root, "endpoint-query.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        application,
+        query: {
+          seed: { kind: "endpoint", value: "" },
+          direction: "forward-influence",
+        },
+      }),
+    );
+    const traced = await cli.run({
+      arguments: ["trace-javascript-semantics", request, "--json"],
+      timeoutMs: 60_000,
+    });
+    expect(traced.exitCode, traced.stdout).toBe(0);
+    const trace = javaScriptSemanticTraceResultSchema.parse(
+      toolContract("trace_javascript_semantics").outputSchema.parse(traced.json)
+        .normalized_result,
+    );
+    expect(new Set(trace.seed_node_ids)).toEqual(retained);
+  },
+  120_000,
+);
