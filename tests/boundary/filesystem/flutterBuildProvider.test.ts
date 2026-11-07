@@ -595,7 +595,6 @@ it("rejects a target that is not a readable file", async () => {
       operation: "identify_flutter_build",
       input: { path: "/nonexistent/app.apk" },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("expected a refusal");
     return projectAnalysisError(result.error);
   })();
@@ -1202,7 +1201,6 @@ it.each(["identify_flutter_build", "inspect_dart_aot"] as const)(
       close.mockRestore();
     });
     const result = await provider.execute({ operation, input: { path } });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected retained reader cleanup");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({ operation });
@@ -1658,7 +1656,6 @@ it.each([false, true])(
       { operation: "identify_flutter_build", input: { path } },
       { signal: controller.signal },
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected owned cleanup failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.cleanupResources).toEqual([retainedRoot]);
@@ -1759,7 +1756,6 @@ it("preserves source admission failure when cancellation arrives during its root
     },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected missing selected source");
   expect(result.error).not.toBeInstanceOf(AnalysisCancelledError);
   expect(result.error).toMatchObject({ _tag: "AnalysisInputError" });
@@ -1896,7 +1892,6 @@ it("does not create a replacement snapshot when cancelled during cleanup retry",
   const cancelled = await provider.execute(request, {
     signal: controller.signal,
   });
-  expect(cancelled.ok).toBe(false);
   if (cancelled.ok) throw new Error("Expected cancellation");
   expect(projectAnalysisError(cancelled.error).code).toBe("cancelled");
   expect(cancelled.error.cause).toBe(reason);

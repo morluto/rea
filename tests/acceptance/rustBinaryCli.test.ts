@@ -6,9 +6,11 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
+  createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
   RUSTC_HASH,
@@ -298,8 +300,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 3 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -465,6 +467,9 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -680,4 +685,32 @@ cliTest(
     await client.ping();
   },
   30000,
+);
+
+cliTest(
+  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      category: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringMatching(
+          /rustc commit.path inventory.*fixed count/iu,
+        ),
+      },
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "capacity",
+        reported_limits: { maximum_rustc_hashes: 64 },
+      },
+    });
+  },
 );

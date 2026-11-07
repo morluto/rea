@@ -205,8 +205,8 @@ cliTest(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
     ).toBe("commonName=Âe, organizationName=REA Tests");
-    expect(evidence.normalized_result.limitations).toContain(
-      "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+    expect(evidence.normalized_result.limitations).toContainEqual(
+      expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
     );
   },
 );
@@ -269,6 +269,40 @@ cliTest(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
     ).toBe("commonName=\ud7ff\ue000, organizationName=REA Tests");
+  },
+);
+
+cliTest(
+  "rejects a certificate validity date that is not a calendar day through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-cert-cli-validity-");
+    const path = join(root, "validity.exe");
+    const payload = pkcs7SignedDataFixture();
+    const timeAt = payload.indexOf(Buffer.from("250101000000Z"));
+    expect(timeAt).toBeGreaterThanOrEqual(0);
+    // 2025 has no 29 February; the equal-length edit keeps every DER length.
+    payload.write("250229000000Z", timeAt, "ascii");
+    await writeFile(path, peCertificateFixture(false, payload));
+    const invalid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(invalid.exitCode).toBe(1);
+    expect(invalid.json).toMatchObject({
+      code: "invalid_request",
+      details: { operation: "inspect_pe_certificates" },
+    });
+    payload.write("240229000000Z", timeAt, "ascii");
+    await writeFile(path, peCertificateFixture(false, payload));
+    const valid = await cli.run({
+      arguments: ["inspect-pe-certificates", path, "--json"],
+    });
+    expect(valid.exitCode, valid.stderr).toBe(0);
+    const evidence = toolContract("inspect_pe_certificates").outputSchema.parse(
+      valid.json,
+    );
+    expect(
+      evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.not_before,
+    ).toBe("240229000000Z");
   },
 );
 
@@ -341,9 +375,7 @@ cliTest.for([
     expect(reason).toContain(message);
     expect(remediation.action).toContain(String(Object.values(limits)[0]));
     expect(remediation.action).toContain("no runtime override");
-    expect(remediation.action).toContain(
-      "Repeating the unchanged request fails the same way",
-    );
+    expect(remediation.action).toMatch(/unchanged request.*fails/iu);
   },
 );
 

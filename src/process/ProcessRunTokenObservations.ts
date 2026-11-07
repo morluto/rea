@@ -3,6 +3,7 @@ import type {
   ProcessRunTokenObservation,
   ProcessTableEntry,
 } from "./ProcessOwnership.js";
+import { liveProcesses } from "./ProcessOwnershipProcessTree.js";
 
 /** Structured native token availability, distinct from failed reads and caller cancellation. */
 export class ProcessRunTokenReadError extends Error {
@@ -88,3 +89,29 @@ export async function* readProcessRunTokens(
     yield { process, observation };
   }
 }
+
+/**
+ * Live processes in the current process table that expose this run token.
+ * A process whose token cannot be read is left out, so the list proves
+ * presence only; it does not prove that no other carrier exists.
+ */
+export const readRunTokenCarriers = async (
+  host: ProcessOwnershipHost,
+  runId: string,
+  signal?: AbortSignal,
+): Promise<readonly ProcessTableEntry[]> => {
+  const carriers: ProcessTableEntry[] = [];
+  const processes = liveProcesses(
+    signal === undefined
+      ? await host.listProcesses()
+      : await host.listProcesses(signal),
+  );
+  for await (const { process, observation } of readProcessRunTokens(
+    host,
+    processes,
+    signal,
+  ))
+    if (observation.state === "readable" && observation.runId === runId)
+      carriers.push(process);
+  return carriers;
+};

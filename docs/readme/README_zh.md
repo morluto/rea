@@ -10,7 +10,7 @@
 **看到喜欢的功能，弄清它的工作原理，深入到二进制层面。**
 
 [![npm version](https://img.shields.io/npm/v/rea-agents?style=flat-square&color=cb3837)](https://www.npmjs.com/package/rea-agents)
-[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../mcp-contracts.md#generated-catalog)
+[![MCP tool catalog](https://img.shields.io/badge/MCP-tool_catalog-5c4ee5?style=flat-square)](../reference/mcp-contracts.md#generated-catalog)
 [![Node.js requirements](https://img.shields.io/badge/Node.js-requirements-339933?style=flat-square&logo=nodedotjs&logoColor=white)](#current-status)
 [![skills.sh](https://skills.sh/b/morluto/rea?style=flat-square)](https://skills.sh/morluto/rea/reverse-engineer-anything)
 [![MIT license](https://img.shields.io/badge/license-MIT-f4c430?style=flat-square)](../../LICENSE)
@@ -80,7 +80,7 @@ npx rea-agents setup
 
 选择智能体，检查计划中的变更并批准。设置流程会添加 REA 的 MCP 服务和匹配的工作流指引，并备份已有配置。完成后重启智能体。
 
-设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他智能体](../installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](../installation.md)。
+设置流程支持 Claude Code、Codex、Cursor、Gemini CLI、Grok Build 和[其他智能体](../getting-started/installation.md#supported-agents)。提供方配置和手动注册 MCP 的方法见[安装与设置](../getting-started/installation.md)。
 
 MCP 默认使用紧凑输入 Schema 来减少上下文开销。需要完整字段说明和嵌套验证细节时，在 MCP 注册中设置 `REA_MCP_INPUT_SCHEMA_PROFILE=full`。两种配置都保留完整工具集和规范的服务端验证；见 MCP 合约指南。
 
@@ -109,7 +109,7 @@ npm install --global rea-agents
 rea --help
 ```
 
-原生分析需要先配置分析提供方。原生命令、提供方选择、快照和脚本用法见 [CLI 与 Evidence 指南](../cli.md)。
+原生分析需要先配置分析提供方。原生命令、提供方选择、快照和脚本用法见 [CLI 与 Evidence 指南](../getting-started/cli.md)。
 
 ### 更新 REA
 
@@ -149,44 +149,45 @@ npx rea-agents@latest setup
 
 REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)，以及 npm。额外工具和主机支持取决于分析目标：
 
-| 目标                  | REA 返回的内容                                                               | 要求与指南                                                                                                         |
-| --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../native-investigation.md)                                                |
-| 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                              | Linux x64 上由调用方提供的 pwntools；[二进制诊断](../binary-diagnostics.md)                                        |
-| Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                       | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                      |
-| WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                             | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                  |
-| EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                                 | Linux x64 上的本地原始字节/十六进制输入载体；[离线 EVM 指南](../evm-bytecode.md)                                   |
-| Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                               |
-| Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                  |
-| PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                            |
-| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                      |
-| ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                       |
-| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                      |
-| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                             |
-| 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项                | Linux x64 上由调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](../recorded-crashes.md)                       |
-| 桌面安装目录          | 运行时候选、支持文件、组件标记和后续操作                                     | 有界的目录与文件头检查；[桌面应用](../desktop-applications.md)                                                     |
-| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系                             | Node.js 和 npm；[应用分析](../javascript-application-workflows.md); Linux: procps `ps`                             |
-| 网站                  | 页面结构、脚本、网络观察结果和按请求获取的截图                               | Chrome 系浏览器；[浏览器分析](../browser-observation.md)                                                           |
-| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 捕获需要 Linux 上的 mitmdump；[捕获指南](../web-network-captures.md)  |
-| 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos；[pcap 指南](../pcap-analysis.md)                                                  |
-| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 静态检查；[托管代码指南](../managed-code-analysis.md)                                                              |
-| PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                              |
-| Android APK           | 清单声明、类、反编译的方法和引用                                             | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../android-analysis.md)                         |
-| Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                    | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../adb-device-analysis.md)                                        |
-| JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                              | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../jeb-analysis.md)                    |
-| Android 资源          | 解码后的清单、字符串表、语言区域和版本信息                                   | 调用方提供的 Apktool 启动器；[资源指南](../apktool-resource-analysis.md)                                           |
-| Flutter 应用          | Dart 快照哈希、按 ABI 的库摘要及引擎构建溯源                                 | 无（静态 APK 解析）；[Flutter 指南](../flutter-analysis.md)                                                        |
-| 固件                  | 区域、提取结果和转交原生分析的内容                                           | Linux 上的 Binwalk / Unblob；[固件指南](../firmware-analysis.md)                                                   |
-| 抓包文件              | 指定字段、重复值、过滤条件与解码规则                                         | Linux: TShark 4.x + prlimit; [抓包分析指南](../packet-captures.md)                                                 |
-| 录制的逻辑信号        | 解码注释、样本范围和诊断信息                                                 | Linux: sigrok-cli 0.7.2 + prlimit; [信号记录指南](../signal-recordings.md)                                         |
-| 软件包与资源          | 文件清单、摘要、plist、Apple bundle 结构和提取的资源                         | [制品与 JavaScript 指南](../javascript-artifact-reconstruction.md)、[Apple 应用](../apple-application-analysis.md) |
-| 进程行为              | 终端输出、交互、退出和文件系统观察结果，以及运行对比                         | 支持原生 PTY 的 Linux/macOS；[进程捕获](../process-capture.md)                                                     |
-| SQLite 数据库         | 表、列、索引、视图、触发器和选定普通表的行                                   | 本地数据库/WAL 快照；Node.js 24.x >=24.15 或 26+，具有原生 SQLite 限制 API                                         |
-| GPU 代码对象          | CUDA/HIP 目标、选定内核参数和资源、保留的 PTX 文本                           | 内置静态检查 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                |
-| 模型文件              | GGUF / safetensors 元数据、张量声明和派生总量                                | 头部检查；可选完整文件哈希; [GGUF / safetensors](../model-artifacts.md)                                            |
-| IL2CPP 元数据         | Unity global-metadata.dat 程序集映像、类型和方法名、索引范围                 | 静态解码版本 24、27、29、31 和 39；无需 Unity                                                                      |
-| Godot PCK             | 归档目录与提取、原始头部和目录信息、选定内容身份                             | 静态格式 2、3 和 4；无需 Godot                                                                                     |
-| APK 签名              | v1/v2/v3/v3.1 签名者、证书指纹、密钥轮换和摘要自洽性                         | 内置静态检查; `inspect_apk_signature`                                                                              |
+| 目标                  | REA 返回的内容                                                               | 要求与指南                                                                                                                                        |
+| --------------------- | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 原生二进制文件        | 伪代码、汇编、字符串、符号、调用和引用                                       | Hopper、Ghidra、IDA 或 Kuna；[原生分析](../guides/native/native-investigation.md)                                                                 |
+| 离线 ELF 布局         | 节、段、原始符号/重定位信息及静态防护机制候选项                              | Linux x64 上由调用方提供的 pwntools；[二进制诊断](../guides/native/binary-diagnostics.md)                                                         |
+| Go 二进制文件         | 内嵌编译器版本、模块、替换项和构建设置                                       | 内置静态 ELF/PE/thin Mach-O 检查；无需安装 Go                                                                                                     |
+| WASM 工件             | 验证、节、精确的导入/导出 WAT 形式及解码后的 WAT                             | 调用方提供的 WABT 1.0.42；`inspect_wasm_artifact`                                                                                                 |
+| EVM 字节码            | 分派选择器、字节偏移、推断的参数和状态可变性                                 | Linux x64 上的本地原始字节/十六进制输入载体；[离线 EVM 指南](../guides/evm/evm-bytecode.md)                                                       |
+| Rust binaries         | Embedded cargo-auditable dependency list                                     | [Rust binaries](../rust-binaries.md)                                                                                                              |
+| Erlang BEAM           | IFF chunks, atoms, exports, and tables                                       | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                                 |
+| PE certificates       | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                                           |
+| PE imports            | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash   | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                                     |
+| ELF notes             | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields              | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                                      |
+| Binary hardening      | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O          | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                                     |
+| Apple IPS crashes     | .ips metadata, threads, images, registers and crash classes                  | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                                     |
+| Linux kernel modules  | .modinfo keys, __versions CRCs, this_module presence, and signature trailer  | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                                            |
+| 已记录的 Linux 崩溃   | 原始 note 记录、每个已记录线程的寄存器/信号及可选的映射候选项                | Linux x64 上由调用方提供的 pwntools；可选的 GDB/pwndbg；[已记录崩溃](../guides/native/recorded-crashes.md)                                        |
+| 桌面安装目录          | 运行时候选、支持文件、组件标记和后续操作                                     | 有界的目录与文件头检查；[桌面应用](../desktop-applications.md)                                                                                    |
+| JavaScript / Electron | 模块、导入、source map、路由、IPC 和原生扩展关系                             | Node.js 和 npm；[应用分析](../guides/javascript/javascript-application-workflows.md); Linux: procps `ps`                                          |
+| 网站                  | 页面结构、脚本、网络观察结果和按请求获取的截图                               | Chrome 系浏览器；[浏览器分析](../guides/web/browser-observation.md)                                                                               |
+| 已保存的网络捕获      | 请求、响应、可访问的载荷和来源位置                                           | HAR / Fiddler Everywhere SAZ；原生 mitmproxy 捕获需要 Linux 上的 mitmdump；[捕获指南](../guides/web/web-network-captures.md)                      |
+| 数据包捕获            | 端点、DNS、TLS SNI、协议分布和 HTTP 请求                                     | 调用方提供的 tshark 和 capinfos；[pcap 指南](../guides/data/pcap-analysis.md)                                                                     |
+| .NET 程序集           | 元数据、CIL 指令、声明的原生依赖和构建对比                                   | 静态检查；[托管代码指南](../guides/managed/managed-code-analysis.md)                                                                              |
+| PyInstaller           | CArchive, PYZ, Python bytecode                                               | Static inspection; [Python packaged applications](../python-packaged-applications.md)                                                             |
+| Android APK           | 清单声明、类、反编译的方法和引用                                             | Linux/macOS/Windows x64 上的无界面 JADX 和完整 JDK；[Android 指南](../guides/android/android-analysis.md)                                         |
+| Android 设备          | 设备、软件包、进程、日志、转储、屏幕截图以及 APK/文件传输                    | 调用方提供的 adb（模拟器或实体设备）；[ADB 指南](../guides/android/adb-device-analysis.md)                                                        |
+| JEB 项目              | 引擎支持的项目单元、工件摘要和类型/方法的伪代码                              | 由调用方启动、提供 MCP 的 JEB 客户端，通过 REA_JEB_MCP_URL 选择；[JEB 指南](../providers/jeb-analysis.md)                                         |
+| Android 资源          | 解码后的清单、字符串表、语言区域和版本信息                                   | 调用方提供的 Apktool 启动器；[资源指南](../guides/android/apktool-resource-analysis.md)                                                           |
+| Flutter 应用          | Dart 快照哈希、按 ABI 的库摘要及引擎构建溯源                                 | 无（静态 APK 解析）；[Flutter 指南](../guides/android/flutter-analysis.md)                                                                        |
+| 固件                  | 区域、提取结果和转交原生分析的内容                                           | Linux 上的 Binwalk / Unblob；[固件指南](../guides/firmware/firmware-analysis.md)                                                                  |
+| 抓包文件              | 指定字段、重复值、过滤条件与解码规则                                         | Linux: TShark 4.x + prlimit; [抓包分析指南](../guides/data/packet-captures.md)                                                                    |
+| 录制的逻辑信号        | 解码注释、样本范围和诊断信息                                                 | Linux: sigrok-cli 0.7.2 + prlimit; [信号记录指南](../guides/signals/signal-recordings.md)                                                         |
+| 软件包与资源          | 文件清单、摘要、plist、Apple bundle 结构和提取的资源                         | [制品与 JavaScript 指南](../guides/javascript/javascript-artifact-reconstruction.md)、[Apple 应用](../guides/apple/apple-application-analysis.md) |
+| 进程行为              | 终端输出、交互、退出和文件系统观察结果，以及运行对比                         | 支持原生 PTY 的 Linux/macOS；[进程捕获](../guides/runtime/process-capture.md)                                                                     |
+| SQLite 数据库         | 表、列、索引、视图、触发器和选定普通表的行                                   | 本地数据库/WAL 快照；Node.js 24.x >=24.15 或 26+，具有原生 SQLite 限制 API                                                                        |
+| GPU 代码对象          | CUDA/HIP 目标、选定内核参数和资源、保留的 PTX 文本                           | 内置静态检查 ELF/PE/fatbin/CUBIN/PTX; [GPU](../gpu-code-objects.md)                                                                               |
+| 模型文件              | GGUF / safetensors 元数据、张量声明和派生总量                                | 头部检查；可选完整文件哈希; [GGUF / safetensors](../model-artifacts.md)                                                                           |
+| IL2CPP 元数据         | Unity global-metadata.dat 程序集映像、类型和方法名、索引范围                 | 静态解码版本 24、27、29、31 和 39；无需 Unity                                                                                                     |
+| Godot PCK             | 归档目录与提取、原始头部和目录信息、选定内容身份                             | 静态格式 2、3 和 4；无需 Godot                                                                                                                    |
+| APK 签名              | v1/v2/v3/v3.1 签名者、证书指纹、密钥轮换和摘要自洽性                         | 内置静态检查; `inspect_apk_signature`                                                                                                             |
 
 静态 JavaScript 和 .NET 检查读取提供的文件，不运行应用。运行时捕获会以你的用户权限运行目标或与之交互；各运行时指南说明了具体影响。
 
@@ -194,7 +195,7 @@ REA 需要 Node.js 22.x（>=22.23.4）、24.x（>=24.22.1）或 26+ (>=26.12.1)�
 
 大型二进制文件可通过 `REA_GHIDRA_STARTUP_TIMEOUT_MS` 或 `REA_HOPPER_STARTUP_TIMEOUT_MS` 延长提供方启动期限。
 
-不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../installation.md#hopper)、[IDA 指南](../ida-provider.md)、[Kuna](../kuna-provider.md)和[实验性 Windows Ghidra 支持](../windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../ghidra-dos.md)。提供方选择见 [CLI 指南](../cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../installation.md#released-package-and-main)。
+不同提供方支持的原生格式和主机系统有所不同。请参阅 [Hopper 与 Ghidra 设置](../getting-started/installation.md#hopper)、[IDA 指南](../providers/ida-provider.md)、[Kuna](../kuna-provider.md)和[实验性 Windows Ghidra 支持](../providers/windows-ghidra-p0.md)。Ghidra 也支持 [16 位 DOS 分析](../providers/ghidra-dos.md)。提供方选择见 [CLI 指南](../getting-started/cli.md#choose-a-provider)。对于最新 npm 版本发布后新增的功能，请查看[发布可用性](../getting-started/installation.md#released-package-and-main)。
 
 ## 案例
 
@@ -275,28 +276,28 @@ REA 导出可直接运行的环境，并附带基本测试，检查环境能否�
 <details>
 <summary><strong>哪些智能体可以使用 REA？</strong></summary>
 
-任何支持本地 MCP 服务的智能体都可以使用。设置流程会配置[受支持的智能体](../installation.md#supported-agents)；其他客户端可通过[手动注册 MCP](../installation.md#mcp-registry) 使用。
+任何支持本地 MCP 服务的智能体都可以使用。设置流程会配置[受支持的智能体](../getting-started/installation.md#supported-agents)；其他客户端可通过[手动注册 MCP](../getting-started/installation.md#mcp-registry) 使用。
 
 </details>
 
 <details>
 <summary><strong>需要 Hopper、Ghidra、IDA 或 Kuna 吗？</strong></summary>
 
-深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra、IDA 和 Kuna 则使用已有安装。见[提供方设置](../installation.md#hopper)。
+深入的原生分析需要其中一个引擎。静态 JavaScript 和 .NET 检查不需要原生分析引擎。设置流程可以在你批准后安装 Hopper；Ghidra、IDA 和 Kuna 则使用已有安装。见[提供方设置](../getting-started/installation.md#hopper)。
 
 </details>
 
 <details>
 <summary><strong>需要先启动 Hopper 吗？</strong></summary>
 
-REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能会出现对话框，让你选择演示模式或激活许可证。见 [Hopper 启动与故障排查](../installation.md#launcher-paths-and-troubleshooting)。
+REA 会在操作需要时启动 Hopper。在 macOS 上，首次运行时可能会出现对话框，让你选择演示模式或激活许可证。见 [Hopper 启动与故障排查](../getting-started/installation.md#launcher-paths-and-troubleshooting)。
 
 </details>
 
 <details>
 <summary><strong>从 skills.sh 安装 skill 有什么作用？</strong></summary>
 
-skill 为智能体提供调查指引。使用 `npx rea-agents setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../installation.md#skill-only-installation)。
+skill 为智能体提供调查指引。使用 `npx rea-agents setup` 注册 REA 的 MCP 服务并安装匹配的指引，然后重启智能体。见[仅安装 skill](../getting-started/installation.md#skill-only-installation)。
 
 </details>
 
@@ -339,12 +340,12 @@ npx rea-agents@latest setup
 
 可以先阅读网站上的[实操指南](https://rea.tools/zh-CN/guides/)。具体选项、前提条件和结果契约见：
 
-- [安装与设置](../installation.md)：智能体注册、提供方配置、更新和卸载。
-- [就绪检查与故障排查](../installation.md#check-readiness-for-your-task)：诊断特定智能体或分析引擎。
-- [CLI 与 Evidence](../cli.md)：命令、提供方选择、快照、导入/导出和退出状态。
-- [MCP 契约](../mcp-contracts.md)和[智能体提示词](../mcp-prompts.md)：工具结果、会话和引导式调查。
-- [工具目录](../mcp-contracts.md#generated-catalog)：构建时生成的工具、提供方和 CLI 命令清单。
-- [路线图](../roadmap.md)：计划中的工作和能力跟踪。
+- [安装与设置](../getting-started/installation.md)：智能体注册、提供方配置、更新和卸载。
+- [就绪检查与故障排查](../getting-started/installation.md#check-readiness-for-your-task)：诊断特定智能体或分析引擎。
+- [CLI 与 Evidence](../getting-started/cli.md)：命令、提供方选择、快照、导入/导出和退出状态。
+- [MCP 契约](../reference/mcp-contracts.md)和[智能体提示词](../getting-started/mcp-prompts.md)：工具结果、会话和引导式调查。
+- [工具目录](../reference/mcp-contracts.md#generated-catalog)：构建时生成的工具、提供方和 CLI 命令清单。
+- [路线图](../development/roadmap.md)：计划中的工作和能力跟踪。
 
 请按照 [SECURITY.md](../../SECURITY.md) 报告漏洞。
 
@@ -375,7 +376,7 @@ REA 用于合法的研究、教育、互操作性、软件保存，以及分析�
 
 欢迎帮助改进 REA！你可以[提交 issue](https://github.com/morluto/rea/issues) 报告错误或建议功能，也可以[提交 pull request](https://github.com/morluto/rea/pulls) 改进代码或文档。
 
-开发设置和检查见 [CONTRIBUTING.md](../../CONTRIBUTING.md)，验证流程见[测试指南](../testing.md)，项目结构见[架构图](../architecture.mermaid)。
+开发设置和检查见 [CONTRIBUTING.md](../../CONTRIBUTING.md)，验证流程见[测试指南](../development/testing.md)，项目结构见[架构图](../architecture/architecture.mermaid)。
 
 ## 许可证
 

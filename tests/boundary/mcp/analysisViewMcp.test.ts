@@ -275,6 +275,68 @@ it("preserves native relationship coverage through inline and retained MCP views
   }
 });
 
+it("directs unsupported parent views to the original Evidence", async () => {
+  const { client, session } = await connect();
+  const root = await createTestTempDirectory("rea-unsupported-view-mcp-");
+  const file = join(root, "evidence.json");
+  const bundle = join(root, "bundle.json");
+  const parent = createEvidence(
+    { path: "/fixtures/native.exe", format: "pe", sha256: "a".repeat(64) },
+    { id: "fixture", name: "Fixture", version: "1" },
+    {
+      operation: "inspect_recorded_crash",
+      parameters: {},
+      result: { path: "/artifacts/crash.core" },
+    },
+  );
+  expect(session.recordEvidence(parent).ok).toBe(true);
+  await writeFile(file, JSON.stringify(parent));
+  const errorSchema = JSON.parse(
+    await readFile("docs/error-contract.schema.json", "utf8"),
+  );
+  for (const source of [
+    { kind: "inline", evidence: parent },
+    { kind: "retained-evidence", evidence_id: parent.evidence_id },
+    { kind: "evidence-file", path: file },
+  ]) {
+    const response = await client.callTool({
+      name: "inspect_analysis_view",
+      arguments: { source, view: { kind: "summary" } },
+    });
+    const { error } = parseMcpToolError(response);
+    expect(schemaValidation.assertions.validate(errorSchema, error)).toBe(true);
+    expect(error).toMatchObject({
+      code: "unsupported_target",
+      retryable: false,
+      details: {
+        operation: "inspect_analysis_view",
+        reason: expect.stringContaining(
+          'Parent Evidence operation "inspect_recorded_crash"',
+        ),
+      },
+    });
+    expect(error.remediation.action).toContain("original complete Evidence");
+    expect(error.remediation.action).toContain("get_evidence_bundle");
+    expect(error.remediation.action).toContain("export_evidence_bundle");
+    expect(error.remediation.action).not.toContain("target format");
+  }
+  const complete = await client.callTool({
+    name: "get_evidence_bundle",
+    arguments: { detail: "complete" },
+  });
+  expect(complete.isError).not.toBe(true);
+  expect(complete.structuredContent).toMatchObject({
+    result: { records: expect.arrayContaining([parent]) },
+  });
+  const exported = await client.callTool({
+    name: "export_evidence_bundle",
+    arguments: { path: bundle },
+  });
+  expect(exported.isError).not.toBe(true);
+  const saved = JSON.parse(await readFile(bundle, "utf8"));
+  expect(saved.records).toContainEqual(parent);
+});
+
 it("advertises typed module references and preserves portable/retained Evidence parity", async () => {
   const { client, session } = await connect();
   const parent = analysisViewJavaScriptEvidence(
@@ -655,7 +717,7 @@ it("reports a tampered inline Evidence ID at its full MCP source path", async ()
         {
           path: ["source", "evidence", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -849,9 +911,7 @@ it("admits portable captures before SDK Evidence parsing and preserves capture c
   expect(result.normalized_result).toMatchObject({
     groups: [{ content_types: [], flags: ["single-sample"] }],
     limitations: expect.arrayContaining([caveat]),
-    unknowns: [
-      "Some retained records have unavailable status or content type values.",
-    ],
+    unknowns: [expect.stringMatching(/unavailable status or content type/iu)],
   });
 });
 
@@ -1170,6 +1230,7 @@ it("reads successive native source pages directly from a completed-result transp
   expect(Buffer.byteLength(JSON.stringify(first))).toBeLessThan(
     STDIO_DEFAULT_MAX_BUFFER_SIZE,
   );
+  if (page.coverage === null) throw new Error("Expected known coverage");
   const second = await client.callTool({
     name: call.name,
     arguments: {
@@ -1469,7 +1530,9 @@ it.each([false, true])(
         }),
       ]),
       limitations: expect.arrayContaining([
-        "Some records carry no usable request duration; their completion and overlap remain unknown.",
+        expect.stringMatching(
+          /request duration.*completion.*overlap.*unknown/iu,
+        ),
       ]),
     });
     expect(parent).toEqual(before);
@@ -1732,7 +1795,11 @@ it("extracts an environment state identically from retained, portable and file M
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).not.toContain("probe folder");
   await client.ping();
 });
@@ -1982,7 +2049,11 @@ it("projects an environment manifest identically from retained, portable and fil
     name: "inspect_analysis_view",
     arguments: { source: { kind: "inline", evidence: hidden }, view },
   });
-  expect(parseMcpToolError(refused).error.code).toBe("unsupported_target");
+  const hiddenError = parseMcpToolError(refused).error;
+  expect(hiddenError.code).toBe("unsupported_target");
+  expect(hiddenError.remediation.action).toContain("sensitivity declarations");
+  expect(hiddenError.remediation.action).toContain("capture or summary view");
+  expect(hiddenError.remediation.action).not.toContain("target format");
   expect(JSON.stringify(refused)).toContain("sensitive_values_unretained");
   expect(JSON.stringify(refused)).not.toContain("/api/folders");
   await client.ping();

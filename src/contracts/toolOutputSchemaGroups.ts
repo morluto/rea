@@ -1,15 +1,16 @@
 import {
   nativeAddressListSchema,
   nativeObservationSourceSchemas,
-  traceContainingProcedureSchema,
 } from "../domain/native/nativeObservation.js";
 import { overviewInventoryCoverageSchema } from "../domain/native/inventoryCoverage.js";
 import {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeFunctionMatchingSummaryViewResultSchema,
   nativeFunctionSummaryViewResultSchema,
   nativeInventorySummaryViewResultSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   nativeLoadImageSummaryViewResultSchema,
   artifactInventorySummaryViewResultSchema,
@@ -18,7 +19,7 @@ import {
   managedArtifactSummaryViewResultSchema,
   managedMemberSummaryViewResultSchema,
 } from "../domain/analysisView/analysisView.js";
-import { literalFeatureMatchSchema } from "../domain/native/literalFeatureMatch.js";
+import { literalFeatureTraceSchema } from "../domain/native/literalFeatureTrace.js";
 import { byteEntropySchema } from "../domain/native/byteEntropy.js";
 import { nativeFunctionMatchingSchema } from "../domain/native/functionMatching.js";
 import { nativeByteReadSchema } from "../domain/native/nativeByteRead.js";
@@ -100,6 +101,7 @@ import { decompileDirectoryManifestSchema } from "./decompileDirectory.js";
 import {
   analysisErrorProjectionSchema,
   analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
 } from "./errorSchemas.js";
 import { relationshipCoverageSchema } from "../domain/relationshipCoverage.js";
 import { nativeDispatchMetadataResultSchema } from "../domain/native/objcSwiftMetadata.js";
@@ -119,14 +121,19 @@ import {
 } from "./toolOutputSchemaPrimitives.js";
 
 import { processCaptureSchema } from "../domain/process/processCapture.js";
+import { processScenarioPlanSchema } from "../domain/process/processScenario.js";
 import { electronFuseReportSchema } from "../domain/electron/electronFuses.js";
+const contextFacetErrorSchema = z.discriminatedUnion("code", [
+  analysisInputErrorProjectionSchema,
+  analysisResourceErrorProjectionSchema,
+]);
 const contextFacetSchema = z.discriminatedUnion("state", [
   z.object({ state: z.literal("available"), value: jsonValueSchema }),
   z.object({
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 const bookmarkFacetSchema = z.discriminatedUnion("state", [
@@ -138,7 +145,7 @@ const bookmarkFacetSchema = z.discriminatedUnion("state", [
     state: z.literal("unavailable"),
     reason: z.string(),
     remediation: z.string(),
-    error: analysisInputErrorProjectionSchema.optional(),
+    error: contextFacetErrorSchema.optional(),
   }),
 ]);
 
@@ -236,7 +243,10 @@ export const officialOutputSchemas = {
       references: z.array(referenceEdgeSchema),
     }),
   ),
-  procedure_pseudo_code: evidenceResultOf(nullableText),
+  procedure_pseudo_code: analysisDetailOutputSchemaOf(
+    nullableText,
+    procedurePseudocodeSummaryViewResultSchema,
+  ),
   resolve_containing_procedure: analysisDetailOutputSchemaOf(
     nativeObservationSourceSchemas.resolve_containing_procedure,
     nativeObservationSummaryViewResultSchemas.resolve_containing_procedure,
@@ -263,21 +273,9 @@ export const officialOutputSchemas = {
   xrefs: evidenceResultOf(nativeAddressListSchema),
 } as const satisfies Readonly<Record<string, z.ZodObject>>;
 
-const literalTraceOutput = evidenceResultOf(
-  z.object({
-    query: z.string(),
-    search_mode: z.literal("literal"),
-    matches: z.array(literalFeatureMatchSchema),
-    references: z.array(
-      z.object({
-        target_address: z.string(),
-        source_address: z.string(),
-        containing_procedure: traceContainingProcedureSchema,
-      }),
-    ),
-    truncated: z.boolean(),
-    residual_unknowns: z.array(z.string()),
-  }),
+const literalTraceOutput = analysisDetailOutputSchemaOf(
+  literalFeatureTraceSchema,
+  nativeFeatureTraceSummaryViewResultSchema,
 );
 
 const callPathTraceOutput = evidenceResultOf(
@@ -286,6 +284,16 @@ const callPathTraceOutput = evidenceResultOf(
     goal: z.string().nullable(),
     direction: z.enum(["forward", "backward"]),
     goal_status: z.enum(["not_requested", "reached", "not_reached", "unknown"]),
+    search_scope: z.object({
+      graph: z.literal("provider_observed_graph"),
+      discovery: z.enum(["complete", "partial", "unknown"]),
+      observed_goal_status: z.enum([
+        "not_requested",
+        "reached",
+        "not_reached",
+        "unknown",
+      ]),
+    }),
     nodes: z.array(
       z.object({
         address: z.string(),
@@ -566,7 +574,13 @@ export const sessionOutputSchemas = {
       total: z.int().min(0),
     }),
   ),
-  capture_process_scenario: evidenceResultOf(processCaptureSchema),
+  capture_process_scenario: evidenceResultOf(
+    z
+      .union([processCaptureSchema, processScenarioPlanSchema])
+      .describe(
+        `A capture, or the plan a dry run produced without launching a process. ${processCaptureSchema.description ?? ""}`,
+      ),
+  ),
   compare_process_captures: evidenceResultOf(processCaptureComparisonSchema),
   compare_artifacts: evidenceResultOf(artifactComparisonResultSchema),
   compare_functions: evidenceResultOf(functionComparisonResultSchema),
