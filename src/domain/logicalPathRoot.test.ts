@@ -37,6 +37,15 @@ describe("normalizeLogicalPath", () => {
     });
   });
 
+  it("preserves a drive-root logical prefix for the mapped root", () => {
+    expect(
+      normalizeLogicalPath("/home/alice/project", {
+        root: "/home/alice/project",
+        logicalPrefix: "C:/",
+      }),
+    ).toEqual({ kind: "mapped", path: "C:/" });
+  });
+
   it("fails closed when path is outside the root and allowOutsideRoot is not set", () => {
     const res = normalizeLogicalPath("/etc/passwd", {
       root: "/home/alice/project",

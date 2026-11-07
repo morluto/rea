@@ -96,7 +96,9 @@ export const normalizeLogicalPath = (
   );
   const mapped =
     posixRel === ""
-      ? prefix.endsWith("://")
+      ? prefix === "/" ||
+        /^[A-Za-z]:\/$/u.test(prefix) ||
+        prefix.endsWith("://")
         ? prefix
         : prefix.replace(/\/$/u, "")
       : `${prefix}${posixRel}`;

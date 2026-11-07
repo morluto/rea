@@ -1243,6 +1243,25 @@ it("uses the same Evidence identity for equivalent logical prefixes", () => {
   expect(first.evidence_id).toBe(second.evidence_id);
 });
 
+it("retains a root-only logical prefix for root-valued paths", () => {
+  const path = "/tmp/work";
+  const evidence = createEvidence(
+    { path, sha256: "a".repeat(64), format: "file" },
+    PROVIDER,
+    {
+      operation: "inspect",
+      logicalPathFields: { parameters: [["path"]] },
+      parameters: { path },
+      result: {},
+      locations: [{ kind: "artifact-path", path }],
+    },
+    { logicalRoot: { root: path, logicalPrefix: "/" } },
+  );
+  expect(evidence.subject?.local_path).toBe("/");
+  expect(evidence.parameters.path).toBe("/");
+  expect(evidence.locations[0]).toMatchObject({ path: "/" });
+});
+
 it("leaves decoded file data untouched and discloses missing path declarations", () => {
   const value = {
     source_path: "/outside/source",
