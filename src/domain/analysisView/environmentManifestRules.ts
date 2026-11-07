@@ -629,13 +629,41 @@ interface RouteOverlapTrieNode<Entry> {
   decodedLiterals?: Map<string, Set<RouteOverlapTrieNode<Entry>>>;
   formatLiterals?: Map<RouteRule, Set<RouteOverlapTrieNode<Entry>>>;
   params?: Map<ParamOverlapKind, RouteOverlapTrieNode<Entry>>;
-  leafFirst?: Entry;
-  leafHasMultiple: boolean;
+  firstEntry?: Entry;
+  hasMultipleEntries: boolean;
+}
+
+interface TrieWorkItem<Entry> {
+  readonly node: RouteOverlapTrieNode<Entry>;
+  readonly index: number;
+}
+
+interface TrieStepContext<Entry> {
+  readonly nextIndex: number;
+  readonly targetLength: number;
+  readonly self: Entry;
+  readonly seen: Set<RouteOverlapTrieNode<Entry>>;
+  readonly stack: TrieWorkItem<Entry>[];
 }
 
 const createTrieNode = <Entry>(): RouteOverlapTrieNode<Entry> => ({
-  leafHasMultiple: false,
+  hasMultipleEntries: false,
 });
+
+const markTrieNodeEntry = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  entry: Entry,
+): void => {
+  if (node.firstEntry === undefined) node.firstEntry = entry;
+  else if (node.firstEntry !== entry) node.hasMultipleEntries = true;
+};
+
+const nodeHasPeer = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  self: Entry,
+): boolean =>
+  node.hasMultipleEntries ||
+  (node.firstEntry !== undefined && node.firstEntry !== self);
 
 const addTrieNodeSet = <Key, Entry>(
   map: Map<Key, Set<RouteOverlapTrieNode<Entry>>>,
@@ -684,133 +712,124 @@ const insertRouteInTrie = <Entry>(
   entry: Entry,
 ): void => {
   let node = root;
+  markTrieNodeEntry(node, entry);
   for (const part of parts) {
     if (part.kind === "literal") {
       node = stepLiteralTrieChild(node, part.value);
-      continue;
+    } else {
+      const kind = paramOverlapKind(part);
+      node.params ??= new Map();
+      let child = node.params.get(kind);
+      if (child === undefined) {
+        child = createTrieNode<Entry>();
+        node.params.set(kind, child);
+      }
+      node = child;
     }
-    const kind = paramOverlapKind(part);
-    node.params ??= new Map();
-    let child = node.params.get(kind);
-    if (child === undefined) {
-      child = createTrieNode<Entry>();
-      node.params.set(kind, child);
-    }
-    node = child;
+    markTrieNodeEntry(node, entry);
   }
-  if (node.leafFirst === undefined) node.leafFirst = entry;
-  else if (node.leafFirst !== entry) node.leafHasMultiple = true;
 };
 
-const trieHasLiteralPeer = <Entry>(
-  node: RouteOverlapTrieNode<Entry>,
-  value: string,
-  parts: readonly RoutePart[],
-  nextIndex: number,
-  self: Entry,
+const enqueueMatchingChild = <Entry>(
+  child: RouteOverlapTrieNode<Entry> | undefined,
+  ctx: TrieStepContext<Entry>,
 ): boolean => {
-  const exact = node.exactLiterals?.get(value);
-  if (
-    exact !== undefined &&
-    trieHasOverlappingPeer(exact, parts, nextIndex, self)
-  )
-    return true;
-  const decoded = value.includes("%") ? decodedSegment(value) : value;
-  if (decoded !== value) {
-    const onceDecoded = node.exactLiterals?.get(decoded);
-    if (
-      onceDecoded !== undefined &&
-      trieHasOverlappingPeer(onceDecoded, parts, nextIndex, self)
-    )
-      return true;
-  }
-  const encodedMatches = node.decodedLiterals?.get(value);
-  if (encodedMatches !== undefined)
-    for (const child of encodedMatches)
-      if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
-  if (value === "" || node.params === undefined) return false;
-  const anyParam = node.params.get("any");
-  if (
-    anyParam !== undefined &&
-    trieHasOverlappingPeer(anyParam, parts, nextIndex, self)
-  )
-    return true;
-  const rawRule = segmentRule(value);
-  if (rawRule !== null) {
-    const rawParam = node.params.get(rawRule);
-    if (
-      rawParam !== undefined &&
-      trieHasOverlappingPeer(rawParam, parts, nextIndex, self)
-    )
-      return true;
-  }
-  if (decoded !== value) {
-    const decodedRule = segmentRule(decoded);
-    if (decodedRule !== null && decodedRule !== rawRule) {
-      const decodedParam = node.params.get(decodedRule);
-      if (
-        decodedParam !== undefined &&
-        trieHasOverlappingPeer(decodedParam, parts, nextIndex, self)
-      )
-        return true;
-    }
+  if (child === undefined || !nodeHasPeer(child, ctx.self)) return false;
+  if (ctx.nextIndex === ctx.targetLength) return true;
+  if (!ctx.seen.has(child)) {
+    ctx.seen.add(child);
+    ctx.stack.push({ node: child, index: ctx.nextIndex });
   }
   return false;
 };
 
-const trieHasParamPeer = <Entry>(
+const enqueueLiteralMatches = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  value: string,
+  ctx: TrieStepContext<Entry>,
+): boolean => {
+  if (enqueueMatchingChild(node.exactLiterals?.get(value), ctx)) return true;
+  const decoded = value.includes("%") ? decodedSegment(value) : value;
+  if (
+    decoded !== value &&
+    enqueueMatchingChild(node.exactLiterals?.get(decoded), ctx)
+  )
+    return true;
+  const encodedMatches = node.decodedLiterals?.get(value);
+  if (encodedMatches !== undefined)
+    for (const child of encodedMatches)
+      if (enqueueMatchingChild(child, ctx)) return true;
+  if (value === "" || node.params === undefined) return false;
+  if (enqueueMatchingChild(node.params.get("any"), ctx)) return true;
+  const rawRule = segmentRule(value);
+  if (rawRule !== null && enqueueMatchingChild(node.params.get(rawRule), ctx))
+    return true;
+  if (decoded !== value) {
+    const decodedRule = segmentRule(decoded);
+    if (
+      decodedRule !== null &&
+      decodedRule !== rawRule &&
+      enqueueMatchingChild(node.params.get(decodedRule), ctx)
+    )
+      return true;
+  }
+  return false;
+};
+
+const enqueueParamMatches = <Entry>(
   node: RouteOverlapTrieNode<Entry>,
   part: ParamPart,
-  parts: readonly RoutePart[],
-  nextIndex: number,
-  self: Entry,
+  ctx: TrieStepContext<Entry>,
 ): boolean => {
   const kind = paramOverlapKind(part);
   if (kind === "any") {
     if (node.exactLiterals !== undefined)
       for (const [literal, child] of node.exactLiterals)
-        if (
-          literal !== "" &&
-          trieHasOverlappingPeer(child, parts, nextIndex, self)
-        )
-          return true;
+        if (literal !== "" && enqueueMatchingChild(child, ctx)) return true;
     if (node.params !== undefined)
       for (const child of node.params.values())
-        if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
+        if (enqueueMatchingChild(child, ctx)) return true;
     return false;
   }
   const matchingLiterals = node.formatLiterals?.get(kind);
   if (matchingLiterals !== undefined)
     for (const child of matchingLiterals)
-      if (trieHasOverlappingPeer(child, parts, nextIndex, self)) return true;
-  const anyParam = node.params?.get("any");
-  if (
-    anyParam !== undefined &&
-    trieHasOverlappingPeer(anyParam, parts, nextIndex, self)
-  )
-    return true;
-  const sameRuleParam = node.params?.get(kind);
+      if (enqueueMatchingChild(child, ctx)) return true;
   return (
-    sameRuleParam !== undefined &&
-    trieHasOverlappingPeer(sameRuleParam, parts, nextIndex, self)
+    enqueueMatchingChild(node.params?.get("any"), ctx) ||
+    enqueueMatchingChild(node.params?.get(kind), ctx)
   );
 };
 
 const trieHasOverlappingPeer = <Entry>(
-  node: RouteOverlapTrieNode<Entry>,
+  root: RouteOverlapTrieNode<Entry>,
   parts: readonly RoutePart[],
-  index: number,
   self: Entry,
 ): boolean => {
-  const part = parts[index];
-  if (part === undefined)
-    return (
-      node.leafHasMultiple ||
-      (node.leafFirst !== undefined && node.leafFirst !== self)
-    );
-  return part.kind === "literal"
-    ? trieHasLiteralPeer(node, part.value, parts, index + 1, self)
-    : trieHasParamPeer(node, part, parts, index + 1, self);
+  if (!nodeHasPeer(root, self)) return false;
+  const targetLength = parts.length;
+  if (targetLength === 0) return true;
+  const seen = new Set<RouteOverlapTrieNode<Entry>>([root]);
+  const stack: TrieWorkItem<Entry>[] = [{ node: root, index: 0 }];
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === undefined) break;
+    const part = parts[current.index];
+    if (part === undefined) continue;
+    const ctx: TrieStepContext<Entry> = {
+      nextIndex: current.index + 1,
+      targetLength,
+      self,
+      seen,
+      stack,
+    };
+    const matched =
+      part.kind === "literal"
+        ? enqueueLiteralMatches(current.node, part.value, ctx)
+        : enqueueParamMatches(current.node, part, ctx);
+    if (matched) return true;
+  }
+  return false;
 };
 
 const isPlainLiteralRoute = (parts: readonly RoutePart[]): boolean =>
@@ -856,7 +875,7 @@ const addOverlappingRpcBucket = (
   const root = createTrieNode<ToolGroup>();
   for (const group of bucket) insertRouteInTrie(root, group.parts, group);
   for (const candidate of rpcCandidates)
-    if (trieHasOverlappingPeer(root, candidate.parts, 0, candidate))
+    if (trieHasOverlappingPeer(root, candidate.parts, candidate))
       overlapping.add(candidate);
 };
 

@@ -848,3 +848,56 @@ describe("percent-encoded literal route overlap parity", () => {
     ]);
   });
 });
+
+describe("deeply nested POST RPC route overlap without stack overflow", () => {
+  it("extracts manifest and state for 3500-segment parameterized GraphQL routes iteratively", () => {
+    const deepPath = `/api${"/a".repeat(3500)}/7/graphql`;
+    const distinctDeepPath = `/api/isolated${"/a".repeat(3499)}/7/graphql`;
+    const accumulator = new EnvironmentStateAccumulator();
+    const ops = ["GetFirst", "GetSecond", "GetThird"] as const;
+    for (const [ordinal, op] of ops.entries())
+      expect(
+        accumulator.add(
+          rpcRecord({
+            ordinal,
+            path: deepPath,
+            postText: JSON.stringify({
+              operationName: op,
+              query: `query ${op} { viewer { id } }`,
+            }),
+            responseText: JSON.stringify({
+              data: { viewer: { id: `u-${String(ordinal)}` } },
+            }),
+          }),
+        ).ok,
+      ).toBe(true);
+    expect(
+      accumulator.add(
+        rpcRecord({
+          ordinal: 3,
+          path: distinctDeepPath,
+          postText: JSON.stringify({
+            operationName: "GetIsolated",
+            query: "query GetIsolated { ok }",
+          }),
+          responseText: JSON.stringify({ data: { ok: true } }),
+        }),
+      ).ok,
+    ).toBe(true);
+
+    const manifest = finished(accumulator);
+    expect(manifest.tools).toHaveLength(4);
+    expect(
+      manifest.tools.map((tool) => tool.rpc_operation?.name ?? "single"),
+    ).toEqual(["GetFirst", "GetSecond", "GetThird", "single"]);
+
+    const state = accumulator.finishState();
+    if (!state.ok) throw state.error;
+    expect(state.value.views).toHaveLength(4);
+    expect(
+      state.value.views.every(
+        (view) => view.shape === "recorded" && view.reason === "query-body",
+      ),
+    ).toBe(true);
+  });
+});
