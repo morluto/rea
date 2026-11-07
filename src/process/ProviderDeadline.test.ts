@@ -279,6 +279,42 @@ it("releases the timer and listener on dispose with a pending wait", async () =>
   }
 });
 
+it("measures elapsed monotonic milliseconds from construction through dispose", () => {
+  const now = vi.spyOn(performance, "now").mockReturnValue(100);
+  const deadline = new ProviderStartupDeadline(1000);
+  try {
+    expect(deadline.elapsedMs()).toBe(0);
+    now.mockReturnValue(120.75);
+    expect(deadline.elapsedMs()).toBe(20);
+    deadline.dispose();
+    now.mockReturnValue(150);
+    expect(deadline.elapsedMs()).toBe(50);
+  } finally {
+    deadline.dispose();
+  }
+});
+
+it("never reports less than the budget once the deadline times out", async () => {
+  vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+  let monotonic = 0;
+  vi.spyOn(performance, "now").mockImplementation(() => monotonic);
+  const deadline = new ProviderStartupDeadline(40);
+  try {
+    monotonic = 39;
+    await vi.advanceTimersByTimeAsync(40);
+    monotonic = 40;
+    await vi.advanceTimersByTimeAsync(1);
+    expect(deadline.interruption).toBe("timeout");
+    expect(deadline.elapsedMs()).toBeGreaterThanOrEqual(40);
+    deadline.dispose();
+    monotonic = 1_000;
+    expect(deadline.elapsedMs()).toBeGreaterThanOrEqual(40);
+  } finally {
+    deadline.dispose();
+    vi.useRealTimers();
+  }
+});
+
 // Retain the authored terminal-budget regression under the newer monotonic
 // expiry policy and re-arm contract for an early native timer callback.
 it("reports no remaining time after terminal expiry near the monotonic boundary", async () => {

@@ -804,6 +804,9 @@ export class GhidraClient {
         ...(primary.timeoutMs === undefined
           ? {}
           : { timeoutMs: primary.timeoutMs }),
+        ...(primary.elapsedMs === undefined
+          ? {}
+          : { elapsedMs: primary.elapsedMs }),
         ...(primary.remoteCode === undefined
           ? {}
           : { remoteCode: primary.remoteCode }),
@@ -1532,6 +1535,7 @@ export class GhidraClient {
         })
       : this.#failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, cause, {
           timeoutMs: deadline.timeoutMs,
+          elapsedMs: deadline.elapsedMs(),
         });
   }
 

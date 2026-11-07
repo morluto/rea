@@ -39,8 +39,9 @@ export async function completeGhidraStartupHandshake(
   );
   if (!ping.ok) {
     const failure =
-      ping.error.kind === "cancelled" &&
-      options.deadline.interruption !== undefined
+      ping.error.kind === "timeout" ||
+      (ping.error.kind === "cancelled" &&
+        options.deadline.interruption !== undefined)
         ? interruptionFailure(options)
         : ping.error;
     if (
@@ -89,4 +90,5 @@ const interruptionFailure = (
       )
     : options.failure("timeout", GHIDRA_STARTUP_DEADLINE_ELAPSED, undefined, {
         timeoutMs: options.startupTimeoutMs,
+        elapsedMs: options.deadline.elapsedMs(),
       });

@@ -30,6 +30,7 @@ export const waitForAbortableDelay = (
  */
 export class ProviderStartupDeadline {
   readonly #controller = new AbortController();
+  readonly #startedAt: number;
   readonly #deadlineAt: number;
   readonly #externalSignal: AbortSignal | undefined;
   readonly #onExternalAbort: () => void;
@@ -42,7 +43,8 @@ export class ProviderStartupDeadline {
   ) {
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0)
       throw new RangeError("Provider startup timeout must be positive");
-    this.#deadlineAt = performance.now() + timeoutMs;
+    this.#startedAt = performance.now();
+    this.#deadlineAt = this.#startedAt + timeoutMs;
     this.#externalSignal = signal;
     this.#onExternalAbort = () => {
       if (this.#controller.signal.aborted) return;
@@ -84,6 +86,21 @@ export class ProviderStartupDeadline {
     // terminal timeout also cannot regain budget after later clock queries.
     if (this.#interruption === "timeout") return 0;
     return Math.max(0, Math.ceil(this.#deadlineAt - performance.now()));
+  }
+
+  /**
+   * Whole milliseconds spent under this deadline so far, mirroring the
+   * remainingMs() rounding direction so a timed-out startup never reports less
+   * time than the budget it exhausted.
+   */
+  elapsedMs(): number {
+    const elapsed = Math.max(
+      0,
+      Math.floor(performance.now() - this.#startedAt),
+    );
+    return this.interruption === "timeout"
+      ? Math.max(this.timeoutMs, elapsed)
+      : elapsed;
   }
 
   /**
