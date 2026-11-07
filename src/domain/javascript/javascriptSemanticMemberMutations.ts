@@ -1702,7 +1702,12 @@ export function* collectSemanticMemberMutationsSteps(
             (t.isStringLiteral(key) || t.isNumericLiteral(key)) &&
             t.isObjectExpression(descriptor) &&
             descriptor.properties.every(
-              (property) => t.isObjectProperty(property) && !property.computed,
+              (property) =>
+                t.isObjectProperty(property) &&
+                !property.computed &&
+                ["value", "writable", "enumerable", "configurable"].includes(
+                  semanticStaticPropertyKey(property.key, false) ?? "",
+                ),
             )
           ) {
             const value = unwrapJavaScriptExpression(target).node;

@@ -698,6 +698,25 @@ it.each(["createReadStream", "createWriteStream"] as const)(
   },
 );
 
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "keeps descriptor-installed accessors conservative for %s",
+  (method) => {
+    for (const [descriptor, use] of [
+      [`get: function () { this.${method} = () => null; }`, "fs.tag;"],
+      [`set: function (_) { this.${method} = () => null; }`, "fs.tag = 1;"],
+    ]) {
+      const operations = analyzeJavaScriptSemantics(`
+        const fs = require("node:fs");
+        Object.defineProperty(fs, "tag", { ${descriptor} });
+        ${use}
+        const stream = fs.${method}("input");
+        stream.close();
+      `).resourceOperations;
+      expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+    }
+  },
+);
+
 it("checks the constructor at the factory call even when the factory was saved earlier", () => {
   const operations = analyzeJavaScriptSemantics(`
     const fs = require("node:fs");
