@@ -1,4 +1,5 @@
 import { defineConfig } from "vitepress";
+import { readdir, readFile } from "node:fs/promises";
 
 export default defineConfig({
   title: "REA",
@@ -7,6 +8,28 @@ export default defineConfig({
   lang: "en-US",
   base: "/rea/",
   srcExclude: ["readme/**"],
+  // VitePress renders verification Markdown but does not copy sibling JSON
+  // files into dist. Publish those source-owned records without duplicating them.
+  vite: {
+    plugins: [
+      {
+        name: "rea-verification-json-assets",
+        async generateBundle() {
+          const records = new URL("../verification/", import.meta.url);
+          const names = (await readdir(records)).filter((name) =>
+            name.endsWith(".json"),
+          );
+          for (const name of names) {
+            this.emitFile({
+              type: "asset",
+              fileName: `verification/${name}`,
+              source: await readFile(new URL(name, records)),
+            });
+          }
+        },
+      },
+    ],
+  },
   themeConfig: {
     nav: [
       { text: "Get started", link: "/installation" },
