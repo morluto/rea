@@ -3,6 +3,10 @@ import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
 
+import { AnalysisCleanupLease } from "../../artifacts/AnalysisCleanupLease.js";
+import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { retryPublishedCleanup } from "./DesktopBuildWitness.js";
+
 import type { RecordingManifest } from "../../desktop/AgentEnvComputer.js";
 import { parseDesktopTask } from "../../domain/desktop/appTask.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
@@ -42,6 +46,27 @@ const witness = async (): Promise<EndedWitness> => {
 };
 
 const log = { entries: [], dropped: 0 };
+
+describe("published witness cleanup", () => {
+  it("returns the same published error when closing the handles fails again", async () => {
+    const published = new ProviderAdapterError("agentenv", "check_build_task", {
+      userMessage: "handles open",
+      cleanup: { reason: "handles open", resources: ["/tmp/witness"] },
+    });
+    const lease = new AnalysisCleanupLease(async () => {
+      throw new Error("still open");
+    }, ["/tmp/witness"]);
+    lease.bindCleanupError(published);
+    const again = await retryPublishedCleanup(published, async () => {
+      throw new Error("still open");
+    });
+    expect(again.ok).toBe(false);
+    if (again.ok) return;
+    expect(again.error).toBe(published);
+    expect(again.error.cleanup?.resources).toEqual(["/tmp/witness"]);
+    expect(lease.released).toBe(false);
+  });
+});
 
 describe("writeWitnessRecord", () => {
   it("does not publish a record when the recording cannot be ended, and retries the end", async () => {
