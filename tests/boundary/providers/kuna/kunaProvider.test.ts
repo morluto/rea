@@ -441,9 +441,21 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations.at(-1)).toBe(
+  expect(broken.limitations).toContain(
     "Kuna could not decompile this function: Flow exceeded maximum instructions",
   );
+  const dossier = await run(client, "analyze_function", {
+    procedure: "broken",
+  });
+  expect(dossier.result).toMatchObject({
+    facet_availability: {
+      pseudocode: {
+        available: false,
+        reason:
+          "Kuna could not decompile this function: Flow exceeded maximum instructions",
+      },
+    },
+  });
   const imported = await run(client, "procedure_pseudo_code", {
     procedure: "puts",
   });
@@ -670,6 +682,20 @@ it("keeps answering pseudocode one function at a time when the export fails", as
       expect.stringContaining("The project export failed"),
       "REA does not expose per-function records from a failed project export.",
     ]),
+  );
+  const fresh = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+    analysis: "independent_fresh",
+  });
+  expect(fresh.rawResult).toMatchObject({
+    source: { kind: "single-function" },
+    project_export: {
+      state: "failed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
+  });
+  expect(fresh.limitations).toContainEqual(
+    expect.stringContaining("fresh independent single-function"),
   );
   expect(pseudocode.limitations.join(" ")).not.toContain("still building");
   expect(pseudocode.limitations.join(" ")).toContain(

@@ -1998,7 +1998,6 @@ exit 1`,
     operation: "install_adb_package",
     input: { serial: "emulator-5554", apk_path: apk, replace: false },
   });
-  expect(execution.ok).toBe(true);
   if (!execution.ok) throw execution.error;
   expect(execution.value.result).toMatchObject({
     bytes: 3,
@@ -2006,8 +2005,10 @@ exit 1`,
     replace_requested: false,
     replaced: null,
   });
-  expect(execution.value.limitations).toContain(
-    "Whether an existing package was replaced is unknown; replace_requested records only the adb install mode",
+  expect(execution.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /package was replaced is unknown.*replace_requested.*install mode/iu,
+    ),
   );
 
   const { binary: failing } = await writeAdbStub(

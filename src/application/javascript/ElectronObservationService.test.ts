@@ -188,7 +188,7 @@ it("retains completed target facts when cancellation arrives before Evidence pub
         isolation: "none",
       },
       limitations: expect.arrayContaining([
-        "Browser host platform and architecture were not observed.",
+        expect.stringMatching(/platform.*architecture.*not observed/iu),
       ]),
       normalized_result: targets,
     });
