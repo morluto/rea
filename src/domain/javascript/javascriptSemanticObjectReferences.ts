@@ -5,7 +5,10 @@ import {
 } from "./javascriptSemanticState.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { semanticReadInitializers } from "./javascriptSemanticMutationInitializers.js";
-import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import {
+  copiedReferencePath,
+  semanticReferenceSourcesInactive,
+} from "./javascriptSemanticReferenceSources.js";
 import {
   semanticStaticPropertyKey,
   unwrapJavaScriptExpression,
@@ -15,6 +18,7 @@ import {
   type JavaScriptSemanticPropertyPath as PropertyPath,
 } from "./javascriptSemanticPropertyPaths.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
+import { arrayReferencedValues } from "./javascriptSemanticArrayReferences.js";
 
 export interface JavaScriptSemanticObjectReference {
   readonly node: t.Node;
@@ -383,6 +387,78 @@ const escapedClassValues = (
       classes.push(...semanticClassCandidates(klass.superClass, state));
   }
   const seen = new Set<t.Node>();
+  const selectedExpressions = (root: t.Node, path: PropertyPath): void => {
+    const pending: JavaScriptSemanticObjectReference[] = [{ node: root, path }];
+    const visited = new Map<t.Node, Set<string>>();
+    for (let index = 0; index < pending.length; index++) {
+      const current = pending[index];
+      if (current === undefined) continue;
+      const node = unwrapJavaScriptExpression(current.node).node;
+      const key = JSON.stringify(current.path);
+      const paths = visited.get(node) ?? new Set<string>();
+      if (paths.has(key)) continue;
+      paths.add(key);
+      visited.set(node, paths);
+      if (current.path.length === 0) {
+        expressions.push(node);
+      } else if (t.isObjectExpression(node)) {
+        pending.push(
+          ...semanticObjectPropertyReferences(node, current.path, state),
+        );
+      } else if (t.isArrayExpression(node)) {
+        for (const reference of arrayReferencedValues(node, current.path)) {
+          pending.push(reference);
+          if (reference.iterableFallbackPath !== undefined)
+            values.push({
+              node: reference.node,
+              path: reference.iterableFallbackPath,
+              escapes: true,
+            });
+        }
+      } else if (t.isConditionalExpression(node)) {
+        pending.push(
+          { node: node.consequent, path: current.path },
+          { node: node.alternate, path: current.path },
+        );
+      } else if (t.isLogicalExpression(node)) {
+        pending.push(
+          { node: node.left, path: current.path },
+          { node: node.right, path: current.path },
+        );
+      } else if (t.isSequenceExpression(node)) {
+        const last = node.expressions.at(-1);
+        if (last !== undefined)
+          pending.push({ node: last, path: current.path });
+      } else if (t.isIdentifier(node)) {
+        const binding = resolveSemanticBindingState(state, node, node.name);
+        if (binding === undefined)
+          values.push({ node, path: current.path, escapes: true });
+        else {
+          const origins = semanticReadInitializers(
+            binding,
+            node,
+            state.parentsByNode,
+          );
+          for (const initializer of origins.initializers)
+            pending.push({
+              node: initializer.node,
+              path: [...initializer.projection, ...current.path],
+            });
+          for (const initializer of origins.referenceInitializers)
+            if (!semanticReferenceSourcesInactive(initializer, state)) {
+              const path = copiedReferencePath(
+                initializer,
+                current.path,
+                "escape",
+              );
+              if (path !== null) pending.push({ node: initializer.node, path });
+            }
+        }
+      } else {
+        values.push({ node, path: current.path, escapes: true });
+      }
+    }
+  };
   for (let cursor = 0; cursor < expressions.length; cursor++) {
     const input = expressions[cursor];
     if (input === undefined) continue;
@@ -392,9 +468,20 @@ const escapedClassValues = (
     if (t.isThisExpression(node) || t.isSuper(node)) continue;
     if (t.isIdentifier(node)) {
       const binding = resolveSemanticBindingState(state, node, node.name);
-      if (binding !== undefined)
-        for (const initializer of binding.initializers)
-          expressions.push(initializer.node);
+      if (binding !== undefined) {
+        const origins = semanticReadInitializers(
+          binding,
+          node,
+          state.parentsByNode,
+        );
+        for (const initializer of origins.initializers)
+          selectedExpressions(initializer.node, initializer.projection);
+        for (const initializer of origins.referenceInitializers)
+          if (!semanticReferenceSourcesInactive(initializer, state)) {
+            const path = copiedReferencePath(initializer, [], "escape");
+            if (path !== null) selectedExpressions(initializer.node, path);
+          }
+      }
     }
     if (t.isNewExpression(node)) {
       for (const owner of semanticClassCandidates(node.callee, state))

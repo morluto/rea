@@ -17,11 +17,13 @@ import {
   semanticObjectPropertyReferences,
   type JavaScriptSemanticObjectReference,
 } from "./javascriptSemanticObjectReferences.js";
+import { arrayReferencedValues } from "./javascriptSemanticArrayReferences.js";
 import { semanticIterationSources } from "./javascriptSemanticIterationSources.js";
 import { semanticCallableResultExpressions } from "./javascriptSemanticCallableResults.js";
 import { createSemanticReturnedReferences } from "./javascriptSemanticReturnedReferences.js";
 import { semanticMutationInitializers } from "./javascriptSemanticMutationInitializers.js";
 import {
+  copiedReferencePath,
   semanticReferenceSourcesInactive,
   semanticSelectedReferenceSlot,
 } from "./javascriptSemanticReferenceSources.js";
@@ -1081,99 +1083,4 @@ const observableMutationPaths = (
     return result;
   };
   return { normalize, repeatsUnpruned };
-};
-
-const arrayReferencedValues = (
-  node: t.ArrayExpression,
-  path: PropertyPath,
-): readonly ReferencedValue[] => {
-  const [key, ...remaining] = path;
-  const selected = key ?? null;
-  const selectedIndex =
-    typeof selected === "object" ? null : semanticArrayIndex(selected);
-  if (typeof selected !== "object" && selectedIndex === null) return [];
-  const references: ReferencedValue[] = [];
-  let minimumIndex = 0;
-  let uncertainIndex = false;
-  for (const element of node.elements) {
-    if (t.isSpreadElement(element)) {
-      if (selectedIndex === null || selectedIndex >= minimumIndex) {
-        let sourceKey: PropertyPath[number] = null;
-        if (!uncertainIndex) {
-          if (selectedIndex !== null) sourceKey = selectedIndex - minimumIndex;
-          else if (selected !== null && typeof selected === "object")
-            sourceKey = {
-              excludedKeys: selected.excludedKeys.flatMap((name) => {
-                const index = semanticArrayIndex(name);
-                return index === null || index < minimumIndex
-                  ? []
-                  : [String(index - minimumIndex)];
-              }),
-              startIndex: Math.max(
-                0,
-                (selected.startIndex ?? 0) - minimumIndex,
-              ),
-            };
-        }
-        references.push({
-          node: element.argument,
-          path: [sourceKey, ...remaining],
-          iterableFallbackPath: [],
-        });
-      }
-      uncertainIndex = true;
-      continue;
-    }
-    if (
-      element !== null &&
-      (uncertainIndex
-        ? selectedIndex === null || selectedIndex >= minimumIndex
-        : semanticPropertyPathKeyMatches(selected, String(minimumIndex)))
-    )
-      references.push({ node: element, path: remaining });
-    minimumIndex++;
-  }
-  return references;
-};
-
-const copiedReferencePath = (
-  initializer: JavaScriptSemanticBindingState["referenceInitializers"][number],
-  path: PropertyPath,
-  effect: ValueEffect,
-): PropertyPath | null => {
-  const offset = initializer.copyProjectionOffset;
-  if (offset === undefined) return [...initializer.projection, ...path];
-  const copiedPath = [...initializer.projection.slice(offset + 1), ...path];
-  if (effect === "write" && copiedPath.length < 2) return null;
-  let [key, ...remaining] = copiedPath;
-  if (initializer.copyKind === "array-rest") {
-    const startIndex = initializer.copyStartIndex ?? 0;
-    if (key === undefined || key === null)
-      key = { excludedKeys: [], startIndex };
-    else if (typeof key === "object")
-      key = {
-        excludedKeys: key.excludedKeys.flatMap((name) => {
-          const index = semanticArrayIndex(name);
-          return index === null ? [] : [String(index + startIndex)];
-        }),
-        startIndex: (key.startIndex ?? 0) + startIndex,
-      };
-    else {
-      const index = semanticArrayIndex(key);
-      if (index === null) return null;
-      key = index + startIndex;
-    }
-  } else {
-    const excludedKeys = initializer.copyExcludedKeys ?? [];
-    if (key === undefined || key === null) key = { excludedKeys };
-    else if (typeof key === "object")
-      key = {
-        ...key,
-        excludedKeys: [...new Set([...key.excludedKeys, ...excludedKeys])].sort(
-          compareUnicodeCodePoints,
-        ),
-      };
-    else if (excludedKeys.includes(String(key))) return null;
-  }
-  return [...initializer.projection.slice(0, offset), key, ...remaining];
 };
