@@ -249,6 +249,13 @@ describe("Windows Ghidra doctor authority", () => {
       detail: "Authored native artifact unavailable diagnostic",
       remediation: expect.stringContaining("matching Windows x64 REA package"),
     });
+    expect(
+      result.checks.find(({ name }) => name === "ghidra-native_authority"),
+    ).toMatchObject({
+      remediation: expect.stringMatching(
+        /only when.*Matching package version alone is insufficient.*from this exact source checkout/u,
+      ),
+    });
   });
 
   it("fails provider-scoped Windows readiness without blaming installation", async () => {
