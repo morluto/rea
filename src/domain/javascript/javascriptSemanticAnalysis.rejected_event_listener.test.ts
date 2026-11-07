@@ -1082,6 +1082,32 @@ it("does not invalidate array iterators when modifying Map or Set iterators", ()
   expect(ir.eventOperations).toEqual([]);
 });
 
+it("retains valid callbacks when conditional test evaluates != with loose-equality coercion", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", 0 != "" ? 1 : () => {});
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+});
+
 it("safely bounds alias cycles during array iterator prototype checks", () => {
   const ir = analyzeJavaScriptSemantics(`
     import { spawn } from "node:child_process";
