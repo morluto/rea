@@ -204,6 +204,7 @@
     "verify:binary-hardening": "node scripts/verify-binary-hardening.mjs",
     "verify:flutter": "npm run build:cached && node scripts/verify-flutter.mjs",
     "verify:adb": "npm run build:cached && node scripts/verify-adb.mjs",
+    "verify:call-path-goals": "npm run build:cached && node scripts/verify-call-path-goals.mjs",
     "verify:ghidra": "npm run build:cached && node scripts/verify-real-ghidra.mjs",
     "verify:ghidra:checkpoints": "npm run build:cached && node scripts/verify-real-ghidra-checkpoints.mjs",
     "verify:ghidra:seeds": "npm run build:cached && node scripts/verify/ghidra/seeds.mjs",
