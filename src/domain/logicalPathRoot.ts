@@ -103,31 +103,12 @@ export const normalizeLogicalPath = (
   return { kind: "mapped", path: mapped };
 };
 
-/**
- * Explicit path-bearing parameter keys across REA inspection tools.
- */
-const KNOWN_PATH_PARAMETER_KEYS = new Set([
-  "path",
-  "input_path",
-  "binary_path",
-  "capture_path",
-  "target_path",
-  "descriptor_set_path",
-  "snapshot_path",
-  "schema_path",
-  "output_directory",
-]);
-
-/**
- * Explicit path-bearing fields in normalized_result and raw_result.
- */
-const KNOWN_RESULT_PATH_KEYS = new Set([
-  "target_location",
-  "capture_path",
-  "source_path",
-  "output_directory",
-  "descriptor_set_path",
-]);
+/** Exact JSON paths whose producer identifies as local filesystem values. */
+export interface LogicalPathFields {
+  readonly parameters?: readonly (readonly string[])[];
+  readonly result?: readonly (readonly string[])[];
+  readonly rawResult?: readonly (readonly string[])[];
+}
 
 export interface RedactEvidenceObservationPathsOutcome {
   readonly observation: EvidenceObservationInput;
@@ -135,55 +116,51 @@ export interface RedactEvidenceObservationPathsOutcome {
   readonly outsideCount: number;
 }
 
-/** Recursively traverse and map known path fields in a validated JSON value. */
-const redactJsonStructurePaths = (
+/** Map only declared locations in validated JSON, retaining all other members. */
+const mapDeclaredPath = (
   value: JsonValue,
-  mapString: (s: string) => string,
-  isPathKey: (key: string) => boolean,
+  path: readonly string[],
+  mapString: (value: string) => string,
 ): JsonValue => {
-  if (typeof value !== "object" || value === null) {
-    return value;
-  }
+  if (path.length === 0)
+    return typeof value === "string" ? mapString(value) : value;
+  if (value === null || typeof value !== "object") return value;
+  const [key, ...rest] = path;
+  if (key === undefined || !Object.hasOwn(value, key)) return value;
   if (Array.isArray(value)) {
-    return value.map((item) =>
-      redactJsonStructurePaths(item, mapString, isPathKey),
-    );
+    if (!/^(0|[1-9][0-9]*)$/u.test(key)) return value;
+    const index = Number(key);
+    if (!Number.isSafeInteger(index) || index >= value.length) return value;
+    const mapped = mapDeclaredPath(value[index]!, rest, mapString);
+    if (mapped === value[index]) return value;
+    const copy = [...value];
+    copy[index] = mapped;
+    return copy;
   }
-  let changed = false;
-  const result: Record<string, JsonValue> = {};
-  for (const [k, v] of Object.entries(value)) {
-    if (isPathKey(k) && typeof v === "string") {
-      const mapped = mapString(v);
-      if (mapped !== v) changed = true;
-      Object.defineProperty(result, k, {
-        value: mapped,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    } else if (typeof v === "object" && v !== null) {
-      const nested = redactJsonStructurePaths(v, mapString, isPathKey);
-      if (nested !== v) changed = true;
-      Object.defineProperty(result, k, {
-        value: nested,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    } else {
-      Object.defineProperty(result, k, {
-        value: v,
-        enumerable: true,
-        writable: true,
-        configurable: true,
-      });
-    }
-  }
-  return changed ? result : value;
+  const child = value[key];
+  if (child === undefined) return value;
+  const mapped = mapDeclaredPath(child, rest, mapString);
+  if (mapped === child) return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([name, entry]) => [
+      name,
+      name === key ? mapped : entry,
+    ]),
+  );
 };
 
+const mapDeclaredPaths = (
+  value: JsonValue,
+  paths: readonly (readonly string[])[],
+  mapString: (value: string) => string,
+): JsonValue =>
+  paths.reduce(
+    (current, path) => mapDeclaredPath(current, path, mapString),
+    value,
+  );
+
 /**
- * Redacts known path-bearing fields in Evidence inputs using an explicit schema allowlist.
+ * Maps the exact filesystem fields declared by the Evidence producer.
  */
 export const redactEvidenceObservationPaths = (
   observation: EvidenceObservationInput,
@@ -222,40 +199,29 @@ export const redactEvidenceObservationPaths = (
     });
   }
 
-  // Validate parameters as true JSON before mapping
-  let newParameters = observation.parameters;
-  if (
-    typeof observation.parameters === "object" &&
-    observation.parameters !== null
-  ) {
-    const validatedParams = jsonObjectSchema.parse(observation.parameters);
-    newParameters = redactJsonStructurePaths(validatedParams, mapString, (k) =>
-      KNOWN_PATH_PARAMETER_KEYS.has(k),
-    ) as Record<string, JsonValue>;
-  }
-
-  // Validate and redact normalized_result
-  let newResult = observation.result;
-  const isOriginalImmutable = isImmutableJsonSnapshot(observation.result);
-  if (typeof observation.result === "object" && observation.result !== null) {
-    const validatedResult = jsonValueSchema.parse(observation.result);
-    const redacted = redactJsonStructurePaths(validatedResult, mapString, (k) =>
-      KNOWN_RESULT_PATH_KEYS.has(k),
-    );
-    newResult = isOriginalImmutable ? freezeJsonSnapshot(redacted) : redacted;
-  }
-
-  // Validate and redact rawResult if present
-  let newRawResult = observation.rawResult;
-  if (
-    typeof observation.rawResult === "object" &&
-    observation.rawResult !== null
-  ) {
-    const validatedRaw = jsonValueSchema.parse(observation.rawResult);
-    newRawResult = redactJsonStructurePaths(validatedRaw, mapString, (k) =>
-      KNOWN_RESULT_PATH_KEYS.has(k),
-    );
-  }
+  // Admit the original values before mapping, including scalar results.
+  const newParameters = mapDeclaredPaths(
+    jsonObjectSchema.parse(observation.parameters),
+    observation.logicalPathFields?.parameters ?? [],
+    mapString,
+  ) as Record<string, JsonValue>;
+  const originalResult = jsonValueSchema.parse(observation.result);
+  const mappedResult = mapDeclaredPaths(
+    originalResult,
+    observation.logicalPathFields?.result ?? [],
+    mapString,
+  );
+  const newResult = isImmutableJsonSnapshot(observation.result)
+    ? freezeJsonSnapshot(mappedResult)
+    : mappedResult;
+  const newRawResult =
+    observation.rawResult === undefined || observation.rawResult === null
+      ? observation.rawResult
+      : mapDeclaredPaths(
+          jsonValueSchema.parse(observation.rawResult),
+          observation.logicalPathFields?.rawResult ?? [],
+          mapString,
+        );
 
   return {
     observation: {

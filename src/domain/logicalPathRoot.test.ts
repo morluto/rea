@@ -83,6 +83,10 @@ describe("normalizeLogicalPath", () => {
     const outcome = redactEvidenceObservationPaths(
       {
         operation: "inspect",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: {
           path: "/home/alice/project/file.bin",
           url: "https://example.com/api",
@@ -146,7 +150,15 @@ it("retains own __proto__ JSON members when mapping a sibling path", () => {
     '{"__proto__":false,"target_location":"/home/alice/project/app.bin"}',
   );
   const mapped = redactEvidenceObservationPaths(
-    { operation: "inspect", parameters, result },
+    {
+      operation: "inspect",
+      parameters,
+      result,
+      logicalPathFields: {
+        parameters: [["path"]],
+        result: [["target_location"]],
+      },
+    },
     { root: "/home/alice/project" },
   );
   expect(mapped.observation.parameters).toEqual(
@@ -174,3 +186,73 @@ it.skipIf(process.platform !== "win32")(
     ).toEqual({ kind: "unmodified", path: "https://example.com/file" });
   },
 );
+
+it("maps web export and network fields at their producer-owned locations", async () => {
+  const { WEB_SCRIPT_EXPORT_LOGICAL_PATH_FIELDS } =
+    await import("./webScriptExport.js");
+  const { WEB_NETWORK_CAPTURE_LOGICAL_PATH_FIELDS } =
+    await import("./webNetworkCapture.js");
+  const root = { root: "/tmp/work" };
+  const exported = redactEvidenceObservationPaths(
+    {
+      operation: "export_web_scripts",
+      logicalPathFields: WEB_SCRIPT_EXPORT_LOGICAL_PATH_FIELDS,
+      parameters: {
+        capture_path: "/tmp/work/capture",
+        output_directory: "/tmp/work/out",
+      },
+      result: {
+        capture_path: "/tmp/work/capture",
+        output_directory: "/tmp/work/out",
+        analysis_input: { input_path: "/tmp/work/out" },
+        manifest: { path: "/tmp/work/out/manifest.json" },
+        scripts: [{ source_path: "/outside/recorded" }],
+      },
+    },
+    root,
+  );
+  expect(exported.observation.result).toEqual({
+    capture_path: "workspace://capture",
+    output_directory: "workspace://out",
+    analysis_input: { input_path: "workspace://out" },
+    manifest: { path: "workspace://out/manifest.json" },
+    scripts: [{ source_path: "/outside/recorded" }],
+  });
+  const captured = redactEvidenceObservationPaths(
+    {
+      operation: "inspect_web_network_capture",
+      logicalPathFields: WEB_NETWORK_CAPTURE_LOGICAL_PATH_FIELDS,
+      parameters: {
+        capture_path: "/tmp/work/capture",
+        protobuf: { schema: { descriptor_set_path: "/tmp/work/schema.pb" } },
+      },
+      result: {
+        artifact: { path: "/tmp/work/capture" },
+        records: [{ source_path: "/outside/recorded" }],
+      },
+    },
+    root,
+  );
+  expect(captured.observation.parameters).toEqual({
+    capture_path: "workspace://capture",
+    protobuf: { schema: { descriptor_set_path: "workspace://schema.pb" } },
+  });
+  expect(captured.observation.result).toEqual({
+    artifact: { path: "workspace://capture" },
+    records: [{ source_path: "/outside/recorded" }],
+  });
+});
+
+it("supports explicitly declared scalar raw-result paths", () => {
+  const mapped = redactEvidenceObservationPaths(
+    {
+      operation: "inspect_fixture",
+      parameters: {},
+      result: {},
+      rawResult: "/tmp/work/raw.bin",
+      logicalPathFields: { rawResult: [[]] },
+    },
+    { root: "/tmp/work" },
+  );
+  expect(mapped.observation.rawResult).toBe("workspace://raw.bin");
+});

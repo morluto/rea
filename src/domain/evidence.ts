@@ -14,6 +14,7 @@ import {
   normalizeLogicalPrefix,
   redactEvidenceObservationPaths,
   type LogicalPathRootMapping,
+  type LogicalPathFields,
 } from "./logicalPathRoot.js";
 import {
   analysisProfileSchema,
@@ -213,6 +214,8 @@ export interface EvidenceObservationInput {
   readonly operation: string;
   readonly parameters: unknown;
   readonly result: unknown;
+  /** Producer-owned filesystem locations, not names inferred from target data. */
+  readonly logicalPathFields?: LogicalPathFields;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly rawResult?: unknown;
   readonly confidence?: "observed" | "derived" | "inferred";
@@ -501,6 +504,11 @@ const applyLogicalRootRedaction = (
 
   const totalOutsideCount = outsideCount + obsOutsideCount;
   const addedLimitations: string[] = [];
+  addedLimitations.push(
+    observation.logicalPathFields === undefined
+      ? "logical-root redaction incomplete; producer did not declare filesystem field locations."
+      : "logical-root mapping covers only producer-declared filesystem fields; other recorded data may contain host paths.",
+  );
   const prefix = normalizeLogicalPrefix(
     mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX,
   );

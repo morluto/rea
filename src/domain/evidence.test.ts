@@ -909,6 +909,10 @@ describe("issue #9196: post-hoc string redaction vs valid ev_* ID", () => {
       PROVIDER,
       {
         operation: "inspect_elf",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: { path: hostPath },
         locations: [{ kind: "artifact-path", path: hostPath }],
         result: { target_location: hostPath },
@@ -944,6 +948,10 @@ describe("issue #9196: opt-in logical path root redaction", () => {
       PROVIDER,
       {
         operation: "inspect_elf",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: { path: "/tmp/run-alpha/app/target.bin" },
         locations: [
           { kind: "artifact-path", path: "/tmp/run-alpha/app/target.bin" },
@@ -967,6 +975,10 @@ describe("issue #9196: opt-in logical path root redaction", () => {
       PROVIDER,
       {
         operation: "inspect_elf",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: { path: "/tmp/run-beta/app/target.bin" },
         locations: [
           { kind: "artifact-path", path: "/tmp/run-beta/app/target.bin" },
@@ -1022,6 +1034,10 @@ describe("issue #9196: opt-in logical path root redaction", () => {
         PROVIDER,
         {
           operation: "inspect_elf",
+          logicalPathFields: {
+            parameters: [["path"]],
+            result: [["target_location"]],
+          },
           parameters: { path: "/tmp/outside/target.bin" },
           result: { status: "ok" },
         },
@@ -1040,6 +1056,10 @@ describe("issue #9196: opt-in logical path root redaction", () => {
       PROVIDER,
       {
         operation: "inspect_elf",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: { path: "/tmp/outside/target.bin" },
         result: { status: "ok" },
       },
@@ -1052,27 +1072,31 @@ describe("issue #9196: opt-in logical path root redaction", () => {
       "logical-root redaction incomplete; host-local path retained.",
     );
   });
+});
 
-  it("preserves unconfigured behavior byte-for-byte when logicalRoot is omitted", () => {
-    const hostPath = "/home/alice/project/file.bin";
-    const evidence = createEvidence(
-      {
-        path: hostPath,
-        sha256: "e".repeat(64),
-        format: "elf",
+it("preserves unconfigured behavior byte-for-byte when logicalRoot is omitted", () => {
+  const hostPath = "/home/alice/project/file.bin";
+  const evidence = createEvidence(
+    {
+      path: hostPath,
+      sha256: "e".repeat(64),
+      format: "elf",
+    },
+    PROVIDER,
+    {
+      operation: "inspect_elf",
+      logicalPathFields: {
+        parameters: [["path"]],
+        result: [["target_location"]],
       },
-      PROVIDER,
-      {
-        operation: "inspect_elf",
-        parameters: { path: hostPath },
-        result: { status: "ok" },
-      },
-    );
+      parameters: { path: hostPath },
+      result: { status: "ok" },
+    },
+  );
 
-    expect(evidence.parameters).toEqual({ path: hostPath });
-    expect(evidence.limitations).toEqual([]);
-    expect(parseEvidence(evidence)).toEqual(evidence);
-  });
+  expect(evidence.parameters).toEqual({ path: hostPath });
+  expect(evidence.limitations).toEqual([]);
+  expect(parseEvidence(evidence)).toEqual(evidence);
 });
 
 it.skipIf(process.platform === "win32")(
@@ -1084,6 +1108,10 @@ it.skipIf(process.platform === "win32")(
       PROVIDER,
       {
         operation: "inspect",
+        logicalPathFields: {
+          parameters: [["path"]],
+          result: [["target_location"]],
+        },
         parameters: { path },
         result: {},
         locations: [{ kind: "artifact-path", path }],
@@ -1106,7 +1134,15 @@ it("maps a sealed result and retains outside-root subject disclosure", () => {
   const steps = createImmutableEvidenceSteps(
     { path: "/outside/file", sha256: "a".repeat(64), format: "file" },
     PROVIDER,
-    { operation: "inspect", parameters: {}, result },
+    {
+      operation: "inspect",
+      logicalPathFields: {
+        parameters: [["path"]],
+        result: [["target_location"]],
+      },
+      parameters: {},
+      result,
+    },
     { logicalRoot: { root: "/tmp/redaction-root", allowOutsideRoot: true } },
   );
   let current = steps.next();
@@ -1127,7 +1163,15 @@ it("discloses an outside-root target even when no observation path is mapped", (
   const evidence = createEvidence(
     { path: "/outside/file", sha256: "a".repeat(64), format: "file" },
     PROVIDER,
-    { operation: "inspect", parameters: {}, result: {} },
+    {
+      operation: "inspect",
+      logicalPathFields: {
+        parameters: [["path"]],
+        result: [["target_location"]],
+      },
+      parameters: {},
+      result: {},
+    },
     { logicalRoot: { root: "/tmp/redaction-root", allowOutsideRoot: true } },
   );
   expect(evidence.subject?.local_path).toBe("/outside/file");
@@ -1144,6 +1188,10 @@ it("uses the same Evidence identity for equivalent logical prefixes", () => {
   };
   const input = {
     operation: "inspect",
+    logicalPathFields: {
+      parameters: [["path"]],
+      result: [["target_location"]],
+    },
     parameters: { path: target.path },
     result: {},
   };
@@ -1156,4 +1204,74 @@ it("uses the same Evidence identity for equivalent logical prefixes", () => {
   expect(first.subject?.local_path).toBe(second.subject?.local_path);
   expect(first.limitations).toEqual(second.limitations);
   expect(first.evidence_id).toBe(second.evidence_id);
+});
+
+it("leaves decoded file data untouched and discloses missing path declarations", () => {
+  const value = {
+    source_path: "/outside/source",
+    nested: { path: "/tmp/work/inside" },
+  };
+  const evidence = createEvidence(
+    { path: "/tmp/work/file.plist", sha256: "a".repeat(64), format: "file" },
+    PROVIDER,
+    { operation: "inspect_plist", parameters: {}, result: { value } },
+    { logicalRoot: { root: "/tmp/work" } },
+  );
+  expect(evidence.normalized_result).toEqual({ value });
+  expect(evidence.limitations).toContain(
+    "logical-root redaction incomplete; producer did not declare filesystem field locations.",
+  );
+  expect(parseEvidence(evidence).evidence_id).toBe(evidence.evidence_id);
+});
+
+it("maps only explicitly declared nested parameter, result, and raw-result paths", () => {
+  const evidence = createEvidence(
+    undefined,
+    PROVIDER,
+    {
+      operation: "inspect_fixture",
+      logicalPathFields: {
+        parameters: [["protobuf", "schema", "descriptor_set_path"]],
+        result: [["artifact", "path"]],
+        rawResult: [["output", "input_path"]],
+      },
+      parameters: {
+        protobuf: {
+          schema: {
+            descriptor_set_path: "/tmp/work/schema.pb",
+            message_type: "x",
+          },
+        },
+      },
+      result: {
+        artifact: { path: "/tmp/work/capture.har" },
+        value: { path: "/outside/preserved" },
+      },
+      rawResult: {
+        output: { input_path: "/tmp/work/input" },
+        value: { input_path: "/outside/preserved" },
+      },
+    },
+    { logicalRoot: { root: "/tmp/work" } },
+  );
+  expect(evidence.parameters).toMatchObject({
+    protobuf: {
+      schema: {
+        descriptor_set_path: "workspace://schema.pb",
+        message_type: "x",
+      },
+    },
+  });
+  expect(evidence.normalized_result).toEqual({
+    artifact: { path: "workspace://capture.har" },
+    value: { path: "/outside/preserved" },
+  });
+  expect(evidence.raw_result).toEqual({
+    output: { input_path: "workspace://input" },
+    value: { input_path: "/outside/preserved" },
+  });
+  expect(evidence.limitations).toContain(
+    "logical-root mapping covers only producer-declared filesystem fields; other recorded data may contain host paths.",
+  );
+  expect(parseEvidence(evidence).evidence_id).toBe(evidence.evidence_id);
 });
