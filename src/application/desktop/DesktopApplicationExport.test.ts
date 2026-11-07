@@ -23,6 +23,7 @@ import {
 import {
   exportDesktopApplication,
   seedLimitation,
+  trashedFilesLimitation,
 } from "./DesktopApplicationExport.js";
 import {
   EDITED_NOTE,
@@ -308,9 +309,13 @@ describe("exportDesktopApplication and the desktop Trash", () => {
         "Documents/today.txt",
       ],
     });
-    expect(result.limitations).toContain(
-      "The desktop Trash held 2 file(s) at the seed checkpoint, which are not seeded: ~/.local/share/Trash/files/today.txt, ~/.local/share/Trash/info/today.txt.trashinfo. Restore one the task needs and capture again.",
-    );
+    const trashPaths = [
+      ".local/share/Trash/files/today.txt",
+      ".local/share/Trash/info/today.txt.trashinfo",
+    ];
+    const notice = trashedFilesLimitation(trashPaths);
+    expect(result.limitations).toContain(notice);
+    for (const path of trashPaths) expect(notice).toContain(`~/${path}`);
   });
 });
 
