@@ -6,6 +6,18 @@ import { passing, xml, xmlDraft } from "./appTaskDraft.fixture.js";
 
 const FILE = "Documents/doc.xml";
 
+it("checks clean and partially noisy fields of the same added record", () => {
+  const before = '<doc><record id="old"><title>Old</title></record></doc>';
+  const after = '<doc><record id="old"><title>Old</title></record><record id="new"><title>Shopping</title><details><name>Water filter</name><modified>1793870600</modified></details></record></doc>';
+  const checks = xmlDraft(before, after).suggested;
+  expect(checks).toEqual(expect.arrayContaining([
+    expect.objectContaining({ value: "Shopping" }),
+    expect.objectContaining({ kind: "text_contains", value: "Water filter" }),
+  ]));
+  expect(passing(FILE, xml(after.replace("1793870600", "1793870700")), checks).every(Boolean)).toBe(true);
+  expect(passing(FILE, xml(after.replace("Water filter", "Wrong item")), checks).every(Boolean)).toBe(false);
+});
+
 it("does not include a sibling generated UUID when a record field changes", () => {
   const before =
     '<doc><record id="one"><value>Old text</value><session>123e4567-e89b-12d3-a456-426614174000</session></record></doc>';

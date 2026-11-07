@@ -25,6 +25,21 @@ const drafted = (before: string, after: string) => {
 };
 
 describe("draftTaskFiles for lines holding values the app generates", () => {
+  it("keeps assignment-like text quoted in a translation", () => {
+    const translation = 'msgstr "Set created=2025550123 and save"';
+    const file = drafted(lines(), lines(translation));
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [translation] },
+    ]);
+  });
+
+  it("keeps long ordinary text as a whole line", () => {
+    const text = `msgstr "${"ordinary words ".repeat(3000)}"`;
+    const file = drafted(lines(), lines(text));
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [text] },
+    ]);
+  });
   it("keeps phone numbers but counts a stable prefix before a named creation time", () => {
     const phone = 'topic TEXT="Call 2025550123"';
     const timed = 'topic TEXT="Water filter" CREATED="1793955250671"';

@@ -104,15 +104,38 @@ const TOKEN = /[\p{L}\d_-]+/gu;
 
 /** Where a line's first value the app generates starts: a UUID, an epoch time, or an id such as Freeplane's `ID_329023692`; -1 when it holds none. */
 const volatileAt = (line: string): number => {
+  let end = 0;
+  let quote: string | undefined;
+  let previous: string | undefined;
+  let previousOutside = false;
   for (const { 0: token, index } of line.matchAll(TOKEN)) {
-    const key = /([\p{L}_][\p{L}\d_.:-]*)\s*=\s*["']?$/u.exec(
-      line.slice(0, index),
-    )?.[1];
+    const gap = line.slice(end, index);
+    const key =
+      quote === undefined && previousOutside && /^\s*=\s*["']?$/u.test(gap)
+        ? previous
+        : undefined;
+    for (let at = 0; at < gap.length; at += 1) {
+      const character = gap[at];
+      if (character === "\\" && quote !== undefined) {
+        at += 1;
+      } else if (character === quote) {
+        quote = undefined;
+      } else if (
+        quote === undefined &&
+        (character === '"' ||
+          (character === "'" && /[\s=]/u.test(line[end + at - 1] ?? " ")))
+      ) {
+        quote = character;
+      }
+    }
     if (
       isVolatileValue(token, key !== undefined && isBookkeepingName(key)) ||
       /^\p{L}+_\d{6,}$/u.test(token)
     )
       return index;
+    previous = token;
+    previousOutside = quote === undefined;
+    end = index + token.length;
   }
   return -1;
 };
@@ -139,11 +162,12 @@ export const addedLineChecks = (
 ): { readonly checks: DesktopTaskCheckInput[]; readonly notes: FileNote[] } => {
   const holding = (all: readonly string[], text: string) =>
     all.filter((line) => line.includes(text)).length;
-  const whole = added.filter((line) => volatileAt(line) < 0);
+  const classified = added.map((line) => ({ line, at: volatileAt(line) }));
+  const whole = classified.filter(({ at }) => at < 0).map(({ line }) => line);
   const prefixes = new Set<string>();
   let unnamed = 0;
-  for (const line of added.filter((text) => counted && volatileAt(text) >= 0)) {
-    const prefix = line.slice(0, volatileAt(line)).trimStart();
+  for (const { line, at } of classified.filter(({ at }) => counted && at >= 0)) {
+    const prefix = line.slice(0, at).trimStart();
     const equals = holding(lines.after, prefix);
     if (
       prefix.trim().length >= 3 &&
