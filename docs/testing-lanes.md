@@ -1296,6 +1296,14 @@ The lane also injects one cleanup denial for exact private runtime roots and
 input descriptors, checks recovered CLI errors, and verifies retry on the same
 MCP connection after repeated runtime-removal denial. These are controlled
 faults, not naturally occurring permission failures; no WASM target is executed.
+The verifier's input and provider-temp roots remain owned when MCP cleanup or
+the provider-residue check fails. Its cleanup error lists the roots still held
+and retains the same `cleanupOwner.close()` capability for an importing caller
+to retry. The SDK child must exit and close its output before release. POSIX
+also requires a successful run-lineage check; Windows reports the lack of
+descendant verification outside the SDK child's pipes, since this transport
+has no retained native Job Object lease. This does not prove absence of detached,
+reparented processes that no longer hold those pipes.
 Pass an installed package's
 `scripts/rea.mjs` as the first argument to run the same lane against the package.
 `npm run verify:wasm:package` packs and installs REA into an isolated temporary
