@@ -626,3 +626,45 @@ it("drops child listener when non-empty template literal short-circuits logical 
   expect(ir.childProcessInteractions).toEqual([]);
   expect(ir.eventOperations).toEqual([]);
 });
+
+it("retains child listener when template literal evaluates to empty string via escaped line break", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", \`\\\n\` || (() => {}));
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "complete",
+      }),
+    ]),
+  );
+});
+
+it("retains candidate and records resource limit when nested spreads exceed depth limit", () => {
+  let expr = "1";
+  for (let i = 0; i < 260; i++) {
+    expr = `[...${expr}]`;
+  }
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ...${expr});
+  `);
+  expect(ir.coverage.resourceLimits ?? []).toContain("expression-depth");
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+});

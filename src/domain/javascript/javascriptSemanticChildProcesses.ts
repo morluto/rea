@@ -223,7 +223,7 @@ const childInteraction = (
   const { kind, interactionMethod, eventName } = classification;
   const listener =
     kind === "listener"
-      ? resolvePositionalArgument(node.arguments, 1)
+      ? resolvePositionalArgument(node.arguments, 1, state)
       : undefined;
   let rejectedNodeListener = false;
   if (kind === "listener" && rejectsEventListener(listener, state)) {

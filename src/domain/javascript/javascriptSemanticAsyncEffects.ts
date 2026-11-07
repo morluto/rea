@@ -181,12 +181,15 @@ const staticExpressionTruthiness = (
   if (t.isTemplateLiteral(unwrapped)) {
     if (
       unwrapped.quasis.some(
-        (q) => (q.value.raw ?? q.value.cooked ?? "").length > 0,
+        (q) => typeof q.value.cooked === "string" && q.value.cooked.length > 0,
       )
     ) {
       return true;
     }
-    if (unwrapped.expressions.length === 0) {
+    if (
+      unwrapped.expressions.length === 0 &&
+      unwrapped.quasis.every((q) => q.value.cooked === "")
+    ) {
       return false;
     }
   }
@@ -272,6 +275,8 @@ export function* flattenCallArguments(
     | t.JSXNamespacedName
     | t.ArgumentPlaceholder
   )[],
+  depth = 0,
+  state?: JavaScriptSemanticAnalysisState,
 ): Generator<
   | t.Expression
   | t.SpreadElement
@@ -281,13 +286,25 @@ export function* flattenCallArguments(
 > {
   for (const arg of args) {
     if (t.isSpreadElement(arg)) {
-      const unwrapped = unwrapJavaScriptExpression(arg.argument).node;
-      if (t.isArrayExpression(unwrapped)) {
-        for (const element of unwrapped.elements) {
+      if (depth >= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+        state?.valueResourceLimits.add("expression-depth");
+        yield arg;
+        continue;
+      }
+      const unwrapped = unwrapJavaScriptExpression(arg.argument);
+      const nextDepth = depth + unwrapped.depth + 1;
+      if (nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+        state?.valueResourceLimits.add("expression-depth");
+        yield arg;
+        continue;
+      }
+      const inner = unwrapped.node;
+      if (t.isArrayExpression(inner)) {
+        for (const element of inner.elements) {
           if (element === null) {
             yield undefined;
           } else if (t.isSpreadElement(element)) {
-            yield* flattenCallArguments([element]);
+            yield* flattenCallArguments([element], nextDepth, state);
           } else {
             yield element;
           }
@@ -307,6 +324,7 @@ export const resolvePositionalArgument = (
     | t.ArgumentPlaceholder
   )[],
   targetIndex: number,
+  state?: JavaScriptSemanticAnalysisState,
 ):
   | t.Expression
   | t.SpreadElement
@@ -314,7 +332,7 @@ export const resolvePositionalArgument = (
   | t.ArgumentPlaceholder
   | undefined => {
   let index = 0;
-  for (const arg of flattenCallArguments(args)) {
+  for (const arg of flattenCallArguments(args, 0, state)) {
     if (index === targetIndex) return arg;
     index += 1;
   }
@@ -343,11 +361,20 @@ export const rejectsEventListener = (
   ) {
     if (current.node === undefined) continue;
     if (t.isSpreadElement(current.node)) {
-      const unwrappedArg = unwrapJavaScriptExpression(
-        current.node.argument,
-      ).node;
-      if (t.isArrayExpression(unwrappedArg)) {
-        const flattened = [...flattenCallArguments([current.node])];
+      if (current.depth >= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+        state.valueResourceLimits.add("expression-depth");
+        return false;
+      }
+      const unwrappedArg = unwrapJavaScriptExpression(current.node.argument);
+      const nextDepth = current.depth + unwrappedArg.depth + 1;
+      if (nextDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+        state.valueResourceLimits.add("expression-depth");
+        return false;
+      }
+      if (t.isArrayExpression(unwrappedArg.node)) {
+        const flattened = [
+          ...flattenCallArguments([current.node], current.depth, state),
+        ];
         if (flattened.length === 0) {
           // An empty array spread (...[] or ...[...[]]) supplies no listener.
           continue;
@@ -356,8 +383,11 @@ export const rejectsEventListener = (
         if (first === undefined) {
           continue;
         }
-        if (t.isExpression(first) || t.isSpreadElement(first)) {
-          pending.push({ node: first, depth: current.depth + 1 });
+        if (t.isSpreadElement(first)) {
+          return false;
+        }
+        if (t.isExpression(first)) {
+          pending.push({ node: first, depth: nextDepth });
           continue;
         }
       }
@@ -913,7 +943,7 @@ const collectEvent = (
   const eventArgument = node.arguments[0];
   const listenerMethod = EVENT_LISTENER_METHODS.includes(method);
   const listenerArgument = listenerMethod
-    ? resolvePositionalArgument(node.arguments, 1)
+    ? resolvePositionalArgument(node.arguments, 1, state)
     : undefined;
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
@@ -1050,7 +1080,7 @@ const schedulesWithNonFunctionCallback = (
 ): boolean => {
   if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
     return false;
-  const callback = resolvePositionalArgument(node.arguments, 0);
+  const callback = resolvePositionalArgument(node.arguments, 0, state);
   return rejectsEventListener(callback, state);
 };
 
