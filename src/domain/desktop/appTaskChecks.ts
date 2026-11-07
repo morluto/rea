@@ -385,6 +385,7 @@ const textVerdict = (
   if (problem !== undefined) return fail(problem);
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
   // A zip view's truncation that matters is the entry the pointer goes into.
+  // A child past the kept nodes of a cut view may still hold the text.
   const truncated = zip
     ? zipLeavesOutAt(read.view, check.pointer)
     : read.truncated;

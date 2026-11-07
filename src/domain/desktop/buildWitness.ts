@@ -29,6 +29,11 @@ export type WitnessExpectation = "some_fail" | "all_pass";
 export interface WitnessActionLog {
   readonly total: number;
   readonly lastApplied: Readonly<Partial<Record<ComputerAction, number>>>;
+  /**
+   * The index of the last reset whose reply was lost. It is not applied, and
+   * it is not absent: a near miss cannot use the input before it.
+   */
+  readonly lastUnsettled?: Readonly<Partial<Record<ComputerAction, number>>>;
 }
 
 /** One stage's checks, with how many logged actions came before it. */
@@ -93,22 +98,19 @@ export const unrestoredChecks = <Outcome extends ComparedOutcome>(
 };
 
 /**
- * Checks whose seed result was unreadable and whose result after the reset is
- * now decided differently. That difference is unknown, not evidence the reset
- * failed.
+ * Checks whose seed comparison is unknown: either the filed seed result or the
+ * result after the reset was not read. An unreadable `false` is not the same
+ * result as a decided `false`.
  */
-export const unreadSeedDifferences = <Outcome extends ComparedOutcome>(
+export const unreadResetChecks = <Outcome extends ComparedOutcome>(
   stages: readonly WitnessStageRecord[],
   results: readonly Outcome[],
 ): Outcome[] => {
   const seed = seedResults(stages);
   return results.filter((result) => {
     const filed = seed.get(result.id);
-    return (
-      filed?.undecided === true &&
-      result.undecided !== true &&
-      filed.passed !== result.passed
-    );
+    if (filed === undefined) return false;
+    return filed.undecided === true || result.undecided === true;
   });
 };
 
@@ -128,10 +130,7 @@ export const stageVerdict = (
     const unrestored = unrestoredChecks(stages, results);
     if (unrestored.some((result) => result.undecided !== true))
       return "not_held";
-    if (
-      unrestored.length > 0 ||
-      unreadSeedDifferences(stages, results).length > 0
-    )
+    if (unrestored.length > 0 || unreadResetChecks(stages, results).length > 0)
       return "undecided";
   }
   const failed = results.filter((result) => !result.passed);
@@ -149,11 +148,17 @@ const notAnEdit = (
   latest: {
     readonly input: number;
     readonly reset: number;
+    readonly unsettledReset: number;
     readonly from: number;
   },
 ): string | undefined => {
   if (latest.input < latest.from)
     return `Before checking ${stage}, act on the app with act_on_build_computer: no click, drag, scroll, type or key was applied since ${since}, and a reset does not count.`;
+  if (
+    latest.unsettledReset > latest.reset &&
+    latest.unsettledReset > latest.input
+  )
+    return `A reset since ${since} lost its reply, so whether it restored the seed is unknown. Reset again, or act after a reset whose reply you have, before checking ${stage}.`;
   if (latest.reset > latest.input)
     return `A reset since ${since} put the seed back; act on the app after it before checking ${stage}.`;
   return undefined;
@@ -184,12 +189,21 @@ export const admitWitnessStage = (
     from: stages.at(-1)?.actions_before ?? 0,
     input: Math.max(-1, ...INPUT.map((kind) => log.lastApplied[kind] ?? -1)),
     reset: log.lastApplied.reset ?? -1,
+    unsettledReset: log.lastUnsettled?.reset ?? -1,
   };
   const edit =
     stage === "after_edit" || stage === "near_miss"
       ? notAnEdit(stage, stages.at(-1)?.stage ?? "the start", latest)
       : undefined;
   if (edit !== undefined) return err(edit);
+  if (
+    stage === "after_reset" &&
+    latest.unsettledReset > latest.reset &&
+    latest.unsettledReset >= latest.from
+  )
+    return err(
+      "The last reset's reply was lost, so whether it restored the seed is unknown. Reset again, then check after_reset once that reset is applied.",
+    );
   if (
     stage === "after_reset" &&
     (latest.reset < latest.from || latest.reset < latest.input)
