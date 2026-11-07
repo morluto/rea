@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import { expect } from "vitest";
 import { z } from "zod";
 
-import { waitForBrowserDevtoolsPort } from "../../../src/browser/BrowserProcessStartup.js";
+import { waitForBrowserDevtoolsPort } from "../../../scripts/lib/browser-process-startup.mjs";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { listBrowserTargetsInputSchema } from "../../../src/domain/browserObservation.js";
 import { browserScenarioCaptureSchema } from "../../../src/domain/browserScenarioCapture.js";
