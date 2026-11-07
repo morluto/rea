@@ -1,12 +1,18 @@
 import type { z } from "zod";
 import type { AndroidRequest } from "../domain/android/androidAnalysis.js";
 import { androidResultSchemas } from "../domain/android/androidAnalysis.js";
+import { androidAppFunctionsSchema } from "../domain/android/androidAppFunctions.js";
 import { observedAndroidManifestComponentsSchema } from "../domain/android/androidManifestComponents.js";
 import {
   type AndroidMappingQuery,
   type AndroidMappingSource,
   projectAndroidMapping,
 } from "../domain/android/androidMapping.js";
+import {
+  extractAndroidAppFunctionManifestBindings,
+  projectAndroidAppFunctions,
+  type AndroidAppFunctionAssetScan,
+} from "./AndroidAppFunctions.js";
 import { parseAndroidManifestComponents } from "./AndroidManifestComponents.js";
 import {
   AnalysisInputError,
@@ -57,6 +63,11 @@ export interface JadxAnalysisContext {
   readonly loaded: z.infer<typeof jadxLoadSchema> | undefined;
   readonly engine: Engine;
   readonly mapping?: AndroidMappingSource | undefined;
+  readonly appFunctionsAssets?:
+    | ((
+        referencedPaths: readonly string[],
+      ) => Promise<AndroidAppFunctionAssetScan>)
+    | undefined;
   readonly jni?: {
     readonly apkSha256: string;
     readonly inventory: () => Promise<AndroidNativeDeclarations>;
@@ -67,6 +78,7 @@ export interface JadxAnalysisContext {
 const observedPackageSchema =
   androidResultSchemas.inspect_android_package.extend({
     components: observedAndroidManifestComponentsSchema,
+    app_functions: androidAppFunctionsSchema,
   });
 
 const methodsOf = (summary: Pick<ClassSummary, "methods">) => {
@@ -271,11 +283,24 @@ const inspectPackage = async (
   tools: JadxToolPort,
   loaded: z.infer<typeof jadxLoadSchema>,
   engine: Engine,
+  appFunctionsAssets: JadxAnalysisContext["appFunctionsAssets"],
 ): Promise<JsonValue> => {
   const app = jadxAppSchema.parse(await tools.json("get_app_info", {}));
   const manifest = normalizeJadxText(
     await tools.text("get_android_manifest", {}),
   );
+  const components = parseAndroidManifestComponents(
+    manifest.text,
+    manifest.status,
+    app.target_sdk || null,
+    app.min_sdk || null,
+  );
+  const manifestBindings =
+    extractAndroidAppFunctionManifestBindings(components);
+  const assetScan =
+    appFunctionsAssets === undefined
+      ? null
+      : await appFunctionsAssets(manifestBindings.referencedAssetPaths);
   return observedPackageSchema.parse({
     engine,
     package_name: app.package || null,
@@ -285,12 +310,8 @@ const inspectPackage = async (
     target_sdk: app.target_sdk || null,
     permissions: app.permissions,
     manifest,
-    components: parseAndroidManifestComponents(
-      manifest.text,
-      manifest.status,
-      app.target_sdk || null,
-      app.min_sdk || null,
-    ),
+    components,
+    app_functions: projectAndroidAppFunctions(manifestBindings, assetScan),
     class_count: loaded.class_count,
     resource_count: loaded.resource_count,
     signature_verification: "not_performed",
@@ -483,7 +504,7 @@ export const analyzeJadxRequest = async (
       "Decompiler operation requires the admitted APK to be loaded.",
     );
   if (request.operation === "inspect_android_package")
-    return inspectPackage(tools, loaded, engine);
+    return inspectPackage(tools, loaded, engine, context.appFunctionsAssets);
   if (request.operation === "search_android_classes")
     return searchClasses(tools, request, loaded, engine);
   if (request.operation === "trace_android_references")

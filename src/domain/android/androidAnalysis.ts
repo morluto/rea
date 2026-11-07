@@ -3,6 +3,7 @@ import {
   absoluteLocalPathStringSchema,
   localPathStringSchema,
 } from "../localPath.js";
+import { androidAppFunctionsSchema } from "./androidAppFunctions.js";
 import { androidManifestComponentsSchema } from "./androidManifestComponents.js";
 import {
   androidViewRequestSchema,
@@ -237,6 +238,14 @@ export const androidResultSchemas = {
       items: [],
       limitations: [
         "This Evidence predates the manifest component projection; run inspect_android_package again to obtain it.",
+      ],
+    })),
+    app_functions: androidAppFunctionsSchema.default(() => ({
+      status: "unavailable" as const,
+      services: [],
+      schemas: [],
+      limitations: [
+        "This Evidence predates the AppFunctions inventory; run inspect_android_package again to obtain it.",
       ],
     })),
     class_count: z.int().nonnegative(),

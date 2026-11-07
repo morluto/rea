@@ -38,6 +38,8 @@ cliTest.for([
 cliTest.for([
   ["complete", '{"kind":"android","facet":"components"}', "view"],
   ["summary", '{"kind":"android","facet":"components"}', "evidence_output"],
+  ["complete", '{"kind":"android","facet":"app-functions"}', "view"],
+  ["summary", '{"kind":"android","facet":"app-functions"}', "evidence_output"],
   [
     "summary",
     '{"kind":"android","facet":"components","fields":["invented"]}',
