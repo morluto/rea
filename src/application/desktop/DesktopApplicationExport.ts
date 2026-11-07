@@ -411,7 +411,14 @@ const runExport = async (
         );
   const admitted = await admitDesktopTask(
     request.tasks,
-    { ...plan, files, identity, ends, seedViews },
+    {
+      ...plan,
+      files,
+      identity,
+      ends,
+      seedViews,
+      seeded: new Set(seeds.keys()),
+    },
     signal,
   );
   const { generated, readme } = bundleText(plan, admitted, dconf.holdsIdentity);

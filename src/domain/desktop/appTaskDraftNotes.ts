@@ -9,6 +9,7 @@ import { diffStateViews } from "./stateChanges.js";
 /** Why a task draft holds no files, one code per reason; a new reason adds its code. */
 const EMPTY_DRAFT_CODES = [
   "no_change",
+  "incomplete_capture",
   "unowned_changes",
   "uncheckable_changes",
   "unreadable_changes",
@@ -143,6 +144,11 @@ export const draftNotes = (
     readonly dconf: ReadonlyMap<string, DesktopStatePath>;
     readonly ends: StateEnds;
     readonly checkpoints: readonly string[];
+    /**
+     * False when the seed or end checkpoint stopped early or could not read
+     * part of the home, so an empty change list is not evidence of no change.
+     */
+    readonly observed: boolean;
   },
 ): readonly DraftNote[] => {
   if (facts.drafted.length > 0)
@@ -168,7 +174,17 @@ export const draftNotes = (
       unread.push({ file: home, role: path.role, error: keys.error });
   }
   const notes: EmptyDraftNote[] = [];
-  if (changed.length === 0 && settings.length === 0 && unread.length === 0)
+  if (!facts.observed)
+    notes.push({
+      code: "incomplete_capture",
+      message: `Checkpoint ${seed} or ${end} did not cover the whole home, so a change can be missing from the list. Walk it again before treating an empty list as no change.`,
+    });
+  if (
+    facts.observed &&
+    changed.length === 0 &&
+    settings.length === 0 &&
+    unread.length === 0
+  )
     notes.push({
       code: "no_change",
       message: `No file under the home changed between checkpoints ${seed} and ${end}: save the change in the app before taking ${end}.`,
