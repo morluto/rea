@@ -349,6 +349,7 @@ function* checkCoverageSteps(
       });
   }
   for (let index = 1; index < graph.coverage.files.length; index += 1) {
+    if (index % 256 === 0) yield;
     const previous = graph.coverage.files[index - 1];
     const current = graph.coverage.files[index];
     if (
@@ -806,12 +807,16 @@ export const createJavaScriptSemanticGraph = (
 const validatedImmutableSemanticGraphs = new WeakSet<object>();
 
 const semanticGraphShape = javaScriptSemanticGraphInputSchema.shape;
+const semanticCoverageShape = semanticGraphShape.coverage.shape;
 const semanticGraphContainerSchema = javaScriptSemanticGraphInputSchema.extend({
   evidence_contexts: arrayContainerSchema(semanticGraphShape.evidence_contexts),
   nodes: arrayContainerSchema(semanticGraphShape.nodes),
   relations: arrayContainerSchema(semanticGraphShape.relations),
   fingerprints: arrayContainerSchema(semanticGraphShape.fingerprints),
   unknowns: arrayContainerSchema(semanticGraphShape.unknowns),
+  coverage: semanticGraphShape.coverage.extend({
+    files: arrayContainerSchema(semanticCoverageShape.files),
+  }),
 });
 
 /** Clone input synchronously; commit, check and seal the owned graph in steps. */
@@ -869,6 +874,15 @@ function* parseAndSealSemanticGraphSteps(
       ["unknowns"],
       issues,
     ),
+    coverage: {
+      ...container.coverage,
+      files: yield* parseElementSteps(
+        semanticCoverageShape.files.element,
+        container.coverage.files,
+        ["coverage", "files"],
+        issues,
+      ),
+    },
   };
   if (issues.length > 0) throw new z.ZodError(issues);
   return yield* validateAndSealSemanticGraphSteps(normalizeGraphInput(parsed));
