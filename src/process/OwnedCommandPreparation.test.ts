@@ -5,12 +5,17 @@ import { DarwinProcessOwnershipInspectionError } from "./DarwinProcessRunTokenRe
 import {
   OwnedCommandFailure,
   prepareOwnedCommand,
+  prepareOwnedCommandLaunch,
   runOwnedCommand,
 } from "./OwnedCommand.js";
 import {
   prepareProcessOwnershipInspection,
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
+import {
+  prepareOwnedProviderProcess,
+  type OwnedProviderProcessSpawnOptions,
+} from "./ProviderProcess.js";
 
 const platform = Object.getOwnPropertyDescriptor(
   systemProcessOwnershipHost,
@@ -259,4 +264,249 @@ it("cancels no-deadline preparation with the caller's exact opaque reason", asyn
   await started.promise;
   controller.abort(reason);
   await expected;
+});
+
+it("allows baseline preparation to finish before a short command deadline", async () => {
+  hostPlatform("darwin");
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue();
+  const baseline = [{ pid: 101, identity: "darwin-start:before" }];
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async () => {
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      return baseline;
+    },
+  );
+  const spawn: OwnedProviderProcessSpawnOptions = {
+    command: "not-launched",
+    arguments: [],
+    runId: "authored-prepared-baseline",
+    sweepTokenOwnedProcesses: true,
+  };
+  const prepared = await prepareOwnedProviderProcess(spawn);
+  expect(prepared.captureBaseline).toEqual(baseline);
+  const pending = runOwnedCommand(
+    { ...spawn, preparedOwnership: prepared },
+    { timeoutMs: 10, diagnosticBytes: 1024 },
+    {
+      launcher: async (input) => {
+        expect(input.preparedOwnership).toBe(prepared);
+        throw new Error("after prepared baseline");
+      },
+    },
+  );
+  await expect(pending).rejects.toThrow("after prepared baseline");
+});
+
+it("preserves caller cancellation during early Darwin baseline preparation", async () => {
+  hostPlatform("darwin");
+  const controller = new AbortController();
+  const reason = { request: "cancel-baseline" };
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue();
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async () => {
+      controller.abort(reason);
+      throw reason;
+    },
+  );
+  let failure: unknown;
+  try {
+    await prepareOwnedCommandLaunch(
+      {
+        command: "unused",
+        arguments: [],
+        runId: "baseline-cancel",
+        platform: "darwin",
+        sweepTokenOwnedProcesses: true,
+      },
+      controller.signal,
+    );
+  } catch (cause) {
+    failure = cause;
+  }
+  expect(failure).toBeInstanceOf(OwnedCommandFailure);
+  if (!(failure instanceof OwnedCommandFailure)) throw failure;
+  expect(failure.reason).toBe("cancelled");
+  expect(failure.cancellation?.reason).toBe(reason);
+});
+
+it("does not move Linux baseline capture outside the command deadline", async () => {
+  hostPlatform("linux");
+  const capture = vi.spyOn(systemProcessOwnershipHost, "captureBaseline");
+  await prepareOwnedCommandLaunch({
+    command: "unused",
+    arguments: [],
+    runId: "linux-baseline",
+    platform: "linux",
+    sweepTokenOwnedProcesses: true,
+  });
+  expect(capture).not.toHaveBeenCalled();
+});
+
+it.skipIf(process.platform !== "darwin")(
+  "reuses the prepared baseline in the default owned launcher",
+  async () => {
+    const entered = createDeferred<void>();
+    const release = createDeferred<void>();
+    const original = systemProcessOwnershipHost.captureBaseline;
+    if (original === undefined)
+      throw new Error("Expected Darwin baseline support");
+    const capture = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockImplementation(async (signal) => {
+        entered.resolve();
+        await release.promise;
+        return original(signal);
+      });
+    const spawn: OwnedProviderProcessSpawnOptions = {
+      command: process.execPath,
+      arguments: ["-e", "process.stdout.write('ready')"],
+      runId: "rea-baseline-reuse-test",
+      sweepTokenOwnedProcesses: true,
+    };
+    try {
+      const preparation = prepareOwnedCommandLaunch(spawn);
+      await entered.promise;
+      release.resolve();
+      const prepared = await preparation;
+      if (prepared === undefined)
+        throw new Error("Expected Darwin preparation");
+      const result = await runOwnedCommand(
+        { ...spawn, preparedOwnership: prepared },
+        { timeoutMs: 10_000, diagnosticBytes: 1024 },
+      );
+      expect(result.stdout.text).toBe("ready");
+      expect(capture).toHaveBeenCalledOnce();
+    } finally {
+      release.resolve();
+    }
+  },
+  30_000,
+);
+
+it("retains baseline cleanup ownership when cancellation arrives during preparation", async () => {
+  hostPlatform("darwin");
+  const reason = { request: "cancel-during-baseline-cleanup" };
+  const controller = new AbortController();
+  const cleanup = new ProviderCleanupError(
+    "process-ownership",
+    ["baseline-helper"],
+    {},
+  );
+  const owner = {
+    close: vi.fn(async () => {
+      cleanup.resolveCleanup();
+    }),
+  };
+  const physical = new DarwinProcessOwnershipInspectionError(
+    "baseline cleanup incomplete",
+    {
+      cancellation: { reason },
+      cleanupFailure: cleanup,
+      cleanupOwner: owner,
+    },
+  );
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue();
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async () => {
+      controller.abort(reason);
+      throw physical;
+    },
+  );
+  let failure: unknown;
+  try {
+    await prepareOwnedCommandLaunch(
+      {
+        command: "unused",
+        arguments: [],
+        runId: "baseline-cleanup",
+        platform: "darwin",
+        sweepTokenOwnedProcesses: true,
+      },
+      controller.signal,
+    );
+  } catch (cause) {
+    failure = cause;
+  }
+  if (!(failure instanceof OwnedCommandFailure)) throw failure;
+  expect(failure.cancellation?.reason).toBe(reason);
+  expect(failure.preparationFailure?.cleanupOwner).toBe(owner);
+  expect(failure.preparationFailure?.cleanupFailure).toBe(cleanup);
+  await owner.close();
+  expect(cleanup.cleanupIncomplete).toBe(false);
+});
+
+it("times out stalled Linux baseline capture before the default launcher starts a child", async () => {
+  hostPlatform("linux");
+  vi.useFakeTimers();
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockResolvedValue();
+  const entered = createDeferred<void>();
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async (signal) => {
+      entered.resolve();
+      return await new Promise((_resolve, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      );
+    },
+  );
+  const spawn: OwnedProviderProcessSpawnOptions = {
+    command: "never-launched",
+    arguments: [],
+    runId: "linux-stalled-baseline",
+    platform: "linux",
+    sweepTokenOwnedProcesses: true,
+  };
+  expect(await prepareOwnedCommandLaunch(spawn)).toBeUndefined();
+  const pending = runOwnedCommand(spawn, {
+    timeoutMs: 50,
+    diagnosticBytes: 1024,
+  });
+  const outcome = pending.then(
+    () => {
+      throw new Error("Expected timeout");
+    },
+    (cause: unknown) => cause,
+  );
+  await entered.promise;
+  await vi.advanceTimersByTimeAsync(50);
+  expect(await outcome).toMatchObject({ reason: "timeout" });
+});
+
+it("bounds a stalled Darwin baseline without charging helper preparation to the baseline budget", async () => {
+  hostPlatform("darwin");
+  vi.useFakeTimers();
+  const preparation = createDeferred<void>();
+  const entered = createDeferred<void>();
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+    async () => preparation.promise,
+  );
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async (signal) => {
+      entered.resolve();
+      return await new Promise((_resolve, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      );
+    },
+  );
+  const pending = prepareOwnedCommandLaunch({
+    command: "never-launched",
+    arguments: [],
+    runId: "darwin-stalled",
+    platform: "darwin",
+    sweepTokenOwnedProcesses: true,
+  });
+  const outcome = pending.then(
+    () => {
+      throw new Error("Expected timeout");
+    },
+    (cause: unknown) => cause,
+  );
+  await vi.advanceTimersByTimeAsync(20_000);
+  preparation.resolve();
+  await entered.promise;
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(await outcome).toMatchObject({ reason: "timeout" });
 });
