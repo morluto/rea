@@ -831,6 +831,10 @@ describe("version report requests", () => {
   it.each([
     [["--version", "--json"], "json"],
     [["--json", "--version"], "json"],
+    [["--version", "--json", "--no-timings"], "json"],
+    [["--timings=false", "--version", "--json"], "json"],
+    [["--version", "--json", "--", "--no-timings"], undefined],
+    [["--version", "--json", "--filter-output", "--no-timings"], undefined],
     [["--version", "--format", "yaml"], "yaml"],
     [normalizeCliArguments(["--version", "--format=toon"]), "toon"],
     // Without an explicit format, Incur prints the bare version.
