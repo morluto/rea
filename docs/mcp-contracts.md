@@ -188,7 +188,11 @@ The complete field/type diagnostic is preserved when normalization fits the
 response budget, including request-specific rejected fields and reasons. Zod
 input issues retain their field paths and available type and range constraints.
 SDK diagnostic parts may be distributed between field issues and the main
-message so each retained explanation appears once.
+message so each retained explanation appears once. Known neighboring-tool
+argument-name mistakes (such as `address` instead of `procedure`, or `query`
+instead of `pattern`) provide targeted replacement guidance and the expected
+canonical property name without accepting unauthorized aliases or changing
+canonical Evidence parameters.
 If their conservative projection allowance is exhausted, the response states
 that field-level detail was omitted and retains the original SDK diagnostic.
 Oversized SDK diagnostics keep the existing retained-Evidence recovery path. An unknown
@@ -574,15 +578,18 @@ after target content was read.
 
 ## Offline API contract declarations
 
-`inspect_api_contract` reads a local OpenAPI 3.0/3.1/3.2 JSON document without
-an active target or any requests to declared servers or references. Default
-summary delivery retains complete declaration Evidence; an optional
-`api-contract` view selects operations, unresolved Path Items or diagnostics in
-this call. Exact filters, field selection and paging share the retained
-`inspect_analysis_view` projector. Coverage describes inline paths only and
-never establishes runtime implementation or full specification conformance.
-See [offline API contracts](api-contracts.md) for identities, source pointers,
-resource bounds and CLI publication.
+`inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
+GraphQL SDL (`format: "graphql-sdl"`) without an active target or network requests.
+OpenAPI inventories inline path operations and unresolved Path Items. GraphQL
+inventories type/field declarations; optional `operations_path` adds operation
+owners, aliases, SDL field bindings and explicit fragment-spread edges without
+expanding fragments. Unresolved bindings and unavailable models stay explicit.
+Default summaries retain complete Evidence; `api-contract` or `graphql-contract`
+views select facts immediately with exact filters, fields and paging. Retained
+`inspect_analysis_view` uses the same projector without reopening inputs.
+Coverage describes examined declarations and does not establish runtime behavior
+or full specification/operation validity. See [offline API contracts](api-contracts.md)
+for source identities, parser allowances, supported scope and CLI publication.
 
 ## Retained application Evidence inputs
 
@@ -1894,7 +1901,13 @@ The default, `full`, retains the complete upfront advertisement. Restart the
 server to change profiles. See [client configuration](client-configuration.md#hotcold-catalogs).
 
 Hot/cold initially advertises `binary_session`, `open_binary`, `close_binary`,
-`get_evidence_bundle`, `inspect_analysis_view`, and the adapter's `discover_tools`.
+`get_evidence_bundle`, and the adapter's `discover_tools`.
+`inspect_analysis_view` is loaded on demand like other analysis tools. When a
+follow-up needs retained facts, include it in `discover_tools.names`; if the
+producer and follow-up are known together, load both in one batch. Producers
+that accept `view` can answer a selected first question without loading the
+cross-domain view contract. Complete output schemas and canonical result
+validation are preserved when each tool loads.
 An explicit tool-family scope can remove any of those domain tools.
 `discover_tools` searches canonical names and descriptions using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
@@ -2138,3 +2151,12 @@ skill and portable conformance projections in the `generated-docs` artifact.
 These outputs describe the exact source revision being built; they are not
 checked-in snapshots. For a running server, `binary_session` remains the
 authoritative source of catalog identity and tool availability.
+
+## Offline Playwright traces
+
+`inspect_playwright_trace` reads a local v10 trace ZIP and defaults to a retained
+summary. `playwright-trace` views select source-located action boundaries, console
+and network facts, resource references and diagnostics; long text has bounded
+previews and character pages. Import does not contact recorded URLs or use a
+browser. See [offline Playwright traces](./playwright-traces.md) for coverage,
+resource policies and the shared CLI workflow.

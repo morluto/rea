@@ -12,7 +12,9 @@ import { systemUninstallHost } from "../../../src/application/Uninstall.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { clearClientLocationEnvironment } from "../../fixtures/clientEnvironment.js";
 
-const command = currentClientRegistrationCommand();
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 
 beforeEach(clearClientLocationEnvironment);
 afterEach(() => vi.unstubAllEnvs());

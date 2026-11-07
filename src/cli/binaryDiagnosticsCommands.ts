@@ -57,8 +57,10 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local ELF32/ELF64 image"),
     }),
     options: z.object({
-      maxFileBytes: inspectElfNotesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectElfNotesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectElfNotesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(inspectElfNotesInputSchema.shape.max_entries),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -93,13 +95,18 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local Apple .ips crash report"),
     }),
     options: z.object({
-      maxFileBytes: inspectAppleIpsInputSchema.shape.max_file_bytes,
-      maxThreads: inspectAppleIpsInputSchema.shape.max_threads,
-      maxFrames: inspectAppleIpsInputSchema.shape.max_frames,
-      maxImages: inspectAppleIpsInputSchema.shape.max_images,
-      maxRegisters: inspectAppleIpsInputSchema.shape.max_registers,
-      maxIntegerTextBytes:
+      maxFileBytes: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_file_bytes,
+      ),
+      maxThreads: cliDecimalField(inspectAppleIpsInputSchema.shape.max_threads),
+      maxFrames: cliDecimalField(inspectAppleIpsInputSchema.shape.max_frames),
+      maxImages: cliDecimalField(inspectAppleIpsInputSchema.shape.max_images),
+      maxRegisters: cliDecimalField(
+        inspectAppleIpsInputSchema.shape.max_registers,
+      ),
+      maxIntegerTextBytes: cliDecimalField(
         inspectAppleIpsInputSchema.shape.max_integer_text_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -140,8 +147,12 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      maxFileBytes: inspectKernelModuleInputSchema.shape.max_file_bytes,
-      maxEntries: inspectKernelModuleInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectKernelModuleInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -176,8 +187,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeLoadConfigInputSchema.shape.max_file_bytes,
-      maxCallbacks: inspectPeLoadConfigInputSchema.shape.max_callbacks,
+      maxFileBytes: cliDecimalField(
+        inspectPeLoadConfigInputSchema.shape.max_file_bytes,
+      ),
+      maxCallbacks: cliDecimalField(
+        inspectPeLoadConfigInputSchema.shape.max_callbacks,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -212,7 +227,9 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local ELF, PE, or Mach-O image"),
     }),
     options: z.object({
-      maxFileBytes: inspectBinaryHardeningInputSchema.shape.max_file_bytes,
+      maxFileBytes: cliDecimalField(
+        inspectBinaryHardeningInputSchema.shape.max_file_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -289,8 +306,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeCertificatesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeCertificatesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectPeCertificatesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeCertificatesInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -325,9 +346,13 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeImportsInputSchema.shape.max_file_bytes,
-      maxDlls: inspectPeImportsInputSchema.shape.max_dlls,
-      maxFunctions: inspectPeImportsInputSchema.shape.max_functions,
+      maxFileBytes: cliDecimalField(
+        inspectPeImportsInputSchema.shape.max_file_bytes,
+      ),
+      maxDlls: cliDecimalField(inspectPeImportsInputSchema.shape.max_dlls),
+      maxFunctions: cliDecimalField(
+        inspectPeImportsInputSchema.shape.max_functions,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -363,8 +388,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeResourcesInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeResourcesInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectPeResourcesInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeResourcesInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
@@ -398,18 +427,18 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local flattened devicetree image"),
     }),
     options: z.object({
-      maxFileBytes: inspectDevicetreeInputSchema.shape.max_file_bytes.describe(
-        "Maximum FDT file size in bytes (default 4194304)",
-      ),
-      maxNodes: inspectDevicetreeInputSchema.shape.max_nodes.describe(
-        "Maximum number of device-tree nodes (default 8192)",
-      ),
-      maxProperties: inspectDevicetreeInputSchema.shape.max_properties.describe(
-        "Maximum number of device-tree properties (default 32768)",
-      ),
-      maxDepth: inspectDevicetreeInputSchema.shape.max_depth.describe(
-        "Maximum device-tree nesting depth (default 64)",
-      ),
+      maxFileBytes: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_file_bytes,
+      ).describe("Maximum FDT file size in bytes (default 4194304)"),
+      maxNodes: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_nodes,
+      ).describe("Maximum number of device-tree nodes (default 8192)"),
+      maxProperties: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_properties,
+      ).describe("Maximum number of device-tree properties (default 32768)"),
+      maxDepth: cliDecimalField(
+        inspectDevicetreeInputSchema.shape.max_depth,
+      ).describe("Maximum device-tree nesting depth (default 64)"),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>
@@ -449,7 +478,9 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE or ELF image"),
     }),
     options: z.object({
-      maxFileBytes: inspectNativeExportsInputSchema.shape.max_file_bytes,
+      maxFileBytes: cliDecimalField(
+        inspectNativeExportsInputSchema.shape.max_file_bytes,
+      ),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>
@@ -489,8 +520,9 @@ export const registerBinaryDiagnosticsCommands = (
       ),
     }),
     options: z.object({
-      pwntoolsTimeoutMs:
+      pwntoolsTimeoutMs: cliDecimalField(
         inspectBinaryLayoutInputSchema.shape.pwntools_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -524,8 +556,9 @@ export const registerBinaryDiagnosticsCommands = (
         .boolean()
         .default(false)
         .describe("Add BYO core-only GDB/pwndbg mapping candidates"),
-      pwntoolsTimeoutMs:
+      pwntoolsTimeoutMs: cliDecimalField(
         inspectRecordedCrashInputSchema.shape.pwntools_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

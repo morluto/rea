@@ -349,7 +349,10 @@ unknown names, resource limits and retained views. Compressed bytes stay stored.
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
-refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+reported as a resource limit (`reason: limit`, `boundary: memory`), rather than
+as archive corruption. The cap cannot be raised at runtime: recompress with a
+window of at most 128 MiB, or decompress externally before retrying.
+Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
 Inventory and extract UF2 or DfuSe regions:
 
@@ -796,7 +799,8 @@ from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
-`compare-managed-members` keeps its two assembly paths, and
+`compare-managed-members` keeps its two assembly paths and an optional
+repeatable `--type` selection applied to both sides, and
 `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input; producer options that write a new bundle, such
 as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
@@ -1196,6 +1200,10 @@ such as `UNSUPPORTED_OUTPUT_COMBINATION` for `--json` with `--token-limit`. Use
 Commands reject surplus positional arguments before execution, including commands
 that accept no positionals. Use `rea <command> --help` for the declared argument
 shape; a final variadic argument continues to accept multiple values.
+`rea mcp add` accepts options only and rejects unknown options before reading or
+backing up client settings or starting registration. Its `--agent` and
+`--command`/`-c` options accept spaced and equals forms. Values must be nonempty; a following flag does not satisfy a spaced option's
+missing value.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1384,7 +1392,11 @@ status with the analysis failure status, so it exits `1`. Setup has its own cont
 structured result and process status as separate signals when scripting
 cancellation.
 
-`setup --dry-run` returns `planned` and exits `0`; a cancelled setup also exits
+`setup --dry-run` returns `planned` and exits `0`. For `setup` and
+`environment-build`, explicit `--dry-run=true` and `--dry-run=false` are
+accepted; empty or other values fail with `PARSE_ERROR` before any changes.
+Every supplied value is checked even when a later occurrence overrides it.
+A cancelled setup also exits
 `0`. Setup returns `1` for `needs_confirmation` or `needs_human`.
 `doctor` returns `1` when required checks in its selected readiness scope fail;
 unavailable optional providers remain informational for unrelated tasks.

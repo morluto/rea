@@ -4,7 +4,7 @@ import { workspaceCliTest } from "../../support/cli/workspaceCliFixture.js";
 
 const CLI_INTEGRATION_TIMEOUT_MS = 60_000;
 
-describe("MCP doctor help boundary", () => {
+describe("MCP doctor output routing boundary", () => {
   workspaceCliTest(
     "keeps output options from selecting the CLI-derived MCP doctor",
     async ({ cli }) => {
@@ -43,7 +43,9 @@ describe("MCP doctor help boundary", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
+});
 
+describe("MCP doctor help boundary", () => {
   workspaceCliTest(
     "answers the advertised help option instead of validating it",
     async ({ cli }) => {
@@ -105,9 +107,7 @@ describe("MCP doctor help boundary", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
-});
 
-describe("MCP doctor option validation", () => {
   workspaceCliTest(
     "keeps the actionable error for a genuinely unknown option",
     async ({ cli }) => {
@@ -158,7 +158,9 @@ describe("MCP doctor option validation", () => {
     },
     CLI_INTEGRATION_TIMEOUT_MS,
   );
+});
 
+describe("MCP doctor timing boundary", () => {
   workspaceCliTest(
     "reports doctor timing on stderr while preserving JSON output",
     async ({ cli }) => {

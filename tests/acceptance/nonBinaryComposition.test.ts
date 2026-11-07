@@ -241,7 +241,15 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(response.isError).toBe(true);
-      expect(parseMcpToolError(response)).toEqual({ error: result.json });
+      const { error: mcpError } = parseMcpToolError(response);
+      const { message: cliMessage, ...cliFacts } = result.json as Record<
+        string,
+        unknown
+      >;
+      const { message: mcpMessage, ...mcpFacts } = mcpError;
+      expect(mcpFacts).toEqual(cliFacts);
+      expect(cliMessage).toContain("input is invalid");
+      expect(mcpMessage).toContain("advertised input schema");
       expect(result.json).toMatchObject({
         code: "invalid_request",
         details: {
@@ -250,6 +258,42 @@ cliTest(
         },
       });
     }
+    const path = join(root, "bundle.js");
+    const output = join(root, "output");
+    const result = await cli.run({
+      arguments: [
+        "recover-javascript-sources",
+        path,
+        output,
+        "--additional-path",
+        "relative.js",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 10_000,
+    });
+    const response = await client.callTool({
+      name: "recover_javascript_sources",
+      arguments: {
+        path,
+        output_directory: output,
+        additional_paths: ["relative.js"],
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(response.isError).toBe(true);
+    const issue = {
+      path: ["additional_paths", 0],
+      reason: "invalid_format",
+      message: expect.stringContaining("relative.js"),
+    };
+    expect(result.json).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [issue] },
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: { code: "invalid_request", details: { issues: [issue] } },
+    });
   },
 );
 
