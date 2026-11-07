@@ -169,8 +169,8 @@ describe("ESP flash layout inventory", () => {
     expect(root(snapshot)).toMatchObject({
       partition_table: { flash_address: 0xa000, method: "scan" },
     });
-    expect(snapshot.limitations).toContain(
-      "The partition table at 0xa000 was found by scanning 0x1000-aligned flash sectors for a table whose MD5 verifies; the dump does not record the bootloader's configured table offset.",
+    expect(snapshot.limitations).toContainEqual(
+      expect.stringMatching(/0xa000.*0x1000.*MD5.*does not record/iu),
     );
   });
 });

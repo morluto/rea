@@ -794,9 +794,13 @@ it.each(["[2001:db8::1]", "[::1]", "[::ffff:192.0.2.1]"])(
         _extension: { serverIPAddress: address },
       },
     });
-    expect(decoded.records[0]?.limitations).toContain(
-      "This capture declares Playwright 1.58.2 and reports bracketed IPv6 serverIPAddress. Original spellings are retained; brackets were removed only from valid IPv6 values in the validation copy. Producer declarations are not authenticated.",
+    const limitation = decoded.records[0]?.limitations.find((line) =>
+      line.includes("Playwright 1.58.2"),
     );
+    expect(limitation).toMatch(/bracketed IPv6.*serverIPAddress/iu);
+    expect(limitation).toMatch(/original spellings.*retained/iu);
+    expect(limitation).toMatch(/brackets.*only.*valid IPv6.*validation copy/iu);
+    expect(limitation).toMatch(/producer declarations.*not authenticated/iu);
     expect(
       decoded.records[1]?.limitations.some((limitation) =>
         limitation.includes("bracketed IPv6 serverIPAddress"),

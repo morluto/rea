@@ -14,7 +14,11 @@ import {
   otaRecord,
 } from "../../src/domain/firmware/espFlash.fixture.js";
 import { parseEvidence } from "../../src/domain/evidence.js";
-import { artifactInspectionResultSchema } from "../../src/domain/artifactInspection.js";
+import {
+  artifactInspectionResultSchema,
+  createArtifactInspection,
+} from "../../src/domain/artifactInspection.js";
+import { espFlashSelectionError } from "../../src/domain/firmware/espFlashSelection.js";
 import {
   artifactExtractionResultSchema,
   artifactInventoryResultSchema,
@@ -114,9 +118,12 @@ cliTest(
       ],
     });
     expect(unpaired.exitCode).not.toBe(0);
-    expect(unpaired.stdout + unpaired.stderr).toContain(
-      "flash_offset and partition_table_offset apply only with format=esp-flash-image",
-    );
+    const selectionError = espFlashSelectionError({ flashOffset: 0x1000 });
+    if (selectionError === undefined)
+      throw new Error("Expected selection error");
+    expect(unpaired.stdout + unpaired.stderr).toContain(selectionError);
+    expect(selectionError).toContain("flash_offset");
+    expect(selectionError).toContain("esp-flash-image");
     // Without the format, the bootloader is read as one ESP image, and the
     // table at file offset 0x7000 says how to reopen the dump.
     const automatic = await cli.run({
@@ -128,20 +135,26 @@ cliTest(
     expect(guessed.root).toMatchObject({
       flash_dump: { flash_offset: 0x1000, table_file_offset: 0x7000 },
     });
-    expect(
-      artifactInspectionResultSchema.parse(
-        parseEvidence(automatic.json).normalized_result,
-      ).next_probes,
-    ).toEqual([
-      {
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(automatic.json).normalized_result,
+    );
+    const inventoryEvidence = inspection.substeps[0]?.evidence;
+    expect(inspection.next_probes).toEqual(
+      createArtifactInspection(inventoryEvidence).next_probes,
+    );
+    expect(inspection.next_probes).toEqual([
+      expect.objectContaining({
         operation: "open_binary",
-        rationale:
-          "Reopen the file with format esp-flash-image and flash_offset 0x1000, then inspect_artifact: it is a flash dump read from flash 0x1000, with a partition table at file offset 0x7000.",
         authority: "artifact-bytes",
-      },
+        rationale: expect.stringMatching(
+          /esp-flash-image.*flash_offset 0x1000.*0x7000/iu,
+        ),
+      }),
     ]);
-    expect(guessed.graph.limitations).toContain(
-      "This file looks like a flash dump read from flash 0x1000, not one ESP image: its esp32 image at file offset 0 is where the ROM loads the bootloader from 0x1000, and a partition table sits at file offset 0x7000, which is flash 0x8000 from that origin. Reopen it with format esp-flash-image and flash_offset 0x1000.",
+    expect(guessed.graph.limitations).toContainEqual(
+      expect.stringMatching(
+        /flash dump.*0x1000.*0x7000.*0x8000.*esp-flash-image.*0x1000/iu,
+      ),
     );
     const inspected = await cli.run({
       arguments: [

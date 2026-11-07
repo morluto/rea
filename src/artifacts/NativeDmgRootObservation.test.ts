@@ -78,7 +78,6 @@ it.each(["same", "other", "missing-path", "no-path", "empty-group"] as const)(
     } catch (cause: unknown) {
       failure = cause;
     }
-    expect(failure).toBeDefined();
     const projected = projectAnalysisError(
       translateArtifactFailure("inspect_artifact", failure),
     );

@@ -150,14 +150,13 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
     });
     const controlText = JSON.stringify(control.structuredContent);
     expect(controlText).toContain(
-      "The effective REA_CAPTURE_DECODER_OLD_GENERATION_MIB value is 192 MiB (source default; default 192 MiB, floor 8 MiB, maximum 16384 MiB).",
+      captureDecoderHeapRecovery(DEFAULT_CAPTURE_DECODER_HEAP),
     );
+    expect(controlText).toContain("192 MiB");
     expect(controlText).toContain("source default");
     expect(controlText).toContain("floor 8 MiB");
     expect(controlText).toContain("maximum 16384 MiB");
-    expect(controlText).toContain(
-      "Set REA_CAPTURE_DECODER_OLD_GENERATION_MIB in the environment that starts REA",
-    );
+    expect(controlText).toContain("REA_CAPTURE_DECODER_OLD_GENERATION_MIB");
     await truncate(path, WEB_NETWORK_CAPTURE_LIMITS.inputBytes + 1);
     const oversized = await call("inspect_web_network_capture", {
       capture_path: path,

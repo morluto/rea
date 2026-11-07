@@ -12,6 +12,7 @@ import { expect, it, vi } from "vitest";
 import * as artifactPaths from "./ArtifactPaths.js";
 
 import { NodeSeaArtifactReader } from "./NodeSeaArtifactReader.js";
+import { artifactFormatDescriptor } from "./artifactFormats.js";
 import { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import { extractArtifact } from "./extraction/ArtifactExtraction.js";
 import {
@@ -68,9 +69,11 @@ it.each([
   const snapshot = await scanCanonicalArtifactInventory(path);
   expect(snapshot.manifest.root_format).toBe("node-sea");
   expect(snapshot.coverage.status).toBe("complete");
-  expect(snapshot.limitations).toContain(
-    "Node SEA inventory establishes the injected blob, flags, fuse sentinel, main script, optional code cache, snapshot, and assets. V8 snapshots and code cache are not deserialized, and the application is not executed.",
-  );
+  const limitation = artifactFormatDescriptor("node-sea")?.readerLimitation;
+  if (limitation === undefined) throw new Error("Missing Node SEA limitation");
+  expect(snapshot.limitations).toContain(limitation);
+  expect(limitation).toMatch(/snapshots.*code cache.*not deserialized/iu);
+  expect(limitation).toMatch(/application.*not executed/iu);
   expect(snapshot.limitations).not.toContain(NODE_SEA_FUSE_UNSET);
   const root = snapshot.occurrences.find((row) => row.logical_path === ".");
   expect(root).toMatchObject({ artifact_kind: "container" });

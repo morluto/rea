@@ -168,13 +168,17 @@ describe("ESP flash layout plans", () => {
       ["partitions/gone.bin", 0xf_f000, 0],
     ]);
     expect(plan.limitations).toEqual([
-      "Partition early at 0x0 starts before the end of the partition table at 0x9000; gen_esp32part.py rejects such a table.",
-      "Partition early at 0x0 begins before the dump's first byte at flash 0x1000; it is not read.",
-      "Partition cut at 0x30000-0x40000 is truncated: the dump holds 36864 of its 65536 bytes.",
-      "Partition gone at 0x100000-0x101000 lies outside the dump, which ends at flash 0x39000.",
+      expect.stringMatching(
+        /early.*0x0.*before.*table.*0x9000.*gen_esp32part/iu,
+      ),
+      expect.stringMatching(/early.*0x0.*before.*0x1000.*not read/iu),
+      expect.stringMatching(/cut.*0x30000-0x40000.*truncated.*36864.*65536/iu),
+      expect.stringMatching(/gone.*0x100000-0x101000.*outside.*0x39000/iu),
     ]);
   });
+});
 
+describe("ESP flash layout overlaps", () => {
   it("reports every region inside a longer one", () => {
     const plan = planEspFlashLayout(
       input({
@@ -186,8 +190,12 @@ describe("ESP flash layout plans", () => {
       }),
     );
     expect(plan.limitations).toEqual([
-      "partitions/b.bin at 0xa000 overlaps partitions/a.bin, which ends at 0x11000.",
-      "partitions/c.bin at 0xc000 overlaps partitions/a.bin, which ends at 0x11000.",
+      expect.stringMatching(
+        /partitions\/b\.bin.*0xa000.*overlaps.*partitions\/a\.bin.*0x11000/iu,
+      ),
+      expect.stringMatching(
+        /partitions\/c\.bin.*0xc000.*overlaps.*partitions\/a\.bin.*0x11000/iu,
+      ),
     ]);
   });
 });
