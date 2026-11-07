@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 
+import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import {
+  capturedHomePath,
   appModuleFile,
   className,
   environmentName,
@@ -385,5 +387,25 @@ describe("README and class wording", () => {
     }
     expect(renderReadme(made)).toContain("`envs/mousepad/seed/`");
     expect(renderReadme(own)).not.toContain("`envs/mousepad/seed/`");
+  });
+});
+
+describe("capturedHomePath", () => {
+  it("uses the selected spelling of a linked settings folder, innermost selection first", () => {
+    const home = "/home/ada";
+    const physical = `${home}/settings/vendor`;
+    const selected = `${home}/.config/vendor`;
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          { path: `${home}/settings`, physical: `${home}/settings` },
+          { path: selected, physical },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+    expect(path(`${physical}/app.conf`)).toBe(".config/vendor/app.conf");
+    expect(path(`${home}/Documents/note.txt`)).toBe("Documents/note.txt");
   });
 });

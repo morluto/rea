@@ -33,14 +33,47 @@ export const guestFileAnswerBytes = (bytes: number, files: number): number =>
 const heapQuarter = () => Math.floor(getHeapStatistics().heap_size_limit / 4);
 /** Where the data/get answer ceiling comes from. The guest's reported size does not change it. */
 export const GUEST_FILE_ANSWER_SOURCE = "v8.heap_size_limit/4";
+/**
+ * Copies of one answer held together while it is parsed: the raw chunks, the
+ * concatenated buffer, and the text. The decoded files replace the text
+ * afterward and are smaller than the base64 body.
+ */
+export const GUEST_FILE_ANSWER_COPIES = 3;
 
 /** The host ceiling for one data/get answer, including base64 expansion and each file's envelope. */
 export const guestFileAnswerCeiling = (): number => heapQuarter();
 
+/** Wire bytes that fit in the ceiling once the parse's copies are counted. */
+export const guestFileAnswerWorkingBytes = (answerCeiling: number): number =>
+  Math.floor(answerCeiling / GUEST_FILE_ANSWER_COPIES);
+
+const guestFileAnswerError = (
+  fileBytes: number,
+  files: number,
+  answerCeiling: number,
+  remediation: string,
+  limits: Readonly<Record<string, JsonValue>>,
+): AnalysisResourceConstraintError =>
+  new AnalysisResourceConstraintError(
+    "data/get",
+    "memory",
+    remediation,
+    {
+      guest_file_bytes: fileBytes,
+      file_count: files,
+      answer_ceiling_bytes: answerCeiling,
+      answer_working_bytes: guestFileAnswerWorkingBytes(answerCeiling),
+      answer_copies: GUEST_FILE_ANSWER_COPIES,
+      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
+      ...limits,
+    },
+    { remediationAction: remediation, retryable: false },
+  );
+
 /**
- * Refuse a data/get whose base64 answer would exceed the host ceiling. The
- * computer's reported size is not the ceiling: a larger report is refused
- * before the answer is read.
+ * Refuse a data/get whose base64 answer, counted once for each copy the parse
+ * holds, would exceed the host ceiling. A larger report is refused before the
+ * answer is read. The reported size does not raise the ceiling.
  */
 export const guestFileAnswerRefusal = (
   fileBytes: number,
@@ -48,21 +81,50 @@ export const guestFileAnswerRefusal = (
   answerCeiling: number,
 ): AnalysisResourceConstraintError | undefined => {
   const answerBytes = guestFileAnswerBytes(fileBytes, files);
-  if (answerBytes <= answerCeiling) return undefined;
-  const remediation = `This data/get answer is limited to ${String(answerCeiling)} bytes, one quarter of this process's V8 heap (source ${GUEST_FILE_ANSWER_SOURCE}; the allowed answer is at most that quarter). The computer reported ${String(fileBytes)} file bytes across ${String(files)} paths, which expand to ${String(answerBytes)} bytes once each file is base64 and its envelope is counted. The reported size does not raise the ceiling. Restart REA with a larger Node --max-old-space-size so this heap quarter covers the answer.`;
-  return new AnalysisResourceConstraintError(
-    "data/get",
-    "memory",
-    remediation,
-    {
-      guest_file_bytes: fileBytes,
-      file_count: files,
-      answer_bytes: answerBytes,
-      answer_ceiling_bytes: answerCeiling,
-      ceiling_source: GUEST_FILE_ANSWER_SOURCE,
-    },
-    { remediationAction: remediation, retryable: false },
-  );
+  const workingBytes = guestFileAnswerWorkingBytes(answerCeiling);
+  if (answerBytes <= workingBytes) return undefined;
+  const remediation = `This data/get answer is limited to ${String(workingBytes)} wire bytes, one quarter of this process's V8 heap divided by ${String(GUEST_FILE_ANSWER_COPIES)} copies held while the answer is parsed (source ${GUEST_FILE_ANSWER_SOURCE}; the heap quarter is ${String(answerCeiling)} bytes). The computer reported ${String(fileBytes)} file bytes across ${String(files)} paths, which expand to ${String(answerBytes)} bytes once each file is base64 and its envelope is counted. The reported size does not raise the ceiling. Restart REA with a larger Node --max-old-space-size so this heap quarter covers the answer.`;
+  return guestFileAnswerError(fileBytes, files, answerCeiling, remediation, {
+    answer_bytes: answerBytes,
+  });
+};
+
+/** One decoded part of a data/get answer. */
+export interface GuestFilePart {
+  readonly path: string | undefined;
+  readonly bytes: Buffer;
+}
+
+/**
+ * The decoded files, or a refusal when they contain more bytes than the
+ * computer reported. An underreported size must not admit the larger body.
+ */
+export const retainGuestFiles = (
+  parts: readonly GuestFilePart[],
+  reportedBytes: number,
+  files: number,
+  answerCeiling: number,
+):
+  | { readonly ok: true; readonly files: ReadonlyMap<string, Buffer> }
+  | { readonly ok: false; readonly error: AnalysisResourceConstraintError } => {
+  let decodedBytes = 0;
+  const retained = new Map<string, Buffer>();
+  for (const part of parts) {
+    decodedBytes += part.bytes.length;
+    if (part.path !== undefined) retained.set(part.path, part.bytes);
+  }
+  if (decodedBytes <= reportedBytes) return { ok: true, files: retained };
+  const remediation = `The computer reported ${String(reportedBytes)} file bytes, but the data/get answer decoded to ${String(decodedBytes)} bytes. The extra bytes were not kept. A reported size is only a ceiling when the answer is no larger.`;
+  return {
+    ok: false,
+    error: guestFileAnswerError(
+      reportedBytes,
+      files,
+      answerCeiling,
+      remediation,
+      { decoded_file_bytes: decodedBytes },
+    ),
+  };
 };
 
 const readinessSchema = z.object({
@@ -454,7 +516,10 @@ export class AgentEnvComputer {
         signal,
         {
           limit: {
-            bytes: guestFileAnswerBytes(bytes, paths.length),
+            bytes: Math.min(
+              guestFileAnswerBytes(bytes, paths.length),
+              guestFileAnswerWorkingBytes(ceiling),
+            ),
             what: `The computer's answer for ${paths.join(", ")}`,
           },
         },
@@ -464,15 +529,24 @@ export class AgentEnvComputer {
       throw new Error(
         `data/get failed: ${this.redacted(answer.error.message)}`,
       );
-    return new Map(
+    const retained = retainGuestFiles(
       answer.result.parts.flatMap((part) => {
-        const path = Object.values(part.metadata ?? {})[0]?.path;
         const encoded = part.file?.bytes;
-        return path === undefined || encoded === undefined
+        return encoded === undefined
           ? []
-          : [[path, Buffer.from(encoded, "base64")] as const];
+          : [
+              {
+                path: Object.values(part.metadata ?? {})[0]?.path,
+                bytes: Buffer.from(encoded, "base64"),
+              },
+            ];
       }),
+      bytes,
+      paths.length,
+      ceiling,
     );
+    if (!retained.ok) throw retained.error;
+    return retained.files;
   }
 
   /** Run a command in the computer's desktop session as its user; output is cut at the computer's cap. */

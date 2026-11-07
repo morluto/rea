@@ -150,6 +150,22 @@ describe("draftDesktopApplicationTask notes", () => {
     expect(draft.notes.map(({ code }) => code)).toEqual(["no_change"]);
   });
 
+  it("does not call an empty change list unchanged when a checkpoint was cut short", async () => {
+    const base = withEnd(seedEndCapture(), { changes: [], kept: [] });
+    const cut: DesktopApplicationCapture = {
+      ...base,
+      state: {
+        ...base.state,
+        checkpoints: base.state.checkpoints.map((point) =>
+          point.name === "end" ? { ...point, truncated: true } : point,
+        ),
+      },
+    };
+    const draft = await notesOf(cut);
+    expect(draft.notes.map(({ code }) => code)).toContain("incomplete_capture");
+    expect(draft.notes.map(({ code }) => code)).not.toContain("no_change");
+  });
+
   it("lists the first five changed files outside the owned paths, desktop files last, when no document was recognized", async () => {
     const base = seedEndCapture();
     const untitled: DesktopApplicationCapture = {
