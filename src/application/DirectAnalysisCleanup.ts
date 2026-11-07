@@ -13,6 +13,7 @@ import { err, type Result } from "../domain/result.js";
 import type { AnalysisExecution } from "./AnalysisProvider.js";
 import type { BinarySession } from "./binary/BinarySession.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { isCompletedCloseFailure } from "../domain/analysisCloseCompletedError.js";
 import {
   tryParseEvidence,
   withEvidenceCallerInputPath,
@@ -87,6 +88,23 @@ export const directAnalysisCleanupFailure = (
       ? projectInvocationFailure(failure)
       : projectDirectAnalysisFailure(failure, callerInputPath);
   const cleanup = project(error);
+  // The close released every resource; only a later step (export) failed.
+  if (isCompletedCloseFailure(error)) {
+    if (!result.ok)
+      return {
+        error: "Analysis failed",
+        ...project(result.error),
+        details: {
+          ...project(result.error).details,
+          client_close_failure: cleanup,
+        },
+      };
+    return {
+      error: "Analysis failed",
+      ...cleanup,
+      details: { ...cleanup.details, partial_observation: result.value },
+    };
+  }
   if (!result.ok) {
     const primary = project(result.error);
     const combined = analysisErrorWithCleanupFailure(result.error, error);
@@ -127,6 +145,16 @@ export const managedAnalysisCleanupFailure = (
 ): Result<AnalysisExecution, AnalysisError> => {
   // A close rejection without a live cleanup state has unknown completion;
   // an empty dependency set must not turn that rejection into confirmed cleanup.
+  if (isCompletedCloseFailure(error))
+    return err(
+      result.ok
+        ? error.retainDiagnostics({
+            partial_observation: jsonValueSchema.parse(result.value),
+          })
+        : result.error.retainSecondaryFailure(error, {
+            client_close_failure: projectAnalysisError(error),
+          }),
+    );
   if (!result.ok) {
     const failure = analysisErrorWithCleanupFailure(result.error, error);
     return err(

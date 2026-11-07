@@ -26,6 +26,7 @@ export interface GhidraDiagnosticsOptions {
   readonly providerVersion: string;
   readonly profileDigest: string;
   readonly runId?: string;
+  readonly diagnosticsExportPath?: string;
   readonly runtimeRoot?: string;
   readonly socketRoot?: string;
   readonly endpointPath?: string;
@@ -66,6 +67,9 @@ export const createGhidraDiagnostics = (
     provider_version: options.providerVersion,
     profile_digest: options.profileDigest,
     ...(options.runId === undefined ? {} : { run_id: options.runId }),
+    ...(options.diagnosticsExportPath === undefined
+      ? {}
+      : { diagnostics_export_path: options.diagnosticsExportPath }),
     ...(options.runtimeRoot === undefined
       ? {}
       : { runtime_root: options.runtimeRoot }),

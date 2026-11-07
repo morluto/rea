@@ -13,6 +13,7 @@ import {
   chmod,
   mkdir,
   writeFile,
+  readFile,
   open,
   type FileHandle,
 } from "node:fs/promises";
@@ -55,6 +56,35 @@ import {
   GhidraFixtureLauncher as FixtureLauncher,
   ghidraFixturePath as fixturePath,
 } from "./ghidraClient.fixture.js";
+
+const diagnosticCloseFault = vi.hoisted(() => ({
+  path: "",
+  failures: 0,
+  closed: false,
+  pauseOutputOpen: undefined as undefined | (() => Promise<void>),
+}));
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    open: async (...args: Parameters<typeof actual.open>) => {
+      const handle = await actual.open(...args);
+      if (String(args[0]).endsWith("stdout.log"))
+        await diagnosticCloseFault.pauseOutputOpen?.();
+      if (args[0] !== diagnosticCloseFault.path) return handle;
+      const close = handle.close.bind(handle);
+      handle.close = async () => {
+        if (diagnosticCloseFault.failures > 0) {
+          diagnosticCloseFault.failures -= 1;
+          throw new Error("diagnostic source close failed");
+        }
+        await close();
+        diagnosticCloseFault.closed = true;
+      };
+      return handle;
+    },
+  };
+});
 
 const PROFILE_DIGEST = "a".repeat(64);
 const PROVIDER_VERSION = "12.1.4";
@@ -127,6 +157,7 @@ const clientFor = (
     readonly logger?: Logger;
     readonly targetPath?: string;
     readonly targetSha256?: string;
+    readonly diagnosticsDir?: string;
   } = {},
 ): GhidraClient => {
   const client = new GhidraClient({
@@ -138,6 +169,9 @@ const clientFor = (
     profileDigest: PROFILE_DIGEST,
     startupTimeoutMs: options.startupTimeoutMs ?? 1_000,
     ...(options.runId === undefined ? {} : { runId: options.runId }),
+    ...(options.diagnosticsDir === undefined
+      ? {}
+      : { diagnosticsDir: options.diagnosticsDir }),
     ...(options.logger === undefined ? {} : { logger: options.logger }),
     ...(options.onDiagnostic === undefined
       ? {}
@@ -1677,6 +1711,44 @@ describe("GhidraClient runtime removal failures", () => {
       });
     },
   );
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "keeps a finished export failure across a failed runtime removal and its retry",
+    async () => {
+      const root = await createTestTempDirectory("ghidra-diagnostics-");
+      const launcher = new FixtureLauncher("remote_error");
+      const client = clientFor(launcher, { diagnosticsDir: root });
+      const result = await client.callTool("list_procedures", {
+        document: null,
+        offset: 0,
+        limit: 500,
+      });
+      if (result.ok) throw new Error("Expected remote lookup failure");
+      const path = result.error.diagnostics.diagnostics_export_path;
+      if (typeof path !== "string")
+        throw new Error("Missing diagnostic export path");
+      await writeFile(join(path, "manifest.json.tmp"), "occupied");
+      const runtimeRoot = launcher.runtimeRoots[0] ?? "";
+      await chmod(runtimeRoot, 0o500);
+      try {
+        await expect(client.close()).resolves.toMatchObject({
+          ok: false,
+          error: {
+            cleanupIncomplete: true,
+            diagnostics: { diagnostics_export_path: path },
+          },
+        });
+      } finally {
+        await chmod(runtimeRoot, 0o700);
+      }
+      // The retry removes the runtime and still reports the finished export.
+      await expect(client.close()).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "ProviderAdapterError", operation: "diagnostic_export" },
+      });
+      await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+    },
+  );
 });
 
 describe("GhidraClient cleanup and diagnostics", () => {
@@ -2650,3 +2722,192 @@ it.each(["search_procedures", "search_strings"] as const)(
     ).toBe(4);
   },
 );
+
+it("exports request-discoverable diagnostics after the runtime is removed", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  expect(result.error.diagnostics.diagnostic_scope).toBe("request");
+  expect(result.error.diagnostics).not.toHaveProperty("stdout");
+  const path = result.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  await writeFile(
+    join(launcher.runtimeRoots[0]!, "ghidra.log"),
+    `log ${launcher.tokens[0]} end`,
+  );
+  expect((await client.close()).ok).toBe(true);
+  await expect(access(launcher.runtimeRoots[0]!)).rejects.toThrow();
+  expect(await readFile(join(path, "ghidra.log"), "utf8")).toBe(
+    "log [REDACTED] end",
+  );
+  expect(await readFile(join(path, "stdout.log"), "utf8")).toContain(
+    "Fixture launcher startup output",
+  );
+  const manifest = JSON.parse(
+    await readFile(join(path, "manifest.json"), "utf8"),
+  );
+  expect(manifest.files.stdout).toEqual({ status: "complete" });
+  expect(manifest.files.ghidra).toEqual({ status: "captured" });
+  expect(manifest.files.script).toEqual({ status: "unavailable" });
+  expect(manifest.log_source_completeness).toBe("unknown");
+});
+
+it("cancels startup during diagnostic allocation before launching Ghidra", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-cancel-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  let entered!: () => void;
+  let release!: () => void;
+  const opening = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const continueOpen = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  diagnosticCloseFault.pauseOutputOpen = async () => {
+    entered();
+    await continueOpen;
+  };
+  onTestFinished(async () => {
+    diagnosticCloseFault.pauseOutputOpen = undefined;
+    release();
+    await client.close();
+  });
+  const controller = new AbortController();
+  const started = client.start(controller.signal);
+  await opening;
+  controller.abort();
+  release();
+  const result = await started;
+  expect(result.ok).toBe(false);
+  if (!result.ok) expect(result.error.kind).toBe("cancelled");
+  expect(launcher.tokens).toHaveLength(0);
+  expect((await client.close()).ok).toBe(true);
+});
+
+it("retains a diagnostic source handle when close fails and retries it", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-close-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  onTestFinished(async () => {
+    diagnosticCloseFault.failures = 0;
+    await client.close();
+    diagnosticCloseFault.path = "";
+  });
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  const log = join(launcher.runtimeRoots[0]!, "ghidra.log");
+  await writeFile(log, "diagnostic log");
+  diagnosticCloseFault.path = log;
+  diagnosticCloseFault.failures = 2;
+  diagnosticCloseFault.closed = false;
+  const first = await client.close();
+  expect(first.ok).toBe(false);
+  if (first.ok) throw new Error("Expected incomplete cleanup");
+  expect(first.error.cleanupIncomplete).toBe(true);
+  expect(first.error.cleanupResources).toContain(
+    `Ghidra diagnostic source log ${log}`,
+  );
+  expect(diagnosticCloseFault.closed).toBe(false);
+  const retry = await client.close();
+  expect(retry).toMatchObject({
+    ok: false,
+    error: { operation: "diagnostic_export", cleanupIncomplete: false },
+  });
+  expect(diagnosticCloseFault.closed).toBe(true);
+  expect(first.error.cleanupIncomplete).toBe(false);
+  await expect(client.close()).resolves.toEqual({ ok: true, value: null });
+});
+
+it("reports export failure after closing the process and removing the runtime", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const launcher = new FixtureLauncher("remote_error");
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const result = await client.callTool("list_procedures", {
+    document: null,
+    offset: 0,
+    limit: 500,
+  });
+  if (result.ok) throw new Error("Expected remote lookup failure");
+  const path = result.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  await writeFile(join(path, "manifest.json.tmp"), "occupied");
+  const closed = await client.close();
+  expect(closed).toMatchObject({
+    ok: false,
+    error: { _tag: "ProviderAdapterError", operation: "diagnostic_export" },
+  });
+  await expect(access(launcher.runtimeRoots[0]!)).rejects.toThrow();
+  expect(launcher.processes[0]?.exitCode).not.toBeNull();
+  expect((await client.close()).ok).toBe(true);
+});
+
+it("exports log coordinates after a launch failure with completed rollback", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-rollback-");
+  let runtime = "";
+  const launcher: GhidraLauncher = {
+    launch: async (session) => {
+      runtime = session.runtimeRoot;
+      const ghidraLogPath = join(runtime, "ghidra.log");
+      const scriptLogPath = join(runtime, "script.log");
+      await writeFile(ghidraLogPath, `before ${session.token} after`);
+      await writeFile(scriptLogPath, "script output");
+      return err(
+        new GhidraLaunchError("launch failed", {
+          logPaths: { ghidraLogPath, scriptLogPath },
+        }),
+      );
+    },
+  };
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const started = await client.start();
+  if (started.ok) throw new Error("Expected launch failure");
+  const path = started.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  expect(await readFile(join(path, "ghidra.log"), "utf8")).toBe(
+    "before [REDACTED] after",
+  );
+  expect(await readFile(join(path, "script.log"), "utf8")).toBe(
+    "script output",
+  );
+  await expect(access(runtime)).rejects.toMatchObject({ code: "ENOENT" });
+  expect((await client.close()).ok).toBe(true);
+});
+
+it("returns the finalized export path after automatic startup failure cleanup", async () => {
+  const root = await createTestTempDirectory("ghidra-diagnostics-");
+  const { launcher } = preExitedProcessLauncher({
+    output: "startup output",
+    closeOutput: true,
+  });
+  const client = clientFor(launcher, { diagnosticsDir: root });
+  const started = await client.start();
+  if (started.ok) throw new Error("Expected startup failure");
+  expect(started.error.kind).toBe("process");
+  const path = started.error.diagnostics.diagnostics_export_path;
+  if (typeof path !== "string")
+    throw new Error("Missing diagnostic export path");
+  expect(await readFile(join(path, "stdout.log"), "utf8")).toContain(
+    "startup output",
+  );
+  const manifest = JSON.parse(
+    await readFile(join(path, "manifest.json"), "utf8"),
+  );
+  expect(manifest.files.stdout.status).toBe("complete");
+  const runtimeRoot = started.error.diagnostics.runtime_root;
+  if (typeof runtimeRoot !== "string") throw new Error("Missing runtime root");
+  await expect(access(runtimeRoot)).rejects.toThrow();
+});
