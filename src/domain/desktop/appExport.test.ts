@@ -417,6 +417,29 @@ describe("README and class wording", () => {
   });
 });
 
+it("keeps a nested selection under the state path of a selected alias", () => {
+  const home = "/home/ada";
+  const state = `${home}/.config/geany`;
+  const path = capturedHomePath({
+    host: { home },
+    application: { state_directories: [{ path: state }] },
+    state: {
+      state_directories: [state],
+      selected_paths: [
+        { path: `${home}/settings`, physical: state, kind: "directory" },
+        {
+          path: `${home}/settings/profiles/work`,
+          physical: `${state}/profiles/work`,
+          kind: "directory",
+        },
+      ],
+    },
+  } as unknown as DesktopApplicationCapture);
+  expect(path(`${state}/profiles/work/geany.conf`)).toBe(
+    ".config/geany/profiles/work/geany.conf",
+  );
+});
+
 describe("capturedHomePath", () => {
   it("keeps the application's state directory when a selected link points to it", () => {
     const home = "/home/ada";

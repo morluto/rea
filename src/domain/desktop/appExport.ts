@@ -169,9 +169,7 @@ export const ownedPaths = (
 };
 
 /** A captured path's home-relative path, in the innermost walked state directory's own spelling unless that leaves the home. */
-export const capturedHomePath = (
-  capture: DesktopApplicationCapture,
-): ((path: string) => string | null) => {
+const capturedHomePlan = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const relative = (path: string) =>
     path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null;
@@ -185,6 +183,18 @@ export const capturedHomePath = (
     })
     .sort((left, right) => right.physical.length - left.physical.length);
   const selections = [...(capture.state.selected_paths ?? [])];
+  const stateAliases = capturedStateAliases(capture);
+  const aliasPaths = [...stateAliases].sort(
+    (left, right) => right.alias.length - left.alias.length,
+  );
+  const selectedSpelling = (path: string) => {
+    for (const { alias, target } of aliasPaths) {
+      const prefix = `${home}/${alias}`;
+      if (isWithinAny(path, [prefix]))
+        return `${home}/${target}${path.slice(prefix.length)}`;
+    }
+    return path;
+  };
   const recorded = [
     ...(capture.state.content_roots ?? []),
     ...(capture.state.state_directories ?? []),
@@ -218,7 +228,10 @@ export const capturedHomePath = (
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
     ...renamed,
-    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
+    ...selections.map(({ physical, path }) => ({
+      physical,
+      logical: selectedSpelling(path),
+    })),
   ].sort((left, right) => right.physical.length - left.physical.length);
   const spell = (path: string) => {
     for (const { physical, logical } of spellings) {
@@ -229,7 +242,7 @@ export const capturedHomePath = (
     const plain = relative(path);
     return plain === null ? undefined : { spelled: plain, specificity: 0 };
   };
-  return (path) => {
+  const homePath = (path: string) => {
     const own = spell(path);
     // A database log follows the database only when that database's mapping is
     // more specific than the log file's own. A selected file whose name ends
@@ -252,10 +265,15 @@ export const capturedHomePath = (
     }
     return own?.spelled ?? null;
   };
+  return { homePath, stateAliases };
 };
 
+/** A captured path's home-relative spelling in the shared export plan. */
+export const capturedHomePath = (capture: DesktopApplicationCapture) =>
+  capturedHomePlan(capture).homePath;
+
 /** Selected links to an app state root must keep both the app's name and the selected name. */
-export const capturedStateAliases = (capture: DesktopApplicationCapture) => {
+const capturedStateAliases = (capture: DesktopApplicationCapture) => {
   const { home } = capture.host;
   const walked = capture.state.state_directories ?? [];
   const roots = capture.application.state_directories;
@@ -327,7 +345,7 @@ export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
   state: DesktopApplicationState,
 ) => {
-  const homePath = capturedHomePath(capture);
+  const { homePath, stateAliases } = capturedHomePlan(capture);
   const homePaths = (paths: readonly string[]) =>
     paths.map(homePath).filter((path): path is string => path !== null);
   const { files, dconf, collisions } = stateFilesByHomePath(
@@ -355,7 +373,16 @@ export const exportedStateFiles = (
     withRole("document"),
     stateDirectories,
   );
-  return { homePath, files, dconf, collisions, paths, selected, ...leftOut };
+  return {
+    homePath,
+    stateAliases,
+    files,
+    dconf,
+    collisions,
+    paths,
+    selected,
+    ...leftOut,
+  };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */

@@ -263,13 +263,21 @@ it("seeds the app's state at its own path and retains a selected alias", async (
       state_directories: [physical, `${HOME}/.local/share/notes`],
       selected_paths: [
         { path: `${HOME}/settings`, physical, kind: "directory" },
+        {
+          path: `${HOME}/settings/profiles/work`,
+          physical: `${physical}/profiles/work`,
+          kind: "directory",
+        },
       ],
       checkpoints: [
         checkpoint(
           "baseline",
           "baseline",
           [],
-          [retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n")],
+          [
+            retained(`${physical}/settings.ini`, "[ui]\nwrap=false\n"),
+            retained(`${physical}/profiles/work/profile.ini`, "milk\n"),
+          ],
         ),
       ],
     },
@@ -277,7 +285,10 @@ it("seeds the app's state at its own path and retains a selected alias", async (
   if (result instanceof Error) throw result;
   expect(result.normalized_result).toMatchObject({
     paths: [".config/notes"],
-    seed_files: [".config/notes/settings.ini"],
+    seed_files: [
+      ".config/notes/profiles/work/profile.ini",
+      ".config/notes/settings.ini",
+    ],
   });
   expect(
     await readFile(
@@ -285,6 +296,15 @@ it("seeds the app's state at its own path and retains a selected alias", async (
       "utf8",
     ),
   ).toBe("[ui]\nwrap=false\n");
+  expect(
+    await readFile(
+      join(
+        directory,
+        "envs/notes/seed/.config/notes/profiles/work/profile.ini",
+      ),
+      "utf8",
+    ),
+  ).toBe("milk\n");
   const module = await readFile(
     join(directory, "envs/notes/notes_app.py"),
     "utf8",

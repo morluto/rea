@@ -197,6 +197,13 @@ it("restores a selected settings alias without replacing an existing path", asyn
     join(root, "seed", ".config", "notes", "settings.ini"),
     "saved",
   );
+  await mkdir(join(root, "seed", ".config", "notes", "profiles", "work"), {
+    recursive: true,
+  });
+  await writeFile(
+    join(root, "seed", ".config", "notes", "profiles", "work", "profile.ini"),
+    "profile",
+  );
   const imports = PYTHON_IMPORTS.split("\n")
     .filter((line) => !line.includes("agentenv_protocol"))
     .join("\n");
@@ -216,6 +223,12 @@ _ensure_state_aliases(home)
   expect(await readFile(join(home, "settings", "settings.ini"), "utf8")).toBe(
     "saved",
   );
+  expect(
+    await readFile(
+      join(home, "settings", "profiles", "work", "profile.ini"),
+      "utf8",
+    ),
+  ).toBe("profile");
   const other = join(root, "other-home");
   await mkdir(other);
   await writeFile(join(other, "settings"), "preserve");
