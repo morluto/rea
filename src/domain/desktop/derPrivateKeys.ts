@@ -147,23 +147,28 @@ function* base64Runs(
   }
 }
 
-/** Where in `run` its `count`th base64 character is. */
-const runIndex = (run: string, count: number): number => {
+/** Map increasing compact offsets back to their positions in a run in one pass. */
+const runIndices = (run: string) => {
   let seen = 0;
-  for (let index = 0; index < run.length; index += 1) {
-    if (run.startsWith("\\r\\n", index)) index += 3;
-    else if (run.startsWith("\\n", index)) index += 1;
-    else if (isBase64Character(run[index] ?? "") && (seen += 1) > count)
-      return index;
-  }
-  return run.length;
+  let index = 0;
+  return (count: number): number => {
+    for (; index < run.length; index += 1) {
+      if (run.startsWith("\\r\\n", index)) index += 3;
+      else if (run.startsWith("\\n", index)) index += 1;
+      else if (isBase64Character(run[index] ?? "")) {
+        if (seen === count) return index;
+        seen += 1;
+      }
+    }
+    return run.length;
+  };
 };
 
 /** Where text holds a private key as base64 DER, bounded by its declared DER length when complete. */
-export const derKeySpans = (text: string): [number, number][] => {
-  const spans: [number, number][] = [];
+export function* derKeySpans(text: string): Generator<[number, number]> {
   for (const run of base64Runs(text)) {
     const compact = run.value.replace(LINE_BREAKS, "").replace(/=+$/u, "");
+    const indexOf = runIndices(run.value);
     for (
       let at = compact.indexOf("M");
       at !== -1 && compact.length - at >= MIN_KEY_CHARACTERS;
@@ -180,16 +185,15 @@ export const derKeySpans = (text: string): [number, number][] => {
           Math.ceil((outer.end * 8) / 6),
           compact.length - at,
         );
-        const from = runIndex(run.value, at);
-        let to = runIndex(run.value, at + characters - 1) + 1;
+        const from = indexOf(at);
+        let to = indexOf(at + characters - 1) + 1;
         while (to < run.value.length && run.value[to] === "=") to += 1;
-        spans.push([run.start + from, run.start + to]);
+        yield [run.start + from, run.start + to];
         at += characters - 1;
       }
     }
   }
-  return spans;
-};
+}
 
 /** Text with each private key held as base64 DER replaced by its kind. */
 export const redactDerKeys = (text: string): string => {

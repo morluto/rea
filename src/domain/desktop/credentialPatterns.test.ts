@@ -116,6 +116,21 @@ it("redacts multiple adjacent unpadded keys without removing their separator", (
   );
 });
 
+it("finds and redacts every key in a long run while preserving separators", () => {
+  const key = generateKeyPairSync("ed25519", {
+    privateKeyEncoding: { type: "pkcs8", format: "der" },
+    publicKeyEncoding: { type: "spki", format: "der" },
+  }).privateKey.toString("base64").replace(/=+$/u, "");
+  const keys = Array.from({ length: 2000 }, (_, index) =>
+    index % 2 === 0 ? key : lines(key, "\\n"),
+  );
+  const text = keys.join("\n");
+  expect(credentialsIn(text)).toContain("private-key");
+  expect(redactCredentials(text)).toBe(
+    keys.map(() => "<credential:private-key>").join("\n"),
+  );
+});
+
 it("preserves surrounding settings for padded and wrapped private keys", () => {
   for (const { name, der, isPublic } of generatedKeys()) {
     if (isPublic === true) continue;

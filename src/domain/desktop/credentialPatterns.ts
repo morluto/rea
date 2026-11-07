@@ -42,7 +42,7 @@ const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
 /** The kinds of credential a text holds, each once, in pattern order. */
 export const credentialsIn = (text: string): string[] => [
   ...new Set([
-    ...(derKeySpans(text).length > 0 ? ["private-key"] : []),
+    ...(!derKeySpans(text).next().done ? ["private-key"] : []),
     ...CREDENTIAL_PATTERNS.filter(({ pattern }) => {
       pattern.lastIndex = 0;
       return pattern.test(text);
