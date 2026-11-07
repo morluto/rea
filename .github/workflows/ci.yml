@@ -877,6 +877,13 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           npm run verify:windows-native:artifact
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      # Load and self-inspect the locally built addon before the download
+      # overwrites it, so a PE file that links but cannot load or execute
+      # its inspection cannot pass this check.
+      - name: Load and self-inspect the Windows-built addon
+        shell: pwsh
+        run: |
+          node -e "const addon = require('./native/windows/build/rea-windows-x64.node'); const inspection = addon.call('inspect', []); if (!inspection || inspection.runtimeWriteTransient !== true || inspection.abiVersion !== 1 || inspection.nodeApiVersion !== 8 || inspection.architecture !== 'x64') { console.error('Locally built addon failed self-inspection:', JSON.stringify(inspection)); process.exit(1) }"
       - name: Typecheck with the official Windows compiler
         env:
           GOMAXPROCS: "2"
