@@ -51,7 +51,13 @@ export const itemViewSchema = z.discriminatedUnion("collection", [
 export const pageViewSchema = z.strictObject({
   kind: z.literal("page"),
   collection: z
-    .enum(["sections", "symbols", "modules", "semantic_files", "semantic_unknowns"])
+    .enum([
+      "sections",
+      "symbols",
+      "modules",
+      "semantic_files",
+      "semantic_unknowns",
+    ])
     .describe(
       "sections/symbols page binary layouts. modules, semantic_files (per-source semantic coverage and exact unknown counts) and semantic_unknowns (retained unknown frontiers by source) page JavaScript application Evidence.",
     ),

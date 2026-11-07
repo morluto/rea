@@ -455,22 +455,3 @@ const moduleFormat = (
         ? "commonjs"
         : "unknown";
 };
-
-const jsonStatus = (
-  file: JavaScriptArtifactFile,
-): "included" | "invalid" | "unavailable" => {
-  if (!file.text.included) return "unavailable";
-  try {
-    JSON.parse(file.text.value);
-    return "included";
-  } catch (cause: unknown) {
-    // Invalid JSON is classified without further detail.
-    void cause;
-    return "invalid";
-  }
-};
-
-const isExportLink = (link: JavaScriptSemanticModuleLink): boolean =>
-  link.kind === "export" ||
-  link.kind === "re-export" ||
-  link.kind === "commonjs-export";

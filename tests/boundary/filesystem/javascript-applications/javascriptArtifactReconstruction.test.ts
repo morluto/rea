@@ -1614,7 +1614,17 @@ const assertSemanticLinks = (
     ...semanticGraphInput,
     application_graph_id: `jag_${"f".repeat(64)}`,
   });
-  const { electron_summary: summary, ...analysisResult } = result;
+  const {
+    electron_summary: summary,
+    inventory: _inventory,
+    ...analysisResult
+  } = result;
+  expect(
+    javascriptApplicationAnalysisResultSchema.safeParse({
+      ...analysisResult,
+      summary,
+    }).success,
+  ).toBe(true);
   expect(() =>
     javascriptApplicationAnalysisResultSchema.parse({
       ...analysisResult,
