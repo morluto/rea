@@ -85,6 +85,19 @@ export function untouched() {
   box.self.y = 2;
   return box.x;
 }
+export function nestedObjectGetter() {
+  const shared = { value: 1 };
+  class Child { alias = shared; }
+  class R { child = { get container() { return new Child(); } }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2;
+  return shared.value;
+}
+export function shadowedGetter() {
+  const shared = { value: 1 };
+  class R { s = {}; get s() { return shared; } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2;
+  return shared.value;
+}
 `,
     );
     let document: unknown;
@@ -120,6 +133,8 @@ export function untouched() {
       ["replacementKeepsOldObject", "literal"],
       ["replacementMutatesCapturedObject", "unknown"],
       ["untouched", "literal"],
+      ["nestedObjectGetter", "unknown"],
+      ["shadowedGetter", "literal"],
     ] as const) {
       const projection = graph.nodes
         .flatMap(({ observations }) => observations)

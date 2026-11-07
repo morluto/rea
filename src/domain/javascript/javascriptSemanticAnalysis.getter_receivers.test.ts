@@ -296,6 +296,72 @@ it("considers a replacement before delayed instance-field evaluation", () => {
   `)?.status,
   ).toBe("unknown");
 });
+describe("getter widening across object and instance ownership", () => {
+  it("follows an instance returned by an object getter", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { get container() { return new Child(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("does not widen a prototype getter hidden by an own instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        s = {};
+        get s() { return shared; }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("does not widen an object getter replaced by a later data property", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { get container() { return new Child(); }, container: {} };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("does not widen an inherited getter hidden by an instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Base { get s() { return shared; } }
+      class R extends Base {
+        s = {};
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+});
+
 describe("nested instances reached during getter widening", () => {
   it.each(["new Child()", "child"])(
     "retains aliases reached through %s during widening",

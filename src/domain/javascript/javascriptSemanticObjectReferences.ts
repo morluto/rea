@@ -356,14 +356,17 @@ const escapedClassValues = (
   expandedClasses.add(lookup.receiver ?? lookup.owner);
   const seenClasses = new Set<t.Node>();
   const expressions: t.Node[] = [];
-  if (lookup.kind === "instance")
-    for (const reference of instanceFieldReferences(
-      lookup.receiver ?? lookup.owner,
-      null,
-      [],
-      state,
-    ).references)
-      expressions.push(reference.node);
+  const fields =
+    lookup.kind === "instance"
+      ? instanceFieldReferences(
+          lookup.receiver ?? lookup.owner,
+          null,
+          [],
+          state,
+        )
+      : undefined;
+  if (fields !== undefined)
+    for (const reference of fields.references) expressions.push(reference.node);
   for (let cursor = 0; cursor < classes.length; cursor++) {
     const klass = classes[cursor];
     if (klass === undefined || seenClasses.has(klass)) continue;
@@ -379,7 +382,13 @@ const escapedClassValues = (
       if (
         (t.isClassMethod(member) || t.isClassPrivateMethod(member)) &&
         member.kind === "get" &&
-        member.static === (lookup.kind === "static")
+        member.static === (lookup.kind === "static") &&
+        !(
+          t.isClassMethod(member) &&
+          fields?.definiteNames.has(
+            semanticStaticPropertyKey(member.key, member.computed) ?? "",
+          ) === true
+        )
       )
         for (const { node } of semanticCallableResultExpressions(member))
           if (node !== null) expressions.push(node);
@@ -426,6 +435,7 @@ const escapedClassValues = (
           node,
           current.path,
           state,
+          activeGetters,
         ))
           enqueue(reference);
       } else if (t.isArrayExpression(node)) {
@@ -670,10 +680,15 @@ const escapedClassValues = (
       continue;
     }
     if (t.isObjectExpression(node))
-      for (const property of node.properties)
-        if (t.isObjectProperty(property)) expressions.push(property.value);
-        else if (t.isSpreadElement(property))
-          expressions.push(property.argument);
+      for (const reference of semanticObjectPropertyReferences(
+        node,
+        [null],
+        state,
+        activeGetters,
+      )) {
+        if (reference.escapes === true) values.push(reference);
+        selectedExpressions(reference.node, reference.path);
+      }
     if (t.isArrayExpression(node))
       for (const element of node.elements)
         if (element !== null)
@@ -1167,6 +1182,7 @@ export const semanticObjectPropertyReferences = (
   node: t.ObjectExpression,
   path: PropertyPath,
   state: JavaScriptSemanticAnalysisState,
+  activeGetters: ReadonlyMap<t.Node, number> = new Map(),
 ): readonly JavaScriptSemanticObjectReference[] => {
   const [key, ...remaining] = path;
   const references: JavaScriptSemanticObjectReference[] = [];
@@ -1225,6 +1241,7 @@ export const semanticObjectPropertyReferences = (
           { getter: property, owner: node },
           remaining,
           state,
+          activeGetters,
         ))
           references.push(reference);
       } else if (t.isObjectMethod(property) && property.kind === "set") {
