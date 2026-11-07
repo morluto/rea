@@ -250,7 +250,7 @@ it("promotes only complete production cleanup-only Evidence after CLI cleanup re
     const result = await runObjdump(service, path);
 
     expect(result).toMatchObject({
-      provider: { id: "gnu.objdump" },
+      provider: { id: "objdump.command" },
       normalized_result: { completion_status: "complete" },
     });
     expect(producedCleanupFailure?.cleanupOnly).toBe(true);

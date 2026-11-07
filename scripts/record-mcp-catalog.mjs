@@ -15,12 +15,16 @@ const [
   { parseConfig },
   { silentLogger },
   { PROMPT_CONTRACTS },
+  { TOOL_CONTRACTS },
+  { getEvidenceInputContract },
 ] = await Promise.all([
   read("server/createServer.js"),
   read("composition/binary.js"),
   read("config/parseConfig.js"),
   read("logger.js"),
   read("contracts/promptContracts.js"),
+  read("contracts/toolContracts.js"),
+  read("domain/evidenceInputContract.js"),
 ]);
 const recordCatalog = async (profile) => {
   // Catalog generation is independent of the host account and user configuration.
@@ -71,6 +75,11 @@ const recordCatalog = async (profile) => {
       instructions: client.getInstructions(),
       identity: server.catalogIdentity,
       tools,
+      evidenceReferenceAlternatives: TOOL_CONTRACTS.filter(
+        (contract) =>
+          getEvidenceInputContract(contract.inputSchema)
+            .hasEvidenceReferenceAlternative,
+      ).map((contract) => contract.name),
       prompts,
     };
     const encoded = JSON.stringify(catalog);

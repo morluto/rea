@@ -47,6 +47,50 @@ import {
 import { inspectEvidenceBundle } from "../../../src/application/investigation/InspectEvidenceBundle.js";
 
 cliTest(
+  "reads a saved scalar pseudocode observation without starting an analysis engine",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pseudocode-view-cli-");
+    const parent = createEvidence(
+      { path: "/fixtures/program", format: "elf", sha256: "a".repeat(64) },
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "procedure_pseudo_code",
+        parameters: { procedure: "file-offset:0x10" },
+        result: "A😀\r\n尾\n",
+        locations: [
+          { kind: "artifact-path", path: "/fixtures/program" },
+          { kind: "file-offset", offset: 0x10 },
+          { kind: "address", address: "0x401010" },
+          { kind: "address", address: "0x401000" },
+        ],
+      },
+    );
+    const request = join(root, "request.json");
+    await writeFile(
+      request,
+      JSON.stringify({
+        source: { kind: "inline", evidence: parent },
+        view: { kind: "native", facet: "pseudocode", offset: 1, limit: 2 },
+      }),
+    );
+    const response = await cli.run({
+      arguments: ["inspect-analysis-view", request, "--json"],
+    });
+    expect(response.exitCode).toBe(0);
+    const result = parseEvidence(response.json);
+    expect(result.subject).toEqual(parent.subject);
+    expect(result.evidence_links).toEqual([parent.evidence_id]);
+    expect(result.locations).toEqual(parent.locations);
+    expect(result.normalized_result).toMatchObject({
+      parent_operation: "procedure_pseudo_code",
+      procedure_address: null,
+      item: { text: "😀" },
+      coverage: { next_offset: 3 },
+    });
+  },
+);
+
+cliTest(
   "reads selected batch rows and one body from a saved bundle without a provider",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-batch-view-cli-");

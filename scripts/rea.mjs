@@ -70,15 +70,8 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   guardClosedStdout();
   // Doctor runs outside Incur, so handle its global timing flag here. Keep a
   // token consumed by --format as a value, even when it looks like a flag.
-  const outputValues = new Set(
-    builtinArguments
-      .splitIncurBuiltinArguments(doctorArguments)
-      .outputValues.map(({ index }) => index),
-  );
-  const doctorCliArguments = doctorArguments.filter(
-    (argument, index) => argument !== "--timings" || outputValues.has(index),
-  );
-  const timingRequested = doctorCliArguments.length !== doctorArguments.length;
+  const { arguments: doctorCliArguments, enabled: timingRequested } =
+    builtinArguments.splitCliTimingArguments(doctorArguments);
   const started = performance.now();
   try {
     const { runProductionMcpDoctorCli } =
@@ -148,6 +141,37 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
       process.exitCode = 1;
     } else if (versionOutput !== undefined) {
       writeStdout(versionOutput);
+    } else if (
+      !isShellCompletion &&
+      builtinArguments.isProjectScopedAmpRegistration(cliArgs)
+    ) {
+      // Incur's Amp writer ignores --no-global and always writes the global
+      // settings file, so fail closed before it runs rather than reporting
+      // a project registration that never happened.
+      //
+      // A caller that asked for a structured document gets the refusal in
+      // that document, through the same pre-execution error renderer the
+      // output-argument branch uses; anything else keeps the plain message.
+      const refusalMessage =
+        "Amp does not support project-scoped registration: 'rea mcp add --no-global' with Amp would write the global Amp settings file instead of a project file. Run without --no-global to register Amp globally.";
+      const refusalFormat = outputOptions.format;
+      if (
+        refusalFormat === "json" ||
+        refusalFormat === "jsonl" ||
+        refusalFormat === "yaml"
+      ) {
+        writeStdout(
+          renderCliOutputArgumentError({
+            ok: false,
+            format: refusalFormat,
+            code: "AMP_PROJECT_SCOPE_UNSUPPORTED",
+            message: refusalMessage,
+          }),
+        );
+      } else {
+        process.stderr.write(`${refusalMessage}\n`);
+      }
+      process.exitCode = 1;
     } else {
       const cliRuntime = await import("../dist/cli-runtime/cli.js");
       closeCliResources = cliRuntime.closeCliResources;
@@ -174,7 +198,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
           exit: (code) => {
             exiting = true;
             void (async () => {
-              let status = code;
+              let status = typeof code === "number" ? code : 0;
               try {
                 await closeCliResources();
               } catch (cleanup) {
@@ -184,7 +208,7 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
                 if (status === 0) status = 1;
               }
               try {
-                await resultOutput?.finishSdkOutput(code);
+                await resultOutput?.finishSdkOutput(status);
               } catch (cause) {
                 if (!stdoutClosed)
                   process.stderr.write(`${cleanupFailureText(cause)}\n`);

@@ -2,8 +2,17 @@
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and persistent database mutation are unavailable.
+read-only. GUI controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
+
+An opt-in [owned Program checkpoint](installation.md#automatically-checkpoint-an-owned-ghidra-program)
+retains analysis across Linux/macOS processes. It saves initial completed analysis
+and normal-close metadata changes to `REA_GHIDRA_CHECKPOINT_DIR`; cancellation
+and process failure recover only the last successfully saved state. The restored
+packed Program's digest is reported with restored observations. Initial analysis
+keeps one stable generation through its first save; later saved states bind their
+content digest in profile identity. Restoration does not turn prior
+database state into a fresh discovery. The default remains ephemeral.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
@@ -330,9 +339,11 @@ Without bounds, loaded memory blocks are eligible, in Ghidra address order.
 Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
 listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
 `end` in their address space to search them.
-Overlapping matches are included; matches never cross block boundaries.
-Each match reports its address, segment, unique source file offset (or null),
-and containing procedure (or null).
+Overlapping matches are included, including across adjacent eligible initialized
+blocks in the same address space. Gaps and excluded or uninitialized blocks break
+a search run. Each match reports its address, starting segment, unique source file
+offset for that starting address (or null), and containing procedure (or null).
+A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
 with the same target, profile, pattern, mask and bounds to continue. `complete`
