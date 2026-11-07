@@ -12,7 +12,6 @@ import {
 import { logCliCommand } from "../cliLogging.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { cliDecimalField } from "./options.js";
-import { observeWebExecutionInputSchema } from "../domain/webExecution.js";
 import type { Logger } from "pino";
 import type { ProgressReporter } from "../application/ProgressReporter.js";
 import { withCommandCancellation } from "./commandCancellation.js";
