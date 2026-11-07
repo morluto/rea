@@ -403,3 +403,68 @@ it.each([
     ]);
   },
 );
+/**
+ * Which slot `tls` merges, and an unreadable `path` that may still rescue.
+ *
+ * Measured on Node 24.22.1:
+ *
+ *   tls.connect(-1, [], {port:80})         -> THREW (an array fills slot 1, so slot 2
+ *                                            is ignored and the positional port wins)
+ *   tls.connect(-1, /x/, {port:80})        -> THREW
+ *   tls.connect(-1, () => {}, {port:80})   -> socket (a callback frees slot 1)
+ *   tls.connect(-1, 0, {port:80})          -> socket
+ *   tls.connect(80, [], {port:-1})         -> socket
+ *   tls.connect(80, /x/, {port:-1})        -> socket
+ *   tls.connect(80, {port:-1, path:p})     -> socket when `p` is a non-empty path
+ *   net.connect(80, {port:-1, path:p})     -> socket
+ */
+it.each([
+  [
+    "a tls positional port with an array slot",
+    `tls.connect(-1, [], {port: 80})`,
+  ],
+  [
+    "a tls positional port with a regexp slot",
+    `tls.connect(-1, /x/, {port: 80})`,
+  ],
+  [
+    "a tls positional port with a two-element array slot",
+    `tls.connect(-1, [1, 2], {port: 80})`,
+  ],
+  [
+    "a tls positional port with an array slot and no port",
+    `tls.connect(-1, [], {})`,
+  ],
+] as const)("emits no socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a tls port beside an array slot", `tls.connect(80, [], {port: -1})`],
+  ["a tls port beside a regexp slot", `tls.connect(80, /x/, {port: -1})`],
+  [
+    "a tls options port beside an array slot",
+    `tls.connect({port: 80}, [], {port: -1})`,
+  ],
+  [
+    "a tls options port beside a regexp slot",
+    `tls.connect({port: 80}, /x/, {port: -1})`,
+  ],
+  [
+    "a tls port beside a callback slot",
+    `tls.connect(-1, () => {}, {port: 80})`,
+  ],
+  ["a tls port beside a numeric slot", `tls.connect(-1, 0, {port: 80})`],
+  [
+    "a tls bad port beside an unreadable path",
+    `tls.connect(80, {port: -1, path: p})`,
+  ],
+  [
+    "a net bad port beside an unreadable path",
+    `net.connect(80, {port: -1, path: p})`,
+  ],
+] as const)("keeps the socket acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([
+    { kind: "acquire", method: "connect" },
+  ]);
+});

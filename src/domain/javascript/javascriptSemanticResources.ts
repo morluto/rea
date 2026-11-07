@@ -596,8 +596,10 @@ const rejectsSocketPort = (
   if (objects === undefined) return false;
   if (specifier === "net") return rejectsPortValue(head, context);
   // `tls` merges the options over the positional port, so a member that rescues the
-  // port check applies here too: `tls.connect(-1, {path:"/tmp/x"})` connects.
-  if (optionsRescuePort(objects, specifier)) return false;
+  // port check applies here too: `tls.connect(-1, {path:"/tmp/x"})` connects. An
+  // unreadable path or socket leaves the answer unknown, so keep the acquisition.
+  const rescue = optionsRescuePort(objects, specifier);
+  if (rescue !== "validates") return false;
   // The merged options win when they carry an effective `port`; otherwise the
   // positional value is the one validated. `tls.connect(-1, {})` still throws.
   const merged = mergedOptionsProperty(objects, "port");
@@ -734,11 +736,25 @@ const socketOptionsObjects = (
 };
 
 /**
+ * Whether a value occupies `tls`' single merge slot without supplying option members.
+ *
+ * An array or a regular expression cannot carry `port`, `path` or `socket`, but it
+ * still fills argument 1, and Node then ignores argument 2. Measured on Node
+ * 24.22.1: `tls.connect(-1, [], {port:80})` throws — the ignored `port` does not
+ * rescue it — while `tls.connect(-1, () => {}, {port:80})` connects, because a
+ * callback or a primitive leaves the slot for argument 2.
+ */
+const occupiesOptionsSlotOnly = (value: t.Node): boolean =>
+  t.isArrayExpression(value) || t.isRegExpLiteral(value);
+
+/**
  * The single later options object `tls` merges, `null` for none, or undefined when
  * the slot that decides it could hold an unreadable object.
  *
- * Slot 1 is the override when it is an object literal. When slot 1 is provably not
- * an object (a callback, a primitive, `null`, `undefined`), slot 2 decides instead.
+ * Slot 1 is the override when it is an object literal. When slot 1 is provably not an
+ * object (a callback, a primitive, `null`, `undefined`), slot 2 decides instead. An
+ * array or a regular expression in slot 1 occupies the slot without supplying
+ * members, so slot 2 is still ignored.
  */
 const tlsMergedOptionsObject = (
   node: t.CallExpression | t.OptionalCallExpression,
@@ -748,12 +764,14 @@ const tlsMergedOptionsObject = (
   if (t.isSpreadElement(slot)) return undefined;
   const candidate = unwrapJavaScriptExpression(slot).node;
   if (t.isObjectExpression(candidate)) return candidate;
+  if (occupiesOptionsSlotOnly(candidate)) return null;
   if (!isExactlyNonObjectExpression(candidate)) return undefined;
   const next = node.arguments[2];
   if (next === undefined) return null;
   if (t.isSpreadElement(next)) return undefined;
   const second = unwrapJavaScriptExpression(next).node;
   if (t.isObjectExpression(second)) return second;
+  if (occupiesOptionsSlotOnly(second)) return null;
   return isExactlyNonObjectExpression(second) ? null : undefined;
 };
 
@@ -793,18 +811,8 @@ const rejectsOptionsPortLiteral = (
 ): boolean => {
   const read = mergedOptionsProperty(objects, "port");
   if (read.status !== "explicit") return false;
-  // A non-empty `path` selects a Unix socket; Node never validates the port.
-  const path = mergedOptionsProperty(objects, "path");
-  if (path.status === "dynamic") return false;
-  if (path.status === "explicit") {
-    if (!t.isStringLiteral(path.value)) return false;
-    if (path.value.value.length > 0) return false;
-  }
-  // `tls.connect` wraps a supplied socket instead of connecting.
-  if (specifier === "tls") {
-    const socket = mergedOptionsProperty(objects, "socket");
-    if (socket.status !== "missing") return false;
-  }
+  // One shared rescue decision, so this branch and the positional branch agree.
+  if (optionsRescuePort(objects, specifier) !== "validates") return false;
   return rejectsOptionsPortValue(
     unwrapJavaScriptExpression(read.value as t.Node).node,
     context,
@@ -812,22 +820,33 @@ const rejectsOptionsPortLiteral = (
 };
 
 /**
- * Whether the merged options make Node skip the port check: a non-empty `path`
- * becomes the Unix socket, and for `tls` a supplied `socket` is wrapped instead of
- * connecting.
+ * Whether the merged options make Node skip the port check, or leave it undecided.
+ *
+ * A non-empty `path` becomes the Unix socket and neutralises the port. For `tls`, a
+ * supplied `socket` is wrapped instead of connecting. An unreadable `path` may be a
+ * non-empty path, so it does not prove the port is validated: the caller must keep
+ * the acquisition rather than decide against it.
  */
 const optionsRescuePort = (
   objects: readonly t.ObjectExpression[],
   specifier: string,
-): boolean => {
+): "rescues" | "validates" | "unknown" => {
   const path = mergedOptionsProperty(objects, "path");
-  if (path.status === "dynamic") return false;
+  if (path.status === "dynamic") return "unknown";
   if (path.status === "explicit") {
-    if (!t.isStringLiteral(path.value)) return false;
-    if (path.value.value.length > 0) return true;
+    if (!t.isStringLiteral(path.value)) return "unknown";
+    if (path.value.value.length > 0) return "rescues";
   }
-  if (specifier !== "tls") return false;
-  return mergedOptionsProperty(objects, "socket").status !== "missing";
+  if (specifier === "tls") {
+    const socket = mergedOptionsProperty(objects, "socket");
+    if (socket.status === "dynamic") return "unknown";
+    if (socket.status === "explicit") {
+      // An explicit `undefined` member is absent, not a wrapped socket.
+      const value = unwrapJavaScriptExpression(socket.value as t.Node).node;
+      if (!isNullishJavaScriptSyntax(value)) return "rescues";
+    }
+  }
+  return "validates";
 };
 
 /** Whether a number is a TCP port Node accepts. */
