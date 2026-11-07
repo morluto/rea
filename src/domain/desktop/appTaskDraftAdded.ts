@@ -511,15 +511,15 @@ const fieldsOf = (
           : [],
       );
     }
-    const pieces = keptFieldPieces(field)
-      .map((piece) => piece.trim())
-      .filter(
-        (piece) => piece !== "" && !isStamp(piece) && !isVolatileValue(piece),
-      );
+    const pieces = keptFieldPieces(field).filter((piece) => {
+      const text = piece.trim();
+      return text !== "" && !isStamp(text) && !isVolatileValue(text);
+    });
     if (pieces.length === 0 || holdsIds(field)) return [];
-    const whole = elementText(field).trim();
-    if (pieces.length === 1 && pieces[0] === whole) {
-      const value = pieces[0];
+    // The evaluator reads the field's text as saved, including the line breaks around it.
+    const whole = elementText(field);
+    if (pieces.length === 1 && pieces[0]?.trim() === whole.trim()) {
+      const value = whole;
       if (value.length > context.chars) {
         context.long?.push(at);
         return [];

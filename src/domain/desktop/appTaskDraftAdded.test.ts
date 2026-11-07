@@ -439,6 +439,48 @@ describe("draftTaskFiles for an identified record's own text", () => {
       false,
     );
   });
+
+  it("checks a field by the text the file saved, line breaks included", () => {
+    const records = (people: readonly (readonly [string, string])[]) =>
+      `<records>${people
+        .map(
+          ([id, name]) =>
+            `<record id="${id}"><details>${name}</details></record>`,
+        )
+        .join("")}</records>`;
+    const before = records([["one", "Ada"]]);
+    const after = records([
+      ["one", "Ada"],
+      ["two", "\nMoreau\n"],
+    ]);
+    const file = xmlDraft(before, after);
+
+    expect(
+      file.suggested.some(
+        (check) =>
+          "value" in check &&
+          check.value === "Moreau" &&
+          "normalize_whitespace" in check &&
+          check.normalize_whitespace === true,
+      ),
+    ).toBe(true);
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+    expect(
+      passing(
+        FILE,
+        xml(
+          records([
+            ["one", "Ada"],
+            ["two", "\nSomeone\n"],
+          ]),
+        ),
+        file.suggested,
+      ).some((passed) => !passed),
+    ).toBe(true);
+    expect(
+      passing(FILE, xml(before), file.suggested).some((passed) => !passed),
+    ).toBe(true);
+  });
 });
 
 describe("draftTaskFiles for an added record whose words the seed already has", () => {
