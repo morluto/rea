@@ -6,6 +6,7 @@ import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { warcArchiveSchema } from "../../domain/warcArchive/warcArchive.js";
 import { inspectWarcArchiveEvidence } from "./WarcArchiveService.js";
 
@@ -127,6 +128,9 @@ it("reports the selected path and cause when the archive cannot be resolved", as
       expect(result.ok).toBe(false);
       if (result.ok || !(result.error instanceof AnalysisInputError))
         throw new Error("Expected input refusal");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain("host running REA");
+      expect(projected.recovery).toBeUndefined();
       expect(result.error.conformsToInputContract).toBe(true);
       expect(result.error.remediationAction).toContain("host running REA");
       expect(result.error.issues).toEqual([
