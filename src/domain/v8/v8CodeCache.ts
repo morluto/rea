@@ -24,10 +24,22 @@ export const V8_CODE_CACHE_MAGIC_HIGH = 0xc0de;
 export const MAX_INSPECT_V8_CODE_CACHE_STRINGS = 65536;
 /** Shortest printable run reported as a byte-pattern observation. */
 export const MIN_INSPECT_V8_CODE_CACHE_STRING_BYTES = 4;
+
+/** Upper bound the input schema admits for `min_string_bytes`. */
+export const MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES = 256;
 /** Longest single reported run; longer runs are truncated and said to be truncated. */
 export const MAX_INSPECT_V8_CODE_CACHE_STRING_BYTES = 4096;
 /** `vm.compileFunction` sets this bit in the source-length word. */
 export const V8_CODE_CACHE_COMPILE_FUNCTION_BIT = 0x20000000;
+
+/**
+ * Bit 30 of the source-length word marks `vm.SourceTextModule` output.
+ *
+ * Measured on Node 24.22.1: a module cache reads `0x40000013` for a 19-unit source and a
+ * script cache reads `0x00000013` for the same length. The source-length mask is
+ * `0x1fffffff`, so this bit and the function bit are both outside it.
+ */
+export const V8_CODE_CACHE_MODULE_BIT = 0x40000000;
 /** Source length occupies the low bits of that word. */
 export const V8_CODE_CACHE_SOURCE_LENGTH_MASK = 0x1fffffff;
 
@@ -58,7 +70,7 @@ export const inspectV8CodeCacheInputSchema = z.strictObject({
     .number()
     .int()
     .min(MIN_INSPECT_V8_CODE_CACHE_STRING_BYTES)
-    .max(256)
+    .max(MAX_INSPECT_V8_CODE_CACHE_MIN_STRING_BYTES)
     .default(MIN_INSPECT_V8_CODE_CACHE_STRING_BYTES)
     .describe("Shortest printable run reported as one observation"),
 });
@@ -100,10 +112,15 @@ const headerSchema = z.strictObject({
   /** Source length in UTF-16 code units, as recorded by the producer, if determinable. */
   source_length: uint.nullable(),
   /**
-   * Producer family observed from the source-length word: `script` for
-   * `vm.Script`/bytenode output, `compile_function` when V8's function bit is set.
+   * Producer family observed from the source-length word.
+   *
+   * `vm.Script`/bytenode output carries neither flag. V8 sets bit 29 for
+   * `vm.compileFunction` and bit 30 for `vm.SourceTextModule`, the two upper bits the
+   * source-length mask leaves out. Measured on Node 24.22.1: a module cache reads
+   * `0x40000013` for a 19-unit source, so a producer check that only looks at the
+   * function bit reports a module cache as a plain script.
    */
-  producer: z.enum(["script", "compile_function"]),
+  producer: z.enum(["script", "compile_function", "module"]),
 });
 
 /** One printable run found in the payload. An observation, not a decoded heap object. */

@@ -86,6 +86,40 @@ it("reports the source length the producer recorded", () => {
   expect(report.header.producer).toBe("script");
 });
 
+it("reports a module cache as a module rather than a script", () => {
+  // Bit 30 of the source-length word marks `vm.SourceTextModule` output. Measured on
+  // Node 24.22.1: a real module cache reads `0x40000013` for a 19-unit source while a
+  // script of the same length reads `0x00000013`, so a producer check that only tests
+  // the function bit reports the module cache as a plain script.
+  const script = v8CodeCacheFixture();
+  const word = script.readUInt32LE(8);
+  const length = word & 0x1fffffff;
+  expect(word & 0x40000000).toBe(0);
+  expect(parse(script).header.producer).toBe("script");
+
+  const moduleCache = withHeaderWord(script, 2, word | 0x40000000);
+  const report = parse(moduleCache);
+  expect(report.header.producer).toBe("module");
+  // The module bit sits outside the source-length mask, so the length is unchanged.
+  expect(report.header.source_length).toBe(length);
+});
+
+it("keeps the function and module flags distinct", () => {
+  const script = v8CodeCacheFixture("var y = 1;");
+  const length = script.readUInt32LE(8) & 0x1fffffff;
+  expect(
+    parse(withHeaderWord(script, 2, 0x20000000 | length)).header.producer,
+  ).toBe("compile_function");
+  expect(
+    parse(withHeaderWord(script, 2, 0x40000000 | length)).header.producer,
+  ).toBe("module");
+  // Both bits set is not a shape V8 produces; the module flag wins so the reported
+  // family stays one of the three observed kinds.
+  expect(
+    parse(withHeaderWord(script, 2, 0x60000000 | length)).header.producer,
+  ).toBe("module");
+});
+
 it("separates the compileFunction producer bit from the source length", () => {
   const source = "return 7;";
   const cache = v8FunctionCodeCacheFixture(source);
