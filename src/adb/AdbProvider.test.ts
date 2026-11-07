@@ -87,7 +87,6 @@ const refusedBy = async (
   request: AdbRequest,
 ): Promise<ReturnType<typeof projectAnalysisError>> => {
   const result = await provider.execute(request);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a refusal");
   return projectAnalysisError(result.error);
 };
@@ -577,7 +576,6 @@ it.each([
       await expect(lstat(packageDirectory)).rejects.toThrow();
       return;
     }
-    expect(result.ok).toBe(true);
     if (!result.ok) throw new Error(result.error.message);
     expect(
       (
@@ -1463,7 +1461,6 @@ exit 1`,
       overwrite: false,
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected snapshot cleanup to be reported");
   expect(result.error.cleanupResources).toHaveLength(1);
   expect(result.error.partialObservation).toMatchObject({
@@ -1523,7 +1520,6 @@ exit 1`,
       overwrite: false,
     },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected a changed-artifact result");
   const evidence = parseEvidence(result.error.partialObservation);
   expect(evidence).toMatchObject({
@@ -1868,7 +1864,6 @@ it("reads Android 16 focus declarations from displays when windows omits them", 
     operation: "inspect_adb_window",
     input: { serial: "emulator-5554" },
   });
-  expect(execution.ok).toBe(true);
   if (!execution.ok) throw execution.error;
   expect(execution.value.limitations).toContainEqual(
     expect.stringContaining("dumpsys window displays"),
@@ -1891,7 +1886,6 @@ it("describes missing window focus as unknown after both sections omit declarati
     operation: "inspect_adb_window",
     input: { serial: "emulator-5554" },
   });
-  expect(execution.ok).toBe(true);
   if (!execution.ok) throw execution.error;
   expect(execution.value.limitations).toContainEqual(
     expect.stringContaining("focus is unknown"),
@@ -1915,7 +1909,6 @@ it.each(["windows", "displays"])(
       operation: "inspect_adb_window",
       input: { serial: "emulator-5554" },
     });
-    expect(execution.ok).toBe(true);
     if (!execution.ok) throw execution.error;
     expect(execution.value.result).toMatchObject({
       focused_window: null,

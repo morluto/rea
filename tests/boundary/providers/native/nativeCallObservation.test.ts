@@ -574,7 +574,6 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     undefined,
     controller.signal,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected completion cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",

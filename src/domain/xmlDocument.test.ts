@@ -43,7 +43,6 @@ it.each([
     doctype: "allow",
     lineEndings: "preserve",
   });
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected refusal");
   expect(parsed.error.reason).toBe("malformed");
   expect(parsed.error.cause).toBeDefined();
@@ -94,7 +93,6 @@ it("applies the consumer's explicit DTD policy", () => {
     '<!DOCTYPE root [<!ENTITY value "unused">]><root/>',
     { doctype: "reject", lineEndings: "preserve" },
   );
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Expected unsupported DTD");
   expect(parsed.error.reason).toBe("doctype");
 });

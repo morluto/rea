@@ -20,7 +20,6 @@ import { parseConfig } from "./parseConfig.js";
 import {
   CAPTURE_DECODER_OLD_GENERATION_SETTING,
   captureDecoderHeapConstraint,
-  captureDecoderHeapRecovery,
   DEFAULT_CAPTURE_DECODER_HEAP,
   parseCaptureDecoderHeap,
 } from "./captureDecoderHeap.js";
@@ -97,9 +96,15 @@ it("uses a valid REA_CAPTURE_DECODER_OLD_GENERATION_MIB override", async () => {
     code: "resource_constraint",
     details: { resource: "memory" },
   });
-  expect(projected.remediation.action).toContain(
-    captureDecoderHeapRecovery(configured(256)),
+  expect(projected.remediation.action).toMatch(
+    /REA_CAPTURE_DECODER_OLD_GENERATION_MIB.*256 MiB.*source setting/iu,
   );
+  expect(projected.remediation.action).toContain("--max-old-space-size=256");
+  expect(projected.remediation.action).toMatch(
+    /floor 8 MiB.*maximum 16384 MiB/iu,
+  );
+  expect(projected.remediation.action).toContain("update_analysis_settings");
+  expect(projected.remediation.action).toMatch(/restart REA/iu);
   if (process.versions.bun === undefined)
     expect(projected.details).toMatchObject({
       limit: {
@@ -163,16 +168,19 @@ it("reports the heap the selected adapter launches when decoder environment diff
     if (!reported.ok)
       throw new Error(projectAnalysisError(reported.error).message);
     const limitations = reported.value.limitations.join("\n");
-    expect(limitations).toContain(captureDecoderHeapRecovery(launched.heap));
+    expect(limitations).toMatch(
+      /REA_CAPTURE_DECODER_OLD_GENERATION_MIB.*256 MiB.*source setting/iu,
+    );
 
     vi.spyOn(launched, "command").mockRejectedValue(heapExhaustion());
     const exhausted = await decoder.inspect(input);
     if (exhausted.ok) throw new Error("Heap exhaustion must fail inspection");
     const projected = projectAnalysisError(exhausted.error);
     expect(projected.code).toBe("resource_constraint");
-    expect(projected.remediation.action).toContain(
-      captureDecoderHeapRecovery(launched.heap),
+    expect(projected.remediation.action).toMatch(
+      /REA_CAPTURE_DECODER_OLD_GENERATION_MIB.*256 MiB.*source setting/iu,
     );
+    expect(projected.remediation.action).toContain("--max-old-space-size=256");
     if (process.versions.bun === undefined)
       expect(projected.details).toMatchObject({
         limit: {

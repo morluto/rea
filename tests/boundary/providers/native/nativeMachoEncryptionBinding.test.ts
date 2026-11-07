@@ -86,7 +86,6 @@ class MutatingRunner extends NativeFixtureRunner {
 it("refuses facts when the file changes while the tools inspect it", async () => {
   const path = await writeTarget();
   const { result } = await inspect(path, new MutatingRunner(path));
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a changed-artifact refusal");
   expect(result.error).toMatchObject({
     _tag: "AnalysisArtifactChangedError",
@@ -139,7 +138,6 @@ it("retains the target descriptor when close rejects and retries it on client cl
   const path = await writeTarget();
   const state = await failingClose();
   const { client, result } = await inspect(path);
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected the close failure");
   expect(result.error).toBeInstanceOf(ProviderCleanupError);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -159,7 +157,6 @@ it("keeps the inspection failure primary when the descriptor close also rejects"
   const path = await writeTarget();
   const state = await failingClose();
   const { client, result } = await inspect(path, new MutatingRunner(path));
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected change and close failures");
   expect(result.error).toBeInstanceOf(ProviderCleanupError);
   expect(result.error.cleanupIncomplete).toBe(true);
@@ -192,7 +189,6 @@ it("reports cancellation that arrives during the final close without retaining t
     {},
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected final-close cancellation");
   expect(result.error).toMatchObject({
     _tag: "AnalysisCancelledError",

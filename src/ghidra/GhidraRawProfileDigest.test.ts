@@ -8,12 +8,12 @@ import { GhidraProvider } from "./GhidraProvider.js";
 
 // Digests commit to the current shared policy, including the instruction
 // status, load-image relocation-symbol, procedure search, byte-search and
-// bit-field base-type revisions that prevent reuse of snapshots with earlier
+// bit-field base-type and inventory-search revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "6105f8d9c1739f7261a85e4a8463ed381c92ab85d6195974df73b40e45058300",
+  "6502": "d36ab0327d6063d0acb78c18b1037a73a13886b0a6a147218e58a7d6b851ccae",
   "x86-disabled-analyzer":
-    "4f059962604e029c688bf6f181a8a60d6a642bd569c5e8e8ec540f888aee7de0",
+    "39c710586b830f1f417a20b184dd0a3f007445704c5be10d7296ac46934306c0",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -49,6 +49,7 @@ describe("raw-binary analysis profile digest", () => {
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-and-containing-code-data-v3",
+      inventory_search_projection: "provider-inventory-facts-v1",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
       instruction_references:
@@ -72,6 +73,7 @@ describe("raw-binary analysis profile digest", () => {
       RAW_DIGESTS["x86-disabled-analyzer"],
     );
     expect(resolved.value.profile?.parameters).toMatchObject({
+      inventory_search_projection: "provider-inventory-facts-v1",
       analysis_options: {
         disabled_analyzers: ["Aggressive Instruction Finder"],
       },
