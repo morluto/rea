@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import { absoluteLocalPathStringSchema } from "../localPath.js";
+import { delphiFormResourceSchema } from "./delphiForm.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -122,6 +123,7 @@ export const peResourcesSchema = z.strictObject({
       ),
     }),
   ),
+  delphi_forms: z.array(delphiFormResourceSchema),
   coverage: z.strictObject({
     status: z.literal("complete"),
     examined_entries: uint,
