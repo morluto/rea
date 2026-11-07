@@ -327,3 +327,26 @@ it("admits JSON before redaction and preserves sealed cooperative results", asyn
     step.value.normalized_result,
   );
 });
+
+it("maps a Windows-recorded Evidence subject and result on a non-Windows exporter", () => {
+  const evidence = createEvidence(
+    {
+      path: "C:\\work\\run-alpha\\app\\target.bin",
+      sha256: SHA256,
+      format: "elf",
+      architecture: "x86_64",
+    },
+    TEST_PROVIDER,
+    {
+      operation: "inspect",
+      parameters: {},
+      result: { path: "C:\\work\\run-alpha\\app\\target.bin" },
+    },
+  );
+  const redacted = redactEvidence(evidence, "C:\\work\\run-alpha");
+  expect(redacted.subject?.local_path).toBe("$WORKSPACE/app/target.bin");
+  expect(redacted.normalized_result).toEqual({
+    path: "$WORKSPACE/app/target.bin",
+  });
+  expect(parseEvidence(redacted).evidence_id).toBe(redacted.evidence_id);
+});

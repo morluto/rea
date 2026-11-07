@@ -131,3 +131,30 @@ describe("logical path redaction on JSON values and locations", () => {
     expect(limitation).not.toContain("run-alpha");
   });
 });
+
+it("maps Windows roots using the recorded path format on any host", () => {
+  const config = resolveLogicalPathConfig("C:\\work\\run-alpha")!;
+  expect(redactLogicalPath("c:\\WORK\\run-alpha\\app\\test.bin", config)).toBe(
+    "$WORKSPACE/app/test.bin",
+  );
+  expect(
+    redactLogicalPath("C:\\work\\run-alpha\\..\\elsewhere\\test.bin", config),
+  ).toBe("C:\\work\\run-alpha\\..\\elsewhere\\test.bin");
+  const unc = resolveLogicalPathConfig("\\\\server\\share\\run-alpha")!;
+  expect(
+    redactLogicalPath("\\\\server\\share\\run-alpha\\app\\test.bin", unc),
+  ).toBe("$WORKSPACE/app/test.bin");
+});
+
+it("checks normalized POSIX containment and preserves sibling paths", () => {
+  const config = resolveLogicalPathConfig("/tmp/run-alpha")!;
+  expect(redactLogicalPath("/tmp/run-alpha/../run-beta/file", config)).toBe(
+    "/tmp/run-alpha/../run-beta/file",
+  );
+  expect(redactLogicalPath("/tmp/run-alphabet/file", config)).toBe(
+    "/tmp/run-alphabet/file",
+  );
+  expect(redactLogicalPath("/tmp/run-alpha/app/../file", config)).toBe(
+    "$WORKSPACE/file",
+  );
+});

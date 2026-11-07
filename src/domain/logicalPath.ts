@@ -1,4 +1,4 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { resolve, posix, win32 } from "node:path";
 import type { JsonValue } from "./jsonValue.js";
 
 /** Specification for logical path root redaction. */
@@ -22,6 +22,16 @@ export interface ResolvedLogicalPathConfig {
   readonly prefix: string;
 }
 
+const isWindowsAbsolute = (value: string): boolean =>
+  /^[A-Za-z]:[\\/]/u.test(value) || value.startsWith("\\\\");
+
+const resolveRoot = (root: string): string =>
+  isWindowsAbsolute(root)
+    ? win32.normalize(root)
+    : posix.isAbsolute(root)
+      ? posix.normalize(root)
+      : resolve(root);
+
 /** Resolve and normalize logical path redaction configuration. */
 export const resolveLogicalPathConfig = (
   input: LogicalPathRootInput | undefined,
@@ -29,15 +39,15 @@ export const resolveLogicalPathConfig = (
 ): ResolvedLogicalPathConfig | undefined => {
   if (input === undefined) return undefined;
   if (typeof input === "string") {
-    const trimmed = input.trim();
+    const trimmed = input;
     if (trimmed === "") return undefined;
     return {
-      root: resolve(trimmed),
+      root: resolveRoot(trimmed),
       prefix: fallbackPrefix,
     };
   }
   const rootStr = "logicalRoot" in input ? input.logicalRoot : input.root;
-  if (typeof rootStr !== "string" || rootStr.trim() === "") return undefined;
+  if (typeof rootStr !== "string" || rootStr === "") return undefined;
   const prefixStr =
     "logicalPrefix" in input
       ? input.logicalPrefix
@@ -45,7 +55,7 @@ export const resolveLogicalPathConfig = (
         ? input.prefix
         : undefined;
   return {
-    root: resolve(rootStr.trim()),
+    root: resolveRoot(rootStr),
     prefix: typeof prefixStr === "string" ? prefixStr : fallbackPrefix,
   };
 };
@@ -66,38 +76,25 @@ export const redactLogicalPath = (
 ): string => {
   if (rawPath === "") return rawPath;
 
-  const normPath = rawPath.replaceAll("\\", "/").replace(/\/+/gu, "/");
-  const normRoot = config.root
-    .replaceAll("\\", "/")
-    .replace(/\/+/gu, "/")
-    .replace(/\/+$/u, "");
-
-  // Exact root match
-  if (normPath === normRoot) {
-    return config.prefix;
-  }
-
-  // Child path within root
-  if (normPath.startsWith(`${normRoot}/`)) {
-    const remainder = normPath.slice(normRoot.length + 1);
-    return config.prefix === "" ? remainder : `${config.prefix}/${remainder}`;
-  }
-
-  // Also check native relative path for platform-specific containment
-  const rel = relative(config.root, rawPath);
-  const isWithin =
-    isAbsolute(rawPath) &&
-    (rel === "" ||
-      (rel !== ".." &&
-        !rel.startsWith(`..${sep}`) &&
-        !rel.startsWith("../") &&
-        !isAbsolute(rel)));
-
-  if (isWithin) {
+  // Choose the recorded path format, independent of the export host. Resolve
+  // lexical dot segments before testing containment; do not resolve arbitrary
+  // relative result strings against the host working directory.
+  const path = isWindowsAbsolute(config.root) ? win32 : posix;
+  if (path.isAbsolute(rawPath)) {
+    const rel = path.relative(config.root, path.normalize(rawPath));
     if (rel === "") return config.prefix;
-    const forwardRel = rel.split(/[\\/]/u).filter(Boolean).join("/");
-    return config.prefix === "" ? forwardRel : `${config.prefix}/${forwardRel}`;
+    if (
+      rel !== ".." &&
+      !rel.startsWith(`..${path.sep}`) &&
+      !path.isAbsolute(rel)
+    ) {
+      const suffix = rel.split(path.sep).join("/");
+      return config.prefix === "" ? suffix : `${config.prefix}/${suffix}`;
+    }
+    return rawPath;
   }
+
+  const normRoot = config.root.replaceAll("\\", "/").replace(/\/+$/u, "");
 
   // Fallback: replace any embedded root occurrences (both slash styles)
   let result = rawPath;
