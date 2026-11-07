@@ -228,6 +228,7 @@ describe("properties and profiles", () => {
       {
         id: "integration",
         active_by_default: true,
+        active_by_default_declared: "true",
         source_pointer: "/profiles[0]/profile[0]",
       },
     ]);
@@ -370,8 +371,10 @@ describe("declaration fidelity", () => {
     </dependency>
   </dependencies>`),
     );
-    expect(result.dependencies[0]?.optional).toBeNull();
+    expect(result.dependencies[0]).toMatchObject({ optional: null, optional_declared: "${flag}" });
   });
+
+
 
   it("reads plugin repositories by their own element name", () => {
     const result = parse(
@@ -473,6 +476,29 @@ describe("declaration fidelity", () => {
       resolved: "x",
     });
   });
+});
+
+it("preserves declared boolean text separately from omission and parsed values", () => {
+  const result = parse(pom(`
+    <dependencies>
+      <dependency><groupId>g</groupId><artifactId>one</artifactId><optional>  false  </optional></dependency>
+      <dependency><groupId>g</groupId><artifactId>two</artifactId><optional>invalid</optional></dependency>
+      <dependency><groupId>g</groupId><artifactId>three</artifactId></dependency>
+    </dependencies>
+    <profiles>
+      <profile><id>one</id><activation><activeByDefault>\${flag}</activeByDefault></activation></profile>
+      <profile><id>two</id><activation/></profile>
+      <profile><id>three</id><activation><activeByDefault> true </activeByDefault></activation></profile>
+    </profiles>`));
+  expect(result.dependencies.map(({ optional, optional_declared }) => [optional, optional_declared])).toEqual([
+    [false, "  false  "], [null, "invalid"], [null, null],
+  ]);
+  expect(result.profiles.map(({ active_by_default, active_by_default_declared }) => [active_by_default, active_by_default_declared])).toEqual([
+    [null, "${flag}"], [null, null], [true, " true "],
+  ]);
+  expect(result.property_references).toEqual(expect.arrayContaining([
+    expect.objectContaining({ name: "flag", resolution: "unresolved" }),
+  ]));
 });
 
 describe("property reference coverage", () => {

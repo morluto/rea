@@ -33,15 +33,17 @@ const child = (node: Element, name: string): Element | undefined =>
 const children = (node: Element, name: string): readonly Element[] =>
   childElements(node).filter((candidate) => candidate.localName === name);
 
-const textOf = (element: Element): string => {
+const declaredTextOf = (element: Element): string => {
   const collected: string[] = [];
   for (let index = 0; index < element.childNodes.length; index += 1) {
     const node = element.childNodes.item(index);
     if (node !== null && (node.nodeType === 3 || node.nodeType === 4))
       collected.push(node.nodeValue ?? "");
   }
-  return collected.join("").trim();
+  return collected.join("");
 };
+
+const textOf = (element: Element): string => declaredTextOf(element).trim();
 
 const text = (node: Element, name: string): string | null => {
   const element = child(node, name);
@@ -218,9 +220,9 @@ const managementKey = (
 };
 
 /** Declared boolean text; unresolvable and non-Maven values stay unknown. */
-const declaredBoolean = (element: Element | undefined): boolean | null => {
-  if (element === undefined) return null;
-  const value = textOf(element);
+const declaredBoolean = (declared: string | null): boolean | null => {
+  if (declared === null) return null;
+  const value = declared.trim();
   if (value === "true") return true;
   if (value === "false") return false;
   return null;
@@ -266,6 +268,8 @@ const parseDependency = (
   const scope = text(element, "scope");
   const classifier = text(element, "classifier");
   const type = text(element, "type");
+  const optionalElement = child(element, "optional");
+  const optionalDeclared = optionalElement === undefined ? null : declaredTextOf(optionalElement);
   const exclusions = children(element, "exclusions").flatMap((container) =>
     children(container, "exclusion").flatMap((exclusion) => {
       const exclusionGroup = text(exclusion, "groupId");
@@ -310,7 +314,8 @@ const parseDependency = (
     ),
     declared_by: section,
     scope,
-    optional: declaredBoolean(child(element, "optional")),
+    optional: declaredBoolean(optionalDeclared),
+    optional_declared: optionalDeclared,
     type,
     classifier,
     system_path: text(element, "systemPath"),
@@ -434,13 +439,12 @@ export const parseMavenPom = (
   )) {
     const id = text(profile, "id");
     const activation = child(profile, "activation");
+    const activeElement = activation === undefined ? undefined : child(activation, "activeByDefault");
+    const activeDeclared = activeElement === undefined ? null : declaredTextOf(activeElement);
     profiles.push({
       id,
-      active_by_default: declaredBoolean(
-        activation === undefined
-          ? undefined
-          : child(activation, "activeByDefault"),
-      ),
+      active_by_default: declaredBoolean(activeDeclared),
+      active_by_default_declared: activeDeclared,
       source_pointer: pointer(root, profile, collector),
     });
     // Declarations that live inside the profile stay attributed to it rather
@@ -514,6 +518,7 @@ export const parseMavenPom = (
       dependency.artifact_id,
       dependency.version,
       dependency.scope,
+      dependency.optional_declared,
       dependency.type,
       dependency.classifier,
       dependency.system_path,
@@ -536,6 +541,7 @@ export const parseMavenPom = (
           text(parentElement, "relativePath"),
         ]),
     ...properties.map((property) => property.value),
+    ...profiles.map((profile) => profile.active_by_default_declared),
     ...repositories.flatMap((repository) => [
       repository.id,
       repository.url,

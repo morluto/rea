@@ -54,6 +54,7 @@ export const mavenDependencySchema = z.strictObject({
   declared_by: z.enum(["dependencies", "dependency_management"]),
   scope: z.string().nullable(),
   optional: z.boolean().nullable(),
+  optional_declared: z.string().nullable(),
   type: z.string().nullable(),
   classifier: z.string().nullable(),
   system_path: z.string().nullable(),
@@ -138,6 +139,7 @@ export const mavenPomSchema = z.strictObject({
     z.strictObject({
       id: z.string().nullable(),
       active_by_default: z.boolean().nullable(),
+      active_by_default_declared: z.string().nullable(),
       source_pointer: z.string(),
     }),
   ),

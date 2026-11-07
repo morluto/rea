@@ -622,6 +622,7 @@ A representative result, shortened to two dependencies:
       "declared_by": "dependencies",
       "scope": "compile",
       "optional": null,
+      "optional_declared": null,
       "type": null,
       "classifier": null,
       "profile": null,
@@ -675,6 +676,10 @@ substituted value. Profile declarations carry the profile's `id` in `profile`
 and are counted separately; activation conditions are reported but never
 evaluated. `source_coverage` states what was not read, so an incomplete
 inventory is visible instead of appearing complete.
+
+Dependency `optional_declared` and profile `active_by_default_declared` retain
+decoded element text, or `null` when omitted. Their corresponding boolean fields
+are `null` for omitted or unrecognized values, including property expressions.
 
 Limits: the file allowance and the accounted retained-facts allowance are each
 32 MiB. A POM whose declarations expand past the retained allowance fails with
