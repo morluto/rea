@@ -1,6 +1,4 @@
-import type { Client } from "@modelcontextprotocol/client";
-import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
-import { describe, expect, it, onTestFinished, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import {
   TOOL_CONTRACTS,
@@ -8,122 +6,19 @@ import {
 } from "../../../src/contracts/toolContracts.js";
 import { TOOL_FAMILY_DEFINITIONS } from "../../../src/contracts/toolFamilies.js";
 import { registerSessionStatusTool } from "../../../src/server/registerSessionStatusTool.js";
-import { binaryTargetSummary } from "../../../src/application/binary/BinaryTargetSummary.js";
-import { EvidenceMcpServer } from "../../../src/server/EvidenceMcpServer.js";
 import { jsonObjectSchema } from "../../../src/domain/jsonValue.js";
-import { ToolResultDelivery } from "../../../src/server/ToolResultDelivery.js";
-import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
-import { createTestMcp } from "../../support/mcp/mcpFixture.js";
-import { createTestBinarySession } from "../../fixtures/binarySession.js";
-
-const scopedServer = (
-  advertisedToolFamilies: ReadonlySet<string> | undefined,
-): EvidenceMcpServer =>
-  new EvidenceMcpServer(
-    { name: "tool-families", version: "0" },
-    { capabilities: {} },
-    undefined,
-    new ToolResultDelivery(STDIO_DEFAULT_MAX_BUFFER_SIZE),
-    undefined,
-    "full",
-    undefined,
-    advertisedToolFamilies,
-  );
-
-const registerCatalog = (server: EvidenceMcpServer): void => {
-  for (const contract of TOOL_CONTRACTS)
-    server.registerTool(
-      contract.name,
-      toolRegistrationOptions(contract),
-      async () => ({ content: [] }),
-    );
-};
-
-const withClient = async (
-  server: EvidenceMcpServer,
-  use: (client: Client) => Promise<void>,
-): Promise<void> => {
-  const mcp = createTestMcp();
-  try {
-    const client = await mcp.connect(server, {
-      name: "tool-families",
-      version: "0",
-    });
-    await use(client);
-  } finally {
-    await mcp.close();
-  }
-};
+import {
+  registerCatalog,
+  scopedServer,
+  sessionWithDirectOperations,
+  withClient,
+} from "../../support/mcp/sessionStatusMcp.js";
+import type { SessionReport } from "../../support/mcp/sessionStatusMcp.js";
 
 const familyTools = (...ids: readonly string[]): readonly string[] =>
   TOOL_FAMILY_DEFINITIONS.filter(({ id }) => ids.includes(id)).flatMap(
     ({ contracts }) => contracts.map(({ name }) => name),
   );
-
-/** Preserve owner-produced lifecycle facts while varying the route under test. */
-const sessionWithDirectOperations = () => {
-  const session = createTestBinarySession(() => {
-    throw new Error("Status projection must not acquire a provider");
-  });
-  const status = session.status.bind(session);
-  const projected = vi
-    .spyOn(session, "status")
-    .mockImplementation(async (options) => ({
-      ...jsonObjectSchema.parse(await status(options)),
-      open: true,
-      ...binaryTargetSummary({
-        path: "/fixture/tool-family-target",
-        kind: "executable",
-        format: "mach-o",
-        architecture: "x86_64",
-        availableArchitectures: ["x86_64"],
-        sha256: "a".repeat(64),
-      }),
-      capabilities: [
-        {
-          provider: { id: "probe", name: "Probe", version: "1" },
-          shared_limitations: [],
-          groups: [
-            {
-              operations: [
-                "open_binary",
-                "get_navigation_context",
-                "current_document",
-                "current_address",
-                "resolve_containing_procedure",
-                "inspect_macho",
-              ],
-              effects: ["mutates_artifact"],
-              limitations: [],
-              available: true,
-              reason: null,
-              availability_code: null,
-            },
-          ],
-        },
-      ],
-    }));
-  onTestFinished(async () => {
-    projected.mockRestore();
-    const disposed = await session.dispose();
-    if (!disposed.ok) throw disposed.error;
-  });
-  return session;
-};
-
-interface SessionReport {
-  readonly capabilities?: readonly {
-    readonly groups: readonly { readonly operations: readonly string[] }[];
-  }[];
-  readonly tool_availability?: {
-    readonly groups: readonly {
-      readonly names: readonly string[];
-      readonly available: boolean;
-      readonly reason: string | null;
-      readonly default_mode_available?: boolean;
-    }[];
-  };
-}
 
 describe("MCP tool family advertising", () => {
   it("advertises every catalog tool when no scope is set", async () => {
