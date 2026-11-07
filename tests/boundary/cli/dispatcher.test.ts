@@ -27,6 +27,10 @@ const installCliRuntime = async (
       "scripts/lib/cli-process-environment.mjs",
       workspace.path("scripts/lib/cli-process-environment.mjs"),
     ),
+    copyFile(
+      "scripts/lib/runtime-admission.mjs",
+      workspace.path("scripts/lib/runtime-admission.mjs"),
+    ),
     workspace.write(
       "package.json",
       JSON.stringify({ type: "module", version: "1.0.0" }),
@@ -188,6 +192,64 @@ describe("doctor configuration dispatch", () => {
   );
 });
 
+describe("runtime admission dispatch", () => {
+  workspaceCliTest(
+    "refuses an unsupported runtime before loading the compiled runtime",
+    async ({ processes, workspace }) => {
+      // A compiled import that a rejected runtime must never reach.
+      await installCliRuntime(
+        workspace,
+        'throw new Error("compiled runtime was loaded");\n',
+        'throw new Error("compiled runtime was loaded");\n',
+      );
+      await workspace.write(
+        "package.json",
+        JSON.stringify({
+          type: "module",
+          version: "1.0.0",
+          engines: { node: ">=999.0.0" },
+        }),
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "--version"],
+        { cwd: workspace.root },
+      );
+      expect(result.exitCode).toBe(1);
+      expect(result.stdout).toBe("");
+      expect(result.stderr).toContain(
+        "REA requires Node.js 999.x (>=999.0.0)",
+      );
+      expect(result.stderr).toContain(`runs Node.js ${process.versions.node}`);
+      expect(result.stderr).not.toContain("compiled runtime was loaded");
+    },
+  );
+
+  workspaceCliTest(
+    "admits a runtime the package engines field allows",
+    async ({ processes, workspace }) => {
+      await installCliRuntime(
+        workspace,
+        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => {} });\n',
+      );
+      await workspace.write(
+        "package.json",
+        JSON.stringify({
+          type: "module",
+          version: "1.0.0",
+          engines: { node: `^${process.versions.node}` },
+        }),
+      );
+      const result = await processes.run(
+        process.execPath,
+        [workspace.path("scripts/rea.mjs"), "fixture"],
+        { cwd: workspace.root },
+      );
+      expect(result.stderr).toBe("");
+    },
+  );
+});
+
 describe("executable dispatcher", () => {
   workspaceCliTest(
     "does not append recovery output after delegated stdout has begun",
@@ -299,6 +361,10 @@ describe("executable dispatcher", () => {
         copyFile(
           "scripts/lib/cli-process-environment.mjs",
           workspace.path("scripts/lib/cli-process-environment.mjs"),
+        ),
+        copyFile(
+          "scripts/lib/runtime-admission.mjs",
+          workspace.path("scripts/lib/runtime-admission.mjs"),
         ),
         workspace.write(
           "package.json",
