@@ -160,6 +160,12 @@ cliTest.skipIf(process.platform !== "linux").for([false, true])(
       { evidence: cliEvidence, result: cliExtraction },
       { evidence: mcpEvidence, result: mcpExtraction },
     ]) {
+      expect(result.coverage.status).toBe(
+        withOpaqueName ? "unknown" : "complete",
+      );
+      expect(evidence.limitations).toEqual(
+        expect.arrayContaining(result.limitations),
+      );
       expect(
         result.limitations.some((limitation) =>
           limitation.includes("nested archive contents remain"),
@@ -175,11 +181,6 @@ cliTest.skipIf(process.platform !== "linux").for([false, true])(
       for (const limitations of [result.limitations, evidence.limitations]) {
         expect(
           limitations.some((value) => value.includes("not valid UTF-8")),
-        ).toBe(withOpaqueName);
-        expect(
-          limitations.some((value) =>
-            value.includes("source traversal coverage is unknown"),
-          ),
         ).toBe(withOpaqueName);
         expect(
           limitations.some((value) => value.startsWith("All regular files")),
@@ -252,6 +253,10 @@ cliTest.for([false, true])(
       { evidence: cliEvidence, result: cliExtraction },
       { evidence: mcpEvidence, result: mcpExtraction },
     ]) {
+      expect(result.coverage.status).toBe(opaque ? "unknown" : "complete");
+      expect(evidence.limitations).toEqual(
+        expect.arrayContaining(result.limitations),
+      );
       expect(
         result.limitations.some((limitation) =>
           limitation.includes("nested archive contents remain"),
@@ -275,11 +280,6 @@ cliTest.for([false, true])(
         expect(
           limitations.some((value) =>
             value.includes("PYZ archives remain opaque"),
-          ),
-        ).toBe(opaque);
-        expect(
-          limitations.some((value) =>
-            value.includes("source traversal coverage is unknown"),
           ),
         ).toBe(opaque);
         expect(

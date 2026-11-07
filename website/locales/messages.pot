@@ -4583,7 +4583,7 @@ msgstr ""
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-started/client-
 #. configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
@@ -4655,12 +4655,11 @@ msgid ""
 "requires npm 6.8.0 or later."
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-started/client-
 #. configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-package-
-#. and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -4683,7 +4682,7 @@ msgid ""
 "on the Bot's computer:"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-started/client-
 #. configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
@@ -5047,8 +5046,8 @@ msgid ""
 "Settings → Privacy & Security → Automation, then retry."
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -5150,9 +5149,8 @@ msgid ""
 "your computer:"
 msgstr ""
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-macos-
-#. native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -5160,8 +5158,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -5191,10 +5189,11 @@ msgid ""
 " approve the updated client configuration, then restart your agent."
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-ghidra-p0.md" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
+#. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
 #, python-brace-format
@@ -5292,7 +5291,8 @@ msgid ""
 "and restart your agent."
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-provider.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
+#. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
 #, python-brace-format
@@ -5446,12 +5446,15 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-analysis.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
+#. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-artifact-
-#. reconstruction.md" >
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
+#. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md" >
+#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
+#. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
 #. {ph7}: </a>
@@ -5690,9 +5693,8 @@ msgid ""
 "client configuration and skill."
 msgstr ""
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-update-
-#. and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -6237,7 +6239,7 @@ msgid ""
 "workflow{ph1} to follow files and process boundaries."
 msgstr ""
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -9874,7 +9876,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-analysis.md" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
+#. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
 #, python-brace-format
