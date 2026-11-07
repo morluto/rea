@@ -138,8 +138,15 @@ import re
 import sys
 
 with open(os.environ["APT_CONFIG"]) as handle:
-    lists = re.search(r'Dir::State::Lists "([^"]+)"', handle.read()).group(1)
+    conf = handle.read()
+lists = re.search(r'Dir::State::Lists "([^"]+)"', conf).group(1)
 code = int(os.environ.get("FAKE_APT_EXIT", "0"))
+if os.environ.get("FAKE_APT_EMPTY") and 'APT::Update::Error-Mode "any"' in conf and not os.environ.get("FAKE_APT_IGNORE_ERROR_MODE"):
+    print("Err:1 http://archive.ubuntu.com/ubuntu noble InRelease")
+    print("E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'")
+    sys.exit(100)
+if os.environ.get("FAKE_APT_EMPTY"):
+    sys.exit(0)
 if code != 0 and os.environ.get("FAKE_APT_PARTIAL"):
     open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages.lz4"), "w").close()
 if code != 0:
