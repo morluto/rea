@@ -136,3 +136,46 @@ cliTest(
     expect(result.json).toMatchObject({ code: "target_unavailable" });
   },
 );
+
+cliTest(
+  "admits exactly one nonempty native data type selector before opening a target",
+  async ({ cli }) => {
+    const invalid = (issue: Record<string, unknown>) => ({
+      code: "invalid_request",
+      details: { operation: "inspect_native_data_type", issues: [issue] },
+    });
+    const choice = invalid({
+      path: [],
+      reason: "invalid_value",
+      message: "Supply exactly one of type or address",
+    });
+    for (const [selection, expected] of [
+      [[], choice],
+      [["--type", "/MyStruct", "--address", "0x1000"], choice],
+      [
+        ["--type", ""],
+        invalid({ path: ["type"], reason: "out_of_range", minimum: 1 }),
+      ],
+      [
+        ["--address", ""],
+        invalid({ path: ["address"], reason: "out_of_range", minimum: 1 }),
+      ],
+      [["--type", "/MyStruct"], { code: "target_unavailable" }],
+      [["--address", "0x1000"], { code: "target_unavailable" }],
+    ] as const) {
+      const label = `inspect-native-data-type ${selection.join(" ")}`;
+      const result = await runFileCli(cli, {
+        arguments: [
+          "inspect-native-data-type",
+          "does-not-exist",
+          ...selection,
+          "--format",
+          "json",
+        ],
+        environment: { REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode, label).not.toBe(0);
+      expect(result.json, label).toMatchObject(expected);
+    }
+  },
+);
