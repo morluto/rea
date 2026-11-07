@@ -521,6 +521,27 @@ it.each([
   },
 );
 
+it("publishes an InternalCall method as a runtime-provided boundary", () => {
+  // MethodImplOptions.InternalCall: the runtime implements the body. Core
+  // library FCalls carry this bit with IL code type and no RVA.
+  const { members, boundaries } = inspectImplementationFixture({
+    implFlags: 0x1000,
+    zeroRva: true,
+  });
+  expect(boundaries.native_implementations).toMatchObject([
+    {
+      token: members.methods[0]?.token,
+      impl_flags: 0x1000,
+      code_type: "il",
+      managed_kind: "managed",
+      pinvoke_declared: false,
+      boundary_kind: "runtime-provided",
+      body_interpretation: "not-file-backed",
+    },
+  ]);
+  expect(boundaries.summary.native_implementation_count).toBe(1);
+});
+
 it.each([
   {
     name: "PInvoke flag on managed IL",
