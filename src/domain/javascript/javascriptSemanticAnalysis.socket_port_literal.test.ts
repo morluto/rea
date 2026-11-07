@@ -468,3 +468,100 @@ it.each([
     { kind: "acquire", method: "connect" },
   ]);
 });
+/**
+ * A `socket` member on `tls.connect` only rescues the port check when it is a real
+ * stream. Every literal is decided: `false`, `0`, `""`, `0n` and `null` are present but
+ * not streams, so Node still validates the port; `{}`, `[]` and `() => {}` pass the
+ * port check and then throw from the stream check.
+ *
+ * Measured on Node 24.22.1 with an invalid port:
+ *
+ *   { socket: false | 0 | -0 | "" | 0n | null }  -> THREW ERR_SOCKET_BAD_PORT
+ *   { socket: undefined | void 0 }               -> THREW ERR_SOCKET_BAD_PORT
+ *   { socket: {} | [] | () => {} | 1 | "x" }     -> THREW TypeError
+ *   { socket: new net.Socket() }                 -> Socket created
+ *   net.connect({ socket: <any> })               -> THREW (net ignores `socket`)
+ */
+it.each([
+  [`tls.connect({ socket: false, port: -1 })`],
+  [`tls.connect({ socket: 0, port: -1 })`],
+  [`tls.connect({ socket: -0, port: -1 })`],
+  [`tls.connect({ socket: "", port: -1 })`],
+  [`tls.connect({ socket: 0n, port: -1 })`],
+  [`tls.connect({ socket: null, port: -1 })`],
+  [`tls.connect({ socket: undefined, port: -1 })`],
+  [`tls.connect({ socket: void 0, port: -1 })`],
+  [`tls.connect({ socket: {}, port: -1 })`],
+  [`tls.connect({ socket: [], port: -1 })`],
+  [`tls.connect({ socket: () => {}, port: -1 })`],
+  [`tls.connect({ socket: 1, port: -1 })`],
+  [`tls.connect({ socket: "x", port: -1 })`],
+  [`tls.connect({ socket: /x/, port: -1 })`],
+] as const)("emits no acquisition for a literal socket member: %s", (call) => {
+  expect(socketAcquisitionsFor(call)).toEqual([]);
+});
+
+it.each([
+  ["a real socket binding", `tls.connect({ socket: s, port: -1 })`],
+  ["a call result", `tls.connect({ socket: open(), port: -1 })`],
+  [
+    "a falsy socket with a valid port",
+    `tls.connect({ socket: false, port: 65535 })`,
+  ],
+  [
+    "an empty-string socket with a valid port",
+    `tls.connect({ socket: "", port: 65535 })`,
+  ],
+  [
+    "a zero socket with a valid port",
+    `tls.connect({ socket: 0, port: 65535 })`,
+  ],
+] as const)("keeps the acquisition for %s", (_name, call) => {
+  expect(socketAcquisitionsFor(call)).toHaveLength(1);
+});
+
+/**
+ * A `socket` member named `undefined` is absent only while the global is unshadowed.
+ * Measured on Node 24.22.1: `tls.connect({ socket: undefined, port: -1 })` throws, but
+ * a parameter or local named `undefined` carries that binding's value instead.
+ */
+const socketAcquisitionsIn = (source: string) =>
+  analyzeJavaScriptSemantics(
+    `import tls from "node:tls";\n${source}`,
+  ).resourceOperations.filter(({ kind }) => kind === "acquire").length;
+
+it("reads the global undefined as an absent socket member", () => {
+  expect(
+    socketAcquisitionsIn(
+      `function g() { tls.connect({ socket: undefined, port: -1 }); }`,
+    ),
+  ).toBe(0);
+});
+
+it("does not read a shadowed undefined as the global", () => {
+  // A parameter named `undefined` may hold a real stream, so the port check cannot be
+  // proven here and the acquisition stays.
+  expect(
+    socketAcquisitionsIn(
+      `function g(undefined) { tls.connect({ socket: undefined, port: -1 }); }`,
+    ),
+  ).toBe(1);
+});
+
+it("does not read a shadowed undefined as absent in the merge slot", () => {
+  // `tls` uses slot 1 as the override when it is an object. A shadowed `undefined` may
+  // be an object, so slot 2 is not provably the deciding argument.
+  expect(
+    socketAcquisitionsIn(
+      `function g(undefined) { tls.connect({ port: -1 }, undefined); }`,
+    ),
+  ).toBe(1);
+});
+
+it("still defers to slot 2 for the global undefined", () => {
+  expect(
+    socketAcquisitionsIn(
+      `function g() { tls.connect({ port: 80 }, undefined, { port: -1 }); }`,
+    ),
+  ).toBe(0);
+});
