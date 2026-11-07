@@ -94,29 +94,35 @@ export const readTypeMemberListFacts = (
   }
   const nonmonotonicFields = new Set<number>();
   const nonmonotonicMethods = new Set<number>();
-  for (let index = 0; index + 1 < rows.length; index += 1) {
-    const current = rows[index];
-    const next = rows[index + 1];
-    if (current === undefined || next === undefined) continue;
-    for (const [name, before, after, affected] of [
-      ["FieldList", current.field, next.field, nonmonotonicFields],
-      ["MethodList", current.method, next.method, nonmonotonicMethods],
-    ] as const)
+  const previousKnown = { field: -1, method: -1 };
+  for (const [index, entry] of rows.entries()) {
+    for (const [name, member, affected] of [
+      ["FieldList", "field", nonmonotonicFields],
+      ["MethodList", "method", nonmonotonicMethods],
+    ] as const) {
+      const after = entry[member];
+      // An invalid coordinate cannot establish a range endpoint, but it
+      // cannot hide a decrease between the surrounding valid coordinates.
+      if (after.value === null) continue;
+      const preceding = previousKnown[member];
+      const before = rows[preceding]?.[member];
+      previousKnown[member] = index;
       if (
+        before !== undefined &&
         before.value !== null &&
-        after.value !== null &&
         after.value < before.value
       ) {
         managedDecodeBudget(layout).reserve(512, after.offset);
+        affected.add(preceding);
         affected.add(index);
-        affected.add(index + 1);
         issues.push({
           code: "invalid-row",
-          scope: `metadata.TypeDef:${metadataToken(2, index + 2)}`,
+          scope: `metadata.TypeDef:${metadataToken(2, index + 1)}`,
           offset: after.offset,
-          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; adjacent member ranges are unknown`,
+          detail: `TypeDef ${name} start ${String(after.raw)} decreases from preceding start ${String(before.raw)}; affected member ranges are unknown`,
         });
       }
+    }
   }
   const entries: TypeMemberListEntry[] = rows.map((entry, index) => {
     const next = rows[index + 1];

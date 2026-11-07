@@ -85,6 +85,12 @@ export type DesktopCaptureProgress = z.infer<
   typeof desktopCaptureProgressSchema
 >;
 
+/** The capture event in one progress line, when that line carries one. */
+export const captureProgressEvent = (
+  line: string,
+): DesktopCaptureEvent | undefined =>
+  desktopCaptureProgressSchema.parse(JSON.parse(line)).rea_progress.event;
+
 /** The acknowledgement of a taken checkpoint, from what it recorded. */
 export const checkpointTaken = (
   checkpoint: DesktopCheckpoint,
