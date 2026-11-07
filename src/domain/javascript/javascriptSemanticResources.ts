@@ -11,7 +11,6 @@ import type {
 } from "./javascriptSemanticIr.js";
 import {
   isNullishJavaScriptSyntax,
-  readExactJavaScriptLiteral,
   semanticStaticPropertyName,
   staticJavaScriptTruthiness,
   staticObjectProperty,
@@ -230,13 +229,24 @@ const rejectsStreamOptionsLiteral = (
   // A getter anywhere in the literal can replace another member before Node reads it,
   // so no member's declared value is what Node sees.
   if (optionsHasEagerAccessor(value)) return false;
+  // Node copies own enumerable keys by assignment. An own __proto__ key, including
+  // one supplied by a spread or dynamic key, can install setters on the copy before
+  // a later option is assigned. The literal's values then do not prove a rejection.
+  if (staticObjectProperty(value, "__proto__").status !== "missing")
+    return false;
   const member = (name: string): StreamMemberValue => {
     const read = staticObjectProperty(value, name);
     if (read.status !== "explicit") return undefined;
-    return streamMemberValue(
-      unwrapJavaScriptExpression(read.value as t.Node).node,
-      context,
-    );
+    const memberValue = unwrapJavaScriptExpression(read.value as t.Node).node;
+    // A FileHandle can be the prototype of an object literal, so the literal's
+    // shape alone does not prove that Node rejects it as a descriptor.
+    if (
+      name === "fd" &&
+      t.isObjectExpression(memberValue) &&
+      staticObjectProperty(memberValue, "__proto__").status !== "missing"
+    )
+      return undefined;
+    return streamMemberValue(memberValue, context);
   };
   const rejectsIndex = (
     name: string,
