@@ -749,6 +749,53 @@ describe("MCP root input schemas", () => {
   });
 });
 
+describe("MCP advertised input defaults", () => {
+  it("advertises defaults only for properties every input group accepts", async () => {
+    const server = new McpServer({ name: "schema-defaults", version: "0" });
+    const client = new Client({ name: "schema-defaults", version: "0" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    for (const contract of TOOL_CONTRACTS)
+      server.registerTool(
+        contract.name,
+        toolRegistrationOptions(contract),
+        async () => ({ content: [] }),
+      );
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      const { tools } = await client.listTools();
+      const advertised = new Map(tools.map((tool) => [tool.name, tool]));
+      for (const contract of TOOL_CONTRACTS) {
+        const properties = advertised.get(contract.name)!.inputSchema
+          .properties as Record<string, Record<string, unknown>>;
+        const defaults = Object.fromEntries(
+          Object.entries(properties).flatMap(([name, schema]) =>
+            "default" in schema ? [[name, schema.default]] : [],
+          ),
+        );
+        // Some MCP clients send every advertised default with each call.
+        for (const example of contract.examples)
+          expect(
+            contract.inputSchema.safeParse({ ...defaults, ...example.input })
+              .success,
+            `${contract.name}: ${example.title}`,
+          ).toBe(true);
+        if (!(contract.inputSchema instanceof z.ZodUnion)) continue;
+        for (const group of contract.inputSchema.options)
+          if (group instanceof z.ZodObject)
+            for (const name of Object.keys(defaults))
+              expect(
+                Object.keys(group.shape),
+                `${contract.name}: default for ${name}`,
+              ).toContain(name);
+      }
+    } finally {
+      await Promise.allSettled([client.close(), server.close()]);
+    }
+  });
+});
+
 it(
   "advertises and enforces the process-owned environment key constraint",
   advertiseAndEnforceProcessEnvironmentKeyConstraint,
