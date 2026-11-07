@@ -232,6 +232,14 @@ cliTest.for([
   { name: "MicroBlaze big", machine: 189, byteOrder: "big", coreFlags: 0 },
   { name: "C-SKY little", machine: 252, byteOrder: "little", coreFlags: 0 },
   { name: "C-SKY big", machine: 252, byteOrder: "big", coreFlags: 0 },
+  { name: "Blackfin little", machine: 106, byteOrder: "little", coreFlags: 0 },
+  { name: "UniCore little", machine: 110, byteOrder: "little", coreFlags: 0 },
+  { name: "Nios II little", machine: 113, byteOrder: "little", coreFlags: 0 },
+  { name: "C6x little", machine: 140, byteOrder: "little", coreFlags: 0 },
+  { name: "C6x big", machine: 140, byteOrder: "big", coreFlags: 0 },
+  { name: "NDS32 little", machine: 167, byteOrder: "little", coreFlags: 0 },
+  { name: "NDS32 big", machine: 167, byteOrder: "big", coreFlags: 0 },
+  { name: "Meta little", machine: 174, byteOrder: "little", coreFlags: 0 },
 ] as const)(
   "decodes Linux ELF32 process identity through CLI and MCP ($name)",
   async ({ machine, byteOrder, coreFlags }, { cli }) => {
