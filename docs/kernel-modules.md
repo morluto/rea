@@ -50,7 +50,9 @@ when section names were complete; it does not establish the absence of version
 metadata in `__version_ext_names` and `__version_ext_crcs`, which Linux uses
 with `CONFIG_EXTENDED_MODVERSIONS` and this workflow does not decode.
 
-`.gnu.linkonce.this_module` is reported as present, absent, or unknown.
+`.gnu.linkonce.this_module` is reported as present, absent, unknown, or
+unsupported. `unsupported` means the section is stored `SHF_COMPRESSED`; its
+file range is reported and the payload is not inflated.
 `layout` is always `unknown` because `struct module` changes with the kernel
 version and is not decoded. File-backed `__ksymtab*` sections are listed in
 section-header order by name and file range; their records are not decoded.
@@ -91,10 +93,12 @@ entries. `SHT_NOBITS` or a declared range that leaves the file is
 `SHF_COMPRESSED` payloads are not inflated
 (`modinfo_section_compressed`, `versions_section_compressed`).
 
-An appended magic with fewer than 12 preceding bytes is
-`signature_trailer_truncated`. A `sig_len` that does not leave at least one
-module byte is `signature_length_inconsistent`. Nonzero `algo`, `hash`,
-signer, key-id, or pad fields for PKCS#7 are `signature_parameters_nonzero`.
+`signature_trailer_truncated` is reserved for an appended magic with fewer
+than 12 preceding bytes. ELF admission requires at least 52 (ELF32) or 64
+(ELF64) bytes, so this inspection never returns it for an admitted file. A
+`sig_len` that does not leave at least one module byte is
+`signature_length_inconsistent`. Nonzero `algo`, `hash`, signer, key-id, or
+pad fields for PKCS#7 are `signature_parameters_nonzero`.
 A parameter block whose `id_type` is not PKCS#7 is
 `signature_id_type_not_pkcs7` and is unsupported rather than a validated
 signature.
