@@ -10,7 +10,9 @@ import type {
   JavaScriptSemanticResourceOperation,
 } from "./javascriptSemanticIr.js";
 import {
+  isNullishJavaScriptSyntax,
   semanticStaticPropertyName,
+  staticObjectProperty,
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
@@ -26,7 +28,11 @@ import {
   traverseDataEffects,
   type DataEffectTraversalContext,
 } from "./javascriptSemanticDataEffectHelpers.js";
-import { FS_OPEN_FLAGS, range } from "./javascriptStaticAnalysisHelpers.js";
+import {
+  BUFFER_ENCODINGS,
+  FS_OPEN_FLAGS,
+  range,
+} from "./javascriptStaticAnalysisHelpers.js";
 
 const RELEASE_METHODS = ["close", "destroy", "end"] as const;
 
@@ -64,16 +70,173 @@ export const collectJavaScriptSemanticResources = (
     callableStack: [],
     ancestors: [],
   };
-  const acquisitions = collectAcquisitions(program, context).filter(
-    (candidate) =>
-      !socketPortInFirstArgument(candidate) ||
-      !rejectsSocketPortLiteral(candidate.node, context),
-  );
+  const acquisitions = collectAcquisitions(program, context)
+    .filter(
+      (candidate) =>
+        !socketPortInFirstArgument(candidate) ||
+        !rejectsSocketPortLiteral(candidate.node, context),
+    )
+    .filter(
+      (candidate) =>
+        !streamOptionsInSecondArgument(candidate) ||
+        !rejectsStreamOptionsLiteral(
+          candidate.node,
+          candidate.method === "createReadStream",
+          context,
+        ),
+    );
   return [
     ...acquisitions.map(immutableAcquisition),
     ...collectReleases(program, context, acquisitions),
   ];
 };
+
+/**
+ * `fs.createReadStream` and `fs.createWriteStream` take their options object in slot 1.
+ *
+ * Node validates `start`, `end`, `fd`, `highWaterMark` and `encoding` there before it
+ * constructs the stream, so a value it rejects throws synchronously and no handle
+ * exists. Being a stream, that handle is what the release facts attach to, so a
+ * wrongly retained acquisition also invents a teardown.
+ */
+const streamOptionsInSecondArgument = (
+  candidate: Pick<AcquisitionReference, "specifier" | "method">,
+): boolean =>
+  candidate.specifier === "fs" &&
+  (candidate.method === "createReadStream" ||
+    candidate.method === "createWriteStream");
+
+/**
+ * Whether a stream's options object provably throws before the handle exists.
+ *
+ * Measured on Node 24.22.1. Each member has its own check:
+ *
+ * - `start` / `end`: a non-integer or negative number throws `ERR_OUT_OF_RANGE`; a
+ *   string, `null` or boolean throws `ERR_INVALID_ARG_TYPE`; `undefined` is absent.
+ *   `-0` is port zero here too, so the sign alone does not decide.
+ * - `fd`: the same number rule, but `null` is treated as absent.
+ * - `highWaterMark`: an integer below zero or a fraction throws
+ *   `ERR_INVALID_ARG_VALUE`; `null` is absent.
+ * - `encoding`: a nullish or otherwise falsy value is skipped, so only a truthy
+ *   literal is decided, and a string must be one `Buffer` accepts.
+ * - `start` above `end` throws `ERR_OUT_OF_RANGE`, so the pair is read together.
+ *
+ * A member this reader cannot price, and an options expression that is not an object
+ * literal, leave the call undecided.
+ */
+const rejectsStreamOptionsLiteral = (
+  node: t.CallExpression | t.OptionalCallExpression,
+  readStream: boolean,
+  context: DataEffectTraversalContext,
+): boolean => {
+  // A spread before the options slot shifts the runtime position, so slot 1 is not
+  // provably the options object.
+  if (t.isSpreadElement(node.arguments[0])) return false;
+  const options = node.arguments[1];
+  if (options === undefined || t.isSpreadElement(options)) return false;
+  const value = unwrapJavaScriptExpression(options).node;
+  if (!t.isObjectExpression(value)) return false;
+  const member = (
+    name: string,
+  ): { readonly status: string; readonly node?: t.Node } => {
+    const read = staticObjectProperty(value, name);
+    if (read.status !== "explicit") return { status: read.status };
+    return {
+      status: "explicit",
+      node: unwrapJavaScriptExpression(read.value as t.Node).node,
+    };
+  };
+  const rejectsNumberMember = (
+    name: string,
+    nullIsAbsent: boolean,
+  ): boolean => {
+    const found = member(name);
+    if (found.status !== "explicit" || found.node === undefined) return false;
+    if (t.isNullLiteral(found.node)) return !nullIsAbsent;
+    if (isNullishJavaScriptSyntax(found.node)) return false;
+    if (t.isNumericLiteral(found.node))
+      return !isUsableIndexNumber(found.node.value);
+    if (t.isUnaryExpression(found.node)) {
+      const operand = unwrapJavaScriptExpression(found.node.argument).node;
+      if (t.isNumericLiteral(operand)) {
+        const signed =
+          found.node.operator === "-" ? -operand.value : operand.value;
+        return !isUsableIndexNumber(signed);
+      }
+      if (
+        t.isIdentifier(operand) &&
+        (operand.name === "NaN" || operand.name === "Infinity")
+      )
+        return isUnmodifiedGlobalReference(
+          operand,
+          context.state,
+          operand.name,
+        );
+    }
+    // `NaN` and `Infinity` are not usable indices, and every other exactly readable
+    // primitive is a type Node refuses.
+    if (
+      t.isIdentifier(found.node) &&
+      (found.node.name === "NaN" || found.node.name === "Infinity")
+    )
+      return isUnmodifiedGlobalReference(
+        found.node,
+        context.state,
+        found.node.name,
+      );
+    return (
+      t.isStringLiteral(found.node) ||
+      t.isBooleanLiteral(found.node) ||
+      t.isBigIntLiteral(found.node) ||
+      t.isTemplateLiteral(found.node)
+    );
+  };
+  // `start` and `end` treat `null` as present, so a null literal is rejected there.
+  // Only a read stream has an `end`: a write stream ignores that member entirely, so
+  // `createWriteStream(p, {end: -1})` still creates a handle.
+  if (rejectsNumberMember("start", false)) return true;
+  if (readStream && rejectsNumberMember("end", false)) return true;
+  if (rejectsNumberMember("fd", true)) return true;
+  if (rejectsNumberMember("highWaterMark", true)) return true;
+  // `start` above `end` throws `ERR_OUT_OF_RANGE`. Both sides must be readable.
+  const start = member("start");
+  const end = member("end");
+  if (
+    start.status === "explicit" &&
+    end.status === "explicit" &&
+    start.node !== undefined &&
+    end.node !== undefined &&
+    t.isNumericLiteral(start.node) &&
+    t.isNumericLiteral(end.node) &&
+    start.node.value > end.node.value
+  )
+    return true;
+  if (rejectsStreamEncoding(member("encoding").node)) return true;
+  return false;
+};
+
+/** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
+const rejectsStreamEncoding = (value: t.Node | undefined): boolean => {
+  if (value === undefined) return false;
+  if (t.isNullLiteral(value) || isNullishJavaScriptSyntax(value)) return false;
+  const text = t.isStringLiteral(value)
+    ? value.value
+    : t.isTemplateLiteral(value) && value.expressions.length === 0
+      ? value.quasis[0]?.value.cooked
+      : undefined;
+  if (text !== undefined && text !== null)
+    // A falsy encoding is skipped by Node before it validates anything.
+    return text.length > 0 && !BUFFER_ENCODINGS.has(text.toLowerCase());
+  // Only a truthy literal reaches Node's check; `0`, `false` and `-0` are skipped.
+  if (t.isNumericLiteral(value)) return value.value !== 0;
+  if (t.isBooleanLiteral(value)) return value.value;
+  if (t.isBigIntLiteral(value)) return ![0n, -0n].includes(BigInt(value.value));
+  return false;
+};
+
+/** Whether a value is an index Node accepts for `start`, `end`, `fd` or a budget. */
+const isUsableIndexNumber = (value: number): boolean =>
+  Number.isInteger(value) && value >= 0;
 
 /**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
