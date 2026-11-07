@@ -391,22 +391,27 @@ describe("README and class wording", () => {
 });
 
 describe("capturedHomePath", () => {
-  it("uses the selected spelling of a linked settings folder, innermost selection first", () => {
+  it("uses the selected spelling of a linked settings folder, and a database's logs", () => {
     const home = "/home/ada";
     const physical = `${home}/settings/vendor`;
-    const selected = `${home}/.config/vendor`;
+    const database = `${home}/data/books.db`;
     const path = capturedHomePath({
       host: { home },
       application: { state_directories: [] },
       state: {
         selected_paths: [
           { path: `${home}/settings`, physical: `${home}/settings` },
-          { path: selected, physical },
+          { path: `${home}/.config/vendor`, physical },
+          { path: `${home}/Documents/linked.db`, physical: database },
         ],
       },
     } as unknown as DesktopApplicationCapture);
+
     expect(path(`${physical}/app.conf`)).toBe(".config/vendor/app.conf");
     expect(path(`${home}/Documents/note.txt`)).toBe("Documents/note.txt");
+    expect(path(database)).toBe("Documents/linked.db");
+    expect(path(`${database}-wal`)).toBe("Documents/linked.db-wal");
+    expect(path(`${database}-journal`)).toBe("Documents/linked.db-journal");
   });
 
   it("maps a database selected through a link together with its write-ahead log", () => {

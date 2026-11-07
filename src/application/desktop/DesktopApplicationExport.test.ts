@@ -1150,12 +1150,16 @@ describe("exportDesktopApplication launch document", () => {
         recorded: linkedSettingsCapture(`${HOME}/${target}`),
       });
 
-      // The settings keep the link's meaning, so the note is the one document.
+      // The selected link is ~/.config/MuseScore, so the settings keep that
+      // spelling and the note stays the one document.
       expect(result.normalized_result).toMatchObject({
         seed_files: expect.arrayContaining([
           "Documents/today.txt",
           ".config/MuseScore/MuseScore3.ini",
         ]),
+      });
+      expect(result.normalized_result).not.toMatchObject({
+        seed_files: expect.arrayContaining([`${target}/MuseScore3.ini`]),
       });
       expect(module).toContain(
         `exec 'notes' \\"$HOME\\"/'Documents/today.txt'"]`,
