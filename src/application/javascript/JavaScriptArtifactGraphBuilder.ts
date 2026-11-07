@@ -1,5 +1,11 @@
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { electronSemanticsState } from "./ElectronBoundaryAnalysis.js";
+import {
+  electronSemanticsState,
+  createElectronIpcContext,
+  hasCandidateElectronFindings,
+  summarizeElectronBoundaries,
+  type ElectronIpcContext,
+} from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -47,12 +53,6 @@ import {
 } from "./JavaScriptArtifactGraphStructure.js";
 import { addJavaScriptBundlerNodes } from "./JavaScriptArtifactGraphBundlers.js";
 import { addElectronBoundaries } from "./ElectronBoundaryGraph.js";
-import {
-  createElectronIpcContext,
-  hasCandidateElectronFindings,
-  summarizeElectronBoundaries,
-  type ElectronIpcContext,
-} from "./ElectronBoundaryAnalysis.js";
 
 /**
  * Build a validated application graph with cooperative immutable ownership.
