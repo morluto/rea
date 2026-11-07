@@ -344,7 +344,7 @@ export const recordChecks = (
     return [];
   const { keys } = pairMembers(element.children, []).newer;
   return element.children
-    .flatMap((field, index) => {
+    .flatMap<Suggestion>((field, index) => {
       const key = keys[index] ?? "";
       const at = `${pointer}/children/${escapeToken(key)}`;
       if (
@@ -356,9 +356,19 @@ export const recordChecks = (
       )
         return [];
       const value = elementText(field);
+      if (holdsNoisyText(field))
+        return keptFieldPieces(field).flatMap((piece) => {
+          const text = piece.trim();
+          return text.length < MIN_FIELD_CHARS ||
+            text.length > context.chars ||
+            !/[\p{L}\d]/u.test(text) ||
+            isStamp(text) ||
+            isVolatileValue(text, isBookkeeping(field))
+            ? []
+            : [{ kind: "text_contains" as const, file, pointer: at, value: text }];
+        });
       return value.trim() === "" ||
         value.length > context.chars ||
-        holdsNoisyText(field) ||
         isStamp(value) ||
         isVolatileValue(value, isBookkeeping(field))
         ? []
