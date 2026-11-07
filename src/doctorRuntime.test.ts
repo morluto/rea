@@ -23,6 +23,8 @@ import { runDoctorOwned } from "./application/Doctor.js";
 import { waitForAbortable } from "./process/AbortablePromise.js";
 import { AnalysisCleanupLease } from "./artifacts/AnalysisCleanupLease.js";
 import { CURRENT_ENTRYPOINT_PATH } from "./process/CurrentEntrypointPath.js";
+import * as configurationFiles from "./application/ClientConfigurationFiles.js";
+import { RegularFileCleanupFailure } from "./filesystem/OwnedRegularFile.js";
 
 const readyDisplay = {
   ok: true,
@@ -690,3 +692,71 @@ test.each([["win32"], ["linux"]] as const)(
     }
   },
 );
+
+test("retains a failed registration-file close returned as a read error", async () => {
+  const home = await createTestTempDirectory("rea-doctor-registration-close-");
+  const close = vi.fn().mockResolvedValue(undefined);
+  const path = join(home, ".config/opencode/opencode.json");
+  const failure = new RegularFileCleanupFailure({
+    path,
+    owner: { close } as never,
+    outcome: { kind: "failed", cause: new Error("read failed") },
+    cleanupCause: new Error("close failed"),
+  });
+  const read = vi
+    .spyOn(configurationFiles, "readEffectiveClientRegistrationConfiguration")
+    .mockResolvedValue(
+      err({
+        kind: "unreadable",
+        path,
+        detail: "unreadable",
+        cleanupFailure: failure,
+      }),
+    );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    await host.providerInspections?.(["opencode"]);
+    await host.close?.();
+    expect(close).toHaveBeenCalledOnce();
+  } finally {
+    read.mockRestore();
+    await host.close?.();
+  }
+});
+
+test("retries a retained registration-file close after a failed retry", async () => {
+  const home = await createTestTempDirectory(
+    "rea-doctor-registration-close-retry-",
+  );
+  const close = vi
+    .fn()
+    .mockRejectedValueOnce(new Error("close still failed"))
+    .mockResolvedValue(undefined);
+  const path = join(home, ".config/opencode/opencode.json");
+  const failure = new RegularFileCleanupFailure({
+    path,
+    owner: { close } as never,
+    outcome: { kind: "failed", cause: new Error("read failed") },
+    cleanupCause: new Error("close failed"),
+  });
+  const read = vi
+    .spyOn(configurationFiles, "readEffectiveClientRegistrationConfiguration")
+    .mockResolvedValue(
+      err({
+        kind: "unreadable",
+        path,
+        detail: "unreadable",
+        cleanupFailure: failure,
+      }),
+    );
+  const host = createSystemDoctorHost({ HOME: home });
+  try {
+    await host.providerInspections?.(["opencode"]).catch(() => undefined);
+    await host.close?.().catch(() => undefined);
+    await host.close?.();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    read.mockRestore();
+    await host.close?.();
+  }
+});

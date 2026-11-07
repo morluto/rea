@@ -138,7 +138,13 @@ const readSelectedRegistration = async (
     });
   // A registration this process cannot read says nothing about the values the
   // client passes on; the terminal is not those values.
-  if (configuration === undefined || !configuration.ok) return undefined;
+  if (configuration === undefined) return undefined;
+  if (!configuration.ok) {
+    const cleanup = configuration.error.cleanupFailure;
+    if (cleanup !== undefined)
+      resourceScope.retain(cleanup.owner, cleanup.path);
+    return undefined;
+  }
   const details = clientRegistrationEnvironmentDetails(
     configuration.value.document,
     {},
