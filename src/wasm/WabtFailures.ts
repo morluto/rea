@@ -1,6 +1,8 @@
 import { analysisSettingLimit } from "../domain/analysisSettingDefinitions.js";
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import {
   artifactFileCancellationCause,
   bindArtifactFileCleanup,
@@ -309,11 +311,10 @@ const classifyWabtFailure = (
     return new AnalysisInputError(
       "inspect_wasm_artifact",
       {
-        cause,
-        ...artifactOptions,
         ...(cause instanceof ArtifactReaderFailure
-          ? stableArtifactInputRecovery(cause)
-          : {}),
+          ? selectedPathRefusal(cause)
+          : { cause }),
+        ...artifactOptions,
       },
       [
         {

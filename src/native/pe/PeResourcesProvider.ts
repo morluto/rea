@@ -1,12 +1,14 @@
 import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   projectStableArtifactFailure,
-  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { fixedNativeAllowance } from "../../domain/native/nativeDeadlines.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../../artifacts/ArtifactReader.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
 import {
   artifactFilePrimaryFacts,
@@ -176,17 +178,13 @@ const peResourcesFailurePrimary = (
       );
     }
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(
-        operation,
-        { cause, ...stableArtifactInputRecovery(cause) },
-        [
-          {
-            path: ["path"],
-            reason: "invalid_format",
-            message: cause.message,
-          },
-        ],
-      );
+      return new AnalysisInputError(operation, selectedPathRefusal(cause), [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: cause.message,
+        },
+      ]);
   }
 
   if (cause instanceof Error && "code" in cause) {

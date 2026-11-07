@@ -2,6 +2,7 @@ import {
   chmod,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   symlink,
@@ -11,6 +12,7 @@ import { dirname, join } from "node:path";
 import { describe, expect, it, onTestFinished } from "vitest";
 import { exportWebScripts } from "../../../src/application/WebScriptExportService.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { readStableArtifact } from "../../../src/artifacts/readStableArtifact.js";
 import { LocalWebScriptArtifacts } from "../../../src/browser/assets/LocalWebScriptArtifacts.js";
 import { LocalWebModuleArtifacts } from "../../../src/browser/modules/WebModuleArtifacts.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
@@ -240,6 +242,37 @@ describe("caller-selected web module files", () => {
       );
     }
   });
+
+  it.skipIf(process.platform === "win32")(
+    "keeps the reader's resolved-target recovery for a symlinked manifest (#8714)",
+    async () => {
+      const { root, manifestPath } = await fixture();
+      const selected = join(root, "selected-manifest.json");
+      await symlink(manifestPath, selected);
+      const target = await realpath(manifestPath);
+      const refusal: unknown = await readStableArtifact(
+        selected,
+        1024 * 1024,
+      ).catch((cause: unknown) => cause);
+      const recovery = (refusal as { userMessage?: string }).userMessage;
+      expect(recovery).toContain(target);
+      const response = await new LocalWebModuleArtifacts().load({
+        manifest_path: selected,
+        script_index: 0,
+      });
+      if (response.ok) throw new Error("expected selection failure");
+      const projected = projectAnalysisError(response.error);
+      expect(projected).toMatchObject(
+        selectionIssue(["manifest_path"], target),
+      );
+      expect(projected.remediation.action).toBe(recovery);
+      const retried = await new LocalWebModuleArtifacts().load({
+        manifest_path: target,
+        script_index: 0,
+      });
+      if (!retried.ok) throw retried.error;
+    },
+  );
 
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     "reports an unreadable manifest as a host access denial",

@@ -352,6 +352,49 @@ export class ArtifactReaderFailure extends Error {
   }
 }
 
+/** Recovery wording for a refused symlink whose target is a regular file now. */
+export const resolvedPathRetry = (resolvedPath: string): string =>
+  `Retry with the resolved regular file path ${resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`;
+
+/**
+ * Input-error options for a reader `path` refusal that keep the reader's own
+ * recovery, such as a refused symlink's resolved target, as the remediation.
+ */
+export const selectedPathRefusal = (
+  cause: ArtifactReaderFailure,
+): {
+  readonly cause: ArtifactReaderFailure;
+  readonly remediationAction?: string;
+  readonly conformsToInputContract?: boolean;
+} => ({
+  cause,
+  ...selectedPathRecovery(cause),
+});
+
+/**
+ * Recovery for a reader `path` refusal: a verified regular-file target is a
+ * conforming retry; otherwise the reader's own guidance (dangling or
+ * unreachable symlink targets) is passed through unchanged.
+ */
+export const selectedPathRecovery = (
+  cause: ArtifactReaderFailure,
+):
+  | {
+      readonly remediationAction: string;
+      readonly conformsToInputContract?: boolean;
+    }
+  | Record<string, never> => {
+  if (cause.reason !== "path") return {};
+  if (cause.resolvedPath !== undefined)
+    return {
+      remediationAction: resolvedPathRetry(cause.resolvedPath),
+      conformsToInputContract: true,
+    };
+  return cause.userMessage === undefined
+    ? {}
+    : { remediationAction: cause.userMessage };
+};
+
 /** Fixed reader input ceilings share producer-owned recovery across CLI and MCP. */
 export const artifactFixedLimitFailure = (
   name: string,

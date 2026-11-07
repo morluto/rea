@@ -2,13 +2,13 @@ import {
   artifactFileCancellationCause,
   artifactFilePrimaryFacts,
 } from "../../artifacts/ArtifactFileOperation.js";
-import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRecovery,
+} from "../../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { readStableArtifact } from "../../artifacts/readStableArtifact.js";
-import {
-  projectStableArtifactFailure,
-  stableArtifactInputRecovery,
-} from "../../artifacts/StableArtifactFailure.js";
+import { projectStableArtifactFailure } from "../../artifacts/StableArtifactFailure.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisAccessDeniedError,
@@ -41,7 +41,7 @@ const inputFailure = (
     {
       cause,
       ...(cause instanceof ArtifactReaderFailure
-        ? stableArtifactInputRecovery(cause)
+        ? selectedPathRecovery(cause)
         : {}),
     },
     [

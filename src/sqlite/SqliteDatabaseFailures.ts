@@ -1,5 +1,7 @@
-import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
-import { stableArtifactInputRecovery } from "../artifacts/StableArtifactFailure.js";
+import {
+  ArtifactReaderFailure,
+  selectedPathRefusal,
+} from "../artifacts/ArtifactReader.js";
 import {
   ArtifactFileCleanupFailure,
   bindArtifactFileCleanup,
@@ -173,17 +175,13 @@ export const sqliteDatabaseFailure = (
       return new AnalysisCancelledError(operation, {
         cause: artifactFileCancellationCause(cause),
       });
-    return new AnalysisInputError(
-      operation,
-      { cause, ...stableArtifactInputRecovery(cause) },
-      [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ],
-    );
+    return new AnalysisInputError(operation, selectedPathRefusal(cause), [
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: cause.message,
+      },
+    ]);
   }
   if (cause instanceof Error && cause.name === "AbortError")
     return new AnalysisCancelledError(operation, {

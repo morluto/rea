@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { constants, type BigIntStats } from "node:fs";
 import { lstat, open, realpath, type FileHandle } from "node:fs/promises";
 import { sameRegularFileState } from "../filesystem/RegularFile.js";
-import { ArtifactReaderFailure } from "./ArtifactReader.js";
+import { ArtifactReaderFailure, resolvedPathRetry } from "./ArtifactReader.js";
 import type { ArtifactResourceScope } from "./ArtifactResourceScope.js";
 import {
   artifactFileCompletion,
@@ -38,6 +38,7 @@ export const completedStableArtifact = (
 export interface StableArtifactFileSystem {
   lstat(path: string): Promise<BigIntStats>;
   open(path: string, flags: number): Promise<FileHandle>;
+  /** Names a refused symlink's target for recovery; it never admits that target. */
   realpath?(path: string): Promise<string>;
 }
 
@@ -47,20 +48,64 @@ const FILE_SYSTEM: StableArtifactFileSystem = {
   realpath,
 };
 
-/** Suggest a retry only when the rejected link currently resolves to a regular file. */
-const resolvedRegularFile = async (
+/**
+ * Refuse a selected symlink while naming its current target, so a caller can
+ * deliberately select that canonical path. The target is only reported: the
+ * read never follows it, because the selected spelling would otherwise stop
+ * identifying the bytes that were read.
+ */
+const selectedPathFailure = async (
   path: string,
+  metadata: BigIntStats,
   fileSystem: StableArtifactFileSystem,
-): Promise<string | undefined> => {
+): Promise<ArtifactReaderFailure> => {
+  const message = `Expected a regular file without a symlink: ${path}`;
+  if (!metadata.isSymbolicLink() || fileSystem.realpath === undefined)
+    return new ArtifactReaderFailure("path", message);
+  let target: string;
   try {
-    const resolved = await fileSystem.realpath?.(path);
-    if (resolved === undefined) return undefined;
-    const target = await fileSystem.lstat(resolved);
-    return target.isFile() && !target.isSymbolicLink() ? resolved : undefined;
+    target = await fileSystem.realpath(path);
+  } catch (cause) {
+    if (artifactSelectedPathErrno(cause) !== undefined)
+      return new ArtifactReaderFailure(
+        "path",
+        `${message} (its target does not currently resolve)`,
+        {
+          cause,
+          userMessage: `The selected path is a symlink whose target does not currently resolve: ${path}. Select an existing regular file directly, then retry.`,
+        },
+      );
+    // The target may exist but be unreachable (EACCES, EIO, ...): keep the
+    // refusal, but report the lookup failure instead of calling it dangling.
+    const code =
+      cause instanceof Error &&
+      "code" in cause &&
+      typeof cause.code === "string"
+        ? cause.code
+        : "unknown error";
+    return new ArtifactReaderFailure(
+      "path",
+      `${message} (its target could not be resolved: ${code})`,
+      {
+        cause,
+        userMessage: `The selected path is a symlink whose target could not be resolved (${code}): ${path}. Check access to the link's target, or select the intended regular file directly, then retry.`,
+      },
+    );
+  }
+  // Offer the target as a retry only when it is a regular file now; a link to
+  // a directory or another special file gets no resolved-file hint.
+  try {
+    const resolved = await fileSystem.lstat(target);
+    if (resolved.isFile() && !resolved.isSymbolicLink())
+      return new ArtifactReaderFailure(
+        "path",
+        `${message} (it resolves to ${target})`,
+        { resolvedPath: target, userMessage: resolvedPathRetry(target) },
+      );
   } catch {
     // A missing or unreadable target changes only the recovery hint.
-    return undefined;
   }
+  return new ArtifactReaderFailure("path", message);
 };
 
 const afterValidation = async <T>(
@@ -92,13 +137,7 @@ export const readStableArtifact = async (
   assertArtifactReadActive(signal);
   const before = await fileSystem.lstat(path);
   if (!before.isFile() || before.isSymbolicLink())
-    throw new ArtifactReaderFailure(
-      "path",
-      `Expected a regular file without a symlink: ${path}`,
-      before.isSymbolicLink()
-        ? { resolvedPath: await resolvedRegularFile(path, fileSystem) }
-        : {},
-    );
+    throw await selectedPathFailure(path, before, fileSystem);
   const maximumSize = BigInt(maximumBytes);
   if (before.size > maximumSize)
     throw new ArtifactReaderFailure(
