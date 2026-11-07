@@ -7,6 +7,11 @@ import { expect, it } from "vitest";
 
 import { isPortableBundleName } from "../../../src/application/environment/environmentBundle.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import {
+  evidenceSemanticContent,
+  type Evidence,
+} from "../../../src/domain/evidence.js";
 import { parseDesktopTask } from "../../../src/domain/desktop/appTask.js";
 import {
   renderTaskSteps,
@@ -260,4 +265,46 @@ it("refuses UTF-16 credentials in seeded files and gzip content", async () => {
   expect(error.message).toContain("jwt");
   expect(JSON.stringify(refused)).not.toContain(token);
   expect(await readdir(directory).catch(() => [])).toEqual([]);
+});
+
+it("redacts a typed secret truncated in a stopped capture draft", async () => {
+  const secret = `e-${"Fake9Kite".repeat(88)}x`;
+  const config = await secretsConfig({ master: { text: secret } });
+  const { client, outputs } = await buildCaptureFakes({
+    serverEnv: { XDG_CONFIG_HOME: config },
+  });
+  const draft = JSON.parse(await readFile(outputs.draft, "utf8")) as {
+    normalized_result: { files: { values: unknown[] }[] };
+  };
+  const file = draft.normalized_result.files[0];
+  if (file === undefined) throw new Error("expected a drafted file");
+  file.values.push({
+    pointer: "/root/password",
+    kind: "changed",
+    before: "old",
+    after: `${secret.slice(0, 600)}…`,
+  });
+  (draft as unknown as { evidence_id: string }).evidence_id =
+    `ev_${digestCanonicalValue(evidenceSemanticContent(draft as unknown as Evidence), "Evidence")}`;
+  await writeFile(outputs.draft, JSON.stringify(draft));
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: id,
+    name: "seed",
+  });
+  await callOk(client, "act_on_build_computer", {
+    computer_id: id,
+    action: "type_secret",
+    secret: "master",
+  });
+  await callOk(client, "mark_build_checkpoint", {
+    computer_id: id,
+    name: "end",
+  });
+  const stopped = await callOk(client, "stop_build_capture", {
+    computer_id: id,
+  });
+  expect(JSON.stringify(stopped)).not.toContain(secret.slice(0, 600));
+  expect(JSON.stringify(stopped)).toContain("<secret:master>…");
 });
