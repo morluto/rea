@@ -838,6 +838,43 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   },
 );
 
+/** Assert the refusal's facts, not the sentence that joins them. */
+const expectNotADatabaseRefusal = (error: unknown, selected: string): void => {
+  expect(error).toMatchObject({
+    code: "invalid_request",
+    details: {
+      issues: [
+        {
+          path: ["path"],
+          reason: "invalid_format",
+          message: expect.stringContaining("file is not a database"),
+        },
+      ],
+    },
+  });
+  expect(error).toMatchObject({
+    details: { issues: [{ message: expect.stringContaining(selected) }] },
+  });
+};
+
+cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
+  "refuses a one-byte file instead of reporting a complete empty schema",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-sqlite-one-byte-");
+    const selected = join(root, "truncated.db");
+    await writeFile(selected, "S");
+    const refused = await runFileCli(cli, {
+      arguments: ["inspect-sqlite-database", selected, "--json"],
+      environment: { REA_LOG_LEVEL: "silent" },
+    });
+    expect(refused.exitCode).toBe(1);
+    expectNotADatabaseRefusal(refused.json, selected);
+    const { call } = await connectLocalToolsMcp();
+    const response = await call("inspect_sqlite_database", { path: selected });
+    expectNotADatabaseRefusal(parseMcpToolError(response).error, selected);
+  },
+);
+
 cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
   "returns actionable public errors for corrupt input, unknown or ambiguous tables and invalid record choices",
   async ({ cli }) => {
@@ -847,28 +884,16 @@ cliTest.runIf(SQLITE_NATIVE_LIMITS_AVAILABLE)(
     // Distinct malformed selections each name their own selected path.
     for (const selected of [path, join(root, "other-invalid.db")]) {
       await writeFile(selected, "not a SQLite database");
-      const expectedError = {
-        code: "invalid_request",
-        details: {
-          issues: [
-            {
-              path: ["path"],
-              reason: "invalid_format",
-              message: `Selected SQLite database is invalid (file is not a database): ${selected}`,
-            },
-          ],
-        },
-      };
       const corrupt = await runFileCli(cli, {
         arguments: ["inspect-sqlite-database", selected, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
       expect(corrupt.exitCode).toBe(1);
-      expect(corrupt.json).toMatchObject(expectedError);
+      expectNotADatabaseRefusal(corrupt.json, selected);
       const response = await call("inspect_sqlite_database", {
         path: selected,
       });
-      expect(parseMcpToolError(response).error).toMatchObject(expectedError);
+      expectNotADatabaseRefusal(parseMcpToolError(response).error, selected);
     }
     const valid = join(root, "valid.db");
     const database = new DatabaseSync(valid);

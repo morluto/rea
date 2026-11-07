@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import { z } from "zod";
 import { jsonParts } from "../domain/jsonSerialization.js";
@@ -789,6 +790,10 @@ export const inspectSqliteDatabaseSnapshot = (
   snapshotPath: string,
   input: InspectSqliteDatabaseInput,
 ): Inspection => {
+  // SQLite's Unix VFS reports a one-byte file as size zero, so the engine would
+  // open it as an empty database and never reach its own header check.
+  if (statSync(snapshotPath).size === 1)
+    throw new SqliteInspectionFailure("format", "file is not a database");
   const db = new DatabaseSync(snapshotPath, {
     readOnly: true,
     allowExtension: false,
