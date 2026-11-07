@@ -198,3 +198,25 @@ describe("controller arguments", () => {
     }
   });
 });
+
+describe("batchListedFiles", () => {
+  it("splits many tiny files before their envelopes pass the answer budget", () => {
+    const files = Array.from({ length: 3000 }, (_, index) => ({
+      path: `home/file-${String(index)}`,
+      size: 1,
+    }));
+    const answerBytes = guestFileAnswerBytes(1, 1);
+    const batches = batchListedFiles(files, {
+      rawBytes: 8 * MIB,
+      answerBytes,
+    });
+
+    expect(batches.length).toBe(files.length);
+    expect(
+      batches.every(
+        (batch) =>
+          guestFileAnswerBytes(batch.bytes, batch.files.length) <= answerBytes,
+      ),
+    ).toBe(true);
+  });
+});

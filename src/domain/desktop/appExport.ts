@@ -172,7 +172,10 @@ export const capturedHomePath = (
     (left, right) => right.physical.length - left.physical.length,
   );
   return (path) => {
-    // The caller-selected spelling wins, including through a link, innermost first.
+    // The path the caller selected is the one the app uses, including through
+    // a link, innermost first. ~/.config/MuseScore pointing at settings or
+    // Documents is seeded as .config/MuseScore, so those settings are not a
+    // second document beside the note.
     const selection = selections.find(({ physical }) =>
       isWithinAny(path, [physical]),
     );

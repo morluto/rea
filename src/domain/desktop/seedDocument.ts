@@ -39,18 +39,37 @@ export const openSeedDocument = (
     readonly documents: readonly string[];
     /** Whether a home path is a document the capture saw. */
     readonly isDocument: (homePath: string) => boolean;
+    /** The seed's spelling of a home path, when a selected link renamed it. */
+    readonly spell?: (homePath: string) => string;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
+  const spelled = (path: string) => facts.spell?.(path) ?? path;
   const none = (reason: string) => ({
     argv,
     opens: { kind: "none", reason } as const,
   });
+  const retarget = (argument: string) => {
+    const path = homePathOf(argument, home, facts.workingDirectory);
+    if (path === undefined) return argument;
+    const seedPath = spelled(path);
+    return seedPath !== path &&
+      facts.isDocument(seedPath) &&
+      argument.endsWith(path)
+      ? `${argument.slice(0, -path.length)}${seedPath}`
+      : argument;
+  };
   const named = argv
     .slice(1)
-    .map((argument) => homePathOf(argument, home, facts.workingDirectory));
+    .map((argument) => homePathOf(argument, home, facts.workingDirectory))
+    .map((path) => (path === undefined ? undefined : spelled(path)));
   if (named.some((path) => path !== undefined && facts.isDocument(path)))
-    return { argv, opens: { kind: "captured" } };
+    return {
+      argv: argv.map((argument, index) =>
+        index === 0 ? argument : retarget(argument),
+      ),
+      opens: { kind: "captured" },
+    };
   const [document] = documents;
   if (document === undefined) return { argv, opens: { kind: "empty" } };
   if (documents.length > 1)
