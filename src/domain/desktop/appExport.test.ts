@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import {
   appModuleFile,
@@ -17,6 +21,40 @@ import {
   type DesktopAppExportPlan,
 } from "./appExport.js";
 import type { LaunchDocument } from "./seedDocument.js";
+
+it.skipIf(process.platform === "win32")(
+  "does not import seeded Python modules while encoding a file URL",
+  () => {
+    const home = mkdtempSync(join(tmpdir(), "rea-url-home-"));
+    try {
+      writeFileSync(
+        join(home, "urllib.py"),
+        'open("seed-ran", "w").write("unexpected")\n',
+      );
+      const command = launchCommand(
+        [
+          process.execPath,
+          "-e",
+          "process.stdout.write(process.argv[1])",
+          "file:///home/ada/Documents/report.txt",
+        ],
+        "/home/ada",
+        "/home/ada",
+      );
+      const result = spawnSync(command[0]!, command.slice(1), {
+        encoding: "utf8",
+        env: { ...process.env, HOME: home },
+      });
+      expect(result.status).toBe(0);
+      expect(result.stdout).toBe(
+        pathToFileURL(join(home, "Documents/report.txt")).href,
+      );
+      expect(existsSync(join(home, "seed-ran"))).toBe(false);
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "launches captured file URLs under the runtime home with their encoded suffix, query, and fragment",
