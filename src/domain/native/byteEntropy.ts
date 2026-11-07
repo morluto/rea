@@ -70,9 +70,16 @@ export const entropyFromCounts = (
 };
 
 export const computeBlockEntropy = (bytes: Uint8Array): number => {
-  const counts = new Float64Array(256);
-  for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
-  return entropyFromCounts(counts, bytes.length);
+  // Indexed reads into an integer counter. Iterating a typed array with `for...of`
+  // and re-reading `counts[byte] ?? 0` through a Float64Array measured several times
+  // slower than this loop on the same input.
+  const counts = new Uint32Array(256);
+  const length = bytes.length;
+  for (let index = 0; index < length; index += 1) {
+    const key = bytes[index] as number;
+    counts[key] = counts[key]! + 1;
+  }
+  return entropyFromCounts(counts, length);
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */
