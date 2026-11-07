@@ -1052,7 +1052,7 @@ describe("app bundle canonical containment", () => {
   );
 });
 
-describe("binary target I/O: explicit kinds and executable headers", () => {
+describe("binary target I/O: explicit kinds and database identity", () => {
   it("honors an explicit database kind without relying on the file suffix", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     await writeFile(join(directory, "saved-analysis"), "database");
@@ -1064,9 +1064,46 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
     expect(result.ok && result.value).toMatchObject({
       kind: "database",
       format: "analysis-database",
+      databaseEngine: null,
     });
   });
 
+  it("identifies IDA databases by signature and Hopper databases by suffix", async () => {
+    const directory = await createTestTempDirectory("rea-target-");
+    const header = (magic: string) =>
+      Buffer.concat([Buffer.from(magic, "latin1"), Buffer.alloc(28)]);
+    await writeFile(join(directory, "renamed.bin"), header("IDA2"));
+    await writeFile(join(directory, "legacy.idb"), header("IDA1"));
+    await writeFile(join(directory, "sample.hop"), header("IDA9"));
+    await writeFile(join(directory, "spoofed.i64"), header("IDA9"));
+    const parse = (name: string) =>
+      parseBinaryTarget(name, { cwd: directory, hostArchitecture: "arm64" });
+    for (const [name, databaseEngine] of [
+      ["renamed.bin", "ida"],
+      ["legacy.idb", "ida"],
+      ["sample.hop", "hopper"],
+    ] as const)
+      expect(await parse(name)).toMatchObject({
+        ok: true,
+        value: {
+          kind: "database",
+          format: "analysis-database",
+          databaseEngine,
+        },
+      });
+    // A suffix alone does not make an IDA database.
+    expect((await parse("spoofed.i64")).ok).toBe(false);
+    // An explicit executable kind is not overridden by the signature.
+    expect(
+      await parseBinaryTarget("renamed.bin", {
+        cwd: directory,
+        targetKind: "executable",
+      }),
+    ).toMatchObject({ ok: false });
+  });
+});
+
+describe("binary target I/O: executable headers", () => {
   it("reads a PE header beyond the initial probe", async () => {
     const directory = await createTestTempDirectory("rea-target-");
     const path = join(directory, "delayed.exe");

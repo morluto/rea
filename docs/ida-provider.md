@@ -1,6 +1,6 @@
 # IDA provider
 
-REA adapts an existing IDA MCP server into its native analysis tools. Existing IDA Pro profiles use [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); an optional native bridge for IDA Pro and IDA Free is described below. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
+REA adapts an existing IDA MCP server into its native analysis tools. Existing IDA Pro profiles use [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); the official [Hex-Rays IDA MCP](https://github.com/HexRaysSA/ida-mcp) and an optional native bridge for IDA Pro and IDA Free are described below. Install and configure your selected engine and upstream MCP using their instructions. REA does not install, upgrade, activate, or license them, and does not bundle another IDA server.
 
 Choose one lifecycle mode in an upstream MCP JSON registration. Set `REA_IDA_MCP_CONFIG` to that file, then select `ida` once through `REA_ANALYSIS_PROVIDER`, the CLI's `--provider ida`, or MCP's `open_binary.provider_id`. No provider startup occurs during discovery.
 
@@ -12,10 +12,11 @@ Startup failures identify the accepted REA analysis operation. Missing-profile a
 
 The headless profile is defined by the database-supervisor API, not by an upstream version string. The upstream source snapshot [`c133c385`](https://github.com/mrexodia/ida-pro-mcp/tree/c133c3853faa111a9b00ee615c013b720d0c4acd) includes `idb_close` (introduced by [upstream PR #495](https://github.com/mrexodia/ida-pro-mcp/pull/495)) alongside `idb_open` and `idb_list`. Earlier builds may report the same `2.0.0` version while lacking that tool, so REA checks the live catalog rather than treating a version number or branch name as a compatibility guarantee.
 
-| Mode     | Upstream profile    | Known working                                          |
-| -------- | ------------------- | ------------------------------------------------------ |
-| attached | legacy GUI tools    | 1.4.0                                                  |
-| headless | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close` |
+| Mode     | Upstream profile    | Known working                                                                            |
+| -------- | ------------------- | ---------------------------------------------------------------------------------------- |
+| attached | legacy GUI tools    | 1.4.0                                                                                    |
+| headless | database supervisor | builds serving `idb_open`, `idb_list`, and `idb_close`                                   |
+| headless | Hex-Rays IDA MCP    | builds serving `open_database`, `list_databases`, `close_database`, and `execute_python` |
 
 ## Analyze an already-open GUI target
 
@@ -51,6 +52,11 @@ was established; failed registrations remain unavailable. Correct
 launch environment. Restart/reconnect that server after changing its environment;
 an export in another shell does not update a running server.
 
+In attached mode, open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. 
+REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. 
+The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows. 
+Attached profiles, including native mode, refuse universal Mach-O inputs at admission: every slice shares the recorded whole-file hash, so REA cannot verify which slice the GUI loaded. 
+Open a thin file extracted with `lipo -thin` in both IDA and REA, or use headless mode, which analyzes the selected slice.
 An HTTP registration's `url` must use `http` or `https` without URL credentials,
 and its host must be `localhost`, `127.0.0.1`, `[::1]`, or the Docker/Podman
 host-gateway name `host.docker.internal` or `host.containers.internal`. Use a
@@ -193,6 +199,37 @@ When a completed `idb_open` response reports success or is otherwise ambiguous, 
 
 Headless cleanup uses the upstream database lifecycle. Abruptly terminating REA, its proxy, or the supervisor does not establish worker release. Prefer `close_binary` for MCP sessions; after an interrupted process, inspect upstream session inventory and retained workspace diagnostics before removing working files. This adapter does not claim Windows Job Object containment for the upstream detached workers.
 
+## Use the official Hex-Rays IDA MCP
+
+The `hexrays` protocol drives the [Hex-Rays IDA MCP](https://github.com/HexRaysSA/ida-mcp) headlessly. Upstream requires IDA 9.4 or later with idalib and Python 3.11 or later, with `uv` and Git on `PATH`; REA installs none of them. Register the server for stdio:
+
+```json
+{
+  "command": "ida-mcp",
+  "args": ["stdio", "--agent=rea"],
+  "mode": "headless",
+  "protocol": "hexrays"
+}
+```
+
+The profile is headless and stdio only. Hex-Rays database leases belong to the MCP server process, so REA's own stdio child is what makes a lease provably REA's. Attached and HTTP Hex-Rays registrations are rejected, and analyzing a database already open in the IDA GUI is not supported. A registration that omits `protocol` but reaches a Hex-Rays server fails at startup with `advertised_tools` and a recovery naming the `hexrays` registration.
+
+Any stdio command that starts the server works; copy `command` and `args` from your working installation, such as `uvx ida-mcp stdio` or the Claude Code plugin's `uv run ... ida-mcp stdio`. Upstream's README adds `--exclude-newer=1s` to the `uvx` form, which resolves the newest release on every start, so it can run a release newer than the ones verified below.
+
+REA copies and verifies the input in a private workspace as for the database supervisor, then calls `open_database` on that copy with `set_current: false`. Hex-Rays assigns the instance id; REA binds the session only when the reply reports an `idalib` backend and `list_databases` shows that id leased for the private input. A GUI database is refused, and the open is treated as unverified.
+
+### Start from an existing IDA database
+
+The `hexrays` profile also opens an existing `.idb` or `.i64`, so analysis starts from its saved names, types and comments instead of a fresh auto-analysis. Pass the database itself to `open_binary` with `provider_id: "ida"`. REA identifies an IDA database by its `IDA1`/`IDA2` signature, not its suffix, and copies the whole file into the private workspace before opening the copy. The copy matters: idalib repacks a database when its last lease is released, even without a save, so opening the selected file directly would rewrite it. The selected database is only read.
+
+The session is bound to the copy's opened database path (`idb_path`), because a database reports the input it was created from as `input_path`; health also reports the `input_sha256` IDA recorded for that input. Results reflect the database's saved content: unsaved changes held by another IDA session, including an unpacked `.id0`/`.id1` set beside it, are not included. Evidence subjects identify the database file, not the input binary. Attached and database-supervisor registrations reject database targets, and Hopper rejects IDA databases.
+
+Hex-Rays MCP exposes database reads only through `execute_python`. REA therefore sends one fixed, read-only query module, [`bridge/ida/hexrays_queries.py`](../bridge/ida/hexrays_queries.py), followed by a single `_rea_query(name, arguments_json)` call. The module answers the same database-supervisor reads REA already validates: health, function inventory and lookup, strings, paged pseudocode and assembly, callees, a depth-zero call graph, xrefs to an address, and a minimal segment survey. Caller-supplied text only ever reaches the module as JSON data, never as Python source, and REA forwards no other Python. Each observation records `execute_python` as the upstream tool, plus the query name, its arguments, and the module's SHA-256 instead of its body. The health reads behind each operation's identity checks are kept the same way, as `health_observations` beside the parsed metadata. Call scans skip data items inside functions.
+
+`execute_python` waits for initial auto-analysis, so readiness is checked before the first read. Function sizes are enclosing spans, as with other IDA profiles. Strings come from IDA's default string list. Xrefs exclude ordinary flow from the preceding instruction. Callees on x86-only targets report every direct code or pointer target of a call instruction: targets inside a function are internal and resolve to that function, and imports, pointer slots, and code outside every function are reported by address as external. Indirect calls without a reference remain unknown. Other targets use the processor-neutral call graph and report function entries only. Direct callers remain unavailable for the same reason as in the database-supervisor profile. The observed Hex-Rays MCP does not truncate or preview `execute_python` results, and REA keeps every page to 100 items or fewer. Nonempty engine stdout and stderr are retained in the observation.
+
+On close, REA releases its lease with `close_database`, then requires `list_databases` to show neither its instance id nor its private input. The Hex-Rays MCP packs the private copy's database when the final lease is released. That write stays inside the private workspace, which REA then removes. A rejected `close_database` counts as a release only once inventory confirms it; otherwise the workspace is retained and a later close retries the release. An explicit rejection of `open_database` with no listed lease removes the workspace. When the open reply is lost, REA adopts and releases a lease its own server lists for the private input, but still retains the workspace because the open request may not have stopped. A GUI database is never released or closed. The Hex-Rays MCP also writes per-session JSONL traces of its tool calls under `~/.idapro/mcp/sessions/`; REA neither creates nor removes them.
+
 ## Connect an agent once
 
 Add the registration path to the **REA** MCP entry's environment, keeping the upstream registration in its separate JSON file:
@@ -239,7 +276,7 @@ All profiles expose `list_documents` as the single target admitted for the sessi
 
 The legacy profile additionally supports direct callers. Its producer may report call-site or interior addresses; REA resolves the reported function symbol to its canonical entry. The modern and native profiles do not prove direct callers from its code/data xref labels, so that capability is unavailable and the dossier marks it unknown.
 
-Complete body ranges, typed reference edges, CFG, referenced data, source locals, comment kinds, and database revision are unavailable. Empty unsupported dossier facets mean **unknown**, not observed absence. Whole-symbol inventory, mutation, debugging, arbitrary Python forwarding, and requested GUI navigation are outside this adapter's coverage. Check session availability before composing a workflow that needs those facets.
+Complete body ranges, typed reference edges, CFG, referenced data, source locals, comment kinds, and database revision are unavailable. Empty unsupported dossier facets mean **unknown**, not observed absence. Whole-symbol inventory, mutation, debugging, arbitrary Python forwarding, and requested GUI navigation are outside this adapter's coverage; the Hex-Rays profile sends only its fixed query module. Check session availability before composing a workflow that needs those facets.
 
 `provider.version` identifies the REA adapter; the profile explicitly records `version_scope: "rea-ida-adapter"`. The MCP handshake's `serverInfo` is separate and does not establish IDA or Python distribution versions. Raw observations preserve producer metadata and output. Attached hashes identify the recorded original input; headless identity uses the digest-verified private copy and observed worker input path. Neither proves source-code recovery or an unmodified analysis database.
 
@@ -252,6 +289,8 @@ Native verification requires `--second-procedure other_function --second-marker 
 The verifier requires the resolved procedure in both inventory and procedure search, then compares address, assembly, pseudocode, instruction windows and relationship results with the CLI/MCP dossier. Supply `--expected-string known_literal` to check a known positive string inventory/search result and `--expected-xref 0xSOURCE` to check a known reference source address. Choose those oracles independently from the operation under test. Without them, string and xref correctness are listed in `unverified`; valid output shapes alone do not establish those behaviors. Callee parity does not independently establish semantic completeness. Native callee successes must report an explicit truncation marker; missing markers remain protocol failures.
 
 The initial real workflows use stdio registrations for the legacy Windows GUI profile and a Windows x64 headless supervisor with IDA 9.3. The headless workflow has also passed on macOS arm64 with IDA Professional 9.1 (build 9.1.250226) against the same upstream commit `c133c3853faa111a9b00ee615c013b720d0c4acd`, using a source-built arm64 Mach-O fixture; Mach-O C symbols carry a leading underscore, so the procedure name is `_rea_fixture_add`. Streamable HTTP is tested against a loopback MCP fixture with the pinned client SDK; a real IDA HTTP-supervisor workflow remains unverified. Linux headless engine operation, other IDA releases, architectures, and modern attached GUI tools require their corresponding real workflows before support is claimed.
+
+The Hex-Rays profile has passed `npm run verify:ida` on Linux x64 against Hex-Rays IDA MCP 20261008.0.1 with idalib, using the public two-function fixture built as an x86-64 ELF, the same fixture with an added string literal for `--expected-string`, and a statically linked AArch64 ELF build that exercises the call-graph callee path. It has also passed with the x86-64 fixture's saved `.i64` as the target, holding a function renamed in that database; the selected database stayed byte-identical. Other hosts, PE and Mach-O targets, and Hex-Rays HTTP transports remain unverified.
 
 Native Windows verification uses IDA Pro 9.3 with the public two-function fixture and Windows `whoami.exe`, using upstream `c9d15d98e8a143fc74f6e14037c48f63889b6d6c` with a loopback-listener change. It covers production CLI/MCP parity, distinct-function switching, identity and connection cleanup. See the [correctness and performance measurements](https://github.com/morluto/rea/blob/a2e2c29b59e8775b0e6aedb09a9eb16adf32646b/experiments/analysis-efficiency/ida-native-windows.md). This follow-up did not run Windows IDA Free or native macOS.
 

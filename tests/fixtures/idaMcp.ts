@@ -71,6 +71,8 @@ export class RecordingIdaMcp implements IdaMcpConnection {
   detaches = 0;
   inputSha256: string;
   inputPath: string;
+  /** Opened database path; defaults to the input path's sibling database. */
+  idbPath: string | undefined;
   imageBase = "0x1000";
   pseudocode = "int main(void) { return 42; }";
   owned = true;
@@ -258,7 +260,7 @@ export class RecordingIdaMcp implements IdaMcpConnection {
         return {
           status: "ok",
           input_path: this.inputPath,
-          idb_path: `${this.inputPath}.i64`,
+          idb_path: this.idbPath ?? `${this.inputPath}.i64`,
           module: "target.elf",
           imagebase: this.imageBase,
           auto_analysis_ready: true,

@@ -44,6 +44,9 @@ export const IDA_LIMITATIONS = Object.freeze([
   "Complete function body ranges, typed references, unresolved indirect calls, referenced data, and basic blocks are unavailable in this adapter. Empty unsupported dossier facets are unknown, not observed absence.",
 ]);
 
+export const IDA_DATABASE_TARGET_LIMITATION =
+  "Results start from a private copy of the selected IDA database's saved content; unsaved changes held by another IDA session are excluded. The input binary is identified only by the SHA-256 the database records.";
+
 export const IDA_NATIVE_STRING_LIMITATION =
   "Native string observations use upstream C-string rendering; other string representations remain unknown.";
 

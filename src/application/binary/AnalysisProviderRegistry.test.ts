@@ -32,6 +32,7 @@ const DATABASE_TARGET: BinaryTarget = {
   sha256: "a".repeat(64),
   kind: "database",
   format: "analysis-database",
+  databaseEngine: "hopper",
 };
 const ARTIFACT_TARGET: BinaryTarget = {
   path: "/tmp/app.asar",

@@ -50,6 +50,7 @@
     "dist",
     "install.sh",
     "bridge/hopper_bridge.py",
+    "bridge/ida/hexrays_queries.py",
     "bridge/cutter/rea_bridge.py",
     "bridge/native/NativeUIChildren.swift",
     "bridge/native/NativeUIValues.swift",

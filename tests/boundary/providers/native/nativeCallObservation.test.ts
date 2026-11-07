@@ -515,6 +515,7 @@ describe("observe_native_calls failures", () => {
         sha256: target.sha256,
         kind: "database",
         format: "analysis-database",
+        databaseEngine: null,
       })
       .execute("observe_native_calls", { breakpoints: [] });
     expect(!database.ok && database.error).toBeInstanceOf(

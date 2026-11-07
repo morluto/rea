@@ -353,7 +353,10 @@ explicit path or endpoint and do not need it.
   inventory context is useful and available from the selected provider.
 
 For an existing IDA MCP configuration, use `open_binary` with the original
-input binary and `provider_id: "ida"`; do not pass an `.idb` or `.i64` database.
+input binary and `provider_id: "ida"`. Only the Hex-Rays (`hexrays`) profile
+also admits an existing `.idb` or `.i64`: pass the database path to start from
+its saved annotations instead of a fresh auto-analysis. REA analyzes a private
+copy and never writes the selected database.
 The legacy attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
 owned private database without saving. Installation and registration reuse

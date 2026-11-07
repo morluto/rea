@@ -36,6 +36,10 @@ import {
   type StableRegularFileDescriptor,
 } from "../filesystem/RegularFile.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  hasIdaDatabaseSignature,
+  type AnalysisDatabaseEngine,
+} from "../domain/analysisDatabase.js";
 import type {
   BinaryTarget,
   BinaryArchitecture,
@@ -477,17 +481,22 @@ const readOpenedBinaryTarget = async (
     ...(await identity()),
     artifactSelectedPath: selectedPath,
   });
+  const databaseEngine =
+    targetKind === undefined || targetKind === "database"
+      ? await detectDatabaseEngine(path, handle, signal)
+      : null;
   if (
     targetKind === "database" ||
     (targetKind === undefined &&
       artifactFormat !== "ines" &&
       artifactFormat !== "plist" &&
-      path.toLowerCase().endsWith(".hop"))
+      databaseEngine !== null)
   )
     return ok({
       ...(await identity()),
       kind: "database",
       format: "analysis-database",
+      databaseEngine,
     });
   if (artifactFormat !== undefined) {
     const identity = await artifactIdentity();
@@ -723,6 +732,21 @@ const throwIfTargetResolutionCancelled = (signal?: AbortSignal): void => {
     throw new AnalysisCancelledError("resolve_binary_target", {
       cause: signal.reason,
     });
+};
+
+/** IDA databases carry a signature; Hopper databases are known only by suffix. */
+const detectDatabaseEngine = async (
+  path: string,
+  handle: FileHandle,
+  signal?: AbortSignal,
+): Promise<AnalysisDatabaseEngine | null> => {
+  throwIfTargetResolutionCancelled(signal);
+  const magic = Buffer.alloc(4);
+  const observed = await handle.read(magic, 0, magic.length, 0);
+  throwIfTargetResolutionCancelled(signal);
+  if (hasIdaDatabaseSignature(magic.subarray(0, observed.bytesRead)))
+    return "ida";
+  return path.toLowerCase().endsWith(".hop") ? "hopper" : null;
 };
 
 const detectArtifactFormat = async (

@@ -76,6 +76,7 @@ it.each(["search_strings", "search_procedures"] as const)(
       sha256: "a".repeat(64),
       kind: "database",
       format: "analysis-database",
+      databaseEngine: "hopper",
     });
     try {
       const result = await client.execute(operation, {

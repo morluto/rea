@@ -207,6 +207,7 @@ it("rejects an omitted auxiliary source at the actual package verification bound
   const packedFiles = [
     "package/bridge/hopper_bridge.py",
     "package/bridge/cutter/rea_bridge.py",
+    "package/bridge/ida/hexrays_queries.py",
     ...Object.values(GHIDRA_BRIDGE_SOURCES)
       .filter((name) => name !== source)
       .map((name) => `package/bridge/ghidra/${name}`),

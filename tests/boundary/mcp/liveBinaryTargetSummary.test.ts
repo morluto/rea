@@ -100,7 +100,12 @@ const targets: readonly BinaryTarget[] = [
       entryPoint: 0x80003100,
     },
   },
-  { ...identity, kind: "database", format: "analysis-database" },
+  {
+    ...identity,
+    kind: "database",
+    format: "analysis-database",
+    databaseEngine: null,
+  },
   ...([...ZIP_PACKAGE_FORMATS, "asar", "godot-pck", "dmg", "pkg"] as const).map(
     (format) => ({ ...identity, kind: "archive" as const, format }),
   ),

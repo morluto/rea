@@ -1,4 +1,5 @@
-import { rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -15,6 +16,9 @@ import { createEvidence } from "../../src/domain/evidence.js";
 import { createEvidenceBundle } from "../../src/domain/evidenceBundle.js";
 import { createAnalysisExecution } from "../../src/application/AnalysisProvider.js";
 import { EnhancedTools } from "../../src/application/EnhancedTools.js";
+import { IDA_DATABASE_TARGET_LIMITATION } from "../../src/ida/IdaProviderCapabilities.js";
+import type { BinaryTarget } from "../../src/domain/binaryTargetTypes.js";
+import { RecordingHexRaysIdaMcp } from "../fixtures/idaHexRaysMcp.js";
 import { IDA_PROVIDER_IDENTITY } from "../../src/ida/IdaProviderMetadata.js";
 import { parseBinaryTarget } from "../../src/application/BinaryTargetResolver.js";
 import { fat } from "../../src/domain/binaryTarget.fixture.js";
@@ -154,12 +158,16 @@ describe("IDA provider composition", () => {
     const producer = new RecordingIdaMcp(target);
     const provider = new IdaProvider(config.value, {}, () => producer);
     expect(
-      provider.inspectTargetSupport({
-        path: target.path,
-        sha256: target.sha256,
-        kind: "database",
-        format: "analysis-database",
-      }),
+      await provider.inspectTargetSupportWithOptions(
+        {
+          path: target.path,
+          sha256: target.sha256,
+          kind: "database",
+          format: "analysis-database",
+          databaseEngine: "ida",
+        },
+        {},
+      ),
     ).toMatchObject({ status: "unsupported", code: "target_kind_unsupported" });
     const session = createTestBinarySession(provider);
     expect((await session.open(target.path)).ok).toBe(true);
@@ -386,5 +394,111 @@ describe("IDA binary_overview execution", () => {
     const procedures = await session.execute("list_procedures", {});
     expect(procedures.ok).toBe(true);
     expect((await session.close()).ok).toBe(true);
+  });
+});
+
+describe("IDA database targets", () => {
+  const hexRaysSession = async () => {
+    const { root } = await createIdaTarget();
+    roots.push(root);
+    const registration = join(root, "registration.json");
+    await writeFile(
+      registration,
+      JSON.stringify({
+        command: "uvx",
+        args: ["ida-mcp", "stdio"],
+        mode: "headless",
+        protocol: "hexrays",
+        workspaceRoot: root,
+      }),
+    );
+    const config = parseConfig({ REA_IDA_MCP_CONFIG: registration });
+    if (!config.ok) throw config.error;
+    const bytes = Buffer.concat([
+      Buffer.from("IDA2", "latin1"),
+      Buffer.alloc(60, 7),
+    ]);
+    const path = await realpath(root).then((dir) =>
+      join(dir, "target.exe.i64"),
+    );
+    await writeFile(path, bytes);
+    const target: BinaryTarget = {
+      path,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      kind: "database",
+      format: "analysis-database",
+      databaseEngine: "ida",
+    };
+    const producer = new RecordingHexRaysIdaMcp(target);
+    producer.recordedInputPath = "/original/target.exe";
+    const provider = new IdaProvider(config.value, {}, () => producer);
+    return {
+      root,
+      path,
+      bytes,
+      target,
+      producer,
+      provider,
+      session: createTestBinarySession(provider),
+    };
+  };
+
+  it("analyzes a private copy of an IDA database and leaves the selected database unchanged", async () => {
+    const { root, path, bytes, target, producer, provider, session } =
+      await hexRaysSession();
+    expect(
+      provider.inspectTargetSupport({
+        path: join(root, "sample.hop"),
+        sha256: "a".repeat(64),
+        kind: "database",
+        format: "analysis-database",
+        databaseEngine: "hopper",
+      }),
+    ).toMatchObject({
+      status: "unsupported",
+      code: "target_format_unsupported",
+    });
+    // The registration protocol decides database support, so only the
+    // registration-aware check can admit an IDA database.
+    expect(provider.inspectTargetSupport(target)).toMatchObject({
+      status: "unknown",
+    });
+    expect(
+      await provider.inspectTargetSupportWithOptions(target, {}),
+    ).toMatchObject({ status: "supported" });
+
+    const opened = await session.open(path, { providerId: "ida" });
+    expect(opened).toMatchObject({
+      ok: true,
+      value: { kind: "database", databaseEngine: "ida" },
+    });
+    const listed = await session.execute("list_procedures", {});
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.limitations).toContain(IDA_DATABASE_TARGET_LIMITATION);
+    const open = producer.calls.find(({ name }) => name === "open_database");
+    expect(open?.args.path).not.toBe(path);
+    expect(String(open?.args.path).replaceAll("\\", "/")).toMatch(
+      /rea-ida-[^/]+\/target\.exe\.i64$/u,
+    );
+
+    expect((await session.close()).ok).toBe(true);
+    // The worker repacked only its private copy, which REA then removed.
+    expect(producer.leases.size).toBe(0);
+    expect((await readFile(path)).equals(bytes)).toBe(true);
+    expect(
+      (await readdir(root)).filter((name) => name.startsWith("rea-ida-")),
+    ).toEqual([]);
+  });
+
+  it("binds the database by its opened path, not the input it records", async () => {
+    const { path, producer, session } = await hexRaysSession();
+    expect((await session.open(path, { providerId: "ida" })).ok).toBe(true);
+    expect((await session.execute("list_procedures", {})).ok).toBe(true);
+    producer.reads.idbPath = "/elsewhere/other.i64";
+    const moved = await session.execute("list_procedures", {});
+    expect(moved.ok).toBe(false);
+    if (!moved.ok)
+      expect(moved.error.message).toContain("input identity changed");
+    await session.close();
   });
 });

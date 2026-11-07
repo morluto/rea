@@ -148,6 +148,14 @@ export class HopperProvider implements AnalysisProviderCandidate {
         reason: `Hopper cannot directly analyze ${target.kind} targets.`,
         diagnostics,
       };
+    if (target.kind === "database" && target.databaseEngine === "ida")
+      return {
+        status: "unsupported",
+        code: "target_format_unsupported",
+        reason:
+          "Hopper cannot open IDA databases. Select the ida provider or open the original executable.",
+        diagnostics,
+      };
     if (target.kind === "database" && this.platform === "darwin")
       return {
         status: "unsupported",
