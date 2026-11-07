@@ -13,7 +13,7 @@ const text = (value: unknown): string | undefined =>
 const jsonText = (value: unknown): string =>
   typeof value === "string" ? value : JSON.stringify(value);
 
-const mcpToolNames = new Set(TOOL_CONTRACTS.map(({ name }) => name));
+const mcpToolNames: ReadonlySet<string> = new Set(TOOL_CONTRACTS.map(({ name }) => name));
 
 const mcpIdentity = (
   value: unknown,
@@ -31,9 +31,25 @@ const mcpIdentity = (
   return suffix === undefined ? undefined : { server: "rea", tool: suffix };
 };
 
+const preserveContentBlocks = (value: unknown): RecordValue[] => {
+  if (Array.isArray(value)) {
+    return value.map((block) => {
+      const b = record(block);
+      if (b?.type === "text" && typeof b.text === "string")
+        return { type: "text", text: b.text };
+      if (b?.type === "data" && b.data !== undefined)
+        return { type: "data", data: b.data };
+      return { type: "text", text: jsonText(block) };
+    });
+  }
+  if (typeof value === "string")
+    return [{ type: "text", text: value }];
+  return [{ type: "text", text: jsonText(value) }];
+};
+
 const toolResult = (value: unknown, isError = false): RecordValue => ({
   ...(isError ? { isError: true } : {}),
-  content: [{ type: "text", text: jsonText(value) }],
+  content: preserveContentBlocks(value),
 });
 
 const completedTool = ({
@@ -155,7 +171,8 @@ export const normalizeGeminiEvents = (
     string,
     { readonly name: string; readonly input: unknown }
   >();
-  const assistantText: string[] = [];
+  // Accumulate text within each assistant response, separate from prior commentary.
+  let currentResponseText: string[] = [];
 
   for (const value of events) {
     const event = record(value);
@@ -164,12 +181,12 @@ export const normalizeGeminiEvents = (
       const role = text(event.role);
       if (role !== "assistant" && role !== "model") continue;
       const content = event.content;
-      if (typeof content === "string") assistantText.push(content);
+      if (typeof content === "string") currentResponseText.push(content);
       else if (Array.isArray(content)) {
         for (const partValue of content) {
           const part = record(partValue);
           const partText = text(part?.text);
-          if (partText !== undefined) assistantText.push(partText);
+          if (partText !== undefined) currentResponseText.push(partText);
         }
       }
     } else if (event.type === "tool_use") {
@@ -205,12 +222,14 @@ export const normalizeGeminiEvents = (
       const stats =
         record(event.stats) ?? record(event.tokens) ?? record(event.usage);
       const result = text(event.output) ?? text(event.response);
-      if (result !== undefined) assistantText.push(result);
-      if (assistantText.length > 0)
+      if (result !== undefined) currentResponseText.push(result);
+      if (currentResponseText.length > 0) {
+        const combined = currentResponseText.join("");
         normalized.push({
           type: "item.completed",
-          item: { type: "agent_message", text: assistantText.join("") },
+          item: { type: "agent_message", text: combined },
         });
+      }
       normalized.push({
         type: "turn.completed",
         usage: {
@@ -226,6 +245,7 @@ export const normalizeGeminiEvents = (
               : 0,
         },
       });
+      currentResponseText = [];
     }
   }
   return normalized;

@@ -147,7 +147,7 @@ processTest.for([false, true])(
       }
       export async function runOwnedCommand() {
         const run = join(${JSON.stringify(parent)}, (await readdir(${JSON.stringify(parent)}))[0]);
-        await mkdir(join(run, "codex"));
+        await mkdir(join(run, "codex"), { recursive: true });
         await writeFile(join(run, "codex/auth.json"), "inert fixture");
         await writeFile(${JSON.stringify(receipt)}, JSON.stringify({ run }));
         throw new OwnedCommandFailure("fixture timeout with retained owner");
@@ -239,7 +239,7 @@ processTest.for([
       }
       export async function prepareOwnedCommand() {
         const run = join(${JSON.stringify(parent)}, (await readdir(${JSON.stringify(parent)}))[0]);
-        await mkdir(join(run, "codex"));
+        await mkdir(join(run, "codex"), { recursive: true });
         await writeFile(join(run, "codex/auth.json"), "inert preparation fixture");
         await delay(10);
         prepared = true;
