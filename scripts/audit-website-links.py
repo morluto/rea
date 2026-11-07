@@ -9,6 +9,7 @@ from pathlib import Path
 import re
 import subprocess
 import sys
+from typing import NamedTuple
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, unquote, urlsplit
 from urllib.request import Request, urlopen
@@ -25,6 +26,11 @@ def github_api(endpoint):
     return json.loads(result.stdout)
 
 
+class GitHubTarget(NamedTuple):
+    endpoint: str
+    asset: str | None = None
+
+
 def github_target(url):
     """Resolve repository URLs, including branch names containing slashes."""
     parts = [unquote(part) for part in url.path.strip("/").split("/")]
@@ -35,7 +41,7 @@ def github_target(url):
         # Raw URLs omit the blob segment; share ref/path resolution below.
         parts = [*parts[:2], "blob", *parts[2:]]
     if len(parts) == 2:
-        return repo
+        return GitHubTarget(repo)
     kind = parts[2]
     if kind in ("blob", "tree") and len(parts) >= 4:
         ref = parts[3]
@@ -49,13 +55,23 @@ def github_target(url):
             if matches:
                 ref = max(matches, key=len)
         path = "/".join(parts[3:])[len(ref):].lstrip("/")
-        return f"{repo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}"
+        return GitHubTarget(f"{repo}/contents/{quote(path, safe='/')}?ref={quote(ref, safe='')}")
     if kind in ("issues", "pull") and len(parts) == 4 and parts[3].isdigit():
-        return f"{repo}/{'pulls' if kind == 'pull' else 'issues'}/{parts[3]}"
+        return GitHubTarget(f"{repo}/{'pulls' if kind == 'pull' else 'issues'}/{parts[3]}")
     if kind == "commit" and len(parts) == 4:
-        return f"{repo}/commits/{parts[3]}"
-    if kind == "releases" and len(parts) >= 5 and parts[3] in ("tag", "download"):
-        return f"{repo}/releases/tags/{quote(parts[4], safe='')}"
+        return GitHubTarget(f"{repo}/commits/{parts[3]}")
+    if kind == "releases":
+        if parts[3:] == ["latest"]:
+            return GitHubTarget(f"{repo}/releases/latest")
+        if len(parts) == 6 and parts[3:5] == ["latest", "download"]:
+            return GitHubTarget(f"{repo}/releases/latest", parts[5])
+        if len(parts) >= 5 and parts[3] == "tag":
+            tag = "/".join(parts[4:])
+        elif len(parts) >= 6 and parts[3] == "download":
+            tag = "/".join(parts[4:-1])
+        else:
+            return None
+        return GitHubTarget(f"{repo}/releases/tags/{quote(tag, safe='')}", parts[-1] if parts[3] == "download" else None)
     return None
 
 
@@ -66,15 +82,13 @@ def audit_url(item):
     url = urlsplit(value)
     try:
         if url.hostname in ("github.com", "raw.githubusercontent.com"):
-            endpoint = github_target(url)
-            if endpoint is None:
+            target = github_target(url)
+            if target is None:
                 return dict(result, status="unknown", reason="GitHub UI route; check in a browser")
-            data = github_api(endpoint)
-            parts = url.path.strip("/").split("/")
-            if len(parts) >= 6 and parts[2:4] == ["releases", "download"]:
-                if unquote(parts[5]) not in [asset["name"] for asset in data.get("assets", [])]:
-                    return dict(result, status="broken", reason="Release asset is missing")
-            return dict(result, status="ok", via="gh api", endpoint=endpoint)
+            data = github_api(target.endpoint)
+            if target.asset is not None and target.asset not in [asset["name"] for asset in data.get("assets", [])]:
+                return dict(result, status="broken", reason="Release asset is missing")
+            return dict(result, status="ok", via="gh api", endpoint=target.endpoint)
         request = Request(value.split("#", 1)[0], headers={
             "User-Agent": "REA-Website-Verifier/1.0 (+https://github.com/morluto/rea)",
         })
