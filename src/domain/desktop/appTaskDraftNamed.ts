@@ -278,9 +278,11 @@ const elementChecks = (
     return;
   }
   if (texts.covers(pointer) || !room(collected, collected.elements)) return;
+  const records = recordChecks(added, pointer, value);
+  // Repeated unnamed fields, such as two `<field>` children, have no selector. Their text is the content check; the tag name is not.
   const own = [
     ...attributeChecks(added, pointer, value),
-    ...recordChecks(added, pointer, value),
+    ...(records.length > 0 ? records : fieldChecks(added, pointer, value)),
     ...nestedRecordChecks(
       { file, final: ends.final, named: (at) => added.named(ends.final, at) },
       pointer,

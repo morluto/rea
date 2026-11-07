@@ -447,6 +447,26 @@ async def _settled_views(url):
     return views, True, False
 `;
 
+/** Where the verifier's evaluator begins. The task description is everything before it. */
+const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
+
+/**
+ * The task a verifier states: the app, the checks and the settle timing,
+ * without the evaluator that runs them. An older REA renders that evaluator
+ * differently, including its array-index helper, for the same task.
+ */
+export const taskVerifierDescription = (source: string): string | undefined => {
+  const at = source.indexOf(VERIFIER_EVALUATOR);
+  return at < 0 ? undefined : source.slice(0, at + 1);
+};
+
+/** Whether two verifiers state the same task. Their evaluator source may differ. */
+export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
+  const expected = taskVerifierDescription(hosted);
+  const found = taskVerifierDescription(bundled);
+  return expected !== undefined && expected === found;
+};
+
 /** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
 export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
