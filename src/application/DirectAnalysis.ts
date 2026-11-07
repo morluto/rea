@@ -22,8 +22,10 @@ import {
   retainAnalysisResultSources,
   type AnalysisResultWithSources,
 } from "./investigation/recordEvidenceSources.js";
-import { resolveInvestigationEvidenceClosure } from "./investigation/InvestigationEvidence.js";
-import { createInvestigationEvidenceClosureChecker } from "./investigation/InvestigationEvidence.js";
+import {
+  resolveInvestigationEvidenceClosure,
+  createInvestigationEvidenceClosureChecker,
+} from "./investigation/InvestigationEvidence.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { NativeToolName } from "../contracts/native/nativeToolContracts.js";
 import type { EnhancedToolName } from "../contracts/enhancedInputs.js";
@@ -43,7 +45,10 @@ import {
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
 import { access, stat } from "node:fs/promises";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { requiresNativeSourceAdmissionBeforeReplay } from "./binary/AnalysisSnapshotCache.js";
+import {
+  requestsFreshIndependentDecompile,
+  requiresNativeSourceAdmissionBeforeReplay,
+} from "./binary/AnalysisSnapshotCache.js";
 import { classifyBinaryTargetFilesystemFailure } from "./BinaryTargetResolver.js";
 import {
   snapshotBindingMismatch,
@@ -473,6 +478,7 @@ const runAnalysis = async (
         ) &&
         tool !== "trace_native_ui_action" &&
         tool !== "decompile_all" &&
+        !requestsFreshIndependentDecompile(tool, arguments_) &&
         routeAllowsSnapshotReplay(route, tool)
       ) {
         const cached = snapshotEvidenceForQuery(snapshot, {

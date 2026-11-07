@@ -84,7 +84,7 @@ early stop, no swap and 192 tasks. The passing static gate used 153.534 s wall,
 152.274161 family CPU seconds and 6,442,016,768 peak cgroup bytes. It reported
 no OOM and verified payload cleanup. Cgroup memory includes file cache, not RSS.
 Other trials' exact counters and failures are preserved in the
-[compact record](electron-cancellation-2026-10-16.json).
+[compact record](https://github.com/morluto/rea/blob/main/docs/verification/electron-cancellation-2026-10-16.json).
 
 Payload-exit counters are collected while the observer remains alive and are
 not final whole-scope counters. Some failed probes retain live app/Xvfb processes

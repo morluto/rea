@@ -1,4 +1,7 @@
-import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import {
+  filterGhidraLiteralCandidates,
+  GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+} from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
@@ -1046,7 +1049,14 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        executionMetadata = { ...executionMetadata, rawResult: called.value };
+        executionMetadata = {
+          ...executionMetadata,
+          rawResult: called.value,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+          ],
+        };
       }
       if (
         operation === "inspect_native_data_type" &&

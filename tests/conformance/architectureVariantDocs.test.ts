@@ -10,7 +10,10 @@ import {
 import { GHIDRA_VARIANT_LANGUAGES } from "../../src/ghidra/GhidraRawBinaryLanguage.js";
 
 it("documents every architecture variant with its Ghidra decoder", async () => {
-  const content = await readFile(resolve("docs/raw-binary.md"), "utf8");
+  const content = await readFile(
+    resolve("docs/providers/raw-binary.md"),
+    "utf8",
+  );
   const rows = content
     .split("\n")
     .filter((line) => /^\|\s*`armv/u.test(line))

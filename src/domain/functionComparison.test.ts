@@ -117,7 +117,13 @@ const observe = (
   digit: string,
   value: ReturnType<typeof dossier>,
   providerId = "rea-workflow",
-  relationshipCoverage: RelationshipCoverage | null = { status: "complete" },
+  relationshipCoverage: RelationshipCoverage | null = {
+    status: "complete",
+    discovery: {
+      callers: { status: "complete" },
+      callees: { status: "complete" },
+    },
+  },
 ): Evidence =>
   createEvidence(
     {
@@ -499,7 +505,7 @@ describe("function call relationship coverage", () => {
         conclusion_kind: "unresolved_branch",
         left_count: 0,
         right_count: 0,
-        limitations: [`Right: ${limitation}`],
+        limitations: expect.arrayContaining([`Right: ${limitation}`]),
       });
       expect(result.status).toBe("unknown");
     },
@@ -921,10 +927,18 @@ describe("function comparison", () => {
     const left = observe("a", dossier("return 0;", "0x1000"), "rea-workflow", {
       status: "complete",
       diagnostics: [diagnostic],
+      discovery: {
+        callers: { status: "complete" },
+        callees: { status: "complete" },
+      },
     });
     const right = observe("b", dossier("return 0;", "0x2000"), "rea-workflow", {
       status: "complete",
       diagnostics: [diagnostic],
+      discovery: {
+        callers: { status: "complete" },
+        callees: { status: "complete" },
+      },
     });
     const comparison = compareFunctions(
       functionSnapshotFixture(left),
