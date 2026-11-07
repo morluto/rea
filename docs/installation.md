@@ -378,12 +378,12 @@ a particular caller-supplied input will be valid. See
 
 Select the part you want to check:
 
-| Task                                | Readiness check                                                          |
-| ----------------------------------- | ------------------------------------------------------------------------ |
-| Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.           |
-| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `kuna`)       |
-| One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents)) |
-| Installed workflow instructions     | `rea doctor --skill --json`                                              |
+| Task                                | Readiness check                                                            |
+| ----------------------------------- | -------------------------------------------------------------------------- |
+| Static JavaScript/Electron analysis | Run `rea analyze-javascript-application PATH --json` directly.             |
+| One analysis engine                 | `rea doctor --provider ghidra --json` (or `hopper`, `ida`, `jadx`, `kuna`) |
+| One agent registration              | `rea doctor --client codex --json` (see [client IDs](#supported-agents))   |
+| Installed workflow instructions     | `rea doctor --skill --json`                                                |
 
 A scoped report has `scope.mode: "explicit"`. Its `scope_checks` determine
 `healthy` and the exit status. Other checks appear in `informational_checks`;
@@ -636,6 +636,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Claude Desktop     | `claude_desktop` |
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
+| CodeBuddy          | `codebuddy`      |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -654,6 +655,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Factory Droid      | `droid`          |
 | Trae               | `trae`           |
 | WorkBuddy          | `workbuddy`      |
+| LM Studio          | `lm_studio`      |
 | ZCode              | `zcode`          |
 | DeepSeek Harness   | `dsh`            |
 | FreeBuff           | `freebuff`       |
@@ -663,12 +665,20 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 `freebuff` requires `rea-agents@6.8.0` or later. Older releases reject
 `rea setup --client freebuff` as an unsupported client.
 
+`lm_studio` requires a release after 6.8.0.
+
 See [client configuration and troubleshooting](client-configuration.md) for
 configuration paths, profiles, trust policies, and schema-limit workarounds.
 
 ### DeepSeek Harness
 
 See [the Cordis patch and launcher setup](client-configuration.md#deepseek-harness).
+
+### llama.cpp
+
+llama-server can launch REA through its native stdio MCP configuration. This is
+a manual connection, not an automatic setup client ID. See the
+[local model setup](client-configuration.md#llamacpp).
 
 ### Other client settings
 
@@ -717,6 +727,11 @@ and status when publisher verification cannot download the current package.
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP or to a URL carrying credentials is refused before
 that destination is requested, and those credentials are not reported.
+A package download fails when no bytes arrive for 30 seconds or when it has not
+finished within 15 minutes, so a slow connection that keeps delivering bytes can
+complete. Release metadata and the publisher key keep a 10-second limit. A
+`timeout` failure reports the `limit` it reached (`stalled` or `deadline`), its
+`timeoutMs` and the `receivedBytes` before it stopped.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -1134,7 +1149,8 @@ and `set_addresses_names` name a function entry or any other mapped address
 session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly
+Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
+[DOS MZ executables](ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied
 entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
 unsupported on Windows.
@@ -1160,7 +1176,11 @@ selected formula's `libexec/openjdk.jdk/Contents/Home`, for example
 Java version bounds declared by your Ghidra installation; REA does not select
 another JDK when `JAVA_HOME` is explicit or the PATH JVM runs. On macOS,
 when the PATH launcher cannot start a JVM, it tries executable Homebrew
-`opt/openjdk` candidates, preferring the host architecture's prefix. Failed
+`opt/openjdk` and installed `opt/openjdk@<major>` candidates, preferring the host
+architecture's prefix and the unversioned formula within each prefix. Versioned
+aliases are considered in ascending major order within Ghidra's declared Java
+bounds; the selected executable still undergoes the normal Java probe and
+admission checks. REA does not invoke Homebrew or install a JDK. Failed
 discovery probes remain available in installation diagnostics. Doctor distinguishes an absent Java
 command from a command that runs and fails, and retains bounded probe output
 and any parsed properties when the selected runtime cannot be admitted.
@@ -1413,6 +1433,74 @@ not needed for the make step, only for the Ghidra provider. If your toolchain
 rejects the inherited `-mmacosx-version-min=10.6` flag, retry the make with
 `ADDITIONAL_FLAGS="-w"`.
 
+### Automatically checkpoint an owned Ghidra Program
+
+On Linux/macOS, opt in with an absolute storage directory:
+
+```bash
+export REA_GHIDRA_CHECKPOINT_DIR=/absolute/rea-checkpoints
+rea decompile /absolute/target/app --procedure entry --provider ghidra --json
+```
+
+Use the same setting in the MCP server environment. CLI and MCP share the
+provider-owned implementation. The first successful analysis saves the complete
+Program as a packed `.gzf`. Later processes restore its names, comments, types
+and analysis into a private temporary project with `-noanalysis`. Normal close
+saves metadata changes; unchanged queries do not rewrite the checkpoint.
+The target executable is never executed by this workflow.
+
+For agents, `open_binary` advertises this startup setting. After selecting Ghidra,
+the default `binary_session` summary reports enabled or ephemeral mode in the
+provider's `capabilities[].shared_limitations`. Successful native results state
+whether initial analysis was created or a verified packed Program was restored.
+No separate save/restore tool or runtime analysis-setting update is required;
+enabling checkpoint mode requires the startup environment and an MCP restart.
+
+Storage is separated by target SHA-256 and analysis-profile identity, including
+the supported Ghidra version. Identical executable bytes at another path can
+reuse the Program. One live REA session holds the checkpoint's socket lease;
+a competing session reports that owner and must wait until it closes. Only
+REA-owned Programs are checkpointed. Caller-selected existing projects retain
+their separate read-only workflow below.
+
+The directory retains the current manifest and packed Program. Publication
+writes and syncs a new packed file before atomically replacing the manifest;
+superseded files are removed after publication. A failed save preserves the
+previous checkpoint and the live session for retry. Correct the reported storage
+problem, then call `close_binary` again. Incomplete cleanup retains its owner.
+Corrupt, malformed or changed checkpoints fail explicitly instead of falling
+back to a fresh import. Preserve that directory and repair it or explicitly
+select a new directory to start fresh.
+
+Recovery reaches **the last successfully saved checkpoint**. Cancellation,
+process failure or a killed CLI can lose later edits; unfinished first-time
+auto-analysis cannot resume midway. This does not restore a whole REA
+investigation, and does not promise host-crash durability. The working project
+remains ephemeral. Packed Program import, checksums, and saving consume disk and
+time proportional to Program size; saving runs once after first analysis and
+again only when the Program changes.
+
+This initial mode supports stock native ELF, PE and Mach-O imports on POSIX.
+Windows, special pinned-loader profiles, caller-selected `.gpr` projects,
+language/analyzer overrides, analysis seeds and extra analysis extensions are
+not admitted with this setting; unset it to use their existing workflows.
+The checkpoint directory must be private to the current user.
+
+REA analysis snapshots remain separate immutable query results. Initial analysis
+has a stable generation bound to the target and analysis profile: publishing its
+first checkpoint neither replaces a live MCP session nor invalidates its initial
+snapshot. Later saved states bind their content digest, so an edited checkpoint
+can require reopening without an older `--snapshot`. Snapshot import and save
+after live metadata mutation remain unavailable as before. Complete Evidence
+retains the checkpoint directory and generation in its analysis profile; restored
+reads also report the packed file's path and verified digest. Returned caveats
+distinguish restored database state from fresh analysis.
+
+Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installation
+to verify fresh CLI/MCP processes, name/comment/type preservation, competing
+sessions, corruption refusal and explicit recovery. Lifecycle fixtures cover
+save failure/retry and cancellation during checkpoint finalization separately.
+
 ### Reuse an existing Ghidra project
 
 For repeated investigations, select an expanded local project marker with
@@ -1421,6 +1509,20 @@ use this shared selection. `REA_GHIDRA_PROGRAM_NAME` selects one exact program
 in the project root; when omitted it defaults to the selected target's filename.
 Paths, globs and command flags are not program names. The matching `.rep`
 directory must be present; restore `.grez` archives with Ghidra first.
+
+For a `.gzf` packed program, first import it into a new Ghidra project in an
+existing, caller-selected directory. A packed program is not a `.grez` project
+archive:
+
+```bash
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "/absolute/new-project-directory" "new-project" \
+  -import "/absolute/program.gzf" -noanalysis
+```
+
+Select the resulting `new-project.gpr` with `REA_GHIDRA_PROJECT_PATH`. If the
+imported program name differs from the selected target's filename, set
+`REA_GHIDRA_PROGRAM_NAME` to the name reported by Ghidra's import. REA then
+opens its own read-only project copy; it does not import the packed program.
 
 ```bash
 export REA_ANALYSIS_PROVIDER=ghidra
@@ -1443,17 +1545,30 @@ the original database; REA reads selected files only for fingerprinting and copy
 This mode does not copy unrelated sibling projects, rerun repair scripts, or
 admit bridge database edits. Cleanup removes the owned copy.
 The bridge checks the program's recorded import SHA-256 against the admitted
-target digest; mismatches and project changes fail explicitly. Reopen the target
-to resolve a new profile after intentionally changing the source project.
+target digest. An unavailable or malformed recorded digest is reported as an
+unverified identity, distinct from a known mismatch; neither admits the program
+or triggers a fresh import. Select a matching target or explicitly configure a
+different project or program. Changes to the source project also fail admission;
+reopen the target to resolve a new profile after intentionally changing it.
 
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
+For supported header-selected MIPS ELF targets, the profile also binds the
+selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
+used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
 Project content participates in snapshot identity, so different project states
 cannot reuse the same profile's cached observations.
+
+If a function selector is missing, use `list_procedures` or `search_procedures`
+to inspect the selected project's observed inventory. A missing entry does not
+prove the function is absent from the executable. To explicitly compare with a
+fresh import, start another REA process without `REA_GHIDRA_PROJECT_PATH` and
+`REA_GHIDRA_PROGRAM_NAME`; the fresh analysis will not include the selected
+project's annotations.
 
 To prepare a new project explicitly, use your existing Ghidra installation in a
 new directory you own (this writes that project; REA does not save it for you):

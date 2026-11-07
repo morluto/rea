@@ -115,7 +115,7 @@ it("preserves partial and exact endpoint identity through graph projection", asy
   );
   await writeFile(
     join(root, "app.js"),
-    'fetch(target); fetch("target"); function other(target) { fetch(target); }',
+    'fetch(target); fetch("target"); fetch(new Request("/api/chat", { method: "POST" })); function other(target) { fetch(target); }',
   );
   const snapshot = await scanCanonicalArtifactInventory(root, {});
   const reader = createJavaScriptArtifactReader(root, "directory");
@@ -154,6 +154,22 @@ it("preserves partial and exact endpoint identity through graph projection", asy
         limitations: [expect.stringContaining("not an exact literal")],
       },
     });
+    const request = endpoints.find(({ observations }) =>
+      observations.some(({ properties }) => properties.value === "/api/chat"),
+    );
+    expect(request?.observations[0]).toMatchObject({
+      properties: {
+        endpoint_kind: "network",
+        value: "/api/chat",
+        mechanism: "call:fetch",
+      },
+      evidence: {
+        authority: "ast-static-analysis",
+        state: "observed",
+        confidence: "exact",
+      },
+    });
+    expect(request?.observations[0]?.properties.resolution).toBeUndefined();
   } finally {
     await reader.close();
     await rm(root, { recursive: true, force: true });

@@ -33,6 +33,12 @@ export const isVtoolContainerRefusal = (
 
 const MISSING_UUID_DIAGNOSTIC = "missing LC_UUID load command";
 
+/** dyld_info refusals of a slice that nm and the load table still describe. */
+const UNSUPPORTED_SLICE_DIAGNOSTICS: ReadonlySet<string> = new Set([
+  "unknown platform",
+  "old arm64e bind opcodes not supported",
+]);
+
 const dyldFailureDiagnostics = (
   capture: NativeCommandCapture,
   outputs: readonly string[],
@@ -66,6 +72,17 @@ export const isMissingUuidDyldFailure = (
 ): boolean =>
   capture.stderr.trim().length === 0 &&
   dyldFailureDiagnostic(capture) === MISSING_UUID_DIAGNOSTIC;
+
+/** The sole diagnostic when dyld_info refuses the slice itself; nm and the load table still describe it. */
+export const dyldSliceRefusal = (
+  capture: NativeCommandCapture,
+): string | null => {
+  if (isMissingUuidDyldFailure(capture)) return MISSING_UUID_DIAGNOSTIC;
+  const diagnostic = dyldFailureDiagnostic(capture);
+  return diagnostic !== null && UNSUPPORTED_SLICE_DIAGNOSTICS.has(diagnostic)
+    ? diagnostic
+    : null;
+};
 
 /** Admit the observed dSYM refusal only when no other diagnostic is present. */
 export const isUnbackedTextDyldFailure = (
@@ -106,10 +123,13 @@ export const nativeMachoCapturedOutput = (
 });
 
 /** Keep the exact target diagnostic beside the incomplete collection. */
-export const missingUuidLimitation = (mode: "imports" | "exports"): string =>
+export const dyldRefusalLimitation = (
+  mode: "imports" | "exports",
+  diagnostic: string,
+): string =>
   mode === "imports"
-    ? "dyld_info -imports reported 'missing LC_UUID load command'; import observations are unavailable."
-    : "dyld_info -exports reported 'missing LC_UUID load command'; exports include nm symbol-table observations only.";
+    ? `dyld_info -imports reported '${diagnostic}'; import observations are unavailable.`
+    : `dyld_info -exports reported '${diagnostic}'; exports include nm symbol-table observations only.`;
 
 /** Preserve unrecognized nonzero command output as an inspection failure. */
 export const unusableNativeCommandOutput = (

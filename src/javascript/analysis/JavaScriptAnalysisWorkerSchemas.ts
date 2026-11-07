@@ -327,6 +327,11 @@ const referenceShape = {
   ...findingContext,
   operation: z.enum(["load", "resolve"]),
   resolution_base_path: z.string().exactOptional(),
+  // A `factory-loader` specifier is a recovered bundle module key rather than a
+  // package specifier, so the loader identity travels with the reference.
+  loader: z
+    .enum(["commonjs-loader", "factory-loader", "create-require"])
+    .exactOptional(),
   kind: z.enum([
     "static-import",
     "dynamic-import",
