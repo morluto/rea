@@ -388,8 +388,12 @@ export const registerBinaryDiagnosticsCommands = (
       path: localPathStringSchema.describe("Local PE32/PE32+ image"),
     }),
     options: z.object({
-      maxFileBytes: inspectPeRichHeaderInputSchema.shape.max_file_bytes,
-      maxEntries: inspectPeRichHeaderInputSchema.shape.max_entries,
+      maxFileBytes: cliDecimalField(
+        inspectPeRichHeaderInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectPeRichHeaderInputSchema.shape.max_entries,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
