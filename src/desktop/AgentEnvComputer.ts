@@ -224,17 +224,36 @@ const readBounded = async (
   return Buffer.concat(chunks, bytes).toString("utf8");
 };
 
+/** Why a computer did not come up. Readiness is a fact, not a phrase in the message. */
+export type ComputerStartReason = "handshake" | "not_ready" | "unusable";
+
 /** Why a computer did not come up, with what the caller can do about it. */
 export class ComputerStartFailure extends Error {
+  readonly reason: ComputerStartReason;
+
   constructor(
     message: string,
     readonly remediation: string | undefined,
-    options?: ErrorOptions,
+    options?: ErrorOptions & { readonly reason?: ComputerStartReason },
   ) {
     super(message, options);
     this.name = "ComputerStartFailure";
+    this.reason = options?.reason ?? "unusable";
   }
 }
+
+/**
+ * Whether `cause` is a start that failed because the computer never became
+ * ready. The helper's own sentence is classified once, where it is read.
+ */
+export const computerFailedOnReadiness = (
+  cause: unknown,
+): cause is ComputerStartFailure =>
+  cause instanceof ComputerStartFailure && cause.reason === "not_ready";
+
+/** agentenv's probe says the computer never became ready. That sentence is outside REA. */
+const helperWasNotReady = (error: string | undefined) =>
+  error !== undefined && /\bnot ready\b|wasn't ready|didn't boot/u.test(error);
 
 /** Every few seconds while a computer comes up, report the phase and agentenv's latest line. */
 const progressHeartbeat = (
@@ -353,6 +372,11 @@ export class AgentEnvComputer {
       throw new ComputerStartFailure(
         `agentenv did not bring the computer up: ${handshake?.error ?? "its helper ended without a handshake"}.`,
         "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
+        {
+          reason: helperWasNotReady(handshake?.error)
+            ? "not_ready"
+            : "handshake",
+        },
       );
     phase.name = "waiting for the computer's readiness checks";
     let client: StructuredContentMcpClient | undefined;
@@ -375,10 +399,11 @@ export class AgentEnvComputer {
     } catch (cause: unknown) {
       await client?.close().catch(() => undefined);
       if (signal.aborted) throw signal.reason;
+      if (cause instanceof ComputerStartFailure) throw cause;
       throw new ComputerStartFailure(
         `The computer came up but REA could not use it: ${cause instanceof Error ? cause.message : String(cause)}`,
         undefined,
-        { cause },
+        { cause, reason: "unusable" },
       );
     }
   }
@@ -640,10 +665,12 @@ export class AgentEnvComputer {
       const waiting = status.checks.filter((check) => !check.ok);
       const failed = waiting.find((check) => check.final === true);
       if (failed !== undefined || Date.now() > deadline)
-        throw new Error(
+        throw new ComputerStartFailure(
           failed === undefined
             ? `The computer was not ready within ${String(READY_TIMEOUT_MS / 1000)} s; waiting on ${waiting.map((check) => check.name).join(", ")}.`
             : `The computer's ${failed.name} check failed: ${failed.detail ?? "no detail"}.`,
+          "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
+          { reason: "not_ready" },
         );
       await delay(500, undefined, { signal });
     }
