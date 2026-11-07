@@ -181,6 +181,27 @@ it("downloads the package lists again on the next start after an update that fet
   }
 });
 
+it("releases a capture whose start was cancelled after launch, so another start can run", async () => {
+  const { computer, client } = await fakes({
+    screenshotDelaysMs: [0, 60_000],
+  });
+  const id = await startBuildComputer(client, BUILD_REQUEST);
+  const screenshots = () =>
+    computer.calls.filter(({ name }) => name === "computer_screenshot").length;
+  const controller = new AbortController();
+  const started = client.callTool(
+    { name: "start_build_capture", arguments: { computer_id: id } },
+    { signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(screenshots()).toBe(2), { timeout: 30_000 });
+  controller.abort();
+  await expect(started).rejects.toThrow();
+  const again = await callOk(client, "start_build_capture", {
+    computer_id: id,
+  });
+  expect(again.structuredContent).toMatchObject({ package_lists: 1 });
+}, 60_000);
+
 it("cancels a capture's start when the computer closes while it waits for the opened app's screenshot", async () => {
   // The start's own screenshot answers at once; the capture's waits until its request is cancelled.
   const { computer, client } = await fakes({ screenshotDelaysMs: [0, 60_000] });
