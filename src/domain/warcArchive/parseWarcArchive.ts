@@ -8,6 +8,7 @@ import {
   WARC_ARCHIVE_HTTP_HEADER_BLOCK_BYTES as HTTP_HEADER_BLOCK_BYTES,
   WARC_ARCHIVE_HTTP_HEADER_FIELDS as HTTP_HEADER_FIELDS,
   WARC_ARCHIVE_HTTP_START_LINE_BYTES as HTTP_START_LINE_BYTES,
+  WARC_ARCHIVE_MAX_HEADER_ENTRIES,
   WARC_ARCHIVE_MAX_DIAGNOSTICS,
   WARC_ARCHIVE_MAX_INVALID_VERSIONS,
   type WarcArchive,
@@ -74,6 +75,62 @@ const REPEATABLE_FIELDS = new Set([
 
 /** RFC 2616 token: the only shape WARC allows for a field name. */
 const FIELD_NAME = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
+const SENSITIVE_HTTP_HEADERS = new Set([
+  "authorization",
+  "proxy-authorization",
+  "authentication-info",
+  "proxy-authentication-info",
+  "cookie",
+  "cookie2",
+  "set-cookie",
+  "set-cookie2",
+]);
+const HTTP_URL_HEADERS = new Set([
+  "location",
+  "content-location",
+  "referer",
+  "origin",
+]);
+
+/** Preserve the selected URL spelling while withholding explicit authority credentials. */
+const withoutUrlUserInfo = (value: string): string => {
+  const prefix = /^[A-Za-z][A-Za-z0-9+.-]*:\/\//u.exec(value)?.[0];
+  if (prefix === undefined) return value;
+  try {
+    const url = new URL(value);
+    if (url.username === "" && url.password === "") return value;
+  } catch {
+    return value;
+  }
+  const from = prefix.length;
+  const tail = value.slice(from);
+  const end = tail.search(/[/?#]/u);
+  const authority = end === -1 ? tail : tail.slice(0, end);
+  const at = authority.lastIndexOf("@");
+  return at < 0 ? value : `${prefix}[redacted]@${tail.slice(at + 1)}`;
+};
+
+const sanitizedMalformedHeader = (
+  text: string,
+  previousSensitive: boolean,
+): string => {
+  const colon = text.indexOf(":");
+  const name = colon > 0 ? text.slice(0, colon) : "";
+  if (SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase()))
+    return `${name}: [redacted]`;
+  if (
+    name.trim().toLowerCase() === "warc-target-uri" ||
+    HTTP_URL_HEADERS.has(name.trim().toLowerCase())
+  ) {
+    const value = text.slice(colon + 1);
+    const start = value.search(/[^ \t]/u);
+    if (start >= 0)
+      return `${name}:${value.slice(0, start)}${withoutUrlUserInfo(value.slice(start))}`;
+  }
+  if (/^[ \t]/u.test(text) && previousSensitive)
+    return "[redacted continuation]";
+  return text;
+};
 
 /**
  * A version line is `WARC/` followed by a decimal `major.minor`. Accepting any
@@ -97,7 +154,12 @@ const findLineEnd = (data: Buffer, from: number) => {
 interface HeaderBlockResult {
   readonly block: HeaderBlock | null;
   /** Resource allowance reached while reading this header, if any. */
-  readonly limit: "line" | "block-bytes" | "block-fields" | null;
+  readonly limit:
+    | "line"
+    | "block-bytes"
+    | "block-fields"
+    | "archive-fields"
+    | null;
   /** The line began `WARC/` but carries no parseable version. */
   readonly invalidVersion?: number;
 }
@@ -107,7 +169,14 @@ interface HeaderBlockResult {
  * ends without a blank line returns null so the caller can report a truncated
  * record rather than inventing fields.
  */
-const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
+interface HeaderBudget {
+  remaining: number;
+}
+const readHeaderBlock = (
+  data: Buffer,
+  start: number,
+  budget: HeaderBudget,
+): HeaderBlockResult => {
   const versionLine = findLineEnd(data, start);
   if (versionLine === null) return { block: null, limit: null };
   // A version line past the allowance is a reader ceiling, not damage: the
@@ -121,6 +190,7 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
   const fields = new Map<string, string>();
   const malformed: string[] = [];
   let cursor = versionLine.end;
+  let previousSensitive = false;
   for (;;) {
     if (cursor >= data.length) return { block: null, limit: null };
     const line = findLineEnd(data, cursor);
@@ -153,15 +223,18 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
     if (malformedLine || first === undefined) {
       if (fields.size + malformed.length >= WARC_ARCHIVE_HEADER_FIELDS)
         return { block: null, limit: "block-fields" };
-      if (malformedLine) malformed.push(text);
+      if (budget.remaining === 0)
+        return { block: null, limit: "archive-fields" };
+      budget.remaining -= 1;
+      if (malformedLine)
+        malformed.push(sanitizedMalformedHeader(text, previousSensitive));
       else fields.set(name, text.slice(colon + 1).trim());
     }
+    if (!/^[ \t]/u.test(text))
+      previousSensitive = SENSITIVE_HTTP_HEADERS.has(name);
     cursor = line.end;
   }
 };
-
-const isDigit = (byte: number) => byte >= 0x30 && byte <= 0x39;
-const isSpace = (byte: number) => byte === 0x20 || byte === 0x09;
 
 /** RFC 9110 token characters plus the obsolete separators WARC-era captures wrote. */
 const TOKEN = /^[!#$%&'*+\-.^_`|~0-9A-Za-z]+$/;
@@ -266,7 +339,11 @@ const readHttpRequestLine = (
   while (versionFrom < line.length && line[versionFrom] === " ")
     versionFrom += 1;
   const version = readHttpVersion(line, versionFrom);
-  if (version === null) return null;
+  if (version === null || version.cursor !== line.length) return null;
+  for (const character of requestTarget) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x20 || code === 0x7f) return null;
+  }
   return {
     version: version.version,
     method,
@@ -276,9 +353,14 @@ const readHttpRequestLine = (
 
 /** A payload that begins `HTTP/` or an apparent method token and so promises a message. */
 const HTTP_PREFIX = "HTTP/";
-const looksLikeHttpMessage = (payload: Buffer, limit: number): boolean => {
+const looksLikeHttpMessage = (
+  payload: Buffer,
+  limit: number,
+  recordType: string,
+): boolean => {
   const head = payload.toString("latin1", 0, Math.min(limit, 64));
   if (head.startsWith(HTTP_PREFIX)) return true;
+  if (recordType === "response") return false;
   const space = head.indexOf(" ");
   if (space <= 0) return false;
   return TOKEN.test(head.slice(0, space));
@@ -323,6 +405,11 @@ const HTTP_OMISSION_DIAGNOSTICS: Record<
     message: (offset) =>
       `The HTTP header block at decoded offset ${offset} ends without the empty line that terminates it.`,
   },
+  "archive-header-limit": {
+    code: "archive-header-limit-reached",
+    message: () =>
+      `The archive-wide header entry allowance of ${WARC_ARCHIVE_MAX_HEADER_ENTRIES} was reached; the HTTP message and later records were not inventoried.`,
+  },
 };
 
 /**
@@ -334,11 +421,15 @@ const HTTP_OMISSION_DIAGNOSTICS: Record<
  * payload, so a record that declares a gigabyte of body costs the same as one
  * that declares nothing.
  */
-const readHttpMessage = (payload: Buffer, recordType: string): HttpRead => {
+const readHttpMessage = (
+  payload: Buffer,
+  recordType: string,
+  budget: HeaderBudget,
+): HttpRead => {
   const limit = Math.min(payload.length, HTTP_START_LINE_BYTES);
   if (recordType !== "request" && recordType !== "response")
     return { message: null, omission: null };
-  if (!looksLikeHttpMessage(payload, limit))
+  if (!looksLikeHttpMessage(payload, limit, recordType))
     return { message: null, omission: null };
   const startLine = findLineEnd(payload, 0);
   if (startLine === null) return { message: null, omission: null };
@@ -356,6 +447,7 @@ const readHttpMessage = (payload: Buffer, recordType: string): HttpRead => {
   const malformed: string[] = [];
   let headerBytes = startLine.end;
   let terminated = false;
+  let previousSensitive = false;
   // The block ends at the first empty line. `headerBytes` is measured against
   // the same window, so an unterminated block is reported rather than guessed.
   while (cursor < payload.length) {
@@ -372,14 +464,28 @@ const readHttpMessage = (payload: Buffer, recordType: string): HttpRead => {
       return { message: null, omission: "header-block-limit" };
     if (line.end > HTTP_HEADER_BLOCK_BYTES)
       return { message: null, omission: "header-block-limit" };
-    const text = payload.toString("utf8", cursor, line.contentEnd);
+    if (budget.remaining === 0)
+      return { message: null, omission: "archive-header-limit" };
+    budget.remaining -= 1;
+    const text = payload.toString("latin1", cursor, line.contentEnd);
     const colon = text.indexOf(":");
-    if (colon <= 0 || !TOKEN.test(text.slice(0, colon))) malformed.push(text);
-    else
+    const name = colon > 0 ? text.slice(0, colon) : "";
+    const sensitive = SENSITIVE_HTTP_HEADERS.has(name.trim().toLowerCase());
+    const continuation = /^[ \t]/u.test(text);
+    if (colon <= 0 || !TOKEN.test(name))
+      malformed.push(sanitizedMalformedHeader(text, previousSensitive));
+    else {
+      const value = text.slice(colon + 1).replace(/^[ \t]+|[ \t]+$/gu, "");
       fields.push({
-        name: text.slice(0, colon),
-        value: text.slice(colon + 1).trim(),
+        name,
+        value: sensitive
+          ? null
+          : HTTP_URL_HEADERS.has(name.toLowerCase())
+            ? withoutUrlUserInfo(value)
+            : value,
       });
+    }
+    if (!continuation) previousSensitive = sensitive;
     headerBytes = line.end;
     cursor = line.end;
   }
@@ -390,13 +496,23 @@ const readHttpMessage = (payload: Buffer, recordType: string): HttpRead => {
       field.name.toLowerCase() === "content-length" ||
       field.name.toLowerCase() === "transfer-encoding",
   );
+  const target = "request_target" in parsed ? parsed.request_target : null;
+  const safeTarget = target === null ? null : withoutUrlUserInfo(target);
+  const targetOffset =
+    target === null
+      ? -1
+      : startText.indexOf(target, startText.indexOf(" ") + 1);
+  const safeStartLine =
+    target === null || target === safeTarget
+      ? startText
+      : `${startText.slice(0, targetOffset)}${safeTarget}${startText.slice(targetOffset + target.length)}`;
   return {
     omission: null,
     message: {
-      start_line: startText,
+      start_line: safeStartLine,
       version: parsed.version,
       method: "method" in parsed ? parsed.method : null,
-      request_target: "request_target" in parsed ? parsed.request_target : null,
+      request_target: safeTarget,
       status_code: "status_code" in parsed ? parsed.status_code : null,
       reason_phrase: "reason_phrase" in parsed ? parsed.reason_phrase : null,
       headers: fields,
@@ -487,7 +603,13 @@ const resumeAfterUnreadableHeader = (
   // Name the ceiling when the reader stopped on one: a long but intact header
   // is not archive damage, and reporting it as truncation sends the operator
   // looking for a defect that is not there.
-  if (result.limit === "line")
+  if (result.limit === "archive-fields")
+    diagnostic(
+      ordinal,
+      "archive-header-limit-reached",
+      `The archive-wide header entry allowance of ${WARC_ARCHIVE_MAX_HEADER_ENTRIES} was reached; later records were not read.`,
+    );
+  else if (result.limit === "line")
     diagnostic(
       ordinal,
       "header-line-limit-reached",
@@ -555,6 +677,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
   }
 
   let cursor = 0;
+  const budget: HeaderBudget = { remaining: WARC_ARCHIVE_MAX_HEADER_ENTRIES };
   let ordinal = 0;
   let rejectedVersions = 0;
   while (cursor < data.length) {
@@ -579,7 +702,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
         "trailing-bytes",
         `${nextVersion - searchFrom} unexpected byte(s) between records.`,
       );
-    const header = readHeaderBlock(data, nextVersion);
+    const header = readHeaderBlock(data, nextVersion, budget);
     if (header.block === null) {
       const resume = resumeAfterUnreadableHeader(
         header,
@@ -608,6 +731,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
     const step = readOneRecord(data, header.block, nextVersion, {
       ordinal,
       diagnostic,
+      budget,
     });
     records.push(step.record);
     if (step.nextCursor === null) break;
@@ -628,9 +752,13 @@ const readOneRecord = (
   data: Buffer,
   block: HeaderBlock,
   offset: number,
-  context: { readonly ordinal: number; readonly diagnostic: DiagnosticSink },
+  context: {
+    readonly ordinal: number;
+    readonly diagnostic: DiagnosticSink;
+    readonly budget: HeaderBudget;
+  },
 ): RecordStep => {
-  const { ordinal, diagnostic } = context;
+  const { ordinal, diagnostic, budget } = context;
   for (const line of block.malformed)
     diagnostic(
       ordinal,
@@ -655,6 +783,7 @@ const readOneRecord = (
         ordinal,
         payloadBytes: 0,
         payload: Buffer.alloc(0),
+        budget,
       }),
       nextCursor: null,
     };
@@ -675,6 +804,7 @@ const readOneRecord = (
     ordinal,
     payloadBytes,
     payload,
+    budget,
   });
   // An omission is only reported when the payload promised an HTTP message, so
   // an ordinary body reads as `http: null` without a diagnostic per record.
@@ -687,10 +817,19 @@ const readOneRecord = (
         record.http_omitted,
       ),
     );
+  if (record.http !== null && record.http.malformed_header_lines.length > 0)
+    diagnostic(
+      ordinal,
+      "invalid-header-line",
+      `The HTTP header block contains ${record.http.malformed_header_lines.length} malformed line(s).`,
+    );
   return {
     record,
     nextCursor:
-      payloadBytes < declaredLength ? null : payloadStart + payloadBytes,
+      payloadBytes < declaredLength ||
+      record.http_omitted === "archive-header-limit"
+        ? null
+        : payloadStart + payloadBytes,
   };
 };
 
@@ -702,15 +841,16 @@ const buildRecord = (
     readonly ordinal: number;
     readonly payloadBytes: number;
     readonly payload: Buffer;
+    readonly budget: HeaderBudget;
   },
 ): WarcRecord => {
-  const { block, offset, ordinal, payloadBytes, payload } = input;
+  const { block, offset, ordinal, payloadBytes, payload, budget } = input;
   const type = block.fields.get("warc-type") ?? "";
   const version = block.version;
   const contentLength = parseNonNegativeInt(block.fields.get("content-length"));
   const hasPayload = payloadBytes > 0;
   const http = hasPayload
-    ? readHttpMessage(payload, type)
+    ? readHttpMessage(payload, type, budget)
     : { message: null, omission: null };
 
   return {
@@ -728,7 +868,9 @@ const buildRecord = (
     warc_version: `WARC/${version}`,
     warc_date: block.fields.get("warc-date") ?? null,
     warc_record_id: block.fields.get("warc-record-id") ?? null,
-    target_uri: block.fields.get("warc-target-uri") ?? null,
+    target_uri: block.fields.has("warc-target-uri")
+      ? withoutUrlUserInfo(block.fields.get("warc-target-uri")!)
+      : null,
     content_type: block.fields.get("content-type") ?? null,
     content_length: contentLength,
     payload_bytes: payloadBytes,
@@ -803,6 +945,7 @@ const limitationsFor = (
 ) => {
   const limitations = [
     "Embedded HTTP request and response header blocks are decoded; HTTP bodies, chunked or compressed content codings, and trailers are not.",
+    "HTTP authentication and cookie header values and URL authority credentials are withheld; field names remain visible.",
     "Record payload bytes outside the HTTP header block are counted but not retained, so no body content reaches the result.",
     "Declared digests are reported as written and are not verified against payload bytes.",
     "Records are not linked to each other by WARC-Record-ID or payload digest.",
@@ -879,7 +1022,10 @@ export const parseWarcArchive = (
   }
   const stream = parseDecodedStream(decoded.value.decoded, options.maxRecords);
   const malformedHeaders = stream.records.reduce(
-    (total, record) => total + record.malformed_header_lines.length,
+    (total, record) =>
+      total +
+      record.malformed_header_lines.length +
+      (record.http?.malformed_header_lines.length ?? 0),
     0,
   );
   const status: "complete-within-scope" | "partial" =

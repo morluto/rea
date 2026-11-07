@@ -58,6 +58,30 @@ it("decodes a gzip archive without contacting the target", async () => {
   }
 });
 
+it("does not retain transport credentials in Evidence", async () => {
+  const payload =
+    "HTTP/1.1 200 OK\r\nSet-Cookie: session=fixture-private\r\nX-Header: kept\r\n\r\n";
+  const source = `WARC/1.1\r\nWARC-Type: response\r\nContent-Length: ${Buffer.byteLength(payload)}\r\n\r\n${payload}`;
+  const path = await inputFile("credentials.warc", source);
+  const resources = new ArtifactResourceScope();
+  try {
+    const result = await inspectWarcArchiveEvidence({ path }, resources);
+    if (!result.ok) throw new Error(`expected inspection: ${result.error}`);
+    const archive = warcArchiveSchema.parse(
+      result.value.evidence.normalized_result,
+    );
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Set-Cookie", value: null },
+      { name: "X-Header", value: "kept" },
+    ]);
+    expect(JSON.stringify(result.value.evidence)).not.toContain(
+      "fixture-private",
+    );
+  } finally {
+    await resources.close();
+  }
+});
+
 it("keeps a malformed archive as diagnostics instead of failing the read", async () => {
   const path = await inputFile("crawl.warc", "not an archive at all");
   const resources = new ArtifactResourceScope();

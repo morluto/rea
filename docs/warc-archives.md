@@ -38,7 +38,12 @@ allowances, not HTTP limits.
 
 A request names its `method` and `request_target` instead. Header fields keep the
 order and repeats the archive wrote, because a response may legitimately carry
-several `Set-Cookie` or `Warning` fields. `body_bytes` counts the payload bytes
+several `Set-Cookie` or `Warning` fields. Values of authentication and cookie
+headers are `null` rather than retained; malformed credential fields and their
+continuation lines are redacted as well. User information in absolute WARC target
+URIs, HTTP request targets, and URL-valued HTTP location, referer, and origin
+fields is replaced with `[redacted]`. Other HTTP field values use a reversible
+Latin-1 byte view with surrounding HTTP whitespace removed. `body_bytes` counts the payload bytes
 after the header block; the body itself is neither retained nor interpreted, and
 `body_framing_declared` only says whether a `Content-Length` or
 `Transfer-Encoding` field is present. A malformed header line is kept in
@@ -98,6 +103,7 @@ for an archive-wide fact) and a stable code:
 | `http-header-block-limit-reached` | an HTTP header block exceeds 64 KiB, 8 KiB per line or 2000 fields    |
 | `http-start-line-invalid`         | the start line is neither a request line nor a status line            |
 | `http-header-block-unterminated`  | the header block has no terminating empty line                        |
+| `archive-header-limit-reached`    | the archive-wide header entry allowance was reached                   |
 
 A record whose header block cannot be read ends the scan, because the next
 record's offset cannot be established without inventing one. Records read before
@@ -114,7 +120,7 @@ that point are still reported and counted.
 These are resource allowances, not WARC or HTTP format limits. The decoded
 stream is bounded during inflation, and each record header is bounded before
 fields and diagnostics are collected. A header exceeding 8 KiB per line,
-1 MiB total, or 20000 retained fields and malformed lines stops the scan with partial coverage. An archive that expands past
+1 MiB total, or 20000 retained fields and malformed lines stops the scan with partial coverage. Across the archive, 100000 WARC and HTTP header entries may be collected; reaching the allowance stops the inventory with partial coverage. An archive that expands past
 `max_decoded_bytes` is reported instead of exhausting memory.
 
 ## Identity

@@ -21,6 +21,8 @@ export const WARC_ARCHIVE_HTTP_START_LINE_BYTES = 8 * 1024;
  */
 export const WARC_ARCHIVE_HTTP_HEADER_BLOCK_BYTES = 64 * 1024;
 export const WARC_ARCHIVE_HTTP_HEADER_FIELDS = 2_000;
+/** Bound collected header entries across the archive, not just per record. */
+export const WARC_ARCHIVE_MAX_HEADER_ENTRIES = 100_000;
 /** Bound per-record header representation before collecting fields or malformed lines. */
 export const WARC_ARCHIVE_HEADER_BLOCK_BYTES = 1024 * 1024;
 export const WARC_ARCHIVE_HEADER_FIELDS = 20_000;
@@ -66,7 +68,8 @@ export type WarcArchiveArtifact = z.output<typeof warcArchiveArtifactSchema>;
  */
 export const warcHttpHeaderSchema = z.strictObject({
   name: z.string(),
-  value: z.string(),
+  /** Authentication-bearing transport fields are retained by name only. */
+  value: z.string().nullable(),
 });
 export type WarcHttpHeader = z.output<typeof warcHttpHeaderSchema>;
 
@@ -109,6 +112,7 @@ export const warcHttpOmissionSchema = z.enum([
   "header-block-limit",
   "malformed-start-line",
   "unterminated-header-block",
+  "archive-header-limit",
 ]);
 export type WarcHttpOmission = z.output<typeof warcHttpOmissionSchema>;
 
@@ -167,6 +171,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "http-header-block-limit-reached",
     "http-start-line-invalid",
     "http-header-block-unterminated",
+    "archive-header-limit-reached",
     "invalid-version-line",
     "invalid-version-limit-reached",
   ]),

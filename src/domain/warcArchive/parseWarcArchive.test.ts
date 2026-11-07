@@ -124,8 +124,8 @@ describe("parseWarcArchive", () => {
     // Repeats are kept in archive order rather than collapsed to one value.
     expect(http?.headers).toEqual([
       { name: "Content-Type", value: "text/plain" },
-      { name: "Set-Cookie", value: "a=1" },
-      { name: "Set-Cookie", value: "b=2" },
+      { name: "Set-Cookie", value: null },
+      { name: "Set-Cookie", value: null },
     ]);
     expect(archive.source_coverage).toMatchObject({
       scope: "record-headers-and-http-headers",
@@ -491,6 +491,101 @@ describe("response status line", () => {
 });
 
 describe("embedded HTTP messages", () => {
+  it("excludes transport credentials, including malformed and folded fields", () => {
+    const archive = parsed(
+      record(
+        "request",
+        [],
+        "GET / HTTP/1.1\r\nAuthorization: Bearer private-one\r\n continuation-private\r\nCookie: session=private-two\r\nProxy-Authorization : private-three\r\nX-Note: retained\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Authorization", value: null },
+      { name: "Cookie", value: null },
+      { name: "X-Note", value: "retained" },
+    ]);
+    expect(JSON.stringify(archive)).not.toMatch(
+      /private-one|continuation-private|private-two|private-three/u,
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.summary.malformed_headers).toBe(2);
+  });
+
+  it("does not retain credentials in malformed duplicate WARC headers", () => {
+    const archive = parsed(
+      record("resource", [
+        ["Authorization", "first-private"],
+        ["Authorization", "second-private"],
+      ]),
+    );
+    expect(archive.records[0]?.malformed_header_lines).toEqual([
+      "Authorization: [redacted]",
+    ]);
+    expect(JSON.stringify(archive)).not.toMatch(
+      /first-private|second-private/u,
+    );
+  });
+
+  it("withholds explicit URL authority credentials while preserving the rest of each URL", () => {
+    const url = "https://fixture-user:fixture-pass@example.test/a?x=1";
+    const archive = parsed(
+      record(
+        "request",
+        [["WARC-Target-URI", url]],
+        `GET ${url} HTTP/1.1\r\nReferer: ${url}\r\n\r\n`,
+      ),
+    );
+    expect(archive.records[0]?.target_uri).toBe(
+      "https://[redacted]@example.test/a?x=1",
+    );
+    expect(archive.records[0]?.http?.request_target).toBe(
+      "https://[redacted]@example.test/a?x=1",
+    );
+    expect(archive.records[0]?.http?.start_line).toBe(
+      "GET https://[redacted]@example.test/a?x=1 HTTP/1.1",
+    );
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "Referer", value: "https://[redacted]@example.test/a?x=1" },
+    ]);
+    expect(JSON.stringify(archive)).not.toMatch(/fixture-user|fixture-pass/u);
+  });
+
+  it("preserves non-UTF-8 HTTP bytes with a reversible Latin-1 view", () => {
+    const bytes = Buffer.from(
+      record("response", [], "HTTP/1.1 200 OK\r\nX-Value: caf~\r\n\r\n"),
+    );
+    bytes[bytes.indexOf("~")] = 0xe9;
+    const archive = parsed(bytes);
+    expect(archive.records[0]?.http?.headers).toEqual([
+      { name: "X-Value", value: "café" },
+    ]);
+  });
+
+  it("rejects malformed request lines and does not classify FTP responses as HTTP", () => {
+    for (const line of ["GET / HTTP/1.1junk", "GET /a\tb HTTP/1.1"]) {
+      const archive = parsed(record("request", [], `${line}\r\n\r\n`));
+      expect(archive.records[0]?.http_omitted).toBe("malformed-start-line");
+      expect(archive.source_coverage.status).toBe("partial");
+    }
+    const ftp = parsed(record("response", [], "220 Welcome\r\n"));
+    expect(ftp.records[0]?.http).toBeNull();
+    expect(ftp.records[0]?.http_omitted).toBeNull();
+    expect(ftp.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("bounds retained headers across records and reports the unexamined tail", () => {
+    const payload = `HTTP/1.1 200 OK\r\n${"A: x\r\n".repeat(1_990)}\r\n`;
+    const archive = parsed(record("response", [], payload).repeat(51));
+    expect(archive.records.length).toBeGreaterThan(1);
+    expect(archive.records.at(-1)?.http_omitted).toBe("archive-header-limit");
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "archive-header-limit-reached",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+});
+
+describe("embedded HTTP message inventory", () => {
   it("decodes a request line as a request rather than a status", () => {
     const archive = parsed(
       record(
