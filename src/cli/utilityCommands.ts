@@ -18,7 +18,10 @@ import {
 } from "../domain/analysisErrorCore.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import { safeParseJson } from "../domain/safeJson.js";
-import { nativeUiScenarioInputSchema } from "../domain/native/nativeUiObservation.js";
+import {
+  nativeUiObservationInputSchema,
+  nativeUiScenarioInputSchema,
+} from "../domain/native/nativeUiObservation.js";
 import {
   nativeCommandTimeoutField,
   nativeUiDeadlineField,
@@ -56,14 +59,8 @@ const nativeUiScopeOptions = {
   windowId: cliIntegerArgument(1).describe(
     "Exact selected application window ID",
   ),
-  screenshot: z
-    .boolean()
-    .default(true)
-    .describe("Capture only the selected window"),
-  accessibility: z
-    .boolean()
-    .default(true)
-    .describe("Read the selected window accessibility tree"),
+  screenshot: nativeUiObservationInputSchema.shape.screenshot,
+  accessibility: nativeUiObservationInputSchema.shape.accessibility,
   maxNodes: cliIntegerArgument(1)
     .default(500)
     .describe("Maximum accessibility nodes per capture"),

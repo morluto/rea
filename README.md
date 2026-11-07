@@ -235,6 +235,10 @@ Static JavaScript and .NET inspection read the supplied files without running
 the application. Runtime capture runs or interacts with the selected target
 using your user permissions; each runtime guide describes its effects.
 
+Native UI observation and scenario capture need at least one capture source.
+Keep screenshot or accessibility enabled. REA rejects a request that disables
+both and names the fields to correct.
+
 For offline native-binary inspection, REA also supports caller-supplied GNU
 objdump and Rizin. See the [reverse-engineering tools guide](docs/reverse-engineering-tools.md)
 for provider setup, CLI commands, and Evidence limitations. REA does not install

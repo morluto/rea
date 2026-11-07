@@ -93,6 +93,46 @@ const connectNativeUi = async () => {
   return { client, replies, snapshot };
 };
 
+it("advertises and explains the capture source requirement", async () => {
+  const { client } = await connectNativeUi();
+  const tools = new Map(
+    (await client.listTools()).tools.map((tool) => [tool.name, tool]),
+  );
+  for (const name of [
+    "observe_native_ui",
+    "capture_native_ui_scenario",
+  ] as const) {
+    expect(tools.get(name)?.description).toBe(toolContract(name).description);
+    const response = await client.callTool({
+      name,
+      arguments: {
+        pid: 123,
+        window_id: 456,
+        screenshot: false,
+        accessibility: false,
+        ...(name === "capture_native_ui_scenario"
+          ? { steps: [{ kind: "wait", milliseconds: 0 }] }
+          : {}),
+      },
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        message: expect.stringMatching(/screenshot.*accessibility/iu),
+        details: {
+          issues: [
+            { path: ["screenshot"], reason: "invalid_value" },
+            { path: ["accessibility"], reason: "invalid_value" },
+          ],
+        },
+        remediation: {
+          action: expect.stringMatching(/screenshot.*accessibility.*true/iu),
+        },
+      },
+    });
+  }
+});
+
 it("preserves scalar accessibility values in passive and scenario Evidence", async () => {
   const { client, replies, snapshot } = await connectNativeUi();
   replies.push(snapshot([0.25, true, "selected", null]));
