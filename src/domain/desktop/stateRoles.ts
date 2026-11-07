@@ -4,6 +4,7 @@ import type {
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
 import { isLockName } from "./runtimeFiles.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 
 /** Why a path is, or is not, treated as the application's state. */
 export type DesktopStateReason =
@@ -120,7 +121,24 @@ export interface DesktopRoleFacts {
   }[];
   readonly titles: readonly string[];
   readonly openedFiles: ReadonlySet<string>;
+  /** SQLite `-wal` and `-journal` files added beside a selected database. */
+  readonly sqliteSidecars?: ReadonlySet<string>;
 }
+
+/** Content roots that are the `-wal` or `-journal` of another root, not selections of their own. */
+export const sqliteSidecarRoots = (
+  roots: readonly string[],
+): ReadonlySet<string> => {
+  const present = new Set(roots);
+  return new Set(
+    roots.filter((root) =>
+      SQLITE_SIDECARS.some(
+        ({ suffix }) =>
+          root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
+      ),
+    ),
+  );
+};
 
 /** Compute the shared role facts once per capture. */
 export const roleFacts = (
@@ -135,13 +153,16 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots);
   return {
     home: host.home,
     stateDirectories,
     stateTails,
+    sqliteSidecars,
     selectedRoots: state.content_roots.filter((root) => {
       const relative = homePath(root, host.home);
       return (
+        !sqliteSidecars.has(root) &&
         !stateDirectories.includes(root) &&
         (relative === null || !stateTails.includes(relative))
       );
