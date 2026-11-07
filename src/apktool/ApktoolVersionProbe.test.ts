@@ -191,6 +191,7 @@ it.each(["linux", "win32"] as const)(
 
 it.each([
   ["EACCES", "command_not_executable"],
+  ["EPERM", "command_not_executable"],
   ["ENOENT", "command_missing"],
 ])("distinguishes launcher spawn %s", async (code, expected) => {
   vi.mocked(runOwnedCommand).mockRejectedValueOnce(
