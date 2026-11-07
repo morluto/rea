@@ -580,6 +580,87 @@ it("rejects count expansion outside the selected file-backed segment without exp
   });
 });
 
+// ULEB encodings of 64-bit two's-complement backward steps.
+const MINUS_0X10 = [0xf0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+const MINUS_0X18 = [0xe8, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01];
+const MINUS_0X200 = [
+  0x80, 0xfc, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x01,
+];
+
+it("wraps a backward ADD_ADDR_ULEB rebase step at 64 bits like dyld", () => {
+  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100), DO once,
+  // ADD_ADDR(-0x10), DO once, DONE. dyld's uint64 cursor lands on 0xf8.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x51, 0x30, ...MINUS_0X10, 0x51, 0]),
+  );
+
+  expect(fixups.decode(BASE + 0x100n, 0x200n)).toEqual({
+    kind: "rebase",
+    target: 0x200n,
+  });
+  expect(fixups.decode(BASE + 0xf8n, 0x300n)).toEqual({
+    kind: "rebase",
+    target: 0x300n,
+  });
+  expect(fixups.issues).toEqual([]);
+  expect(fixups.unreadRebaseBytes).toBe(0);
+});
+
+it("wraps backward rebase-and-advance and single-slot skip steps", () => {
+  // SET_TYPE(pointer), SET_SEGMENT(offset 0x100),
+  // DO_REBASE_ADD_ADDR(-0x18) → 0xf0, DO 1 skipping -0x18 → 0xe0, DO once.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([
+      0x11,
+      0x20,
+      0x80,
+      0x02,
+      0x70,
+      ...MINUS_0X18,
+      0x80,
+      0x01,
+      ...MINUS_0X18,
+      0x51,
+      0,
+    ]),
+  );
+
+  for (const offset of [0x100n, 0xf0n, 0xe0n])
+    expect(fixups.decode(BASE + offset, 0x200n)).toEqual({
+      kind: "rebase",
+      target: 0x200n,
+    });
+  expect(fixups.decode(BASE + 0xe8n, 0n)).toEqual({ kind: "raw", target: 0n });
+  expect(fixups.issues).toEqual([]);
+});
+
+it("still refuses a wrapped rebase cursor that leaves the segment", () => {
+  // SET_SEGMENT(offset 0x100), ADD_ADDR(-0x200) wraps below the segment start.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x30, ...MINUS_0X200, 0x51, 0]),
+  );
+
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unknown",
+    reason: expect.stringContaining("leaves its file-backed segment"),
+  });
+  expect(fixups.issues).toMatchObject([
+    { code: "rebase_stream_decode_failed" },
+  ]);
+});
+
+it("still refuses a multi-slot run with a backward skip", () => {
+  // DO 2 skipping -0x18 would revisit earlier slots; no linker emits it.
+  const { fixups } = legacyRebaseInput(
+    Buffer.from([0x11, 0x20, 0x80, 0x02, 0x80, 0x02, ...MINUS_0X18, 0]),
+  );
+
+  expect(fixups.decode(BASE + 0x100n, 0n)).toMatchObject({
+    kind: "unknown",
+    reason: expect.stringContaining("leaves its file-backed segment"),
+  });
+});
+
 it("bounds cumulative work across repeated full-range runs and retains the prefix", () => {
   const data = Buffer.alloc(0x10000);
   const repeatedRun = Buffer.from([
