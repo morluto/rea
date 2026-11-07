@@ -12,6 +12,7 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { managedMemberListStartsFixture } from "../../tests/fixtures/managedMemberListStarts.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
@@ -2210,6 +2211,127 @@ describe("managed TypeDef list ownership bounds", () => {
     });
     expect(result.coverage.state).toBe("partial");
   });
+});
+
+describe("managed TypeDef ordering across invalid coordinates", () => {
+  it.each([
+    {
+      label: "both lists decrease",
+      fields: [2, 0, 1],
+      methods: [2, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "out-of-range nonzero coordinates are skipped",
+      fields: [2, 65535, 1],
+      methods: [2, 65535, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "known coordinates stay ordered",
+      fields: [1, 0, 1],
+      methods: [1, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [],
+    },
+    {
+      label: "only fields decrease",
+      fields: [2, 0, 1],
+      methods: [1, 1, 1],
+      fieldOwner: null,
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["FieldList", 3]],
+    },
+    {
+      label: "only methods decrease",
+      fields: [1, 1, 1],
+      methods: [2, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: null,
+      issues: 2,
+      decreases: [["MethodList", 3]],
+    },
+    {
+      label: "multiple invalid rows",
+      fields: [2, 0, 0, 1],
+      methods: [2, 0, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 6,
+      decreases: [
+        ["FieldList", 4],
+        ["MethodList", 4],
+      ],
+    },
+    {
+      label: "one invalid column does not hide another column or a valid tail",
+      fields: [1, 0, 1],
+      methods: [2, 1, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["MethodList", 2]],
+    },
+  ] as const)(
+    "checks independent ordering across invalid starts: $label",
+    (test) => {
+      const bytes = managedMemberListStartsFixture(test.fields, test.methods);
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+      expect(result.fields).toMatchObject([
+        {
+          token: "0x04000001",
+          declaring_type: test.fieldOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.fieldOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.methods).toMatchObject([
+        {
+          token: "0x06000001",
+          declaring_type: test.methodOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.methodOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.types.at(-1)).toMatchObject({
+        field_list: { count: test.fieldOwner === null ? 0 : 1 },
+        method_list: { count: test.methodOwner === null ? 0 : 1 },
+      });
+      expect(result.coverage.state).toBe("partial");
+      expect(result.coverage.issues).toHaveLength(test.issues);
+      expect(
+        result.coverage.issues.filter(({ detail }) =>
+          detail.includes("decreases"),
+        ),
+      ).toMatchObject(
+        test.decreases.map(([list, row]) => ({
+          code: "invalid-row",
+          scope: `metadata.TypeDef:0x0200000${String(row)}`,
+          detail: expect.stringContaining(
+            `${list} start 1 decreases from preceding start 2`,
+          ),
+        })),
+      );
+    },
+  );
 });
 
 describe("managed TypeDef list ordering", () => {

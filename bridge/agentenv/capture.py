@@ -53,10 +53,16 @@ def _apt(work: str, timeout: float) -> dict:
     os.makedirs(os.path.join(lists, "partial"), exist_ok=True)
     os.makedirs(os.path.join(root, "cache", "archives", "partial"), exist_ok=True)
     with open(os.path.join(root, "apt.conf"), "w", encoding="utf-8") as conf:
-        conf.write(f'Dir::State::Lists "{lists}";\nDir::Cache "{root}/cache";\nDebug::NoLocking "true";\n')
+        conf.write(
+            f'Dir::State::Lists "{lists}";\n'
+            f'Dir::Cache "{root}/cache";\n'
+            'Debug::NoLocking "true";\n'
+            'APT::Update::Error-Mode "any";\n'
+        )
     # apt keeps lists compressed as it fetched them, such as *_Packages.lz4 on Ubuntu.
     count = lambda: len([name for name in os.listdir(lists) if re.search(r"_Packages(\.\w+)?$", name)])  # noqa: E731
-    if os.path.exists(updated):
+    # A marker left by an update that fetched nothing is not a success; download again.
+    if os.path.exists(updated) and count() > 0:
         return {"lists": count(), "updated": False}
     log = os.path.join(root, "update.log")
     try:
@@ -65,11 +71,15 @@ def _apt(work: str, timeout: float) -> dict:
                                   stdout=output, stderr=subprocess.STDOUT, timeout=timeout).returncode
     except (OSError, subprocess.TimeoutExpired) as error:
         return {"lists": count(), "updated": True, "error": f"{type(error).__name__}: {error}"}
-    if code == 0:
-        # Only a whole update is kept, so a failed or partial one runs again on the next start.
+    lists_fetched = count()
+    if code == 0 and lists_fetched > 0:
+        # Only a whole update that fetched lists is kept, so a failed or empty one runs again.
         open(updated, "w").close()
-        return {"lists": count(), "updated": True, "exit_code": code}
-    return {"lists": count(), "updated": True, "exit_code": code,
+        return {"lists": lists_fetched, "updated": True, "exit_code": code}
+    if code == 0:
+        return {"lists": lists_fetched, "updated": True, "exit_code": code,
+                "error": "apt-get update exited 0 without a package list"}
+    return {"lists": lists_fetched, "updated": True, "exit_code": code,
             "error": f"apt-get update exited {code}: {_tail(log)[-1500:].strip()}"}
 
 

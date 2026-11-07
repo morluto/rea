@@ -1572,7 +1572,7 @@ const expectReaderBindingMismatch = (
   expect(projectAnalysisError(error).details).toMatchObject({
     binding_mismatch: {
       provider: {
-        snapshot: { version: "apple-metadata-reader-older" },
+        snapshot: { version: "apple-metadata-reader-2" },
         selected: { version: selectedVersion },
       },
       profile_digest: { snapshot: snapshotDigest },
@@ -1610,12 +1610,13 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   if (!opened.ok) throw opened.error;
   const readerIdentity = APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider;
   const wrongReader = structuredClone(snapshot);
+  // Reader v2 could discard owners when their adopted-protocol list was unreadable.
   const otherReaderProfile = createAnalysisProfile(
-    { ...readerIdentity, version: "apple-metadata-reader-older" },
+    { ...readerIdentity, version: "apple-metadata-reader-2" },
     {
       operation: "inspect_native_dispatch_metadata",
       reader: "apple-dispatch-metadata",
-      revision: 0,
+      revision: 2,
     },
   );
   wrongReader.binding = {

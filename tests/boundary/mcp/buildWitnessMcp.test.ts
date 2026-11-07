@@ -612,6 +612,32 @@ it("files one after_edit when two checks of it arrive together, so the record ca
   ).toContain("the next stage is near_miss");
 });
 
+it("keeps a completed reset when the screenshot after it is cancelled", async () => {
+  const witness = await witnessed(0, { screenshotDelaysMs: [0, 60_000] });
+  await witness.check({ stage: "seed", directory: witness.directory });
+  await edit(witness, lines("milk", "eggs"));
+  await witness.check({ stage: "after_edit" });
+  await witness.act("type", { text: "near" });
+  const controller = new AbortController();
+  const resetting = witness.client.callTool(
+    {
+      name: "act_on_build_computer",
+      arguments: {
+        computer_id: witness.id,
+        action: "reset",
+        screenshot: true,
+      },
+    },
+    { signal: controller.signal },
+  );
+  await vi.waitFor(() => expect(witness.app.methods).toContain("data/reset"));
+  controller.abort();
+  await expect(resetting).rejects.toThrow();
+  const near = parseMcpToolError(await witness.check({ stage: "near_miss" }));
+  expect(near.error.message).toContain("put the seed back");
+  expect(witness.app.state).toEqual(lines("milk"));
+}, 30_000);
+
 it("checks after_reset once the reset sent before it has relaunched the app", async () => {
   const witness = await witnessed(4);
   const { app, check } = witness;
