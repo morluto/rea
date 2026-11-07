@@ -7,7 +7,7 @@ import { providerCatalog, toolFamilyCatalog } from "./catalog-builders.mjs";
 /** Project current runtime contracts into deterministic, machine-readable facts. */
 export const createProductCatalog = async (root) => {
   const sources = await loadSources(root);
-  const cli = createCliInventory(sources.cli.createCli());
+  const cli = createCliInventory(await sources.cli.createCli());
   assertSameNames(
     "Primary CLI inventory",
     cli.primary,

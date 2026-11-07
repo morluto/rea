@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
 
-type CliInstance = ReturnType<typeof createCli>;
+type CliInstance = Awaited<ReturnType<typeof createCli>>;
 
 const serve = async (
   cli: CliInstance,
@@ -64,7 +64,7 @@ const optionLine = (help: string, option: string): string | undefined => {
 
 describe("CLI help default annotations", () => {
   it("states each schema-owned option default exactly once", async () => {
-    const cli = createCli({});
+    const cli = await createCli({});
     const repeated: string[] = [];
     for (const { command, options } of singleDefaultOptions) {
       const { stdout, exitCode } = await serve(cli, [command, "--help"]);

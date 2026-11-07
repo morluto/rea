@@ -300,7 +300,9 @@ it.each([
     process.exitCode = 0;
     let stdout = "";
     let exitCode = 0;
-    await createCli({}).serve(["compare", path, path, "--json"], {
+    await (
+      await createCli({})
+    ).serve(["compare", path, path, "--json"], {
       env: {},
       stdout: (chunk) => {
         stdout += chunk;
@@ -363,15 +365,14 @@ it.each([
     let stdout = "";
     const previousExitCode = process.exitCode;
     try {
-      await createCli({}).serve(
-        [...standaloneBundleArguments(command, path, output), "--json"],
-        {
-          stdout: (part) => {
-            stdout += part;
-          },
-          exit: () => {},
+      await (
+        await createCli({})
+      ).serve([...standaloneBundleArguments(command, path, output), "--json"], {
+        stdout: (part) => {
+          stdout += part;
         },
-      );
+        exit: () => {},
+      });
       expect(attempts.size).toBe(command === "compare" ? 2 : 1);
       expect([...attempts.values()]).toEqual(
         command === "compare" ? [3, 3] : [3],
@@ -417,15 +418,14 @@ it.each([
   let stdout = "";
   try {
     process.exitCode = undefined;
-    await createCli({}).serve(
-      [...standaloneBundleArguments(command, path, output), "--json"],
-      {
-        stdout: (part) => {
-          stdout += part;
-        },
-        exit: () => {},
+    await (
+      await createCli({})
+    ).serve([...standaloneBundleArguments(command, path, output), "--json"], {
+      stdout: (part) => {
+        stdout += part;
       },
-    );
+      exit: () => {},
+    });
     expect(JSON.parse(stdout)).toMatchObject({ code: "cancelled" });
     expect(process.exitCode).toBe(130);
     expect(process.listenerCount("SIGINT")).toBe(before);
@@ -471,7 +471,9 @@ it.each(["compare", "inspect-evidence-bundle"])(
     let stdout = "";
     try {
       process.exitCode = undefined;
-      await createCli({}).serve(
+      await (
+        await createCli({})
+      ).serve(
         [
           ...(command === "compare"
             ? [command, path, path]
@@ -531,7 +533,9 @@ it.each(["before-commit", "after-commit", "cleanup-retry"])(
     let stdout = "";
     try {
       process.exitCode = undefined;
-      await createCli({}).serve(["evidence-export", path, output, "--json"], {
+      await (
+        await createCli({})
+      ).serve(["evidence-export", path, output, "--json"], {
         stdout: (part) => {
           stdout += part;
         },

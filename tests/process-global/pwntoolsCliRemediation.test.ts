@@ -83,16 +83,15 @@ it
         );
       let stdout = "";
       process.exitCode = 0;
-      await createCli({}).serve(
-        [command, workspace.path("selected.elf"), "--json"],
-        {
-          env: {},
-          stdout: (text) => {
-            stdout += text;
-          },
-          exit: () => undefined,
+      await (
+        await createCli({})
+      ).serve([command, workspace.path("selected.elf"), "--json"], {
+        env: {},
+        stdout: (text) => {
+          stdout += text;
         },
-      );
+        exit: () => undefined,
+      });
       const output: unknown = JSON.parse(stdout);
       expect(output).toMatchObject({
         code: "provider_unavailable",

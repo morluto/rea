@@ -4,7 +4,7 @@ import { createCli, closeCliResources } from "../../../src/cli.js";
 afterAll(async () => closeCliResources());
 
 const run = async (arguments_: string[]) => {
-  const cli = createCli({});
+  const cli = await createCli({});
   let stdout = "";
   let exitCode = 0;
   const previousExitCode = process.exitCode;

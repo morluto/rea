@@ -192,7 +192,7 @@ it("reports the heap the selected adapter launches when decoder environment diff
 });
 
 it("registers CLI commands when the capture decoder heap setting is invalid", async () => {
-  const cli = createCli({
+  const cli = await createCli({
     REA_LOG_LEVEL: "silent",
     REA_CAPTURE_DECODER_OLD_GENERATION_MIB: "7",
   });

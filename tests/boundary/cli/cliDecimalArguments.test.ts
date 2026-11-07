@@ -70,8 +70,8 @@ const REQUIRED_NUMERIC_FIELDS = [
 ] as const;
 
 describe("decimal integer CLI admission", () => {
-  it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", () => {
-    const cli = createCli({});
+  it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", async () => {
+    const cli = await createCli({});
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     const failures: string[] = [];
     const checked: string[] = [];

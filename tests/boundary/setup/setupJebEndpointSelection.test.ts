@@ -32,7 +32,9 @@ it("validates selected and existing JEB endpoints without losing caller selectio
   };
   const setup = async () => {
     let stdout = "";
-    await createCli(env).serve(
+    await (
+      await createCli(env)
+    ).serve(
       ["setup", "--client", "cursor", "--skill=false", "--yes", "--json"],
       {
         env,

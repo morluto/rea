@@ -18,7 +18,9 @@ import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 
 const runCli = async (arguments_: readonly string[]): Promise<unknown> => {
   let stdout = "";
-  await createCli({}).serve([...arguments_, "--json"], {
+  await (
+    await createCli({})
+  ).serve([...arguments_, "--json"], {
     env: {},
     stdout: (chunk) => {
       stdout += chunk;

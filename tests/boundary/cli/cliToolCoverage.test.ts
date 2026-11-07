@@ -108,8 +108,8 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
 ]);
 
 describe("CLI canonical tool coverage", () => {
-  it("accounts for every MCP tool on the CLI or marks it intentionally MCP-only", () => {
-    const registeredCli = createCliInventory(createCli());
+  it("accounts for every MCP tool on the CLI or marks it intentionally MCP-only", async () => {
+    const registeredCli = createCliInventory(await createCli());
     const registeredCommandNames = new Set([
       ...registeredCli.primary,
       ...registeredCli.aliases.map(({ name }) => name),

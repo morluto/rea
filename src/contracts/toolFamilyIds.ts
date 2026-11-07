@@ -34,7 +34,8 @@ export const isToolFamilyId = (value: string): value is ToolFamilyId =>
 
 /**
  * Invoke one registrar per published family, in {@link TOOL_FAMILY_IDS} order.
- * Both CLI and MCP pass a complete map; a new id fails those call sites.
+ * MCP passes a complete map, and the CLI's command group catalog keys a
+ * complete map by the same ids, so a new id fails both sites.
  * This module stays free of contract schemas so CLI startup can walk the list
  * without loading every tool definition.
  */

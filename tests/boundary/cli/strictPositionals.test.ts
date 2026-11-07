@@ -53,7 +53,7 @@ it("rejects surplus public CLI inputs before importing and retains the one-path 
       unknowns: [],
     }),
   );
-  const cli = createCli({});
+  const cli = await createCli({});
   for (const extra of [["ignored"], ["ignored", "second"]]) {
     const result = await serve(cli, ["evidence-import", path, ...extra]);
     expect(result.exitCode).toBe(1);

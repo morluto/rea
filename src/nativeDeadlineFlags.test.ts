@@ -3,7 +3,7 @@ import { expect, it } from "vitest";
 import { createCli } from "./cli.js";
 
 const help = async (command: string): Promise<string> => {
-  const cli = createCli({ REA_LOG_LEVEL: "silent" });
+  const cli = await createCli({ REA_LOG_LEVEL: "silent" });
   let text = "";
   await cli.serve([command, "--help"], {
     env: {},

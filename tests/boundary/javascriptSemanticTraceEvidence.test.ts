@@ -30,7 +30,7 @@ it("reports invalid nested semantic graph Evidence as caller input through CLI a
     "export function parse(value) { return JSON.parse(value); }\n",
   );
 
-  const cli = createCli({});
+  const cli = await createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
     root,
@@ -143,7 +143,7 @@ it("excludes local exports from writes-only traces through CLI and MCP", async (
     ].join("\n"),
   );
 
-  const cli = createCli({});
+  const cli = await createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
     root,
@@ -207,7 +207,7 @@ it("traces exact empty property names through CLI and MCP", async () => {
     join(root, "main.js"),
     "const routes = {'': 'HOME', x: 'NAMED'}; const root = routes['']; const named = routes.x;\n",
   );
-  const cli = createCli({});
+  const cli = await createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
     root,
@@ -279,7 +279,7 @@ it("traces transformed operands through CLI and advertised MCP output", async ()
     join(root, "main.js"),
     'const base = "https://example.test"; const url = base + "/x"; fetch(url); consume("only-direct"); const nested = "nested-token"; const box = { url: wrap(nested + "/x") };',
   );
-  const cli = createCli({});
+  const cli = await createCli({});
   const analyzed = await serveCli(cli, [
     "analyze-javascript-application",
     root,
@@ -341,7 +341,7 @@ it("reports offered semantic capacity when a large template exceeds it", async (
     join(root, "main.js"),
     `const base = "token"; const value = \`${expressions}\`;`,
   );
-  const analyzed = await serveCli(createCli({}), [
+  const analyzed = await serveCli(await createCli({}), [
     "analyze-javascript-application",
     root,
     "--max-semantic-nodes-per-file",
@@ -358,7 +358,7 @@ it("reports offered semantic capacity when a large template exceeds it", async (
 });
 
 const assertSuccessfulTraceParity = async (
-  cli: ReturnType<typeof createCli>,
+  cli: Awaited<ReturnType<typeof createCli>>,
   harness: Awaited<ReturnType<typeof createApplicationMcpHarness>>,
   application: ReturnType<typeof parseEvidence>,
   query: {
@@ -457,7 +457,7 @@ const assertTraceContextsResolve = (
 };
 
 const serveCli = async (
-  cli: ReturnType<typeof createCli>,
+  cli: Awaited<ReturnType<typeof createCli>>,
   arguments_: readonly string[],
 ): Promise<{ readonly stdout: string; readonly exitCode: number }> => {
   let stdout = "";

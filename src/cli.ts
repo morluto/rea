@@ -2,28 +2,9 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { writeAmpRegistrationBackup } from "./cli/ampRegistrationBackup.js";
-import { registerToolFamilies } from "./contracts/toolFamilyIds.js";
-import { registerGpuCommands } from "./cli/gpuCommands.js";
-import { registerNativeFunctionMatchingCommands } from "./cli/nativeFunctionMatchingCommands.js";
-import { registerCaptureCommands } from "./cli/captureCommands.js";
-import { registerSignalCommands } from "./cli/signalCommands.js";
-import { registerWasmCommands } from "./cli/wasmCommands.js";
-import { registerApkSignatureCommands } from "./cli/apkSignatureCommands.js";
 import { snapshotEnvironment } from "./process/snapshotEnvironment.js";
-import { createDirectAnalysis } from "./composition/directAnalysis.js";
-import { registerEvmCommands } from "./cli/evmCommands.js";
-import { registerDesktopApplicationCommands } from "./cli/desktopApplicationCommands.js";
-import { registerGoCommands } from "./cli/goCommands.js";
-import { registerModelCommands } from "./cli/modelCommands.js";
-import { registerIl2cppCommands } from "./cli/il2cppCommands.js";
-import { registerRustCommands } from "./cli/rustCommands.js";
-import { registerPythonPycCommands } from "./cli/pythonPycCommands.js";
-import { registerErlangCommands } from "./cli/erlangCommands.js";
-import { registerSqliteCommands } from "./cli/sqliteCommands.js";
-import { registerAnalysisViewCommands } from "./cli/analysisViewCommands.js";
-import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsCommands.js";
-import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
+import type { DirectAnalysis } from "./composition/directAnalysis.js";
 import { Cli, z } from "incur";
 import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import {
@@ -46,42 +27,17 @@ import { parseLogLevel } from "./config/processStart.js";
 import { PRODUCT_IDENTITY } from "./identity.js";
 import { currentClientRegistrationCommand } from "./application/ClientRegistrationIdentity.js";
 import { clientRegistrationCommandText } from "./cli/clientRegistrationCommandText.js";
-import { registerSetupCommands } from "./cli/setupCommands.js";
-import { registerCoreAnalysisCommands } from "./cli/coreAnalysisCommands.js";
-import { registerUtilityCommands } from "./cli/utilityCommands.js";
-import { registerArtifactCommands } from "./cli/artifactCommands.js";
-import { registerManagedCommands } from "./cli/managedCommands.js";
-import { registerFirmwareCommands } from "./cli/firmwareCommands.js";
-import { registerAndroidCommands } from "./cli/androidCommands.js";
-import { registerApktoolCommands } from "./cli/apktoolCommands.js";
-import { registerPcapCommands } from "./cli/pcapCommands.js";
-import { registerFlutterCommands } from "./cli/flutterCommands.js";
-import { registerJebCommands } from "./cli/jebCommands.js";
-import { registerAdbCommands } from "./cli/adbCommands.js";
-import { registerEvidenceCommands } from "./cliEvidenceCommands.js";
-import { registerEnvironmentCommands } from "./cli/environmentCommands.js";
-import { registerProcessCommands } from "./cli/processCommands.js";
-import { registerDesktopCaptureCommands } from "./cli/desktopCaptureCommands.js";
-import { registerBrowserCommands } from "./cli/browserCommands.js";
-import { registerWebScriptCommands } from "./cli/webScriptCommands.js";
-import { registerWebModuleCommands } from "./cli/webModuleCommands.js";
-import { registerWebSourceLocationCommands } from "./cli/webSourceLocationCommands.js";
-import { registerWebRuntimeCommands } from "./cli/webRuntimeCommands.js";
-import { registerWebNetworkCaptureCommands } from "./cli/webNetworkCaptureCommands.js";
-import { registerJavaScriptRecoveryCommands } from "./cli/javascriptRecoveryCommands.js";
-import { registerAdvancedBrowserCommands } from "./cli/browserAdvancedCommands.js";
-import { registerBrowserScenarioCommands } from "./cliBrowserScenarioCommands.js";
-import { registerElectronCommands } from "./cli/electronCommands.js";
-import { registerJavaScriptRuntimeObservationCommands } from "./cli/javascriptRuntimeCommands.js";
-import { registerApplicationCommands } from "./cli/applicationCommands.js";
+import {
+  CLI_COMMAND_GROUPS,
+  type CliCommandGroup,
+  type CliCommandGroupContext,
+} from "./cli/commandGroups.js";
 import { presentOmittableDefaults } from "./cli/omittableDefaults.js";
 import type { CliInstance } from "./cli/types.js";
 import {
   streamCliCommandResults,
   type CliResultOutput,
 } from "./cli/cliResultOutput.js";
-import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
-import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
 import { validateCliArguments } from "./cli/strictPositionals.js";
 import {
@@ -90,12 +46,9 @@ import {
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
 import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
-import {
-  closeCliGuidanceResources,
-  registerGuidanceCommands,
-} from "./cli/guidanceCommands.js";
-import { closeCliJavaScriptResources } from "./cli/javascriptApplicationAnalysis.js";
-import { registerGuidedWorkflowCommands } from "./cli/guidedWorkflowCommands.js";
+import { closeCliGuidanceResources } from "./cli/cliGuidanceResources.js";
+import { closeCliJavaScriptResources } from "./cli/cliJavaScriptResources.js";
+import { RECORDED_CLI_COMMAND_GROUPS } from "./recordedCliCommandGroups.js";
 
 /** Close every process-owned resource used by CLI commands. */
 export const closeCliResources = async (): Promise<void> => {
@@ -112,9 +65,28 @@ export const closeCliResources = async (): Promise<void> => {
 };
 
 /**
+ * The groups to load for one top-level command token. A token the build did
+ * not record, including help, completions and Incur's built-in commands,
+ * loads every group so routing, suggestions and root help stay complete.
+ */
+const selectedCommandGroups = (
+  command: string | undefined,
+): readonly CliCommandGroup[] => {
+  if (command === undefined || RECORDED_CLI_COMMAND_GROUPS === undefined)
+    return CLI_COMMAND_GROUPS;
+  const id = Object.hasOwn(RECORDED_CLI_COMMAND_GROUPS, command)
+    ? RECORDED_CLI_COMMAND_GROUPS[command]
+    : undefined;
+  const group = CLI_COMMAND_GROUPS.find((candidate) => candidate.id === id);
+  return group === undefined ? CLI_COMMAND_GROUPS : [group];
+};
+
+/**
  * Build the one-shot Incur CLI without starting Hopper at import time.
  * Analysis commands acquire and close their own sessions; bare `mcp` and
  * `--mcp` are intercepted by the executable dispatcher before this module loads.
+ * With `command`, only the group that registers that recorded top-level
+ * command is imported; otherwise every group is.
  */
 export const createCli = (
   selectedEnvironment: Readonly<
@@ -122,9 +94,56 @@ export const createCli = (
   > = process.env,
   resultOutput?: CliResultOutput,
   fridaInstrumentation?: FridaInstrumentationPort,
-): CliInstance => {
+  command?: string,
+): Promise<CliInstance> =>
+  assembleCli(
+    selectedEnvironment,
+    resultOutput,
+    fridaInstrumentation,
+    selectedCommandGroups(command),
+  );
+
+/** Top-level command and alias names each group registers, for the build recorder. */
+export const recordCliCommandGroups = async (
+  selectedEnvironment: Readonly<Record<string, string | undefined>>,
+): Promise<Readonly<Record<string, string>>> => {
+  const recorded: Record<string, string> = {};
+  for (const group of CLI_COMMAND_GROUPS) {
+    const cli = await assembleCli(selectedEnvironment, undefined, undefined, [
+      group,
+    ]);
+    const commands = Cli.toCommands.get(
+      cli as unknown as Parameters<typeof Cli.toCommands.get>[0],
+    );
+    if (commands === undefined)
+      throw new Error("Incur did not expose the registered REA CLI commands");
+    for (const name of commands.keys()) {
+      const owner = recorded[name];
+      if (owner !== undefined)
+        throw new Error(
+          `CLI command ${name} is registered by both ${owner} and ${group.id}`,
+        );
+      recorded[name] = group.id;
+    }
+  }
+  return recorded;
+};
+
+const assembleCli = async (
+  selectedEnvironment: Readonly<Record<string, string | undefined>>,
+  resultOutput: CliResultOutput | undefined,
+  fridaInstrumentation: FridaInstrumentationPort | undefined,
+  groups: readonly CliCommandGroup[],
+): Promise<CliInstance> => {
   const environment = snapshotEnvironment(selectedEnvironment);
-  const analysis = createDirectAnalysis(environment);
+  // Groups that run analysis share one composition, created on first use.
+  let analysis: Promise<DirectAnalysis> | undefined;
+  const sharedAnalysis = (): Promise<DirectAnalysis> => {
+    analysis ??= import("./composition/directAnalysis.js").then(
+      ({ createDirectAnalysis }) => createDirectAnalysis(environment),
+    );
+    return analysis;
+  };
   // The executable reports an invalid level before every command except doctor.
   // Doctor keeps going so its readiness report can name REA_LOG_LEVEL.
   const level =
@@ -180,77 +199,18 @@ export const createCli = (
   // type while Incur owns parsing and the middleware owns this added flag.
   const cli = timedCli as unknown as CliInstance;
 
-  registerSetupCommands(cli, logger, environment);
-  registerToolFamilies({
-    direct: () =>
-      registerCoreAnalysisCommands(
-        cli,
-        logger,
-        analysis.runDirectAnalysis,
-        environment,
-      ),
-    // Enhanced workflows are MCP tools. Their CLI entry points live with core analysis.
-    enhanced: () => undefined,
-    native: () => {
-      registerReverseEngineeringCommands(cli, logger, environment);
-      registerCutterCommands(cli, logger, environment);
-      registerUtilityCommands(cli, logger, environment, analysis);
-      registerBinaryDiagnosticsCommands(cli, logger, environment);
-    },
-    artifact: () => {
-      registerWasmCommands(cli, logger, environment);
-      registerApkSignatureCommands(cli, logger, environment);
-      registerCaptureCommands(cli, logger, environment);
-      registerSignalCommands(cli, logger, environment);
-      registerEvmCommands(cli, logger, environment);
-      registerDesktopApplicationCommands(cli, logger);
-      registerGoCommands(cli, logger);
-      registerIl2cppCommands(cli, logger);
-      registerModelCommands(cli, logger);
-      registerGpuCommands(cli, logger);
-      registerRustCommands(cli, logger);
-      registerPythonPycCommands(cli, logger);
-      registerErlangCommands(cli, logger);
-      registerSqliteCommands(cli, logger, environment);
-      registerArtifactCommands(cli, logger, analysis.runProviderAnalysis);
-    },
-    managed: () =>
-      registerManagedCommands(cli, logger, analysis.runProviderAnalysis),
-    firmware: () => registerFirmwareCommands(cli, logger, environment),
-    android: () => registerAndroidCommands(cli, logger, environment),
-    pcap: () => registerPcapCommands(cli, logger, environment),
-    flutter: () => registerFlutterCommands(cli, logger),
-    frida: () => registerFridaCommands(cli, logger, fridaInstrumentation),
-    apktool: () => registerApktoolCommands(cli, logger, environment),
-    jeb: () => registerJebCommands(cli, logger, environment),
-    adb: () => registerAdbCommands(cli, logger, environment),
-    browser: () => {
-      registerBrowserCommands(cli, logger);
-      registerWebRuntimeCommands(cli, logger);
-      registerWebNetworkCaptureCommands(cli, logger, environment);
-      registerAdvancedBrowserCommands(cli, logger);
-      registerBrowserScenarioCommands(cli, logger, environment);
-    },
-    electron: () => registerElectronCommands(cli, logger, environment),
-    "javascript-runtime": () =>
-      registerJavaScriptRuntimeObservationCommands(cli, logger, environment),
-    application: () => {
-      registerGuidanceCommands(cli, logger);
-      registerGuidedWorkflowCommands(cli, logger);
-      registerAnalysisViewCommands(cli, logger);
-      registerEvidenceCommands(cli, logger);
-      registerEnvironmentCommands(cli, logger, environment);
-      registerProcessCommands(cli, logger, environment);
-      registerDesktopCaptureCommands(cli, logger, environment);
-      registerJavaScriptRecoveryCommands(cli, logger, environment);
-      registerWebScriptCommands(cli, logger);
-      registerWebModuleCommands(cli, logger, environment);
-      registerWebSourceLocationCommands(cli, logger, environment);
-      registerApplicationCommands(cli, logger);
-    },
-    session: () =>
-      registerNativeFunctionMatchingCommands(cli, logger, environment),
-  });
+  const context: CliCommandGroupContext = {
+    cli,
+    logger,
+    environment,
+    analysis: sharedAnalysis,
+    fridaInstrumentation,
+  };
+  // Import selected groups concurrently, then register in catalog order.
+  const registrations = await Promise.all(
+    groups.map((group) => group.load(context)),
+  );
+  for (const register of registrations) register(context);
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
   const serveStrict = validateCliArguments(cli);

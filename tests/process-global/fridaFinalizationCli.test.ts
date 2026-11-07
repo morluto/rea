@@ -70,7 +70,9 @@ it.each([
         : [command, "--json"];
     let stdout = "";
     try {
-      await createCli({}, undefined, provider).serve(args, {
+      await (
+        await createCli({}, undefined, provider)
+      ).serve(args, {
         env: {},
         exit: () => {},
         stdout: (text) => {

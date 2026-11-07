@@ -73,7 +73,7 @@ it.each(
         }),
       );
 
-    const cli = createCli({});
+    const cli = await createCli({});
     let stdout = "";
     await cli.serve(
       [
