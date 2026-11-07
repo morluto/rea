@@ -5,6 +5,7 @@ import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
   WARC_ARCHIVE_HEADER_BLOCK_BYTES,
   WARC_ARCHIVE_HEADER_FIELDS,
+  WARC_ARCHIVE_HTTP_STATUS_LINE_BYTES as HTTP_STATUS_LINE_BYTES,
   WARC_ARCHIVE_MAX_DIAGNOSTICS,
   type WarcArchive,
   type WarcArchiveArtifact,
@@ -67,6 +68,16 @@ const REPEATABLE_FIELDS = new Set([
 /** RFC 2616 token: the only shape WARC allows for a field name. */
 const FIELD_NAME = /^[!#$%&'*+\-.^_`|~0-9a-z]+$/;
 
+/**
+ * A version line is `WARC/` followed by a decimal `major.minor`. Accepting any
+ * line that merely began with `WARC/` turned `WARC/not-a-version` into a record
+ * with no diagnostic, and its declared Content-Length then swallowed later real
+ * records. Deliberately not anchored with `$`: WARC 1.0 allows a trailing
+ * comment after the version, which this parser does not interpret, and before
+ * any such comment was tolerated this only rejected lines with no version.
+ */
+const WARC_VERSION_LINE = /^WARC\/[0-9]+\.[0-9]+(?:[ \t]|$)/;
+
 const findLineEnd = (data: Buffer, from: number) => {
   const lf = data.indexOf(0x0a, from);
   if (lf === -1) return null;
@@ -80,6 +91,8 @@ interface HeaderBlockResult {
   readonly block: HeaderBlock | null;
   /** Resource allowance reached while reading this header, if any. */
   readonly limit: "line" | "block-bytes" | "block-fields" | null;
+  /** The line began `WARC/` but carries no parseable version. */
+  readonly invalidVersion?: number;
 }
 
 /**
@@ -96,6 +109,8 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
     return { block: null, limit: "line" };
   const version = data.toString("utf8", start, versionLine.contentEnd);
   if (!version.startsWith("WARC/")) return { block: null, limit: null };
+  if (!WARC_VERSION_LINE.test(version))
+    return { block: null, limit: null, invalidVersion: versionLine.end };
   const fields = new Map<string, string>();
   const malformed: string[] = [];
   let cursor = versionLine.end;
@@ -144,19 +159,79 @@ interface HttpFacts {
   readonly header_bytes: number;
 }
 
-/** Decode only the embedded response status line; headers and body stay undecoded. */
+const isDigit = (byte: number) => byte >= 0x30 && byte <= 0x39;
+const isSpace = (byte: number) => byte === 0x20 || byte === 0x09;
+
+/**
+ * Decode only the embedded response status line; headers and body stay undecoded.
+ *
+ * Read positionally rather than with `/^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s+(.*))?$/`:
+ * that expression let `\s+` and `(.*)` backtrack over the same spaces, so a
+ * status line with a long run of blanks and an invalid reason phrase cost
+ * quadratic time — 32,000 spaces took 1.43 s synchronously, blocking the MCP
+ * server and cancellation. Every step here advances the cursor.
+ */
+/** Read `HTTP/` and a decimal major, optional `.minor`. */
+const readHttpVersion = (payload: Buffer, limit: number): number | null => {
+  const prefix = payload.toString("latin1", 0, Math.min(5, limit));
+  if (prefix !== "HTTP/") return null;
+  let cursor = 5;
+  const skipDigits = () => {
+    const from = cursor;
+    while (cursor < limit && isDigit(payload[cursor] ?? -1)) cursor += 1;
+    return cursor - from;
+  };
+  if (skipDigits() === 0) return null;
+  if (cursor < limit && payload[cursor] === 0x2e) {
+    cursor += 1;
+    if (skipDigits() === 0) return null;
+  }
+  return cursor;
+};
+
+/** Skip mandatory spaces, then read exactly three digits within 100–599. */
+const readHttpStatusCode = (
+  payload: Buffer,
+  from: number,
+  limit: number,
+): { code: number; cursor: number } | null => {
+  let cursor = from;
+  const spacesFrom = cursor;
+  while (cursor < limit && isSpace(payload[cursor] ?? -1)) cursor += 1;
+  if (cursor === spacesFrom) return null;
+  let code = 0;
+  for (let index = 0; index < 3; index += 1) {
+    const byte = payload[cursor + index] ?? -1;
+    if (!isDigit(byte)) return null;
+    code = code * 10 + byte - 0x30;
+  }
+  if (code < 100 || code > 599) return null;
+  cursor += 3;
+  if (cursor < limit && !isSpace(payload[cursor] ?? -1)) return null;
+  return { code, cursor };
+};
+
 const readHttpStatus = (payload: Buffer): HttpFacts | null => {
   const line = findLineEnd(payload, 0);
   if (line === null) return null;
-  const text = payload.toString("utf8", 0, line.contentEnd);
-  const match = /^HTTP\/\d(?:\.\d)?\s+(\d{3})(?:\s+(.*))?$/u.exec(text);
-  if (match === null) return null;
-  const code = Number(match[1]);
-  if (!Number.isInteger(code) || code < 100 || code > 599) return null;
-  const reason = match[2]?.trim();
+  if (line.contentEnd > HTTP_STATUS_LINE_BYTES) return null;
+  const limit = line.contentEnd;
+  const afterVersion = readHttpVersion(payload, limit);
+  if (afterVersion === null) return null;
+  const status = readHttpStatusCode(payload, afterVersion, limit);
+  if (status === null) return null;
+  let reasonFrom = status.cursor;
+  let reasonEnd = limit;
+  while (reasonFrom < reasonEnd && isSpace(payload[reasonFrom] ?? -1))
+    reasonFrom += 1;
+  while (reasonEnd > reasonFrom && isSpace(payload[reasonEnd - 1] ?? -1))
+    reasonEnd -= 1;
   return {
-    status_code: code,
-    reason_phrase: reason === undefined || reason === "" ? null : reason,
+    status_code: status.code,
+    reason_phrase:
+      reasonEnd > reasonFrom
+        ? payload.toString("utf8", reasonFrom, reasonEnd)
+        : null,
     header_bytes: line.end,
   };
 };
@@ -197,6 +272,51 @@ type DiagnosticSink = (
   code: WarcArchive["diagnostics"][number]["code"],
   message: string,
 ) => void;
+
+/**
+ * Report why a header block could not be read. Returns how to resume: null
+ * ends the scan, a number is the offset scanning continues from.
+ */
+const resumeAfterUnreadableHeader = (
+  result: HeaderBlockResult,
+  offset: number,
+  ordinal: number,
+  diagnostic: DiagnosticSink,
+): number | null => {
+  // A `WARC/` line with no version is damage in one place, not a reason to
+  // stop: its own Content-Length was never trusted, so resume after that line
+  // and the genuine records following it are still read.
+  if (result.invalidVersion !== undefined) {
+    diagnostic(
+      ordinal,
+      "invalid-version-line",
+      `The line at decoded offset ${offset} starts a WARC record but carries no WARC version; scanning resumed after it.`,
+    );
+    return result.invalidVersion;
+  }
+  // Name the ceiling when the reader stopped on one: a long but intact header
+  // is not archive damage, and reporting it as truncation sends the operator
+  // looking for a defect that is not there.
+  if (result.limit === "line")
+    diagnostic(
+      ordinal,
+      "header-line-limit-reached",
+      `The record starting at decoded offset ${offset} has a version or header line longer than ${WARC_ARCHIVE_HEADER_LINE_BYTES} bytes; later records were not read.`,
+    );
+  else if (result.limit !== null)
+    diagnostic(
+      ordinal,
+      "header-block-limit-reached",
+      `The record starting at decoded offset ${offset} exceeds the header ${result.limit === "block-bytes" ? `byte allowance of ${WARC_ARCHIVE_HEADER_BLOCK_BYTES}` : `retained field and malformed-line allowance of ${WARC_ARCHIVE_HEADER_FIELDS}`}; later records were not read.`,
+    );
+  else
+    diagnostic(
+      ordinal,
+      "truncated-record",
+      `The record starting at decoded offset ${offset} has an incomplete version line or header block.`,
+    );
+  return null;
+};
 
 const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
   const records: WarcRecord[] = [];
@@ -268,30 +388,18 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
         "trailing-bytes",
         `${nextVersion - searchFrom} unexpected byte(s) between records.`,
       );
-    const { block, limit } = readHeaderBlock(data, nextVersion);
-    if (block === null) {
-      // Name the ceiling when the reader stopped on one: a long but intact
-      // header is not archive damage, and reporting it as truncation sends the
-      // operator looking for a defect that is not there.
-      if (limit === "line")
-        diagnostic(
-          ordinal,
-          "header-line-limit-reached",
-          `The record starting at decoded offset ${nextVersion} has a version or header line longer than ${WARC_ARCHIVE_HEADER_LINE_BYTES} bytes; later records were not read.`,
-        );
-      else if (limit !== null)
-        diagnostic(
-          ordinal,
-          "header-block-limit-reached",
-          `The record starting at decoded offset ${nextVersion} exceeds the header ${limit === "block-bytes" ? `byte allowance of ${WARC_ARCHIVE_HEADER_BLOCK_BYTES}` : `retained field and malformed-line allowance of ${WARC_ARCHIVE_HEADER_FIELDS}`}; later records were not read.`,
-        );
-      else
-        diagnostic(
-          ordinal,
-          "truncated-record",
-          `The record starting at decoded offset ${nextVersion} has an incomplete version line or header block.`,
-        );
-      break;
+    const header = readHeaderBlock(data, nextVersion);
+    if (header.block === null) {
+      const resume = resumeAfterUnreadableHeader(
+        header,
+        nextVersion,
+        ordinal,
+        diagnostic,
+      );
+      if (resume === null) break;
+      cursor = resume;
+      ordinal += 1;
+      continue;
     }
     if (records.length >= maxRecords) {
       stoppedAtLimit = true;
@@ -302,7 +410,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
       );
       break;
     }
-    const step = readOneRecord(data, block, nextVersion, {
+    const step = readOneRecord(data, header.block, nextVersion, {
       ordinal,
       diagnostic,
     });

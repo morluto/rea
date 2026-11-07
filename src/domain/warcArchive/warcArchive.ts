@@ -7,6 +7,12 @@ export const WARC_ARCHIVE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const WARC_ARCHIVE_MAX_DECODED_BYTES = 256 * 1024 * 1024;
 export const WARC_ARCHIVE_MAX_RECORDS = 20_000;
 export const WARC_ARCHIVE_HEADER_LINE_BYTES = 8 * 1024;
+/**
+ * The embedded HTTP status line is a handful of tokens. A response record's
+ * payload line is not subject to the WARC header line allowance, so bound it
+ * here before decoding rather than letting a huge first line reach the reader.
+ */
+export const WARC_ARCHIVE_HTTP_STATUS_LINE_BYTES = 8 * 1024;
 /** Bound per-record header representation before collecting fields or malformed lines. */
 export const WARC_ARCHIVE_HEADER_BLOCK_BYTES = 1024 * 1024;
 export const WARC_ARCHIVE_HEADER_FIELDS = 20_000;
@@ -84,6 +90,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "diagnostic-limit-reached",
     "header-line-limit-reached",
     "header-block-limit-reached",
+    "invalid-version-line",
   ]),
   message: z.string(),
 });

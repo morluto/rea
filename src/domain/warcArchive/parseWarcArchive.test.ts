@@ -349,6 +349,73 @@ describe("field validation", () => {
     );
     expect(archive.summary.malformed_headers).toBeGreaterThan(0);
   });
+
+  it("rejects a version line without a version instead of inventing a record", () => {
+    // Any line starting `WARC/` used to be a record, so this passed as a clean
+    // inventory and its declared length could consume the real record after it.
+    const junk =
+      "WARC/not-a-version\r\nWARC-Type: resource\r\nContent-Length: 0\r\n\r\n";
+    const archive = parsed(
+      junk + record("response", [["WARC-Record-ID", "<urn:real>"]], "real"),
+    );
+    expect(archive.records.map((r) => r.record_type)).toEqual(["response"]);
+    expect(archive.diagnostics.map((d) => d.code)).toContain(
+      "invalid-version-line",
+    );
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
+  it("still accepts a version line carrying a trailing comment", () => {
+    const archive = parsed(
+      "WARC/1.1 written by a crawler\r\nWARC-Type: resource\r\nContent-Length: 0\r\n\r\n\r\n",
+    );
+    expect(archive.records).toHaveLength(1);
+    expect(archive.diagnostics).toEqual([]);
+  });
+});
+
+describe("response status line", () => {
+  it("rejects a malformed status line without scanning it quadratically", () => {
+    // `\s+` and `.*` rescanned the same spaces, so this took ~1.4 s at 32,000
+    // blanks — synchronously, blocking the server and its cancellation.
+    const spaced = `HTTP/1.1 200 ${" ".repeat(200_000)}A\rX\r\n\r\n`;
+    const started = Date.now();
+    const archive = parsed(
+      record("response", [["WARC-Record-ID", "<urn:1>"]], spaced),
+    );
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(archive.records[0]?.http).toBeNull();
+  });
+
+  it("bounds the status line before decoding it", () => {
+    const padded = `HTTP/1.1 200${" ".repeat(9000)}ok\r\n\r\n`;
+    const archive = parsed(
+      record("response", [["WARC-Record-ID", "<urn:1>"]], padded),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+  });
+
+  it("keeps the reason phrase and rejects an out-of-range status", () => {
+    const ok = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1  204\tNo Content  \r\n\r\n",
+      ),
+    );
+    expect(ok.records[0]?.http).toMatchObject({
+      status_code: 204,
+      reason_phrase: "No Content",
+    });
+    const bad = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:2>"]],
+        "HTTP/1.1 999 Nope\r\n\r\n",
+      ),
+    );
+    expect(bad.records[0]?.http).toBeNull();
+  });
 });
 
 describe("bounded archives", () => {
