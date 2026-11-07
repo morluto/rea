@@ -68,18 +68,23 @@ export const ownedProcessPrerequisiteAvailability = (
   cause: unknown,
 ): ProviderAvailability | undefined => {
   const refusal = prerequisiteRefusal(cause);
-  if (refusal !== undefined)
+  if (refusal !== undefined) {
+    const remediation = refusal.remediationAction ?? REMEDIATION;
     return {
       status: "unavailable",
       code: "runtime_unavailable",
-      reason: `${refusal.reason}. ${REMEDIATION}`,
-      remediation: REMEDIATION,
+      reason: `${refusal.reason}. ${remediation}`,
+      remediation,
       diagnostics: {
         stage: "ownership_preparation",
         prerequisite_provider_id: refusal.providerId,
         prerequisite_operation: refusal.operation,
+        ...(refusal.diagnostics?.system_code === undefined
+          ? {}
+          : { system_code: refusal.diagnostics.system_code }),
       },
     };
+  }
   const darwin = darwinPrerequisiteRefusal(cause);
   if (darwin === undefined) return undefined;
   return {

@@ -785,23 +785,47 @@ it("restricts Linux process ownership prerequisite remediation to missing ps and
   );
 
   currentError = eioError;
-  await expect(host.captureBaseline?.()).rejects.toMatchObject({
-    _tag: "ProcessAdmissionError",
-    code: "baseline_unavailable",
-    detail: { system_code: "EIO" },
+  const eioFailure = (await host
+    .captureBaseline?.()
+    .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
+  expect(eioFailure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(eioFailure.remediationAction).toContain(
+    processOwnershipAdmissionRecovery("baseline_unavailable", "linux", "EIO"),
+  );
+  expect(eioFailure.remediationAction).not.toContain("procps");
+  expect(eioFailure.remediationAction).not.toContain("PATH");
+  expect(eioFailure.diagnostics).toMatchObject({
+    boundary: "process-ownership",
+    system_code: "EIO",
   });
 
   currentError = epermError;
-  await expect(host.captureBaseline?.()).rejects.toMatchObject({
-    _tag: "ProcessAdmissionError",
-    code: "baseline_unavailable",
-    detail: { system_code: "EPERM" },
+  const epermFailure = (await host
+    .captureBaseline?.()
+    .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
+  expect(epermFailure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(epermFailure.remediationAction).toContain(
+    processOwnershipAdmissionRecovery("baseline_unavailable", "linux", "EPERM"),
+  );
+  expect(epermFailure.remediationAction).not.toContain("procps");
+  expect(epermFailure.remediationAction).not.toContain("PATH");
+  expect(epermFailure.diagnostics).toMatchObject({
+    boundary: "process-ownership",
+    system_code: "EPERM",
   });
 
   currentError = psMissing;
-  await expect(host.captureBaseline?.()).rejects.toBeInstanceOf(
-    LinuxOwnedProcessPrerequisiteError,
+  const missingFailure = (await host
+    .captureBaseline?.()
+    .catch((error: unknown) => error)) as LinuxOwnedProcessPrerequisiteError;
+  expect(missingFailure).toBeInstanceOf(LinuxOwnedProcessPrerequisiteError);
+  expect(missingFailure.remediationAction).toContain(
+    LINUX_PROCESS_OWNERSHIP_REMEDIATION,
   );
+  expect(missingFailure.diagnostics).toMatchObject({
+    boundary: "process-ownership",
+    system_code: "ENOENT",
+  });
 });
 
 it.each(["EIO", "EPERM"] as const)(
@@ -817,11 +841,7 @@ it.each(["EIO", "EPERM"] as const)(
     const captureSpy = vi
       .spyOn(systemProcessOwnershipHost, "captureBaseline")
       .mockRejectedValue(
-        new ProcessAdmissionError(
-          "baseline_unavailable",
-          { system_code: systemCode },
-          { cause: systemError },
-        ),
+        new LinuxOwnedProcessPrerequisiteError(systemError, systemCode),
       );
     const service = new TestReverseEngineeringService({
       environment: { REA_OBJDUMP_COMMAND: command },
@@ -850,8 +870,8 @@ it.each(["EIO", "EPERM"] as const)(
         );
         expect(projected.remediation.action).not.toContain("procps");
         expect(projected.remediation.action).not.toContain("PATH");
-        expect(projected.remediation.action).toContain(
-          "REA_OBJDUMP_COMMAND does not need to change",
+        expect(projected.remediation.action).not.toContain(
+          "REA_OBJDUMP_COMMAND",
         );
       }
       expect(service.observedLaunchFailures()).toEqual({});

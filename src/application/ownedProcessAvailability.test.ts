@@ -1,9 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
+} from "../domain/analysisErrorCore.js";
 import { ProviderAdapterError } from "../domain/providerAdapterError.js";
 import { DarwinProcessOwnershipInspectionError } from "../process/DarwinProcessRunTokenReader.js";
 import { OwnedCommandFailure } from "../process/OwnedCommand.js";
+import { LinuxOwnedProcessPrerequisiteError } from "../process/ProcessOwnershipObservation.js";
 import { ownedProcessPrerequisiteAvailability } from "./ownedProcessAvailability.js";
 
 describe("Darwin ownership prerequisite discovery", () => {
@@ -80,5 +84,60 @@ describe("Darwin ownership prerequisite discovery", () => {
         }),
       ),
     ).toBeUndefined();
+  });
+});
+
+describe("Linux ownership prerequisite discovery", () => {
+  it("restricts procps/PATH remediation to missing ps and preserves system error codes", () => {
+    const psMissing = new LinuxOwnedProcessPrerequisiteError(
+      Object.assign(new Error("spawn ps ENOENT"), { code: "ENOENT" }),
+    );
+    const wrappedMissing = new AnalysisCapabilityUnavailableError(
+      "jadx",
+      "inspect_jadx_client",
+      "prerequisite failed",
+      {
+        cause: psMissing,
+        diagnostics: { stage: "ownership_preparation" },
+      },
+    );
+    expect(ownedProcessPrerequisiteAvailability(wrappedMissing)).toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      remediation: expect.stringContaining("procps"),
+      diagnostics: {
+        stage: "ownership_preparation",
+        system_code: "ENOENT",
+      },
+    });
+
+    const eioError = new LinuxOwnedProcessPrerequisiteError(
+      Object.assign(new Error("ps EIO"), { code: "EIO" }),
+      "EIO",
+    );
+    const wrappedEio = new AnalysisCapabilityUnavailableError(
+      "jadx",
+      "inspect_jadx_client",
+      "prerequisite failed",
+      {
+        cause: eioError,
+        diagnostics: { stage: "ownership_preparation" },
+      },
+    );
+    const eioAvailability = ownedProcessPrerequisiteAvailability(wrappedEio);
+    expect(eioAvailability).toMatchObject({
+      status: "unavailable",
+      code: "runtime_unavailable",
+      remediation: expect.stringContaining("EIO"),
+      diagnostics: {
+        stage: "ownership_preparation",
+        system_code: "EIO",
+      },
+    });
+    expect(eioAvailability?.status).toBe("unavailable");
+    if (eioAvailability?.status === "unavailable") {
+      expect(eioAvailability.remediation).not.toContain("procps");
+      expect(eioAvailability.remediation).not.toContain("PATH");
+    }
   });
 });
