@@ -33,6 +33,7 @@ import {
 import { parseOtlpTrace } from "../../domain/otlpTrace/parseOtlpTrace.js";
 import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import { err, ok, type Result } from "../../domain/result.js";
+import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -209,6 +210,11 @@ const readFailure = (
       return new AnalysisAccessDeniedError(operation, input.path, cause.code, {
         cause,
       });
+    if (isSelectedRegularFileError(cause))
+      return inputFailure(
+        `Selected trace could not be read (${cause.code}): ${input.path}`,
+        cause,
+      );
   }
   return new ArtifactOperationError(
     operation,

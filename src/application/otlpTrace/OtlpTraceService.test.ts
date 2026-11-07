@@ -3,6 +3,7 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectOtlpTraceEvidence } from "./OtlpTraceService.js";
 
@@ -242,4 +243,28 @@ it("detects a lossy numeric value under an escaped JSON key", async () => {
     path,
     sha256: createHash("sha256").update(input).digest("hex"),
   });
+});
+
+it("reports the selected path and cause when the trace cannot be resolved", async () => {
+  const root = await createTestTempDirectory("rea-otlp-missing-");
+  const blocker = join(root, "file");
+  await writeFile(blocker, "x");
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  for (const [path, code] of [
+    [join(root, "missing.json"), "ENOENT"],
+    [join(blocker, "child.json"), "ENOTDIR"],
+  ] as const) {
+    const result = await inspectOtlpTraceEvidence({ path }, resources);
+    expect(result.ok).toBe(false);
+    if (result.ok || !(result.error instanceof AnalysisInputError))
+      throw new Error("Expected input refusal");
+    expect(result.error.issues).toEqual([
+      {
+        path: ["path"],
+        reason: "invalid_format",
+        message: `Selected trace could not be read (${code}): ${path}`,
+      },
+    ]);
+  }
 });
