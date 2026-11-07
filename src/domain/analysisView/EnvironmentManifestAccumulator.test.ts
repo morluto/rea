@@ -2,6 +2,11 @@ import { describe, expect, it } from "vitest";
 import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
 import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { EnvironmentManifestAccumulator } from "./EnvironmentManifestAccumulator.js";
+import {
+  selectGroupsWithOverlappingRpcPeers,
+  type RoutePart,
+  type ToolGroup,
+} from "./environmentManifestRules.js";
 import { EnvironmentStateAccumulator } from "./EnvironmentStateAccumulator.js";
 
 const sample = (
@@ -899,5 +904,84 @@ describe("deeply nested POST RPC route overlap without stack overflow", () => {
         (view) => view.shape === "recorded" && view.reason === "query-body",
       ),
     ).toBe(true);
+  });
+});
+
+describe("lazy child iteration on large wildcard + encoded-sibling buckets", () => {
+  it("short-circuits at the first matching branch across 6000 numeric wildcard and encoded-sibling groups", () => {
+    const makeGroup = (
+      ordinal: number,
+      parts: readonly RoutePart[],
+      opName: string,
+    ): ToolGroup => ({
+      method: "POST",
+      origin: "https://manifest.test",
+      api_surface_template: "/api/teams/{numeric}/graphql",
+      parts,
+      positions: [ordinal],
+      statuses: new Set([200]),
+      contentTypes: new Set(["application/json"]),
+      queryNames: new Set(),
+      bodyShape: null,
+      rpcOperation: { kind: "graphql", name: opName },
+    });
+
+    const numericPart: RoutePart = {
+      kind: "param",
+      rule: "numeric",
+      values: new Set(["1"]),
+    };
+    const groups: ToolGroup[] = [];
+    for (let index = 0; index < 3000; index += 1) {
+      groups.push(
+        makeGroup(
+          index,
+          [
+            { kind: "literal", value: "api" },
+            { kind: "literal", value: "teams" },
+            numericPart,
+            { kind: "literal", value: "graphql" },
+          ],
+          `GetNumericOp${String(index)}`,
+        ),
+      );
+    }
+    for (let index = 0; index < 3000; index += 1) {
+      const encodedDigits = String(index).replaceAll(
+        /\d/gu,
+        (digit) => `%3${digit}`,
+      );
+      groups.push(
+        makeGroup(
+          3000 + index,
+          [
+            { kind: "literal", value: "api" },
+            { kind: "literal", value: "teams" },
+            { kind: "literal", value: encodedDigits },
+            { kind: "literal", value: "graphql" },
+          ],
+          `GetEncodedOp${String(index)}`,
+        ),
+      );
+    }
+    const nonOverlapping = makeGroup(
+      6000,
+      [
+        { kind: "literal", value: "api" },
+        { kind: "literal", value: "teams" },
+        { kind: "literal", value: "search" },
+        { kind: "literal", value: "graphql" },
+      ],
+      "SearchTeams",
+    );
+    groups.push(nonOverlapping);
+
+    const start = performance.now();
+    const overlapping = selectGroupsWithOverlappingRpcPeers(groups);
+    const elapsedMs = performance.now() - start;
+
+    expect(elapsedMs).toBeLessThan(100);
+    expect(overlapping.size).toBe(6000);
+    expect(overlapping.has(nonOverlapping)).toBe(false);
   });
 });

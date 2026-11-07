@@ -633,17 +633,9 @@ interface RouteOverlapTrieNode<Entry> {
   hasMultipleEntries: boolean;
 }
 
-interface TrieWorkItem<Entry> {
-  readonly node: RouteOverlapTrieNode<Entry>;
-  readonly index: number;
-}
-
-interface TrieStepContext<Entry> {
+interface TrieFrame<Entry> {
   readonly nextIndex: number;
-  readonly targetLength: number;
-  readonly self: Entry;
-  readonly seen: Set<RouteOverlapTrieNode<Entry>>;
-  readonly stack: TrieWorkItem<Entry>[];
+  readonly children: Iterator<RouteOverlapTrieNode<Entry>>;
 }
 
 const createTrieNode = <Entry>(): RouteOverlapTrieNode<Entry> => ({
@@ -730,76 +722,63 @@ const insertRouteInTrie = <Entry>(
   }
 };
 
-const enqueueMatchingChild = <Entry>(
-  child: RouteOverlapTrieNode<Entry> | undefined,
-  ctx: TrieStepContext<Entry>,
-): boolean => {
-  if (child === undefined || !nodeHasPeer(child, ctx.self)) return false;
-  if (ctx.nextIndex === ctx.targetLength) return true;
-  if (!ctx.seen.has(child)) {
-    ctx.seen.add(child);
-    ctx.stack.push({ node: child, index: ctx.nextIndex });
-  }
-  return false;
-};
-
-const enqueueLiteralMatches = <Entry>(
+function* matchingLiteralTrieChildren<Entry>(
   node: RouteOverlapTrieNode<Entry>,
   value: string,
-  ctx: TrieStepContext<Entry>,
-): boolean => {
-  if (enqueueMatchingChild(node.exactLiterals?.get(value), ctx)) return true;
+): Generator<RouteOverlapTrieNode<Entry>> {
+  const exact = node.exactLiterals?.get(value);
+  if (exact !== undefined) yield exact;
   const decoded = value.includes("%") ? decodedSegment(value) : value;
-  if (
-    decoded !== value &&
-    enqueueMatchingChild(node.exactLiterals?.get(decoded), ctx)
-  )
-    return true;
+  if (decoded !== value) {
+    const onceDecoded = node.exactLiterals?.get(decoded);
+    if (onceDecoded !== undefined) yield onceDecoded;
+  }
   const encodedMatches = node.decodedLiterals?.get(value);
-  if (encodedMatches !== undefined)
-    for (const child of encodedMatches)
-      if (enqueueMatchingChild(child, ctx)) return true;
-  if (value === "" || node.params === undefined) return false;
-  if (enqueueMatchingChild(node.params.get("any"), ctx)) return true;
+  if (encodedMatches !== undefined) yield* encodedMatches;
+  if (value === "" || node.params === undefined) return;
+  const anyParam = node.params.get("any");
+  if (anyParam !== undefined) yield anyParam;
   const rawRule = segmentRule(value);
-  if (rawRule !== null && enqueueMatchingChild(node.params.get(rawRule), ctx))
-    return true;
+  if (rawRule !== null) {
+    const rawParam = node.params.get(rawRule);
+    if (rawParam !== undefined) yield rawParam;
+  }
   if (decoded !== value) {
     const decodedRule = segmentRule(decoded);
-    if (
-      decodedRule !== null &&
-      decodedRule !== rawRule &&
-      enqueueMatchingChild(node.params.get(decodedRule), ctx)
-    )
-      return true;
+    if (decodedRule !== null && decodedRule !== rawRule) {
+      const decodedParam = node.params.get(decodedRule);
+      if (decodedParam !== undefined) yield decodedParam;
+    }
   }
-  return false;
-};
+}
 
-const enqueueParamMatches = <Entry>(
+function* matchingParamTrieChildren<Entry>(
   node: RouteOverlapTrieNode<Entry>,
   part: ParamPart,
-  ctx: TrieStepContext<Entry>,
-): boolean => {
+): Generator<RouteOverlapTrieNode<Entry>> {
   const kind = paramOverlapKind(part);
   if (kind === "any") {
+    if (node.params !== undefined) yield* node.params.values();
     if (node.exactLiterals !== undefined)
       for (const [literal, child] of node.exactLiterals)
-        if (literal !== "" && enqueueMatchingChild(child, ctx)) return true;
-    if (node.params !== undefined)
-      for (const child of node.params.values())
-        if (enqueueMatchingChild(child, ctx)) return true;
-    return false;
+        if (literal !== "") yield child;
+    return;
   }
+  const sameRuleParam = node.params?.get(kind);
+  if (sameRuleParam !== undefined) yield sameRuleParam;
+  const anyParam = node.params?.get("any");
+  if (anyParam !== undefined) yield anyParam;
   const matchingLiterals = node.formatLiterals?.get(kind);
-  if (matchingLiterals !== undefined)
-    for (const child of matchingLiterals)
-      if (enqueueMatchingChild(child, ctx)) return true;
-  return (
-    enqueueMatchingChild(node.params?.get("any"), ctx) ||
-    enqueueMatchingChild(node.params?.get(kind), ctx)
-  );
-};
+  if (matchingLiterals !== undefined) yield* matchingLiterals;
+}
+
+const matchingTrieChildren = <Entry>(
+  node: RouteOverlapTrieNode<Entry>,
+  part: RoutePart,
+): Iterator<RouteOverlapTrieNode<Entry>> =>
+  part.kind === "literal"
+    ? matchingLiteralTrieChildren(node, part.value)
+    : matchingParamTrieChildren(node, part);
 
 const trieHasOverlappingPeer = <Entry>(
   root: RouteOverlapTrieNode<Entry>,
@@ -807,27 +786,31 @@ const trieHasOverlappingPeer = <Entry>(
   self: Entry,
 ): boolean => {
   if (!nodeHasPeer(root, self)) return false;
+  const firstPart = parts[0];
+  if (firstPart === undefined) return true;
   const targetLength = parts.length;
-  if (targetLength === 0) return true;
   const seen = new Set<RouteOverlapTrieNode<Entry>>([root]);
-  const stack: TrieWorkItem<Entry>[] = [{ node: root, index: 0 }];
+  const stack: TrieFrame<Entry>[] = [
+    { nextIndex: 1, children: matchingTrieChildren(root, firstPart) },
+  ];
   while (stack.length > 0) {
-    const current = stack.pop();
-    if (current === undefined) break;
-    const part = parts[current.index];
-    if (part === undefined) continue;
-    const ctx: TrieStepContext<Entry> = {
-      nextIndex: current.index + 1,
-      targetLength,
-      self,
-      seen,
-      stack,
-    };
-    const matched =
-      part.kind === "literal"
-        ? enqueueLiteralMatches(current.node, part.value, ctx)
-        : enqueueParamMatches(current.node, part, ctx);
-    if (matched) return true;
+    const frame = stack[stack.length - 1];
+    if (frame === undefined) break;
+    const step = frame.children.next();
+    if (step.done) {
+      stack.pop();
+      continue;
+    }
+    const child = step.value;
+    if (!nodeHasPeer(child, self) || seen.has(child)) continue;
+    if (frame.nextIndex === targetLength) return true;
+    const nextPart = parts[frame.nextIndex];
+    if (nextPart === undefined) continue;
+    seen.add(child);
+    stack.push({
+      nextIndex: frame.nextIndex + 1,
+      children: matchingTrieChildren(child, nextPart),
+    });
   }
   return false;
 };
