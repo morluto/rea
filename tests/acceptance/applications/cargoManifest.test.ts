@@ -94,6 +94,36 @@ cliTest(
 );
 
 cliTest(
+  "preserves legacy Cargo default-feature declarations in MCP Evidence",
+  async () => {
+    const root = await createTestTempDirectory("rea-cargo-legacy-features-");
+    const path = join(root, "Cargo.toml");
+    await writeFile(
+      path,
+      `[package]\nname = "demo"\nedition = "2021"\n[dependencies]\nserde = { version = "1", default_features = false }\n`,
+    );
+    const { call } = await connectLocalToolsMcp({
+      REA_MCP_TOOL_FAMILIES: "application,session",
+    });
+    const response = await call("inspect_cargo_manifest", { path });
+    expect(response.isError, JSON.stringify(response.content)).not.toBe(true);
+    const report = cargoManifestSchema.parse(
+      parseEvidence(response.structuredContent).normalized_result,
+    );
+    expect(report.dependencies).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "serde",
+          default_features: false,
+          source_pointer: "/dependencies/serde",
+        }),
+      ]),
+    );
+    expect(report.diagnostics).toEqual([]);
+  },
+);
+
+cliTest(
   "reports a malformed Cargo manifest as a typed input failure",
   async () => {
     const root = await createTestTempDirectory("rea-malformed-cargo-manifest-");

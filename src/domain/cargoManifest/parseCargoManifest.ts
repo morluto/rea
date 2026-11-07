@@ -162,15 +162,24 @@ const classify = (
 const defaultFeatures = (
   declaration: Record<string, unknown>,
   source: CargoDependency["source"],
+  legacyStatus: "supported" | "unsupported" | "unknown",
 ): boolean | null => {
-  const declared = declaration["default-features"];
+  if (
+    declaration.default_features !== undefined &&
+    legacyStatus !== "supported"
+  )
+    return null;
+  const declared =
+    declaration["default-features"] ?? declaration.default_features;
   if (typeof declared === "boolean") return declared;
+  if (declared !== undefined) return null;
   return source === "workspace" ? null : true;
 };
 
 /** Field-level problems that would otherwise be flattened into plausible facts. */
 const declarationProblems = (
   declaration: Record<string, unknown>,
+  legacyStatus: "supported" | "unsupported" | "unknown",
 ): readonly string[] => {
   const problems: string[] = [];
   if (
@@ -183,6 +192,20 @@ const declarationProblems = (
     typeof declaration["default-features"] !== "boolean"
   )
     problems.push("default-features is not a boolean");
+  if (
+    declaration.default_features !== undefined &&
+    typeof declaration.default_features !== "boolean"
+  )
+    problems.push("default_features is not a boolean");
+  if (
+    declaration.default_features !== undefined &&
+    legacyStatus === "unsupported"
+  )
+    problems.push("default_features is unsupported in edition 2024 or later");
+  if (declaration.default_features !== undefined && legacyStatus === "unknown")
+    problems.push(
+      "default_features support is unknown because the package edition is inherited",
+    );
   if (
     declaration.features !== undefined &&
     stringArray(declaration.features) === undefined
@@ -329,6 +352,16 @@ class CargoInventory {
     const alias = typeof packageName === "string" ? key : null;
     const name = typeof packageName === "string" ? packageName : key;
     const features = stringArray(declaration.features) ?? [];
+    const edition = this.packages[0]?.edition;
+    const legacyStatus =
+      declaredBy === "package" && edition === "inherited"
+        ? "unknown"
+        : declaredBy === "package" &&
+            typeof edition === "string" &&
+            /^\d{4}$/u.test(edition) &&
+            Number(edition) >= 2024
+          ? "unsupported"
+          : "supported";
     const retained = this.retain(
       pointer,
       name,
@@ -355,12 +388,16 @@ class CargoInventory {
       registry: classified.registry,
       declared_by: declaredBy,
       optional: declaration.optional === true,
-      default_features: defaultFeatures(declaration, classified.source),
+      default_features: defaultFeatures(
+        declaration,
+        classified.source,
+        legacyStatus,
+      ),
       features,
       target: table.target,
       source_pointer: pointer,
     });
-    const problems = declarationProblems(declaration);
+    const problems = declarationProblems(declaration, legacyStatus);
     return problems.length === 0
       ? ok(undefined)
       : this.diagnostic(

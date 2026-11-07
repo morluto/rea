@@ -542,6 +542,77 @@ explicit = { workspace = true, default-features = true }
     });
   });
 
+  it("recognizes legacy default_features without inventing enabled features", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+edition = "2021"
+[dependencies]
+legacy = { version = "1", default_features = false }
+both = { version = "1", default-features = true, default_features = false }
+invalid = { version = "1", default_features = "no" }
+invalid_modern = { version = "1", default-features = "no" }
+`),
+    );
+    const byName = new Map(
+      value.dependencies.map((dependency) => [dependency.name, dependency]),
+    );
+    expect(byName.get("legacy")?.default_features).toBe(false);
+    expect(byName.get("both")?.default_features).toBe(true);
+    expect(byName.get("invalid")?.default_features).toBeNull();
+    expect(byName.get("invalid_modern")?.default_features).toBeNull();
+    expect(value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_pointer: "/dependencies/invalid",
+          message: expect.stringContaining("default_features is not a boolean"),
+        }),
+      ]),
+    );
+  });
+
+  it("reports the unsupported legacy spelling in edition 2024", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+edition = "2024"
+[dependencies]
+legacy = { version = "1", default_features = false }
+`),
+    );
+    expect(value.dependencies[0]?.default_features).toBeNull();
+    expect(value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source_pointer: "/dependencies/legacy",
+          message: expect.stringContaining("default_features is unsupported"),
+        }),
+      ]),
+    );
+  });
+
+  it("keeps legacy support unknown for an inherited package edition", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+edition.workspace = true
+[dependencies]
+legacy = { version = "1", default_features = false }
+`),
+    );
+    expect(value.dependencies[0]?.default_features).toBeNull();
+    expect(value.diagnostics).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          message: expect.stringContaining("support is unknown"),
+        }),
+      ]),
+    );
+  });
+
   it("keeps a local path byte for byte instead of redacting it as a URL", () => {
     const value = required(
       parse(`
