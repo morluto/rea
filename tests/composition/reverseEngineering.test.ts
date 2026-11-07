@@ -3,7 +3,7 @@ import type { Stats } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { PassThrough } from "node:stream";
+import { PassThrough, Readable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
@@ -11,7 +11,11 @@ import {
   digestFile,
   REVERSE_COMMAND_OUTPUT_LIMITATION,
 } from "../../src/application/reverse/ReverseEngineeringService.js";
-import { TestReverseEngineeringService as ReverseEngineeringService } from "../support/reverseEngineeringService.js";
+import {
+  findsNoExecutable,
+  TestReverseEngineeringService as ReverseEngineeringService,
+} from "../support/reverseEngineeringService.js";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { providerSnapshot } from "../support/reverseEngineeringCompositionFixtures.js";
 import { createReverseEngineeringService } from "../../src/composition/reverseEngineering.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
@@ -264,9 +268,12 @@ it("uses one selected environment snapshot for provider selection and execution"
   };
   const calls: { command: string; env: NodeJS.ProcessEnv | undefined }[] = [];
   const service = createReverseEngineeringService(selectedEnvironment, {
-    run: async (command, _args, options) => {
-      calls.push({ command, env: options?.env });
-      return { stdout: "headers", stderr: "" };
+    processes: {
+      lookup: findsNoExecutable,
+      run: async (command, _args, options) => {
+        calls.push({ command, env: options?.env });
+        return { stdout: "headers", stderr: "" };
+      },
     },
   });
   selectedEnvironment.REA_RIZIN_COMMAND = "/changed/rizin";
@@ -352,7 +359,7 @@ it("marks signal-terminated provider commands as unknown completion", async () =
       expect(ordinaryExit.value.limitations).toContain(
         "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
       );
-      expect(ordinaryExit.value.limitations).toHaveLength(4);
+      expect(ordinaryExit.value.limitations).toHaveLength(5);
     }
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -422,7 +429,7 @@ describe("Rizin command service", () => {
       expect(result.value.limitations).toContain(
         "Rizin commands and retained plugins may read files or access network resources outside the selected artifact; those external inputs are not bound to Evidence.",
       );
-      expect(result.value.limitations).toHaveLength(4);
+      expect(result.value.limitations).toHaveLength(5);
       expect(result.value.parameters).toMatchObject({
         path: callerPath,
         command,
@@ -730,16 +737,237 @@ it("shares one preflight deadline across stat and digest", async () => {
   };
   const started = performance.now();
   await expect(
-    digestFile("/tmp/rea-preflight-deadline", undefined, stat, 200, open),
+    digestFile("/tmp/rea-preflight-deadline", { stat, timeoutMs: 200, open }),
   ).rejects.toMatchObject({ code: "ETIMEDOUT" });
   expect(performance.now() - started).toBeLessThan(280);
+});
+
+/** Joins a destroyed stream's close within a bound. */
+const joinClose = async (stream: Readable): Promise<void> => {
+  if (stream.closed) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      new Promise<void>((resolve) => stream.once("close", () => resolve())),
+      new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("the stalled stream did not close")),
+          1_000,
+        );
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+};
+
+/**
+ * A stream whose open stalls, as on an unresponsive mount, until the test
+ * answers it. `release` answers the open, even after a failed assertion, and
+ * joins the stream's close within a bound.
+ */
+const stalledOpen = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    construct(callback) {
+      held = callback;
+    },
+    read() {},
+  });
+  const answer = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    answer();
+    stream.destroy();
+    await joinClose(stream);
+  };
+  return { stream, answer, release };
+};
+
+/**
+ * A stream that opens and then holds a read, as an unresponsive mount can,
+ * until the test answers it. Like a file stream, it closes only after the read
+ * in flight returns. `release` answers the read, even after a failed
+ * assertion, and joins the stream's close within a bound.
+ */
+const stalledRead = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    read() {},
+    destroy(error, callback) {
+      held = () => callback(error);
+    },
+  });
+  queueMicrotask(() => stream.emit("open", 3));
+  const answer = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    stream.destroy();
+    answer();
+    await joinClose(stream);
+  };
+  return { stream, answer, release };
+};
+
+/**
+ * A stream that reads its content and then holds its close, as an
+ * unresponsive mount can, until the test answers it. `release` answers the
+ * close, even after a failed assertion, and joins it within a bound.
+ */
+const stalledClose = () => {
+  let held: (() => void) | undefined;
+  const stream = new Readable({
+    read() {
+      this.push(Buffer.from("x"));
+      this.push(null);
+    },
+    destroy(error, callback) {
+      held = () => callback(error);
+    },
+  });
+  const answer = (): void => {
+    const callback = held;
+    held = undefined;
+    callback?.();
+  };
+  const release = async (): Promise<void> => {
+    stream.destroy();
+    answer();
+    await joinClose(stream);
+  };
+  return { stream, answer, release };
+};
+
+it.each(["deadline", "cancellation"] as const)(
+  "ends a digest on its %s while the file's open is still pending",
+  async (interruption) => {
+    const controller = new AbortController();
+    const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+    let stalled: ReturnType<typeof stalledOpen> | undefined;
+    const open = () => {
+      stalled = stalledOpen();
+      return stalled.stream as unknown as ReturnType<
+        typeof import("node:fs").createReadStream
+      >;
+    };
+    try {
+      const digest = digestFile("/tmp/rea-stalled-open", {
+        signal: controller.signal,
+        stat,
+        timeoutMs: interruption === "deadline" ? 50 : 10_000,
+        open,
+      }).catch((cause: unknown) => cause);
+      if (interruption === "cancellation")
+        setTimeout(() => controller.abort("stop the digest"), 20);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const failure = await Promise.race([
+        digest,
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve("still waiting"), 1_000);
+        }),
+      ]);
+      clearTimeout(timer);
+      expect(failure).toMatchObject(
+        interruption === "deadline"
+          ? { code: "ETIMEDOUT" }
+          : { _tag: "AnalysisCancelledError", cause: "stop the digest" },
+      );
+      expect(stalled?.stream.destroyed).toBe(true);
+    } finally {
+      await stalled?.release();
+    }
+  },
+);
+
+it.each([
+  ["open", stalledOpen],
+  ["read", stalledRead],
+  ["close", stalledClose],
+] as const)(
+  "ends a hash at its deadline on a stalled %s, and a later hash of the path starts its own read",
+  async (operation, stall) => {
+    const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+    let stalled: ReturnType<typeof stall> | undefined;
+    const opened: Readable[] = [];
+    // The first stream stalls until the test answers it; a later one reads "x".
+    const open = () => {
+      const stream =
+        opened.length === 0
+          ? (stalled = stall()).stream
+          : Readable.from([Buffer.from("x")]);
+      opened.push(stream);
+      return stream as unknown as ReturnType<
+        typeof import("node:fs").createReadStream
+      >;
+    };
+    const path = `/tmp/rea-unreturned-${operation}`;
+    try {
+      await expect(
+        digestFile(path, { stat, timeoutMs: 50, open }),
+      ).rejects.toMatchObject({ code: "ETIMEDOUT" });
+      expect(stalled?.stream.destroyed).toBe(true);
+      // Nothing tracks the stalled step, so the next hash does not wait for it.
+      await expect(
+        digestFile(path, { stat, timeoutMs: 1_000, open }),
+      ).resolves.toBe(createHash("sha256").update("x").digest("hex"));
+      expect(opened).toHaveLength(2);
+    } finally {
+      await stalled?.release();
+    }
+  },
+);
+
+it("lets hashes of the same path read at the same time", async () => {
+  const stat = async (): Promise<Stats> => ({ isFile: () => true }) as Stats;
+  const opened: Readable[] = [];
+  let acknowledge: (() => void) | undefined;
+  const bothOpened = new Promise<void>((resolve) => {
+    acknowledge = resolve;
+  });
+  const open = () => {
+    const stream = new Readable({ read() {} });
+    opened.push(stream);
+    if (opened.length === 2) acknowledge?.();
+    return stream as unknown as ReturnType<
+      typeof import("node:fs").createReadStream
+    >;
+  };
+  const path = "/tmp/rea-concurrent-digest";
+  const digests = Promise.allSettled([
+    digestFile(path, { stat, timeoutMs: 1_000, open }),
+    digestFile(path, { stat, timeoutMs: 1_000, open }),
+  ]);
+  try {
+    // Neither hash waits for the other: both open the file before either
+    // reads it.
+    await awaitAcknowledgement(bothOpened, digests, "the second hash's open");
+    for (const stream of opened) {
+      stream.push("x");
+      stream.push(null);
+    }
+    const expected = createHash("sha256").update("x").digest("hex");
+    expect(await digests).toEqual([
+      { status: "fulfilled", value: expected },
+      { status: "fulfilled", value: expected },
+    ]);
+  } finally {
+    // A failed wait leaves the hashes reading; end them and join them.
+    for (const stream of opened) stream.destroy(new Error("test finished"));
+    await digests;
+  }
 });
 
 it("retains an explicit null reason when digest admission is already cancelled", async () => {
   const controller = new AbortController();
   controller.abort(null);
   await expect(
-    digestFile("/tmp/rea-cancelled-digest", controller.signal),
+    digestFile("/tmp/rea-cancelled-digest", { signal: controller.signal }),
   ).rejects.toMatchObject({
     _tag: "AnalysisCancelledError",
     cause: null,
@@ -757,13 +985,12 @@ it("retains an object reason when cancellation interrupts an active digest strea
       typeof import("node:fs").createReadStream
     >;
   };
-  const failure: unknown = await digestFile(
-    "/tmp/rea-cancelled-stream",
-    controller.signal,
+  const failure: unknown = await digestFile("/tmp/rea-cancelled-stream", {
+    signal: controller.signal,
     stat,
-    1_000,
+    timeoutMs: 1_000,
     open,
-  ).catch((cause: unknown) => cause);
+  }).catch((cause: unknown) => cause);
   expect(failure).toBeInstanceOf(AnalysisCancelledError);
   if (!(failure instanceof AnalysisCancelledError))
     throw new Error("Expected digest cancellation");

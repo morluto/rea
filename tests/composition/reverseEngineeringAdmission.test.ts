@@ -1,4 +1,4 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -97,6 +97,56 @@ it("bounds concurrent reverse-engineering provider calls", async () => {
     ).resolves.toMatchObject({ ok: true });
   } finally {
     release();
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("gives a call's place back at its deadline while a file stat it gave up on has not returned", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "rea-reverse-abandoned-"));
+  const paths = Array.from({ length: 8 }, (_, index) =>
+    join(directory, `fixture-${String(index)}.bin`),
+  );
+  await Promise.all(paths.map((path) => writeFile(path, "fixture")));
+  let answer!: () => void;
+  const answered = new Promise<void>((resolve) => {
+    answer = resolve;
+  });
+  let stalling = true;
+  // As an unresponsive mount, the stat holds each file until the test answers it.
+  const held: Promise<unknown>[] = [];
+  const service = new TestReverseEngineeringService({
+    run: async () => ({ stdout: "", stderr: "" }),
+    stat: (path) => {
+      if (!stalling) return stat(path);
+      const work = answered.then(() => stat(path));
+      held.push(work);
+      return work;
+    },
+  });
+  try {
+    for (const path of paths)
+      await expect(
+        service.inspectWithObjdump({
+          path,
+          operation: "file_headers",
+          command_timeout_ms: 50,
+        }),
+      ).resolves.toMatchObject({
+        ok: false,
+        error: { _tag: "AnalysisTimeoutError" },
+      });
+    // The stalled stats still run, but none of the eight calls keeps its place.
+    stalling = false;
+    await expect(
+      service.inspectWithObjdump({
+        path: paths[0]!,
+        operation: "file_headers",
+      }),
+    ).resolves.toMatchObject({ ok: true });
+  } finally {
+    answer();
+    await Promise.allSettled(held);
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
