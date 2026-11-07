@@ -127,20 +127,6 @@ describe("openSeedDocument", () => {
       argv: ["editor", `${HOME}/Documents/report.md`],
       opens: { kind: "captured" },
     });
-    expect(
-      openSeedDocument(["editor", "--config=settings/notes"], {
-        ...AT_HOME,
-        exec: "editor",
-        documents: [],
-        spell: (path) =>
-          path === "settings/notes" || path.startsWith("settings/notes/")
-            ? `.config/notes${path.slice("settings/notes".length)}`
-            : path,
-      }),
-    ).toEqual({
-      argv: ["editor", `--config=${HOME}/.config/notes`],
-      opens: { kind: "empty" },
-    });
   });
 
   it("leaves a command that already names a document alone, absolute or from its working directory", () => {
@@ -171,6 +157,36 @@ describe("openSeedDocument", () => {
     ).toEqual({
       argv: [...argv, `${HOME}/Documents/poster.svg`],
       opens: { kind: "seed", document: "Documents/poster.svg" },
+    });
+  });
+});
+
+describe("openSeedDocument settings spelling", () => {
+  it("respells a separate --config directory and an equals option", () => {
+    expect(
+      openSeedDocument(["geany", "--config", "settings/geany"], {
+        ...AT_HOME,
+        exec: "geany",
+        documents: [],
+        spell: (path) => (path === "settings/geany" ? ".config/geany" : path),
+      }),
+    ).toEqual({
+      argv: ["geany", "--config", `${HOME}/.config/geany`],
+      opens: { kind: "empty" },
+    });
+    expect(
+      openSeedDocument(["editor", "--config=settings/notes"], {
+        ...AT_HOME,
+        exec: "editor",
+        documents: [],
+        spell: (path) =>
+          path === "settings/notes" || path.startsWith("settings/notes/")
+            ? `.config/notes${path.slice("settings/notes".length)}`
+            : path,
+      }),
+    ).toEqual({
+      argv: ["editor", `--config=${HOME}/.config/notes`],
+      opens: { kind: "empty" },
     });
   });
 });
