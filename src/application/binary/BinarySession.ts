@@ -35,8 +35,11 @@ import type {
 } from "../AnalysisProvider.js";
 import type {
   BinarySessionPort,
+  BinaryOpenResult,
+  OpenSelectionReceipt,
   SavedAnalysisSnapshot,
 } from "./BinarySessionPort.js";
+import { binaryTargetSummary } from "./BinaryTargetSummary.js";
 import {
   SessionProviderRouter,
   type SessionProviderRoute,
@@ -49,6 +52,7 @@ import { InvestigationRecords } from "../investigation/InvestigationRecords.js";
 import { recordEvidenceSources } from "../investigation/recordEvidenceSources.js";
 import { BinarySessionRecords } from "./BinarySessionRecords.js";
 import { binarySessionStatus } from "./BinarySessionStatus.js";
+import { SessionRuntimeAvailability } from "./SessionRuntimeAvailability.js";
 import { isSourceEvidenceRetainable } from "./AnalysisSnapshotCache.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import {
@@ -179,6 +183,7 @@ export class BinarySession
 {
   #active: SessionBinding | undefined;
   #externalMutationCleanupFailure: AnalysisError | undefined;
+  #lastCloseCleanupFailure: AnalysisError | undefined;
   #pendingCleanup:
     | {
         readonly run: SessionRun;
@@ -197,10 +202,7 @@ export class BinarySession
   readonly #bundleResourceFactory: BundleResourceClientFactory | undefined;
   #activeBundleResources: ActiveBundleResourceSession | undefined;
   #pendingBundleResourceCleanup: ActiveBundleResourceSession[] = [];
-  readonly #runtimeUnavailability = new Map<
-    string,
-    { readonly reason: string }
-  >();
+  readonly #runtimeAvailability = new SessionRuntimeAvailability();
   readonly #availabilityListeners = new Set<() => void | Promise<void>>();
 
   constructor(
@@ -479,7 +481,7 @@ export class BinarySession
   open(
     path: string,
     options: BinarySessionOpenOptions = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#open(
       (admitted) =>
         resolveSessionOpen({
@@ -499,7 +501,7 @@ export class BinarySession
   openResolvedTarget(
     resolved: Pick<ResolvedSessionOpen, "target" | "route">,
     options: Pick<BinarySessionOpenOptions, "signal" | "snapshot"> = {},
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#open(
       () =>
         Promise.resolve(
@@ -520,18 +522,50 @@ export class BinarySession
       admitted: BinarySessionOpenOptions,
     ) => Promise<Result<ResolvedSessionOpen, AnalysisError>>,
     options: BinarySessionOpenOptions,
-  ): Promise<Result<BinaryTarget, AnalysisError>> {
+  ): Promise<BinaryOpenResult> {
     return this.#serialize(async (admittedThrough) => {
-      const refused = this.#targetAcquisitionRefused("open_binary");
-      if (refused !== undefined) return refused;
-      const admitted = await this.#withLoadedSnapshot(options);
-      if (!admitted.ok) return admitted;
-      return this.#openWithinTransition(
-        admittedThrough,
-        () => resolve(admitted.value),
-        admitted.value,
-      );
+      const attempt = async (): Promise<
+        Result<BinaryTarget, AnalysisError>
+      > => {
+        const refused = this.#targetAcquisitionRefused("open_binary");
+        if (refused !== undefined) return refused;
+        const admitted = await this.#withLoadedSnapshot(options);
+        if (!admitted.ok) return admitted;
+        return this.#openWithinTransition(
+          admittedThrough,
+          () => resolve(admitted.value),
+          admitted.value,
+        );
+      };
+      const result = await attempt();
+      if (result.ok) return result;
+      return {
+        ...result,
+        selection: this.#openSelectionReceipt(),
+        targetAtCompletion:
+          this.#active === undefined
+            ? null
+            : binaryTargetSummary(this.#active.target),
+        providerIdAtCompletion:
+          this.#active?.route.binding?.identity.id ?? null,
+      };
     });
+  }
+
+  #openSelectionReceipt(): OpenSelectionReceipt {
+    if (this.#active !== undefined)
+      return {
+        kind: "binary",
+        path: this.#active.target.path,
+        sha256: this.#active.target.sha256,
+      };
+    if (this.#activeBundleResources !== undefined)
+      return {
+        kind: "resources",
+        path: this.#activeBundleResources.root.canonicalPath,
+        caller_path: this.#activeBundleResources.root.callerPath,
+      };
+    return { kind: "none" };
   }
 
   /** Read the staged snapshot only after earlier lifecycle transitions have settled. */
@@ -566,8 +600,9 @@ export class BinarySession
       );
     const resolved = await resolve();
     if (!resolved.ok) return resolved;
-    const { target, route, sameTarget } = resolved.value;
-    const { profile } = route;
+    const { target, sameTarget } = resolved.value;
+    let { route } = resolved.value;
+    let { profile } = route;
     if (isAborted(options.signal))
       return err(
         new AnalysisCancelledError("open_binary", {
@@ -637,6 +672,29 @@ export class BinarySession
           }),
         ),
       );
+    if (previous !== undefined) {
+      const refreshed = await this.#providerRouter.refreshAfterRetirement(
+        route,
+        target,
+        options.signal,
+      );
+      const admitted = refreshed.ok
+        ? validateResolvedSessionTarget({
+            target,
+            route: refreshed.value,
+            current: previous,
+            options,
+            stagedSnapshotMismatch: (target, profile) =>
+              this.snapshotMismatch(target, profile),
+          })
+        : refreshed;
+      if (!admitted.ok)
+        return err(
+          await this.#restoreAfterFailedOpen(previous, admitted.error),
+        );
+      route = admitted.value.route;
+      profile = route.profile;
+    }
     const runId = randomUUID();
     const client = route.createClient(target, {
       runId,
@@ -1012,14 +1070,29 @@ export class BinarySession
     closed: Result<null, AnalysisError>,
     retry: AnalysisCleanupRetry | undefined,
   ): Result<null, AnalysisError> {
+    this.#lastCloseCleanupFailure = undefined;
     if (
       !closed.ok &&
       retry !== undefined &&
       closed.error.cleanupIncomplete &&
       this.#retainsCloseCleanup()
-    )
+    ) {
       closed.error.bindCleanupRetry(retry);
+      this.#lastCloseCleanupFailure = closed.error;
+    }
     return closed;
+  }
+
+  /** Only a retired target's known close owner can offer this status retry. */
+  #statusCleanupRetry(): AnalysisCleanupRetry | undefined {
+    if (
+      this.#active !== undefined ||
+      this.#activeBundleResources !== undefined ||
+      this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
+      !this.#retainsCloseCleanup()
+    )
+      return undefined;
+    return this.#lastCloseCleanupFailure?.cleanupRetry;
   }
 
   /** Owners the next close retries; external mutation owners retry elsewhere. */
@@ -1252,6 +1325,7 @@ export class BinarySession
       this.#pendingBundleResourceCleanup[0] ??
       this.#pendingCleanup?.run;
     const client = run?.client;
+    const cleanupRetry = this.#statusCleanupRetry();
     return binarySessionStatus({
       ...options,
       investigation: this.investigationStatistics(),
@@ -1264,11 +1338,12 @@ export class BinarySession
           }),
       route: this.#currentRoute(),
       router: this.#providerRouter,
-      runtimeUnavailability: this.#runtimeUnavailability,
+      runtimeUnavailability: this.#runtimeAvailability.entries,
       runId: run?.runId,
       runtimeLineageSnapshots: client?.runtimeLineageSnapshots?.() ?? [],
       requestActivitySnapshots: client?.requestActivitySnapshots?.() ?? [],
       providerOperationHealth: client?.operationHealthSnapshot?.() ?? null,
+      ...(cleanupRetry === undefined ? {} : { cleanupRetry }),
       cleanupPending:
         this.#externalMutationCleanupFailure?.cleanupIncomplete === true ||
         this.#retainsCloseCleanup(),
@@ -1414,6 +1489,7 @@ export class BinarySession
       active: this.#active,
       operation: name,
       parameters: arguments_,
+      snapshotContext: options?.snapshotContext,
       nativeSourceAdmitted: this.#active?.nativeSourceAdmitted === true,
       unboundOperationError: (operation, route) =>
         this.#providerRouter.unboundOperationError(operation, route),
@@ -1426,6 +1502,7 @@ export class BinarySession
     // A failed reply cannot prove that a dispatched metadata write rolled back.
     // Stop replay before dispatch, including reads overlapping the write.
     if (capability.effects.mutatesArtifact) this.invalidateSnapshot();
+    const dispatch = this.#runtimeAvailability.dispatch();
     const call = active.client.execute(name, arguments_, options);
     const result = unrecordedExecution(await call);
     const profiled = bindExecutionTarget(
@@ -1454,7 +1531,15 @@ export class BinarySession
       this.#active === active
     )
       this.#active.nativeSourceAdmitted = true;
-    this.#observeRuntimeAvailability(name, execution);
+    if (
+      this.#runtimeAvailability.observe(
+        dispatch,
+        capability,
+        active.route.capabilities.values(),
+        execution,
+      )
+    )
+      this.#emitAvailabilityChanged();
     // Source facts belong to the observation, even when this query cannot be
     // replayed (for example a Ghidra procedure read without a document selector).
     if (execution.ok && execution.value.sourceEvidence !== undefined) {
@@ -1466,7 +1551,12 @@ export class BinarySession
     }
     if (
       execution.ok &&
-      isSourceEvidenceRetainable(name, capability, arguments_) &&
+      isSourceEvidenceRetainable(
+        name,
+        capability,
+        arguments_,
+        options?.snapshotContext,
+      ) &&
       profile !== undefined
     ) {
       const evidence = createAnalysisExecutionEvidence(
@@ -1492,62 +1582,15 @@ export class BinarySession
           operation: name,
           parameters: arguments_,
           execution: retained,
+          evidence: this.evidenceForAnalysis(evidence.evidence_id) ?? evidence,
         });
       return ok(retained);
     }
     return execution;
   }
 
-  #observeRuntimeAvailability(
-    operation: AnalysisOperation,
-    result: Result<AnalysisExecution, AnalysisError>,
-  ): void {
-    if (result.ok) {
-      if (this.#markRuntimeAvailable(operation))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (result.error._tag === "AnalysisCapabilityUnavailableError") {
-      if (this.#markRuntimeUnavailable(operation, result.error.message))
-        this.#emitAvailabilityChanged();
-      return;
-    }
-    if (
-      [
-        "ProviderAdapterError",
-        "HopperProcessError",
-        "HopperStartError",
-      ].includes(result.error._tag)
-    ) {
-      const capabilities = this.#active?.route.capabilities;
-      const providerId = capabilities?.get(operation)?.provider.id;
-      let changed = false;
-      for (const descriptor of capabilities?.values() ?? [])
-        if (providerId !== undefined && descriptor.provider.id === providerId)
-          changed =
-            this.#markRuntimeUnavailable(
-              descriptor.operation,
-              `${result.error._tag}: ${result.error.message}`,
-            ) || changed;
-      if (changed) this.#emitAvailabilityChanged();
-    }
-  }
-
-  #markRuntimeAvailable(operation: string): boolean {
-    return this.#runtimeUnavailability.delete(operation);
-  }
-
-  #markRuntimeUnavailable(operation: string, reason: string): boolean {
-    const current = this.#runtimeUnavailability.get(operation);
-    if (current?.reason === reason) return false;
-    this.#runtimeUnavailability.set(operation, { reason });
-    return true;
-  }
-
   #clearRuntimeAvailability(): void {
-    if (this.#runtimeUnavailability.size === 0) return;
-    this.#runtimeUnavailability.clear();
-    this.#emitAvailabilityChanged();
+    if (this.#runtimeAvailability.clear()) this.#emitAvailabilityChanged();
   }
 
   #emitAvailabilityChanged(): void {
@@ -1643,15 +1686,22 @@ export class BinarySession
     previous: SessionBinding | undefined,
   ): Promise<Result<null, AnalysisError>> {
     if (previous === undefined) return ok(null);
+    const refreshed = await this.#providerRouter.refreshAfterRetirement(
+      previous.route,
+      previous.target,
+    );
+    if (!refreshed.ok) return refreshed;
+    const route = refreshed.value;
     const runId = randomUUID();
-    const client = previous.route.createClient(previous.target, {
+    const client = route.createClient(previous.target, {
       runId,
     });
-    const run: SessionRun = { client, route: previous.route, runId };
+    const run: SessionRun = { client, route, runId };
     const started = await client.execute("health", {});
     if (started.ok) {
       this.#active = {
         ...previous,
+        profile: route.profile,
         ...run,
         nativeSourceAdmitted: false,
       };

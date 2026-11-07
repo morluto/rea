@@ -1,3 +1,4 @@
+import { FIRMWARE_OPERATION_ENGINES } from "../contracts/firmware/firmwareToolRequirements.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { FirmwareAnalysisService } from "../application/firmware/FirmwareAnalysisService.js";
@@ -5,6 +6,7 @@ import { createFirmwareAnalysisProvider } from "../composition/firmware.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { firmwareInputSchemas } from "../domain/firmware/firmwareAnalysis.js";
+import { cliDecimalField } from "./options.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import type { FirmwareOperation } from "../domain/firmware/firmwareAnalysis.js";
 import type { Logger } from "pino";
@@ -36,7 +38,7 @@ export const registerFirmwareCommands = (
           callerPath,
           () => service.execute(operation, input, { signal }),
           service,
-          operation === "inspect_firmware_regions" ? "binwalk" : "unblob",
+          FIRMWARE_OPERATION_ENGINES[operation],
           operation,
           signal,
         ).then(projectCliAnalysisResult),
@@ -49,7 +51,9 @@ export const registerFirmwareCommands = (
     description:
       "Inspect firmware signature candidates without extracting them",
     args: z.object({ path }),
-    options: z.object({ analysisTimeoutMs: extractInput.analysis_timeout_ms }),
+    options: z.object({
+      analysisTimeoutMs: cliDecimalField(extractInput.analysis_timeout_ms),
+    }),
     run: ({ args, options }) =>
       execute(
         CLI_COMMANDS.inspectFirmwareRegions,
@@ -74,17 +78,23 @@ export const registerFirmwareCommands = (
       ),
     }),
     options: z.object({
-      offset: range.offset
-        .optional()
-        .describe("Selected byte offset; requires length"),
-      length: range.length
-        .optional()
-        .describe("Selected byte length; requires offset"),
-      maxDepth: extractInput.max_depth,
-      maxOutputBytes: extractInput.max_output_bytes,
-      maxOutputFiles: extractInput.max_output_files,
-      publicationTimeoutMs: extractInput.publication_timeout_ms,
-      analysisTimeoutMs: extractInput.analysis_timeout_ms,
+      offset: cliDecimalField(
+        range.offset
+          .optional()
+          .describe("Selected byte offset; requires length"),
+      ),
+      length: cliDecimalField(
+        range.length
+          .optional()
+          .describe("Selected byte length; requires offset"),
+      ),
+      maxDepth: cliDecimalField(extractInput.max_depth),
+      maxOutputBytes: cliDecimalField(extractInput.max_output_bytes),
+      maxOutputFiles: cliDecimalField(extractInput.max_output_files),
+      publicationTimeoutMs: cliDecimalField(
+        extractInput.publication_timeout_ms,
+      ),
+      analysisTimeoutMs: cliDecimalField(extractInput.analysis_timeout_ms),
     }),
     run: ({ args, options }) =>
       execute(

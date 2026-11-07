@@ -1,6 +1,7 @@
 import { z } from "zod";
 import type { InvestigationStatistics } from "../../domain/investigationLifecycle.js";
 import { artifactTargetRefusal } from "../../domain/apple/artifactTargetApplicability.js";
+import { targetApplicabilityRefusal } from "../../domain/targetApplicability.js";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import { binaryTargetSummary } from "./BinaryTargetSummary.js";
@@ -25,6 +26,7 @@ import type {
 } from "./SessionProviderRouter.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
+import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
 
 interface BinarySessionStatusInput {
   readonly investigation: InvestigationStatistics;
@@ -42,6 +44,7 @@ interface BinarySessionStatusInput {
   readonly requestActivitySnapshots: readonly ProviderRequestActivitySnapshot[];
   readonly providerOperationHealth?: ProviderOperationHealth | null;
   readonly cleanupPending?: boolean;
+  readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly detail?: BinarySessionDetail;
   readonly signal?: AbortSignal;
   readonly refreshCandidates?: boolean;
@@ -61,6 +64,7 @@ export const binarySessionStatus = async ({
   requestActivitySnapshots,
   providerOperationHealth,
   cleanupPending = false,
+  cleanupRetry,
   detail = "complete",
   signal,
   refreshCandidates = false,
@@ -78,7 +82,12 @@ export const binarySessionStatus = async ({
       const targetRefusal =
         target === undefined
           ? undefined
-          : artifactTargetRefusal(descriptor.operation, target);
+          : descriptor.targetApplicability === undefined
+            ? artifactTargetRefusal(descriptor.operation, target)
+            : targetApplicabilityRefusal(
+                descriptor.targetApplicability,
+                target,
+              );
       if (targetRefusal !== undefined && descriptor.available)
         return {
           ...descriptor,
@@ -89,11 +98,7 @@ export const binarySessionStatus = async ({
       const unavailable = runtimeUnavailability.get(descriptor.operation);
       return unavailable === undefined
         ? descriptor
-        : {
-            ...descriptor,
-            available: false as const,
-            reason: unavailable.reason,
-          };
+        : runtimeUnavailable(descriptor, unavailable.reason);
     });
   const capabilities = providerCapabilitySets(routeCapabilities);
   const analysisProviderBinding =
@@ -143,6 +148,9 @@ export const binarySessionStatus = async ({
   const common = {
     investigation,
     cleanup_pending: cleanupPending,
+    ...(cleanupRetry === undefined
+      ? {}
+      : { cleanup_retry: { ...cleanupRetry } }),
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
     analysis_provider_candidates: analysisProviderCandidates,
@@ -184,6 +192,19 @@ export const binarySessionStatus = async ({
         ...common,
         ...binaryTargetSummary(target),
       };
+};
+
+/** A runtime observation replaces the declared state and its repair instruction. */
+const runtimeUnavailable = (
+  descriptor: CapabilityDescriptor,
+  reason: string,
+): CapabilityDescriptor & { readonly runtimeUnavailable?: true } => {
+  if (descriptor.available) {
+    const { availabilityCode: _available, ...declared } = descriptor;
+    return { ...declared, available: false, reason, runtimeUnavailable: true };
+  }
+  const { remediation: _superseded, ...declared } = descriptor;
+  return { ...declared, reason };
 };
 
 /** Capability surfaces a registration may narrow without hiding provider facts. */
@@ -344,9 +365,13 @@ type CapabilityAvailabilityCode = Exclude<
 type CapabilityProjection = Omit<
   CapabilityDescriptor,
   "operation" | "available" | "reason"
-> & { readonly operation: string } & (
+> & { readonly operation: string; readonly runtimeUnavailable?: true } & (
     | { readonly available: true; readonly reason: null }
-    | { readonly available: false; readonly reason: string }
+    | {
+        readonly available: false;
+        readonly reason: string;
+        readonly remediation?: string;
+      }
   );
 type ProviderCapabilityGroup = ProviderCapabilitySet["groups"][number];
 
@@ -396,6 +421,12 @@ export const providerCapabilitySets = (
             available: false as const,
             reason: descriptor.reason,
             availability_code: availabilityCode,
+            ...(descriptor.runtimeUnavailable === true
+              ? { runtime_unavailable: true as const }
+              : {}),
+            ...(descriptor.remediation === undefined
+              ? {}
+              : { remediation: descriptor.remediation }),
           };
       const key = JSON.stringify([
         effects,
@@ -403,6 +434,8 @@ export const providerCapabilitySets = (
         status.available,
         status.reason,
         status.availability_code,
+        status.available ? null : (status.runtime_unavailable ?? null),
+        status.available ? null : (status.remediation ?? null),
       ]);
       const group = groups.get(key);
       if (group === undefined)

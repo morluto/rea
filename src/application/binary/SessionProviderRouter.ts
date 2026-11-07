@@ -25,6 +25,7 @@ export interface SessionProviderRoute {
   readonly identity: ProviderIdentity;
   readonly capabilities: ReadonlyMap<string, CapabilityDescriptor>;
   readonly profile: AnalysisProfileCommitment | null;
+  readonly refreshAfterRetirement?: true;
   readonly binding: AnalysisProviderBinding | null;
   readonly selection: AnalysisProviderSelection | undefined;
   createClient(
@@ -95,6 +96,37 @@ export class SessionProviderRouter {
     return selected.ok
       ? ok(selectableRoute(this.auxiliaryProviders, selected.value))
       : selected;
+  }
+
+  /** Refresh only provider selections whose state can be published by close. */
+  async refreshAfterRetirement(
+    route: SessionProviderRoute,
+    target: BinaryTarget,
+    signal?: AbortSignal,
+  ): Promise<Result<SessionProviderRoute, AnalysisError>> {
+    if (route.refreshAfterRetirement !== true || route.binding === null)
+      return ok(route);
+    const refreshed = await this.registry.select(
+      target,
+      route.binding.identity.id,
+      signal === undefined ? {} : { signal },
+    );
+    if (!refreshed.ok) return refreshed;
+    return ok(
+      selectableRoute(this.auxiliaryProviders, {
+        ...refreshed.value,
+        requestedProviderId:
+          route.selection?.requestedProviderId ??
+          refreshed.value.requestedProviderId,
+        binding:
+          refreshed.value.binding === null
+            ? null
+            : {
+                ...refreshed.value.binding,
+                selectionSource: route.binding.selectionSource,
+              },
+      }),
+    );
   }
 
   /** Preserve selection observations unless a caller requests a fresh inspection. */
@@ -171,6 +203,9 @@ const selectableRoute = (
     identity,
     capabilities,
     profile: binding?.profile ?? null,
+    ...(binding?.refreshAfterRetirement === undefined
+      ? {}
+      : { refreshAfterRetirement: binding.refreshAfterRetirement }),
     binding,
     selection,
     createClient: (target, context) =>

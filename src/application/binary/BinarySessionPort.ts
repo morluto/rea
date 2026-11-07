@@ -18,6 +18,7 @@ import type { EvidenceIntegrityError } from "../../domain/evidenceErrors.js";
 import type { AnalysisSnapshotLoader } from "./BinarySessionOpen.js";
 import type { WorkflowSnapshotRecordInput } from "./BinarySessionRecords.js";
 import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
+import type { binaryTargetSummary } from "./BinaryTargetSummary.js";
 
 import type {
   AnalysisExecution,
@@ -29,6 +30,29 @@ import type {
 
 import type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
 export type { SavedAnalysisSnapshot } from "../../domain/savedAnalysisSnapshot.js";
+
+/** Selection observed at the end of one serialized open attempt. */
+export type OpenSelectionReceipt =
+  | { readonly kind: "binary"; readonly path: string; readonly sha256: string }
+  | {
+      readonly kind: "resources";
+      readonly path: string;
+      readonly caller_path: string;
+    }
+  | { readonly kind: "none" };
+
+/** A failure retains its original error and both selection receipts. */
+export type BinaryOpenResult =
+  | { readonly ok: true; readonly value: BinaryTarget }
+  | {
+      readonly ok: false;
+      readonly error: AnalysisError;
+      readonly selection: OpenSelectionReceipt;
+      readonly targetAtCompletion: ReturnType<
+        typeof binaryTargetSummary
+      > | null;
+      readonly providerIdAtCompletion: string | null;
+    };
 
 /** Target lifecycle used by CLI and MCP without exposing a concrete provider. */
 export interface BinarySessionPort
@@ -72,7 +96,7 @@ export interface BinarySessionPort
       readonly loadSnapshot?: AnalysisSnapshotLoader;
       readonly providerId?: AnalysisProviderSelector;
     },
-  ): Promise<Result<BinaryTarget, AnalysisError>>;
+  ): Promise<BinaryOpenResult>;
   /** Open a resource-only app root without selecting or inventing an executable target. */
   openBundleResources(
     path: string,
