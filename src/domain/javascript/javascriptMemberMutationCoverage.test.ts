@@ -80,6 +80,64 @@ it("joins overflowing member-alias histories into disclosed possible effects", (
   ).toMatchObject([{ specifier: null }]);
 });
 
+// Linked-list splicing in the shape of a minified update-queue drain. Its
+// reassigned cursors add a different segment on each alias lap.
+const growingAliasCycleSource = `
+  export function drain(owner, props, context, mask) {
+    var queue = owner.queue;
+    var first = queue.head, last = queue.tail, item = queue.inbox.pending;
+    if (null !== item) {
+      queue.inbox.pending = null;
+      var end = item, start = end.next;
+      end.next = null;
+      null === last ? first = start : last.next = start;
+      last = end;
+      var other = owner.alternate;
+      null !== other && (other = other.queue, item = other.tail, item !== last && (null === item ? other.head = start : item.next = start, other.tail = end));
+    }
+    if (null !== first) {
+      var state = queue.state;
+      last = 0;
+      other = start = end = null;
+      item = first;
+      do {
+        var lane = item.lane, time = item.time;
+        if ((mask & lane) === lane) {
+          null !== other && (other = other.next = { time: time, lane: 0, tag: item.tag, payload: item.payload, callback: item.callback, next: null });
+          apply: {
+            var target = owner, update = item;
+            lane = props; time = context;
+            switch (update.tag) {
+              case 1: target = update.payload; if ("function" === typeof target) { state = target.call(time, state, lane); break apply; } state = target; break apply;
+              case 3: target.flags = target.flags & -65537 | 128;
+              case 0: target = update.payload; lane = "function" === typeof target ? target.call(time, state, lane) : target; if (null === lane || void 0 === lane) break apply; state = assign({}, state, lane); break apply;
+            }
+          }
+        } else time = { time: time, lane: lane, tag: item.tag, payload: item.payload, callback: item.callback, next: null }, null === other ? (start = other = time, end = state) : other = other.next = time, last |= lane;
+        item = item.next;
+        if (null === item) if (item = queue.inbox.pending, null === item) break; else lane = item, item = lane.next, lane.next = null, queue.tail = lane, queue.inbox.pending = null;
+      } while (1);
+      null === other && (end = state);
+      queue.state = end;
+      queue.head = start;
+      queue.tail = other;
+      owner.lanes = last;
+      owner.memoizedState = state;
+    }
+  }
+`;
+
+it("bounds widened alias joins on a growing linked-list cycle", () => {
+  const facts = analyzeJavaScriptStaticSource(growingAliasCycleSource);
+  expect(facts.parse_status).not.toBe("failed");
+  expect(
+    facts.analysis_coverage?.examination.semantic_resource_limits,
+  ).toContain("alias-selections");
+  expect(facts.limitations).toContain(
+    semanticResourceLimitReason("alias-selections"),
+  );
+});
+
 it("never records a joined selector as a definite receiver replacement", () => {
   const parsed = parseJavaScriptSource(memberAliasSource(16));
   if (parsed === null) throw new Error("Expected parsed source");
