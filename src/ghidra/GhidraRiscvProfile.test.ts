@@ -278,7 +278,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const resolved = await ghidra({
       REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:32:AndeStar_v5",
     }).resolveAnalysisProfile(target({ elfClass: 32 }));
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
     expect(resolved.error).toMatchObject({

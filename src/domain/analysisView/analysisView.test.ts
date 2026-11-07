@@ -1093,7 +1093,6 @@ it("rejects ambiguous JavaScript module paths with candidate node ids", () => {
     collection: "modules",
     selector: { path: "renderer.js" },
   });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("expected ambiguous path");
   expect(result.error).toMatchObject({
     _tag: "AnalysisInputError",

@@ -436,10 +436,11 @@ it("retains fixed declarations while requesting only a source-bounded relocation
   const bytes = extendedRelocationImage();
   const prefix = bytes.subarray(0, 64);
   const evidence = parseMzHeaderEvidence(prefix, bytes.length);
-  expect(evidence.declarations).toEqual(readDosMzDeclarations(prefix));
   expect(evidence.declarations).toMatchObject({
     ok: true,
     value: {
+      lastPageBytes: 32,
+      pages: 17,
       headerBytes: 4112,
       relocationCount: 2,
       relocationTableOffset: 4096,

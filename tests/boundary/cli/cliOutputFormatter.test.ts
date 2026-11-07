@@ -92,7 +92,6 @@ it.each([
         view: { offset: 0, limit: 3 },
       },
     });
-    expect(output.ok).toBe(true);
     if (!output.ok) throw output.error;
     const lineEnding = format === "csv" ? "\r\n" : "\n";
     const metadataEnd = output.value.indexOf(lineEnding);

@@ -57,6 +57,22 @@ it("selects the last table and Code payload for every repeated chunk name", () =
   repeated.writeUInt32BE(repeated.length - 8, 4);
   const report = parse(repeated);
   const control = parse(original);
+  expect(control.module).toBe("selected");
+  expect(control.atoms?.map(({ name }) => name)).toEqual([
+    "selected",
+    "module_info",
+    "start",
+    "erlang",
+    "get_module_info",
+  ]);
+  expect(control.exports).toHaveLength(3);
+  expect(control.imports).toHaveLength(1);
+  expect(control.lambdas).toHaveLength(1);
+  expect(control.code).toMatchObject({
+    opcode_max: 169,
+    labels: 4,
+    functions: 2,
+  });
   expect(report.atoms).toEqual(control.atoms);
   expect(report.exports).toEqual(control.exports);
   expect(report.imports).toEqual(control.imports);

@@ -700,7 +700,6 @@ for (const cancel of [false, true]) {
           release.resolve();
           const result = await reading;
           if (failClose || cancel) {
-            expect(result.ok).toBe(false);
             if (result.ok) throw new Error("Expected read failure");
             expect(result.cause).toMatchObject(
               failClose
@@ -709,7 +708,6 @@ for (const cancel of [false, true]) {
             );
             if (failClose) expect(owner?.handle.fd).toBeGreaterThanOrEqual(0);
           } else {
-            expect(result.ok).toBe(true);
             if (!result.ok) throw result.cause;
             expect(
               Buffer.compare(result.value.subarray(16), Buffer.from("body")),

@@ -495,7 +495,6 @@ it("matches ELF module names case-sensitively and leaves unknown platform equiva
       nativeFunctionEvidence("/examples/libCaseProbe.so", "elf"),
     ],
   });
-  expect(workflow.ok).toBe(true);
   if (!workflow.ok) throw workflow.error;
   expect(workflow.value.evidence.normalized_result).toMatchObject({
     summary: { contradicted: 1, verified: 0 },
@@ -687,7 +686,6 @@ it("retains a decorated module match when another decorated candidate has unknow
         managed_boundaries: managed,
         native_observations: observations,
       });
-      expect(result.ok).toBe(true);
       if (!result.ok) throw result.error;
       const output = managedNativeVerificationResultSchema.parse(
         result.value.evidence.normalized_result,
