@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
@@ -893,7 +894,7 @@ describe("Ghidra Windows platform support", () => {
       status: "unsupported",
       code: "target_format_unsupported",
     });
-    // ARM64 PE is admitted on Windows P0 (bounded; see docs/windows-ghidra-p0.md).
+    // ARM64 PE is admitted on Windows P0 (bounded; see docs/providers/windows-ghidra-p0.md).
     expect(
       ghidra.inspectTargetSupport(executableTarget("pe", "arm64")).status,
     ).toBe("supported");
@@ -6397,18 +6398,27 @@ it.each(["search_procedures", "search_strings"] as const)(
       if (!result.ok) throw result.error;
       expect(result.value.result).toEqual(rows.slice(0, 2));
       expect(result.value.rawResult).toEqual(rows);
+      expect(result.value.limitations).toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
       const regex = await client.execute(operation, {
         pattern: "source",
         mode: "regex",
       });
       if (!regex.ok) throw regex.error;
       expect(regex.value.result).toEqual(rows);
+      expect(regex.value.limitations).not.toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
       const sensitive = await client.execute(operation, {
         pattern: "source",
         case_sensitive: true,
       });
       if (!sensitive.ok) throw sensitive.error;
       expect(sensitive.value.result).toEqual(rows);
+      expect(sensitive.value.limitations).not.toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
     } finally {
       await client.close();
     }

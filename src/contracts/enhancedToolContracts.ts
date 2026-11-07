@@ -71,7 +71,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections.",
+    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections. Kuna lacks this general name inventory; xrefs can instead resolve names present in Kuna's inventory, but unlisted names may still exist in the target.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(
@@ -87,7 +87,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_call_path",
-    "Resolve start and optional goal symbols or addresses to canonical procedure entries, then trace direct callers or callees until the graph is exhausted or the goal is reached. Results use canonical addresses; Evidence preserves supplied selectors. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns. A requested goal is unknown when unresolved expansions prevent proving it absent; unresolved indirect calls remain unknown.",
+    "Resolve start and optional goal symbols or addresses, then trace direct callers or callees. Returns observed edges and a shortest path within the provider-observed graph. search_scope distinguishes the observed-graph result from whether discovery is established; a missing goal is unknown when relationship reads or discovery are incomplete. Unresolved indirect calls remain unknown.",
     enhancedInputSchemas.trace_call_path,
   ),
   enhanced(
