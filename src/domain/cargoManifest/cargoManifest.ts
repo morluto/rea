@@ -30,9 +30,18 @@ export const cargoDependencySchema = z.strictObject({
   requirement: z.string().nullable(),
   source: z.enum(["registry", "git", "path", "workspace", "unknown"]),
   source_detail: z.string().nullable(),
+  /**
+   * The alternate registry named beside a `path`, `git` or version source.
+   * Absent when the declaration names none.
+   */
+  registry: z.string().nullable(),
   declared_by: z.enum(["package", "workspace"]),
   optional: z.boolean(),
-  default_features: z.boolean(),
+  /**
+   * `null` when the declaration leaves the setting to a workspace declaration
+   * this reader does not open, so "unstated" never reads as "enabled".
+   */
+  default_features: z.boolean().nullable(),
   features: z.array(z.string()),
   target: z.string().nullable(),
   source_pointer: z.string(),

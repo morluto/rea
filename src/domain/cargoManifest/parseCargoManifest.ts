@@ -61,6 +61,27 @@ const tableFailure = (
 /** One retained string, charged at its expanded UTF-16 length before it is kept. */
 const expandedBytes = (value: string): number => value.length * 2;
 
+/**
+ * Expanded size of a retained value. Strings are charged directly; arrays and
+ * objects are charged for the strings they hold, so a container cannot carry
+ * values past the allowance just because only its own shape was counted.
+ */
+const expandedBytesOf = (value: unknown, seen = new Set<object>()): number => {
+  if (typeof value === "string") return expandedBytes(value);
+  if (typeof value === "number" || typeof value === "boolean")
+    return String(value).length;
+  if (typeof value !== "object" || value === null) return 0;
+  if (seen.has(value)) return 0;
+  seen.add(value);
+  const entries = Array.isArray(value)
+    ? value.map((item) => expandedBytesOf(item, seen))
+    : Object.entries(value).flatMap(([key, item]) => [
+        expandedBytes(key),
+        expandedBytesOf(item, seen),
+      ]);
+  return entries.reduce((total, bytes) => total + bytes, 0);
+};
+
 /** Strip transport userinfo so recorded evidence never carries credentials. */
 const credentialFree = (value: string): string => {
   const { credentials } = parseRecordedTransportUrl(value);
@@ -84,12 +105,22 @@ const classify = (
       readonly source: CargoDependency["source"];
       readonly sourceDetail: string | null;
       readonly requirement: string | null;
+      readonly registry: string | null;
     }
   | undefined => {
   const version =
     typeof declaration.version === "string" ? declaration.version : null;
+  const registry =
+    typeof declaration.registry === "string"
+      ? credentialFree(declaration.registry)
+      : null;
   if (declaration.workspace === true)
-    return { source: "workspace", sourceDetail: null, requirement: version };
+    return {
+      source: "workspace",
+      sourceDetail: null,
+      requirement: version,
+      registry,
+    };
   const path = declaration.path;
   if (typeof path === "string")
     // A filesystem path is not a URL: redaction would rewrite directory names
@@ -98,6 +129,7 @@ const classify = (
       source: "path",
       sourceDetail: path,
       requirement: version,
+      registry,
     };
   const git = declaration.git;
   if (typeof git === "string") {
@@ -109,18 +141,31 @@ const classify = (
       source: "git",
       sourceDetail: [credentialFree(git), ...revision].join(" "),
       requirement: version,
+      registry,
     };
   }
   if (version !== null)
     return {
       source: "registry",
-      sourceDetail:
-        typeof declaration.registry === "string"
-          ? credentialFree(declaration.registry)
-          : null,
+      sourceDetail: registry,
       requirement: version,
+      registry,
     };
   return undefined;
+};
+
+/**
+ * An inherited declaration takes `default-features` from the workspace entry,
+ * which this reader deliberately does not open. Reporting `true` there would
+ * claim a setting the manifest does not state.
+ */
+const defaultFeatures = (
+  declaration: Record<string, unknown>,
+  source: CargoDependency["source"],
+): boolean | null => {
+  const declared = declaration["default-features"];
+  if (typeof declared === "boolean") return declared;
+  return source === "workspace" ? null : true;
 };
 
 /** Field-level problems that would otherwise be flattened into plausible facts. */
@@ -179,12 +224,19 @@ class CargoInventory {
   retain(
     ...values: readonly (string | readonly string[])[]
   ): Result<void, AnalysisError> {
-    let bytes = 0;
-    for (const value of values)
-      bytes +=
-        typeof value === "string"
-          ? expandedBytes(value)
-          : value.reduce((total, item) => total + expandedBytes(item), 0);
+    return this.reserve(expandedBytesOf(values));
+  }
+
+  /**
+   * Charge a value this inventory keeps from the source document without
+   * rewriting it. The expanded size of a container is the expanded size of the
+   * values inside it, which is what retention has to account for.
+   */
+  retainSource(...values: readonly unknown[]): Result<void, AnalysisError> {
+    return this.reserve(expandedBytesOf(values));
+  }
+
+  reserve(bytes: number): Result<void, AnalysisError> {
     this.#retainedBytes += bytes;
     return this.#retainedBytes <= CARGO_MANIFEST_FACT_BYTES
       ? ok(undefined)
@@ -230,11 +282,13 @@ class CargoInventory {
     pointer: string,
   ): Result<void, AnalysisError> {
     const declaredBy = table.declaredBy;
+    // A string declaration is charged as its version; an inline table is charged
+    // for everything it records, including arrays such as `features`.
+    const admitted = this.retainSource(key, value);
+    if (!admitted.ok) return admitted;
     const declaration =
       typeof value === "string" ? { version: value } : record(value);
     if (declaration === undefined) {
-      const admitted = this.retain(key, pointer);
-      if (!admitted.ok) return admitted;
       this.dependencies.push({
         dependency_id: identity("cargo_dependency", [
           this.artifact.sha256,
@@ -247,6 +301,7 @@ class CargoInventory {
         requirement: null,
         source: "unknown",
         source_detail: null,
+        registry: null,
         declared_by: declaredBy,
         optional: false,
         default_features: true,
@@ -271,15 +326,15 @@ class CargoInventory {
     const alias = typeof packageName === "string" ? key : null;
     const name = typeof packageName === "string" ? packageName : key;
     const features = stringArray(declaration.features) ?? [];
-    const admitted = this.retain(
-      key,
+    const retained = this.retain(
       pointer,
       name,
       classified.sourceDetail ?? "",
+      classified.registry ?? "",
       classified.requirement ?? "",
       features,
     );
-    if (!admitted.ok) return admitted;
+    if (!retained.ok) return retained;
     this.dependencies.push({
       dependency_id: identity("cargo_dependency", [
         this.artifact.sha256,
@@ -292,9 +347,10 @@ class CargoInventory {
       requirement: classified.requirement,
       source: classified.source,
       source_detail: classified.sourceDetail,
+      registry: classified.registry,
       declared_by: declaredBy,
       optional: declaration.optional === true,
-      default_features: declaration["default-features"] !== false,
+      default_features: defaultFeatures(declaration, classified.source),
       features,
       target: table.target,
       source_pointer: pointer,
@@ -351,6 +407,10 @@ export const parseCargoManifest = (
   // diagnostic. The shipping field is workspace.exclude, singular.
   const members = stringArray(workspace?.members) ?? [];
   const excludes = stringArray(workspace?.exclude) ?? [];
+  // The workspace arrays are copied into the report verbatim, so they are
+  // charged before they are retained rather than left outside the allowance.
+  const workspaceAdmitted = inventory.retainSource(members, excludes);
+  if (!workspaceAdmitted.ok) return workspaceAdmitted;
   for (const [field, present] of [
     ["members", workspace?.members],
     ["exclude", workspace?.exclude],
@@ -363,9 +423,6 @@ export const parseCargoManifest = (
       );
       if (!recorded.ok) return recorded;
     }
-  const workspaceAdmitted = inventory.retain(members, excludes);
-  if (!workspaceAdmitted.ok) return workspaceAdmitted;
-
   const dependencyTables: DependencyTable[] = [];
   const collectTables = (
     container: Record<string, unknown>,
@@ -501,7 +558,7 @@ export const parseCargoManifest = (
         if (!recorded.ok) return recorded;
         continue;
       }
-      const admitted = inventory.retain(name, enables);
+      const admitted = inventory.retainSource(name, enables);
       if (!admitted.ok) return admitted;
       inventory.features.push({
         name,

@@ -25,16 +25,18 @@ an `invalid-dependency-declaration` diagnostic instead of a synthesized package.
 
 Each dependency keeps the manifest text that produced it:
 
-| fact             | meaning                                                        |
-| ---------------- | -------------------------------------------------------------- |
-| `dependency_key` | identity that survives later edits to the same declaration     |
-| `dependency_id`  | source-scoped identity, including the manifest digest          |
-| `name` / `alias` | package name and the manifest key when it was renamed          |
-| `source`         | `registry`, `git`, `path`, `workspace` or `unknown`            |
-| `source_detail`  | path, Git URL with `rev`/`tag`/`branch`, or alternate registry |
-| `declared_by`    | `package` or `workspace`                                       |
-| `target`         | the `cfg(...)` or target triple from the containing table      |
-| `source_pointer` | JSON Pointer into the parsed manifest                          |
+| fact               | meaning                                                                                                                       |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
+| `dependency_key`   | identity that survives later edits to the same declaration                                                                    |
+| `dependency_id`    | source-scoped identity, including the manifest digest                                                                         |
+| `name` / `alias`   | package name and the manifest key when it was renamed                                                                         |
+| `source`           | `registry`, `git`, `path`, `workspace` or `unknown`                                                                           |
+| `source_detail`    | path, Git URL with `rev`/`tag`/`branch`, or the registry name                                                                 |
+| `registry`         | the alternate registry named beside any source, else absent                                                                   |
+| `default_features` | `true`/`false` when stated; absent for a `workspace = true` entry whose setting lives in a manifest this reader does not open |
+| `declared_by`      | `package` or `workspace`                                                                                                      |
+| `target`           | the `cfg(...)` or target triple from the containing table                                                                     |
+| `source_pointer`   | JSON Pointer into the parsed manifest                                                                                         |
 
 `source_coverage` states what was not examined (`lockfile`, `resolution`,
 `workspace_member_manifests`) and its `status` is `partial` whenever a

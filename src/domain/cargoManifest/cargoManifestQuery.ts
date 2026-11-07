@@ -1,9 +1,9 @@
 import { z } from "zod";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 import { CARGO_MANIFEST_MAX_FILE_BYTES } from "./cargoManifest.js";
 
 export const inspectCargoManifestInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute path to one local Cargo.toml manifest",
   ),
   format: z.literal("cargo-toml").default("cargo-toml"),

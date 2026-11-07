@@ -372,6 +372,32 @@ members = [${members.map((m) => `"${m}"`).join(", ")}]
     expect(result.ok).toBe(false);
   });
 
+  it("charges a dependency's inline features, not just its key", () => {
+    // The declaration is retained verbatim; an 18 MiB feature list has to
+    // count against the allowance even though the key is three characters.
+    const features = Array.from({ length: 180 }, () => "x".repeat(100_000));
+    const result = parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { version = "1", features = [${features
+      .map((f) => `"${f}"`)
+      .join(", ")}] }
+`);
+    expect(result.ok).toBe(false);
+  });
+
+  it("charges workspace exclusions as well as members", () => {
+    const excluded = Array.from({ length: 180 }, () => "y".repeat(100_000));
+    const result = parse(`
+[workspace]
+members = ["crates/*"]
+exclude = [${excluded.map((e) => `"${e}"`).join(", ")}]
+`);
+    expect(result.ok).toBe(false);
+  });
+
   it("rejects a document that is neither a package nor a workspace", () => {
     expect(parse(`[profile.release]\nlto = true\n`).ok).toBe(false);
   });
@@ -382,6 +408,78 @@ members = [${members.map((m) => `"${m}"`).join(", ")}]
 });
 
 describe("parseCargoManifest source fidelity", () => {
+  it("keeps the alternate registry a declaration names beside its path", () => {
+    const value = required(
+      parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { path = "../helper", version = "1.2", registry = "internal" }
+from_git = { git = "https://example.test/tool", registry = "mirror" }
+from_registry = { version = "2", registry = "internal" }
+`),
+    );
+    const byPointer = new Map(
+      value.dependencies.map((dependency) => [
+        dependency.source_pointer,
+        dependency,
+      ]),
+    );
+    expect(byPointer.get("/dependencies/helper")).toMatchObject({
+      source: "path",
+      source_detail: "../helper",
+      registry: "internal",
+    });
+    expect(byPointer.get("/dependencies/from_git")).toMatchObject({
+      source: "git",
+      registry: "mirror",
+    });
+    expect(byPointer.get("/dependencies/from_registry")).toMatchObject({
+      source: "registry",
+      registry: "internal",
+    });
+  });
+
+  it("leaves an inherited default-features unstated instead of enabled", () => {
+    // The workspace declaration that decides the setting is not opened, so
+    // reporting `true` here would claim something the manifest does not state.
+    const value = required(
+      parse(`
+[workspace]
+members = ["crates/*"]
+
+[workspace.dependencies]
+serde = { version = "1", default-features = false }
+
+[package]
+name = "demo"
+
+[dependencies]
+inherited = { workspace = true }
+explicit = { workspace = true, default-features = true }
+`),
+    );
+    const byPointer = new Map(
+      value.dependencies.map((dependency) => [
+        dependency.source_pointer,
+        dependency,
+      ]),
+    );
+    expect(byPointer.get("/dependencies/inherited")).toMatchObject({
+      source: "workspace",
+      default_features: null,
+    });
+    expect(byPointer.get("/dependencies/explicit")).toMatchObject({
+      source: "workspace",
+      default_features: true,
+    });
+    expect(byPointer.get("/workspace/dependencies/serde")).toMatchObject({
+      source: "registry",
+      default_features: false,
+    });
+  });
+
   it("keeps a local path byte for byte instead of redacting it as a URL", () => {
     const value = required(
       parse(`
