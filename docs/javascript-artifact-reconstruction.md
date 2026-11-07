@@ -408,6 +408,11 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Bundled import calls such as `(0, module.fetch)("/api")` are named by their
+final callee when every discarded comma operand is a literal. The comma drops
+the receiver, so such a spelling never establishes a browser network API; it
+contributes at most an endpoint candidate.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:

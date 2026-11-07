@@ -318,6 +318,7 @@ describe("tRPC binding identity and bundled syntax", () => {
       const p = (t.createTRPCProxyClient as any)({});
       p.posts.query();
       (0, t.httpLink)({ url: "/api/other" });
+      (track(), t.httpLink)({ url: "/api/effect" });
     `),
     ).toEqual([
       {
