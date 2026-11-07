@@ -36,6 +36,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
+import { decompileAnalysisSelection } from "../contracts/officialToolContracts.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
@@ -221,6 +222,7 @@ const registerDecompileCommand = (
         .describe(
           `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
         ),
+      analysis: decompileAnalysisSelection,
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
     }),
@@ -245,6 +247,9 @@ const registerDecompileCommand = (
                 : "file-offset",
               "procedure_pseudo_code",
             ),
+            ...(options.analysis === undefined
+              ? {}
+              : { analysis: options.analysis }),
           },
           directAnalysisOptionsFromCli(logger, options),
         ).then(projectCliAnalysisResult),

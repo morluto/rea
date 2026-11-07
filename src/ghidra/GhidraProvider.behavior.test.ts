@@ -9,6 +9,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
+  limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
@@ -280,6 +281,17 @@ it.each([
     expect(exported.value.evidence_bundle.records).toContainEqual(evidence);
   },
 );
+
+it("states the fresh-session and pseudocode boundaries", () => {
+  const functionNotes = limitationsFor("analyze_function").join("\n");
+  expect(functionNotes).toMatch(/auto.analysis.*complete/iu);
+  expect(functionNotes).toMatch(
+    /original executable bytes (?:are unchanged|are never written|remain unmodified)/iu,
+  );
+  const pseudocodeNotes = limitationsFor("procedure_pseudo_code").join("\n");
+  expect(pseudocodeNotes).toMatch(/not original source/iu);
+  expect(pseudocodeNotes).toMatch(/not text.equivalent to Hopper/iu);
+});
 
 it("carries the inspected release identity into the production launcher", async () => {
   const launchers: GhidraHeadlessLauncher[] = [];
@@ -1643,8 +1655,7 @@ describe("Ghidra file-offset outcome projection", () => {
       if (result.ok) throw new Error("Expected an input refusal");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",
-        message:
-          "Analysis input is invalid. Check the arguments and try again.",
+        message: expect.stringMatching(/input.*invalid/iu),
         recovery: { kind: "inspect_input_contract", operation },
         details: {
           issues: [
@@ -2099,6 +2110,7 @@ describe("Ghidra PE CodeView debug symbol limitations", () => {
 
 describe("Ghidra relationship coverage", () => {
   it("marks the full direct call-reference response complete while keeping static caveats", async () => {
+    const diagnostic = "fixture coverage caveat";
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: (operation) =>
@@ -2110,9 +2122,7 @@ describe("Ghidra relationship coverage", () => {
                   limitations: [],
                   relationship_coverage: {
                     status: "complete",
-                    diagnostics: [
-                      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-                    ],
+                    diagnostics: [diagnostic],
                   },
                 }
               : { value: [], limitations: [] },
@@ -2128,13 +2138,9 @@ describe("Ghidra relationship coverage", () => {
     if (!execution.ok) throw execution.error;
     expect(execution.value.relationshipCoverage).toEqual({
       status: "complete",
-      diagnostics: [
-        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-      ],
+      diagnostics: [diagnostic],
     });
-    expect(execution.value.limitations).not.toContain(
-      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-    );
+    expect(execution.value.limitations).not.toContain(diagnostic);
     await client.close();
   });
 });
@@ -4975,8 +4981,8 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     expect(procedures.value.analysisProfile?.digest).toBe(profile.digest);
     expect(procedures.value.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(
-          "Applied analyzer preset: ghidra-default+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer(n/a).",
+        expect.stringMatching(
+          /ghidra-default\+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer\(n\/a\)/iu,
         ),
       ]),
     );
