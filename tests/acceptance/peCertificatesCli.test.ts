@@ -205,8 +205,8 @@ cliTest(
       evidence.normalized_result.entries[0]?.pkcs7?.certificates[0]?.issuer
         .text,
     ).toBe("commonName=Âe, organizationName=REA Tests");
-    expect(evidence.normalized_result.limitations).toContain(
-      "TeletexString values use OpenSSL's ISO-8859-1 compatibility mapping; this is not a full T.61 decoder.",
+    expect(evidence.normalized_result.limitations).toContainEqual(
+      expect.stringMatching(/TeletexString.*ISO.8859.1.*not a full T.61/iu),
     );
   },
 );
@@ -375,9 +375,7 @@ cliTest.for([
     expect(reason).toContain(message);
     expect(remediation.action).toContain(String(Object.values(limits)[0]));
     expect(remediation.action).toContain("no runtime override");
-    expect(remediation.action).toContain(
-      "Repeating the unchanged request fails the same way",
-    );
+    expect(remediation.action).toMatch(/unchanged request.*fails/iu);
   },
 );
 

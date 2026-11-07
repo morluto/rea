@@ -25,7 +25,7 @@ export const binarySessionInputSchema = z.strictObject({
     .enum(BINARY_SESSION_DETAILS)
     .default("summary")
     .describe(
-      "summary (default) keeps open state, the binding, current-route capabilities, each provider candidate's availability and target-support status, code and reason, and every tool's availability, reason and remediation; omitted_fields lists what it leaves out. complete adds each unavailable candidate's remediation, provider diagnostics, candidate capabilities and static tool surface, effect and annotation flags.",
+      "Start with summary (default): it keeps open state, the binding, current-route capabilities (including selected Ghidra checkpoint mode), each provider candidate's availability and target-support status, code and reason, and every tool's availability, reason and remediation; omitted_fields lists what it leaves out. Request complete only when you need unavailable-candidate remediation, provider diagnostics, candidate capabilities or static tool surface, effect and annotation flags.",
     ),
   expected_package_version: z.string().min(1).optional(),
   expected_catalog_digest: z

@@ -16,10 +16,7 @@ import { ProviderAdapterError } from "./providerAdapterError.js";
 import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import { resolvedAnalysisError } from "./analysisErrorBase.js";
 import { createEvidence } from "./evidence.js";
-import {
-  redactExplicitFailure,
-  redactExplicitPointer,
-} from "./explicitSensitiveFailure.js";
+import { redactExplicitFailure } from "./explicitSensitiveFailure.js";
 
 const context = {
   diagnostics: {
@@ -95,7 +92,13 @@ it.each([
 ])(
   "preserves a real parent for excluded pointer identities: %s",
   (pointer, values, expected) => {
-    expect(redactExplicitPointer(pointer, values)).toBe(expected);
+    const failure = new AnalysisInputError("inspect", undefined, [
+      { path: ["capture_path", pointer], reason: "invalid_format" },
+    ]);
+    const redacted = redactExplicitFailure(failure, values);
+    if (!(redacted instanceof AnalysisInputError))
+      throw new Error("Expected a redacted input error");
+    expect(redacted.issues[0]?.path).toEqual(["capture_path", expected]);
   },
 );
 
