@@ -99,6 +99,22 @@ describe("openSeedDocument", () => {
     expect(new Set(reasons).size).toBe(reasons.length);
   });
 
+  it("respells an argument the seed holds through a selected link", () => {
+    const opened = openSeedDocument(["editor", "storage/report.md"], {
+      ...AT_HOME,
+      exec: "editor %f",
+      documents: ["Documents/report.md"],
+      isDocument: (path) => path === "Documents/report.md",
+      spell: (path) =>
+        path === "storage/report.md" ? "Documents/report.md" : path,
+    });
+
+    expect(opened).toEqual({
+      argv: ["editor", "Documents/report.md"],
+      opens: { kind: "captured" },
+    });
+  });
+
   it("leaves a command that already names a document alone, absolute or from its working directory", () => {
     for (const [argv, workingDirectory] of [
       [["typora", `${HOME}/Documents/trip.md`], HOME],

@@ -1,4 +1,8 @@
 import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import {
+  observeProcessStartIdentity,
+  signalProcessWithStartIdentity,
+} from "../../src/process/ProcessOwnershipObservation.js";
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import {
@@ -218,11 +222,26 @@ const EXEC_STDOUT_BYTES = 1024 * 1024;
 /** Process groups a computer's commands started, so closing the computer can stop them. */
 interface ExecSessions {
   readonly running: Set<ChildProcess>;
-  readonly detached: Set<number>;
+  /** Start identity recorded while the process was still the one this computer launched. */
+  readonly owned: Map<number, string>;
 }
 
+/** Remember a live PID only with the start identity that proves it is still that process. */
+const rememberOwned = async (
+  sessions: ExecSessions,
+  pid: number | undefined,
+) => {
+  if (pid === undefined || sessions.owned.has(pid)) return;
+  const observed = await observeProcessStartIdentity(pid);
+  if (observed?.state === "readable")
+    sessions.owned.set(pid, observed.identity);
+};
+
 /** Child processes of `pid`, which a new session keeps after the parent exits. */
-const noteChildren = (sessions: ExecSessions, pid: number | undefined) => {
+const noteChildren = async (
+  sessions: ExecSessions,
+  pid: number | undefined,
+) => {
   if (pid === undefined) return;
   try {
     const text = readFileSync(
@@ -232,7 +251,7 @@ const noteChildren = (sessions: ExecSessions, pid: number | undefined) => {
     for (const id of text.trim().split(/\s+/u)) {
       const child = Number(id);
       if (Number.isSafeInteger(child) && child > 0)
-        sessions.detached.add(child);
+        await rememberOwned(sessions, child);
     }
   } catch {
     // The process has exited, or this host does not expose /proc.
@@ -240,20 +259,19 @@ const noteChildren = (sessions: ExecSessions, pid: number | undefined) => {
 };
 
 /** Stop commands this computer started, including captures detached into their own session. */
-const stopExecSessions = (sessions: ExecSessions) => {
-  for (const child of sessions.running) noteChildren(sessions, child.pid);
+const stopExecSessions = async (sessions: ExecSessions) => {
+  for (const child of sessions.running) await noteChildren(sessions, child.pid);
   for (const child of sessions.running) child.kill("SIGTERM");
-  for (const pid of sessions.detached) {
-    try {
-      process.kill(-pid, "SIGTERM");
-    } catch {
-      try {
-        process.kill(pid, "SIGTERM");
-      } catch {
-        // The capture already exited.
-      }
-    }
-  }
+  for (const [pid, identity] of sessions.owned)
+    await signalProcessWithStartIdentity(pid, identity, "SIGTERM", {
+      sendSignal: (target, signal) => {
+        try {
+          process.kill(-target, signal);
+        } catch {
+          process.kill(target, signal);
+        }
+      },
+    });
 };
 
 /** Run one computer-exec command on this host as the computer would: in the home, its stdin closed, its stdout cut at the cap. */
@@ -283,23 +301,25 @@ const runExec = (
     child.stderr.on("data", (chunk: Buffer) => (stderr += String(chunk)));
     child.once("error", reject);
     child.once("close", (code) => {
-      noteChildren(sessions, child.pid);
-      const output = Buffer.concat(stdout);
-      for (const match of output
-        .toString("utf8")
-        .matchAll(/"pid":\s*(\d+)/gu)) {
-        const capture = Number(match[1]);
-        if (Number.isSafeInteger(capture) && capture > 0)
-          sessions.detached.add(capture);
-      }
-      sessions.running.delete(child);
-      resolve({
-        exit_code: code,
-        stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
-        stderr,
-        truncated: output.length > EXEC_STDOUT_BYTES,
-        timed_out: false,
-      });
+      void (async () => {
+        await noteChildren(sessions, child.pid);
+        const output = Buffer.concat(stdout);
+        for (const match of output
+          .toString("utf8")
+          .matchAll(/"pid":\s*(\d+)/gu)) {
+          const capture = Number(match[1]);
+          if (Number.isSafeInteger(capture) && capture > 0)
+            await rememberOwned(sessions, capture);
+        }
+        sessions.running.delete(child);
+        resolve({
+          exit_code: code,
+          stdout: output.subarray(0, EXEC_STDOUT_BYTES).toString("utf8"),
+          stderr,
+          truncated: output.length > EXEC_STDOUT_BYTES,
+          timed_out: false,
+        });
+      })().catch(reject);
     });
   });
 
@@ -507,7 +527,7 @@ export const startFakeComputer = async (
     polls: 0,
     lostStarts: options.lostRecordingStarts ?? 0,
   };
-  const sessions: ExecSessions = { running: new Set(), detached: new Set() };
+  const sessions: ExecSessions = { running: new Set(), owned: new Map() };
   const refusals = new Map<string, string>();
   const lostReplies = new Set<string>();
   const { mcp, transport } = await startFakeDriver(calls, refusals, options);
@@ -569,7 +589,7 @@ export const startFakeComputer = async (
     refuseNext: (name, message) => refusals.set(name, message),
     loseNext: (name) => lostReplies.add(name),
     close: async () => {
-      stopExecSessions(sessions);
+      await stopExecSessions(sessions);
       await mcp.close();
       server.closeAllConnections();
       await new Promise((resolve) => server.close(resolve));

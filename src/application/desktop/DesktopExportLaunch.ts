@@ -1,4 +1,5 @@
 import {
+  capturedHomePath,
   launchCommand,
   type DesktopAppExportPlan,
 } from "../../domain/desktop/appExport.js";
@@ -48,12 +49,14 @@ export const seedVersions = (
 
 /** The launch command, opening the seed's one document when the app takes files. */
 export const planLaunch = (
-  { application, host }: DesktopApplicationCapture,
+  capture: DesktopApplicationCapture,
   electron: boolean,
   seeds: ReadonlyMap<string, SeedVersion>,
   files: ReadonlyMap<string, StatePath>,
 ): Pick<DesktopAppExportPlan, "command" | "opens"> => {
+  const { application, host } = capture;
   const isDocument = (home: string) => files.get(home)?.role === "document";
+  const homeOf = capturedHomePath(capture);
   const launch = openSeedDocument(
     electronLaunchArguments(application.argv, electron),
     {
@@ -62,6 +65,7 @@ export const planLaunch = (
       exec: application.desktop_entry?.exec ?? null,
       documents: [...seeds.keys()].filter(isDocument).sort(),
       isDocument,
+      spell: (path) => homeOf(`${host.home}/${path}`) ?? path,
     },
   );
   return {

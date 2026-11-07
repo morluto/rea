@@ -18,6 +18,7 @@ import {
 import type { DesktopApplicationCapture } from "./desktopCapture.js";
 import type { DesktopApplicationState } from "./desktopState.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 import { SEED_HOME } from "./hostIdentity.js";
 import type { LaunchDocument } from "./seedDocument.js";
 import { roleFacts, stateDirectoryOf } from "./stateRoles.js";
@@ -167,10 +168,30 @@ export const capturedHomePath = (
         : [{ physical, logical: path }];
     })
     .sort((left, right) => right.physical.length - left.physical.length);
+  const selections = [...(capture.state.selected_paths ?? [])].sort(
+    (left, right) => right.physical.length - left.physical.length,
+  );
   return (path) => {
-    // A selected alias, such as ~/.config/MuseScore pointing at settings/MuseScore
-    // or Documents, does not move the file. The seed keeps the folder the link
-    // points at, which is what the export's linked-settings cases require.
+    // The path the caller selected is the one the app uses, including through
+    // a link, innermost first. ~/.config/MuseScore pointing at settings or
+    // Documents is seeded as .config/MuseScore, so those settings are not a
+    // second document beside the note.
+    const selection = selections.find(({ physical }) =>
+      isWithinAny(path, [physical]),
+    );
+    const selected =
+      selection === undefined
+        ? null
+        : relative(`${selection.path}${path.slice(selection.physical.length)}`);
+    if (selected !== null) return selected;
+    for (const { suffix } of SQLITE_SIDECARS) {
+      if (!path.endsWith(suffix)) continue;
+      const database = path.slice(0, -suffix.length);
+      const owner = selections.find(({ physical }) => physical === database);
+      if (owner === undefined) continue;
+      const home = relative(`${owner.path}${suffix}`);
+      if (home !== null) return home;
+    }
     const directory = renamed.find(({ physical }) =>
       isWithinAny(path, [physical]),
     );
