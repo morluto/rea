@@ -21,11 +21,20 @@ const PATHS = [
 ];
 
 it("matches the host path module for absolute local paths", () => {
+  const checked: string[] = [];
   for (const path of PATHS) {
+    checked.push(path);
     expect(absoluteLocalPathStringSchema.safeParse(path).success).toBe(
       isAbsolute(path),
     );
   }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "/absolute/path",
+      "relative/path",
+      "file:///absolute/path",
+    ]),
+  );
   expect(absoluteLocalPathStringSchema.safeParse("").success).toBe(false);
   expect(
     absoluteLocalPathStringSchema.safeParse("/absolute/with\0nul").success,
@@ -51,10 +60,20 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
       () => new RegExp(windowsAbsolutePathPattern.source, flags),
       flags,
     ).not.toThrow();
-  for (const path of PATHS)
+  const checked: string[] = [];
+  for (const path of PATHS) {
+    checked.push(path);
     expect(windowsAbsolutePathPattern.test(path), path).toBe(
       win32.isAbsolute(path),
     );
+  }
+  expect(checked).toEqual(
+    expect.arrayContaining([
+      "C:\\absolute\\path",
+      "C:relative/path",
+      "/absolute/path",
+    ]),
+  );
   for (const path of ["C:\\absolute\npath\0nul", "C:\\absolute\0nul\n"])
     expect(windowsAbsolutePathPattern.test(path), JSON.stringify(path)).toBe(
       false,

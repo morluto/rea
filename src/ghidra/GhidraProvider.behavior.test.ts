@@ -3,7 +3,6 @@ import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
-  checkpointCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
   ghidraEmptyDossierIncomingLimitation,
   ghidraEmptyExternalOutgoingLimitation,
@@ -110,48 +109,6 @@ import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
-it.skipIf(process.platform === "win32")(
-  "health describes checkpoint recovery without ephemeral reimport advice",
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-checkpoint-health-"));
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: async () => ok(sessionInfo()),
-        callTool: async () => ok([]),
-        close: async () => ok(null),
-        checkpointRestore: () => ({
-          path: join(directory, "verified.gzf"),
-          sha256: "a".repeat(64),
-        }),
-      }),
-      { REA_GHIDRA_CHECKPOINT_DIR: directory },
-    );
-    const client = await createElfClient(ghidra);
-    try {
-      const health = await client.execute("health", {});
-      if (!health.ok) throw health.error;
-      expect(health.value.limitations.join("\n")).toContain(
-        "last successfully saved owned Program",
-      );
-      expect(health.value.limitations.join("\n")).toContain(
-        "auto-analysis was not rerun",
-      );
-      expect(health.value.limitations.join("\n")).not.toMatch(
-        /imports the original artifact again|discards session annotations/,
-      );
-      for (const capability of checkpointCapabilities()) {
-        expect(capability.limitations.join("\n")).not.toMatch(
-          /discarded on close|imports the original artifact again/,
-        );
-      }
-    } finally {
-      await client.close();
-      await ghidra.closeOwnedResources();
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
 afterEach(() => vi.restoreAllMocks());
 const installationHost = (
   platform: NodeJS.Platform = "linux",

@@ -821,9 +821,13 @@ export const createGhidraProviderClient = (input: {
     return [
       ...(restored === undefined
         ? []
-        : [
-            `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
-          ]),
+        : restored === null
+          ? [
+              "Created the initial owned Ghidra Program from the executable and saved its analysis checkpoint; metadata edits are saved on normal close.",
+            ]
+          : [
+              `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
+            ]),
       ...providerLimitations,
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
