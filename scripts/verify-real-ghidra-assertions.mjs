@@ -432,6 +432,9 @@ export function summary(observed) {
     names: observed.names.length,
     strings: observed.strings.length,
     memory_blocks: observed.segments.length,
+    ...(observed.variant === "indirect-branches"
+      ? { indirect_branches: observed.probes }
+      : {}),
   };
 }
 

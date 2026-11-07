@@ -11,9 +11,9 @@ import { GhidraProvider } from "./GhidraProvider.js";
 // bit-field base-type revisions that prevent reuse of snapshots with earlier
 // results.
 const RAW_DIGESTS = {
-  "6502": "6f904539c00521b04f76a3bfd1ca88275e080b5751f9e2305de66c20d0bd2fa0",
+  "6502": "f8211e6e6c370c4c5a1aba047a126204050d22a1b7a9788ef0e1273f23fe9193",
   "x86-disabled-analyzer":
-    "5a534d959baf34abdafaea64ae9fcb9126553802d42ffa5e4bc0426de5f0af8c",
+    "989e04336f04e449609e3a3de27c78411a07b1410a1919feeccdd4f2923a6989",
 } as const;
 
 const configFor = (environment: NodeJS.ProcessEnv) => {
@@ -49,6 +49,8 @@ describe("raw-binary analysis profile digest", () => {
       load_image_observations:
         "source-mappings-entry-context-relocation-symbol-v3",
       instruction_status: "unlisted-address-without-decode-v1",
+      indirect_branch_inventory:
+        "listing-computed-jumps-typed-warning-address-v2",
       byte_search_boundary: "contiguous-eligible-initialized-blocks-v1",
       data_type_observations: "bit-field-base-and-lookup-v1",
       analyzer_preset: "ghidra-default",
