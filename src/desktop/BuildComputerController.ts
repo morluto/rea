@@ -23,6 +23,14 @@ const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
  * One argument past this fails with E2BIG before the process starts.
  */
 export const LINUX_SINGLE_ARGUMENT_BYTES = 32 * 4096 - 1;
+/**
+ * A usual Linux `ARG_MAX`, leaving room for the environment the kernel counts
+ * with the arguments. A larger vector fails with E2BIG before the process starts.
+ */
+export const LINUX_ARGUMENT_VECTOR_BYTES = 2 * 1024 * 1024 - 256 * 1024;
+
+const argumentVectorBytes = (argv: readonly string[]): number =>
+  argv.reduce((sum, argument) => sum + Buffer.byteLength(argument) + 1, 0);
 
 let source: Promise<string> | undefined;
 
@@ -77,15 +85,21 @@ export const runBuildController = async (
     throw new Error(
       `REA's build controller source is ${String(Buffer.byteLength(script))} bytes, above the ${String(LINUX_SINGLE_ARGUMENT_BYTES)} bytes Linux passes as one argument.`,
     );
+  const argv = [
+    "python3",
+    "-I",
+    "-c",
+    script,
+    command,
+    ...controllerArgumentPieces(JSON.stringify(argumentsJson)),
+  ];
+  const vectorBytes = argumentVectorBytes(argv);
+  if (vectorBytes > LINUX_ARGUMENT_VECTOR_BYTES)
+    throw new Error(
+      `The build controller command is ${String(vectorBytes)} bytes, above the ${String(LINUX_ARGUMENT_VECTOR_BYTES)} bytes Linux accepts for one command's arguments (E2BIG).`,
+    );
   const result = await computer.exec(
-    [
-      "python3",
-      "-I",
-      "-c",
-      script,
-      command,
-      ...controllerArgumentPieces(JSON.stringify(argumentsJson)),
-    ],
+    argv,
     // The controller's own waits end first, so it can answer.
     timeoutS + 60,
     signal,
