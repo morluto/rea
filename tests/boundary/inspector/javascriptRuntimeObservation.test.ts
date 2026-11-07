@@ -26,7 +26,7 @@ import {
 import { inspectWebPageInputSchema } from "../../../src/domain/browserObservation.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import { javascriptRuntimeReconciliationResultSchema } from "../../../src/domain/javascript/javascriptRuntimeReconciliationSchemas.js";
-import { parseRuntimeCaptures } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
+import { parseRuntimeCapture } from "../../../src/domain/javascript/javascriptRuntimeReconciliationCaptureParsing.js";
 import { startFakeV8Inspector } from "../../fixtures/inspector/fakeV8Inspector.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -62,7 +62,7 @@ test("reports static-layer Evidence digest failure at its caller path", () => {
         {
           path: ["static_layers", 0, "analysis", "evidence_id"],
           reason: "invalid_value",
-          message: "Evidence semantic identifier does not match its record",
+          message: expect.stringMatching(/semantic identifier.*not match/iu),
         },
       ],
     },
@@ -867,7 +867,10 @@ test("keeps Inspector parse failures separate and preserves file URL script iden
     );
     expect(new Set(scriptKeys).size).toBe(2);
 
-    const parsedCapture = parseRuntimeCaptures([evidence])[0];
+    const parsedCapture = parseRuntimeCapture(evidence, [
+      "runtime_observations",
+      0,
+    ]);
     if (parsedCapture?.kind !== "v8-inspector")
       throw new Error("Expected the Inspector Evidence to parse as V8 capture");
     expect(

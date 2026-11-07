@@ -33,6 +33,17 @@ describe("stateRole", () => {
       "shared_desktop",
     );
   });
+
+  it("keeps a file in the desktop Trash shared, whatever else names it", () => {
+    expect(
+      stateRole([
+        "opened_by_application",
+        "named_in_window_title",
+        "selected_path",
+        "desktop_trash",
+      ]),
+    ).toBe("shared_desktop");
+  });
 });
 
 describe("stateReasons", () => {
@@ -55,6 +66,29 @@ describe("stateReasons", () => {
     ]);
     expect(reasons("/home/ada/Documents/day.txt")).toEqual([]);
     expect(reasons("/home/ada/Documents/today.tx")).toEqual([]);
+  });
+
+  it("marks the desktop Trash, where a file the user deleted keeps its name", () => {
+    const facts: DesktopRoleFacts = {
+      home: "/home/ada",
+      stateDirectories: [],
+      stateTails: [],
+      selectedRoots: [],
+      titles: ["poster.svg - Inkscape"],
+      openedFiles: new Set(),
+    };
+    const reasons = (path: string) => stateReasons(facts, path, [], false);
+
+    expect(reasons("/home/ada/.local/share/Trash/files/poster.svg")).toEqual([
+      "named_in_window_title",
+      "desktop_trash",
+    ]);
+    expect(
+      reasons("/home/ada/.local/share/Trash/info/poster.svg.trashinfo"),
+    ).toEqual(["desktop_trash"]);
+    expect(reasons("/home/ada/.local/share/Trashcan/poster.svg")).toEqual([
+      "named_in_window_title",
+    ]);
   });
 });
 

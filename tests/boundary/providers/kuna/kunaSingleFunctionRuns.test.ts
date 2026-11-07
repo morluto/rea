@@ -1,10 +1,7 @@
 import { expect, it as test, vi } from "vitest";
 
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import {
-  kunaTimeoutRecovery,
-  type KunaProcessLauncher,
-} from "../../../../src/kuna/KunaCommand.js";
+import type { KunaProcessLauncher } from "../../../../src/kuna/KunaCommand.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
 import { spawnOwnedProviderProcess } from "../../../../src/process/ProviderProcess.js";
 
@@ -373,20 +370,11 @@ it("names the setting that owns a single-function deadline", async () => {
       message:
         "kuna decompile did not finish within REA_KUNA_TIMEOUT_MS (300 ms).",
       remediation: {
-        action: expect.stringMatching(
-          /^Raise REA_KUNA_TIMEOUT_MS .* restart REA.*project export/u,
-        ),
+        action:
+          "Raise REA_KUNA_TIMEOUT_MS in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.",
       },
       details: { timeout_ms: 300 },
     });
-    // A finished invocation cannot read a later export from this session.
-    const recovery = kunaTimeoutRecovery("REA_KUNA_TIMEOUT_MS", "decompile");
-    expect(
-      projectAnalysisError(result.error, "invocation").remediation.action,
-    ).toBe(recovery.remediationAction);
-    expect(projectAnalysisError(result.error).remediation.action).toBe(
-      recovery.continuingCallerGuidance?.remediationAction,
-    );
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }

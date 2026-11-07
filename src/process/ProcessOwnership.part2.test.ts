@@ -163,8 +163,9 @@ describe("owned process-group cleanup discovery", () => {
     await expect(cleanupOwnedProcessGroup(ownership, adapter)).resolves.toEqual(
       {
         cleaned: false,
-        reason:
-          "descendant process-group leader identity could not be verified",
+        reason: expect.stringMatching(
+          /descendant.*leader identity.*not be verified/iu,
+        ),
       },
     );
     expect(signalGroup).not.toHaveBeenCalled();

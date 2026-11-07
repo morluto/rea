@@ -1,4 +1,7 @@
-import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import {
+  filterGhidraLiteralCandidates,
+  GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+} from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
@@ -821,9 +824,13 @@ export const createGhidraProviderClient = (input: {
     return [
       ...(restored === undefined
         ? []
-        : [
-            `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
-          ]),
+        : restored === null
+          ? [
+              "Created the initial owned Ghidra Program from the executable and saved its analysis checkpoint; metadata edits are saved on normal close.",
+            ]
+          : [
+              `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
+            ]),
       ...providerLimitations,
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
@@ -1026,7 +1033,14 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        executionMetadata = { ...executionMetadata, rawResult: called.value };
+        executionMetadata = {
+          ...executionMetadata,
+          rawResult: called.value,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+          ],
+        };
       }
       if (
         operation === "inspect_native_data_type" &&

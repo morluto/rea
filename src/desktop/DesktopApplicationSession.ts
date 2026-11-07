@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import {
   checkpointNameRefusal,
+  type DesktopCaptureEvent,
   type DesktopSession,
 } from "../domain/desktop/desktopCapture.js";
 import { ownedCommandResources } from "../process/OwnedCommand.js";
@@ -81,7 +82,11 @@ export interface DesktopSessionPlan {
     atMs: number,
     openedFiles: ReadonlySet<string>,
   ) => Promise<void>;
-  readonly report: (message: string) => Promise<void>;
+  /** Progress text, with the event a driver waits on when there is one. */
+  readonly report: (
+    message: string,
+    event?: DesktopCaptureEvent,
+  ) => Promise<void>;
   readonly signal: AbortSignal | undefined;
 }
 
@@ -134,6 +139,7 @@ const sampleSession = async (
     observations.announced = true;
     await plan.report(
       "The application window is open. Send an empty line or `checkpoint <name>` to record its state, or `stop` to finish.",
+      { kind: "window_open" },
     );
   }
   return applicationWindows;
@@ -161,7 +167,11 @@ const requestCheckpoint = async (
 ): Promise<void> => {
   const refusal = checkpointNameRefusal(name, taken);
   if (refusal !== undefined) {
-    await plan.report(`${refusal} No checkpoint was recorded.`);
+    await plan.report(`${refusal} No checkpoint was recorded.`, {
+      kind: "checkpoint_refused",
+      name: name ?? "",
+      reason: refusal,
+    });
     return;
   }
   const chosen = name ?? `checkpoint-${String(observations.now())}`;

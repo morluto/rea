@@ -210,7 +210,6 @@ it.each([
     const fixture = ggufFixture({ tensors: [{ ...tensor, offset: 0n }] });
     const { provider, path } = await providerAt(fixture.bytes);
     const result = await provider.inspect({ path, hash: "header" });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected format refusal");
     expect(result.error).toMatchObject({
       constraint: "file_format_rejected",
@@ -611,7 +610,6 @@ it.each(ggufKLayouts)(
       }).bytes,
     );
     const rejected = await provider.inspect({ path, hash: "header" });
-    expect(rejected.ok).toBe(false);
     if (rejected.ok) throw new Error("Incomplete common K row admitted");
     expect(rejected.error).toMatchObject({
       constraint: "file_format_rejected",
@@ -1143,7 +1141,6 @@ it("classifies over-depth Safetensors extension JSON as a resource limit", async
   );
   const { provider, path } = await providerAt(fixture.bytes);
   const result = await provider.inspect({ path, hash: "header" });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Over-depth JSON was accepted");
   expect(result.error).toMatchObject({
     _tag: "AnalysisResourceConstraintError",
