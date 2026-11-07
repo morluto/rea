@@ -4,8 +4,9 @@ import { Cli, z } from "incur";
 import { browserCliError } from "./browserCliError.js";
 import { createBrowserObservationProvider } from "../composition/browserObservation.js";
 import {
-  browserScopeOptions,
+  passiveBrowserScopeOptions,
   selectedCommandTimeout,
+  selectedDiscoveryTimeout,
 } from "../cliObservationOptions.js";
 import {
   captureWebScreenshot,
@@ -63,7 +64,7 @@ const registerWebMcp = (
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
       observationMs: cliDecimalField(
         discoverWebMcpToolsInputSchema.shape.observation_ms,
       ).describe("Observation duration in milliseconds"),
@@ -77,6 +78,7 @@ const registerWebMcp = (
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
             observation_ms: options.observationMs,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = discoverWebMcpToolsInputSchema.safeParse(input);
@@ -178,7 +180,7 @@ const registerScreenshot = (
       targetId: z.string().describe("Target ID from list-browser-targets"),
     }),
     options: z.object({
-      ...browserScopeOptions,
+      ...passiveBrowserScopeOptions,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -188,6 +190,7 @@ const registerScreenshot = (
             cdp_endpoint: args.endpoint,
             allowed_origins: options.allowedOrigins,
             target_id: args.targetId,
+            ...selectedDiscoveryTimeout(options.discoveryTimeoutMs),
             ...selectedCommandTimeout(options.commandTimeoutMs),
           };
           const parsed = captureWebScreenshotInputSchema.safeParse(input);
