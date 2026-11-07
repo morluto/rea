@@ -294,7 +294,8 @@ const openServer = async (provider, kunaSettings = {}) => {
       );
       assert.equal(
         verification.status,
-        binding.analysis_profile.parameters.verified_release
+        binding.analysis_profile.parameters.kuna_version ===
+          KUNA_VERIFIED_VERSION
           ? "verified"
           : "unverified",
       );
