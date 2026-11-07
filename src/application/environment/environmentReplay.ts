@@ -92,21 +92,23 @@ export const matchReplayTool = (
 ): MatchedReplayTool | undefined => {
   const segments = request.path.slice(1).split("/");
   const fits: MatchedReplayTool[] = [];
-  let best: MatchedReplayTool | undefined;
   for (const tool of manifest.tools) {
     if (tool.method !== request.method) continue;
     const literals = fitOf(tool, segments);
-    if (literals === undefined) continue;
-    const candidate = { tool, segments, literals };
-    fits.push(candidate);
-    if (best === undefined || literals > best.literals) best = candidate;
+    if (literals !== undefined) fits.push({ tool, segments, literals });
   }
-  if (best === undefined) return undefined;
-  const routeFits = fits.filter(
-    ({ tool }) => tool.path_template === best.tool.path_template,
-  );
-  if (!routeFits.some(({ tool }) => tool.rpc_operation !== undefined))
-    return routeFits[0];
+  if (fits.length === 0) return undefined;
+  const pickBest = (
+    candidates: readonly MatchedReplayTool[],
+  ): MatchedReplayTool | undefined => {
+    let best: MatchedReplayTool | undefined;
+    for (const candidate of candidates)
+      if (best === undefined || candidate.literals > best.literals)
+        best = candidate;
+    return best;
+  };
+  if (!fits.some(({ tool }) => tool.rpc_operation !== undefined))
+    return pickBest(fits);
   const rpc =
     request.method === "POST"
       ? selectRpcOperationFromText({
@@ -118,12 +120,14 @@ export const matchReplayTool = (
         })
       : undefined;
   if (rpc !== undefined)
-    return routeFits.find(
-      ({ tool }) =>
-        tool.rpc_operation?.kind === rpc.kind &&
-        tool.rpc_operation.name === rpc.name,
+    return pickBest(
+      fits.filter(
+        ({ tool }) =>
+          tool.rpc_operation?.kind === rpc.kind &&
+          tool.rpc_operation.name === rpc.name,
+      ),
     );
-  return routeFits.find(({ tool }) => tool.rpc_operation === undefined);
+  return pickBest(fits.filter(({ tool }) => tool.rpc_operation === undefined));
 };
 
 /** Caller arguments as the MCP tool receives them. */

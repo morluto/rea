@@ -1471,3 +1471,134 @@ describe("XSSI response size parity in probe origin selection", () => {
     ]);
   });
 });
+
+describe("overlapping POST RPC templates in comparison", () => {
+  it("matches recorded RPC calls across overlapping literal and templated POST routes without no-tool misses", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/api/orgs/org-1/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetOrgSummary",
+              query: "query GetOrgSummary { org { id } }",
+            }),
+            responseText: JSON.stringify({ data: { org: { id: "org-1" } } }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            url: "http://grafana.example/api/orgs/org-1/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { org } }",
+            }),
+            responseText: JSON.stringify({
+              data: { viewer: { org: "org-1" } },
+            }),
+          }),
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:02.000Z",
+            url: "http://grafana.example/api/orgs/org-2/graphql",
+            requestText: JSON.stringify({
+              operationName: "GetViewer",
+              query: "query GetViewer { viewer { org } }",
+            }),
+            responseText: JSON.stringify({
+              data: { viewer: { org: "org-2" } },
+            }),
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: {
+        kind: "environment-manifest",
+        template_rules: ["sibling-variance"],
+      },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "overlapping-graphql", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 3,
+      equal: 3,
+      agreement: 1,
+      categories: { "no-tool": 0, refused: 0 },
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_orgs_org_1_graphql_get_org_summary",
+      "post_orgs_graphql_get_viewer_by_org_id",
+      "post_orgs_graphql_get_viewer_by_org_id",
+    ]);
+  });
+});
+
+describe("single-operation batchexecute form body in comparison", () => {
+  it("accepts form-encoded f.req strings on a single-operation batchexecute route without refusing", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          postProbeEntry({
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            url: "http://grafana.example/_/AppUi/data/batchexecute?rpcids=GetNotes",
+            requestMime: "application/x-www-form-urlencoded",
+            requestText: new URLSearchParams({
+              "f.req": JSON.stringify([[["GetNotes", "[]", null, "generic"]]]),
+            }).toString(),
+            responseMime: "text/plain",
+            responseText:
+              ')]}\'\n[[["wrb.fr","GetNotes","[{\\"id\\":\\"n1\\"}]",null,null,null,"generic"]]]',
+          }),
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    expect(
+      rpcSource.manifest.tools.map((tool) => ({
+        name: tool.name,
+        rpc_operation: tool.rpc_operation,
+      })),
+    ).toEqual([
+      { name: "post_appui_data_batchexecute", rpc_operation: undefined },
+    ]);
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "single-batchexecute", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      agreement: 1,
+      categories: { "no-tool": 0, refused: 0 },
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_appui_data_batchexecute",
+    ]);
+  });
+});

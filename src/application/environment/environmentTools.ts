@@ -8,6 +8,7 @@ import {
   pointerTokens,
   type JsonObject,
 } from "../../domain/analysisView/environmentStateRules.js";
+import { isBatchExecutePath } from "../../domain/analysisView/rpcOperationSelector.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import {
   schemaBytes,
@@ -333,10 +334,23 @@ export const withQueryText = (
   return spelled ?? args;
 };
 
+const acceptsBatchExecuteFormBody = (
+  source: EnvironmentSource,
+  tool: EnvironmentManifestTool,
+): boolean =>
+  tool.rpc_operation?.kind === "batchexecute" ||
+  (tool.body_shape === null &&
+    (isBatchExecutePath(tool.path_template) ||
+      tool.record_ordinals.some(
+        (ordinal) =>
+          source.exchanges.get(ordinal)?.batchexecuteRequest === true,
+      )));
+
 const defaultBodyProperty = (
+  source: EnvironmentSource,
   tool: EnvironmentManifestTool,
 ): EnvironmentToolProperty =>
-  tool.rpc_operation?.kind === "batchexecute"
+  acceptsBatchExecuteFormBody(source, tool)
     ? {
         oneOf: [{ type: "string" }, { type: "object" }],
         description: bodyDescription(tool),
@@ -345,6 +359,7 @@ const defaultBodyProperty = (
 
 /** Lazily render properties so admission precedes retaining a whole schema. */
 function* environmentToolProperties(
+  source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   args: EnvironmentToolArguments,
   served: {
@@ -384,7 +399,7 @@ function* environmentToolProperties(
     ];
   }
   if (args.body !== undefined)
-    yield [args.body, served.body ?? defaultBodyProperty(tool), false];
+    yield [args.body, served.body ?? defaultBodyProperty(source, tool), false];
 }
 
 /** Serialization reservation calibrated with 1500 fields and eight concurrent SDK discovery requests. */
@@ -424,13 +439,14 @@ export interface EnvironmentCatalogOptions {
 
 /** The body a tool takes in a catalog: a served plan's, else the method's. */
 const catalogBody = (
+  source: EnvironmentSource,
   tool: EnvironmentManifestTool,
   body: EnvironmentCatalogOptions["body"],
 ): {
   readonly property: EnvironmentToolProperty | undefined;
   readonly withBody: boolean;
 } => {
-  const property = body?.(tool, defaultBodyProperty(tool));
+  const property = body?.(tool, defaultBodyProperty(source, tool));
   return {
     property,
     withBody: WRITE_METHODS.has(tool.method) || property !== undefined,
@@ -497,7 +513,7 @@ export const environmentToolDefinitions = (
       !text(tool.name)
     )
       return refused();
-    const { property: taken, withBody } = catalogBody(tool, body);
+    const { property: taken, withBody } = catalogBody(source, tool, body);
     const count =
       tool.params.length + tool.query_parameter_names.length + Number(withBody);
     // A lower bound rejects enormous argument lists before constructing their alias map.
@@ -509,6 +525,7 @@ export const environmentToolDefinitions = (
     const properties = new Map<string, EnvironmentToolProperty>();
     const required: string[] = [];
     for (const [argument, property, mandatory] of environmentToolProperties(
+      source,
       tool,
       args,
       { body: taken, query: query?.(tool) },

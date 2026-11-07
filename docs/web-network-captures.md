@@ -622,13 +622,14 @@ the 64 KiB raw UTF-8 body limit (and 8 KiB query limit for `batchexecute`
 
 Requests exceeding those limits, batching distinct operations, omitting an
 operation name or failing validation form an undispatched group without an
-operation discriminator. After template rules run, a `(POST, path_template)`
-splits into operation-qualified tools (`rpc_operation` populated and operation
-words appended to `name`) only when two or more groups share that
-`(POST, path_template)`; a `path_template` with a single `POST` group keeps its
-ordinary `(method, path_template)` tool name and omits `rpc_operation`, while
-`environment-state` still recognizes read-only single-operation `POST` RPC calls
-from the recorded requests.
+operation discriminator. After template rules run, a `POST` group emits
+`rpc_operation` and appends operation words to `name` only when another `POST`
+group in the manifest has an equal or overlapping `path_template` (for example,
+two RPC operations on `/graphql`, or `/api/orgs/org-1/graphql` alongside
+`/api/orgs/{org_id}/graphql`); a `POST` group whose `path_template` overlaps no
+other `POST` group keeps its ordinary `(method, path_template)` tool name and
+omits `rpc_operation`, while `environment-state` still recognizes read-only
+single-operation `POST` RPC calls from the recorded requests.
 
 The parent may instead be `capture_browser_scenario` Evidence whose scenario
 selected response bodies or header values: each network transaction is then
@@ -660,8 +661,8 @@ primary host with dots and ports replaced by hyphens, `grafana-example` for
 `http://grafana.example`. Each tool carries a deterministic `name`, `method`,
 `path_template`, `api_surface_template` (the four-rule template of its
 earliest record), optional `rpc_operation` (`{kind, name}` for discriminated
-`graphql`, `json-rpc` and `batchexecute` `POST` tools when two or more groups
-share a `POST` `path_template`), `params`,
+`graphql`, `json-rpc` and `batchexecute` `POST` tools when another `POST` group
+shares an equal or overlapping `path_template`), `params`,
 `query_parameter_names`, `body_shape`, `statuses`, `content_types` and
 `record_ordinals`. `records` lists one pointer
 `{ordinal, method, path, status, content_type}` per record a tool cites and

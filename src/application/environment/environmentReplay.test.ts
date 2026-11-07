@@ -876,3 +876,89 @@ describe("single-operation POST paths and 64 KiB raw wire budget in matchReplayT
     });
   });
 });
+
+describe("overlapping literal and templated POST RPC routes in matchReplayTool", () => {
+  it("selects the exact RPC tool across overlapping literal and templated POST routes", async () => {
+    const capture = environmentManifestCaptureFixture([
+      postRpcExchange({
+        path: "/api/orgs/org-1/graphql",
+        requestText: JSON.stringify({
+          operationName: "UpdateProfile",
+          query: "mutation UpdateProfile { updateProfile { id } }",
+        }),
+        responseText: JSON.stringify({
+          data: { updateProfile: { id: "org-1" } },
+        }),
+      }),
+      postRpcExchange({
+        path: "/api/orgs/org-1/graphql",
+        requestText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { org } }",
+        }),
+        responseText: JSON.stringify({ data: { viewer: { org: "org-1" } } }),
+      }),
+      postRpcExchange({
+        path: "/api/orgs/org-2/graphql",
+        requestText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { org } }",
+        }),
+        responseText: JSON.stringify({ data: { viewer: { org: "org-2" } } }),
+      }),
+    ]);
+    const evidence = analysisViewCaptureEvidence(capture);
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence },
+      view: {
+        kind: "environment-manifest",
+        template_rules: ["sibling-variance"],
+      },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const source = environmentServeSource({
+      manifest: manifest.value,
+      capture: evidence,
+    });
+    const updateMatch = matchReplayTool(source.manifest, {
+      method: "POST",
+      path: "/api/orgs/org-1/graphql",
+      contentType: "application/json",
+      body: {
+        operationName: "UpdateProfile",
+        query: "mutation UpdateProfile { updateProfile { id } }",
+      },
+    });
+    expect(updateMatch?.tool.name).toBe(
+      "post_orgs_org_1_graphql_update_profile",
+    );
+    const viewerOrg1Match = matchReplayTool(source.manifest, {
+      method: "POST",
+      path: "/api/orgs/org-1/graphql",
+      contentType: "application/json",
+      body: {
+        operationName: "GetViewer",
+        query: "query GetViewer { viewer { org } }",
+      },
+    });
+    expect(viewerOrg1Match?.tool.name).toBe(
+      "post_orgs_graphql_get_viewer_by_org_id",
+    );
+    expect(
+      replay(viewerOrg1Match!.tool.name, { org_id: "org-1" }, source),
+    ).toMatchObject({
+      status: 200,
+      body: { data: { viewer: { org: "org-1" } } },
+    });
+    const unrecordedMatch = matchReplayTool(source.manifest, {
+      method: "POST",
+      path: "/api/orgs/org-1/graphql",
+      contentType: "application/json",
+      body: {
+        operationName: "DeleteOrg",
+        query: "mutation DeleteOrg { deleteOrg }",
+      },
+    });
+    expect(unrecordedMatch).toBeUndefined();
+  });
+});

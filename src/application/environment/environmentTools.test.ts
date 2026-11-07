@@ -602,3 +602,59 @@ describe("environment tool annotations", () => {
     ]);
   });
 });
+
+describe("single-operation batchexecute body schema", () => {
+  it("accepts form string or JSON object bodies on single-operation batchexecute tools while keeping REST object schemas", () => {
+    const batchexecutePathTool: EnvironmentManifestTool = {
+      ...tool("post_folders"),
+      name: "post_appui_data_batchexecute",
+      path_template: "/_/AppUi/data/batchexecute",
+      api_surface_template: "/_/AppUi/data/batchexecute",
+      body_shape: null,
+    };
+    expect(
+      environmentToolInputSchema(batchexecutePathTool).properties.body,
+    ).toEqual({
+      oneOf: [{ type: "string" }, { type: "object" }],
+      description:
+        "Request body; the capture retained no JSON body shape for this tool.",
+    });
+    const customBatchTool: EnvironmentManifestTool = {
+      ...tool("post_folders"),
+      name: "post_rpc_batch",
+      path_template: "/api/rpc/batch",
+      api_surface_template: "/api/rpc/batch",
+      body_shape: null,
+      record_ordinals: [0],
+    };
+    const [customDefinition] = environmentToolDefinitions({
+      ...withTools([customBatchTool]),
+      exchanges: new Map([
+        [
+          0,
+          {
+            ordinal: 0,
+            path: "/api/rpc/batch",
+            query: null,
+            status: 200,
+            contentType: "text/plain",
+            bodyText: '[[["wrb.fr","GetNotes","[]",null,null,null,"generic"]]]',
+            batchexecuteRequest: true,
+          },
+        ],
+      ]),
+    });
+    expect(customDefinition?.inputSchema.properties.body?.oneOf).toEqual([
+      { type: "string" },
+      { type: "object" },
+    ]);
+    expect(
+      environmentToolInputSchema({ ...tool("post_folders"), body_shape: null })
+        .properties.body,
+    ).toEqual({
+      type: "object",
+      description:
+        "Request body; the capture retained no JSON body shape for this tool.",
+    });
+  });
+});

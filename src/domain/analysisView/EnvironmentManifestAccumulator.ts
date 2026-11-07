@@ -41,6 +41,7 @@ import {
 } from "./environmentManifestOrigin.js";
 import {
   applyTemplateRules,
+  routePartsOverlap,
   SEGMENT_LIMITED_RULES,
   SIBLING_VARIANCE_SEGMENT_LIMIT,
   type BodyShape,
@@ -540,21 +541,34 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       const names = parameterNames(group.parts);
       return { group, names, template: pathTemplate(group.parts, names) };
     });
-    const routeCounts = new Map<string, number>();
+    const byMethodAndDepth = new Map<string, (typeof templated)[number][]>();
     for (const entry of templated) {
-      const key = compositeKey([entry.group.method, entry.template]);
-      routeCounts.set(key, (routeCounts.get(key) ?? 0) + 1);
+      const key = compositeKey([entry.group.method, entry.group.parts.length]);
+      const bucket = byMethodAndDepth.get(key);
+      if (bucket === undefined) byMethodAndDepth.set(key, [entry]);
+      else bucket.push(entry);
     }
     return templated
-      .map(({ group, names, template }) => ({
-        group,
-        names,
-        template,
-        rpcOperation:
-          (routeCounts.get(compositeKey([group.method, template])) ?? 0) > 1
-            ? group.rpcOperation
-            : undefined,
-      }))
+      .map((entry) => {
+        const { group, names, template } = entry;
+        const peers =
+          byMethodAndDepth.get(
+            compositeKey([group.method, group.parts.length]),
+          ) ?? [];
+        const hasOverlappingPeer =
+          group.rpcOperation !== undefined &&
+          peers.some(
+            (other) =>
+              other !== entry &&
+              routePartsOverlap(group.parts, other.group.parts),
+          );
+        return {
+          group,
+          names,
+          template,
+          rpcOperation: hasOverlappingPeer ? group.rpcOperation : undefined,
+        };
+      })
       .sort((left, right) =>
         compareTools(
           {

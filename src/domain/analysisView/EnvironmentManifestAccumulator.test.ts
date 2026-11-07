@@ -578,3 +578,70 @@ describe("multiplexed batchexecute query-parameter projection", () => {
     ]);
   });
 });
+
+describe("overlapping POST RPC route templates", () => {
+  it("retains rpc_operation when a literal POST RPC route overlaps a templated POST RPC route", () => {
+    const accumulator = new EnvironmentManifestAccumulator(1024 * 1024, true, [
+      "sibling-variance",
+    ]);
+    const records: readonly WebNetworkCaptureRecord[] = [
+      rpcRecord({
+        ordinal: 0,
+        path: "/api/orgs/org-1/graphql",
+        postText: JSON.stringify({
+          operationName: "UpdateProfile",
+          query: "mutation UpdateProfile { updateProfile { id } }",
+        }),
+      }),
+      rpcRecord({
+        ordinal: 1,
+        path: "/api/orgs/org-1/graphql",
+        postText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+        }),
+      }),
+      rpcRecord({
+        ordinal: 2,
+        path: "/api/orgs/org-2/graphql",
+        postText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+        }),
+      }),
+      rpcRecord({
+        ordinal: 3,
+        path: "/api/status/graphql",
+        postText: JSON.stringify({
+          operationName: "GetHealth",
+          query: "query GetHealth { ok }",
+        }),
+      }),
+    ];
+    for (const record of records) expect(accumulator.add(record).ok).toBe(true);
+    const manifest = finished(accumulator);
+    expect(
+      manifest.tools.map((tool) => ({
+        name: tool.name,
+        path_template: tool.path_template,
+        rpc_operation: tool.rpc_operation,
+      })),
+    ).toEqual([
+      {
+        name: "post_orgs_org_1_graphql_update_profile",
+        path_template: "/api/orgs/org-1/graphql",
+        rpc_operation: { kind: "graphql", name: "UpdateProfile" },
+      },
+      {
+        name: "post_orgs_graphql_get_viewer_by_org_id",
+        path_template: "/api/orgs/{org_id}/graphql",
+        rpc_operation: { kind: "graphql", name: "GetViewer" },
+      },
+      {
+        name: "post_status_graphql",
+        path_template: "/api/status/graphql",
+        rpc_operation: undefined,
+      },
+    ]);
+  });
+});

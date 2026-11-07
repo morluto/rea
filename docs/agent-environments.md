@@ -370,7 +370,7 @@ recorded again.
 An environment manifest is a projection of one application's recorded request
 lines into a tool surface: one tool per method, path template and optional
 `POST` `rpc_operation` (`graphql`, `json-rpc` or `batchexecute`, emitted when
-two or more groups share a `POST` `path_template`) on the
+another `POST` group shares an equal or overlapping `path_template`) on the
 primary origin, with inferred path parameters, observed query parameter
 names, value-free body shapes and pointers to the parent records each tool
 cites. It carries no bodies and no headers. The manifest's
@@ -625,8 +625,8 @@ boolean is sent as its JSON text) or array of strings (for repeated values in
 captured order); write methods accept an
 optional `body` object described by the recorded top-level key types, or a
 string-or-object `body` (`oneOf: [{"type": "string"}, {"type": "object"}]`) for
-discriminated `batchexecute` RPC tools (`rpc_operation.kind === "batchexecute"`)
-whose requests send form-encoded `f.req` strings. Each
+`batchexecute` `POST` tools (including single-operation `/batchexecute` tools
+that omit `rpc_operation`) whose requests send form-encoded `f.req` strings. Each
 input keeps its own argument: a query name equal to a path parameter's name is
 advertised as `query_<name>`, a query name longer than 64 characters as
 `query_<n>` (its position) with the captured name sampled in its description,
@@ -1094,7 +1094,7 @@ sequence made against the live application, seeded as it was for the capture and
 makes no network call: whoever records the probes drives the application with its own credentials. For each probe it
 resets the environment's state, takes the requests in the order they were made (record order when any lacks a start time), keeps each request's raw recorded text alongside its parsed body, and matches each request to the manifest tool of the
 same method whose path template fits with the most literal segments (a format-rule parameter must fit its format once
-percent-decoded); when that path template has discriminated `POST` `rpc_operation` tools, the raw request text is evaluated under the manifest's 64 KiB UTF-8 body and 8 KiB query limits to select the matching `rpc_operation` tool (or an undispatched `POST` fallback tool on that template when the request carries no single bounded operation). A path argument is the raw segment, which the environment decodes once.
+percent-decoded); when any fitting `POST` tool carries `rpc_operation`, the raw request text is evaluated under the manifest's 64 KiB UTF-8 body and 8 KiB query limits to select the matching `rpc_operation` tool with the most literal segments (or the highest-literal-count undispatched `POST` fallback tool when the request carries no single bounded operation). A path argument is the raw segment, which the environment decodes once.
 It answers the call as the served environment would, and compares that answer with the application's.
 
 A re-seeded application holds the same entities under other ids, so the comparison maps them. Objects in the two answers

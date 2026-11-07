@@ -4,8 +4,13 @@ import {
   spellingSummary,
   type SpellingSummary,
 } from "./environmentManifestSpelling.js";
+import { decodedSegment, pathSegmentMatches } from "./environmentStateRules.js";
 import type { RpcOperation } from "./rpcOperationSelector.js";
-import type { RouteRule } from "./webNetworkRouteTemplates.js";
+import {
+  ROUTE_RULES,
+  segmentRule,
+  type RouteRule,
+} from "./webNetworkRouteTemplates.js";
 
 /** Opt-in template rules applied after the four exact format rules. */
 export const TEMPLATE_RULES = [
@@ -574,3 +579,38 @@ export const applyTemplateRules = (
     current = withinSegmentLimit(current, mergePrefixVariance);
   return current;
 };
+
+const FORMAT_ROUTE_RULES: ReadonlySet<string> = new Set(ROUTE_RULES);
+
+const literalMatchesParam = (value: string, param: ParamPart): boolean => {
+  if (value === "") return false;
+  if (!FORMAT_ROUTE_RULES.has(param.rule)) return true;
+  return (
+    segmentRule(value) === param.rule ||
+    segmentRule(decodedSegment(value)) === param.rule
+  );
+};
+
+const partsCanMatchSameSegment = (
+  left: RoutePart,
+  right: RoutePart,
+): boolean => {
+  if (left.kind === "literal")
+    return right.kind === "literal"
+      ? pathSegmentMatches(left.value, right.value)
+      : literalMatchesParam(left.value, right);
+  if (right.kind === "literal") return literalMatchesParam(right.value, left);
+  return (
+    !FORMAT_ROUTE_RULES.has(left.rule) ||
+    !FORMAT_ROUTE_RULES.has(right.rule) ||
+    left.rule === right.rule
+  );
+};
+
+/** Whether two templated route part sequences can both fit the same incoming request path. */
+export const routePartsOverlap = (
+  left: readonly RoutePart[],
+  right: readonly RoutePart[],
+): boolean =>
+  left.length === right.length &&
+  left.every((part, index) => partsCanMatchSameSegment(part, right[index]!));
