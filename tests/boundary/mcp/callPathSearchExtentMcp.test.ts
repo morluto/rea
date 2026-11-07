@@ -292,3 +292,55 @@ it("preserves unresolved outgoing call caveats and bounds search completeness at
     await Promise.allSettled([session.close(), client.close(), server.close()]);
   }
 });
+
+it("records an explicit max_paths preference and keeps omission distinct", async () => {
+  const session = createTestBinarySession(() => {
+    throw new Error("Offline call paths must not launch a provider");
+  });
+  const server = createServer({ kind: "session", session });
+  const client = new Client({ name: "call-path-max-paths", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const start = observe("0x1000", ["0x4000"]);
+    expect(session.recordEvidence(start).ok).toBe(true);
+    const recorded: {
+      readonly parameters: unknown;
+      readonly evidenceId: string;
+      readonly paths: number;
+    }[] = [];
+    // Omitted, explicit default, and an explicit smaller count all describe the
+    // same found path, so only the requested preference can distinguish them.
+    for (const selection of [undefined, 64, 1]) {
+      const reply = await client.callTool({
+        name: "build_call_path",
+        arguments: {
+          functions: [start],
+          start: { address: "0x1000" },
+          goal: { address: "0x4000" },
+          ...(selection === undefined ? {} : { max_paths: selection }),
+        },
+      });
+      if (reply.isError) throw new Error(JSON.stringify(reply));
+      const evidence = parseEvidence(reply.structuredContent);
+      const result = callPathResultSchema.parse(evidence.normalized_result);
+      expect(result).toMatchObject({ status: "found", shortest_hops: 1 });
+      recorded.push({
+        parameters: evidence.parameters,
+        evidenceId: evidence.evidence_id,
+        paths: result.paths.length,
+      });
+    }
+    expect(recorded.map(({ parameters }) => parameters)).toEqual([
+      { start: "0x1000", goal: "0x4000" },
+      { start: "0x1000", goal: "0x4000", max_paths: 64 },
+      { start: "0x1000", goal: "0x4000", max_paths: 1 },
+    ]);
+    expect(recorded.map(({ paths }) => paths)).toEqual([1, 1, 1]);
+    expect(new Set(recorded.map(({ evidenceId }) => evidenceId)).size).toBe(3);
+  } finally {
+    await Promise.allSettled([session.close(), client.close(), server.close()]);
+  }
+});
