@@ -1,6 +1,6 @@
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createHash } from "node:crypto";
-import { rm, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
@@ -49,12 +49,8 @@ import {
 } from "../../../src/contracts/toolOutputSchemaPrimitives.js";
 
 const resources: Array<{ close(): Promise<unknown> }> = [];
-let directory: string | undefined;
 afterEach(async () => {
   await Promise.all(resources.splice(0).map((resource) => resource.close()));
-  if (directory !== undefined)
-    await rm(directory, { recursive: true, force: true });
-  directory = undefined;
 });
 
 it("delivers provider-owned diagnostic keys without narrowing their JSON facts", async () => {
@@ -152,7 +148,7 @@ const expectUnknownProviderKeepsBinding = async (
 
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
-    directory = await createTestTempDirectory("rea-provider-mcp-");
+    const directory = await createTestTempDirectory("rea-provider-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -301,7 +297,7 @@ describe("provider selection over MCP", () => {
 });
 
 it("offers admitted providers and retains unconfigured rejections", async () => {
-  directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
+  const directory = await createTestTempDirectory("rea-provider-mcp-mixed-");
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -503,7 +499,7 @@ const connectDetailFixture = async (starts: string[]) => {
 
 describe("binary_session detail over MCP", () => {
   it("defaults to a summary that keeps every decision fact and names what complete detail adds", async () => {
-    directory = await createTestTempDirectory("rea-session-detail-mcp-");
+    const directory = await createTestTempDirectory("rea-session-detail-mcp-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -836,7 +832,7 @@ it("reports confirmed snapshot binding differences and keeps the active session"
 it.each([true, false])(
   "offers an entry-comment handoff only when the selected provider admits it (%s)",
   async (entryCommentAvailable) => {
-    directory = await createTestTempDirectory("rea-comment-recovery-");
+    const directory = await createTestTempDirectory("rea-comment-recovery-");
     const target = join(directory, "fixture.hop");
     await writeFile(target, "fixture");
     const starts: string[] = [];
@@ -914,7 +910,9 @@ it.each([true, false])(
 );
 
 it("keeps containing-function recovery for undeclared comment facets", async () => {
-  directory = await createTestTempDirectory("rea-undeclared-comment-facet-");
+  const directory = await createTestTempDirectory(
+    "rea-undeclared-comment-facet-",
+  );
   const target = join(directory, "fixture.hop");
   await writeFile(target, "fixture");
   const starts: string[] = [];
@@ -1199,7 +1197,9 @@ it("preserves a selected Ghidra project's read-only guidance when an edit is req
 });
 
 it("retains attributed mixed profile cleanup through registered MCP calls and partial retry", async () => {
-  directory = await createTestTempDirectory("rea-profile-completion-mcp-");
+  const directory = await createTestTempDirectory(
+    "rea-profile-completion-mcp-",
+  );
   const path = join(directory, "fixture.hop");
   await writeFile(path, "fixture");
   const starts: string[] = [];
