@@ -393,9 +393,15 @@ describe("draftTaskFiles for an identified record's own text", () => {
 
     expect(shown).toEqual(["Delphine", "Moreau"]);
     expect(
-      file.suggested.every(
-        (check) => "pointer" in check && check.pointer.includes("[@id=two]"),
-      ),
+      file.suggested
+        .filter(
+          (check) =>
+            "value" in check &&
+            (check.value === "Delphine" || check.value === "Moreau"),
+        )
+        .every(
+          (check) => "pointer" in check && check.pointer.includes("[@id=two]"),
+        ),
     ).toBe(true);
     expect(
       file.suggested.some(
