@@ -157,6 +157,10 @@ is left and the computer stays listed, so closing it again retries. Closing the
 MCP server closes every computer the same way, and a helper whose REA server
 exits sees its stdin close and tears down.
 
+The helper also accepts SIGTERM or SIGINT as a teardown request while stdin
+remains open. It exits 0 when agentenv confirms nothing is left, or 1 when
+agentenv still reports resources; the signal alone does not confirm cleanup.
+
 The control token that guards the computer's framework-only routes stays in
 REA: no result, error or log carries it. Code running in the computer as its
 user can still read it, which is acceptable for a local build.
