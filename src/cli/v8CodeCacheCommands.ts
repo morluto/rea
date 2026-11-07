@@ -7,6 +7,7 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { cliDecimalField } from "./options.js";
 import { inspectV8CodeCacheInputSchema } from "../domain/v8/v8CodeCache.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
@@ -23,9 +24,17 @@ export const registerV8CodeCacheCommands = (
       path: localPathStringSchema.describe("Local V8 code cache (.jsc) file"),
     }),
     options: z.object({
-      maxFileBytes: inspectV8CodeCacheInputSchema.shape.max_file_bytes,
-      maxStrings: inspectV8CodeCacheInputSchema.shape.max_strings,
-      minStringBytes: inspectV8CodeCacheInputSchema.shape.min_string_bytes,
+      // Decimal tokens only: numeric coercion would read "0x10" as 16 and "1e3" as
+      // 1000. The shared fields keep their bounds, defaults and help.
+      maxFileBytes: cliDecimalField(
+        inspectV8CodeCacheInputSchema.shape.max_file_bytes,
+      ),
+      maxStrings: cliDecimalField(
+        inspectV8CodeCacheInputSchema.shape.max_strings,
+      ),
+      minStringBytes: cliDecimalField(
+        inspectV8CodeCacheInputSchema.shape.min_string_bytes,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation(async (signal) => {
