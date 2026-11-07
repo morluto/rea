@@ -81,14 +81,23 @@ const failureForPrimary = (
   if (cause instanceof Il2cppBinaryFormatFailure && cause.kind === "capacity")
     return new AnalysisResourceConstraintError(
       OPERATION,
-      cause.reason === "native-type-text-capacity" ? "memory" : "capacity",
+      cause.reason === "native-type-text-capacity" ||
+        cause.reason === "wasm-memory-capacity"
+        ? "memory"
+        : "capacity",
       cause.message,
       {},
       {
         cause,
         ...fixedAllowanceOptions(
-          "The IL2CPP native-link allowance",
-          cause.reason === "native-type-text-capacity" ? "parser" : "count",
+          cause.reason === "wasm-memory-capacity"
+            ? "The wasm32 linear-memory reconstruction allowance"
+            : "The IL2CPP native-link allowance",
+          cause.reason === "native-type-text-capacity"
+            ? "parser"
+            : cause.reason === "wasm-memory-capacity"
+              ? "bytes"
+              : "count",
         ),
       },
     );

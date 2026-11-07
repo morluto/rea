@@ -21,6 +21,12 @@ import {
   parseMachoLayout,
   UnsupportedMachoMetadataFormatError,
 } from "../native/AppleMachoSelection.js";
+import {
+  WASM_PAGE_BYTES,
+  WasmModuleFailure,
+  readInitialLinearMemorySteps,
+  readWasmModuleImageSteps,
+} from "../wasm/WasmModuleImage.js";
 import { applyElfRelativeRelocationsSteps } from "./ElfRelocations.js";
 import { Il2cppBinaryFormatFailure } from "./Il2cppBinaryFormat.js";
 const MACHO_CPU = new Map([
@@ -77,22 +83,148 @@ const selectImage = (
   return selected.value;
 };
 
+/** A wasm32 module's initial linear memory, read as one image. */
+export interface WasmImageContainer {
+  readonly format: "wasm";
+  readonly architecture: "wasm32";
+  readonly bits: 32;
+  readonly byte_order: "little";
+  readonly mappings: BinaryContainer["mappings"];
+  readonly zero_fills: BinaryContainer["zero_fills"];
+  readonly executable_mappings: BinaryContainer["mappings"];
+  /** A module has no native sections. */
+  readonly sections: BinaryContainer["sections"];
+}
+
+/** Table 0 of a wasm32 module: slot to function index, and how many functions are imports. */
+export interface WasmFunctionTable {
+  readonly slots: ReadonlyMap<number, number>;
+  readonly importedFunctionCount: number;
+}
+
 export interface NativeImage {
   readonly bytes: Buffer;
-  readonly container: BinaryContainer;
+  readonly container: BinaryContainer | WasmImageContainer;
   /** One image's immutable load mappings, shared by stored and loader-aware reads. */
   readonly fileMappings: FileMappingIndex;
   readonly imageBase: bigint;
+  /** Bytes per pointer slot: 8 for the 64-bit native images, 4 for wasm32. */
+  readonly pointerSize: 4 | 8;
   readonly unresolvedPointerSlots: ReadonlyMap<bigint, number>;
   readonly zeroFillPointers: ReadonlyMap<bigint, bigint>;
   /** Mach-O loader fixups shared by every native pointer consumer. */
   readonly machoPointerFixups?: PointerFixups;
+  /** Present only for wasm32: method pointers are slots in this table. */
+  readonly wasmTable?: WasmFunctionTable;
+}
+
+const WASM_MAGIC = Buffer.from([0x00, 0x61, 0x73, 0x6d]);
+
+/** Whether the binary is a WebAssembly module, from its magic alone. */
+export const isWasmModule = (bytes: Buffer): boolean =>
+  bytes.subarray(0, 4).equals(WASM_MAGIC);
+const GZIP_MAGIC = Buffer.from([0x1f, 0x8b]);
+
+/**
+ * Initial linear memory from active data segments, mapped from the lowest
+ * segment start to a short zero tail past the highest end; the rest of the
+ * initial memory is zero fill.
+ * Bytes below the lowest segment stay unmapped, so a pointer into them is not
+ * read as zero.
+ */
+function* openWasmImageSteps(bytes: Buffer): Generator<void, NativeImage> {
+  let module;
+  let memory;
+  // Reconstruction allowances are bytes; the reader's other allowances are counts.
+  let rebuilding = false;
+  try {
+    module = yield* readWasmModuleImageSteps(bytes);
+    // A host-supplied memory may already hold bytes that data segments do not
+    // overwrite, so the initial memory is not known.
+    if (module.memory?.imported === true)
+      throw new WasmModuleFailure(
+        "unsupported",
+        "the module imports its memory, whose initial bytes the module does not determine",
+      );
+    // A host-supplied table may hold functions in slots the module never fills.
+    if (module.tableImported)
+      throw new WasmModuleFailure(
+        "unsupported",
+        "the module imports its function table, whose slots the module does not determine",
+      );
+    rebuilding = true;
+    memory = yield* readInitialLinearMemorySteps(module, bytes.length);
+  } catch (cause) {
+    if (cause instanceof WasmModuleFailure)
+      throw new Il2cppBinaryFormatFailure(
+        cause.kind === "capacity"
+          ? rebuilding
+            ? "wasm-memory-capacity"
+            : "native-index-capacity"
+          : cause.kind === "unsupported"
+            ? "unsupported-container"
+            : "malformed-container",
+        cause.message,
+      );
+    throw cause;
+  }
+  // The view carries a short zero tail past the last segment, so a value that
+  // straddles that boundary reads whole; the rest of the initial memory is a
+  // zero-fill range that reads resolve but searches skip.
+  const mappings =
+    memory.bytes.length === 0
+      ? []
+      : [
+          {
+            address: BigInt(memory.address),
+            offset: 0,
+            size: memory.bytes.length,
+          },
+        ];
+  const end = BigInt(memory.address + memory.bytes.length);
+  const initial =
+    BigInt(module.memory?.initialPages ?? 0) * BigInt(WASM_PAGE_BYTES);
+  const zero_fills: BinaryContainer["zero_fills"] =
+    memory.bytes.length > 0 && initial > end
+      ? [{ address: end, size: initial - end }]
+      : [];
+  return {
+    bytes: memory.bytes,
+    container: {
+      format: "wasm",
+      architecture: "wasm32",
+      bits: 32,
+      byte_order: "little",
+      mappings,
+      zero_fills,
+      executable_mappings: [],
+      sections: [],
+    },
+    fileMappings: createFileMappingIndex(mappings, zero_fills),
+    imageBase: 0n,
+    pointerSize: 4,
+    unresolvedPointerSlots: new Map<bigint, number>(),
+    zeroFillPointers: new Map<bigint, bigint>(),
+    wasmTable: {
+      slots: module.table,
+      importedFunctionCount: module.importedFunctionCount,
+    },
+  };
 }
 
 export function* openImageSteps(
   bytes: Buffer,
   architecture: string | undefined,
 ): Generator<void, NativeImage> {
+  const head = bytes.subarray(0, 4);
+  if (head.equals(WASM_MAGIC) || head.subarray(0, 2).equals(GZIP_MAGIC)) {
+    if (architecture !== undefined)
+      throw new Il2cppBinaryFormatFailure(
+        "slice-not-found",
+        `architecture ${architecture} was requested but the binary is a WebAssembly module`,
+      );
+    return yield* openWasmImageSteps(bytes);
+  }
   let image = selectImage(bytes, architecture);
   let container: BinaryContainer;
   try {
@@ -112,10 +244,15 @@ export function* openImageSteps(
       );
     throw cause;
   }
-  if (container.bits !== 64 || container.byte_order !== "little")
+  // 32-bit coverage is the layout checked on a Unity armeabi-v7a build.
+  const arm32 =
+    container.format === "elf" &&
+    container.bits === 32 &&
+    container.architecture === "arm";
+  if (container.byte_order !== "little" || (container.bits !== 64 && !arm32))
     throw new Il2cppBinaryFormatFailure(
       "unsupported-container",
-      `only 64-bit little-endian images are supported, not ${container.bits}-bit ${container.byte_order}-endian`,
+      `only 64-bit little-endian images and 32-bit ARM ELF are supported, not ${container.bits}-bit ${container.byte_order}-endian ${container.format} ${container.architecture}`,
     );
   let relocated:
     | {
@@ -131,6 +268,7 @@ export function* openImageSteps(
         container.elf,
         container.mappings,
         container.zero_fills,
+        container.bits,
       );
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure)
@@ -195,6 +333,7 @@ export function* openImageSteps(
       container.zero_fills,
     ),
     imageBase,
+    pointerSize: arm32 ? 4 : 8,
     unresolvedPointerSlots: relocated?.unresolved ?? new Map<bigint, number>(),
     zeroFillPointers: relocated?.zeroFillPointers ?? new Map<bigint, bigint>(),
     ...(machoPointerFixups === undefined ? {} : { machoPointerFixups }),
@@ -204,8 +343,10 @@ export function* openImageSteps(
 /** Stored bytes only; loader interpretation belongs to readSlot. */
 const readStoredWord = (image: NativeImage, address: bigint): bigint | null => {
   try {
-    const offset = image.fileMappings.offset(address, 8);
-    return image.bytes.readBigUInt64LE(offset);
+    const offset = image.fileMappings.offset(address, image.pointerSize);
+    return image.pointerSize === 8
+      ? image.bytes.readBigUInt64LE(offset)
+      : BigInt(image.bytes.readUInt32LE(offset));
   } catch (cause) {
     if (cause instanceof BinaryFormatFailure) return null;
     throw cause;
@@ -267,7 +408,8 @@ export const hasPointerArrayCoverage = (
   address: bigint,
   count: number,
 ): boolean => {
-  const end = address + BigInt(count) * 8n;
+  const width = BigInt(image.pointerSize);
+  const end = address + BigInt(count) * width;
   let cursor = address;
   while (cursor < end) {
     let fileEnd = cursor;
@@ -283,7 +425,7 @@ export const hasPointerArrayCoverage = (
         if (range.address <= cursor && range.address + range.size > coveredEnd)
           coveredEnd = range.address + range.size;
     const stop = coveredEnd < end ? coveredEnd : end;
-    const size = Number(((stop - cursor) / 8n) * 8n);
+    const size = Number(((stop - cursor) / width) * width);
     if (size <= 0) return false;
     try {
       if (fileEnd === cursor) {
@@ -317,10 +459,10 @@ export const isExecutable = (image: NativeImage, address: bigint): boolean => {
 const hasUnresolvedElfBytes = (
   image: NativeImage,
   address: bigint,
-  size = 8,
+  size: number = image.pointerSize,
 ): boolean => {
   if (image.unresolvedPointerSlots.size === 0) return false;
-  for (let delta = -7; delta < size; delta++) {
+  for (let delta = 1 - image.pointerSize; delta < size; delta++) {
     const width = image.unresolvedPointerSlots.get(address + BigInt(delta));
     if (width !== undefined && delta + width > 0) return true;
   }
@@ -340,7 +482,8 @@ export const readSlot = (
       // A successful indexed read already excludes zero-fill aliases. Only a
       // non-file-backed slot needs the zero-fill ownership walk.
       raw = readStoredWord(image, address);
-      if (raw === null && isZeroFilled(image, address, 8)) raw = 0n;
+      if (raw === null && isZeroFilled(image, address, image.pointerSize))
+        raw = 0n;
     }
     if (raw === null) return null;
     if (image.machoPointerFixups !== undefined) {
