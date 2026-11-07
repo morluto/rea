@@ -589,4 +589,30 @@ describe("capturedHomePath outside the home", () => {
     );
     expect(path(`${home}/settings/other.txt`)).toBe(".config/app/other.txt");
   });
+
+  it("keeps an ordinary file beside a selected directory in the parent folder", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        content_roots: [
+          `${home}/settings/work`,
+          `${home}/settings/work/notes.txt`,
+          `${home}/settings/work-journal`,
+        ],
+        selected_paths: [
+          { path: `${home}/.config/app`, physical: `${home}/settings` },
+          { path: `${home}/settings/work`, physical: `${home}/settings/work` },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/settings/work-journal`)).toBe(
+      ".config/app/work-journal",
+    );
+    expect(path(`${home}/settings/work/notes.txt`)).toBe(
+      "settings/work/notes.txt",
+    );
+  });
 });
