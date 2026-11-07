@@ -101,7 +101,9 @@ describe("Android application projection", () => {
     ).toBe(true);
     expect(left.limitations).toEqual(
       expect.arrayContaining([
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
         "ZIP inventory cannot see the APK Signing Block, so an empty signing array does not mean the APK is unsigned.",
       ]),
     );

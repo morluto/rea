@@ -125,9 +125,10 @@ export const runRea = (
   options: {
     readonly stdout: string;
     readonly files?: Readonly<Record<string, string>>;
+    readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
-): Promise<number> =>
+): ReturnType<typeof runControllerRea> =>
   runControllerRea(computer, argv, { ...options, work: WORK });
 
 /** `value` with `redact` applied to each of its strings and keys. */

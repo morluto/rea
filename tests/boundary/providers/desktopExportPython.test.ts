@@ -34,7 +34,7 @@ const execPython = (
   try {
     writeFileSync(script, args[codeIndex + 1]!, "utf8");
     return execFileSync(
-      "python3",
+      process.platform === "win32" ? "python" : "python3",
       [
         "-X",
         "utf8",
@@ -410,15 +410,16 @@ it("checks text for JSON the way REA does, token by token, without parsing it", 
         "-I",
         "-B",
         "-c",
-        `${imports}${PYTHON_HELPERS}\nprint(json.dumps([_is_json(text) for text in json.load(sys.stdin)]))`,
+        `${imports}${PYTHON_HELPERS}\ntexts = json.load(sys.stdin)\nprint(json.dumps({"syntax": [_read_json(text, build=False) is not _INVALID_JSON for text in texts], "built": [_read_json(text) is not _INVALID_JSON for text in texts]}))`,
       ],
       { input: JSON.stringify(texts), encoding: "utf8" },
     ),
-  ) as boolean[];
+  ) as { syntax: boolean[]; built: boolean[] };
 
   const parsed = texts.map((text) => safeParseJson(text).ok);
   expect(texts.map((text) => isJsonText(text))).toEqual(parsed);
-  expect(python).toEqual(parsed);
+  expect(python.syntax).toEqual(parsed);
+  expect(python.built).toEqual(parsed);
   expect(parsed.filter(Boolean)).toHaveLength(10);
 });
 
@@ -480,9 +481,13 @@ print(json.dumps([_text_view("settings.ini", text, len(text.encode()))["view"]["
   const root = await createTestTempDirectory("rea-keyfile-python-");
   const script = join(root, "fixture.py");
   await writeFile(script, program, "utf8");
-  const output = execFileSync("python3", ["-I", "-B", "-X", "utf8", script], {
-    input: JSON.stringify(inputs),
-    encoding: "utf8",
-  });
+  const output = execFileSync(
+    process.platform === "win32" ? "python" : "python3",
+    ["-I", "-B", "-X", "utf8", script],
+    {
+      input: JSON.stringify(inputs),
+      encoding: "utf8",
+    },
+  );
   expect(JSON.parse(output)).toEqual(inputs.map(keyfileView));
 });

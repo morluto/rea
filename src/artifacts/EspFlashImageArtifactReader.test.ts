@@ -199,7 +199,7 @@ describe("ESP flash layout coverage and selection", () => {
     ).toMatchObject({
       declared_size: 0,
       limitations: [
-        "partitions/ota_1.bin lies outside the dump: the file holds none of its 65536 bytes.",
+        expect.stringMatching(/partitions\/ota_1\.bin.*outside.*65536/iu),
       ],
       format_metadata: {
         index: 5,

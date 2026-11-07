@@ -23,7 +23,6 @@ const parse = (value: unknown, source = artifact) => {
 };
 const report = (value: unknown, source = artifact) => {
   const result = parse(value, source);
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   return apiContractSchema.parse(result.value);
 };

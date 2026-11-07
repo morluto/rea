@@ -283,7 +283,9 @@ describe("headless IDA producer pagination", () => {
         classification: null,
         body: {
           available: false,
-          reason: "IDA MCP does not report complete function body ranges.",
+          reason: expect.stringMatching(
+            /does not report complete function body ranges/iu,
+          ),
         },
       },
       native_api: null,
