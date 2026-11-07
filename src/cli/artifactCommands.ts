@@ -13,6 +13,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { ARTIFACT_GRAPH_PROVIDER } from "../domain/investigationProviders.js";
 import { keyedArchiveInputSchema } from "../domain/apple/keyedArchive.js";
+import { dylibResolutionInputSchema } from "../domain/apple/dylibResolution.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { z } from "incur";
 import { cliDecimalField } from "./options.js";
@@ -100,16 +101,12 @@ const registerDylibResolutionCommand = (
       ),
     }),
     options: z.object({
-      root: z
-        .array(z.string())
-        .optional()
-        .describe(
-          "Process root relative to the bundle or the Mach-O's directory (repeatable)",
-        ),
-      architecture: z
-        .enum(["arm64", "arm64e", "x86_64"])
-        .optional()
-        .describe("Trace only this slice of each root"),
+      root: dylibResolutionInputSchema.shape.roots.describe(
+        "Process root relative to the bundle or the Mach-O's directory (repeatable)",
+      ),
+      architecture: dylibResolutionInputSchema.shape.architecture.describe(
+        "Trace only this slice of each root",
+      ),
     }),
     run: ({ args, options }) =>
       logCliCommand(logger, CLI_COMMANDS.traceDylibResolution, () =>

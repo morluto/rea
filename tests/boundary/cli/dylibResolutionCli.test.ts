@@ -271,6 +271,37 @@ cliTest(
   },
 );
 
+cliTest(
+  "rejects non-normalized process roots before target access",
+  async ({ cli }) => {
+    const missing = join(
+      await createTestTempDirectory("rea-dylib-selector-"),
+      "missing.app",
+    );
+    const rejected = await runFileCli(cli, {
+      arguments: [
+        "trace-dylib-resolution",
+        missing,
+        "--root",
+        "../outside",
+        "--json",
+      ],
+      environment: ENVIRONMENT,
+    });
+    expect(rejected.exitCode).toBe(1);
+    expect(rejected.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "root.0",
+          code: "invalid_format",
+          message: expect.stringContaining("Use a normalized path"),
+        }),
+      ],
+    });
+  },
+);
+
 describe("trace-dylib-resolution CLI", () => {
   cliTest("traces every executable root of an app bundle", async ({ cli }) => {
     const app = await fixtureApp();
@@ -347,7 +378,6 @@ describe("trace-dylib-resolution CLI", () => {
       await writeFiles(outside, { Tool: machoImage({}) });
       await symlink(outside, join(app, "Contents/Linked"), "dir");
       for (const [root, reason, message] of [
-        ["../outside", "invalid_format", "Use a normalized path"],
         ["Contents/Info.plist", "invalid_value", "is not a Mach-O image"],
         [
           "Contents/Linked/Tool",

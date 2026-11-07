@@ -180,6 +180,12 @@ rea trace-dylib-resolution MyApp.app --json
 rea trace-dylib-resolution MyApp.app --root Contents/MacOS/MyApp --architecture arm64 --json
 ```
 
+Each `--root` is a normalized path relative to the analyzed bundle or the
+standalone Mach-O's directory: no empty, `.` or `..` segment, leading or
+trailing slash, repeated slash, backslash or NUL. The CLI advertises the same
+root and architecture constraints as MCP and refuses malformed selections
+before provider dispatch. Omitting `--root` keeps automatic root selection.
+
 ```json
 {
   "name": "trace_dylib_resolution",
