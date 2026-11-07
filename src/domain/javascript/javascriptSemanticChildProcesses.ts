@@ -257,7 +257,12 @@ const childInteraction = (
       kind === "signal" ? killSignalName(node.arguments, state) : null,
     listenerLocation:
       kind === "listener" && t.isNode(listener) ? range(listener) : null,
-    resolution: complete && !rejectedNodeListener ? "complete" : "partial",
+    resolution:
+      complete &&
+      !rejectedNodeListener &&
+      (kind !== "listener" || eventName !== null)
+        ? "complete"
+        : "partial",
   };
 };
 

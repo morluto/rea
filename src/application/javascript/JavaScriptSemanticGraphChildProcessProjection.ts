@@ -154,16 +154,29 @@ const projectInteraction = (
     interaction.kind === "listener"
       ? addChildListenerNode(context, interaction)
       : addSignalNode(context, interaction);
+  if (interaction.kind === "listener" && interaction.eventName === null) {
+    addChildUnknown({
+      context,
+      node: effect,
+      location: interaction.location,
+      relationKinds: ["listens-exit", "listens-error"],
+      reason: "unknown-value",
+      detail: `Static child ${interaction.method} event name remains unresolved.`,
+      candidateNodeIds: children.map(({ node_id: identifier }) => identifier),
+    });
+    return;
+  }
+  const relation =
+    interaction.kind === "signal"
+      ? "forwards-signal"
+      : interaction.eventName === "exit"
+        ? "listens-exit"
+        : "listens-error";
   for (const child of children)
     addSemanticGraphRelation(context.state, {
       source: interaction.kind === "listener" ? child : effect,
       target: interaction.kind === "listener" ? effect : child,
-      relation:
-        interaction.kind === "signal"
-          ? "forwards-signal"
-          : interaction.eventName === "exit"
-            ? "listens-exit"
-            : "listens-error",
+      relation,
       resolution:
         interaction.resolution === "complete" ? "resolved" : "candidate",
     });
@@ -172,13 +185,7 @@ const projectInteraction = (
       context,
       node: effect,
       location: interaction.location,
-      relationKinds: [
-        interaction.kind === "signal"
-          ? "forwards-signal"
-          : interaction.eventName === "exit"
-            ? "listens-exit"
-            : "listens-error",
-      ],
+      relationKinds: [relation],
       detail: `Static child ${interaction.method} ownership is ambiguous.`,
       candidateNodeIds: children.map(({ node_id: identifier }) => identifier),
     });
