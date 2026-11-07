@@ -25,6 +25,7 @@ import { createEvidence, type Evidence } from "../../domain/evidence.js";
 import {
   MAVEN_POM_OPERATION as operation,
   MAVEN_POM_PROVIDER,
+  MAVEN_POM_MAX_XML_NODES,
   type MavenPom,
   type MavenPomArtifact,
 } from "../../domain/mavenPom/mavenPom.js";
@@ -37,7 +38,10 @@ import {
   parseMavenPom,
 } from "../../domain/mavenPom/parseMavenPom.js";
 import { err, ok, type Result } from "../../domain/result.js";
-import { parseXmlDocument } from "../../domain/xmlDocument.js";
+import {
+  parseXmlDocument,
+  XmlDocumentNodeLimitError,
+} from "../../domain/xmlDocument.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 import { completeProviderEvidence } from "../ProviderOperationExecution.js";
 
@@ -103,7 +107,26 @@ const decodePom = (
   const document = parseXmlDocument(source, {
     doctype: "reject",
     lineEndings: "normalize",
+    maxNodes: MAVEN_POM_MAX_XML_NODES,
   });
+  if (!document.ok && document.error instanceof XmlDocumentNodeLimitError)
+    return err(
+      new AnalysisResourceConstraintError(
+        operation,
+        "memory",
+        document.error.message,
+        {
+          xml_nodes: document.error.nodes,
+          max_xml_nodes: document.error.maxNodes,
+        },
+        {
+          cause: document.error,
+          retryable: false,
+          remediationAction:
+            "Select a POM within the XML node allowance; paging does not change it.",
+        },
+      ),
+    );
   if (!document.ok)
     return err(inputFailure(document.error.message, document.error));
   const root = document.value.documentElement;

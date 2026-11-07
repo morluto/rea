@@ -6,6 +6,8 @@ import { localPathStringSchema } from "../localPath.js";
 export const MAVEN_POM_MAX_FILE_BYTES = 32 * 1024 * 1024;
 /** Accounted size of the declarations a reply retains, separate from file bytes. */
 export const MAVEN_POM_MAX_RETAINED_BYTES = 32 * 1024 * 1024;
+/** Upper bound on XML projection units before allocating the source-located DOM. */
+export const MAVEN_POM_MAX_XML_NODES = 50_000;
 export const MAVEN_POM_OPERATION = "inspect_maven_pom" as const;
 export const MAVEN_POM_PROVIDER = {
   id: "rea-maven-pom",
@@ -97,7 +99,7 @@ export const mavenPropertyReferenceSchema = z.strictObject({
    * `unresolved` means a referenced property is not declared in this POM;
    * `cycle` means a substitution repeated a value already produced, so the
    * declarations depend on each other; `work-limit` means the bounded
-   * substitution allowance ran out first, on a value whose references all
+   * substitution count or intermediate-value allowance ran out first, on a value whose references all
    * declared, so no cycle was established. Only `resolved` carries a
    * substituted value, so a value this POM cannot finish resolving is never
    * reported as absent.

@@ -636,6 +636,7 @@ A representative result, shortened to two dependencies:
       "declared_by": "dependencies",
       "scope": "test",
       "optional": null,
+      "optional_declared": null,
       "type": null,
       "classifier": null,
       "profile": null,
@@ -670,7 +671,8 @@ A representative result, shortened to two dependencies:
 `property_references[].resolution` separates the ways a `${...}` value can fail
 here: `unresolved` means the property is not declared in this POM, `cycle` means
 the declarations depend on each other, and `work-limit` means the allowance of
-64 substitutions for a value ran out before either could be established, so a
+64 substitutions or 16 Mi UTF-16 code units of intermediate values ran out
+before either could be established, so a
 declared property can be wide rather than circular. Only `resolved` carries a
 substituted value. Profile declarations carry the profile's `id` in `profile`
 and are counted separately; activation conditions are reported but never
@@ -682,7 +684,10 @@ decoded element text, or `null` when omitted. Their corresponding boolean fields
 are `null` for omitted or unrecognized values, including property expressions.
 
 Limits: the file allowance and the accounted retained-facts allowance are each
-32 MiB. A POM whose declarations expand past the retained allowance fails with
+32 MiB. XML admission also limits the streamed projection to 50,000 element,
+attribute, text, comment, CDATA, and processing-instruction units before the DOM
+is allocated. These allowances bound input and accounted work; they do not claim
+an exact process-memory ceiling. A POM whose declarations expand past the retained allowance fails with
 a resource constraint naming both sizes rather than returning a truncated
 inventory. A `<project>` document without a supported `modelVersion` is refused
 before parsing declarations.

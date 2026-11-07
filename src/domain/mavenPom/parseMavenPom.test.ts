@@ -63,14 +63,19 @@ describe("project model", () => {
 
 describe("dependencies", () => {
   it("assigns positions per element name across a large sibling list", () => {
-    const declarations = Array.from({ length: 1000 }, (_, index) =>
-      `<other/><dependency><groupId>example</groupId><artifactId>item-${String(index)}</artifactId></dependency>`,
+    const declarations = Array.from(
+      { length: 1000 },
+      (_, index) =>
+        `<other/><dependency><groupId>example</groupId><artifactId>item-${String(index)}</artifactId></dependency>`,
     ).join("");
     const result = parse(pom(`<dependencies>${declarations}</dependencies>`));
     expect(result.dependencies).toHaveLength(1000);
-    expect(result.dependencies.map(({ source_pointer }) => source_pointer)).toEqual(
-      Array.from({ length: 1000 }, (_, index) =>
-        `/dependencies[0]/dependency[${String(index)}]`,
+    expect(
+      result.dependencies.map(({ source_pointer }) => source_pointer),
+    ).toEqual(
+      Array.from(
+        { length: 1000 },
+        (_, index) => `/dependencies[0]/dependency[${String(index)}]`,
       ),
     );
   });
@@ -371,10 +376,11 @@ describe("declaration fidelity", () => {
     </dependency>
   </dependencies>`),
     );
-    expect(result.dependencies[0]).toMatchObject({ optional: null, optional_declared: "${flag}" });
+    expect(result.dependencies[0]).toMatchObject({
+      optional: null,
+      optional_declared: "${flag}",
+    });
   });
-
-
 
   it("reads plugin repositories by their own element name", () => {
     const result = parse(
@@ -479,7 +485,8 @@ describe("declaration fidelity", () => {
 });
 
 it("preserves declared boolean text separately from omission and parsed values", () => {
-  const result = parse(pom(`
+  const result = parse(
+    pom(`
     <dependencies>
       <dependency><groupId>g</groupId><artifactId>one</artifactId><optional>  false  </optional></dependency>
       <dependency><groupId>g</groupId><artifactId>two</artifactId><optional>invalid</optional></dependency>
@@ -489,19 +496,52 @@ it("preserves declared boolean text separately from omission and parsed values",
       <profile><id>one</id><activation><activeByDefault>\${flag}</activeByDefault></activation></profile>
       <profile><id>two</id><activation/></profile>
       <profile><id>three</id><activation><activeByDefault> true </activeByDefault></activation></profile>
-    </profiles>`));
-  expect(result.dependencies.map(({ optional, optional_declared }) => [optional, optional_declared])).toEqual([
-    [false, "  false  "], [null, "invalid"], [null, null],
+    </profiles>`),
+  );
+  expect(
+    result.dependencies.map(({ optional, optional_declared }) => [
+      optional,
+      optional_declared,
+    ]),
+  ).toEqual([
+    [false, "  false  "],
+    [null, "invalid"],
+    [null, null],
   ]);
-  expect(result.profiles.map(({ active_by_default, active_by_default_declared }) => [active_by_default, active_by_default_declared])).toEqual([
-    [null, "${flag}"], [null, null], [true, " true "],
+  expect(
+    result.profiles.map(({ active_by_default, active_by_default_declared }) => [
+      active_by_default,
+      active_by_default_declared,
+    ]),
+  ).toEqual([
+    [null, "${flag}"],
+    [null, null],
+    [true, " true "],
   ]);
-  expect(result.property_references).toEqual(expect.arrayContaining([
-    expect.objectContaining({ name: "flag", resolution: "unresolved" }),
-  ]));
+  expect(result.property_references).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ name: "flag", resolution: "unresolved" }),
+    ]),
+  );
 });
 
 describe("property reference coverage", () => {
+  it("stops before expanded intermediate property values exceed the work allowance", () => {
+    const result = parse(
+      pom(
+        `<properties><p>${"x".repeat(400_000)}</p><wide>${"${p}".repeat(64)}</wide></properties><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId><version>\${wide}</version></dependency></dependencies>`,
+      ),
+    );
+    expect(result.property_references).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "wide",
+          resolution: "work-limit",
+          resolved: null,
+        }),
+      ]),
+    );
+  });
   it("reports a property cycle separately from an undeclared property", () => {
     const result = parse(
       pom(`

@@ -1,6 +1,21 @@
 import { expect, it } from "vitest";
 import { parseXmlDocument } from "./xmlDocument.js";
 
+it("bounds streamed XML projection units before building the DOM", () => {
+  const policy = {
+    doctype: "reject",
+    lineEndings: "preserve",
+    maxNodes: 3,
+  } as const;
+  expect(parseXmlDocument('<root a="b">text</root>', policy).ok).toBe(true);
+  expect(
+    parseXmlDocument('<root a="b"><child/></root>', { ...policy, maxNodes: 2 }),
+  ).toMatchObject({
+    ok: false,
+    error: { reason: "resource", nodes: 3, maxNodes: 2 },
+  });
+});
+
 it.each([
   '<root attr="�">😀 � &amp; &#xFFFD;</root>',
   "<root><!-- � --><![CDATA[�]]></root>",

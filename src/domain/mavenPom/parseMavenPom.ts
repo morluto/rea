@@ -59,7 +59,11 @@ const lineOf = (node: Node | null): number | null => {
 };
 
 /** Structural pointer from the project root, using sibling position per local name. */
-const pointer = (root: Element, node: Element, collector: Collector): string => {
+const pointer = (
+  root: Element,
+  node: Element,
+  collector: Collector,
+): string => {
   const segments: string[] = [];
   let current: Element = node;
   while (current !== root) {
@@ -88,13 +92,16 @@ const pointer = (root: Element, node: Element, collector: Collector): string => 
 
 const PROPERTY_REFERENCE = /\$\{([^{}]+)\}/u;
 
-const referenceNames = (value: string | null): readonly string[] =>
-  value === null
-    ? []
-    : [...value.matchAll(/\$\{([^{}]+)\}/gu)].map((match) => match[1] ?? "");
+function* referenceNames(value: string | null): Generator<string> {
+  if (value !== null)
+    for (const match of value.matchAll(/\$\{([^{}]+)\}/gu))
+      yield match[1] ?? "";
+}
 
 /** Bounded substitutions per resolved value; a POM cannot spend unbounded work here. */
 const MAX_PROPERTY_SUBSTITUTIONS = 64;
+/** Bound all retained intermediate UTF-16 strings during one resolution. */
+const MAX_PROPERTY_WORK_CHARS = MAVEN_POM_MAX_RETAINED_BYTES / 2;
 
 type PropertyResolution =
   | { readonly kind: "resolved"; readonly value: string }
@@ -114,6 +121,7 @@ const resolveReference = (
   properties: ReadonlyMap<string, string>,
 ): PropertyResolution => {
   let current = value;
+  let work = value.length;
   const visited = new Set<string>([value]);
   for (let substitutions = 0; ; substitutions += 1) {
     const match = PROPERTY_REFERENCE.exec(current);
@@ -123,9 +131,13 @@ const resolveReference = (
     if (replacement === undefined) return { kind: "unresolved" };
     if (substitutions >= MAX_PROPERTY_SUBSTITUTIONS)
       return { kind: "work-limit" };
+    const nextLength = current.length - match[0].length + replacement.length;
+    if (work + nextLength > MAX_PROPERTY_WORK_CHARS)
+      return { kind: "work-limit" };
     const next = current.replace(match[0], () => replacement);
     if (visited.has(next)) return { kind: "cycle" };
     visited.add(next);
+    work += nextLength;
     current = next;
   }
 };
@@ -160,20 +172,41 @@ export class MavenPomRetainedFactsLimitError extends Error {
   }
 }
 
-/** Account one retained fact's serialized size before it is kept. */
-const account = (collector: Collector, facts: unknown): void => {
-  let bytes: number;
-  try {
-    bytes = Buffer.byteLength(JSON.stringify(facts) ?? "", "utf8");
-  } catch {
-    bytes = MAVEN_POM_MAX_RETAINED_BYTES + 1;
-  }
+/** Charge bytes without allocating a serialized copy of the fact. */
+const charge = (collector: Collector, bytes: number): void => {
   collector.retainedBytes += bytes;
   if (collector.retainedBytes > MAVEN_POM_MAX_RETAINED_BYTES)
     throw new MavenPomRetainedFactsLimitError(
       collector.retainedBytes,
       MAVEN_POM_MAX_RETAINED_BYTES,
     );
+};
+
+/** Account the UTF-8 JSON representation of a retained fact before keeping it. */
+const account = (collector: Collector, facts: unknown): void => {
+  if (typeof facts === "string") {
+    charge(collector, 2 + Buffer.byteLength(facts, "utf8"));
+    for (const character of facts) {
+      const code = character.charCodeAt(0);
+      if (character === '"' || character === "\\") charge(collector, 1);
+      else if (code < 0x20)
+        charge(collector, [8, 9, 10, 12, 13].includes(code) ? 1 : 5);
+      else if (character.length === 1 && code >= 0xd800 && code <= 0xdfff)
+        charge(collector, 3);
+    }
+  } else if (Array.isArray(facts)) {
+    charge(collector, 2 + Math.max(0, facts.length - 1));
+    for (const item of facts) account(collector, item);
+  } else if (facts !== null && typeof facts === "object") {
+    const entries = Object.entries(facts);
+    charge(collector, 2 + Math.max(0, entries.length - 1) + entries.length);
+    for (const [key, value] of entries) {
+      account(collector, key);
+      account(collector, value);
+    }
+  } else {
+    charge(collector, JSON.stringify(facts)?.length ?? 4);
+  }
 };
 
 const report = (
@@ -183,7 +216,7 @@ const report = (
   sourcePointer: string,
   line: number | null,
 ): void => {
-  collector.diagnostics.push({
+  const diagnostic = {
     diagnostic_id: identity("maven_diagnostic", {
       code,
       source_pointer: sourcePointer,
@@ -193,7 +226,9 @@ const report = (
     message,
     source_pointer: sourcePointer,
     line,
-  });
+  };
+  account(collector, diagnostic);
+  collector.diagnostics.push(diagnostic);
 };
 
 /**
@@ -269,7 +304,8 @@ const parseDependency = (
   const classifier = text(element, "classifier");
   const type = text(element, "type");
   const optionalElement = child(element, "optional");
-  const optionalDeclared = optionalElement === undefined ? null : declaredTextOf(optionalElement);
+  const optionalDeclared =
+    optionalElement === undefined ? null : declaredTextOf(optionalElement);
   const exclusions = children(element, "exclusions").flatMap((container) =>
     children(container, "exclusion").flatMap((exclusion) => {
       const exclusionGroup = text(exclusion, "groupId");
@@ -369,10 +405,10 @@ const collectProperties = (
         lineOf(property),
       );
     const value = textOf(property);
-    collector.properties.set(name, value);
-    collector.propertyPointers.set(name, sourcePointer);
     const fact = { name, value, source_pointer: sourcePointer };
     account(collector, fact);
+    collector.properties.set(name, value);
+    collector.propertyPointers.set(name, sourcePointer);
     return [fact];
   });
 };
@@ -439,14 +475,20 @@ export const parseMavenPom = (
   )) {
     const id = text(profile, "id");
     const activation = child(profile, "activation");
-    const activeElement = activation === undefined ? undefined : child(activation, "activeByDefault");
-    const activeDeclared = activeElement === undefined ? null : declaredTextOf(activeElement);
-    profiles.push({
+    const activeElement =
+      activation === undefined
+        ? undefined
+        : child(activation, "activeByDefault");
+    const activeDeclared =
+      activeElement === undefined ? null : declaredTextOf(activeElement);
+    const profileFact = {
       id,
       active_by_default: declaredBoolean(activeDeclared),
       active_by_default_declared: activeDeclared,
       source_pointer: pointer(root, profile, collector),
-    });
+    };
+    account(collector, profileFact);
+    profiles.push(profileFact);
     // Declarations that live inside the profile stay attributed to it rather
     // than being reported as top-level facts.
     profileDependencies.push(
@@ -510,7 +552,11 @@ export const parseMavenPom = (
   const referenceNamesSeen = new Set<string>();
   const collectReferences = (values: readonly (string | null)[]): void => {
     for (const value of values)
-      for (const name of referenceNames(value)) referenceNamesSeen.add(name);
+      for (const name of referenceNames(value))
+        if (!referenceNamesSeen.has(name)) {
+          account(collector, { name });
+          referenceNamesSeen.add(name);
+        }
   };
   for (const dependency of allDependencies)
     collectReferences([
@@ -568,6 +614,13 @@ export const parseMavenPom = (
           relative_path: text(parentElement, "relativePath"),
         };
 
+  account(collector, {
+    artifact,
+    model_version: modelVersion,
+    project,
+    parent,
+  });
+
   return {
     pom_id: identity("maven_pom", {
       sha256: artifact.sha256,
@@ -591,13 +644,15 @@ export const parseMavenPom = (
         declared === null
           ? ({ kind: "unresolved" } as const)
           : resolveReference(declared, collector.properties);
-      return {
+      const fact = {
         name,
         declared,
         resolution: resolution.kind,
         resolved: resolution.kind === "resolved" ? resolution.value : null,
         source_pointer: collector.propertyPointers.get(name) ?? "/project",
       };
+      account(collector, fact);
+      return fact;
     }),
     diagnostics: collector.diagnostics,
     summary: {

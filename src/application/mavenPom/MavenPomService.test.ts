@@ -3,8 +3,14 @@ import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
-import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
-import { mavenPomSchema } from "../../domain/mavenPom/mavenPom.js";
+import {
+  AnalysisInputError,
+  AnalysisResourceConstraintError,
+} from "../../domain/analysisErrorCore.js";
+import {
+  MAVEN_POM_MAX_XML_NODES,
+  mavenPomSchema,
+} from "../../domain/mavenPom/mavenPom.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectMavenPomEvidence } from "./MavenPomService.js";
 
@@ -103,6 +109,82 @@ it("retains the verified file identity when parsing fails", async () => {
   );
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected a refused POM");
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+});
+
+it("refuses a high-node-count POM before DOM projection and retains its identity", async () => {
+  const bytes = `<project><modelVersion>4.0.0</modelVersion>${"<x/>".repeat(MAVEN_POM_MAX_XML_NODES)}</project>`;
+  const path = await writePom(bytes);
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a resource failure");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+});
+
+it("bounds declaration and duplicate-diagnostic expansion while retaining file identity", async () => {
+  const group = "g".repeat(1_000_000);
+  const dependency = `<dependency><groupId>${group}</groupId><artifactId>a</artifactId></dependency>`;
+  const bytes = `<project><modelVersion>4.0.0</modelVersion><dependencies>${dependency.repeat(18)}</dependencies></project>`;
+  const path = await writePom(bytes);
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a resource failure");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
+  expect(result.error.partialObservation).toMatchObject({
+    kind: "file-snapshot-hash",
+    path,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  });
+});
+
+it.each([
+  [
+    "profile provenance",
+    () => {
+      const dependency =
+        "<dependency><groupId>g</groupId><artifactId>a</artifactId></dependency>";
+      return `<project><modelVersion>4.0.0</modelVersion><profiles><profile><id>${"x".repeat(1_000_000)}</id><dependencies>${dependency.repeat(35)}</dependencies></profile></profiles></project>`;
+    },
+  ],
+  [
+    "resolved property references",
+    () => {
+      const properties = Array.from(
+        { length: 350 },
+        (_, i) => `<p${String(i)}>\${shared}</p${String(i)}>`,
+      ).join("");
+      const references = Array.from(
+        { length: 350 },
+        (_, i) => `\${p${String(i)}}`,
+      ).join("");
+      return `<project><modelVersion>4.0.0</modelVersion><properties><shared>${"x".repeat(100_000)}</shared>${properties}</properties><dependencies><dependency><groupId>g</groupId><artifactId>a</artifactId><version>${references}</version></dependency></dependencies></project>`;
+    },
+  ],
+] as const)("bounds expansion of %s", async (_kind, source) => {
+  const bytes = source();
+  const path = await writePom(bytes);
+  const result = await inspectMavenPomEvidence(
+    { path },
+    new ArtifactResourceScope(),
+  );
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a resource failure");
+  expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
   expect(result.error.partialObservation).toMatchObject({
     kind: "file-snapshot-hash",
     path,

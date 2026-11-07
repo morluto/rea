@@ -11,7 +11,7 @@ export const MAVEN_POM_TOOL_CONTRACTS = [
     ...toolContractMetadata("inspect_maven_pom"),
     kind: "application",
     description:
-      "Inventory declared coordinates, dependencies, dependency management, properties, profiles and repositories in one local pom.xml offline. Maven, Gradle, plugins and build scripts stay untouched; there is no repository or network access, and no parent POM, imported BOM or transitive dependency is fetched. Dependency-management versions are reported as declarations that manage an omitted version, never as resolutions. Property references stay explicit instead of being interpolated, and profile activation conditions are reported without being evaluated. Document type declarations and external entities are rejected before parsing. Text is read as UTF-8 or as byte-order-marked UTF-16; a POM declared in any other encoding is reported as unsupported rather than parsed. File and retained-facts allowances are each 32 MiB.",
+      "Inventory declared coordinates, dependencies, dependency management, properties, profiles and repositories in one local pom.xml offline. Maven, Gradle, plugins and build scripts stay untouched; there is no repository or network access, and no parent POM, imported BOM or transitive dependency is fetched. Dependency-management versions are reported as declarations that manage an omitted version, never as resolutions. Property references stay explicit instead of being interpolated, and profile activation conditions are reported without being evaluated. Document type declarations and external entities are rejected before parsing. Text is read as UTF-8 or as byte-order-marked UTF-16; a POM declared in any other encoding is reported as unsupported rather than parsed. File and accounted retained-facts allowances are each 32 MiB; XML projection has a 50,000-unit admission limit and property resolution has bounded work. These are not exact process-memory ceilings.",
     inputSchema: inspectMavenPomInputSchema,
     outputSchema: evidenceResultOf(mavenPomSchema),
     examples: [
@@ -46,6 +46,7 @@ export const MAVEN_POM_RESULT_EXAMPLE = {
       declared_by: "dependencies",
       scope: "compile",
       optional: null,
+      optional_declared: null,
       type: null,
       classifier: null,
       profile: null,
@@ -59,6 +60,7 @@ export const MAVEN_POM_RESULT_EXAMPLE = {
       declared_by: "dependencies",
       scope: "test",
       optional: null,
+      optional_declared: null,
       type: null,
       classifier: null,
       profile: null,
