@@ -359,7 +359,7 @@ export const launchCommand = (
       url.hash;
     // The framework executes this command in a Python environment. Encode the
     // runtime home as a URL path; shell quoting alone does not escape # or spaces.
-    const encodedHome = `"$(python3 -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["HOME"],safe="/"),end="")')"`;
+    const encodedHome = `"$(python3 -I -c 'import os,urllib.parse;print(urllib.parse.quote(os.environ["HOME"],safe="/"),end="")')"`;
     const prefix =
       /^file:\/\/(?:localhost)?(?=\/)/iu.exec(value)?.[0] ?? "file://";
     return `${shellQuote(prefix)}${encodedHome}${shellQuote(suffix)}`;
