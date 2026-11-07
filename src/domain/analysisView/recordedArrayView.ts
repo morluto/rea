@@ -1,5 +1,9 @@
 import type { z } from "zod";
-import type { JsonValue } from "../jsonValue.js";
+import {
+  jsonValueValidationIssue,
+  MAX_JSON_DEPTH,
+  type JsonValue,
+} from "../jsonValue.js";
 import { jsonValueByteLength } from "../jsonValueByteLength.js";
 import { AnalysisResourceConstraintError } from "../analysisErrorCore.js";
 import { err, ok } from "../result.js";
@@ -9,6 +13,29 @@ import { analysisViewInputError } from "./analysisViewErrors.js";
 import type { recordedArrayViewSchema } from "./analysisViewRequest.js";
 
 const PAGE_BYTES = 1024 * 1024;
+
+/**
+ * Parent parameters sit on the Evidence root. This page stores them under
+ * `normalized_result.source_parameters`, one level deeper. A parent that used
+ * the whole depth budget is valid and still cannot be copied unchanged.
+ */
+const exceedsEvidenceResultDepth = (result: JsonValue): boolean =>
+  jsonValueValidationIssue({ normalized_result: result }) !== undefined;
+
+const recordedArrayDepthRefusal = () =>
+  err(
+    new AnalysisResourceConstraintError(
+      "inspect_analysis_view",
+      "memory",
+      `Recorded array view exceeds the maximum JSON nesting depth of ${MAX_JSON_DEPTH}.`,
+      { maximum_json_depth: MAX_JSON_DEPTH },
+      {
+        retryable: false,
+        remediationAction:
+          "A recorded value cannot be nested inside an Evidence page without exceeding the JSON depth limit. Retrieve or export the complete parent Evidence, or read it from the caller-supplied Evidence file or bundle.",
+      },
+    ),
+  );
 
 /** Page an exact array within authenticated provider-recorded raw JSON. */
 export const projectRecordedArrayView = (
@@ -84,19 +111,23 @@ export const projectRecordedArrayView = (
       },
       PAGE_BYTES,
     );
-  const omitParameters = () => {
+  const omitParameters = (reason: "bytes" | "depth") => {
     result = {
       ...result,
       source_parameters: null,
       limitations: [
         ...result.limitations,
-        "Source parameters were omitted to fit the page allowance; retrieve the parent Evidence for their complete values.",
+        reason === "depth"
+          ? "Source parameters were omitted because nesting them under this Evidence page exceeds the maximum JSON depth; retrieve the parent Evidence for their complete values."
+          : "Source parameters were omitted to fit the page allowance; retrieve the parent Evidence for their complete values.",
       ],
     };
   };
+  if (result.source_parameters !== null && exceedsEvidenceResultDepth(result))
+    omitParameters("depth");
   let bytes = estimateBase();
   if (bytes > PAGE_BYTES) {
-    omitParameters();
+    omitParameters("bytes");
     bytes = estimateBase();
   }
   const tooLarge = () =>
@@ -124,7 +155,7 @@ export const projectRecordedArrayView = (
       rows.length === 0 &&
       result.source_parameters !== null
     ) {
-      omitParameters();
+      omitParameters("bytes");
       bytes = estimateBase();
       if (bytes > PAGE_BYTES) return tooLarge();
       size = jsonValueByteLength(row, PAGE_BYTES - bytes);
@@ -135,7 +166,13 @@ export const projectRecordedArrayView = (
     }
     bytes += comma + size;
     rows.push(row);
+    if (exceedsEvidenceResultDepth({ ...result, rows })) {
+      rows.pop();
+      if (rows.length === 0) return recordedArrayDepthRefusal();
+      break;
+    }
   }
+  if (exceedsEvidenceResultDepth(result)) return recordedArrayDepthRefusal();
   return ok({
     ...result,
     coverage: pageViewCoverage(view.offset, rows.length, value.length),
