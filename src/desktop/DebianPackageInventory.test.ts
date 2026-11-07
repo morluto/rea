@@ -670,6 +670,29 @@ describe.skipIf(process.platform === "win32")("library packages", () => {
       uninstallable_library_packages: [],
     });
   });
+
+  // dpkg-query exits 1 when no package owns a path and 2 when it could not tell.
+  it("reports a failed library owner query rather than calling the libraries unpackaged", async () => {
+    const { runQuery, inspect } = await vendorFixture();
+    const failing: QueryRunner = async (command, argv, signal) =>
+      command === "dpkg-query" &&
+      argv[0] === "-S" &&
+      argv[1]?.endsWith("/bin/typora") !== true
+        ? { stdout: "", exitCode: 2 }
+        : runQuery(command, argv, signal);
+
+    const result = await inspect(failing);
+
+    if (!result.ok) throw new Error(result.error.reason);
+    expect(result.value.inventory.package).toMatchObject({
+      library_packages: [],
+      // The soname the fixture never provides stays missing; the two it locates are not called unpackaged.
+      missing_libraries: ["libsecret-1.so.0"],
+      unpackaged_libraries: [],
+      library_packages_reason:
+        "dpkg-query could not say which packages own the libraries",
+    });
+  });
 });
 
 describe.skipIf(process.platform === "win32")(
