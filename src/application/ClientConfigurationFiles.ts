@@ -1,3 +1,5 @@
+import { dirname, resolve } from "node:path";
+import { stripComments } from "jsonc-parser";
 import { err, ok, type Result } from "../domain/result.js";
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readRegularFileText } from "./RegularFileRead.js";
@@ -14,20 +16,40 @@ import type { ConfigurationError } from "../domain/configurationErrors.js";
 import { mergeEnvironmentOverrides } from "../process/snapshotEnvironment.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
 
+export type ClientRegistrationScope = "user" | "project";
+
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
   readonly sourcePath: string;
+  readonly scope?: ClientRegistrationScope;
 }
 
 const invalidEnvironment = (
   path: string,
   error: ConfigurationError,
-  overrides: Readonly<Record<string, string>> = {},
+  overridesOrScope:
+    | Readonly<Record<string, string>>
+    | ClientRegistrationScope = {},
   platform: NodeJS.Platform = process.platform,
+  explicitScope?: ClientRegistrationScope,
 ): ClientConfigurationFileError => {
+  const scope =
+    typeof overridesOrScope === "string" ? overridesOrScope : explicitScope;
+  const overrides =
+    typeof overridesOrScope === "object" && overridesOrScope !== null
+      ? overridesOrScope
+      : {};
   const constraints = error.settings
     .map(({ setting, constraint }) => `${setting}: ${constraint}`)
     .join("; ");
+  if (scope === "project") {
+    return {
+      kind: "malformed",
+      path,
+      scope,
+      detail: `Configuration ${path} has an invalid REA server environment: ${constraints}. Repair ${path} and rerun rea doctor; REA setup does not modify project-scoped configuration.`,
+    };
+  }
   const overrideNames = new Set(
     Object.keys(overrides).map((name) =>
       platform === "win32" ? name.toUpperCase() : name,
@@ -47,6 +69,7 @@ const invalidEnvironment = (
   return {
     kind: "malformed",
     path,
+    ...(scope === undefined ? {} : { scope }),
     detail: `${location}: ${constraints}${constraints.endsWith(".") ? "" : "."} ${overrideNames.size === 0 ? "Repair it" : "Check the launch environment and any existing registration settings"} before rerunning setup.`,
   };
 };
@@ -55,6 +78,7 @@ const invalidEnvironment = (
 export interface ClientConfigurationFileError {
   readonly kind: "unreadable" | "malformed";
   readonly path: string;
+  readonly scope?: ClientRegistrationScope;
   readonly detail: string;
   readonly cleanupFailure?: RegularFileCleanupFailure;
 }
@@ -114,6 +138,7 @@ export const readClientConfigurationFiles = async (
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
   writeOverrides?: Readonly<Record<string, string>>,
+  effectiveValidation: boolean = true,
 ): Promise<
   Result<readonly ClientConfigurationSource[], ClientConfigurationFileError>
 > => {
@@ -141,24 +166,26 @@ export const readClientConfigurationFiles = async (
             platform,
           ),
         );
-      documents.push({ ...document.value, sourcePath: path });
+      documents.push({ ...document.value, sourcePath: path, scope: "user" });
     }
   }
-  const environment = clientRegistrationEnvironment(
-    effectiveClientConfiguration(documents, undefined, platform),
-    writeOverrides,
-    "effective",
-    platform,
-  );
-  if (!environment.ok)
-    return err(
-      invalidEnvironment(
-        client.configPath,
-        environment.error,
-        writeOverrides,
-        platform,
-      ),
+  if (effectiveValidation) {
+    const environment = clientRegistrationEnvironment(
+      effectiveClientConfiguration(documents, undefined, platform),
+      writeOverrides,
+      "effective",
+      platform,
     );
+    if (!environment.ok)
+      return err(
+        invalidEnvironment(
+          client.configPath,
+          environment.error,
+          writeOverrides,
+          platform,
+        ),
+      );
+  }
   return ok(documents);
 };
 
@@ -270,31 +297,513 @@ export const effectiveClientConfiguration = (
   };
 };
 
-/** Read the configuration ZCode will load, preserving its same-scope fallback rule. */
+const contributingEnvironmentSource = (
+  sources: readonly ClientConfigurationSource[],
+  error: ConfigurationError,
+  platform: NodeJS.Platform = process.platform,
+): ClientConfigurationSource | undefined => {
+  const rejectedSettings = new Set(
+    error.settings.flatMap(({ setting }) => {
+      const normalized = platform === "win32" ? setting.toUpperCase() : setting;
+      const stripped = normalized.includes(".")
+        ? normalized.slice(normalized.indexOf(".") + 1)
+        : normalized;
+      return [normalized, stripped];
+    }),
+  );
+  return [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    const env = isObject(server[doc.environmentKey])
+      ? server[doc.environmentKey]
+      : isObject(server.environment)
+        ? server.environment
+        : isObject(server.env)
+          ? server.env
+          : undefined;
+    if (!isObject(env)) return false;
+    return Object.keys(env).some((key) =>
+      rejectedSettings.has(platform === "win32" ? key.toUpperCase() : key),
+    );
+  });
+};
+
+export const contributingRegistrationSource = (
+  sources: readonly ClientConfigurationSource[],
+  error: ConfigurationError,
+): ClientConfigurationSource | undefined => {
+  const rejectedSettings = new Set(
+    error.settings.map(({ setting }) => setting),
+  );
+  const explicit = [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    return Object.keys(server).some((key) => rejectedSettings.has(key));
+  });
+  if (explicit !== undefined) return explicit;
+  const launcherDoc = [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    return (
+      Object.hasOwn(server, "command") ||
+      Object.hasOwn(server, "args") ||
+      Object.hasOwn(server, "type") ||
+      Object.hasOwn(server, "transport")
+    );
+  });
+  if (launcherDoc !== undefined) return launcherDoc;
+  return [...sources].reverse().find((doc) => {
+    return (
+      effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey) !== undefined
+    );
+  });
+};
+
+const isPiPartialServerOverride = (
+  entry: unknown,
+): entry is Record<string, unknown> =>
+  isObject(entry) &&
+  !Object.hasOwn(entry, "command") &&
+  !Object.hasOwn(entry, "url") &&
+  !Object.hasOwn(entry, "type");
+
+/**
+ * Read-only evaluation of Pi's project trust boundary.
+ * Distinguishes explicit approvals/denials from unreadable/malformed trust files.
+ */
+export const isPiProjectTrusted = async (
+  settings: NonNullable<SetupClient["piSettings"]> | undefined,
+  resources?: ArtifactResourceScope,
+): Promise<Result<boolean, ClientConfigurationFileError>> => {
+  if (settings === undefined) return ok(true);
+  if (settings.env.PI_APPROVE === "true") return ok(true);
+  if (settings.env.PI_APPROVE === "false") return ok(false);
+  if (settings.env.PI_DEFAULT_PROJECT_TRUST === "always") return ok(true);
+  if (settings.env.PI_DEFAULT_PROJECT_TRUST === "never") return ok(false);
+
+  const trustText = await readConfigurationText(settings.trustPath, resources);
+  if (!trustText.ok) return trustText;
+  if (trustText.value !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripComments(trustText.value));
+    } catch (cause: unknown) {
+      return err({
+        kind: "malformed",
+        path: settings.trustPath,
+        scope: "project",
+        detail: `Pi trust configuration in ${settings.trustPath} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    if (!isObject(parsed)) {
+      return err({
+        kind: "malformed",
+        path: settings.trustPath,
+        scope: "project",
+        detail: `Pi trust configuration in ${settings.trustPath} is malformed: expected a JSON object.`,
+      });
+    }
+    const resolvedProject = resolve(settings.projectDirectory);
+    let current = resolvedProject;
+    while (true) {
+      for (const [key, val] of Object.entries(parsed)) {
+        const resolvedKey = resolve(key);
+        const matches =
+          settings.platform === "win32" || settings.platform === "darwin"
+            ? resolvedKey.toLowerCase() === current.toLowerCase()
+            : resolvedKey === current;
+        if (matches) {
+          if (val === true) return ok(true);
+          if (val === false) return ok(false);
+        }
+      }
+      const parent = dirname(current);
+      if (parent === current) break;
+      current = parent;
+    }
+  }
+
+  const settingsText = await readConfigurationText(
+    settings.settingsPath,
+    resources,
+  );
+  if (!settingsText.ok) return settingsText;
+  if (settingsText.value !== undefined) {
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(stripComments(settingsText.value));
+    } catch (cause: unknown) {
+      return err({
+        kind: "malformed",
+        path: settings.settingsPath,
+        scope: "project",
+        detail: `Pi settings in ${settings.settingsPath} are malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+      });
+    }
+    if (!isObject(parsed)) {
+      return err({
+        kind: "malformed",
+        path: settings.settingsPath,
+        scope: "project",
+        detail: `Pi settings in ${settings.settingsPath} are malformed: expected a JSON object.`,
+      });
+    }
+    const defaultTrust = parsed.defaultProjectTrust;
+    if (defaultTrust === "always") return ok(true);
+    if (defaultTrust === "never") return ok(false);
+  }
+
+  return ok(false);
+};
+
+export interface EffectiveClientRegistrationConfiguration {
+  readonly document: ClientConfigurationDocument | undefined;
+  readonly configPath: string;
+  readonly scope?: ClientRegistrationScope;
+  readonly launcherScope?: ClientRegistrationScope;
+  readonly launcherConfigPath?: string;
+  readonly activationScope?: ClientRegistrationScope;
+  readonly activationConfigPath?: string;
+  readonly sources?: readonly ClientConfigurationSource[];
+}
+
+/** Read the configuration the client will load across project and user scopes. */
 export const readEffectiveClientRegistrationConfiguration = async (
   client: SetupClient,
   resources?: ArtifactResourceScope,
   platform: NodeJS.Platform = process.platform,
+  targetScope: "user" | "all" = "all",
 ): Promise<
-  Result<
-    {
-      readonly document: ClientConfigurationDocument | undefined;
-      readonly configPath: string;
-    },
-    ClientConfigurationFileError
-  >
+  Result<EffectiveClientRegistrationConfiguration, ClientConfigurationFileError>
 > => {
+  let evaluatedProjectScope: ClientRegistrationScope | undefined;
+  let piProjectFile:
+    | Result<
+        ClientConfigurationDocument | undefined,
+        ClientConfigurationFileError
+      >
+    | undefined;
+  if (
+    targetScope !== "user" &&
+    client.format === "pi" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectPath = client.projectConfigPaths[0];
+    if (projectPath !== undefined) {
+      const trust = await isPiProjectTrusted(client.piSettings, resources);
+      if (!trust.ok) return err({ ...trust.error, scope: "project" });
+      if (trust.value) {
+        piProjectFile = await readConfigurationFile(
+          projectPath,
+          client.format,
+          resources,
+        );
+        if (!piProjectFile.ok)
+          return err({ ...piProjectFile.error, scope: "project" });
+        if (piProjectFile.value !== undefined) {
+          evaluatedProjectScope = "user";
+          const rawProjectRea = effectiveClientServer(
+            piProjectFile.value,
+            PRODUCT_IDENTITY.mcpServerKey,
+          );
+          if (
+            rawProjectRea !== undefined &&
+            !isPiPartialServerOverride(rawProjectRea)
+          ) {
+            const fragmentEnv = clientRegistrationEnvironment(
+              piProjectFile.value,
+              {},
+              "fragment",
+              platform,
+            );
+            if (!fragmentEnv.ok)
+              return err(
+                invalidEnvironment(projectPath, fragmentEnv.error, "project"),
+              );
+            const effectiveEnv = clientRegistrationEnvironment(
+              piProjectFile.value,
+              {},
+              "effective",
+              platform,
+            );
+            if (!effectiveEnv.ok)
+              return err(
+                invalidEnvironment(projectPath, effectiveEnv.error, "project"),
+              );
+            return ok({
+              document: piProjectFile.value,
+              configPath: projectPath,
+              scope: "project",
+              launcherScope: "project",
+              launcherConfigPath: projectPath,
+              activationScope: "project",
+              activationConfigPath: projectPath,
+            });
+          }
+        }
+      } else {
+        const candidate = await readConfigurationFile(
+          projectPath,
+          client.format,
+          resources,
+        );
+        if (!candidate.ok) {
+          if (candidate.error.cleanupFailure !== undefined) {
+            return err({ ...candidate.error, scope: "project" });
+          }
+        } else if (candidate.value !== undefined) {
+          evaluatedProjectScope = "user";
+        }
+      }
+    }
+  }
+
+  const hasProjectScope =
+    targetScope !== "user" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0;
+
   const nativeSources = await readClientConfigurationFiles(
     client,
     resources,
     platform,
+    undefined,
+    !hasProjectScope,
   );
-  if (!nativeSources.ok) return nativeSources;
+  if (!nativeSources.ok) return err(nativeSources.error);
   const nativeDocument = effectiveClientConfiguration(
     nativeSources.value,
     undefined,
     platform,
   );
+
+  if (
+    targetScope !== "user" &&
+    client.format === "pi" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectPath = client.projectConfigPaths[0];
+    if (projectPath !== undefined) {
+      const projectDoc = piProjectFile?.ok ? piProjectFile.value : undefined;
+      if (projectDoc !== undefined) {
+        const rawProjectRea = effectiveClientServer(
+          projectDoc,
+          PRODUCT_IDENTITY.mcpServerKey,
+        );
+        if (rawProjectRea !== undefined) {
+          const rawUserRea =
+            nativeDocument === undefined
+              ? undefined
+              : effectiveClientServer(
+                  nativeDocument,
+                  PRODUCT_IDENTITY.mcpServerKey,
+                );
+          let effectiveRea = rawProjectRea;
+          let isProjectLauncher = true;
+          let launcherConfigPath = projectPath;
+          let isProjectActivation = true;
+          let activationConfigPath = projectPath;
+          if (
+            isPiPartialServerOverride(rawProjectRea) &&
+            isObject(rawUserRea)
+          ) {
+            const merged: Record<string, unknown> = { ...rawUserRea };
+            if (Object.hasOwn(rawProjectRea, "enabled")) {
+              merged.enabled = rawProjectRea.enabled;
+            } else {
+              isProjectActivation = false;
+              activationConfigPath = client.configPath;
+            }
+            if (Object.hasOwn(rawProjectRea, "exposure"))
+              merged.exposure = rawProjectRea.exposure;
+            if (Object.hasOwn(rawProjectRea, "toolExposure"))
+              merged.toolExposure = rawProjectRea.toolExposure;
+            effectiveRea = merged;
+            isProjectLauncher = false;
+            launcherConfigPath = client.configPath;
+          }
+          const effectiveDoc: ClientConfigurationDocument = {
+            ...projectDoc,
+            servers: {
+              ...projectDoc.servers,
+              [PRODUCT_IDENTITY.mcpServerKey]: effectiveRea,
+            },
+          };
+          const effectiveEnv = clientRegistrationEnvironment(
+            effectiveDoc,
+            {},
+            "effective",
+            platform,
+          );
+          if (!effectiveEnv.ok) {
+            const contributingDoc = isProjectLauncher
+              ? undefined
+              : contributingEnvironmentSource(
+                  nativeSources.value,
+                  effectiveEnv.error,
+                  platform,
+                );
+            const errorPath =
+              contributingDoc?.sourcePath ??
+              (isProjectLauncher ? projectPath : client.configPath);
+            const errorScope: ClientRegistrationScope = isProjectLauncher
+              ? "project"
+              : "user";
+            return err(
+              invalidEnvironment(errorPath, effectiveEnv.error, errorScope),
+            );
+          }
+          const projectSource: ClientConfigurationSource = {
+            ...projectDoc,
+            sourcePath: projectPath,
+            scope: "project",
+          };
+          return ok({
+            document: effectiveDoc,
+            configPath: projectPath,
+            scope: "project",
+            launcherScope: isProjectLauncher ? "project" : "user",
+            launcherConfigPath,
+            activationScope: isProjectActivation ? "project" : "user",
+            activationConfigPath,
+            sources: [...nativeSources.value, projectSource],
+          });
+        }
+      }
+    }
+  }
+
+  if (
+    targetScope !== "user" &&
+    client.format === "opencode" &&
+    client.projectConfigPaths !== undefined &&
+    client.projectConfigPaths.length > 0
+  ) {
+    const projectSources: ClientConfigurationSource[] = [];
+    for (const path of client.projectConfigPaths) {
+      const document = await readConfigurationFile(
+        path,
+        client.format,
+        resources,
+      );
+      if (!document.ok) return err({ ...document.error, scope: "project" });
+      if (document.value !== undefined) {
+        const env = clientRegistrationEnvironment(
+          document.value,
+          {},
+          "fragment",
+          platform,
+        );
+        if (!env.ok) return err(invalidEnvironment(path, env.error, "project"));
+        projectSources.push({ ...document.value, sourcePath: path });
+      }
+    }
+
+    if (projectSources.length > 0) {
+      evaluatedProjectScope = "user";
+    }
+
+    const allSources = [...nativeSources.value, ...projectSources];
+    const winningProjectDoc = [...projectSources]
+      .reverse()
+      .find(
+        (doc) =>
+          effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey) !==
+          undefined,
+      );
+    if (winningProjectDoc !== undefined) {
+      const effectiveDoc = effectiveClientConfiguration(
+        allSources,
+        undefined,
+        platform,
+      );
+      if (effectiveDoc !== undefined) {
+        const effectiveEnv = clientRegistrationEnvironment(
+          effectiveDoc,
+          {},
+          "effective",
+          platform,
+        );
+        if (!effectiveEnv.ok) {
+          const contributingDoc = contributingEnvironmentSource(
+            allSources,
+            effectiveEnv.error,
+            platform,
+          );
+          const isProjectSource =
+            contributingDoc !== undefined
+              ? projectSources.some(
+                  (proj) => proj.sourcePath === contributingDoc.sourcePath,
+                )
+              : true;
+          const errorPath =
+            contributingDoc?.sourcePath ?? winningProjectDoc.sourcePath;
+          const errorScope: ClientRegistrationScope = isProjectSource
+            ? "project"
+            : "user";
+          return err(
+            invalidEnvironment(errorPath, effectiveEnv.error, errorScope),
+          );
+        }
+        const launcherDoc = [...allSources].reverse().find((doc) => {
+          const s = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+          return isObject(s) && Object.hasOwn(s, "command");
+        });
+        const isProjectLauncher =
+          launcherDoc !== undefined &&
+          projectSources.some(
+            (proj) => proj.sourcePath === launcherDoc.sourcePath,
+          );
+        const activationDoc = [...allSources].reverse().find((doc) => {
+          const s = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+          return (
+            isObject(s) &&
+            (Object.hasOwn(s, "disabled") ||
+              Object.hasOwn(s, "enabled") ||
+              Object.hasOwn(s, "enable"))
+          );
+        });
+        const isProjectActivation =
+          activationDoc !== undefined &&
+          projectSources.some(
+            (proj) => proj.sourcePath === activationDoc.sourcePath,
+          );
+        const activationConfigPath =
+          activationDoc?.sourcePath ?? winningProjectDoc.sourcePath;
+        const activationScope: ClientRegistrationScope =
+          activationDoc !== undefined
+            ? isProjectActivation
+              ? "project"
+              : "user"
+            : "project";
+        return ok({
+          document: effectiveDoc,
+          configPath: winningProjectDoc.sourcePath,
+          scope: "project",
+          launcherScope: isProjectLauncher ? "project" : "user",
+          launcherConfigPath:
+            launcherDoc?.sourcePath ?? winningProjectDoc.sourcePath,
+          activationScope,
+          activationConfigPath,
+          sources: allSources,
+        });
+      }
+    }
+  }
+
+  if (hasProjectScope && nativeDocument !== undefined) {
+    const userEnv = clientRegistrationEnvironment(
+      nativeDocument,
+      {},
+      "effective",
+      platform,
+    );
+    if (!userEnv.ok)
+      return err(invalidEnvironment(client.configPath, userEnv.error, "user"));
+  }
+
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
   if (
@@ -302,7 +811,13 @@ export const readEffectiveClientRegistrationConfiguration = async (
     (nativeDocument !== undefined &&
       Object.keys(nativeDocument.servers).length > 0)
   )
-    return ok({ document: nativeDocument, configPath: client.configPath });
+    return ok({
+      document: nativeDocument,
+      configPath: client.configPath,
+      ...(evaluatedProjectScope === undefined
+        ? {}
+        : { scope: evaluatedProjectScope }),
+    });
 
   const fallbackClient: SetupClient = {
     ...client,
@@ -315,7 +830,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
     resources,
     platform,
   );
-  if (!fallbackSources.ok) return fallbackSources;
+  if (!fallbackSources.ok) return err(fallbackSources.error);
   const fallbackDocument = effectiveClientConfiguration(
     fallbackSources.value,
     undefined,
@@ -323,7 +838,21 @@ export const readEffectiveClientRegistrationConfiguration = async (
   );
   return ok(
     fallbackDocument === undefined
-      ? { document: nativeDocument, configPath: client.configPath }
-      : { document: fallbackDocument, configPath: fallbackPath },
+      ? {
+          document: nativeDocument,
+          configPath: client.configPath,
+          ...(evaluatedProjectScope === undefined
+            ? {}
+            : { scope: evaluatedProjectScope }),
+          sources: nativeSources.value,
+        }
+      : {
+          document: fallbackDocument,
+          configPath: fallbackPath,
+          ...(evaluatedProjectScope === undefined
+            ? {}
+            : { scope: evaluatedProjectScope }),
+          sources: fallbackSources.value,
+        },
   );
 };
