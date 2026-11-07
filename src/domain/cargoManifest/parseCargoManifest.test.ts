@@ -507,7 +507,9 @@ private = { git = "https://user:token@example.test/repo" }
       "https://example.test/repo",
     );
   });
+});
 
+describe("parseCargoManifest malformed sections", () => {
   it("keeps valid sibling tables after a malformed dependency table", () => {
     const value = required(
       parse(`
