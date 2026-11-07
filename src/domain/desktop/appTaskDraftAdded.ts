@@ -194,6 +194,14 @@ const keptFieldPieces = (node: JsonValue): string[] => {
   return pieces;
 };
 
+/** An element's text with save-time leaves removed, in document order. */
+const plainText = (node: JsonValue | null): string => {
+  if (typeof node === "string") return isStamp(node) ? "" : node;
+  if (!isXmlElement(node)) return "";
+  if (isStamp(elementText(node))) return "";
+  return node.children.map((child) => plainText(child)).join("");
+};
+
 /** The nearest ancestor both ends hold that a check names without a step by position. */
 const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   const { ends } = context;
@@ -216,11 +224,12 @@ const keptNamedAncestor = (context: AddedContext, pointer: string) => {
  * names, as Osmo adds a `<record>` of `<first_name>` and `<email_1>` among
  * others, at the nearest ancestor both ends hold that a check can name: up to
  * five fields of three or more characters, each absent from that ancestor's
- * text at the seed, so each fails there. The field's own path is kept, so an
- * identifier, a date stamped in parts and text past the limit are left out,
- * as `recordChecks` leaves them out; a field past the limit is named in
- * `context.long`. Empty for an element that `holdsFields` says is no record,
- * as a paragraph of runs, or that has no like sibling.
+ * text at the seed, so each fails there. A record a selector names is checked
+ * itself, so the words have to be in that record. The field's own path is
+ * kept, so an identifier, a date stamped in parts and text past the limit are
+ * left out, as `recordChecks` leaves them out; a field past the limit is
+ * named in `context.long`. Empty for an element that `holdsFields` says is
+ * no record, as a paragraph of runs, or that has no like sibling.
  */
 export const fieldChecks = (
   context: AddedContext,
@@ -232,7 +241,11 @@ export const fieldChecks = (
     return [];
   const at = keptNamedAncestor(context, pointer);
   if (at === undefined) return [];
-  const seen = elementText(resolvePointer(ends.baseline, at) ?? null);
+  // The record's own selector. Words already in another record still have to be here.
+  const onRecord = context.named(ends.final, pointer);
+  const seen = onRecord
+    ? ""
+    : elementText(resolvePointer(ends.baseline, at) ?? null);
   const { keys } = pairMembers(element.children, []).newer;
   const texts: string[] = [];
   let alreadySeen = false;
@@ -262,17 +275,50 @@ export const fieldChecks = (
     }
   });
   if (texts.length > 0)
-    return [...new Set(texts)]
-      .slice(0, MAX_FIELD_CHECKS)
-      .map((value) => ({ kind: "text_contains", file, pointer: at, value }));
-  // Every new field repeats text the seed already has. The list's own text still shows the record was added, when it fits.
-  const now = elementText(resolvePointer(ends.final, at) ?? null);
-  return alreadySeen &&
-    now !== seen &&
-    now.length > 0 &&
-    now.length <= context.chars
-    ? [{ kind: "text_equals", file, pointer: at, value: now }]
-    : [];
+    return [...new Set(texts)].slice(0, MAX_FIELD_CHECKS).map((value) => ({
+      kind: "text_contains" as const,
+      file,
+      pointer: onRecord ? pointer : at,
+      value,
+    }));
+  if (onRecord) return [];
+  // Every new field repeats text the seed already has. The list's text shows the record was added, when it fits and holds no save time. A save time stays out of the check: the new record's own text has to be there, and the seed's text has to remain.
+  const holder = resolvePointer(ends.final, at);
+  const before = resolvePointer(ends.baseline, at);
+  const now = elementText(holder ?? null);
+  const plain = plainText(holder ?? null);
+  const seedPlain = plainText(before ?? null);
+  if (
+    !alreadySeen ||
+    plain === seedPlain ||
+    plain.length === 0 ||
+    plain.length > context.chars
+  )
+    return [];
+  if (plain === now)
+    return [{ kind: "text_equals", file, pointer: at, value: now }];
+  const addedPlain = plainText(element);
+  const seed = elementText(before ?? null);
+  const checks: Suggestion[] = [];
+  if (seedPlain.length >= MIN_FIELD_CHARS && now.includes(seedPlain))
+    checks.push({
+      kind: "text_contains",
+      file,
+      pointer: at,
+      value: seedPlain,
+    });
+  if (
+    addedPlain.length >= MIN_FIELD_CHARS &&
+    now.includes(addedPlain) &&
+    !seed.includes(addedPlain)
+  )
+    checks.push({
+      kind: "text_contains",
+      file,
+      pointer: at,
+      value: addedPlain,
+    });
+  return checks.slice(0, MAX_FIELD_CHECKS);
 };
 
 /**
