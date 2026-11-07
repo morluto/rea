@@ -3,6 +3,8 @@ import type {
   DesktopStateChange,
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { isLockName } from "./runtimeFiles.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 
 /** Why a path is, or is not, treated as the application's state. */
 export type DesktopStateReason =
@@ -112,9 +114,38 @@ export interface DesktopRoleFacts {
   readonly stateDirectories: readonly string[];
   readonly stateTails: readonly string[];
   readonly selectedRoots: readonly string[];
+  /** Every selected path as named and as walked, innermost walked path first. */
+  readonly selections: readonly {
+    readonly path: string;
+    readonly physical: string;
+  }[];
   readonly titles: readonly string[];
   readonly openedFiles: ReadonlySet<string>;
+  /** SQLite `-wal` and `-journal` files added beside a selected database. */
+  readonly sqliteSidecars?: ReadonlySet<string>;
 }
+
+/**
+ * Content roots that are the `-wal` or `-journal` of another root, not
+ * selections of their own. A folder the caller selected is not one of those
+ * logs, even when its name ends in `-wal` or `-journal`.
+ */
+export const sqliteSidecarRoots = (
+  roots: readonly string[],
+  directories: ReadonlySet<string> = new Set(),
+): ReadonlySet<string> => {
+  const present = new Set(roots);
+  return new Set(
+    roots.filter(
+      (root) =>
+        !directories.has(root) &&
+        SQLITE_SIDECARS.some(
+          ({ suffix }) =>
+            root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
+        ),
+    ),
+  );
+};
 
 /** Compute the shared role facts once per capture. */
 export const roleFacts = (
@@ -129,17 +160,28 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
+  const directories = new Set(
+    (state.selected_paths ?? []).flatMap((entry) =>
+      entry.kind === "directory" ? [entry.path, entry.physical] : [],
+    ),
+  );
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, directories);
   return {
     home: host.home,
     stateDirectories,
     stateTails,
+    sqliteSidecars,
     selectedRoots: state.content_roots.filter((root) => {
       const relative = homePath(root, host.home);
       return (
+        !sqliteSidecars.has(root) &&
         !stateDirectories.includes(root) &&
         (relative === null || !stateTails.includes(relative))
       );
     }),
+    selections: [...(state.selected_paths ?? [])].sort(
+      (left, right) => right.physical.length - left.physical.length,
+    ),
     titles: session.windows
       .filter((window) => window.application)
       .flatMap((window) => window.titles),
@@ -212,13 +254,42 @@ export const stateReasons = (
 };
 
 /**
+ * A path's home-relative spelling as the caller selected it: the name given
+ * to the innermost selected path holding it, directly or through a link, so
+ * a file in `~/settings/MuseScore` selected as `~/.config/MuseScore` lies
+ * under `.config/MuseScore`, while a score selected itself keeps its own
+ * name; otherwise its own.
+ */
+export const selectedHomePath = (
+  facts: DesktopRoleFacts,
+  path: string,
+): string | null => {
+  const selection = facts.selections.find(({ physical }) =>
+    isWithinAny(path, [physical]),
+  );
+  return (
+    (selection === undefined
+      ? null
+      : homePath(
+          `${selection.path}${path.slice(selection.physical.length)}`,
+          facts.home,
+        )) ?? homePath(path, facts.home)
+  );
+};
+
+/**
  * The role that follows from a path's reasons, strongest first. A file in the
  * desktop Trash is shared whatever else names it, since the user deleted it.
  * A file the application holds open is a document when a title or the caller
- * names it.
+ * names it. A file the caller selects under a hidden folder of the home, such
+ * as `~/.config/app`, or a dotfile there, is the application's own state, as
+ * is a lock the app holds, such as LibreOffice's `.~lock.<name>#` beside a
+ * document; `selectedAs` is its home path as selected, before links are
+ * resolved.
  */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
+  selectedAs: string | null = null,
 ): DesktopStateRole => {
   if (reasons.includes("desktop_trash")) return "shared_desktop";
   const shared = reasons.includes("desktop_service");
@@ -227,11 +298,12 @@ export const stateRole = (
     (reasons.includes("state_directory") && !shared)
   )
     return "application_state";
-  if (
-    reasons.includes("named_in_window_title") ||
-    reasons.includes("selected_path")
-  )
-    return "document";
+  if (reasons.includes("named_in_window_title")) return "document";
+  if (reasons.includes("selected_path"))
+    return selectedAs !== null &&
+      (selectedAs.startsWith(".") || isLockName(selectedAs))
+      ? "application_state"
+      : "document";
   if (reasons.includes("opened_by_application") && !shared)
     return "application_state";
   if (shared) return "shared_desktop";

@@ -26,6 +26,7 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
       tags: ["a", "b"],
       "a/b": { "~k": null },
       scale: "1.2500",
+      shaped: { name: "Cell", attributes: {}, children: ["437.8"] },
     },
   },
   ".config/notes/app.ini": {
@@ -188,6 +189,29 @@ export const CHECK_VIEWS: Readonly<Record<string, TaskFileView>> = {
           element("q", {}, [element("r", {}, ["x"]), "y"]),
           "z",
         ]),
+      ]),
+      truncated: false,
+    },
+  },
+  "Documents/cut-number.xml": {
+    format: "xml",
+    view: {
+      root: element("Cell", {}, ["437.", "8"]),
+      truncated: true,
+    },
+  },
+  "Documents/budget.xml": {
+    format: "xml",
+    view: {
+      root: element("Cells", {}, [
+        element("Cell", { Row: "2", Col: "3" }, ["437.80000000000001"]),
+        element("Cell", { Row: "2", Col: "2" }, ["398.2"]),
+        element("Cell", { Row: "3", Col: "3" }, ["174.9"]),
+        element("Cell", { Row: "5", Col: "3" }, [
+          "437.",
+          element("span", {}, ["80"]),
+        ]),
+        element("Cell", { Row: "6", Col: "3" }, ["four hundred"]),
       ]),
       truncated: false,
     },
@@ -511,6 +535,100 @@ const TOLERANCE_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] =
       },
       false,
     ],
+    // A cell's text by two attributes together, in either order, as drafts name cells.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3][@Row=2]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]/children/0",
+        value: 437.9,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Col=3]/children/0",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // The cell element, so a split run and an equivalent decimal are the same number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=2][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      true,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=5][@Col=3]",
+        value: 437.89,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/budget.xml",
+        pointer: "/root/children/[name=Cell][@Row=6][@Col=3]",
+        value: 400,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A cut view dropped the text between 437. and 8. The joined numeral is not the file's number.
+    [
+      {
+        kind: "value_equals",
+        file: "Documents/cut-number.xml",
+        pointer: "/root",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
+    // A JSON object shaped like an element is not a cell's text.
+    [
+      {
+        kind: "value_equals",
+        file: settings,
+        pointer: "/shaped",
+        value: 437.8,
+        tolerance: 0.001,
+      },
+      false,
+    ],
   ];
 
 const meeting = "Documents/meeting.xml";
@@ -814,8 +932,6 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   ],
 ];
 
-/** Every kind of check against those views, each with the outcome both evaluators must give. */
-
 /** Failures a cut view may have caused, which both evaluators fail alike and REA marks undecided. */
 const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
   [{ kind: "lines_present", file: "Documents/long.txt", lines: ["z"] }, false],
@@ -838,8 +954,45 @@ const CUT_VIEW_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "gone",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root",
+      value: "kept",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/5",
+      value: "x",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/many.zip",
+      pointer: "/entries/1100/view/root",
+      value: "x",
+    },
+    false,
+  ],
 ];
 
+/** Every kind of check against those views, each with the outcome both evaluators must give. */
 export const CHECK_CASES: readonly (readonly [
   DesktopTaskCheckInput,
   boolean,

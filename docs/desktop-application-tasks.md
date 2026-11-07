@@ -42,9 +42,31 @@ operation `describe_desktop_application_task` and predicate type
   database is compared by its rows, since its hash leaves out the `-wal`
   file. Text changes list each line
   once and add `line_counts`, the lines found at both ends whose number of
-  occurrences changed. Views appear only for the files the suggestions cover,
-  with arrays past 200 items and strings past 2,000 characters cut
+  occurrences changed. An XML file's change names its members by the
+  [selectors](#pointers-and-selectors) checks use, as an archive's already
+  does, and by position only where nothing names a member or where only the
+  members' order changed. Views appear only for the files the suggestions
+  cover, with arrays past 200 items and strings past 2,000 characters cut
   (`view_cut`).
+- `values`, in each of those files: the values its change added, changed and
+  removed, each with the `pointer` a check names it by, its `kind` (`added`,
+  `changed` or `removed`), and `before` and `after`: the scalar, an element as
+  compact XML with the text the XML reader kept, spaces between runs included,
+  or a JSON value as compact JSON, cut at 600 characters, and null at the end
+  that lacks it. A file created or deleted lists what its one end holds,
+  `added` or `removed`: an archive's entries, an XML file's root element, a
+  JSON file's members or a key file's keys, each whole once. A value only
+  position reaches has `note: "by_position"`, and its pointer cannot go into a
+  check; noise an app writes as it saves has `view_state`, `renumbered`,
+  `volatile`, `timestamp` or `upkeep` (see `task`). `refers_to` names up to
+  three other elements a value equals the `key` or `id` of, with the
+  `attribute` holding it, as HomeBank's `category="44"` names
+  `<cat key="44" name="Groceries"/>`; where several elements share that key,
+  the one whose tag shares the attribute's stem, as `payee` and `<pay>`. What a check can
+  name comes first, then what only position reaches, then noise. A file lists
+  at most 20 values and 8 KB, the draft 24 KB, and `values_cut` says when a
+  limit left some out. Values cover XML, archives, JSON and key files; a text
+  or SQLite file's change and suggestions already carry its lines and rows.
 - `task`: a draft with the name `change`, a placeholder prompt the export
   refuses, and suggested checks derived from the net change of the files with
   role `document`, or of the app's own state files when no document changed.
@@ -56,21 +78,153 @@ operation `describe_desktop_application_task` and predicate type
   and the JSON, key file and XML views of a zip archive's entries, gain checks
   by [selectors](#pointers-and-selectors) and never through an element by
   position: in XML, first [`text_equals`](#whole-text) for each element whose
-  text changed, then an element added whole that it exists, one removed whole
-  that it is absent, then values changed, added and removed, an entry or a
-  JSON value added whole through its members, and an empty array or object as
-  it is. The text check names the paragraph rather than a run inside it: it
-  goes up from an element sitting in its parent's text, and from one named by
-  its tag or position alone to the nearest ancestor named by an attribute, as
-  AbiWord's `p` by its `xid`; the text nodes and runs inside it get no other
-  check, but an element holding no text that is added or removed there, such
-  as an image or a line break, keeps its own, since the text check never
-  reads it. Whitespace an app lays out between elements is not checked, and
-  values that look like a time the app stamps, in ISO 8601 or as C's
-  `asctime` writes it (`Thu Nov  5 09:20:31 2026`), are left out.
+  text changed, then elements added or removed whole, then values changed,
+  added and removed, an entry or a JSON value added whole through its
+  members, and an empty array or object as it is.
+  - A selector names a member by its tag, then by its identifiers (`name`,
+    `id`, `xid`, `xml:id`), then by one other attribute, a name-like key such
+    as Scribus's `ANNAME` or `inkscape:label`, a worded value or an integer of
+    up to five digits first, then by two such attributes together, as
+    Gnumeric's cells by `[@Col=3][@Row=2]`, and last by a coordinate, a long
+    number or a token, such as `XPOS` or `ItemID`, or an attribute naming
+    view state, such as which layer is `selected`. A pair counts every
+    member holding both its values, whichever attributes that member ranks
+    first. An element with identifiers is named by those alone. The selector
+    must name the member alone at both ends, with the same values. An
+    element whose one identifier changed, at its place among its tag's
+    members, with every other attribute and its children alike, is that
+    element renamed, as a MyPaint layer renamed from `Untitled` to `Sun`: it
+    is named by its first other attribute naming it alone at both ends, as
+    `[@src=data/layer-00.png]`, so the rename reads as its `name` changed,
+    and the old name gets a check that it names nothing, unless its change
+    is noise, as an id the app renumbered.
+    An identifier the app numbers by position names nothing: where the
+    members of a tag hold it as 1..N (or 0..N-1) in document order at both
+    ends, members were inserted or removed, and every member another
+    attribute names alone at both ends kept its number or moved it the way
+    the count did, one at least, as Planner's task `id` after a task is
+    inserted, members are paired by their other attributes, so an insertion
+    reads as one task added. A value two members swap, or an id appended at
+    the end, as Tellico's next `<entry id="4">`, leaves the ids identity.
+  - The text check names the paragraph rather than a run inside it: it goes up
+    from an element sitting in its parent's text, and from one named by its
+    tag or position alone to the nearest ancestor named by an attribute, as
+    AbiWord's `p` by its `xid`; where no attribute names one, to the nearest
+    ancestor within three levels its tag names with no step by position, as
+    MuseScore's `VBox` around untitled `<Text>` elements; and where only
+    position reaches the element, to the ancestor above the outermost step by
+    position, by an attribute of its own that names it alone where one does,
+    as an ODS sheet's `table:table[@table:name=Q1 Sales]` above its rows. The
+    text nodes and runs inside it get no other check, but an element holding
+    no text that is added or removed there, such as an image or a line break,
+    keeps its own, since the text check never reads it. A decimal that is an
+    element's only text, such as a spreadsheet cell's, is checked by its
+    number instead. Text that grew by whole lines and kept the rest, as a note
+    gaining `olive oil` on a line of its own, gets a `text_contains` of the
+    added lines instead, so a correct edit with a blank line after it or the
+    line elsewhere still passes, and guards that the kept text is still there;
+    text replaced, or grown inside a line, keeps `text_equals`. A record added
+    or removed whole, an element holding only elements, its fields, such as
+    Tellico's `<entry>` or a record of repeated `<field>` elements, never
+    makes the list holding records of its kind a check, whose text would hold
+    the records the edit left alone, except a record removed whole that only
+    position names, whose absence only the list's text shows. Text made of
+    runs is no record: an element whose tag names a paragraph or a piece of
+    text (`p`, Writer's `text:p` and `text:h`, `h1` to `h6`, `li`, `para`,
+    SVG's `text` and `tspan`, a `span` or an `a`), or whose runs split a
+    sentence at a space, as `Meet ` and a linked `Monday`. Nor does an
+    element holding a date the app stamps in parts take a text check.
+  - An element added to a list, where another element of its tag is at either
+    end, gets a `value_equals` for each of its attributes, best ranked first,
+    at most six, leaving out its selector's attributes, identifiers, times,
+    volatile values and view state, as HomeBank's new `<ope>` gets its
+    `amount`, `category` and `payee`. An element whose other attributes, two
+    or more, a like sibling holds every one of, as a new Planner task copies
+    its neighbour's defaults, and any other element added whole, get a check
+    that it exists. A record added to a list that a selector names, as
+    Tellico's `<entry id="4">`, gets a `text_equals` for each field, at most
+    five, each by its selector among the record's fields, as `[name=title]`,
+    leaving out a field repeating the record's identifier, a date the app
+    stamps in parts, and blank text or times. A record only position names,
+    such as Osmo's `<record>` of fields, also gets a `text_contains` for each
+    new field of three or more characters, at most five, at the nearest
+    ancestor a check can name, each absent from that ancestor's text at the
+    seed.
+  - A decimal written as text, such as `146.83`, is suggested as a number
+    with `tolerance: 0.001`, unless the seed's value is that close too.
+  - Noise leaves the suggestions when the file's change holds anything
+    else, a change only position reaches included: view state, which a tag
+    or attribute on the way names (the cursor, a selection, scrolling, zoom,
+    the viewport, windows, splitters, Inkscape's `namedview`, view and
+    configuration settings, the printer, a save's history, edit time,
+    editing duration and cycles, last-saved time, the generator and
+    document statistics), or the value of a name-like attribute or `key` on
+    the way, when it is one token of several words, as LibreOffice's
+    `config:config-item[@config:name=CursorPositionX]` inside
+    `[@config:name=ooo:view-settings]`; an attribute ending in `ID` or `Id`,
+    or an `rsid`, that the app renumbered, with everything else in its
+    element, as Gnumeric empties a formula cell whose shared expression it
+    renumbers, and an identifier the app numbers by position; volatile
+    values, UUIDs and epoch times, and durations and counts under a
+    document's metadata; times the app stamps, also as a date written in
+    parts whose tag, or one it sits in, names when the app made, changed or
+    saved something, as Tellico's `<cdate>` of `<year>`, `<month>` and
+    `<day>` (`cdate`, `mdate`, `created`, `modified`, `saved`, `updated`),
+    which no check ever reads, while a date a user enters in parts, as a
+    birthday, is an edit like any other; and `upkeep`, attributes the
+    elements of one archive entry only gained while another entry holds the
+    edit, as LibreOffice fills in `styles.xml` on save. However much noise
+    comes first, it never takes a check's place. When the change holds
+    nothing else, the checks stay and a note flags them: up to three in a
+    document, and as many as fit in the app's own state, where a view
+    setting may be the task.
+  - Whitespace an app lays out between elements is not checked, and values
+    that look like a time the app stamps, in ISO 8601, as C's `asctime`
+    writes it (`Thu Nov  5 09:20:31 2026`) or as a time of day to the
+    second (`05:16:21.675302540`), are left out; noise never makes its
+    ancestor's whole text a check.
+- `guards`: checks an author may add to show the edit left the rest alone,
+  kept out of `task.checks`, with ids `guard-1` and on: for each suggested
+  `value_equals` or `text_equals` on a member of a list, a field on up to
+  two like siblings, nearest first, at its seed value, which the end holds
+  too: the check's own field where like siblings hold different values in
+  it, and otherwise one that varies among them, as Planner's `work` rather
+  than the `type="normal"` every task shares; never through a sibling only
+  position or a renumbered id pairs. Text that grew by lines gets a
+  `text_contains` of what it kept, and a text file a `lines_present` of the
+  unchanged list items beside its first new line with the same marker, as
+  Zim's other `[ ]` action items, or else its nearest lines with words in
+  them. At most four a file. They pass on the seed, which the export allows,
+  since one check failing there is enough.
+- `notes`: why `files` is empty, or why a file's suggestions are thin. Each
+  note has a `code` and a `message`. For a draft with no files: `no_change`
+  when no file under the home changed between the two checkpoints and nor
+  did the application's dconf keys; `unowned_changes` when files changed but
+  none under the owned paths, with up to five of them in `files`, each with
+  its home path and role (desktop services' files last), and how many more
+  in `more`; `uncheckable_changes` when the application's keys in a dconf
+  database changed, with the database in `files`: no check reads dconf, and
+  the export only writes the keys as they were at the seed checkpoint, so
+  make the task's change one the app saves in a file; `unreadable_changes`
+  when a dconf database changed but REA could not read it, with the read
+  failure in `error` (install `dconf-cli` or set `REA_DCONF_COMMAND` when it
+  is missing), since whose keys changed is then unknown; and `no_document`
+  when no file has the document role, as when no window title shows the
+  file's name. A capture again with `--state-path` naming the file, or
+  `state_paths` on a build computer's `start_build_capture`, makes it the
+  app's. For a drafted file, named in `file`: `by_position` when
+  changes reach their element only by position, the tags no attribute names
+  alone in `elements`, or when only the elements' order changed;
+  `view_state_only` when every change is noise, the checks kept in
+  `pointers`; `long_text` when an element's text changed past the 2,000
+  characters a text check compares, the elements in `pointers`; `cut_view`
+  when the views hold only part of the file; and `unreadable_view` when no
+  check can read it, as a compressed document REA reads as binary.
 
 The suggestions are a starting point. Keep the ones that say what the user
-did; drop the ones that only follow from how the app saves its file. A LibreCAD
+did; drop the ones that only follow from how the app saves its file. Read
+`values` for what changed and its pointers, and `refers_to` for what a number
+stands for, before writing the prompt and any check of your own. A LibreCAD
 capture that added four holes to a drawing rewrote it from DXF R12 to DXF 2007,
 so most of its lines changed; the draft suggests counts of `SECTION`, `ENDSEC`
 and `CIRCLE`, and only `CIRCLE` going from 5 to 9 is the user's change.
@@ -141,7 +295,10 @@ The rules both evaluators follow:
 - A check decided by what a view leaves out (`lines_absent`, `value_absent`,
   `row_absent`, the counts, `value_equals` of a whole object or array, and
   the text checks of an element) fails when that view is truncated; a check
-  satisfied by what the view holds is decided on it.
+  satisfied by what the view holds is decided on it. An element's text is not:
+  the reader may have dropped text from between the runs it kept, so
+  `text_contains` fails on a truncated view even where the kept runs hold its
+  value. A text node or attribute value is whole, and decided.
 
 The export refuses, naming the check, a file outside the owned paths, a file
 spelled with a leading slash, `.` or `..`, a pointer into a file that is text
@@ -319,7 +476,10 @@ The bundle then holds, besides the app and `tasks/smoke.json`:
 
 The verifier finds the app among the computer's child environments, calls its
 `data/get` under the run's grant of the computer's control token, and reads
-the `state` data part. It raises when the app cannot be reached, so the run
+the `state` data part. It reads again until the app's files settle, as
+[grading once the app has saved](desktop-application-export.md#grading-once-the-app-has-saved)
+describes, and each result's `settled` says whether they did, and `read_cut`
+whether the bound cut a read still running. It raises when the app cannot be reached, so the run
 fails rather than scoring the agent. The README lists the task, its prompt, its
 checks and the recipe below.
 

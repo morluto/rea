@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
@@ -221,9 +222,27 @@ def _lines(check, entry):
     return _compared(check, n, f"line(s) of {file} match {_shown(check['exact'])}")
 
 
-def _near(at: str, found, expected, tolerance):
-    """A value compared within a tolerance: numbers, and numeral strings, by their difference."""
-    number = _number(found)
+def _xml_text(entry, view, pointer: str, found) -> bool:
+    """Whether found is an XML element whose joined text is the number: an XML file, or an XML entry of a zip.
+    A JSON object with the same shape is the value itself."""
+    if not _is_element(found) or entry is None:
+        return False
+    form = entry.get("format")
+    if form == "xml":
+        return True
+    if form != "zip":
+        return False
+    parts = pointer[1:].split("/")
+    if len(parts) < 2 or parts[0] != "entries":
+        return False
+    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    return kind == "value" and isinstance(item, dict) and item.get("format") == "xml"
+
+
+def _near(at: str, found, expected, tolerance, join: bool):
+    """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
+    joined only when join says the view is XML."""
+    number = _number(_element_text(found) if join else found)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
@@ -255,7 +274,11 @@ def _value(check, entry):
             return False, f"{at} has no value" if found is None else f"{at}: {found}"
         expected = check["value"]
         if check.get("tolerance") is not None and isinstance(expected, (int, float)) and not isinstance(expected, bool):
-            return _near(at, found, expected, check["tolerance"])
+            # A cut element's kept runs can join into a number the file never held.
+            join = _xml_text(entry, view, check["pointer"], found)
+            if join and truncated:
+                return _undecided(check)
+            return _near(at, found, expected, check["tolerance"], join)
         if _same(found, check["value"]):
             return True, f"{at} is {_shown(check['value'])}"
         return False, f"{at} is {_shown(found)}, not {_shown(check['value'])}"
@@ -339,11 +362,11 @@ def _whole_text(check, entry):
         truncated = _zip_leaves_out(view, check["pointer"])
     if kind == "none":
         if truncated:
-            return _undecided(check)
+            return False, f"the view of {check['file']} is truncated, so what it leaves out is unknown ({check['pointer']})"
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
         return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
-    # A text node is whole; an element's text is whole only if its view left nothing out.
+    # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
     if not isinstance(found, str) and truncated:
         return _undecided(check)
     return _compared_text(check, at, _element_text(found))
@@ -433,16 +456,101 @@ export const pythonLiteral = (value: JsonValue): string => {
     .join(", ")}}`;
 };
 
-/** The verifier artifact: read the app's state through its data/get, then evaluate the task's checks. */
+/** Seconds, as the verifier's constants spell them. */
+const pythonSeconds = (ms: number): string =>
+  Number.isInteger(ms / 1000) ? `${String(ms / 1000)}.0` : String(ms / 1000);
+
+/** The verifier's reads of the app until its files settle, as `settledAppData` reads them for the witness. */
+const PYTHON_SETTLE = String.raw`
+
+def _files(answer) -> list:
+    """Each file data/get returned, by its home path or its place among the parts, with the SHA-256 of its bytes as
+    sent: what changes when the app saves."""
+    files = []
+    for index, part in enumerate(answer.parts):
+        if part.kind != "file":
+            continue
+        marker = (getattr(part, "metadata", None) or {}).get(DATA_OBJECTS)
+        path = marker.get("path") if isinstance(marker, dict) else None
+        content = getattr(part.file, "bytes", None) or getattr(part.file, "uri", None) or ""
+        files.append((path if isinstance(path, str) else f"#{index}", hashlib.sha256(content.encode()).hexdigest()))
+    return sorted(files)
+
+
+async def _read(url):
+    answer = await protocol.get_data(url, timeout=120)
+    states = [part.data["state"] for part in answer.parts
+              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
+    if not states:
+        raise RuntimeError(f"the {APP} app's data/get returned no state views")
+    return states[0], _files(answer)
+
+
+async def _settled_views(url):
+    """The app's views once each file's bytes have held for SETTLE_WINDOW_S, counted from the read that returned them,
+    read every SETTLE_INTERVAL_S; else the last completed read's. No read starts SETTLE_BOUND_S or more after the first
+    began, and one still running then is cut. Also whether the files had held, and whether a read was cut."""
+    start = time.monotonic()
+    # The first read is the one a grade needs, so only its own timeout bounds it.
+    views, files = await _read(url)
+    # Offsets from the first read's start: when the last completed read began, and when a read first returned the
+    # bytes it holds.
+    began, since = 0.0, time.monotonic() - start
+    while began - since < SETTLE_WINDOW_S:
+        # Reads come an interval apart, and the one that can settle the files as soon as the window allows.
+        at = max(min(began + SETTLE_INTERVAL_S, since + SETTLE_WINDOW_S), time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        await asyncio.sleep(max(0.0, at - (time.monotonic() - start)))
+        at = max(at, time.monotonic() - start)
+        if at >= SETTLE_BOUND_S:
+            return views, False, False
+        try:
+            latest_views, latest = await asyncio.wait_for(_read(url), SETTLE_BOUND_S - at)
+        except asyncio.TimeoutError:
+            return views, False, True
+        began, views = at, latest_views
+        if latest != files:
+            since, files = time.monotonic() - start, latest
+    return views, True, False
+`;
+
+/** Where the verifier's evaluator begins. The task description is everything before it. */
+const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
+
+/**
+ * The task a verifier states: the app, the checks and the settle timing,
+ * without the evaluator that runs them. An older REA renders that evaluator
+ * differently, including its array-index helper, for the same task.
+ */
+export const taskVerifierDescription = (source: string): string | undefined => {
+  const at = source.indexOf(VERIFIER_EVALUATOR);
+  return at < 0 ? undefined : source.slice(0, at + 1);
+};
+
+/** Whether two verifiers state the same task. Their evaluator source may differ. */
+export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
+  const expected = taskVerifierDescription(hosted);
+  const found = taskVerifierDescription(bundled);
+  return expected !== undefined && expected === found;
+};
+
+/** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
 export const renderTaskVerifier = (task: DesktopTask, app: string): string =>
   `"""Checks of the task ${task.name} against the ${app} app's state, exported by REA from a desktop application capture.
 
 It reads the app's data/get through the computer, takes the typed views of its files and evaluates each check: no
-model, no code from the task. A failure to reach the app raises, so the run fails rather than scoring the agent.
+model, no code from the task. It grades once the app's files settle, since an app can save a few seconds after the
+last change: each result's settled says whether they had held for SETTLE_WINDOW_S, or had not by SETTLE_BOUND_S and
+the last completed read was graded, and read_cut whether a read still running at SETTLE_BOUND_S was cut. A failure to
+reach the app raises, so the run fails rather than scoring the agent.
 """
+import asyncio
+import hashlib
 import json
 import math
 import re
+import time
 
 from agentenv_protocol import client as protocol
 from agentenv_protocol.types import RPC_PATH
@@ -451,19 +559,24 @@ APP = ${JSON.stringify(app)}
 CHECKS = [
 ${task.checks.map((check) => `    ${pythonLiteral(check as unknown as JsonValue)},`).join("\n")}
 ]
-${PYTHON_TASK_EVALUATOR}
+#: The app's data/get is read this often until its files settle.
+SETTLE_INTERVAL_S = ${pythonSeconds(SETTLE_TIMING.intervalMs)}
+#: How long each file's bytes must hold, from the read that returned them, before the views are graded.
+SETTLE_WINDOW_S = ${pythonSeconds(SETTLE_TIMING.windowMs)}
+#: After the first read began: no read starts then or later, one still running is cut, and the last completed read is
+#: graded though the files are still changing.
+SETTLE_BOUND_S = ${pythonSeconds(SETTLE_TIMING.boundMs)}
+#: Where a data/get file part names its path in the home.
+DATA_OBJECTS = "urn:agentenv:data-objects/v1"
+${PYTHON_TASK_EVALUATOR}${PYTHON_SETTLE}
 
 async def verify(mcp_url, env_url):
     card = await protocol.get_card(env_url)
     child = protocol.find_child(card, APP)
     if child is None:
         raise RuntimeError(f"the computer at {env_url} lists no app named {APP}")
-    answer = await protocol.get_data(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH), timeout=120)
-    states = [part.data["state"] for part in answer.parts
-              if part.kind == "data" and isinstance(part.data.get("state"), dict)]
-    if not states:
-        raise RuntimeError(f"the {APP} app's data/get returned no state views")
-    return evaluate(CHECKS, states[0])
+    views, settled, read_cut = await _settled_views(env_url + (child.get("url") or RPC_PATH).removesuffix(RPC_PATH))
+    return [{**result, "settled": settled, "read_cut": read_cut} for result in evaluate(CHECKS, views)]
 `;
 
 /** The artifact folder of a task's verifier. */
