@@ -215,6 +215,35 @@ describe("draftTaskFiles for a new JSON record named by a field inside it", () =
     );
   });
 
+  it("checks a record inserted before another in a top-level array by a field the seed's record at its place does not hold", () => {
+    const node = (
+      uid: string,
+      format: string,
+      data: Record<string, string>,
+    ) => ({
+      children: [],
+      data,
+      format,
+      uid,
+    });
+    const book = node("1a11808dd9f511f181b7edd4f1920549", "BOOK", {
+      Title: "Same",
+    });
+    const category = node("fc11808dd9f511f181b7edd4f1920549", "CATEGORY", {
+      NAME: "History",
+    });
+    const copy = node("8a11808dd9f511f181b7edd4f1920549", "BOOK", {
+      Title: "Same",
+    });
+    const seed = [book, category] as unknown as JsonValue;
+    const end = [book, copy, category] as unknown as JsonValue;
+    const file = drafted(seed, end);
+
+    expect(file.suggested.map(pointerOf)).toEqual(["/1/data/Title"]);
+    expect(passing(seed, file.suggested)).toEqual([false]);
+    expect(passing(end, file.suggested)).toEqual([true]);
+  });
+
   it("checks a record added to a top-level array that repeats its like records' fields, since no count reaches that array", () => {
     const note = (uid: string) => ({ data: { Title: "Same" }, uid });
     const seed = [note("812403bed9f511f19fc4edd4f1920549")] as JsonValue;

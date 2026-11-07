@@ -296,7 +296,11 @@ const valueSuggestions = (
     if (record === undefined) edits.push(check);
     else defaults.push({ record, check });
   }
-  const listed = withRecordFallbacks(edits, defaults);
+  // A fallback the seed already passes, as a place another record held, checks nothing.
+  const listed = withRecordFallbacks(
+    decisive(edits, ends),
+    defaults.filter(({ check }) => decisive([check], ends).length > 0),
+  );
   for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")
