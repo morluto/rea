@@ -43,6 +43,7 @@ describe("release configuration", () => {
               type: "generic",
               path,
             })),
+            { type: "generic", path: "docker/Dockerfile" },
             {
               type: "generic",
               path: "src/generatedPackageMetadata.ts",
@@ -116,6 +117,19 @@ describe("release configuration", () => {
         );
     },
   );
+
+  it("marks the versioned package install in docker/Dockerfile", async () => {
+    const content = await readFile("docker/Dockerfile", "utf8");
+    const packageJson = (await readJson("package.json")) as {
+      version: string;
+    };
+    const versionBlock =
+      /# x-release-please-start-version\n[\s\S]*?# x-release-please-end/u.exec(
+        content,
+      )?.[0];
+
+    expect(versionBlock).toContain(`rea-agents@${packageJson.version}`);
+  });
 
   it("keeps the release baseline, lockfile, and changelog aligned with the package version", async () => {
     const packageJson = (await readJson("package.json")) as {

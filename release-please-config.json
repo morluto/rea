@@ -18,6 +18,7 @@
       "package-name": "rea-agents",
       "extra-files": [
         { "type": "generic", "path": "docs/installation.md" },
+        { "type": "generic", "path": "docker/Dockerfile" },
         {
           "type": "generic",
           "path": "src/generatedPackageMetadata.ts"
