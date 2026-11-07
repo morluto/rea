@@ -14,6 +14,7 @@ export const PYTHON_READY_CHECK = `
 export const PYTHON_IMPORTS = `from __future__ import annotations
 
 from array import array
+from builtins import EOFError, Exception, NotImplementedError, OSError, RecursionError, UnicodeDecodeError, ValueError
 import contextlib
 import copy
 import hashlib
