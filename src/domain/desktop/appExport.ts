@@ -261,8 +261,9 @@ export const stateFilesByHomePath = (
 /**
  * The state view's files and dconf databases by home path, the paths the app
  * owns, and which home files the seed leaves out as locks the app holds, as
- * the export decides them. A document, a path the caller selected or a file
- * under one is never left out, whatever its name.
+ * the export decides them. A document or a file under a selected path is
+ * seeded, except a lock beside its file, which stays out unless that lock
+ * was the selected path.
  */
 export const exportedStateFiles = (
   capture: DesktopApplicationCapture,
@@ -281,11 +282,9 @@ export const exportedStateFiles = (
     ...capture.application.state_directories.map((entry) => entry.path),
     ...(capture.state.state_directories ?? []),
   ]);
-  const usersOwn = [
-    ...withRole("document"),
-    ...homePaths(roleFacts(capture).selectedRoots),
-  ];
-  const leftOut = leftOutFiles(files, stateDirectories, usersOwn);
+  const selected = homePaths(roleFacts(capture).selectedRoots);
+  const usersOwn = [...withRole("document"), ...selected];
+  const leftOut = leftOutFiles(files, stateDirectories, usersOwn, selected);
   // A lock or log directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the log stay seeded.
   const marksFolder = (home: string) => {
     const folder = home.split("/").slice(0, -1).join("/");

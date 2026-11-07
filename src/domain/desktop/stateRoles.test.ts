@@ -64,16 +64,18 @@ describe("stateRole", () => {
     expect(stateRole(["selected_path"], "Documents/lockfile")).toBe(
       "application_state",
     );
+    // A sibling-lock name stays a document. A lone notes.lck is opened; one
+    // beside its file is left out of the seed by isLockFile.
     expect(stateRole(["selected_path"], "Documents/.household.gsb.lock")).toBe(
-      "application_state",
+      "document",
     );
     expect(stateRole(["selected_path"], "Documents/plan.vym.lock")).toBe(
-      "application_state",
+      "document",
     );
     expect(
       stateRole(["selected_path"], "Documents/household.gnucash.LCK"),
-    ).toBe("application_state");
-    expect(stateRole(["selected_path"], "Documents/Gemfile.lock")).toBe(
+    ).toBe("document");
+    expect(stateRole(["selected_path"], "Documents/notes.lck")).toBe(
       "document",
     );
     expect(
