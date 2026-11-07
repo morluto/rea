@@ -296,26 +296,30 @@ it("returns a draft note's read error when only a dconf database REA cannot read
   ]);
 });
 
-it("refuses a task too large for one command argument before the export runs in the computer", async () => {
+it("exports a task larger than the old 96 KiB refusal and keeps its prompt", async () => {
   const { rea, client } = await fakes();
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
   for (const name of ["seed", "end"])
     await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
   await callOk(client, "stop_build_capture", { computer_id: id });
-  const { error } = parseMcpToolError(
-    await client.callTool({
-      name: "export_build_environment",
-      arguments: {
+  const task = {
+    ...TASK,
+    prompt: `X${"Add eggs. ".repeat(10 * 1024)}Y`,
+  };
+  const exported = toolContract("export_build_environment").outputSchema.parse(
+    (
+      await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) },
+        task,
         directory: join(await createTestTempDirectory("build-out-"), "b"),
-      },
-    }),
+      })
+    ).structuredContent,
   );
-  expect(error.code).toBe("invalid_request");
+  expect(exported.task).toMatchObject({ name: task.name });
+  expect(await rea.notes("tasks.jsonl")).toEqual([task]);
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+  expect(calls.map(({ argv }) => argv[0])).toContain(
     "export-desktop-application",
   );
 });
