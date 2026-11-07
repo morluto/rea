@@ -8,7 +8,7 @@ that whole-task cost.
 
 REA source baseline: `ec3410998b70290847f930538e57d0af0ac1bffb`. Loading driver:
 `5038280f9`; completed-task/default-smoke driver: `61a364210`. The
-[machine-readable receipts](mcp-catalog-codex-2026-11-05.json) retain exact usage,
+[machine-readable receipts](https://github.com/morluto/rea/blob/main/docs/verification/mcp-catalog-codex-2026-11-05.json) retain exact usage,
 source/runtime hashes, response counts, resource counters, answers, and invalid
 profiles. Full local transcripts remain under the recorded `raw_artifact_root`;
 they are not committed. See the [evaluation procedure](../mcp-catalog-evaluation.md)

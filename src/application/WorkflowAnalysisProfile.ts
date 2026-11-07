@@ -21,10 +21,11 @@ export const workflowAnalysisProfile = (
       : operation === "batch_decompile"
         ? { workflow_revision: 4 }
         : operation === "trace_feature"
-          ? { workflow_revision: 8 }
+          ? { workflow_revision: 9 }
           : operation === "get_call_graph"
             ? { workflow_revision: 3 }
-            : operation === "trace_native_values"
+            : operation === "trace_call_path" ||
+                operation === "trace_native_values"
               ? { workflow_revision: 2 }
               : { workflow_revision: 1 }),
   });

@@ -122,7 +122,6 @@ it("retains completed pyc Evidence and the opaque caller reason on late cancella
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
