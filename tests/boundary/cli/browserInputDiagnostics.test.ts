@@ -20,10 +20,14 @@ const invalidInputs = [
   },
   {
     command: "inspect-web-page",
-    arguments: [browserEndpoint, ""],
+    arguments: [malformedEndpoint, "target"],
     operation: "inspect_web_page",
     error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    issue: {
+      path: ["cdp_endpoint"],
+      reason: "invalid_value",
+      message: "Invalid CDP endpoint URL",
+    },
   },
   {
     command: "analyze-web-bundle",
@@ -38,10 +42,14 @@ const invalidInputs = [
   },
   {
     command: "observe-web-session",
-    arguments: [browserEndpoint, ""],
+    arguments: [malformedEndpoint, "target"],
     operation: "observe_web_session",
     error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    issue: {
+      path: ["cdp_endpoint"],
+      reason: "invalid_value",
+      message: "Invalid CDP endpoint URL",
+    },
   },
   {
     command: "list-javascript-runtime-targets",
@@ -74,10 +82,14 @@ const invalidInputs = [
   },
   {
     command: "capture-web-screenshot",
-    arguments: [browserEndpoint, ""],
+    arguments: [malformedEndpoint, "target"],
     operation: "capture_web_screenshot",
     error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    issue: {
+      path: ["cdp_endpoint"],
+      reason: "invalid_value",
+      message: "Invalid CDP endpoint URL",
+    },
   },
 ] as const;
 
@@ -256,6 +268,44 @@ describe("browser and Inspector CLI input diagnostics", () => {
             code: "invalid_type",
             missing: true,
             expected: "string",
+          },
+        ],
+      });
+    },
+  );
+});
+
+describe("browser selector CLI admission", () => {
+  cliTest.for([
+    ["inspect-web-page", [browserEndpoint, ""], "targetId"],
+    ["analyze-web-bundle", [browserEndpoint, ""], "targetId"],
+    ["observe-web-session", [browserEndpoint, ""], "targetId"],
+    ["discover-webmcp-tools", [browserEndpoint, ""], "targetId"],
+    ["capture-web-screenshot", [browserEndpoint, ""], "targetId"],
+    ["observe-web-execution", [browserEndpoint, ""], "targetId"],
+    ["inspect-web-event-listeners", [browserEndpoint, "", "#main"], "targetId"],
+    [
+      "inspect-web-event-listeners",
+      [browserEndpoint, "target", ""],
+      "selector",
+    ],
+  ] as const)(
+    "%s reports the rejected selector at CLI admission",
+    async ([command, args, field], { cli, workspace }) => {
+      const result = await cli.run({
+        arguments: [command, ...args, "--json"],
+        cwd: workspace.root,
+        environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          {
+            path: field,
+            code: "too_small",
+            missing: false,
+            message: "Too small: expected string to have >=1 characters",
           },
         ],
       });
