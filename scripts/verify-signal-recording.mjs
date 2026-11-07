@@ -17,8 +17,15 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { parseEvidence } from "../dist/domain/evidence.js";
-import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
-import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
+import {
+  closeVerifierResources,
+  withVerifierCleanup,
+} from "./lib/verifier-cleanup.mjs";
+import {
+  assertVerifierCleanupComplete,
+  createVerifierRun,
+  completeVerifierRun,
+} from "./lib/verifier-run.mjs";
 
 if (process.platform !== "linux")
   throw new Error(
@@ -31,6 +38,18 @@ if (!isAbsolute(process.env.REA_SIGROK_COMMAND ?? ""))
 const entrypoint =
   process.argv[2] ?? fileURLToPath(new URL("./rea.mjs", import.meta.url));
 const run = createVerifierRun();
+const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
+  .split("\n")
+  .find((line) => line.startsWith("Max address space "))
+  ?.trim()
+  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
+assert.ok(inheritedAddressSpace);
+const expectedAddressSpace = Math.min(
+  1073741824,
+  ...inheritedAddressSpace
+    .slice(1)
+    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
+);
 const root = await PrivateRuntimeRoot.create({
   prefix: "rea-signal-verifier-",
 });
@@ -43,7 +62,10 @@ const environment = {
   TMP: root.path,
   TEMP: root.path,
 };
-const client = new Client({ name: "signal-recording-verifier", version: "1" });
+let client;
+let transport;
+let verifier;
+let rootRemoved = false;
 // Real sigrok refusals of an unknown decoder ID must name the caller's field.
 const assertRejectedSelector = (
   response,
@@ -61,12 +83,6 @@ const assertRejectedSelector = (
   assert.equal(error.details.captured_output.exit_code, expectedExitCode);
   return error;
 };
-const transport = new StdioClientTransport({
-  command: process.execPath,
-  args: [entrypoint, "mcp"],
-  env: environment,
-  stderr: "pipe",
-});
 // Independently synthesize 9600-baud 8N1 samples at 1 MHz: bytes 52 45 41.
 const lines = [
   "$timescale 1 us $end",
@@ -93,20 +109,14 @@ lines.push(`#${tick + 1000}`, "1!");
 const source = lines.join("\n") + "\n";
 let cases = 0;
 const discoveryMeasurements = [];
-const inheritedAddressSpace = (await readFile("/proc/self/limits", "utf8"))
-  .split("\n")
-  .find((line) => line.startsWith("Max address space "))
-  ?.trim()
-  .match(/^Max address space\s+(\S+)\s+(\S+)\s+bytes$/u);
-assert.ok(inheritedAddressSpace);
-const expectedAddressSpace = Math.min(
-  1073741824,
-  ...inheritedAddressSpace
-    .slice(1)
-    .map((value) => (value === "unlimited" ? Infinity : Number(value))),
-);
-
 await withVerifierCleanup(async () => {
+  client = new Client({ name: "signal-recording-verifier", version: "1" });
+  transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [entrypoint, "mcp"],
+    env: environment,
+    stderr: "pipe",
+  });
   await writeFile(path, source);
   await client.connect(transport);
   const advertised = (await client.listTools()).tools.find(
@@ -437,7 +447,26 @@ await withVerifierCleanup(async () => {
     "paged.vcd",
     "recording with spaces.vcd",
   ]);
-}, [() => client.close(), () => transport.close(), () => root.close()]);
+}, [
+  async () => {
+    // Every owner this run acquired must finish before its root can go. A
+    // refused close or unverified lineage keeps the root and reports why.
+    await closeVerifierResources([
+      () => client?.close(),
+      () => transport?.close(),
+    ]);
+    verifier = await completeVerifierRun(run);
+    assertVerifierCleanupComplete(verifier.process_lineage);
+    await root.close();
+    rootRemoved = true;
+  },
+]).catch((cause) => {
+  if (rootRemoved) throw cause;
+  throw new Error(
+    `Signal recording verification failed; retained fixture root ${root.path} because its cleanup is incomplete.`,
+    { cause },
+  );
+});
 console.log(
   JSON.stringify(
     {
@@ -449,7 +478,7 @@ console.log(
       host: `${process.platform}/${process.arch}`,
       scope:
         "real sigrok UART VCD through compiled CLI/MCP; no physical acquisition",
-      ...(await completeVerifierRun(run)),
+      ...verifier,
     },
     null,
     2,
