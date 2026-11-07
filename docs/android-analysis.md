@@ -13,6 +13,22 @@ On Linux, JADX launches an REA-owned process and requires a procps-compatible
 `ps` on REA's `PATH`; see the shared
 [Linux process prerequisite](installation.md#linux-owned-process-prerequisite).
 
+## First pass on a local APK
+
+For a local APK you have selected, inspect its signing data, then inspect its
+package declarations with the configured JADX engine:
+
+```sh
+rea inspect-apk-signature /absolute/path/app.apk --json
+rea inspect-android-package /absolute/path/app.apk --json
+```
+
+Signature inspection runs in-process. Package inspection requires the existing
+Java and JADX configuration described in [Supply tools](#supply-tools). Read the
+[APK signature guide](apk-signature.md) for scheme coverage, digest checks and
+verification limits. Both commands read the selected APK without running its
+Android code.
+
 ## Optional package delivery
 
 The MCP `inspect_android_package` request keeps complete output when `detail` is
