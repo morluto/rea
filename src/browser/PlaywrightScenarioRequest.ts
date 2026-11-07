@@ -24,6 +24,10 @@ import {
   type BrowserScenarioSaveResponse,
 } from "../domain/browserScenarioValues.js";
 import type { BrowserScenarioSecrets } from "./BrowserScenarioSecrets.js";
+import {
+  observeScenarioRedirect,
+  type ScenarioRedirectResponse,
+} from "./PlaywrightScenarioRedirect.js";
 
 type RequestAction = Extract<BrowserScenarioAction, { action: "request" }>;
 
@@ -293,6 +297,10 @@ export const performScenarioRequest = async (input: {
   readonly startOrigin: string;
   readonly signal?: AbortSignal | undefined;
   readonly onOpaqueRedirect?: (() => void) | undefined;
+  /** Receives the redirect answer Playwright withholds; absent when network events are not captured. */
+  readonly onRedirectResponse?:
+    | ((response: ScenarioRedirectResponse) => void)
+    | undefined;
 }): Promise<void> => {
   const { page, action, secrets, startOrigin, signal } = input;
   const deadline =
@@ -348,11 +356,15 @@ export const performScenarioRequest = async (input: {
   if (action.json !== undefined && !hasContentType)
     appendHeader("content-type", "application/json");
   // A step the boundary abandoned, or whose time ran out while values were read, sends nothing.
-  const remaining = deadline === undefined ? undefined : deadline - Date.now();
-  if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
-    throw new ScenarioRequestError(
-      `Request step ${action.step_id} ran out of time before its request was sent.`,
-    );
+  const requireTimeBeforeSending = (): void => {
+    const remaining =
+      deadline === undefined ? undefined : deadline - Date.now();
+    if (signal?.aborted === true || (remaining !== undefined && remaining <= 0))
+      throw new ScenarioRequestError(
+        `Request step ${action.step_id} ran out of time before its request was sent.`,
+      );
+  };
+  requireTimeBeforeSending();
   if (action.json !== undefined) admitSavedJson(action.json, secrets);
   const json =
     action.json === undefined ? undefined : withSavedJson(action.json, secrets);
@@ -421,7 +433,26 @@ export const performScenarioRequest = async (input: {
       await route.fallback();
     }
   };
-  await page.route(matches, gate);
+  // Attach before the aborting route is installed: a slow attachment must not
+  // leave the guard aborting application traffic before this step dispatches.
+  const redirect =
+    input.onRedirectResponse === undefined
+      ? undefined
+      : await observeScenarioRedirect({
+          page,
+          url: dispatchUrl.href,
+          method: request.method,
+          signal,
+          onResponse: input.onRedirectResponse,
+        }).catch(() => undefined);
+  try {
+    // The attachment can outlast the step; an abandoned step installs no guard.
+    requireTimeBeforeSending();
+    await page.route(matches, gate);
+  } catch (cause: unknown) {
+    await redirect?.stop();
+    throw cause;
+  }
   if (protectResponse !== undefined) page.on("request", watch);
   let primaryFailure: { readonly cause: unknown } | undefined;
   let response: PageResponse;
@@ -436,9 +467,14 @@ export const performScenarioRequest = async (input: {
         `Request step ${action.step_id} runs from a page on the start origin ${startOrigin}; the page moved before the request was sent.`,
       );
     if ("redirected" in response) {
-      input.onOpaqueRedirect?.();
+      const recorded = redirect?.delivered() === true;
+      if (!recorded) input.onOpaqueRedirect?.();
       throw new ScenarioRequestError(
-        `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. The browser may withhold the redirect status and Location from network capture.`,
+        `Request step ${action.step_id} was answered with a redirect, which request steps do not follow; a write may already have been applied. ${
+          recorded
+            ? "The browser reported the redirect to network capture; its status and, with header values selected, its Location appear in the network events unless an event budget omitted them."
+            : "The browser may withhold the redirect status and Location from network capture."
+        }`,
       );
     }
     if (
@@ -453,6 +489,9 @@ export const performScenarioRequest = async (input: {
     throw cause;
   } finally {
     if (protectResponse !== undefined) page.off("request", watch);
+    // Listeners stop now; the bounded CDP detach must not keep the route
+    // guard installed, so it is awaited only after the route is removed.
+    const detaching = redirect?.stop();
     try {
       await page.unroute(matches, gate);
     } catch (cause: unknown) {
@@ -463,6 +502,8 @@ export const performScenarioRequest = async (input: {
           { cause: primaryFailure.cause },
         );
       throw cause;
+    } finally {
+      await detaching;
     }
   }
   if (action.save.length > 0) {
