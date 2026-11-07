@@ -34,10 +34,6 @@ export const siblingLockTargets = (file: string): readonly string[] => {
   });
 };
 
-/** Whether the file's own name is a sibling lock, wherever it lies. */
-export const isSiblingLockName = (file: string): boolean =>
-  siblingLockTargets(file).length > 0;
-
 /** Whether a file is named as a lock an app holds while it runs, wherever it lies: a profile lock or LibreOffice's document lock. */
 export const isLockName = (file: string): boolean => {
   const name = file.split("/").at(-1) ?? "";

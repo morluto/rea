@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { fileNotes, type FileNote } from "./appTaskDraftFileNotes.js";
 import { lineGuards } from "./appTaskDraftLineGuards.js";
@@ -407,7 +408,15 @@ export const draftTaskFiles = (
   ends: StateEnds,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const role = changed.some(({ path }) => path.role === "document")
+  const selected = [...files]
+    .filter(([, path]) => path.reasons.includes("selected_path"))
+    .map(([home]) => home);
+  const { isLeftOut } = leftOutFiles(files, [], selected, selected);
+  // A lock the seed leaves out is not the document the user worked on.
+  const considered = changed.filter(
+    ({ home, path }) => !(path.role === "document" && isLeftOut(home)),
+  );
+  const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
   return withinDraftBudget(
