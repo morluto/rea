@@ -158,6 +158,8 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_go_binary: evidence,
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
+  inspect_api_contract: evidence,
+  inspect_playwright_trace: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
   inspect_apk_signature: evidence,
@@ -736,6 +738,30 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     writesFilesystem: true,
     idempotent: false,
   }),
+  // Builds and boots a container that installs and runs the requested app.
+  start_build_computer: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Drives the app through the computer's driver on a loopback port.
+  act_on_build_computer: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  close_build_computer: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    mayDiscardData: true,
+    idempotent: false,
+  }),
   reconcile_javascript_runtime: evidence,
   recover_javascript_sources: effects({
     mutatesSession: true,
@@ -746,6 +772,7 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   trace_application_feature: evidence,
   trace_javascript_semantics: evidence,
   compare_application_versions: evidence,
+  compare_static_and_observed_endpoints: evidence,
   search_guidance: effects(),
   read_guidance_section: effects(),
   guided_workflows: effects(),

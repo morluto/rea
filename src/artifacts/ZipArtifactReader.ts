@@ -28,6 +28,7 @@ import {
   type DecompressionStreamOptions,
   type Entry,
   type FileEntry,
+  type ZipReaderConstructorOptions,
 } from "@zip.js/zip.js";
 
 import {
@@ -52,6 +53,14 @@ const ZIP_UTF8_DECODER = new TextDecoder("utf-8", {
   ignoreBOM: true,
 });
 
+/** Fixed method-93 decoder window: 2^27 bytes, matching the ELF/GPU decoders. */
+const ZIP_ZSTANDARD_WINDOW_LOG_MAX = 27;
+
+const ZIP_ZSTANDARD_WINDOW_ALLOWANCE = `${String(2 ** (ZIP_ZSTANDARD_WINDOW_LOG_MAX - 20))} MiB`;
+
+/** A frame above the window cap is a deliberate resource refusal, not damage. */
+const ZIP_ZSTANDARD_WINDOW_LIMIT = `ZIP Zstandard member requires a decoder window above REA's fixed ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE} allowance; the archive is not necessarily corrupt, and this limit cannot be raised at runtime. Recompress the member with a window of at most ${ZIP_ZSTANDARD_WINDOW_ALLOWANCE}, or decompress it with a tool that admits larger windows, then retry.`;
+
 /** Keep zip.js's framing, CRC, size checks and backpressure for method 93. */
 class ZipZstandardDecompressionStream {
   readonly readable;
@@ -62,7 +71,9 @@ class ZipZstandardDecompressionStream {
       createZstdDecompress({
         chunkSize: options?.chunkSize,
         // Match the existing ELF/GPU Zstandard decoder's 128 MiB window cap.
-        params: { [constants.ZSTD_d_windowLogMax]: 27 },
+        params: {
+          [constants.ZSTD_d_windowLogMax]: ZIP_ZSTANDARD_WINDOW_LOG_MAX,
+        },
       }),
     );
     this.readable = stream.readable;
@@ -77,6 +88,18 @@ registerCodec({
   format: "rea-zip-zstd",
   DecompressionStream: ZipZstandardDecompressionStream,
 });
+
+/** zip.js reader options: CRC and overlap checks, and names decoded as REA reads them. */
+export const ZIP_READER_OPTIONS = {
+  checkSignature: true,
+  checkOverlappingEntry: true,
+  // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
+  // and validated Unicode Path extra fields remain authoritative.
+  filenameEncoding: "cp437",
+  // REA applies its own provider-neutral path validation in scanReader and
+  // must preserve that typed failure instead of zip.js rejecting first.
+  filenameValidation: "tolerant",
+} as const satisfies ZipReaderConstructorOptions;
 
 class NodeFileReader extends Reader<string> {
   #handle: FileHandle | undefined;
@@ -169,16 +192,7 @@ export class ZipArtifactReader implements ArtifactReader {
   ) {
     this.format = format;
     this.#source = new NodeFileReader(path, maximumMetadataReadBytes, admitted);
-    this.#reader = new ZipReader(this.#source, {
-      checkSignature: true,
-      checkOverlappingEntry: true,
-      // Unflagged names use the ZIP legacy encoding (CP437); the UTF-8 flag
-      // and validated Unicode Path extra fields remain authoritative.
-      filenameEncoding: "cp437",
-      // REA applies its own provider-neutral path validation in scanReader and
-      // must preserve that typed failure instead of zip.js rejecting first.
-      filenameValidation: "tolerant",
-    });
+    this.#reader = new ZipReader(this.#source, ZIP_READER_OPTIONS);
   }
 
   async *entries(signal?: AbortSignal): AsyncIterable<ArtifactEntry> {
@@ -368,7 +382,8 @@ const legacyNameLimitations = (entry: Entry): readonly string[] => {
   ];
 };
 
-const decodeZipEntryText = (
+/** Decode an entry name as zip.js reports it: strict UTF-8 when flagged, CP437 otherwise. */
+export const decodeZipEntryText = (
   bytes: Uint8Array,
   encoding: string,
   type: "filename" | "comment",
@@ -396,7 +411,8 @@ const decodeCp437 = (bytes: Uint8Array): string =>
       : CP437_HIGH_HALF.charAt(byte - 0x80),
   ).join("");
 
-const zipEntryPath = (entry: Entry): string => {
+/** An entry's name, from a valid Unicode Path extra field when it has one. */
+export const zipEntryPath = (entry: Entry): string => {
   const field = entry.extraFieldUnicodePath;
   if (field?.valid !== true) return entry.filename;
   return decodeStrictZipUtf8(
@@ -519,6 +535,14 @@ const typedZipFailure = (
       "ZIP archive uses an unsupported Zstandard dictionary",
       { cause },
     );
+  if (
+    compressionMethod === 93 &&
+    code === "ZSTD_error_frameParameter_windowTooLarge"
+  )
+    return new ArtifactReaderFailure("limit", ZIP_ZSTANDARD_WINDOW_LIMIT, {
+      cause,
+      boundary: "memory",
+    });
   const invalidZstandard =
     compressionMethod === 93 &&
     (code === "ZSTD_error_prefix_unknown" ||
@@ -526,7 +550,6 @@ const typedZipFailure = (
       code === "ZSTD_error_corruption_detected" ||
       code === "ZSTD_error_dictionary_corrupted" ||
       code === "ZSTD_error_frameParameter_unsupported" ||
-      code === "ZSTD_error_frameParameter_windowTooLarge" ||
       code === "Z_BUF_ERROR");
   const reason =
     ZIP_FAILURE_REASONS.get(cause.message) ??

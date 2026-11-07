@@ -11,6 +11,7 @@ import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
@@ -18,7 +19,8 @@ import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
-const positive = (fallback: number) => z.int().positive().default(fallback);
+const positive = (fallback: number) =>
+  cliDecimalField(z.int().positive().default(fallback));
 
 /** Options of `capture-desktop-application`. */
 const captureOptions = z.object({
@@ -73,6 +75,22 @@ const captureOptions = z.object({
       "The .deb file the application was installed from; its control fields, SHA-256 and size are recorded, never the file",
     ),
 });
+
+/** The checkpoints a bundle's seed and a task's end state are read at. */
+const checkpointOptions = {
+  seedCheckpoint: z
+    .string()
+    .optional()
+    .describe(
+      "Checkpoint whose state seeds the bundle; the baseline by default",
+    ),
+  endCheckpoint: z
+    .string()
+    .optional()
+    .describe(
+      "Checkpoint whose state a task must pass on; the capture's last by default",
+    ),
+};
 
 /**
  * Run a desktop operation with SQLite and dconf readers, finishing through
@@ -147,6 +165,7 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      ...checkpointOptions,
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -170,6 +189,8 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    seedCheckpoint: options.seedCheckpoint,
+                    endCheckpoint: options.endCheckpoint,
                   },
                   readers,
                   signal,
@@ -189,13 +210,14 @@ const registerDesktopTaskCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.describeDesktopApplicationTask, {
     description:
-      "Describe how a desktop application capture's files changed from the baseline to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
+      "Describe how a desktop application capture's files changed from the seed checkpoint to the end, with suggested checks and a task draft to complete for export-desktop-application --task",
     args: z.object({
       capture: z
         .string()
         .describe("Folder written by capture-desktop-application"),
     }),
-    run: ({ args }) =>
+    options: z.object(checkpointOptions),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(
           logger,
@@ -212,6 +234,7 @@ const registerDesktopTaskCommand = (
                   absoluteCallerPath(args.capture),
                   readers,
                   signal,
+                  { seed: options.seedCheckpoint, end: options.endCheckpoint },
                 ),
             );
           },

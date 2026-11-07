@@ -927,6 +927,13 @@ complete observation.
   section lengths and unsupported non-PowerPC big-endian CPU declarations return
   `unsupported_target` with the selected path and precise reason. Recovery
   selects a well-formed or supported artifact and reopens that target.
+  An unreadable adopted-protocol sublist leaves its class, category or
+  `objc_protocol_records` entry available with partial decode status and
+  `protocol_list_unreadable`. Independently decoded metadata and any readable
+  protocol-name prefix remain available; an empty partial list does not
+  establish that its owner adopts no protocols. Existing list and record
+  limits remain in effect. Reader v3 uses a new analysis profile; snapshots
+  bound to reader v2 are incompatible and must be regenerated for this recovery.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -1211,7 +1218,8 @@ is present. A denied trace reports the `debugger-attach-denied` reason.
 Install a Ghidra 12.x (>=12.1) release and the 64-bit full JDK it declares, then configure REA to
 use them. Ghidra analysis supports Linux x64/arm64 and macOS x64/arm64; each installation requires
 the matching native decompiler. Experimental Windows x64 P0 admits native
-x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly selected
+x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, [DOS MZ
+executables](ghidra-dos.md), plus explicitly selected
 [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied load address,
 on fixed local NTFS volumes. Other raw CPU families remain unsupported on Windows.
 The boundary uses bundled Job Object ownership, protected runtime DACLs, and

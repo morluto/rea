@@ -14,14 +14,11 @@ import type {
 } from "../../domain/desktop/desktopState.js";
 import { diffStateViews } from "../../domain/desktop/stateChanges.js";
 import {
-  decodeStateText,
   detectStateFormat,
-  jsonView,
   keyfileView,
   plainRecord,
   SQLITE_SIDECARS,
-  textView,
-  xmlView,
+  textualView,
 } from "../../domain/desktop/stateFormats.js";
 import {
   applicationNames,
@@ -37,6 +34,7 @@ import { err, ok, type Result } from "../../domain/result.js";
 import { describeValidationFailure } from "../../domain/validationFailure.js";
 import { PrivateRuntimeRoot } from "../../process/PrivateRuntimeRoot.js";
 import { readJsonFile } from "../JsonFiles.js";
+import { readZipView } from "./DesktopZipView.js";
 import {
   withRetainedContent,
   type RetainedContent,
@@ -257,9 +255,9 @@ const dconfView = async (
       : failed(dump.error);
   });
 
-const MIB = 1024 * 1024;
-/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
-const MAX_PARSED_VIEW_BYTES = 4 * MIB;
+/** A reader's result as a version's view or view_error. */
+const outcomeOf = (read: Result<JsonValue, string>): ViewOutcome =>
+  read.ok ? { view: read.value, error: null } : failed(read.error);
 
 /** Read one retained version into JSON for its own format. */
 const viewOf = async (
@@ -267,31 +265,14 @@ const viewOf = async (
   context: ViewContext,
 ): Promise<ViewOutcome> => {
   const format = input.version.format ?? "binary";
-  if (
-    (format === "json" || format === "keyfile") &&
-    input.bytes.length > MAX_PARSED_VIEW_BYTES
-  )
-    return failed(
-      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
-    );
-  const text = decodeStateText(input.bytes) ?? "";
   switch (format) {
     case "text":
-      return { view: textView(text), error: null };
-    case "json": {
-      const parsed = jsonView(text);
-      return parsed.ok
-        ? { view: parsed.value, error: null }
-        : failed(parsed.error);
-    }
+    case "json":
     case "keyfile":
-      return { view: { groups: keyfileView(text) }, error: null };
-    case "xml": {
-      const tree = xmlView(text);
-      return tree === undefined
-        ? failed("not well-formed XML, or it declares a DOCTYPE")
-        : { view: tree, error: null };
-    }
+    case "xml":
+      return outcomeOf(textualView(format, input.bytes));
+    case "zip":
+      return outcomeOf(await readZipView(input.bytes, context.signal));
     case "dconf":
       return dconfView(input, context);
     case "sqlite":
@@ -416,6 +397,7 @@ const STATE_LIMITATIONS = [
   "SQLite views list at most 500 rows of at most 64 ordinary tables, text views at most 5,000 lines and XML views at most 5,000 nodes; changes between truncated views, or views with an unread table, are marked incomplete.",
   "JSON and key file views read files of at most 4 MiB, JSON nested at most 500 levels and only numbers JavaScript holds exactly; other files of those formats have a view_error.",
   "dconf views keep only groups whose path names the application.",
+  "Zip views list at most 1,000 entries and read an entry only when it is unencrypted, stored or deflated, at most 16 MiB and at most 100 times its compressed size, up to 64 MiB per archive; databases and archives inside an archive are not read.",
 ];
 
 /** Read a capture folder into the application's state view. */

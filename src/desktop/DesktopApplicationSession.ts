@@ -264,6 +264,20 @@ const unreleased = (
         ],
       };
 
+/**
+ * The caller's environment without the agent environment's own variables,
+ * such as its control token: agentenv launches the exported app without
+ * them, and the app must not hold a credential to the computer it runs on.
+ */
+const applicationEnvironment = (
+  environment: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv =>
+  Object.fromEntries(
+    Object.entries(environment).filter(
+      ([name]) => !name.startsWith("AGENTENV_"),
+    ),
+  );
+
 const launch = async (
   plan: DesktopSessionPlan,
   runId: string,
@@ -277,7 +291,7 @@ const launch = async (
     // Desktop launchers often exec through env, a shell or a wrapper script.
     expectedCommand: null,
     cwd: plan.workingDirectory,
-    hostEnvironment: plan.environment,
+    hostEnvironment: applicationEnvironment(plan.environment),
     sweepTokenOwnedProcesses: true,
     signal,
   });

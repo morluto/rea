@@ -1,12 +1,12 @@
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import {
+  isPointerCheck,
   parseDesktopTask,
   type DesktopTask,
   type DesktopTaskCheck,
 } from "../../domain/desktop/appTask.js";
 import {
   evaluateTaskChecks,
-  namesXmlNamespace,
   versionView,
   type TaskFileView,
 } from "../../domain/desktop/appTaskChecks.js";
@@ -17,8 +17,17 @@ import {
   taskVerifierArtifact,
 } from "../../domain/desktop/appTaskPython.js";
 import type { DesktopAppExportPlan } from "../../domain/desktop/appExport.js";
-import type { DesktopStatePath } from "../../domain/desktop/desktopState.js";
+import {
+  versionAt,
+  type DesktopStatePath,
+  type StateEnds,
+} from "../../domain/desktop/desktopState.js";
+import {
+  identityLeftIn,
+  type HostIdentity,
+} from "../../domain/desktop/hostIdentity.js";
 import type { AnalysisError } from "../../domain/analysisErrorBase.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { EvidenceFileError } from "../../domain/evidenceErrors.js";
@@ -33,12 +42,16 @@ import { refuse } from "./DesktopExportInstall.js";
 const OPERATION = "export_desktop_application";
 const REWRITE = "Fix the task file and export again.";
 
-/** What the export knows of the app: its name, owned paths, captured home and state files by home path. */
+/** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
   "name" | "paths" | "capturedHome"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
+  readonly identity: HostIdentity;
+  readonly ends: StateEnds;
+  /** Views of the seeds the export rewrites, as it ships them. */
+  readonly seedViews: ReadonlyMap<string, TaskFileView>;
 };
 
 /** A task the capture validated: the files it adds to the bundle, its README section and its summary. */
@@ -101,44 +114,62 @@ const readTaskFile = async (
   throw primary ?? typed(loaded.error);
 };
 
+/** The task's views of every file at its seed, as the bundle ships it, and at its end. */
+interface TaskViews {
+  readonly seed: ReadonlyMap<string, TaskFileView>;
+  readonly end: ReadonlyMap<string, TaskFileView>;
+}
+
+/** Every string in a value, member names included. */
+const valueStrings = (value: JsonValue | undefined): string[] => {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(valueStrings);
+  if (typeof value !== "object" || value === null) return [];
+  return Object.entries(value).flatMap(([name, member]) => [
+    name,
+    ...valueStrings(member),
+  ]);
+};
+
 /** Why a check cannot be validated against this app, or undefined. */
 const targetProblem = (
   check: DesktopTaskCheck,
   target: TaskTarget,
+  views: TaskViews,
 ): string | undefined => {
   if (!isWithinAny(check.file, target.paths))
     return `names ${check.file}, which is not under the app's owned paths (${target.paths.join(", ") || "none"}); data/get serves only those`;
-  if (JSON.stringify(check).includes(target.capturedHome))
-    return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
-  if (check.kind !== "value_equals" && check.kind !== "value_absent")
-    return undefined;
-  const versions = target.files.get(check.file)?.versions ?? [];
-  if (versions.some((version) => version.format === "text"))
-    return `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`;
-  return versions.some(
-    (version) => version.format === "xml" && namesXmlNamespace(version.view),
+  // What the check compares and names; its field names, kind and id label it.
+  const { id: _id, kind: _kind, ...fields } = check;
+  for (const value of Object.values(fields).flatMap(valueStrings)) {
+    if (value.includes(target.capturedHome))
+      return `names the captured home ${target.capturedHome}, which the computer's home replaces`;
+    const named = identityLeftIn(value, target.identity);
+    if (named !== undefined)
+      return `names ${named}, the capture host's name or user, which the export removes from the seed`;
+  }
+  if (!isPointerCheck(check)) return undefined;
+  return [views.seed, views.end].some(
+    (at) => at.get(check.file)?.format === "text",
   )
-    ? `points into ${check.file}, whose XML uses namespaces the verifier names differently`
+    ? `points into ${check.file}, which is text; use lines_present, lines_absent or line_count`
     : undefined;
 };
 
-/** Views of every file at one end of the capture: its first or its last version. */
+/** Views of every file at the end checkpoint, or at the seed as the bundle ships it. */
 const viewsAt = (
-  files: ReadonlyMap<string, DesktopStatePath>,
-  end: "baseline" | "final",
+  target: TaskTarget,
+  end: keyof StateEnds,
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
-  for (const [home, path] of files) {
-    const version =
-      end === "baseline" ? path.versions[0] : path.versions.at(-1);
-    // A file not retained at the baseline is not seeded, so the computer starts without it.
-    if (
-      end === "baseline" &&
-      version?.present === true &&
-      version.sha256 === null
-    )
+  for (const [home, path] of target.files) {
+    const version = versionAt(path, target.ends[end]);
+    // A file not retained at the seed is not seeded, so the computer starts without it.
+    if (end === "seed" && version?.present === true && version.sha256 === null)
       continue;
-    const view = version === undefined ? undefined : versionView(version);
+    const shipped = end === "seed" ? target.seedViews.get(home) : undefined;
+    const view =
+      shipped ?? (version === undefined ? undefined : versionView(version));
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -198,8 +229,12 @@ export const admitDesktopTask = async (
       REWRITE,
     );
   const task = parsed.value;
+  const views: TaskViews = {
+    seed: viewsAt(target, "seed"),
+    end: viewsAt(target, "end"),
+  };
   for (const check of task.checks) {
-    const problem = targetProblem(check, target);
+    const problem = targetProblem(check, target, views);
     if (problem !== undefined)
       throw refuse(
         `Check ${JSON.stringify(check.id)} ${problem}.`,
@@ -207,7 +242,7 @@ export const admitDesktopTask = async (
         REWRITE,
       );
   }
-  const end = evaluateTaskChecks(task.checks, viewsAt(target.files, "final"));
+  const end = evaluateTaskChecks(task.checks, views.end);
   const failing = end.find((outcome) => !outcome.passed);
   if (failing !== undefined)
     throw refuse(
@@ -215,10 +250,7 @@ export const admitDesktopTask = async (
       "task",
       "Write checks that the captured end state passes; describe-desktop-application-task shows its views.",
     );
-  const failingOnSeed = evaluateTaskChecks(
-    task.checks,
-    viewsAt(target.files, "baseline"),
-  )
+  const failingOnSeed = evaluateTaskChecks(task.checks, views.seed)
     .filter((outcome) => !outcome.passed)
     .map((outcome) => outcome.id);
   if (failingOnSeed.length === 0)

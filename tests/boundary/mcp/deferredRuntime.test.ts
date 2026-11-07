@@ -123,13 +123,13 @@ it.each([
       names: ["list_unknowns", "list_unknowns"],
     });
     expect(loaded.structuredContent).toMatchObject({
-      loaded_count: 7,
+      loaded_count: initial.tools.length + 1,
       total_matches: 1,
       tools: [{ name: "list_unknowns" }],
     });
     expect((await call("list_unknowns", {})).isError).not.toBe(true);
     const materialized = await client.listTools();
-    expect(materialized.tools).toHaveLength(7);
+    expect(materialized.tools).toHaveLength(initial.tools.length + 1);
     expect(
       materialized.tools.find(({ name }) => name === "inspect_sqlite_database"),
     ).toBeUndefined();
@@ -153,12 +153,16 @@ it.each([
     expect(result.isError).not.toBe(true);
     expect(JSON.stringify(result.structuredContent)).toContain("pelican");
     expect(JSON.stringify(result.structuredContent)).toContain("evidence_id");
-    expect((await client.listTools()).tools).toHaveLength(8);
+    expect((await client.listTools()).tools).toHaveLength(
+      initial.tools.length + 2,
+    );
     if ("REA_MCP_TOOL_FAMILIES" in environment) {
       expect(
         (await call("discover_tools", { names: ["current_address"] })).isError,
       ).toBe(true);
-      expect((await client.listTools()).tools).toHaveLength(8);
+      expect((await client.listTools()).tools).toHaveLength(
+        initial.tools.length + 2,
+      );
     }
     expect(stderr()).toBe("");
   },
