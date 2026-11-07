@@ -1,6 +1,6 @@
 import type { JsonValue } from "../jsonValue.js";
-import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { leftOutFiles } from "./appExportUnowned.js";
+import { isTimestamp, type DesktopTaskCheckInput } from "./appTask.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
@@ -453,15 +453,24 @@ export const draftTaskFiles = (
   ends: StateEnds,
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const role = changed.some(({ path }) => path.role === "document")
+  const selected = [...files]
+    .filter(([, path]) => path.reasons.includes("selected_path"))
+    .map(([home]) => home);
+  const { isLeftOut, isLeftOutLog } = leftOutFiles(
+    files,
+    [],
+    selected,
+    selected,
+  );
+  // A lock the seed leaves out is not the document the user worked on.
+  const considered = changed.filter(
+    ({ home, path }) => !(path.role === "document" && isLeftOut(home)),
+  );
+  const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
   // The app's logs, which the export leaves out of the seed, never hold a check.
   // A log the caller selected is a document of the task, so it stays.
-  const selected = [...files]
-    .filter(([, path]) => path.reasons.includes("selected_path"))
-    .map(([home]) => home);
-  const { isLeftOutLog } = leftOutFiles(files, [], selected);
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
       const drafted = path.role === role && !isLeftOutLog(home);

@@ -653,3 +653,39 @@ describe("draftTaskFiles for a drawing resized beside a rename", () => {
     ).toBe(true);
   });
 });
+
+describe("draftTaskFiles when a sibling lock changed", () => {
+  const text = (line: string) => ({
+    lines: [line],
+    line_count: 1,
+    truncated: false,
+  });
+
+  it("keeps the settings draft when the lock is the only document that changed", () => {
+    const files = draftOf({
+      ".config/app/settings.json": statePath(
+        "application_state",
+        "json",
+        { size: 1 },
+        { size: 2 },
+      ),
+      "Documents/plan.vym": statePath(
+        "document",
+        "text",
+        text("map"),
+        text("map"),
+      ),
+      "Documents/plan.vym.lock": statePath(
+        "document",
+        "text",
+        text("lock"),
+        text("held"),
+      ),
+    });
+    const settings = files.find(
+      (file) => file.file === ".config/app/settings.json",
+    );
+
+    expect(settings?.suggested).not.toEqual([]);
+  });
+});
