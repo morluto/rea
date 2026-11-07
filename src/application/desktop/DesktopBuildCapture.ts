@@ -66,6 +66,13 @@ const NOT_RUNNING = [
 const exportOptionsSchema = z.object({
   options: z.object({ properties: z.record(z.string(), z.unknown()) }),
 });
+const repackRuntime =
+  "Run npm run pack:build-computer-runtime -- /absolute/path/rea-prod.tar.xz in a current REA checkout, set REA_BUILD_COMPUTER_REA_ARCHIVE to that archive, restart the REA MCP server, and start a new build computer.";
+const schemaCommandError = (exitCode: number | null, detail: string) =>
+  new ProviderAdapterError(AGENTENV_PROVIDER, START, {
+    userMessage: `The build computer's REA export schema command ${exitCode === null ? "ended without an exit status" : `exited ${String(exitCode)}`}: ${detail}`,
+    remediationAction: `Inspect the command error. If the runtime is outdated, ${repackRuntime}`,
+  });
 
 /** Check the installed runtime's advertised export contract before capturing the user's work. */
 const checkExportRuntime = async (
@@ -74,17 +81,35 @@ const checkExportRuntime = async (
 ): Promise<Result<void, AnalysisError>> => {
   try {
     const path = `${WORK}/export-schema.json`;
-    const bytes = await runRea(
+    const command = await runRea(
       computer,
       ["export-desktop-application", "--schema", "--json"],
       { stdout: path, timeoutS: 30, signal },
     );
-    const content = (await computer.homeFiles([path], bytes, signal)).get(path);
+    if (command.exitCode !== 0 && command.stderr !== "")
+      return err(schemaCommandError(command.exitCode, command.stderr));
+    if (command.stdoutBytes > 1024 * 1024)
+      return err(
+        adapterError(
+          START,
+          "The build computer's REA export schema exceeds 1 MiB.",
+        ),
+      );
+    const content = (
+      await computer.homeFiles([path], command.stdoutBytes, signal)
+    ).get(path);
     if (content === undefined)
       return err(
         adapterError(
           START,
           "The build computer did not return its REA export schema.",
+        ),
+      );
+    if (command.exitCode !== 0)
+      return err(
+        schemaCommandError(
+          command.exitCode,
+          content.toString("utf8").slice(-2048),
         ),
       );
     const schema = exportOptionsSchema.safeParse(
@@ -102,7 +127,7 @@ const checkExportRuntime = async (
         refused(
           START,
           "The REA runtime in this build computer does not support synthetic seeds required by build export.",
-          "Pack a current REA with npm run pack:build-computer-runtime, set REA_BUILD_COMPUTER_REA_ARCHIVE to the new archive, and start a new build computer.",
+          repackRuntime,
         ),
       );
     return ok(undefined);

@@ -201,6 +201,28 @@ it("refuses an older build runtime before capturing the app", async () => {
   );
   expect(error.message).toContain("does not support synthetic seeds");
   expect(JSON.stringify(error)).toContain("pack:build-computer-runtime");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
+  const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
+  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+    "capture-desktop-application",
+  );
+});
+
+it("reports an unsuccessful runtime schema command without diagnosing its cause", async () => {
+  const { rea, client } = await fakes({
+    env: { FAKE_REA_SCHEMA_FAILURE: "1" },
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  const { error } = parseMcpToolError(
+    await client.callTool({
+      name: "start_build_capture",
+      arguments: { computer_id: id },
+    }),
+  );
+  expect(error.message).toContain("exited 23");
+  expect(error.message).toContain("runtime cannot load its export command");
+  expect(error.message).not.toContain("does not support synthetic seeds");
+  expect(JSON.stringify(error)).toContain("restart the REA MCP server");
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
   expect(calls.map(({ argv }) => argv[0])).not.toContain(
     "capture-desktop-application",

@@ -29,8 +29,8 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
 1. `start_build_computer` from a request. REA is installed in the computer.
 2. `start_build_capture`. REA first checks the installed runtime's export
    schema for synthetic-seed support. If the archive is too old, repack a
-   current REA, update `REA_BUILD_COMPUTER_REA_ARCHIVE` and start a new build
-   computer. REA then writes an apt configuration under
+   current REA, update `REA_BUILD_COMPUTER_REA_ARCHIVE`, restart the REA MCP
+   server and start a new build computer. REA then writes an apt configuration under
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the

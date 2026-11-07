@@ -128,7 +128,7 @@ export const runRea = (
     readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
-): Promise<number> =>
+): ReturnType<typeof runControllerRea> =>
   runControllerRea(computer, argv, { ...options, work: WORK });
 
 /** `value` with `redact` applied to each of its strings and keys. */
