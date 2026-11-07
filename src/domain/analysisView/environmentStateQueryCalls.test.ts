@@ -892,3 +892,75 @@ describe("single-operation POST RPC read-only classification", () => {
     ).toEqual([]);
   });
 });
+
+describe("persisted GraphQL read-only classification", () => {
+  it("classifies persisted GraphQL requests without body.query by operation name and repeated-read evidence", () => {
+    const viewerResponse = { data: { viewer: { id: "u1", login: "ada" } } };
+    const persistedCall = (
+      name: string,
+      tool: string,
+      discriminated: boolean,
+    ): Call => ({
+      method: "POST",
+      path: "/graphql",
+      tool,
+      ...(discriminated ? { rpcOperation: { kind: "graphql", name } } : {}),
+      request: {
+        operationName: name,
+        extensions: {
+          persistedQuery: { version: 1, sha256Hash: "a".repeat(64) },
+        },
+      },
+      response: viewerResponse,
+    });
+
+    expect(
+      readOnlyOf([persistedCall("GetViewer", "post_graphql_get_viewer", true)]),
+    ).toEqual(["post_graphql_get_viewer"]);
+    expect(
+      readOnlyOf([persistedCall("GetViewer", "post_graphql", false)]),
+    ).toEqual(["post_graphql"]);
+
+    expect(
+      readOnlyOf([
+        persistedCall("UpdateProfile", "post_graphql_update_profile", true),
+      ]),
+    ).toEqual([]);
+    expect(
+      readOnlyOf([persistedCall("UpdateProfile", "post_graphql", false)]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([persistedCall("Viewer", "post_graphql_viewer", true)]),
+    ).toEqual([]);
+    expect(
+      readOnlyOf([persistedCall("Viewer", "post_graphql", false)]),
+    ).toEqual([]);
+
+    const priorGet: Call = {
+      method: "GET",
+      path: "/graphql",
+      query: "?operationName=Viewer",
+      tool: "get_graphql",
+      response: viewerResponse,
+      start: 0,
+      end: 1,
+    };
+    expect(
+      readOnlyOf([
+        priorGet,
+        {
+          ...persistedCall("Viewer", "post_graphql_viewer", true),
+          start: 2,
+          end: 3,
+        },
+      ]),
+    ).toEqual(["post_graphql_viewer"]);
+    expect(
+      readOnlyOf([
+        priorGet,
+        { ...persistedCall("Viewer", "post_graphql", false), start: 2, end: 3 },
+      ]),
+    ).toEqual(["post_graphql"]);
+  });
+});

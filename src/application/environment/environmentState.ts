@@ -258,7 +258,7 @@ export const deriveEnvironmentState = (
     source.manifest.tools.some((tool) => tool.rpc_operation !== undefined)
   )
     return loaded;
-  // Saved bundles built before RPC sub-route discrimination carry plain POST tool names without `rpc_operation`.
+  // Saved bundles built before RPC and XSSI discrimination carry no `rpc_operation` fields and omit newly admitted RPC or XSSI tools.
   const legacyProjected = inspectAnalysisViewValidated(request, lookup, {
     state: new EnvironmentStateAccumulator(undefined, rules, false),
   });

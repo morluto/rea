@@ -658,10 +658,11 @@ Evidence id it reports is the one that projection produces. The view's own
 budget and refusals apply, and the result is checked like the view's Evidence
 for this manifest: extracted from the served capture, with the manifest's
 rules and origin, naming only manifest tools in its views and writes. When a
-saved manifest built before RPC sub-route discrimination carries no
-`rpc_operation` fields and current discriminated extraction names operation
-tools absent from that manifest, derivation falls back to non-discriminated
-grouping so existing saved bundles keep their state and confirmed writes. The server keeps one live state, shared by
+saved manifest built before RPC sub-route and XSSI discrimination carries no
+`rpc_operation` fields and current extraction names operation or XSSI tools
+absent from that manifest (or selects another origin), derivation falls back to
+pre-discrimination extraction so existing saved bundles keep their state and
+confirmed writes. The server keeps one live state, shared by
 every MCP session and the data plane, starting from the derived state.
 
 A state that is unavailable does not stop the server: it logs a warning naming
