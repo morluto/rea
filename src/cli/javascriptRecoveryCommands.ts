@@ -1,9 +1,5 @@
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
-import {
-  javascriptRecoveryInputSchema,
-  MAX_JAVASCRIPT_RECOVERY_ADDITIONAL_PATHS,
-} from "../domain/javascript/javascriptRecovery.js";
-import { localPathStringSchema } from "../domain/localPath.js";
+import { javascriptRecoveryInputSchema } from "../domain/javascript/javascriptRecovery.js";
 import { z } from "incur";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
 import { createJavaScriptRecoveryProvider } from "../composition/javascriptRecovery.js";
@@ -27,21 +23,11 @@ export const registerJavaScriptRecoveryCommands = (
     description:
       "Recover readable JavaScript modules with source provenance and verified files",
     args: z.object({
-      path: localPathStringSchema.describe(
-        javascriptRecoveryInputSchema.shape.path.description!,
-      ),
-      outputDirectory: localPathStringSchema.describe(
-        javascriptRecoveryInputSchema.shape.output_directory.description!,
-      ),
+      path: javascriptRecoveryInputSchema.shape.path,
+      outputDirectory: javascriptRecoveryInputSchema.shape.output_directory,
     }),
     options: z.object({
-      additionalPath: z
-        .array(localPathStringSchema)
-        .max(MAX_JAVASCRIPT_RECOVERY_ADDITIONAL_PATHS)
-        .optional()
-        .describe(
-          javascriptRecoveryInputSchema.shape.additional_paths.description!,
-        ),
+      additionalPath: javascriptRecoveryInputSchema.shape.additional_paths,
       extractionMode: javascriptRecoveryInputSchema.shape.extraction_mode
         .removeDefault()
         .optional()

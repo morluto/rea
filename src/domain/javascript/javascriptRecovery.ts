@@ -6,8 +6,6 @@ import {
   absoluteLocalPathStringSchema,
 } from "../localPath.js";
 
-export const MAX_JAVASCRIPT_RECOVERY_ADDITIONAL_PATHS = 16;
-
 /** Recover derived readable modules from explicitly selected local scripts. */
 export const javascriptRecoveryInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
@@ -20,7 +18,7 @@ export const javascriptRecoveryInputSchema = z.strictObject({
           `additional_paths entries must be absolute filesystem paths on this host: ${path}`,
       ),
     )
-    .max(MAX_JAVASCRIPT_RECOVERY_ADDITIONAL_PATHS)
+    .max(16)
     .optional()
     .describe(
       "Additional absolute UTF-8 JavaScript files recovered together with path; each is snapshotted separately so imports can resolve across related chunks. All inputs share a 64 MiB total budget",

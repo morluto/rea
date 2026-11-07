@@ -158,6 +158,7 @@ describe("JavaScript recovery workflow", () => {
         {
           path: ["additional_paths", 0],
           reason: "invalid_format",
+          expected: "regex",
           message: expect.stringContaining("relative-chunk.js"),
         },
       ],

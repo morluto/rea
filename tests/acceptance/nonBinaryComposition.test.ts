@@ -241,22 +241,34 @@ cliTest(
       });
       expect(result.exitCode).toBe(1);
       expect(response.isError).toBe(true);
-      const { error: mcpError } = parseMcpToolError(response);
-      const { message: cliMessage, ...cliFacts } = result.json as Record<
-        string,
-        unknown
-      >;
-      const { message: mcpMessage, ...mcpFacts } = mcpError;
-      expect(mcpFacts).toEqual(cliFacts);
-      expect(cliMessage).toContain("input is invalid");
-      expect(mcpMessage).toContain("advertised input schema");
       expect(result.json).toMatchObject({
-        code: "invalid_request",
-        details: {
-          operation: "recover_javascript_sources",
-          issues: [{ path: [field], reason: "invalid_format" }],
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          expect.objectContaining({
+            path: field === "path" ? "path" : "outputDirectory",
+            code: "invalid_format",
+          }),
+        ],
+      });
+      expect(parseMcpToolError(response)).toMatchObject({
+        error: {
+          code: "invalid_request",
+          details: {
+            operation: "recover_javascript_sources",
+            issues: [
+              {
+                path: [field],
+                reason: "invalid_format",
+                expected: "regex",
+              },
+            ],
+          },
         },
       });
+      expect(JSON.stringify(result.json)).not.toContain("REA_WAKARU_COMMAND");
+      expect(JSON.stringify(parseMcpToolError(response))).not.toContain(
+        "REA_WAKARU_COMMAND",
+      );
     }
     const path = join(root, "bundle.js");
     const output = join(root, "output");
@@ -282,17 +294,29 @@ cliTest(
     });
     expect(result.exitCode).toBe(1);
     expect(response.isError).toBe(true);
-    const issue = {
-      path: ["additional_paths", 0],
-      reason: "invalid_format",
-      message: expect.stringContaining("relative.js"),
-    };
     expect(result.json).toMatchObject({
-      code: "invalid_request",
-      details: { issues: [issue] },
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "additionalPath.0",
+          code: "invalid_format",
+          message: expect.stringContaining("relative.js"),
+        }),
+      ],
     });
     expect(parseMcpToolError(response)).toMatchObject({
-      error: { code: "invalid_request", details: { issues: [issue] } },
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["additional_paths", 0],
+              reason: "invalid_format",
+              message: expect.stringContaining("relative.js"),
+            },
+          ],
+        },
+      },
     });
   },
 );

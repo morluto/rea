@@ -11,7 +11,7 @@ const entropySchema = z.number().min(0).max(8);
 /** Select blocks relative to an explicit byte window; identity remains file-wide. */
 export const inspectByteEntropyInputSchema = z.strictObject({
   path: absoluteLocalPathStringSchema.describe(
-    "Absolute filesystem path to the file to inspect",
+    "Absolute filesystem path to the file",
   ),
   block_size: z
     .number()
