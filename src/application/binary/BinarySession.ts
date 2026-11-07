@@ -1304,6 +1304,7 @@ export class BinarySession
     options: {
       readonly signal?: AbortSignal;
       readonly detail?: BinarySessionDetail;
+      readonly operation?: string;
     } = {},
   ): Promise<JsonValue> {
     const resourceRun = this.#activeBundleResources;

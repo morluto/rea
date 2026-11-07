@@ -136,10 +136,15 @@ export interface BinarySessionPort
       readonly cleanupRetry?: AnalysisCleanupRetry;
     },
   ): Promise<Result<SavedAnalysisSnapshot, AnalysisError>>;
-  /** Default complete detail; summary omits provider diagnostics and candidate capabilities. */
+  /**
+   * Default complete detail; summary omits provider diagnostics and candidate
+   * capabilities. The operation view requires operation and rejects a tool
+   * outside its deep-provider scope with AnalysisInputError.
+   */
   status(options?: {
     readonly signal?: AbortSignal;
     readonly detail?: BinarySessionDetail;
+    readonly operation?: string;
   }): Promise<JsonValue>;
   activeTarget(): BinaryTarget | undefined;
   /** Read a snapshot with failed descriptors retained for session cleanup retry. */

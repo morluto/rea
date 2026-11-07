@@ -24,6 +24,14 @@ import type {
   SessionProviderRoute,
   SessionProviderRouter,
 } from "./SessionProviderRouter.js";
+import {
+  operationCandidates,
+  operationRequirementsView,
+  providerStateSummary,
+  resolveOperationRequirements,
+} from "./OperationCandidates.js";
+import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
 import type { BinarySessionDetail } from "../../contracts/sessionStatusContract.js";
 import type { AnalysisCleanupRetry } from "../../domain/analysisErrorRecovery.js";
@@ -34,7 +42,10 @@ interface BinarySessionStatusInput {
   readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot;
   readonly resourceCapabilities?: readonly CapabilityDescriptor[];
   readonly route: SessionProviderRoute;
-  readonly router: Pick<SessionProviderRouter, "candidateStatuses">;
+  readonly router: Pick<
+    SessionProviderRouter,
+    "candidateStatuses" | "deepOperations"
+  >;
   readonly runtimeUnavailability: ReadonlyMap<
     string,
     { readonly reason: string }
@@ -46,6 +57,8 @@ interface BinarySessionStatusInput {
   readonly cleanupPending?: boolean;
   readonly cleanupRetry?: AnalysisCleanupRetry;
   readonly detail?: BinarySessionDetail;
+  /** Tool name; required by, and only accepted with, the operation view. */
+  readonly operation?: string;
   readonly signal?: AbortSignal;
 }
 
@@ -65,8 +78,21 @@ export const binarySessionStatus = async ({
   cleanupPending = false,
   cleanupRetry,
   detail = "complete",
+  operation,
   signal,
 }: BinarySessionStatusInput): Promise<JsonValue> => {
+  // Validate the view before any candidate discovery runs.
+  if ((detail === "operation") !== (operation !== undefined))
+    throw new AnalysisInputError("binary_session", {
+      userMessage:
+        'operation is required with detail: "operation" and is only accepted with it.',
+    });
+  const operationRequirements =
+    operation === undefined
+      ? undefined
+      : resolveOperationRequirements(operation, router.deepOperations());
+  if (operationRequirements !== undefined && !operationRequirements.ok)
+    throw operationRequirements.error;
   const routeCapabilities = (
     bundleResourceRoot === undefined
       ? [...route.capabilities.values()]
@@ -116,34 +142,30 @@ export const binarySessionStatus = async ({
                   ),
                 }),
           };
-  const analysisProviderCandidates =
+  const candidateStatuses =
     bundleResourceRoot !== undefined
       ? []
-      : (await router.candidateStatuses(route, signal)).map((candidate) =>
-          detail === "summary"
-            ? {
-                provider: providerSummary(candidate.provider),
-                availability: providerStateSummary(candidate.availability),
-                target_support: providerStateSummary(candidate.targetSupport),
-                selected: candidate.selected,
-              }
-            : {
-                provider: providerSummary(candidate.provider),
-                availability: structuredClone(candidate.availability),
-                target_support: structuredClone(candidate.targetSupport),
-                selected: candidate.selected,
-                capabilities: providerCapabilitySets(
-                  candidate.capabilities
-                    .slice()
-                    .filter(
-                      ({ operation }) => operation !== "inventory_artifact",
-                    )
-                    .sort((left, right) =>
-                      compareUnicodeCodePoints(left.operation, right.operation),
-                    ),
-                ),
-              },
-        );
+      : await router.candidateStatuses(route, signal);
+  // The operation view replaces the candidate list with per-operation facts
+  // derived from the same candidate statuses.
+  const candidateFacts =
+    operationRequirements !== undefined && operation !== undefined
+      ? {
+          operation,
+          operation_requirements: operationRequirementsView(
+            operationRequirements.value,
+          ),
+          operation_candidates: operationCandidates(
+            candidateStatuses,
+            operationRequirements.value,
+          ),
+        }
+      : {
+          analysis_provider_candidates: projectCandidates(
+            candidateStatuses,
+            detail === "summary" ? "summary" : "complete",
+          ),
+        };
   const common = {
     investigation,
     cleanup_pending: cleanupPending,
@@ -152,7 +174,7 @@ export const binarySessionStatus = async ({
       : { cleanup_retry: { ...cleanupRetry } }),
     capabilities,
     analysis_provider_binding: analysisProviderBinding,
-    analysis_provider_candidates: analysisProviderCandidates,
+    ...candidateFacts,
     analysis_run:
       runId === undefined
         ? null
@@ -187,6 +209,35 @@ export const binarySessionStatus = async ({
       };
 };
 
+/** Summary keeps each candidate's status facts; complete adds diagnostics and capability sets. */
+const projectCandidates = (
+  candidates: readonly AnalysisProviderCandidateStatus[],
+  detail: "summary" | "complete",
+) =>
+  candidates.map((candidate) =>
+    detail === "summary"
+      ? {
+          provider: providerSummary(candidate.provider),
+          availability: providerStateSummary(candidate.availability),
+          target_support: providerStateSummary(candidate.targetSupport),
+          selected: candidate.selected,
+        }
+      : {
+          provider: providerSummary(candidate.provider),
+          availability: structuredClone(candidate.availability),
+          target_support: structuredClone(candidate.targetSupport),
+          selected: candidate.selected,
+          capabilities: providerCapabilitySets(
+            candidate.capabilities
+              .slice()
+              .filter(({ operation }) => operation !== "inventory_artifact")
+              .sort((left, right) =>
+                compareUnicodeCodePoints(left.operation, right.operation),
+              ),
+          ),
+        },
+  );
+
 /** A runtime observation replaces the declared state and its repair instruction. */
 const runtimeUnavailable = (
   descriptor: CapabilityDescriptor,
@@ -203,9 +254,15 @@ const runtimeUnavailable = (
 /** Capability surfaces a registration may narrow without hiding provider facts. */
 const advertisedCapabilitySurfaces = z.object({
   capabilities: z.array(providerCapabilitySet),
-  analysis_provider_candidates: z.array(
-    z.union([analysisProviderCandidate, analysisProviderCandidateSummary]),
-  ),
+  // The operation view carries operation_candidates instead. Their
+  // declarations stay unrestricted: they are the requested tool's own
+  // provider prerequisites, which a composed tool needs even when the
+  // registration hides the direct tools.
+  analysis_provider_candidates: z
+    .array(
+      z.union([analysisProviderCandidate, analysisProviderCandidateSummary]),
+    )
+    .optional(),
 });
 
 /**
@@ -223,19 +280,23 @@ export const restrictAdvertisedCapabilities = (
   return jsonObjectSchema.parse({
     ...object,
     capabilities: restrictCapabilitySets(capabilities, isOperationAdvertised),
-    analysis_provider_candidates: analysis_provider_candidates.map(
-      (candidate) => ({
-        ...candidate,
-        ...("capabilities" in candidate
-          ? {
-              capabilities: restrictCapabilitySets(
-                candidate.capabilities,
-                isOperationAdvertised,
-              ),
-            }
-          : {}),
-      }),
-    ),
+    ...(analysis_provider_candidates === undefined
+      ? {}
+      : {
+          analysis_provider_candidates: analysis_provider_candidates.map(
+            (candidate) => ({
+              ...candidate,
+              ...("capabilities" in candidate
+                ? {
+                    capabilities: restrictCapabilitySets(
+                      candidate.capabilities,
+                      isOperationAdvertised,
+                    ),
+                  }
+                : {}),
+            }),
+          ),
+        }),
   });
 };
 
@@ -285,19 +346,6 @@ const requestActivityStatus = (
     providers,
   };
 };
-
-/** Keep a provider-owned status, code, and reason; diagnostics stay in complete detail. */
-const providerStateSummary = <
-  State extends {
-    readonly status: string;
-    readonly code: string | null;
-    readonly reason: string | null;
-  },
->({
-  status,
-  code,
-  reason,
-}: State) => ({ status, code, reason });
 
 const providerSummary = ({
   id,

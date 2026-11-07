@@ -143,6 +143,11 @@ export class SessionProviderRouter {
     );
   }
 
+  /** Operations declared by any registered deep provider, whether or not it is ready. */
+  deepOperations(): ReadonlySet<string> {
+    return new Set(this.registry.declaredOperations());
+  }
+
   /** Produce exact candidate rejections for an intentionally unbound route. */
   unboundOperationError(
     operation: string,

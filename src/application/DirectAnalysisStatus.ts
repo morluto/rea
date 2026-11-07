@@ -16,6 +16,7 @@ import {
   withSessionCleanup,
 } from "./DirectAnalysisCleanup.js";
 import { ok } from "../domain/result.js";
+import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 
 /** Read target-free provider status and operation availability. */
 export const runSessionStatus = async (
@@ -24,6 +25,7 @@ export const runSessionStatus = async (
     "createBinarySession" | "readConfiguration"
   >,
   logger: Logger = silentLogger,
+  view: { readonly operation?: string } = {},
 ): Promise<JsonValue> => {
   const config = dependencies.readConfiguration();
   if (!config.ok) return { error: projectInvocationFailure(config.error) };
@@ -31,7 +33,21 @@ export const runSessionStatus = async (
   return withSessionCleanup<JsonValue>(
     session,
     async () => {
-      const status = jsonObjectSchema.parse(await session.status());
+      // The operation view uses the same session projection as MCP; without
+      // operation the command keeps its complete provider facts.
+      let observed: JsonValue;
+      try {
+        observed = await session.status(
+          view.operation === undefined
+            ? {}
+            : { detail: "operation", operation: view.operation },
+        );
+      } catch (cause) {
+        if (cause instanceof AnalysisInputError)
+          return { error: projectInvocationFailure(cause) };
+        throw cause;
+      }
+      const status = jsonObjectSchema.parse(observed);
       const catalog = catalogIdentityForToolFamilies(
         compactPresentationForMcpInputSchemaProfile(
           config.value.mcpInputSchemaProfile,

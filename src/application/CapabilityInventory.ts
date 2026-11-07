@@ -235,6 +235,44 @@ const ENHANCED_REQUIREMENTS: ReadonlyMap<string, ProviderComposition> = new Map(
   } satisfies Readonly<Record<EnhancedContractName, ProviderComposition>>),
 );
 
+/**
+ * Provider operations one tool needs, from the same compositions that decide
+ * its availability. A direct tool needs its own operation. Each requirement is
+ * one operation or a group satisfied by any one of its operations.
+ */
+export type ToolProviderRequirements =
+  | {
+      readonly kind: "operations";
+      readonly requirements: readonly (string | readonly string[])[];
+    }
+  | {
+      readonly kind: "modes";
+      readonly defaultMode: string | null;
+      readonly modes: readonly {
+        readonly name: string;
+        readonly requirements: readonly (string | readonly string[])[];
+      }[];
+    };
+
+/** Return undefined for an unknown tool or an enhanced tool without a declared composition. */
+export const toolProviderRequirements = (
+  name: string,
+): ToolProviderRequirements | undefined => {
+  const contract = TOOL_CONTRACTS.find((candidate) => candidate.name === name);
+  if (contract === undefined) return undefined;
+  if (contract.kind !== "enhanced")
+    return { kind: "operations", requirements: [name] };
+  const composition = ENHANCED_REQUIREMENTS.get(name);
+  if (composition === undefined) return undefined;
+  return "modes" in composition
+    ? {
+        kind: "modes",
+        defaultMode: composition.defaultMode ?? null,
+        modes: composition.modes,
+      }
+    : { kind: "operations", requirements: composition };
+};
+
 /** Native contracts defined only for an active Mach-O executable. */
 const MACHO_TARGET_OPERATIONS: ReadonlySet<string> = new Set([
   "inspect_signature",

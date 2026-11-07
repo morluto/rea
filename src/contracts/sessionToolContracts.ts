@@ -88,7 +88,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "binary_session",
-    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. A selected provider may report release_verification under its binding; omission means not reported, and reported-version verification does not authenticate executable bytes. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. Request detail: "complete" only for provider diagnostics, candidate capabilities or static tool flags; omitted_fields lists what summary leaves out.',
+    'Report the active binary target or resource-only app root, provider and capability availability when applicable, client-feature, analysis, and server-identity status without starting analysis. A selected provider may report release_verification under its binding; omission means not reported, and reported-version verification does not authenticate executable bytes. Start with the default summary: after selecting Ghidra, capabilities[].shared_limitations already reports enabled checkpoint or ephemeral mode. After an unsupported operation, use detail: "operation" with operation to compare deep-provider candidates for that tool without selecting one. Request detail: "complete" only for provider diagnostics, all candidate capabilities or static tool flags; omitted_fields lists what each view leaves out.',
     binarySessionInputSchema,
   ),
   session(

@@ -1001,7 +1001,30 @@ are not empty or false.
 `detail: "complete"` returns them inline, groups tools by those flags too, and
 has no `omitted_fields`. The output schema keys each result's candidate,
 tool-group and omission fields by its `detail`. CLI `capabilities` and
-`providers` always return complete provider facts.
+`providers` always return complete provider facts unless
+`capabilities --operation` selects the operation view below.
+
+`detail: "operation"` requires `operation`, a tool name such as
+`search_bytes`; `operation` is rejected with any other `detail`. It answers
+which deep-provider candidates could serve that one tool after the current
+provider refused it. `operation_requirements` lists the provider operations the
+tool needs, from the same compositions that decide `tool_availability`; a group
+is met by any one of its operations, and a mode-dependent tool lists its modes.
+Each entry of `operation_candidates` keeps four independent facts: the
+candidate's `availability` and `target_support` (`status`, `code`, `reason`, as
+in summary), `selected`, and `declaration`, the provider's static declaration
+of each required operation as `available`, `unavailable` with its reason, or
+`not_declared`, with `missing_operations` and per-mode status where relevant.
+None of these implies another: a declared operation on an unavailable provider,
+or `unknown` target support while no target is open, stays as reported. The
+view does not select, open or switch a provider, retry the refused call, or
+change the session or Evidence. `tool_availability` keeps only the requested
+tool's entry. `analysis_provider_candidates` and other tools are omitted and
+listed in `omitted_fields`; diagnostics, remediation and all candidate
+capabilities remain available with `detail: "complete"`. The first version
+covers tools whose every required operation is declared by a deep provider;
+other tools, unknown names, and tools hidden by `REA_MCP_TOOL_FAMILIES` return
+an input error.
 
 `get_call_graph` and `trace_call_path` report `forward` and `backward` modes.
 Each requires `procedure_address` plus `procedure_callees` or `procedure_callers`,
