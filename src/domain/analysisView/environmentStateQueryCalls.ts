@@ -488,15 +488,17 @@ const graphqlOperationKind = (
       continue;
     }
     if (ch === "{") {
-      if (braceDepth === 0 && parenDepth === 0 && !awaitingSelection)
-        definitions.push({ kind: "query", name: undefined });
-      braceDepth += 1;
-      awaitingSelection = false;
+      if (parenDepth === 0) {
+        if (braceDepth === 0 && !awaitingSelection)
+          definitions.push({ kind: "query", name: undefined });
+        braceDepth += 1;
+        awaitingSelection = false;
+      }
       at += 1;
       continue;
     }
     if (ch === "}") {
-      braceDepth = Math.max(0, braceDepth - 1);
+      if (parenDepth === 0) braceDepth = Math.max(0, braceDepth - 1);
       at += 1;
       continue;
     }
@@ -504,7 +506,7 @@ const graphqlOperationKind = (
       const start = at;
       while (at < source.length && isGraphqlNameChar(source.charCodeAt(at)))
         at += 1;
-      if (braceDepth === 0 && parenDepth === 0) {
+      if (braceDepth === 0 && parenDepth === 0 && !awaitingSelection) {
         const word = source.slice(start, at);
         if (
           word === "query" ||
@@ -527,17 +529,19 @@ const graphqlOperationKind = (
             at = end;
           }
           definitions.push({ kind: word, name });
-          awaitingSelection = true;
-        } else if (word === "fragment") {
-          awaitingSelection = true;
         }
+        awaitingSelection = true;
       }
       continue;
     }
     at += 1;
   }
-  const named = definitions.find((entry) => entry.name === operationName);
-  if (named !== undefined) return named.kind;
+  const matching = definitions.filter((entry) => entry.name === operationName);
+  if (matching.length === 1) return matching[0]!.kind;
+  if (matching.length > 1)
+    return matching.every((entry) => entry.kind === matching[0]!.kind)
+      ? matching[0]!.kind
+      : undefined;
   return definitions.length === 1 ? definitions[0]?.kind : undefined;
 };
 
@@ -549,10 +553,8 @@ const rpcCallReadsOnly = (
     rpcOperation.kind === "graphql" &&
     isObject(body) &&
     typeof body.query === "string"
-  ) {
-    const kind = graphqlOperationKind(body.query, rpcOperation.name);
-    if (kind !== undefined) return kind === "query";
-  }
+  )
+    return graphqlOperationKind(body.query, rpcOperation.name) === "query";
   return readsOnly(rpcOperation.name);
 };
 
@@ -564,12 +566,13 @@ const namesReadOperations = (
 ): boolean =>
   calls.every((call) => {
     const body = io.request(call.ordinal);
+    if (tool.rpc_operation !== undefined)
+      return rpcCallReadsOnly(tool.rpc_operation, body);
     const operations = operationsOf(call, body);
-    if (operations !== undefined && operations.length > 0)
-      return operations.every(readsOnly);
     return (
-      tool.rpc_operation !== undefined &&
-      rpcCallReadsOnly(tool.rpc_operation, body)
+      operations !== undefined &&
+      operations.length > 0 &&
+      operations.every(readsOnly)
     );
   });
 

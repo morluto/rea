@@ -409,3 +409,64 @@ describe("multiplexed POST RPC state partitioning", () => {
     ]);
   });
 });
+
+describe("multiplexed batchexecute query-parameter projection", () => {
+  it("keeps query-only batchexecute operations separate when include_query_parameter_names is false", () => {
+    const records: readonly WebNetworkCaptureRecord[] = [
+      rpcRecord({
+        ordinal: 0,
+        path: "/_/AppUi/data/batchexecute?rpcids=GetItems&source-path=%2F",
+        requestMime: "application/x-www-form-urlencoded",
+        postText: "at=csrf-token",
+        responseMime: "text/plain",
+        responseText:
+          ')]}\'\n[[["wrb.fr","GetItems","[1]",null,null,null,"generic"]]]',
+      }),
+      rpcRecord({
+        ordinal: 1,
+        path: "/_/AppUi/data/batchexecute?rpcids=SaveItem&source-path=%2F",
+        requestMime: "application/x-www-form-urlencoded",
+        postText: "at=csrf-token",
+        responseMime: "text/plain",
+        responseText:
+          ')]}\'\n[[["wrb.fr","SaveItem","{\\"ok\\":true}",null,null,null,"generic"]]]',
+      }),
+    ];
+    const manifestWithoutQueryNames = new EnvironmentManifestAccumulator(
+      1024 * 1024,
+      false,
+    );
+    const stateAccumulator = new EnvironmentStateAccumulator(1024 * 1024);
+    for (const record of records) {
+      expect(manifestWithoutQueryNames.add(record).ok).toBe(true);
+      expect(stateAccumulator.add(record).ok).toBe(true);
+    }
+    const manifest = finished(manifestWithoutQueryNames);
+    const state = stateAccumulator.finishState();
+    if (!state.ok) throw state.error;
+    expect(
+      manifest.tools.map((tool) => ({
+        name: tool.name,
+        rpc_operation: tool.rpc_operation,
+        query_parameter_names: tool.query_parameter_names,
+      })),
+    ).toEqual([
+      {
+        name: "post_appui_data_batchexecute_get_items",
+        rpc_operation: { kind: "batchexecute", name: "GetItems" },
+        query_parameter_names: [],
+      },
+      {
+        name: "post_appui_data_batchexecute_save_item",
+        rpc_operation: { kind: "batchexecute", name: "SaveItem" },
+        query_parameter_names: [],
+      },
+    ]);
+    expect(state.value.views.map((view) => view.tool)).toEqual([
+      "post_appui_data_batchexecute_get_items",
+    ]);
+    expect(state.value.writes.map((plan) => plan.tool)).toEqual([
+      "post_appui_data_batchexecute_save_item",
+    ]);
+  });
+});

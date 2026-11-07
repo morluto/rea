@@ -11,17 +11,14 @@ import {
 } from "../webNetworkCapture.js";
 import { completeWithinViewCoverage } from "./analysisViewCoverage.js";
 import {
-  base64PrefixChars,
-  readRecordedResponseBody,
   recordedResponseBodyIsEmpty,
   readRecordedResponseDeclaration,
 } from "./recordedResponseBody.js";
 import { readRecordedRequestBody } from "./recordedExchangeBody.js";
 import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
 import {
-  hasXssiGuardPrefix,
-  isXssiEligibleMediaType,
-  parseXssiOrExactJson,
+  hasBoundedXssiJsonResponse,
+  isBatchExecutePath,
   RPC_QUERY_LIMIT_CHARS,
   RPC_REQUEST_BODY_LIMIT_BYTES,
   selectRpcOperationFromText,
@@ -59,6 +56,7 @@ import {
   SEGMENT_BYTES,
   readQueryParameterNames,
   readRecordedRequestLine,
+  readRecordedRequestQuery,
   routePartCount,
   scanRouteTemplate,
   textBytes,
@@ -212,6 +210,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     readonly includeQueryParameterNames = true,
     rules: readonly TemplateRule[] = [],
     budgetSubject = "Environment-manifest",
+    readonly discriminateRpc = true,
   ) {
     super(maximumBytes, budgetSubject);
     this.#rules = new Set(rules);
@@ -253,7 +252,7 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
       const queryNames = readQueryParameterNames(line.query, this.scratch);
       if (queryNames === null) return this.overBudget();
       const rpc =
-        line.method === "POST"
+        this.discriminateRpc && line.method === "POST"
           ? this.#rpcOperation(line, record.reported)
           : ok(undefined);
       if (!rpc.ok) return rpc;
@@ -288,9 +287,10 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
           : ok(null);
       if (!bodyShape.ok) return bodyShape;
       const mime = mediaTypeEssence(line.rawMime);
-      const xssiJson = isJsonLike(mime)
-        ? ok(false)
-        : this.#xssiJsonResponse(record, mime);
+      const xssiJson =
+        !this.discriminateRpc || isJsonLike(mime)
+          ? ok(false)
+          : this.#xssiJsonResponse(record, mime);
       if (!xssiJson.ok) return xssiJson;
       const grouped = this.#append(
         record.ordinal,
@@ -363,21 +363,30 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
         text !== undefined &&
         text.length > 0 &&
         text.length <= RPC_REQUEST_BODY_LIMIT_BYTES &&
-        !this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 3)
+        !this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4)
       )
         return this.overBudget();
+      let query = line.query;
+      if (!this.includeQueryParameterNames && isBatchExecutePath(line.path)) {
+        const rawQuery = readRecordedRequestQuery(reported, (bytes) =>
+          this.temporary(bytes),
+        );
+        if (rawQuery === null) return this.overBudget();
+        query = rawQuery;
+      }
       if (
-        line.query !== undefined &&
-        line.query.length > 0 &&
-        line.query.length <= RPC_QUERY_LIMIT_CHARS &&
-        !this.temporary(textBytes(line.query.length))
+        query !== undefined &&
+        query.length > 0 &&
+        query.length <= RPC_QUERY_LIMIT_CHARS &&
+        isBatchExecutePath(line.path) &&
+        !this.temporary(RECORD_SCRATCH_BYTES + textBytes(query.length) * 2)
       )
         return this.overBudget();
       return ok(
         selectRpcOperationFromText({
           method: line.method,
           path: line.path,
-          query: line.query,
+          query,
           mimeType,
           bodyText: text,
         }),
@@ -392,50 +401,12 @@ export class EnvironmentManifestAccumulator extends WebNetworkProjectionAccumula
     record: WebNetworkCaptureRecord,
     mime: string | null,
   ): Result<boolean, AnalysisError> {
-    if (!isXssiEligibleMediaType(mime)) return ok(false);
-    const declaration = readRecordedResponseDeclaration(record.reported);
-    const content = declaration?.content;
-    if (typeof content?.text !== "string") return ok(false);
-    let sourceLength = 0;
-    if (content.encoding === undefined) {
-      if (
-        !hasXssiGuardPrefix(content.text) ||
-        content.text.length > RPC_REQUEST_BODY_LIMIT_BYTES
-      )
-        return ok(false);
-      sourceLength = content.text.length;
-    } else if (content.encoding === "base64") {
-      const binary = record.binary_fields.find(
-        (field) =>
-          field.pointer === "/response/content/text" &&
-          field.state === "retained",
-      );
-      const encoded = binary?.content_base64 ?? null;
-      if (
-        encoded === null ||
-        !encoded.startsWith("KV19J") ||
-        encoded.length > base64PrefixChars(RPC_REQUEST_BODY_LIMIT_BYTES)
-      )
-        return ok(false);
-      sourceLength = encoded.length;
-    } else return ok(false);
     const release = this.temporaryCheckpoint();
     try {
-      if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(sourceLength) * 4))
-        return this.overBudget();
-      const decoded = readRecordedResponseBody(
-        record,
-        RPC_REQUEST_BODY_LIMIT_BYTES,
-        declaration,
+      const matched = hasBoundedXssiJsonResponse(record, mime, (chars) =>
+        this.temporary(RECORD_SCRATCH_BYTES + textBytes(chars) * 4),
       );
-      if (
-        decoded.bodyText === null ||
-        decoded.bodyEncoding === "base64" ||
-        decoded.bodyCut === true ||
-        !hasXssiGuardPrefix(decoded.bodyText)
-      )
-        return ok(false);
-      return ok(parseXssiOrExactJson(decoded.bodyText) !== undefined);
+      return matched === null ? this.overBudget() : ok(matched);
     } finally {
       release();
     }

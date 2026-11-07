@@ -1198,3 +1198,170 @@ describe("multiplexed POST RPC probe comparison", () => {
     ]);
   });
 });
+
+describe("multiplexed RPC budget and XSSI origin parity in comparison", () => {
+  it("routes >64 KiB JSON-RPC POST requests to the undispatched tool instead of a smaller RPC operation's tool", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const paddedRpcText = `{"jsonrpc":"2.0","method":"tools/list","id":2}${" ".repeat(70_000)}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            time: 10,
+            request: {
+              method: "POST",
+              url: "http://rpc.example/rpc/query",
+              postData: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  method: "tools/list",
+                  id: 1,
+                }),
+              },
+            },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 1,
+                  result: ["small"],
+                }),
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            time: 10,
+            request: {
+              method: "POST",
+              url: "http://rpc.example/rpc/query",
+              postData: {
+                mimeType: "application/json",
+                text: paddedRpcText,
+              },
+            },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify({
+                  jsonrpc: "2.0",
+                  id: 2,
+                  result: ["large"],
+                }),
+              },
+            },
+          },
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    const rpcSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: rpcSource,
+      captureValue: recorded,
+      probes: [{ label: "oversized-rpc", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 2,
+      equal: 2,
+      agreement: 1,
+    });
+    expect(report.value.probes[0]?.results.map((step) => step.tool)).toEqual([
+      "post_rpc_query_tools_list",
+      "post_rpc_query",
+    ]);
+  });
+});
+
+describe("XSSI response size parity in probe origin selection", () => {
+  it("shares the 64 KiB XSSI size check between manifest and probe origin selection", async () => {
+    const { inspectAnalysisView } =
+      await import("../analysisView/AnalysisViewService.js");
+    const largeXssiJs = `)]}'\n{"pad":"${"x".repeat(70_000)}"}`;
+    const makeCapture = () =>
+      analysisViewCaptureEvidence(
+        environmentManifestCaptureFixture([
+          {
+            startedDateTime: "2026-10-20T09:00:00.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://api.example/api/items" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/json",
+                text: JSON.stringify([{ id: "item-1" }]),
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:01.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://cdn.example/feed/1" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/javascript",
+                text: largeXssiJs,
+              },
+            },
+          },
+          {
+            startedDateTime: "2026-10-20T09:00:02.000Z",
+            time: 10,
+            request: { method: "GET", url: "http://cdn.example/feed/2" },
+            response: {
+              status: 200,
+              content: {
+                mimeType: "application/javascript",
+                text: largeXssiJs,
+              },
+            },
+          },
+        ]),
+      );
+    const recorded = makeCapture();
+    const manifest = await inspectAnalysisView({
+      source: { kind: "inline", evidence: recorded },
+      view: { kind: "environment-manifest" },
+    });
+    if (!manifest.ok) throw manifest.error;
+    expect(manifest.value.normalized_result).toMatchObject({
+      origin: "http://api.example",
+    });
+    const apiSource = environmentServeSource({
+      manifest: manifest.value,
+      capture: recorded,
+    });
+    const report = compareEnvironment({
+      source: apiSource,
+      captureValue: recorded,
+      probes: [{ label: "xssi-origin", value: makeCapture() }],
+      operation: "environment-compare",
+    });
+    if (!report.ok) throw report.error;
+    expect(report.value.summary).toMatchObject({
+      steps: 1,
+      equal: 1,
+      unobserved: 2,
+    });
+    expect(report.value.probes[0]?.unobserved).toEqual([
+      { ordinal: 1, reason: "other-origin" },
+      { ordinal: 2, reason: "other-origin" },
+    ]);
+  });
+});

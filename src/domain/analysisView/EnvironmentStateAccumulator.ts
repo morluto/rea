@@ -19,6 +19,7 @@ import {
   hasXssiGuardPrefix,
   isXssiEligibleMediaType,
   parseXssiOrExactJson,
+  XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "./rpcOperationSelector.js";
 import {
   deeperThan,
@@ -54,20 +55,29 @@ const STATE_NESTING_DEPTH = 16;
 export const stateBodyJson = (
   contentType: string | null,
   body: RecordedResponseBody,
+  allowXssi = true,
 ): JsonValue | undefined => {
   const essence = contentType === null ? null : mediaTypeEssence(contentType);
+  const isJson = contentType !== null && isJsonLike(essence);
   if (
     body.bodyText === null ||
     body.bodyEncoding === "base64" ||
     body.bodyCut === true ||
     !(
-      (contentType !== null && isJsonLike(essence)) ||
-      (isXssiEligibleMediaType(essence) && hasXssiGuardPrefix(body.bodyText))
+      isJson ||
+      (allowXssi &&
+        isXssiEligibleMediaType(essence) &&
+        hasXssiGuardPrefix(body.bodyText))
     ) ||
-    Buffer.byteLength(body.bodyText, "utf8") > STATE_BODY_LIMIT_BYTES
+    Buffer.byteLength(body.bodyText, "utf8") >
+      (isJson ? STATE_BODY_LIMIT_BYTES : XSSI_RESPONSE_BODY_LIMIT_BYTES)
   )
     return undefined;
-  const value = parseXssiOrExactJson(body.bodyText);
+  const value = allowXssi
+    ? parseXssiOrExactJson(body.bodyText)
+    : parseXssiOrExactJson(
+        hasXssiGuardPrefix(body.bodyText) ? "" : body.bodyText,
+      );
   return value === undefined ||
     deeperThan(value, MAX_JSON_DEPTH - STATE_NESTING_DEPTH)
     ? undefined
@@ -117,8 +127,9 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
   constructor(
     maximumBytes = WEB_NETWORK_CAPTURE_LIMITS.outputBytes,
     rules: readonly TemplateRule[] = [],
+    discriminateRpc = true,
   ) {
-    super(maximumBytes, true, rules, "Environment-state");
+    super(maximumBytes, true, rules, "Environment-state", discriminateRpc);
   }
 
   /** The state publishes no body shapes. */
@@ -255,7 +266,12 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
           ? null
           : mediaTypeEssence(entry.contentType);
     // A body whose media type cannot carry JSON or XSSI JSON is refused before its decoding is charged.
-    if (entry === undefined || !isXssiEligibleMediaType(essence))
+    if (
+      entry === undefined ||
+      (this.discriminateRpc
+        ? !isXssiEligibleMediaType(essence)
+        : entry.contentType === "" || !isJsonLike(essence))
+    )
       return { kind: "unusable" };
     const declaration = readRecordedResponseDeclaration(entry.record.reported);
     const content = declaration?.content;
@@ -286,6 +302,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
         STATE_BODY_LIMIT_BYTES,
         declaration,
       ),
+      this.discriminateRpc,
     );
     return value === undefined ? { kind: "unusable" } : { kind: "json", value };
   }
@@ -330,7 +347,7 @@ export class EnvironmentStateAccumulator extends EnvironmentManifestAccumulator 
     try {
       if (!this.temporary(RECORD_SCRATCH_BYTES + textBytes(text.length) * 4))
         return null;
-      const value = stateBodyJson(mimeType, { bodyText: text });
+      const value = stateBodyJson(mimeType, { bodyText: text }, false);
       return use(
         value === undefined ? { kind: "unusable" } : { kind: "json", value },
       );

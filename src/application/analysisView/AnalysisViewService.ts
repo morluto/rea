@@ -28,6 +28,7 @@ import {
 import {
   inspectAnalysisViewInputSchema,
   prepareAnalysisViewProjection,
+  type AnalysisViewAccumulators,
   type AnalysisViewResult,
   type AnalysisViewRequest,
   type InspectAnalysisViewInput,
@@ -200,8 +201,9 @@ const cancelledFileViewResult = <T>(
 export const inspectAnalysisViewValidated = (
   input: ReadyAnalysisViewInput,
   lookup?: EvidenceLookup,
+  accumulators?: AnalysisViewAccumulators,
 ): Result<Evidence, AnalysisError> => {
-  const projection = prepareAnalysisViewProjection(input.view);
+  const projection = prepareAnalysisViewProjection(input.view, accumulators);
   if (input.source.kind === "inline") {
     const admitted = projection.admitInlineEvidence(input.source.evidence);
     if (!admitted.ok) return admitted;

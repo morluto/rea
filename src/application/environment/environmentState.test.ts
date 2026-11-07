@@ -15,6 +15,8 @@ import {
   environmentStateServeFixture,
   environmentStateServeInputs,
 } from "../../../tests/fixtures/environmentServe.js";
+import { BOOK_ROWS } from "../../../tests/fixtures/environmentStateWrites.js";
+import { EnvironmentManifestAccumulator } from "../../domain/analysisView/EnvironmentManifestAccumulator.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
@@ -801,5 +803,94 @@ it("keeps missing fields distinct from invalid JSON field contents", () => {
   expect(firstProblem(document)).toEqual({
     path: "rea_state/entities/0/fields",
     message: "is required",
+  });
+});
+
+describe("saved pre-RPC manifest state compatibility", () => {
+  it("preserves derived state and confirmed REST writes when serving a saved manifest without rpc_operation", () => {
+    const capture = timedCaptureEvidence([
+      ...BOOK_ROWS,
+      [
+        "POST",
+        "/graphql",
+        { data: { viewer: { id: "u1" } } },
+        200,
+        {
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+        },
+      ],
+    ]);
+    const legacyManifest = inspectAnalysisViewValidated(
+      {
+        source: { kind: "retained-evidence", evidence_id: capture.evidence_id },
+        view: {
+          kind: "environment-manifest",
+          template_rules: [],
+          include_query_parameter_names: true,
+        },
+      },
+      (id) => (id === capture.evidence_id ? capture : undefined),
+      {
+        manifest: new EnvironmentManifestAccumulator(
+          undefined,
+          true,
+          [],
+          "Environment-manifest",
+          false,
+        ),
+      },
+    );
+    if (!legacyManifest.ok) throw legacyManifest.error;
+    const legacySource = loadEnvironmentSource(legacyManifest.value, capture);
+    if (!legacySource.ok) throw legacySource.error;
+    expect(
+      legacySource.value.manifest.tools.map((tool) => tool.name),
+    ).toContain("post_graphql");
+    expect(
+      legacySource.value.manifest.tools.every(
+        (tool) => tool.rpc_operation === undefined,
+      ),
+    ).toBe(true);
+
+    const served = prepareServedState(legacySource.value, capture);
+    expect(served.report.served).toBe(true);
+    expect(served.state?.views.get("get_books")?.shape).toBe("list");
+    expect(served.state?.writes.get("post_graphql")?.tool).toBe("post_graphql");
+    expect(served.state?.writes.get("post_books")?.served).toBe(true);
+  });
+
+  it("refuses a supplied state whose write plans name a tool absent from the manifest", () => {
+    const booksFixture = environmentStateServeFixture(
+      timedCaptureEvidence(BOOK_ROWS),
+    );
+    const booksSource = loadEnvironmentSource(
+      booksFixture.manifest,
+      booksFixture.capture,
+    );
+    if (!booksSource.ok) throw booksSource.error;
+    const narrowed = {
+      ...booksSource.value,
+      manifest: {
+        ...booksSource.value.manifest,
+        tools: booksSource.value.manifest.tools.filter(
+          (tool) => tool.name !== "post_books",
+        ),
+      },
+    };
+    const refused = refusal(booksFixture.state, narrowed);
+    expect(refused.details).toMatchObject({
+      issues: [
+        {
+          path: [
+            "state",
+            "normalized_result",
+            "writes",
+            expect.any(Number),
+            "tool",
+          ],
+        },
+      ],
+    });
   });
 });

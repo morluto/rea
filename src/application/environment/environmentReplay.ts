@@ -5,7 +5,10 @@ import {
   ownMember,
   pathSegmentMatches,
 } from "../../domain/analysisView/environmentStateRules.js";
-import { selectRpcOperationFromValue } from "../../domain/analysisView/rpcOperationSelector.js";
+import {
+  selectRpcOperationFromValue,
+  type RpcOperation,
+} from "../../domain/analysisView/rpcOperationSelector.js";
 import { segmentRule } from "../../domain/analysisView/webNetworkRouteTemplates.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import {
@@ -38,6 +41,8 @@ export interface ReplayHttpRequest {
   readonly query?: string | null | undefined;
   readonly body?: JsonValue | undefined;
   readonly contentType?: string | null | undefined;
+  /** Pre-extracted RPC discriminator from the raw request text; `null` means already inspected with no match. */
+  readonly rpcOperation?: RpcOperation | null | undefined;
 }
 
 /** A manifest tool matched to an incoming HTTP request, with its split path segments and literal specificity. */
@@ -99,13 +104,15 @@ export const matchReplayTool = (
   };
   const rpc =
     request.method === "POST"
-      ? selectRpcOperationFromValue({
-          method: request.method,
-          path: request.path,
-          query: request.query,
-          mimeType: request.contentType,
-          body: request.body,
-        })
+      ? request.rpcOperation !== undefined
+        ? (request.rpcOperation ?? undefined)
+        : selectRpcOperationFromValue({
+            method: request.method,
+            path: request.path,
+            query: request.query,
+            mimeType: request.contentType,
+            body: request.body,
+          })
       : undefined;
   if (rpc !== undefined) {
     const exact = pickBest(

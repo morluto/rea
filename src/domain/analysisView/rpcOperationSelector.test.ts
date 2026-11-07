@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 
+import { environmentManifestCaptureFixture } from "../../../tests/fixtures/analysisView.js";
+import { stateBodyJson } from "./EnvironmentStateAccumulator.js";
 import {
+  hasBoundedXssiJsonResponse,
   hasXssiGuardPrefix,
   isXssiEligibleMediaType,
   parseXssiOrExactJson,
@@ -9,6 +12,7 @@ import {
   RPC_REQUEST_BODY_LIMIT_BYTES,
   selectRpcOperationFromText,
   selectRpcOperationFromValue,
+  XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "./rpcOperationSelector.js";
 
 describe("selectRpcOperationFromText and selectRpcOperationFromValue", () => {
@@ -201,6 +205,61 @@ describe("selectRpcOperation fallback cases", () => {
   });
 });
 
+describe("selectRpcOperation encoded batchexecute form and query cases", () => {
+  it("decodes percent-encoded form and query names before checking batch ambiguity", () => {
+    const mixedEncodedForm = `f%2Ereq=${encodeURIComponent(
+      JSON.stringify([
+        [
+          ["MaZiqc", "[]", null, "1"],
+          ["FEPhDc", "[]", null, "2"],
+        ],
+      ]),
+    )}`;
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute",
+        query: "?rpcids=MaZiqc",
+        mimeType: "application/x-www-form-urlencoded",
+        bodyText: mixedEncodedForm,
+      }),
+    ).toBeUndefined();
+
+    const singleEncodedForm = `f%2Ereq=${encodeURIComponent(
+      JSON.stringify([[["MaZiqc", "[]", null, "1"]]]),
+    )}`;
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute",
+        mimeType: "application/x-www-form-urlencoded",
+        bodyText: singleEncodedForm,
+      }),
+    ).toEqual({ kind: "batchexecute", name: "MaZiqc" });
+
+    const conflictingRepeatedForm = `${singleEncodedForm}&f.req=${encodeURIComponent(
+      JSON.stringify([[["FEPhDc", "[]", null, "2"]]]),
+    )}`;
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute",
+        query: "?rpcids=MaZiqc",
+        mimeType: "application/x-www-form-urlencoded",
+        bodyText: conflictingRepeatedForm,
+      }),
+    ).toBeUndefined();
+
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute",
+        query: "?rpc%69ds=FEPhDc",
+      }),
+    ).toEqual({ kind: "batchexecute", name: "FEPhDc" });
+  });
+});
+
 describe("selectRpcOperation length and byte bounds", () => {
   it("enforces identifier length, body byte, and query length bounds", () => {
     const exactName = "A".repeat(RPC_OPERATION_NAME_LIMIT);
@@ -273,6 +332,47 @@ describe("selectRpcOperation length and byte bounds", () => {
       }),
     ).toBeUndefined();
   });
+
+  it("enforces the 64 KiB whole-body byte limit on already-parsed JSON values", () => {
+    const baseObject = { jsonrpc: "2.0", method: "ping", pad: "" };
+    const baseBytes = Buffer.byteLength(JSON.stringify(baseObject), "utf8");
+    const exactParsed = {
+      ...baseObject,
+      pad: "p".repeat(RPC_REQUEST_BODY_LIMIT_BYTES - baseBytes),
+    };
+    expect(Buffer.byteLength(JSON.stringify(exactParsed), "utf8")).toBe(
+      RPC_REQUEST_BODY_LIMIT_BYTES,
+    );
+    expect(
+      selectRpcOperationFromValue({
+        method: "POST",
+        path: "/rpc",
+        body: exactParsed,
+      }),
+    ).toEqual({ kind: "json-rpc", name: "ping" });
+
+    expect(
+      selectRpcOperationFromValue({
+        method: "POST",
+        path: "/rpc",
+        body: { ...exactParsed, pad: `${exactParsed.pad}x` },
+      }),
+    ).toBeUndefined();
+
+    expect(
+      selectRpcOperationFromValue({
+        method: "POST",
+        path: "/graphql",
+        body: {
+          operationName: "GetViewer",
+          query: "{ viewer { id } }",
+          variables: {
+            pad: "é".repeat(Math.ceil(RPC_REQUEST_BODY_LIMIT_BYTES / 2)),
+          },
+        },
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("XSSI response prefix detection and parsing", () => {
@@ -300,5 +400,33 @@ describe("XSSI response prefix detection and parsing", () => {
       [["di", 18]],
     ]);
     expect(parseXssiOrExactJson(")]}'\nnot-json")).toBeUndefined();
+    expect(parseXssiOrExactJson(")]}'\nnull")).toBeNull();
+    expect(stateBodyJson("text/plain", { bodyText: ")]}'\nnull" })).toBeNull();
+
+    const baseRecord = environmentManifestCaptureFixture().records[0]!;
+    const xssiRecord = (text: string) => ({
+      ...baseRecord,
+      reported: {
+        request: { method: "POST", url: "https://app.example/batchexecute" },
+        response: {
+          status: 200,
+          content: { mimeType: "application/javascript", text },
+        },
+      },
+    });
+    expect(
+      hasBoundedXssiJsonResponse(
+        xssiRecord(')]}\'\n{"ok":true}'),
+        "application/javascript",
+      ),
+    ).toBe(true);
+    expect(
+      hasBoundedXssiJsonResponse(
+        xssiRecord(
+          `)]}'\n{"pad":"${"x".repeat(XSSI_RESPONSE_BODY_LIMIT_BYTES)}"}`,
+        ),
+        "application/javascript",
+      ),
+    ).toBe(false);
   });
 });

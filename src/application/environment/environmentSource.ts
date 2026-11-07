@@ -8,6 +8,7 @@ import {
   hasXssiGuardPrefix,
   isXssiEligibleMediaType,
   parseXssiOrExactJson,
+  XSSI_RESPONSE_BODY_LIMIT_BYTES,
 } from "../../domain/analysisView/rpcOperationSelector.js";
 
 import {
@@ -105,9 +106,12 @@ export const replayedBody = (exchange: RecordedExchange): ReplayedBody => {
     exchange.contentType === null
       ? null
       : mediaTypeEssence(exchange.contentType);
+  const isJson = exchange.contentType !== null && isJsonLike(essence);
   const value =
-    (exchange.contentType !== null && isJsonLike(essence)) ||
-    (isXssiEligibleMediaType(essence) && hasXssiGuardPrefix(text))
+    isJson ||
+    (isXssiEligibleMediaType(essence) &&
+      hasXssiGuardPrefix(text) &&
+      Buffer.byteLength(text, "utf8") <= XSSI_RESPONSE_BODY_LIMIT_BYTES)
       ? parseXssiOrExactJson(text)
       : undefined;
   return value === undefined ? { kind: "text", text } : { kind: "json", value };

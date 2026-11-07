@@ -163,6 +163,19 @@ export const readRecordedRequestLine = (
   };
 };
 
+/** Read one record's raw query string independently of query-name projection, charging URL text first. */
+export const readRecordedRequestQuery = (
+  reported: unknown,
+  temporary: Reserve,
+): string | undefined | null => {
+  const request = requestSchema.safeParse(reported);
+  if (!request.success || typeof request.data.request.url !== "string")
+    return undefined;
+  const { url } = request.data.request;
+  if (!temporary(RECORD_SCRATCH_BYTES + textBytes(url.length))) return null;
+  return parseRecordedTransportUrl(url, { includeQuery: true }).query;
+};
+
 /** Reserve form-parser scratch before decoding distinct query parameter names. */
 export const readQueryParameterNames = (
   query: string | undefined,

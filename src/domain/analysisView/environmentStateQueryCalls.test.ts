@@ -22,6 +22,7 @@ interface Call {
   readonly request?: JsonValue;
   readonly tool: string;
   readonly template?: string;
+  readonly rpcOperation?: StateToolFacts["rpc_operation"];
   readonly start?: number;
   readonly end?: number | null;
 }
@@ -61,6 +62,9 @@ const readOnlyOf = (
       name: call.tool,
       method: call.method,
       path_template: call.template ?? call.path,
+      ...(call.rpcOperation === undefined
+        ? {}
+        : { rpc_operation: call.rpcOperation }),
       record_ordinals: [...(known?.record_ordinals ?? []), index],
     });
   });
@@ -754,5 +758,55 @@ describe("the bodies read-only decisions compare", () => {
     expect([...outside]).toEqual([]);
     // Each body is kept as its digest's hex text, charged before it is.
     expect(retained).toBeGreaterThanOrEqual(parsed.size * 64);
+  });
+});
+
+describe("GraphQL operation definition classification with fragments and keyword names", () => {
+  it("skips fragment headers and directive or variable defaults so a fragment never hides a mutation", () => {
+    const graphqlCall = (name: string, query: string): Call => ({
+      method: "POST",
+      path: "/graphql",
+      query: "?op=getViewer",
+      tool: `post_graphql_${name}`,
+      rpcOperation: { kind: "graphql", name },
+      request: { operationName: name, query },
+      response: { data: { ok: true } },
+    });
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "on",
+          "fragment query on Mutation { reset } mutation on { ...query }",
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "mutation",
+          "fragment mutation on Query { viewer { id } } query mutation { ...mutation }",
+        ),
+      ]),
+    ).toEqual(["post_graphql_mutation"]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "Save",
+          'mutation Save($in: Input = { query: "x" }) @dir(arg: { a: 1 }) { update { id } }',
+        ),
+      ]),
+    ).toEqual([]);
+
+    expect(
+      readOnlyOf([
+        graphqlCall(
+          "getDup",
+          "query getDup { viewer { id } } mutation getDup { reset }",
+        ),
+      ]),
+    ).toEqual([]);
   });
 });

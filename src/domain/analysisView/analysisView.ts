@@ -391,6 +391,7 @@ export interface AnalysisViewAccumulators {
 /** Prepare one view's source admission and projection under the same owned budget. */
 export const prepareAnalysisViewProjection = (
   view: AnalysisViewRequest,
+  overrides: AnalysisViewAccumulators = {},
 ): {
   admitInlineEvidence(value: unknown): Result<void, AnalysisError>;
   project(
@@ -399,17 +400,20 @@ export const prepareAnalysisViewProjection = (
 } => {
   const accumulators: AnalysisViewAccumulators = {
     apiSurface:
-      view.kind === "api-surface"
+      overrides.apiSurface ??
+      (view.kind === "api-surface"
         ? createApiSurfaceAccumulator(view)
-        : undefined,
+        : undefined),
     manifest:
-      view.kind === "environment-manifest"
+      overrides.manifest ??
+      (view.kind === "environment-manifest"
         ? createEnvironmentManifestAccumulator(view)
-        : undefined,
+        : undefined),
     state:
-      view.kind === "environment-state" || view.kind === "environment-coverage"
+      overrides.state ??
+      (view.kind === "environment-state" || view.kind === "environment-coverage"
         ? createEnvironmentStateAccumulator(view)
-        : undefined,
+        : undefined),
   };
   const accumulator =
     accumulators.apiSurface ?? accumulators.manifest ?? accumulators.state;

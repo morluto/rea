@@ -1,7 +1,13 @@
 import { parseExactJson } from "../exactJsonNumber.js";
 import type { JsonValue } from "../jsonValue.js";
 import { safeParseJson } from "../safeJson.js";
+import type { WebNetworkCaptureRecord } from "../webNetworkCapture.js";
 import { isJson, isJsonLike, mediaTypeEssence } from "./recordedMediaType.js";
+import {
+  base64PrefixChars,
+  readRecordedResponseBody,
+  readRecordedResponseDeclaration,
+} from "./recordedResponseBody.js";
 
 /** Supported single-POST multiplexed RPC families. */
 export const RPC_OPERATION_KINDS = [
@@ -21,6 +27,8 @@ export interface RpcOperation {
 export const RPC_OPERATION_NAME_LIMIT = 128;
 /** Maximum UTF-8 request body size inspected for RPC operation discrimination. */
 export const RPC_REQUEST_BODY_LIMIT_BYTES = 64 * 1024;
+/** Maximum UTF-8 response body size admitted as an XSSI-guarded JSON response on script/text media types. */
+export const XSSI_RESPONSE_BODY_LIMIT_BYTES = 64 * 1024;
 /** Maximum URL query string length inspected for batchexecute `rpcids`. */
 export const RPC_QUERY_LIMIT_CHARS = 8 * 1024;
 
@@ -89,15 +97,57 @@ const isGraphqlPath = (path: string): boolean =>
     .split("/")
     .some((segment) => segment.includes("graphql"));
 
-const isBatchExecutePath = (path: string): boolean => {
+/** Whether a request path targets a Google `batchexecute` endpoint. */
+export const isBatchExecutePath = (path: string): boolean => {
   const trimmed =
     path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
   return trimmed === "/batchexecute" || trimmed.endsWith("/batchexecute");
 };
 
+const withinByteLimit = (text: string, limitBytes: number): boolean =>
+  text.length <= limitBytes && Buffer.byteLength(text, "utf8") <= limitBytes;
+
 const withinBodyByteLimit = (text: string): boolean =>
-  text.length <= RPC_REQUEST_BODY_LIMIT_BYTES &&
-  Buffer.byteLength(text, "utf8") <= RPC_REQUEST_BODY_LIMIT_BYTES;
+  withinByteLimit(text, RPC_REQUEST_BODY_LIMIT_BYTES);
+
+/** Measure exact compact JSON UTF-8 byte size, aborting immediately once `limitBytes` is exceeded. */
+const withinJsonValueByteLimit = (
+  root: JsonValue,
+  limitBytes: number,
+): boolean => {
+  let bytes = 0;
+  const stack: JsonValue[] = [root];
+  while (stack.length > 0) {
+    const current = stack.pop()!;
+    if (current === null || current === true) bytes += 4;
+    else if (current === false) bytes += 5;
+    else if (typeof current === "number") {
+      if (!Number.isFinite(current)) return false;
+      bytes += String(current).length;
+    } else if (typeof current === "string") {
+      if (current.length > limitBytes) return false;
+      bytes += Buffer.byteLength(JSON.stringify(current), "utf8");
+    } else if (Array.isArray(current)) {
+      bytes += 2 + Math.max(0, current.length - 1);
+      if (bytes > limitBytes) return false;
+      for (const item of current) stack.push(item);
+    } else {
+      bytes += 2;
+      let count = 0;
+      for (const key in current) {
+        if (!Object.hasOwn(current, key)) continue;
+        if (count > 0) bytes += 1;
+        count += 1;
+        if (key.length > limitBytes) return false;
+        bytes += Buffer.byteLength(JSON.stringify(key), "utf8") + 1;
+        if (bytes > limitBytes) return false;
+        stack.push(current[key]!);
+      }
+    }
+    if (bytes > limitBytes) return false;
+  }
+  return true;
+};
 
 const selectFromJsonObject = (
   root: Readonly<Record<string, unknown>>,
@@ -141,6 +191,21 @@ const parseBatchExecuteEnvelope = (freqText: string): BatchExecuteBodyParse => {
     : { kind: "single", name: selected };
 };
 
+const selectBatchExecuteFormValues = (
+  freqs: readonly string[],
+): RpcOperation | undefined => {
+  let selected: string | undefined;
+  for (const freq of freqs) {
+    const parsed = parseBatchExecuteEnvelope(freq);
+    if (parsed.kind !== "single") return undefined;
+    if (selected === undefined) selected = parsed.name;
+    else if (selected !== parsed.name) return undefined;
+  }
+  return selected === undefined
+    ? undefined
+    : { kind: "batchexecute", name: selected };
+};
+
 const selectBatchExecuteQueryRpcId = (
   query: string | null | undefined,
 ): string | undefined => {
@@ -148,8 +213,7 @@ const selectBatchExecuteQueryRpcId = (
     query === undefined ||
     query === null ||
     query.length === 0 ||
-    query.length > RPC_QUERY_LIMIT_CHARS ||
-    !query.includes("rpcids=")
+    query.length > RPC_QUERY_LIMIT_CHARS
   )
     return undefined;
   const search = query.startsWith("?") ? query.slice(1) : query;
@@ -189,17 +253,9 @@ export const selectRpcOperationFromText = (input: {
   const { bodyText } = input;
   if (bodyText !== undefined && bodyText !== null && bodyText.length > 0) {
     if (!withinBodyByteLimit(bodyText)) return undefined;
-    if (
-      isFormCandidateMime(essence, input.path) &&
-      bodyText.includes("f.req=")
-    ) {
-      const freq = new URLSearchParams(bodyText).get("f.req");
-      if (freq !== null) {
-        const parsed = parseBatchExecuteEnvelope(freq);
-        return parsed.kind === "single"
-          ? { kind: "batchexecute", name: parsed.name }
-          : undefined;
-      }
+    if (isFormCandidateMime(essence, input.path)) {
+      const freqs = new URLSearchParams(bodyText).getAll("f.req");
+      if (freqs.length > 0) return selectBatchExecuteFormValues(freqs);
     }
     if (isJsonCandidateMime(essence)) {
       const parsed = safeParseJson(bodyText);
@@ -232,7 +288,9 @@ export const selectRpcOperationFromValue = (input: {
       bodyText: input.body,
     });
   if (isPlainObject(input.body))
-    return selectFromJsonObject(input.body, input.path);
+    return withinJsonValueByteLimit(input.body, RPC_REQUEST_BODY_LIMIT_BYTES)
+      ? selectFromJsonObject(input.body, input.path)
+      : undefined;
   if (input.body === undefined && isBatchExecutePath(input.path)) {
     const rpcId = selectBatchExecuteQueryRpcId(input.query);
     if (rpcId !== undefined) return { kind: "batchexecute", name: rpcId };
@@ -302,5 +360,59 @@ const parseLengthPrefixedFrames = (body: string): JsonValue | undefined => {
 export const parseXssiOrExactJson = (text: string): JsonValue | undefined => {
   const stripped = stripXssiGuard(text);
   if (stripped === undefined) return parseExactJson(text);
-  return parseExactJson(stripped) ?? parseLengthPrefixedFrames(stripped);
+  const parsed = parseExactJson(stripped);
+  return parsed === undefined ? parseLengthPrefixedFrames(stripped) : parsed;
+};
+
+/**
+ * Shared XSSI JSON response eligibility and `64 KiB` size policy for manifest grouping and probe origin selection.
+ * Returns `null` only when `reserveSourceChars` refuses the temporary budget.
+ */
+export const hasBoundedXssiJsonResponse = (
+  record: WebNetworkCaptureRecord,
+  essence: string | null,
+  reserveSourceChars: (sourceChars: number) => boolean = () => true,
+): boolean | null => {
+  if (!isXssiEligibleMediaType(essence)) return false;
+  const declaration = readRecordedResponseDeclaration(record.reported);
+  const content = declaration?.content;
+  if (typeof content?.text !== "string") return false;
+  let sourceChars = 0;
+  if (content.encoding === undefined) {
+    if (
+      !hasXssiGuardPrefix(content.text) ||
+      !withinByteLimit(content.text, XSSI_RESPONSE_BODY_LIMIT_BYTES)
+    )
+      return false;
+    sourceChars = content.text.length;
+  } else if (content.encoding === "base64") {
+    const binary = record.binary_fields.find(
+      (field) =>
+        field.pointer === "/response/content/text" &&
+        field.state === "retained",
+    );
+    const encoded = binary?.content_base64 ?? null;
+    if (
+      encoded === null ||
+      !encoded.startsWith("KV19J") ||
+      encoded.length > base64PrefixChars(XSSI_RESPONSE_BODY_LIMIT_BYTES)
+    )
+      return false;
+    sourceChars = encoded.length;
+  } else return false;
+  if (!reserveSourceChars(sourceChars)) return null;
+  const decoded = readRecordedResponseBody(
+    record,
+    XSSI_RESPONSE_BODY_LIMIT_BYTES,
+    declaration,
+  );
+  if (
+    decoded.bodyText === null ||
+    decoded.bodyEncoding === "base64" ||
+    decoded.bodyCut === true ||
+    !withinByteLimit(decoded.bodyText, XSSI_RESPONSE_BODY_LIMIT_BYTES) ||
+    !hasXssiGuardPrefix(decoded.bodyText)
+  )
+    return false;
+  return parseXssiOrExactJson(decoded.bodyText) !== undefined;
 };

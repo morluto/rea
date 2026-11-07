@@ -6,12 +6,10 @@ import {
   mediaTypeEssence,
 } from "../../domain/analysisView/recordedMediaType.js";
 import {
-  hasXssiGuardPrefix,
-  isXssiEligibleMediaType,
-  parseXssiOrExactJson,
-  RPC_REQUEST_BODY_LIMIT_BYTES,
+  hasBoundedXssiJsonResponse,
+  selectRpcOperationFromText,
+  type RpcOperation,
 } from "../../domain/analysisView/rpcOperationSelector.js";
-import { readRecordedResponseBody } from "../../domain/analysisView/recordedResponseBody.js";
 import {
   primaryOrigin,
   type OriginStats,
@@ -114,23 +112,36 @@ const requestContentType = (
     : undefined;
 };
 
+const requestRpcOperation = (
+  record: WebNetworkCaptureRecord,
+  method: string,
+  path: string,
+  query: string | null,
+): RpcOperation | null | undefined => {
+  if (method !== "POST") return undefined;
+  const facts = readRecordedRequestBody(record.reported);
+  const postData =
+    facts.kind === "request" && facts.postData.kind === "object"
+      ? facts.postData
+      : undefined;
+  return (
+    selectRpcOperationFromText({
+      method,
+      path,
+      query,
+      mimeType: postData?.mimeType,
+      bodyText: postData?.text,
+    }) ?? null
+  );
+};
+
 const isProbeJsonLike = (
   record: WebNetworkCaptureRecord,
   rawMime: string,
 ): boolean => {
   const essence = mediaTypeEssence(rawMime);
-  if (isJsonLike(essence)) return true;
-  if (!isXssiEligibleMediaType(essence)) return false;
-  const decoded = readRecordedResponseBody(
-    record,
-    RPC_REQUEST_BODY_LIMIT_BYTES,
-  );
   return (
-    decoded.bodyText !== null &&
-    decoded.bodyEncoding !== "base64" &&
-    decoded.bodyCut !== true &&
-    hasXssiGuardPrefix(decoded.bodyText) &&
-    parseXssiOrExactJson(decoded.bodyText) !== undefined
+    isJsonLike(essence) || hasBoundedXssiJsonResponse(record, essence) === true
   );
 };
 
@@ -192,12 +203,19 @@ export const probeRequests = (
     else {
       const exchange = recordedExchange(record, line);
       const contentType = requestContentType(record);
+      const rpcOperation = requestRpcOperation(
+        record,
+        line.method,
+        exchange.path,
+        exchange.query,
+      );
       const request = {
         method: line.method,
         path: exchange.path,
         query: exchange.query,
         body: requestBody(record),
         ...(contentType === undefined ? {} : { contentType }),
+        ...(rpcOperation === undefined ? {} : { rpcOperation }),
       };
       // A request whose answer was lost may still have changed the application, so it is made but not compared.
       if (exchange.status === null) {

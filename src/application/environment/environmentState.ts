@@ -1,4 +1,5 @@
 import type { AnalysisViewResult } from "../../domain/analysisView/analysisView.js";
+import { EnvironmentStateAccumulator } from "../../domain/analysisView/EnvironmentStateAccumulator.js";
 import {
   changesState,
   type StateDocument,
@@ -166,16 +167,38 @@ const stateMismatch = (
     );
   const tools = new Set(source.manifest.tools.map((tool) => tool.name));
   const index = view.views.findIndex((entry) => !tools.has(entry.tool));
-  return index < 0
+  if (index >= 0)
+    return refusal(
+      operation,
+      {
+        path: ["views", index, "tool"],
+        reason: "invalid_value",
+        message: "Every state view must name a tool of the served manifest.",
+      },
+      "The state names a tool the manifest does not have.",
+    );
+  const writeIndex = view.writes.findIndex((plan) => !tools.has(plan.tool));
+  if (writeIndex >= 0)
+    return refusal(
+      operation,
+      {
+        path: ["writes", writeIndex, "tool"],
+        reason: "invalid_value",
+        message: "Every state write must name a tool of the served manifest.",
+      },
+      "The state names a tool the manifest does not have.",
+    );
+  return view.origin === source.manifest.origin
     ? undefined
     : refusal(
         operation,
         {
-          path: ["views", index, "tool"],
+          path: ["origin"],
           reason: "invalid_value",
-          message: "Every state view must name a tool of the served manifest.",
+          expected: source.manifest.origin,
+          message: `The state selected origin ${String(view.origin)}; the manifest selected ${String(source.manifest.origin)}.`,
         },
-        "The state names a tool the manifest does not have.",
+        "The state selected a different origin than the manifest.",
       );
 };
 
@@ -219,19 +242,33 @@ export const deriveEnvironmentState = (
   const capture = parseEvidenceFile(operation, "evidence", captureValue);
   if (!capture.ok) return capture;
   const captureId = capture.value.evidence_id;
-  const projected = inspectAnalysisViewValidated(
-    {
-      source: { kind: "retained-evidence", evidence_id: captureId },
-      view: {
-        kind: "environment-state",
-        template_rules: [...source.manifest.view.template_rules],
-      },
-    },
-    (evidenceId) => (evidenceId === captureId ? capture.value : undefined),
+  const rules = [...source.manifest.view.template_rules];
+  const lookup = (evidenceId: string) =>
+    evidenceId === captureId ? capture.value : undefined;
+  const request = {
+    source: { kind: "retained-evidence" as const, evidence_id: captureId },
+    view: { kind: "environment-state" as const, template_rules: rules },
+  };
+  const projected = inspectAnalysisViewValidated(request, lookup);
+  if (!projected.ok) return projected;
+  const loaded = loadEnvironmentState(projected.value, source, operation);
+  if (
+    loaded.ok ||
+    source.manifest.parent_evidence_id !== captureId ||
+    source.manifest.tools.some((tool) => tool.rpc_operation !== undefined)
+  )
+    return loaded;
+  // Saved bundles built before RPC sub-route discrimination carry plain POST tool names without `rpc_operation`.
+  const legacyProjected = inspectAnalysisViewValidated(request, lookup, {
+    state: new EnvironmentStateAccumulator(undefined, rules, false),
+  });
+  if (!legacyProjected.ok) return loaded;
+  const legacyLoaded = loadEnvironmentState(
+    legacyProjected.value,
+    source,
+    operation,
   );
-  return projected.ok
-    ? loadEnvironmentState(projected.value, source, operation)
-    : projected;
+  return legacyLoaded.ok ? legacyLoaded : loaded;
 };
 
 /** What a command reports about the state: the state Evidence it serves, or why it serves replay. */
