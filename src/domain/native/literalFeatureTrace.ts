@@ -14,8 +14,16 @@ export const literalFeatureTraceSchema = z.object({
   query: z.string(),
   search_mode: z.literal("literal"),
   matches: z.array(literalFeatureMatchSchema),
-  references: z.array(literalFeatureReferenceSchema),
-  truncated: z.boolean(),
+  references: z
+    .array(literalFeatureReferenceSchema)
+    .describe(
+      "References to matched start addresses only; references to interior bytes of strings and procedures are not searched. Empty does not establish absence.",
+    ),
+  truncated: z
+    .boolean()
+    .describe(
+      "True only when a provider reports a reference cap; false does not establish complete reference coverage.",
+    ),
   residual_unknowns: z.array(z.string()),
 });
 

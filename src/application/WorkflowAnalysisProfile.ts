@@ -21,7 +21,7 @@ export const workflowAnalysisProfile = (
       : operation === "batch_decompile"
         ? { workflow_revision: 4 }
         : operation === "trace_feature"
-          ? { workflow_revision: 4 }
+          ? { workflow_revision: 5 }
           : operation === "get_call_graph"
             ? { workflow_revision: 3 }
             : operation === "trace_native_values"
