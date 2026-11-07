@@ -4,6 +4,8 @@ import {
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   checkpointCapabilities,
+  ghidraCheckpointOriginLimitations,
+  ghidraHealthLimitations,
   ghidraEmptyIncomingReferencesLimitation,
   ghidraEmptyDossierIncomingLimitation,
   ghidraEmptyExternalOutgoingLimitation,
@@ -114,16 +116,17 @@ it.skipIf(process.platform === "win32")(
   "health describes checkpoint recovery without ephemeral reimport advice",
   async () => {
     const directory = await mkdtemp(join(tmpdir(), "rea-checkpoint-health-"));
+    const source = {
+      path: join(directory, "verified.gzf"),
+      sha256: "a".repeat(64),
+    };
     const ghidra = provider(
       installationHost(),
       () => ({
         start: async () => ok(sessionInfo()),
         callTool: async () => ok([]),
         close: async () => ok(null),
-        checkpointRestore: () => ({
-          path: join(directory, "verified.gzf"),
-          sha256: "a".repeat(64),
-        }),
+        checkpointRestore: () => source,
       }),
       { REA_GHIDRA_CHECKPOINT_DIR: directory },
     );
@@ -131,18 +134,17 @@ it.skipIf(process.platform === "win32")(
     try {
       const health = await client.execute("health", {});
       if (!health.ok) throw health.error;
-      expect(health.value.limitations.join("\n")).toContain(
-        "Ghidra Program checkpoint mode is enabled",
-      );
-      expect(health.value.limitations.join("\n")).toContain(
-        "auto-analysis was not rerun",
-      );
-      expect(health.value.limitations.join("\n")).not.toMatch(
-        /imports the original artifact again|discards session annotations/,
+      expect(health.value.limitations).toEqual(
+        expect.arrayContaining([
+          ...ghidraHealthLimitations("owned-checkpoint"),
+          ...ghidraCheckpointOriginLimitations(source),
+        ]),
       );
       for (const capability of checkpointCapabilities()) {
-        expect(capability.limitations.join("\n")).not.toMatch(
-          /discarded on close|imports the original artifact again/,
+        expect(capability.limitations).toEqual(
+          expect.arrayContaining([
+            ...ghidraHealthLimitations("owned-checkpoint"),
+          ]),
         );
       }
     } finally {

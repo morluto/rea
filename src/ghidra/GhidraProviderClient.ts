@@ -111,6 +111,7 @@ import type { NativeAotPeResult } from "../domain/native/nativeAotPe.js";
 import { GhidraNativeAotSnapshotOwner } from "./GhidraNativeAotSnapshotOwner.js";
 import {
   ghidraHealthLimitations,
+  ghidraCheckpointOriginLimitations,
   type GhidraSessionSource,
   ghidraEmptyXrefsLimitation,
   ghidraEmptyIncomingReferencesLimitation,
@@ -817,17 +818,8 @@ export const createGhidraProviderClient = (input: {
     prerequisites.value.providerVersion,
   );
   const sessionLimitations = (): readonly string[] => {
-    const restored = client.checkpointRestore?.();
     return [
-      ...(restored === undefined
-        ? []
-        : restored === null
-          ? [
-              "Created the initial owned Ghidra Program from the executable and saved its analysis checkpoint; metadata edits are saved on normal close.",
-            ]
-          : [
-              `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
-            ]),
+      ...ghidraCheckpointOriginLimitations(client.checkpointRestore?.()),
       ...providerLimitations,
       ...targetLimitations,
       ...(psp ? GHIDRA_PSP_LIMITATIONS : []),

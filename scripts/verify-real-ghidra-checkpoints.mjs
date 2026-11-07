@@ -13,11 +13,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
+import { ghidraCheckpointOriginLimitations } from "../dist/ghidra/GhidraProviderCapabilities.js";
 import {
   requireMcpOperationResult,
   requireMcpToolError,
@@ -213,16 +214,19 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   await phase("first analysis creates a checkpoint", async () => {
     original = await cli("rea_checkpoint_leaf", ["--snapshot", snapshotPath]);
     assert.match(JSON.stringify(original.normalized_result), /value/);
-    assert.ok(
-      original.limitations.some((value) =>
-        value.includes("Created the initial owned Ghidra Program"),
-      ),
-    );
+    for (const limitation of ghidraCheckpointOriginLimitations(null))
+      assert.ok(original.limitations.includes(limitation));
     const keys = await readdir(checkpointDirectory);
     assert.equal(keys.length, 1);
     manifestPath = join(checkpointDirectory, keys[0], "current.json");
     initialManifest = await manifest();
     assert.equal(initialManifest.target_sha256, targetDigest);
+    assert.equal(
+      await sha(
+        join(checkpointDirectory, keys[0], initialManifest.source.file),
+      ),
+      initialManifest.source.sha256,
+    );
     assert.deepEqual(
       original.analysis_profile.parameters.owned_checkpoint.state,
       { kind: "initial-analysis" },
@@ -253,16 +257,21 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
         restored.analysis_profile.digest,
         original.analysis_profile.digest,
       );
+      const source = {
+        path: join(dirname(manifestPath), initialManifest.source.file),
+        sha256: initialManifest.source.sha256,
+      };
+      assert.equal(await sha(source.path), source.sha256);
       assert.ok(
-        restored.limitations.some((value) =>
-          value.includes(initialManifest.source.sha256),
+        restored.limitations.some(
+          (value) =>
+            value.includes(source.path) && value.includes(source.sha256),
         ),
       );
-      assert.ok(
-        !restored.limitations.some((value) =>
-          value.includes("Created the initial owned Ghidra Program"),
-        ),
-      );
+      for (const limitation of ghidraCheckpointOriginLimitations(source))
+        assert.ok(restored.limitations.includes(limitation));
+      for (const limitation of ghidraCheckpointOriginLimitations(null))
+        assert.ok(!restored.limitations.includes(limitation));
       assert.deepEqual(await manifest(), initialManifest);
       return {
         checkpoint_sha256: initialManifest.source.sha256,

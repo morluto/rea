@@ -1,6 +1,7 @@
 import { ok as javaProbeOk, ok } from "../../../src/domain/result.js";
 import type { GhidraJavaObservation } from "../../../src/ghidra/GhidraJavaProbe.js";
 import { spawn, type ChildProcess } from "node:child_process";
+import { createHash } from "node:crypto";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +14,7 @@ import { AnalysisProviderRegistry } from "../../../src/application/binary/Analys
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
 import { LazyAnalysisProvider } from "../../../src/application/binary/LazyAnalysisProvider.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
 import { elf } from "../../../src/domain/binaryTarget.fixture.js";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import type { GhidraInstallationHost } from "../../../src/ghidra/GhidraInstallation.js";
@@ -21,6 +23,10 @@ import type {
   GhidraLauncher,
 } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
+import {
+  ghidraCheckpointOriginLimitations,
+  ghidraHealthLimitations,
+} from "../../../src/ghidra/GhidraProviderCapabilities.js";
 import { silentLogger } from "../../../src/logger.js";
 import { createServer } from "../../../src/server/createServer.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
@@ -311,7 +317,10 @@ describe.skipIf(process.platform === "win32")(
           expect(
             catalog.tools.find(({ name }) => name === "close_binary")
               ?.description,
-          ).toContain("Program metadata");
+          ).toBe(
+            SESSION_TOOL_CONTRACTS.find(({ name }) => name === "close_binary")
+              ?.description,
+          );
           expect((await harness.open()).isError).not.toBe(true);
           const status = await harness.mcp.callTool({
             name: "binary_session",
@@ -330,13 +339,19 @@ describe.skipIf(process.platform === "win32")(
               }),
             })
             .parse(status.structuredContent);
-          const limitations = parsed.result.capabilities
-            .find(({ provider }) => provider.id === "ghidra")
-            ?.shared_limitations.join("\n");
-          expect(limitations).toContain(
-            `checkpoint mode is ${enabled ? "enabled" : "disabled"}`,
+          const limitations = parsed.result.capabilities.find(
+            ({ provider }) => provider.id === "ghidra",
+          )?.shared_limitations;
+          expect(limitations).toEqual(
+            expect.arrayContaining([
+              ...ghidraHealthLimitations(
+                enabled ? "owned-checkpoint" : "fresh-import",
+              ),
+            ]),
           );
-          expect(limitations).toContain("REA_GHIDRA_CHECKPOINT_DIR");
+          expect(limitations?.join("\n")).toContain(
+            "REA_GHIDRA_CHECKPOINT_DIR",
+          );
           expect(harness.clients).toHaveLength(0);
           expect(harness.launcher.launches).toHaveLength(0);
           if (enabled) {
@@ -344,11 +359,13 @@ describe.skipIf(process.platform === "win32")(
             const initial = output.parse(
               (await harness.query(1)).structuredContent,
             );
-            expect(
-              initial.limitations.some((value) =>
-                value.includes("Created the initial owned Ghidra Program"),
-              ),
-            ).toBe(true);
+            expect(harness.clients[0]?.checkpointRestore()).toBeNull();
+            expect(harness.launcher.requests).toContain("checkpoint_program");
+            expect(initial.limitations).toEqual(
+              expect.arrayContaining([
+                ...ghidraCheckpointOriginLimitations(null),
+              ]),
+            );
             expect(
               (
                 await harness.mcp.callTool({
@@ -361,17 +378,32 @@ describe.skipIf(process.platform === "win32")(
             const restored = output.parse(
               (await harness.query(2)).structuredContent,
             );
+            const source = harness.clients[1]?.checkpointRestore();
+            expect(source).toBeTruthy();
+            if (!source)
+              throw new Error("Expected a verified restored Program");
+            expect(source.sha256).toBe(
+              createHash("sha256")
+                .update(await readFile(source.path))
+                .digest("hex"),
+            );
             expect(
-              restored.limitations.some((value) =>
-                value.startsWith("Restored owned Program "),
+              restored.limitations.some(
+                (value) =>
+                  value.includes(source.path) && value.includes(source.sha256),
               ),
             ).toBe(true);
-            expect(
-              restored.limitations.some((value) =>
-                value.includes("Created the initial owned Ghidra Program"),
-              ),
-            ).toBe(false);
-          } else expect(limitations).toContain("restart MCP");
+            expect(restored.limitations).toEqual(
+              expect.arrayContaining([
+                ...ghidraCheckpointOriginLimitations(source),
+              ]),
+            );
+            expect(restored.limitations).not.toEqual(
+              expect.arrayContaining([
+                ...ghidraCheckpointOriginLimitations(null),
+              ]),
+            );
+          }
         } finally {
           await harness.close();
         }
