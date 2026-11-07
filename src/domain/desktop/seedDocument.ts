@@ -41,17 +41,26 @@ export const openSeedDocument = (
     readonly isDocument: (homePath: string) => boolean;
     /** The seed's spelling of a home path, when a selected link renamed it. */
     readonly spell?: (homePath: string) => string;
+    /** Where the process starts when that directory's spelling moved. */
+    readonly launchDirectory?: string;
   },
 ): { readonly argv: readonly string[]; readonly opens: LaunchDocument } => {
   const { home, exec, documents } = facts;
   const spelled = (path: string) => facts.spell?.(path) ?? path;
+  const directoryMoved =
+    facts.launchDirectory !== undefined &&
+    facts.launchDirectory !== facts.workingDirectory;
   const none = (reason: string) => ({
     argv: argvSpelled,
     opens: { kind: "none", reason } as const,
   });
   const absoluteSeed = (path: string) => {
     const seedPath = spelled(path);
-    return seedPath === path ? undefined : `${home}/${seedPath}`;
+    // A relative argument was resolved in the captured directory. Once that
+    // directory moves, the same relative word would name a different file.
+    return seedPath === path && !directoryMoved
+      ? undefined
+      : `${home}/${seedPath}`;
   };
   const retarget = (argument: string) => {
     const equals = argument.indexOf("=");

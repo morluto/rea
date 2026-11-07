@@ -496,4 +496,22 @@ describe("capturedHomePath", () => {
       ".notes-state.db-journal",
     );
   });
+
+  it("keeps a selected file whose name ends in -journal", () => {
+    const home = "/home/ada";
+    const path = capturedHomePath({
+      host: { home },
+      application: { state_directories: [] },
+      state: {
+        selected_paths: [
+          {
+            path: `${home}/.config/vendor/state`,
+            physical: `${home}/data/vendor-journal`,
+          },
+        ],
+      },
+    } as unknown as DesktopApplicationCapture);
+
+    expect(path(`${home}/data/vendor-journal`)).toBe(".config/vendor/state");
+  });
 });
