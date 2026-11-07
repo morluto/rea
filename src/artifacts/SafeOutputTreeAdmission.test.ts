@@ -80,4 +80,46 @@ describe("output directory admission refusal", () => {
   ])("keeps artifact semantics for %s", (_name, cause) => {
     expect(refuse(cause)).toBe(cause);
   });
+
+  it.each([
+    [
+      "a refusal before acquisition",
+      new SafeOutputTreeDestinationRefusal("Extraction output root exists"),
+    ],
+    [
+      "a refusal of an acquired non-empty root",
+      new SafeOutputTreeCreationFailure(
+        new SafeOutputTreeDestinationRefusal("Output directory is not empty"),
+        acquiredTree,
+      ),
+    ],
+  ])("preserves the original failure and user message for %s", (_name, cause) => {
+    const refused = refuse(cause) as AnalysisInputError;
+
+    expect(refused.cause).toBe(cause);
+    expect(refused.userMessage).toBe(cause.message);
+  });
+
+  it("takes the message from the destination refusal, not its wrapper", () => {
+    // Synthetic wrapper: SafeOutputTreeCreationFailure copies the inner message,
+    // so only differing messages can tell which one the admission error reports.
+    const wrapper = new ArtifactReaderFailure("path", "outer wrapper message", {
+      cause: new SafeOutputTreeDestinationRefusal("inner refusal message"),
+    });
+    const refused = refuse(wrapper) as AnalysisInputError;
+
+    expect(refused.userMessage).toBe("inner refusal message");
+    expect(refused).toMatchObject({
+      issues: [{ path: ["output_directory"], message: "inner refusal message" }],
+    });
+  });
+
+  it.each([
+    ["undefined", undefined],
+    ["null", null],
+    ["a string", "boom"],
+    ["a plain Error", new Error("boom")],
+  ])("returns %s unchanged without inspecting it", (_name, cause) => {
+    expect(refuse(cause)).toBe(cause);
+  });
 });
