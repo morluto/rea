@@ -531,6 +531,52 @@ cliTest(
 );
 
 cliTest(
+  "reports an unknown effective inflate limit when the allocation cap fires",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-pe-early-cap-");
+    const path = join(root, "over-allocation.exe");
+    const compressed = deflateSync(Buffer.alloc(8 * 1024 * 1024 + 1));
+    const alignment = 512;
+    const storedBytes = Math.ceil(compressed.length / alignment) * alignment;
+    expect(compressed.length * 64).toBeLessThan(8 * 1024 * 1024);
+    const image = Buffer.alloc(1024 + storedBytes);
+    createRustImage({
+      format: "pe",
+      payload: Buffer.alloc(0),
+      includeRustc: false,
+    }).copy(image);
+    compressed.copy(image, 1024);
+    image.writeUInt32LE(alignment, 152 + 36);
+    image.writeUInt32LE(0, 264 + 8);
+    image.writeUInt32LE(storedBytes, 264 + 16);
+    await writeFile(path, image);
+    const expected = {
+      code: "resource_constraint",
+      retryable: false,
+      details: {
+        resource: "memory",
+        reported_limits: {
+          maximum_bytes: 8 * 1024 * 1024,
+          limit_basis: "inflate_allocation",
+          effective_maximum_bytes: null,
+        },
+      },
+    };
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject(expected);
+    const { client, call } = await connectLocalToolsMcp();
+    expect(
+      parseMcpToolError(await call("inspect_rust_binary", { path })).error,
+    ).toMatchObject(expected);
+    await client.ping();
+  },
+  30000,
+);
+
+cliTest(
   "releases a failed Rust descriptor close before projecting the CLI failure",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-rust-cli-close-");
