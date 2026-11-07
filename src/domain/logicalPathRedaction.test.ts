@@ -350,3 +350,41 @@ it("maps a Windows-recorded Evidence subject and result on a non-Windows exporte
   });
   expect(parseEvidence(redacted).evidence_id).toBe(redacted.evidence_id);
 });
+
+it("maps and reseals profile paths and limitation text at creation and export", async () => {
+  const { createAnalysisProfile, analysisProfileSchema } =
+    await import("./analysisProfile.js");
+  const profile = createAnalysisProfile(
+    TEST_PROVIDER as { id: string; name: string; version: string },
+    {
+      kuna_command: "/home/alice/project/bin/kuna",
+      kuna_executable: "/home/alice/project/bin/kuna",
+    },
+  );
+  const observation = {
+    operation: "inspect",
+    parameters: {},
+    result: {},
+    analysisProfile: profile,
+    limitations: ["Seed file: /home/alice/project/seeds.json"],
+  };
+  const created = createEvidence(undefined, TEST_PROVIDER, observation, {
+    logicalRoot: "/home/alice/project",
+  });
+  const exported = redactEvidence(
+    createEvidence(undefined, TEST_PROVIDER, observation),
+    "/home/alice/project",
+  );
+  for (const evidence of [created, exported]) {
+    expect(evidence.analysis_profile?.parameters).toEqual({
+      kuna_command: "$WORKSPACE/bin/kuna",
+      kuna_executable: "$WORKSPACE/bin/kuna",
+    });
+    expect(evidence.analysis_profile?.digest).not.toBe(profile.digest);
+    expect(
+      analysisProfileSchema.safeParse(evidence.analysis_profile).success,
+    ).toBe(true);
+    expect(evidence.limitations).toContain("Seed file: $WORKSPACE/seeds.json");
+    expect(parseEvidence(evidence).evidence_id).toBe(evidence.evidence_id);
+  }
+});

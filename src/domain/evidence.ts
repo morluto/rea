@@ -18,6 +18,7 @@ import {
 
 import {
   analysisProfileSchema,
+  mapAnalysisProfilePaths,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
 import type { BinaryArchitecture, BinaryTarget } from "./binaryTargetTypes.js";
@@ -505,14 +506,20 @@ export const redactEvidence = (
   const locations = redactEvidenceLocations(evidence.locations, config);
 
   const limitation = logicalPathRedactionLimitation(config);
-  const limitations = evidence.limitations.includes(limitation)
-    ? evidence.limitations
-    : [...evidence.limitations, limitation];
+  const mappedLimitations = evidence.limitations.map((value) =>
+    redactLogicalPath(value, config),
+  );
+  const limitations = mappedLimitations.includes(limitation)
+    ? mappedLimitations
+    : [...mappedLimitations, limitation];
 
   const unauthenticated = {
     subject,
     provider: evidence.provider,
-    analysis_profile: evidence.analysis_profile,
+    analysis_profile:
+      evidence.analysis_profile === null
+        ? null
+        : mapAnalysisProfilePaths(evidence.analysis_profile, config),
     predicate_type: evidence.predicate_type,
     operation: evidence.operation,
     parameters,
@@ -630,8 +637,11 @@ const normalizeEvidenceObservation = (
         ]
       : []),
     ...(observation.limitations ?? []),
-    ...(config !== undefined ? [logicalPathRedactionLimitation(config)] : []),
-  ];
+  ].map((value) =>
+    config === undefined ? value : redactLogicalPath(value, config),
+  );
+  if (config !== undefined)
+    limitations.push(logicalPathRedactionLimitation(config));
 
   const semantic = {
     subject:
@@ -647,7 +657,13 @@ const normalizeEvidenceObservation = (
       name: provider.name,
       version: provider.version,
     },
-    analysis_profile: observation.analysisProfile ?? null,
+    analysis_profile:
+      observation.analysisProfile === undefined ||
+      observation.analysisProfile === null
+        ? null
+        : config === undefined
+          ? observation.analysisProfile
+          : mapAnalysisProfilePaths(observation.analysisProfile, config),
     predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
     operation: observation.operation,
     parameters,

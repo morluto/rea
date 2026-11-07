@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  redactJsonValue,
+  type ResolvedLogicalPathConfig,
+} from "./logicalPath.js";
 
 import { digestCanonicalValue } from "./canonicalDigest.js";
 import { jsonObjectSchema, type JsonValue } from "./jsonValue.js";
@@ -49,6 +53,18 @@ export const createAnalysisProfile = (
     ...unsigned,
     digest: profileDigest(unsigned),
   });
+};
+
+/** Map a caller-selected root and recompute the profile commitment at its owner. */
+export const mapAnalysisProfilePaths = (
+  input: AnalysisProfileCommitment,
+  config: ResolvedLogicalPathConfig,
+): AnalysisProfileCommitment => {
+  const profile = analysisProfileSchema.parse(input);
+  return createAnalysisProfile(
+    profile.provider,
+    redactJsonValue(profile.parameters, config) as Record<string, JsonValue>,
+  );
 };
 
 /** Exact provider identity, including unknown Evidence versions, without interpreting parameters. */
