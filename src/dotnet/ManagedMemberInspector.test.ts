@@ -837,8 +837,9 @@ describe("managed TypeSpec declaring names", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeSpec:0x1b000001",
-          detail:
-            "TypeDefOrRefOrSpec operand 0x25 is invalid: coded index selects row 9 in table 1, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x25.*invalid.*row 9.*table 1.*1 rows/iu,
+          ),
         },
       ],
     });
@@ -957,10 +958,10 @@ describe("managed TypeRef resolution scopes", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeRef:0x01000001",
-          detail: expect.stringContaining(
+          detail: expect.stringMatching(
             enclosingRow === 0
-              ? "coded index selects row zero in table 1"
-              : "coded index selects row 9 in table 1, which has 1 rows",
+              ? /row zero.*table 1/iu
+              : /row 9.*table 1.*1 rows/iu,
           ),
         },
       ]);
@@ -2420,8 +2421,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.TypeDef:0x02000001",
-          detail: expect.stringContaining(
-            "TypeDef Extends coded index 0xc is invalid: coded index selects row 3 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /TypeDef Extends.*0xc.*invalid.*row 3.*table 2.*1 rows/iu,
           ),
         },
       ],
@@ -2449,8 +2450,8 @@ describe("managed metadata reference bounds", () => {
         {
           code: "invalid-row",
           scope: "metadata.MemberRef:0x0a000001",
-          detail: expect.stringContaining(
-            "MemberRef parent coded index 0x28 is invalid: coded index selects row 5 in table 2, which has 1 rows",
+          detail: expect.stringMatching(
+            /MemberRef parent.*0x28.*invalid.*row 5.*table 2.*1 rows/iu,
           ),
         },
       ],

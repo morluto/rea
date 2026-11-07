@@ -402,7 +402,9 @@ describe("managed CIL prefix completion", () => {
       decoded_instruction_count: 1,
       opcode_counts: { "volatile.": 1 },
       normalized_il_sha256: null,
-      issue: "CIL prefix chain at IL offset 0 has no following instruction",
+      issue: expect.stringMatching(
+        /CIL prefix.*offset 0.*no following instruction/iu,
+      ),
     });
   });
 

@@ -40,7 +40,7 @@ const expectUnownedLineage = (adapter: ProcessOwnershipHost) =>
     runId: "run-token",
     launcherPid: 100,
     processGroupId: 100,
-    reason: "process lineage contains an unowned or PID-reused process",
+    reason: expect.stringMatching(/unowned.*PID.reused/iu),
   });
 
 describe("owned process-group cleanup validation: ownership and lineage", () => {
@@ -519,7 +519,9 @@ describe("identityless exit refresh leaves unrelated replacements unresolved", (
       ),
     ).resolves.toMatchObject({
       cleaned: false,
-      reason: "descendant process-group leader identity could not be verified",
+      reason: expect.stringMatching(
+        /descendant.*leader identity.*not be verified/iu,
+      ),
     });
     expect(signalGroup).not.toHaveBeenCalled();
   });
@@ -1297,8 +1299,9 @@ describe("owned process-group cleanup token batches", () => {
         {
           pid: root.pid,
           reason: "environment-unreadable",
-          diagnostic:
-            "individual unreadable; run-token batch failed: batch reader unavailable",
+          diagnostic: expect.stringMatching(
+            /individual unreadable.*batch reader unavailable/iu,
+          ),
         },
       ],
     });

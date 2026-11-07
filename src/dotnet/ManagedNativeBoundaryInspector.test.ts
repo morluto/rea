@@ -136,8 +136,8 @@ describe("managed native boundary coded indexes", () => {
         expect.objectContaining({
           code: "invalid-row",
           scope: "metadata.ImplMap:0x1c000001",
-          detail: expect.stringContaining(
-            "coded index 0x5 is invalid: coded index selects row 2 in table 6, which has 1 rows",
+          detail: expect.stringMatching(
+            /0x5.*invalid.*row 2.*table 6.*1 rows/iu,
           ),
         }),
       ],

@@ -399,7 +399,6 @@ describe("decompile_all inventory limitations", () => {
       directory(),
       { name: "Foo::", limit: 1 },
     );
-    expect(created.ok).toBe(true);
     if (!created.ok) throw created.error;
     expect(created.value).toMatchObject({
       inventory_limitations: ["first inventory limitation"],
@@ -433,7 +432,6 @@ describe("decompile_all inventory limitations", () => {
       directory(),
       { resume: true, name: "Bar::" },
     );
-    expect(resumed.ok).toBe(true);
     if (!resumed.ok) throw resumed.error;
     expect(resumed.value).toMatchObject({
       inventory_limitations: ["second inventory limitation"],

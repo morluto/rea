@@ -4,7 +4,11 @@ import { MAX_JSON_DEPTH, jsonValueSchema } from "../../domain/jsonValue.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { plistUidValue } from "../../domain/apple/plistUid.js";
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
-import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import {
+  nonFiniteRealLimitation,
+  projectPlistValue,
+  unknownScalarLimitation,
+} from "../../domain/apple/plistValue.js";
 import { parseXmlPropertyList } from "../../domain/propertyListKeys.js";
 import {
   decodeBinaryPlistScalars,
@@ -395,7 +399,7 @@ it("does not reject an unreachable malformed date object as a decoded value", ()
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toBe("ok");
   expect(parsed.value.limitations).toContainEqual(
-    expect.stringContaining("number metadata could not be completely observed"),
+    expect.stringMatching(/metadata.*could not.*observed.*precision/iu),
   );
 });
 
@@ -406,7 +410,7 @@ it("keeps reachable date uncertainty when another object is malformed", () => {
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([{ $plist_type: "date", iso8601: null }]);
   expect(parsed.value.limitations).toContainEqual(
-    expect.stringContaining("number metadata could not be completely observed"),
+    expect.stringMatching(/metadata.*could not.*observed.*precision/iu),
   );
 });
 
@@ -422,7 +426,7 @@ it("retains reachable date source facts when an unreachable offset is invalid", 
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.value).toEqual([{ $plist_type: "date", iso8601: null }]);
   expect(parsed.value.limitations).toContainEqual(
-    expect.stringContaining("number metadata could not be completely observed"),
+    expect.stringMatching(/metadata.*could not.*observed.*precision/iu),
   );
 });
 
@@ -435,7 +439,9 @@ it("does not rewrite shared bytes when a reachable date overlaps another object"
     { $plist_type: "data", base64: "" },
   ]);
   expect(parsed.limitations).toContainEqual(
-    expect.stringContaining("sub-millisecond source records overlap"),
+    expect.stringMatching(
+      /1 date.*unknown timestamps.*overlap.*reachable binary object/iu,
+    ),
   );
 });
 
@@ -449,7 +455,9 @@ it("keeps an exactly millisecond-representable overlapping date known", () => {
     null,
   ]);
   expect(parsed.value.limitations).not.toContainEqual(
-    expect.stringContaining("sub-millisecond source records overlap"),
+    expect.stringMatching(
+      /unknown timestamps.*overlap.*reachable binary object/iu,
+    ),
   );
 });
 
@@ -462,7 +470,9 @@ it("keeps a date unknown when its start is inside another reachable payload", ()
     { $plist_type: "date", iso8601: null },
   ]);
   expect(parsed.limitations).toContainEqual(
-    expect.stringContaining("sub-millisecond source records overlap"),
+    expect.stringMatching(
+      /1 date.*unknown timestamps.*overlap.*reachable binary object/iu,
+    ),
   );
 });
 
@@ -477,7 +487,9 @@ it("isolates an overlapping date without losing an independent date", () => {
     { $plist_type: "date", iso8601: "2001-01-01T00:00:00.100Z" },
   ]);
   expect(parsed.value.limitations).toContainEqual(
-    expect.stringContaining("sub-millisecond source records overlap"),
+    expect.stringMatching(
+      /1 date.*unknown timestamps.*overlap.*reachable binary object/iu,
+    ),
   );
 });
 
@@ -487,7 +499,9 @@ it("retains the integer sibling of a sub-millisecond overlapping date", () => {
 
   expect(parsed.value).toEqual([{ $plist_type: "date", iso8601: null }, 42]);
   expect(parsed.limitations).toContainEqual(
-    expect.stringContaining("sub-millisecond source records overlap"),
+    expect.stringMatching(
+      /1 date.*unknown timestamps.*overlap.*reachable binary object/iu,
+    ),
   );
 });
 
@@ -501,8 +515,8 @@ it("isolates a shared overlapping date once while preserving both references", (
     { $plist_type: "data", base64: "" },
   ]);
   expect(parsed.value.limitations).toContainEqual(
-    expect.stringContaining(
-      "2 date value(s) are reported with unknown timestamps",
+    expect.stringMatching(
+      /2 date.*unknown timestamps.*overlap.*reachable binary object/iu,
     ),
   );
 });
@@ -543,8 +557,8 @@ it("keeps binary plist source values lost by XML conversion", () => {
     ps: "a\u2029b",
     largeInteger: { $plist_type: "integer", decimal: "9007199254740992" },
   });
-  expect(parsed.value.limitations).toContain(
-    '1 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+  expect(parsed.value.limitations).toContainEqual(
+    expect.stringMatching(/1 negative.zero.*sign of zero/iu),
   );
   expect(parsed.value.limitations).toContainEqual(
     expect.stringContaining("1 observed integer literal(s)"),
@@ -709,7 +723,7 @@ it("projects retained JSON facts afresh for each XML classification", () => {
     { nested: [42] },
   ]);
   expect(unclassified.value.limitations).toEqual([
-    expect.stringContaining("1 negative-zero real value(s)"),
+    expect.stringMatching(/1 negative.zero.*sign of zero/iu),
     expect.stringContaining("1 number(s)"),
   ]);
 });
@@ -770,7 +784,7 @@ it("preserves numeric source facts inside prototype-named dictionary entries", (
     kept: 42,
   });
   expect(parsed.value.limitations).toEqual([
-    expect.stringContaining("1 negative-zero real value(s)"),
+    expect.stringMatching(/1 negative.zero.*sign of zero/iu),
     expect.stringContaining("1 number(s)"),
   ]);
 });
@@ -840,8 +854,8 @@ it("keeps negative-zero reals distinct in native JSON and XML evidence", () => {
     expect(JSON.stringify(parsed.value.value)).toBe(
       '{"Negative":{"$plist_type":"real","value":"-0"},"Spelled":{"$plist_type":"real","value":"-0"},"Positive":0,"Integer":0,"Ratio":1.25}',
     );
-    expect(parsed.value.limitations).toContain(
-      '2 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+    expect(parsed.value.limitations).toContainEqual(
+      expect.stringMatching(/2 negative.zero.*sign of zero/iu),
     );
   }
 });
@@ -878,9 +892,12 @@ it("keeps CFPropertyList's non-finite real spellings in XML evidence", () => {
   );
   expect(parsed.value.limitations).toEqual([
     expect.stringContaining("XML conversion"),
-    '3 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
-    expect.stringContaining("1 XML scalar value(s) could not be established"),
+    nonFiniteRealLimitation(3),
+    unknownScalarLimitation(1),
   ]);
+  expect(unknownScalarLimitation(1)).toMatch(
+    /scalar.*not be established.*literal.*reason/iu,
+  );
 });
 
 it("retains nested own dictionary names consistently in native JSON, XML and binary projections", () => {

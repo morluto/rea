@@ -94,7 +94,6 @@ it("records the selected artifact and the header plus marshal ranges", async () 
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",

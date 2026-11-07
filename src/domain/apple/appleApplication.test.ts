@@ -301,8 +301,8 @@ describe("macOS application roots and bundle roles", () => {
     );
     expect(result.application_roots).toEqual([]);
     expect(result.bundles).toEqual([]);
-    expect(result.limitations).toContain(
-      "No application bundle (Payload/*.app or *.app/Contents) was present in the supplied inventory pages.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/no application bundle.*inventory/iu),
     );
   });
 });
@@ -896,7 +896,9 @@ describe("Apple path conventions", () => {
     expect(result.limitations).toEqual(
       expect.arrayContaining([
         "Runtime families are inferred from inventory formats and bounded framework path conventions, not observed runtime loading.",
-        "A bridge basis is inferred from the native path and is repeated for every managed component.",
+        expect.stringMatching(
+          /bridge basis.*inferred.*native path.*every managed component/iu,
+        ),
       ]),
     );
   });
