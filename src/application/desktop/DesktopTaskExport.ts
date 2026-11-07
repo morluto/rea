@@ -52,7 +52,7 @@ const DRAFT =
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage" | "seedFiles"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
@@ -183,13 +183,14 @@ const viewsAt = (
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
   const seed = at === "seed";
+  const shipped = new Set(target.seedFiles);
   for (const [home, path] of target.files) {
+    // The seed reads as the bundle ships it: without a file it does not seed, such as a lock, a log or one not retained.
+    if (seed && !shipped.has(home)) continue;
     const version = versionAt(path, seed ? target.ends.seed : at);
-    // A file not retained at the seed is not seeded, so the computer starts without it.
-    if (seed && version?.present === true && version.sha256 === null) continue;
-    const shipped = seed ? target.seedViews.get(home) : undefined;
+    const rewritten = seed ? target.seedViews.get(home) : undefined;
     const view =
-      shipped ?? (version === undefined ? undefined : versionView(version));
+      rewritten ?? (version === undefined ? undefined : versionView(version));
     if (view !== undefined) views.set(home, view);
   }
   return views;

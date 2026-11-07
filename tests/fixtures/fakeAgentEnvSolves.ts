@@ -10,12 +10,15 @@ import { createTestTempDirectory } from "./temporaryDirectory.js";
  * writes the solver's trajectory as Claude Code's last record holds turns and
  * cost, and returns a run shaped like agentenv's, its checks under the
  * instance's verifications. Each call notes its arguments and whether a
- * model endpoint reached it; `FAKE_SOLVE_RAISES` makes it raise instead.
+ * model endpoint reached it; `FAKE_SOLVE_RAISES` makes it raise instead, and
+ * `FAKE_SOLVE_HANGS` makes it ignore SIGTERM and never return.
  */
 const FAKE_SOLVE_MODULE = String.raw`
 import enum
 import json
 import os
+import signal
+import time
 import types
 
 STATE = os.environ["FAKE_STATE"]
@@ -41,6 +44,9 @@ def run_bundle(root, *, tasks=(), model=None, agent=None, sandbox=None, emulate=
                            "endpoint": os.environ.get("LITELLM_BASE_URL")})
     if os.environ.get("FAKE_SOLVE_RAISES"):
         raise RuntimeError(os.environ["FAKE_SOLVE_RAISES"])
+    if os.environ.get("FAKE_SOLVE_HANGS"):
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        time.sleep(3600)
     on_progress("deploying the computer")
     planned = json.loads(os.environ["FAKE_SOLVES"])[n]
     trajectory = os.path.join(STATE, f"trajectory-{n}.json")

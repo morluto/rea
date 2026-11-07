@@ -339,7 +339,9 @@ each check; each solve's outcome, turns, cost, seconds, failed checks and
 instance id; `task_sha256`, the SHA-256 of the task's steps file followed by
 its verifier, so a record whose task changed since shows it is stale; and
 REA's and agentenv's versions. Measuring a task again replaces its record and
-keeps the others. The README gets a Measured difficulty section with one
+keeps the others. A `difficulty.json` or README REA cannot read or parse is refused
+before any solve and left as it is, and measures of one bundle write one at a
+time, so neither loses the other's record. The README gets a Measured difficulty section with one
 line per task, which agentenv ignores like the file.
 
 See the [specification](specs/desktop-app-environments/build-witness/spec.md)

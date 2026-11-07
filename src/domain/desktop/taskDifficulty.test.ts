@@ -118,6 +118,32 @@ describe("the difficulty record", () => {
     expect(record.solves).toHaveLength(6);
   });
 
+  it("counts failures of checks named like an object's own members as plain numbers", () => {
+    const record = difficultyRecord({
+      model: "m",
+      agent: "claude-code",
+      solves: [
+        solve("scored below 1", {
+          failed_checks: ["constructor", "__proto__"],
+        }),
+        solve("scored below 1", { failed_checks: ["constructor"] }),
+      ],
+      budgetUsd: 8,
+      stopped: "budget",
+      taskSha256: "ef".repeat(32),
+      versions: { rea: "6.8.0", agentenv: null },
+      measuredAt: "2026-11-07T01:00:00.000Z",
+    });
+
+    expect(Object.entries(record.failures_per_check)).toEqual([
+      ["constructor", 2],
+      ["__proto__", 1],
+    ]);
+    expect(JSON.parse(JSON.stringify(record)).failures_per_check).toEqual(
+      JSON.parse('{"constructor": 2, "__proto__": 1}'),
+    );
+  });
+
   it("renders one README line per task and replaces the section it wrote before", () => {
     const base = {
       agent: "claude-code",

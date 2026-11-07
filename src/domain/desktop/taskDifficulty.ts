@@ -115,10 +115,11 @@ export const difficultyRecord = (input: {
   readonly measuredAt: string;
 }): DifficultyRecord => {
   const done = input.solves.filter(finished);
-  const failures: Record<string, number> = {};
+  // A Map, so a check named like an object's own member, such as constructor, counts as any other.
+  const failures = new Map<string, number>();
   for (const solve of done)
     for (const check of solve.failed_checks)
-      failures[check] = (failures[check] ?? 0) + 1;
+      failures.set(check, (failures.get(check) ?? 0) + 1);
   return {
     model: input.model,
     agent: input.agent,
@@ -131,7 +132,7 @@ export const difficultyRecord = (input: {
     usd: cents(spent(input.solves)),
     budget_usd: input.budgetUsd,
     turns: done.map((solve) => solve.turns),
-    failures_per_check: failures,
+    failures_per_check: Object.fromEntries(failures),
     solves: [...input.solves],
     task_sha256: input.taskSha256,
     versions: input.versions,

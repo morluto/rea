@@ -326,7 +326,11 @@ export class DesktopBuildComputers {
     return this.#work.run(MEASURE, signal, (stopping) =>
       measureInFreshComputers(
         input,
-        { environment: this.environment, defaults: this.defaults },
+        {
+          environment: this.environment,
+          defaults: this.defaults,
+          retainCleanup: (owner) => this.#work.retain(owner),
+        },
         stopping,
         progress,
       ),
@@ -560,13 +564,11 @@ export class DesktopBuildComputers {
 
   /** Cancel and join the starts in progress, then bring every held computer down, as the server closes. */
   async closeAll(): Promise<void> {
-    await this.#work.close();
-    const results = await Promise.all(
+    const failures = await this.#work.close();
+    for (const result of await Promise.all(
       [...this.#computers.keys()].map((id) => this.close(id)),
-    );
-    const failures = results.flatMap((result) =>
-      result.ok ? [] : [result.error],
-    );
+    ))
+      if (!result.ok) failures.push(result.error);
     if (failures.length > 0)
       throw new AggregateError(
         failures,

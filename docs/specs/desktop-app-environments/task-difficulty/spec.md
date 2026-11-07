@@ -34,7 +34,13 @@ records the result in the bundle.
   verifier) and REA's and agentenv's versions. A task measured again replaces
   its own record. The README's Measured difficulty section lists each task.
 - A solve that could not run ends the measure with its error and writes
-  nothing. Cancelling, or REA closing its build computers, stops the running
+  nothing. A `difficulty.json` or README that exists but cannot be read
+  or parsed is refused before any solve and again before writing, and left
+  as it is; record writes to one bundle run one at a time.
+- A helper still running after the stop grace has its process group cleared
+  before REA reads its report, and that read waits at most 5 s. A helper whose
+  cleanup fails raises a cleanup error naming its process group, and REA keeps
+  it so closing retries the cleanup. Cancelling, or REA closing its build computers, stops the running
   solve, whose run tears its computer down.
 - The building guide tells the agent how to measure, how to read failures per
   check for brittle checks, and how to harden a task that is too easy while

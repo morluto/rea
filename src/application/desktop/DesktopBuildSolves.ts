@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFile, rename, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { rename, rm, writeFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import { z } from "zod";
 
@@ -31,6 +31,7 @@ import {
   type BuildComputerDefaults,
 } from "../../desktop/BuildComputerEnvironment.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
+import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
 import { PRODUCT_IDENTITY } from "../../identity.js";
 import {
   silentProgressReporter,
@@ -41,6 +42,7 @@ import { errorText } from "./DesktopBuildCommands.js";
 const MEASURE = "measure_build_task";
 /** The file at the bundle's root that records each measured task. */
 const DIFFICULTY_FILE = "difficulty.json";
+const README_FILE = "README.md";
 /** The most bytes REA reads of a task's steps, verifier, README or difficulty file. */
 const FILE_BYTES = 4 * 1024 * 1024;
 
@@ -137,33 +139,92 @@ const replaceFile = async (path: string, content: string): Promise<void> => {
   }
 };
 
+/** The bundle's difficulty records and README as they stand. */
+interface BundleRecords {
+  readonly tasks: Readonly<
+    Record<string, z.infer<typeof recordsSchema>["tasks"][string]>
+  >;
+  readonly readme: string;
+}
+
+/** The bundle's records, a missing file read as none; a file REA cannot read or parse is refused, so it is never replaced. */
+const readRecords = async (
+  bundle: string,
+  signal: AbortSignal,
+): Promise<Result<BundleRecords, AnalysisError>> => {
+  const unreadable = (file: string, why: string) =>
+    err(
+      refused(
+        `The bundle's ${file} ${why}, so REA would replace records it cannot keep.`,
+        `Repair or move ${join(bundle, file)} and measure again.`,
+      ),
+    );
+  const records = await readHostFile(
+    join(bundle, DIFFICULTY_FILE),
+    FILE_BYTES,
+    signal,
+  );
+  const readme = await readHostFile(
+    join(bundle, README_FILE),
+    FILE_BYTES,
+    signal,
+  );
+  if (records === "unreadable")
+    return unreadable(DIFFICULTY_FILE, "cannot be read");
+  if (readme === "unreadable") return unreadable(README_FILE, "cannot be read");
+  let tasks: BundleRecords["tasks"] = {};
+  if (records !== "missing") {
+    const json = safeParseUtf8Json(records);
+    const parsed = json.ok ? recordsSchema.safeParse(json.value) : undefined;
+    if (parsed?.success !== true)
+      return unreadable(DIFFICULTY_FILE, "is not a difficulty file REA reads");
+    tasks = parsed.data.tasks;
+  }
+  return ok({
+    tasks,
+    readme: readme === "missing" ? "" : readme.toString("utf8"),
+  });
+};
+
+/** The record writes under way, by bundle, so a measure merges with the one before it rather than racing it. */
+const recording = new Map<string, Promise<unknown>>();
+
+/** Run `write` after every earlier write to the same bundle by this REA. */
+const afterEarlierWrites = async <Value>(
+  bundle: string,
+  write: () => Promise<Value>,
+): Promise<Value> => {
+  const key = resolve(bundle);
+  const earlier = recording.get(key) ?? Promise.resolve();
+  const mine = earlier.then(write, write);
+  const settled = mine.catch(() => undefined);
+  recording.set(key, settled);
+  try {
+    return await mine;
+  } finally {
+    if (recording.get(key) === settled) recording.delete(key);
+  }
+};
+
 /** Record the task's measure in the bundle's difficulty file, beside other tasks', and in its README. */
-const recordMeasure = async (
+const recordMeasure = (
   bundle: string,
   task: string,
   record: DifficultyRecord,
   signal: AbortSignal,
-): Promise<string> => {
-  const path = join(bundle, DIFFICULTY_FILE);
-  const previous = await readHostFile(path, FILE_BYTES, signal);
-  const json = Buffer.isBuffer(previous)
-    ? safeParseUtf8Json(previous)
-    : undefined;
-  const parsed =
-    json?.ok === true ? recordsSchema.safeParse(json.value) : undefined;
-  const tasks = {
-    ...(parsed?.success === true ? parsed.data.tasks : {}),
-    [task]: record,
-  };
-  await replaceFile(path, `${JSON.stringify({ tasks }, null, 2)}\n`);
-  const readmePath = join(bundle, "README.md");
-  const readme = await readFile(readmePath, "utf8").catch(() => "");
-  await replaceFile(
-    readmePath,
-    withDifficultySection(readme, difficultySection(tasks)),
-  );
-  return path;
-};
+): Promise<Result<string, AnalysisError>> =>
+  afterEarlierWrites(bundle, async () => {
+    const current = await readRecords(bundle, signal);
+    if (!current.ok) return current;
+    const tasks = { ...current.value.tasks, [task]: record };
+    const path = join(bundle, DIFFICULTY_FILE);
+    await replaceFile(path, `${JSON.stringify({ tasks }, null, 2)}\n`);
+    await replaceFile(
+      join(bundle, README_FILE),
+      withDifficultySection(current.value.readme, difficultySection(tasks)),
+    );
+    return ok(path);
+  });
 
 /**
  * Measure a bundle's task: solve it in fresh computers, 3 times, then 2 more
@@ -179,6 +240,9 @@ export const measureBuildTask = async (
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
   const digest = await taskDigest(request.bundle, request.task, signal);
   if (!digest.ok) return digest;
+  // Refuse records REA could not keep before any solve is paid for.
+  const records = await readRecords(request.bundle, signal);
+  if (!records.ok) return records;
   const solves: SolveRecord[] = [];
   let agentenv: string | null = null;
   let stopped: StopReason = "decided";
@@ -224,12 +288,19 @@ export const measureBuildTask = async (
       record,
       signal,
     );
+    if (!file.ok)
+      return err(
+        refused(
+          `${request.task} was measured, ${record.band} at ${String(record.passes)} of ${String(record.k)} for $${record.usd.toFixed(2)}, but not recorded: ${file.error.message}`,
+          "Repair the file the message names, then measure again or record this result by hand.",
+        ),
+      );
     const { versions: _versions, ...reported } = record;
     return ok({
       bundle: request.bundle,
       task: request.task,
       ...reported,
-      difficulty_file: file,
+      difficulty_file: file.value,
     });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisError) return err(cause);
@@ -250,6 +321,7 @@ export const measureInFreshComputers = async (
   host: {
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly defaults: BuildComputerDefaults;
+    readonly retainCleanup: (owner: ProviderProcessSupervisor) => void;
   },
   signal: AbortSignal,
   progress?: ProgressReporter,
@@ -267,6 +339,7 @@ export const measureInFreshComputers = async (
         environment,
         signal: turn,
         operation: MEASURE,
+        retainCleanup: host.retainCleanup,
       }),
     signal,
     progress,

@@ -8,11 +8,13 @@ import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
+  HOME,
   NOTE as NOTE_PATH,
   capture,
   change,
   readers,
   retained,
+  seedEndCapture,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -126,6 +128,85 @@ const longNoteCapture = () => {
     },
   };
 };
+
+/** The seed-and-end capture with the app's log, which the seed leaves out, holding `error A` at the seed and not at the end. */
+const LOG = `${HOME}/.config/notes/notes.log`;
+const loggedCapture = () => {
+  const base = seedEndCapture();
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((checkpoint) =>
+        checkpoint.name === "seed" || checkpoint.name === "end"
+          ? {
+              ...checkpoint,
+              changes: [
+                ...checkpoint.changes,
+                checkpoint.name === "seed"
+                  ? change(LOG, { after: "error A\n" }, { state: true })
+                  : change(
+                      LOG,
+                      { before: "error A\n", after: "ok\n" },
+                      { state: true },
+                    ),
+              ],
+              retained: [
+                ...checkpoint.retained,
+                retained(
+                  LOG,
+                  checkpoint.name === "seed" ? "error A\n" : "ok\n",
+                ),
+              ],
+            }
+          : checkpoint,
+      ),
+    },
+  };
+};
+
+describe("exportDesktopApplication with the seed it ships", () => {
+  it("checks the seed the bundle ships, without the app's log it leaves out", async () => {
+    const scratch = await createTestTempDirectory("desktop-task-");
+    const path = join(scratch, "task.json");
+    await writeFile(
+      path,
+      JSON.stringify(
+        task([
+          {
+            id: "no-error",
+            kind: "lines_absent",
+            file: ".config/notes/notes.log",
+            lines: ["error A"],
+          },
+        ]),
+      ),
+    );
+    const directory = join(scratch, "bundle");
+
+    const result = await exportDesktopApplication(
+      {
+        capture: await writeCaptureFolder(loggedCapture(), undefined, [
+          "milk\neggs\n",
+          "error A\n",
+          "ok\n",
+        ]),
+        directory,
+        name: undefined,
+        tasks: [path],
+        seedCheckpoint: "seed",
+        endCheckpoint: "end",
+      },
+      readers,
+    );
+
+    expect(result).toBeInstanceOf(AnalysisInputError);
+    expect((result as AnalysisInputError).userMessage).toContain(
+      "Every check already passes on the seed",
+    );
+    expect(await exists(directory)).toBe(false);
+  });
+});
 
 describe("exportDesktopApplication with a task's seed", () => {
   it("refuses a task whose only seed failure misses a line its cut view may have left out", async () => {
