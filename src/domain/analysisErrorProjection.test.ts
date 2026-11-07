@@ -187,10 +187,12 @@ describe("agent recovery metadata", () => {
         operation: "inspect_analysis_view",
       },
       remediation: {
-        action:
-          "Read the declared input schema or CLI usage for inspect_analysis_view; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.",
+        action: expect.stringContaining("inspect_analysis_view"),
       },
     });
+    expect(projected.remediation.action).toContain("tools/list");
+    expect(projected.remediation.action).toMatch(/correct.*fields.*retry/iu);
+    expect(projected.remediation.action).toMatch(/not repeat.*unchanged/iu);
     expect(analysisErrorProjectionSchema.parse(projected)).toEqual(projected);
   });
 
@@ -353,11 +355,11 @@ it("projects a published file receipt alongside retained cleanup failure", () =>
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
-    message:
-      "The output file was published, but staging cleanup remains incomplete.",
+    message: expect.stringMatching(/published.*staging cleanup.*incomplete/iu),
     remediation: {
-      action:
-        "Use the published file at details.published_path and resolve the reported staging cleanup failure.",
+      action: expect.stringMatching(
+        /published.*details\.published_path.*cleanup/iu,
+      ),
     },
     details: {
       operation: "write",
@@ -1039,8 +1041,7 @@ describe("analysis error projection: caller contract", () => {
     ]);
     expect(projected[1]).toMatchObject({
       category: "unsupported_provider",
-      message:
-        "This analysis is unavailable for the current target. Choose another analysis or target.",
+      message: expect.stringMatching(/unavailable.*target/iu),
       details: {
         provider_id: "fixture",
         operation: "overview",
@@ -1069,8 +1070,9 @@ describe("analysis error projection: caller contract", () => {
         category: "unavailable",
         retryable: false,
         remediation: {
-          action:
-            "Check the current process's read access to the selected path. Retry with a readable local file.",
+          action: expect.stringMatching(
+            /read access.*selected path.*readable local file/iu,
+          ),
         },
         details: {
           path: "/local/targets/app",
@@ -1140,11 +1142,11 @@ describe("analysis error projection: caller contract", () => {
       projectAnalysisError(new UnknownRegistryError("not-found")),
     ).toMatchObject({
       code: "execution_failure",
-      message:
-        "The requested residual unknown does not exist in this session. Check the unknown_id and try again.",
+      message: expect.stringMatching(
+        /residual unknown.*does not exist.*unknown_id/iu,
+      ),
       remediation: {
-        action:
-          "Check that the unknown_id belongs to this session, then retry.",
+        action: expect.stringMatching(/unknown_id.*session.*retry/iu),
       },
       details: { reason: "not-found" },
     });

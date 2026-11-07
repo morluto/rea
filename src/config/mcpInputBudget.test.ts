@@ -34,7 +34,6 @@ it.each([
   "9007199254740992",
 ])("refuses invalid allowance %s without disabling admission", (value) => {
   const parsed = parseMcpInputBudget(value);
-  expect(parsed.ok).toBe(false);
   if (parsed.ok) throw new Error("Invalid admission setting was accepted");
   expect(parsed.error).toBeInstanceOf(ConfigurationError);
   expect(parsed.error.settings).toEqual([

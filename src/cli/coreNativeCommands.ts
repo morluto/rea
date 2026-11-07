@@ -312,7 +312,7 @@ export const registerCoreNativeCommands = (
     cli.command(command, {
       description:
         operation === "inspect_native_instruction"
-          ? "Inspect one native instruction with decoded operand facts"
+          ? "Inspect an exact code or data address for decoded instructions and typed incoming references where supported"
           : "Resolve one static native call site",
       args: z.object({
         path: localPathStringSchema.describe(
@@ -482,7 +482,9 @@ const registerAnnotationCommand = (
       path: localPathStringSchema.describe("Local executable path"),
       procedure: z
         .string()
-        .describe("Exact function entry address or unique name"),
+        .describe(
+          "Function name or address; Ghidra resolves interior addresses to the containing function and edits its entry",
+        ),
     }),
     options: z.object({
       name: z.string().min(1).optional().describe("Analyst function name"),

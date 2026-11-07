@@ -161,18 +161,27 @@ export const entryWithoutView = (
   return VIEW_FORMATS.has(entry.format ?? null) ? undefined : "has no view";
 };
 
-/** The entry whose view a pointer goes into when it has none, so its `view` of `null` is no JSON value, and why. */
+/**
+ * The entry whose view a pointer goes into when it has none, so its `view` of
+ * `null` is no JSON value, and why; `unread` when reading its view failed.
+ */
 export const viewlessEntryAt = (
   view: JsonValue | null,
   pointer: string,
-): { readonly name: string; readonly reason: string } | undefined => {
+):
+  | { readonly name: string; readonly reason: string; readonly unread: boolean }
+  | undefined => {
   const entry = zipEntryAt(view, pointer);
   if (typeof entry !== "object" || pointer.split("/")[3] !== "view")
     return undefined;
   const reason = entryWithoutView(entry);
   return reason === undefined
     ? undefined
-    : { name: typeof entry.name === "string" ? entry.name : "", reason };
+    : {
+        name: typeof entry.name === "string" ? entry.name : "",
+        reason,
+        unread: typeof entry.view_error === "string",
+      };
 };
 
 /**

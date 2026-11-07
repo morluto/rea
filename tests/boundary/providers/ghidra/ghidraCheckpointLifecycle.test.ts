@@ -106,10 +106,13 @@ it.skipIf(process.platform === "win32")(
   "saves completed initial analysis, leaves an unchanged checkpoint alone, and releases its lease",
   async () => {
     const f = await fixture();
+    expect(f.client.checkpointRestore()).toBeUndefined();
     expect((await f.client.start()).ok).toBe(true);
+    expect(f.client.checkpointRestore()).toBeNull();
     const path = join(f.selection.directory, "current.json"),
       before = await readFile(path, "utf8");
     expect((await f.client.close()).ok).toBe(true);
+    expect(f.client.checkpointRestore()).toBeUndefined();
     expect(await readFile(path, "utf8")).toEqual(before);
     expect(f.launcher.requests).toContain("checkpoint_program");
     const selection = await resolveGhidraCheckpoint(
@@ -129,6 +132,9 @@ it.skipIf(process.platform === "win32")(
     });
     clients.push(resumed);
     expect((await resumed.start()).ok).toBe(true);
+    expect(resumed.checkpointRestore()).toMatchObject({
+      sha256: JSON.parse(await readFile(path, "utf8")).source.sha256,
+    });
     expect(f.launcher.packedPrograms.at(-1)?.sha256).toBe(
       JSON.parse(await readFile(path, "utf8")).source.sha256,
     );
