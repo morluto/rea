@@ -1,0 +1,15 @@
+<resources>
+  <item type="id" name="entry" />
+  <item type="id" name="sign_in" />
+  <item type="id" name="status" />
+  <item type="id" name="duplicate_one" />
+  <item type="id" name="duplicate_two" />
+  <item type="id" name="disabled" />
+  <item type="id" name="composite" />
+  <item type="id" name="continue_label" />
+  <item type="id" name="drag_source" />
+  <item type="id" name="drag_destination" />
+  <item type="id" name="scroll" />
+  <item type="id" name="toggle" />
+  <item type="id" name="mirror_input" />
+</resources>

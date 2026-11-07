@@ -196,6 +196,16 @@ export const createServer = (
     options,
     platform: process.platform,
     arch: process.arch,
+    ...(session === undefined
+      ? {}
+      : {
+          onLateAdbUiEvidence: (
+            evidence: Parameters<typeof session.recordEvidence>[0],
+          ) => {
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok) throw recorded.error;
+          },
+        }),
   });
   const {
     evmInterface,

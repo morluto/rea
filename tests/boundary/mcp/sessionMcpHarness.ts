@@ -8,6 +8,7 @@ import { expect } from "vitest";
 import { z } from "zod";
 
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { createEvidence } from "../../../src/domain/evidence.js";
 import type {
@@ -108,7 +109,12 @@ export const createSessionMcpHarness = async (
           }),
     },
   );
-  const mcp = new Client({ name: "session-test", version: "1.0.0" });
+  // Preserve SDK validation and catalog invalidation, without repeatedly
+  // expanding shared output-schema references on each lifecycle transition.
+  const mcp = new Client(
+    { name: "session-test", version: "1.0.0" },
+    { jsonSchemaValidator: createMcpSchemaValidation() },
+  );
   const [clientTransport, serverTransport] =
     InMemoryTransport.createLinkedPair();
   resources.push(mcp, server);

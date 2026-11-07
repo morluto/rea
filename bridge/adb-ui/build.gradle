@@ -1,0 +1,32 @@
+plugins {
+    id 'com.android.application' version '8.7.3'
+}
+
+if (providers.gradleProperty('reaBuildDir').isPresent()) {
+    layout.buildDirectory.set(file(providers.gradleProperty('reaBuildDir').get()))
+}
+
+android {
+    namespace 'dev.rea.uiautomator'
+    compileSdk 35
+    buildToolsVersion '34.0.0'
+
+    defaultConfig {
+        applicationId 'dev.rea.uiautomator'
+        minSdk 24
+        targetSdk 35
+        versionCode 2
+        versionName '0.2.0'
+        buildConfigField 'String', 'UI_AUTOMATOR_VERSION', '"2.4.0"'
+    }
+    buildFeatures { buildConfig true }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.test.uiautomator:uiautomator:2.4.0'
+    implementation 'androidx.test:monitor:1.8.0'
+}

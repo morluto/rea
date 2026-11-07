@@ -447,6 +447,24 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     launchesProcess: true,
     accessesNetwork: true,
   }),
+  inspect_adb_ui: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  find_adb_ui_elements: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  wait_for_adb_ui: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
   read_adb_setting: effects({
     mutatesSession: true,
     launchesProcess: true,

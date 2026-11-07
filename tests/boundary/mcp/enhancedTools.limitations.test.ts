@@ -1,8 +1,10 @@
 import { afterEach, expect, it } from "vitest";
+import type { z } from "zod";
 import { createAnalysisExecution } from "../../../src/application/AnalysisProvider.js";
 import { err, ok } from "../../../src/domain/result.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import type { nativeInventoryRowsSchemas } from "../../../src/domain/native/nativeInventory.js";
 import { connect, closeEnhancedToolResources } from "./enhancedToolsHarness.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 
@@ -51,12 +53,15 @@ it("retains provider coverage caveats in a composed MCP overview without repeate
   expect(calls.length).toBe(new Set(calls).size);
 });
 
-it("counts canonical inventory rows in the composed overview without altering labels", async () => {
+it("counts every canonical inventory row without losing same-address alternatives", async () => {
   const procedures = [
-    { address: "0x1000", value: "__proto__" },
-    { address: "0x2000", value: "ordinary procedure" },
-  ];
-  const strings = [{ address: "0x3000", value: "__proto__" }];
+    { address: "__proto__", value: "observed procedure" },
+    { address: "0x1000", value: "ordinary procedure" },
+    { address: "0x1000", value: "same-address alternative" },
+  ] satisfies z.infer<typeof nativeInventoryRowsSchemas.names>;
+  const strings = [
+    { address: "__proto__", value: "observed string" },
+  ] satisfies z.infer<typeof nativeInventoryRowsSchemas.strings>;
   const before = [JSON.stringify(procedures), JSON.stringify(strings)];
   const client = await connect({
     execute: async (operation) => {

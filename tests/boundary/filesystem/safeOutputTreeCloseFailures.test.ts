@@ -199,17 +199,18 @@ it.skipIf(process.platform === "win32").each([false, true])(
       vi.restoreAllMocks();
     });
     const commit = SafeOutputTree.prototype.commit;
-    vi.spyOn(SafeOutputTree.prototype, "commit").mockImplementation(
-      async function (this: SafeOutputTree) {
+    const commitAttempt = vi
+      .spyOn(SafeOutputTree.prototype, "commit")
+      .mockImplementation(async function (this: SafeOutputTree) {
         injectedFilesystemFailures.closeNext = true;
         injectedFilesystemFailures.blockCloseRetries = persistent;
         await commit.call(this);
-      },
-    );
+      });
 
     const result = await client.execute("extract_artifact", {
       output_root: output,
     });
+    expect(commitAttempt).toHaveBeenCalledTimes(1);
     const extraction = {
       output_root: output,
       artifacts: [expect.objectContaining({ relative_path: "payload.txt" })],

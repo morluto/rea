@@ -1,34 +1,12 @@
 import { z } from "zod";
 import { localPathStringSchema } from "../localPath.js";
 import { IDENTIFIER_PATTERN } from "../stringPatterns.js";
-
-/**
- * Device serials as adb prints them: emulator-5554, USB identifiers, and
- * host:port transports. The pattern keeps arguments free of whitespace and
- * quotes; argv is positional in the provider, so this is admission hygiene
- * rather than injection defense.
- */
-const deviceSerialSchema = z
-  .string()
-  .min(1)
-  .max(256)
-  .regex(
-    /^[^\x00\s"']+$/u,
-    "Device serial cannot contain whitespace or quotes",
-  );
-
-/**
- * Android package names as Package Manager reports them. System entries can
- * be a single segment (`android`), so at least one identifier is required.
- */
-const packageNameSchema = z
-  .string()
-  .min(1)
-  .max(256)
-  .regex(
-    /^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)*$/u,
-    "Package name must be dot-separated Java identifiers",
-  );
+import {
+  adbClientIdentitySchema as client,
+  adbPackageNameSchema as packageNameSchema,
+  adbSerialSchema as deviceSerialSchema,
+} from "./adbIdentity.js";
+import { adbUiInputSchemas, adbUiResultSchemas } from "./adbUiAnalysis.js";
 
 /** Text states emitted by adb's ConnectionState formatter. */
 export const ADB_DEVICE_STATES = [
@@ -63,6 +41,8 @@ const activityExtraNonEmptyValueSchema = activityExtraStringValueSchema.min(1);
 export const MAX_ADB_ACTIVITY_EXTRAS = 16;
 // Android's `am start --ef` parses this text with Float.valueOf. Keep the
 // caller's spelling intact while admitting Java FloatValue forms.
+// Signs stay outside character classes so lint fixes cannot break JSON Schema
+// consumers that compile the advertised pattern with JavaScript's v flag.
 const javaFloatValuePattern =
   /^[\x01-\x20]*(?:\+|-)?(?:NaN|Infinity|(?:(?:\d+(?:\.\d*)?|\.\d+)(?:[eE](?:\+|-)?\d+)?[fFdD]?|0[xX](?:[\da-fA-F]+(?:\.[\da-fA-F]*)?|\.[\da-fA-F]+)[pP](?:\+|-)?\d+[fFdD]?))[\x01-\x20]*$/u;
 const activityExtraSchema = z.discriminatedUnion("type", [
@@ -116,6 +96,7 @@ const activityExtraSchema = z.discriminatedUnion("type", [
  * adb binary the caller selected.
  */
 export const adbInputSchemas = {
+  ...adbUiInputSchemas,
   inspect_adb_client: z.strictObject({}),
   list_adb_devices: z.strictObject({}),
   inspect_adb_device: z.strictObject({
@@ -364,6 +345,22 @@ export type AdbRequest = {
 /** Validate operation and input together so their types remain correlated. */
 export const adbRequestSchema = z.discriminatedUnion("operation", [
   z.strictObject({
+    operation: z.literal("inspect_adb_ui"),
+    input: adbInputSchemas.inspect_adb_ui,
+  }),
+  z.strictObject({
+    operation: z.literal("find_adb_ui_elements"),
+    input: adbInputSchemas.find_adb_ui_elements,
+  }),
+  z.strictObject({
+    operation: z.literal("wait_for_adb_ui"),
+    input: adbInputSchemas.wait_for_adb_ui,
+  }),
+  z.strictObject({
+    operation: z.literal("perform_adb_ui_action"),
+    input: adbInputSchemas.perform_adb_ui_action,
+  }),
+  z.strictObject({
     operation: z.literal("inspect_adb_client"),
     input: adbInputSchemas.inspect_adb_client,
   }),
@@ -461,13 +458,6 @@ export const adbRequestSchema = z.discriminatedUnion("operation", [
   }),
 ]);
 
-const client = z.strictObject({
-  binary_path: z.string().min(1),
-  path_source: z.enum(["environment", "path"]),
-  version: z.string().min(1).nullable(),
-  installed_path: z.string().min(1).nullable(),
-});
-
 const device = z.strictObject({
   serial: z.string().min(1),
   state: adbDeviceStateSchema,
@@ -562,6 +552,7 @@ export type AdbPackageNumericIssues = z.infer<
 
 /** Portable ADB observations with explicit identity and coverage limitations. */
 export const adbResultSchemas = {
+  ...adbUiResultSchemas,
   inspect_adb_client: z.strictObject({
     client,
     /**

@@ -2,13 +2,18 @@ import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
 
-import type { ArtifactOccurrence } from "../artifactGraph.js";
+import type { ArtifactNode, ArtifactOccurrence } from "../artifactGraph.js";
+import {
+  artifactGraphDigest,
+  artifactIdForContent,
+  artifactManifestId,
+  occurrenceIdForLocation,
+} from "../artifactIdentity.js";
 
 import { parseArtifactInventoryEvidence } from "../artifactInventoryEvidence.js";
 import { projectAppleInventory } from "./appleApplication.js";
 import { AnalysisInputError } from "../analysisErrorCore.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
-import { digestCanonicalValue } from "../canonicalDigest.js";
 import { createEvidence, type Evidence } from "../evidence.js";
 
 type EntryKind = "file" | "directory" | "symlink" | "slice";
@@ -23,9 +28,6 @@ interface FixtureEntry {
 
 const sha = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
-const artifactId = (sha256: string): string =>
-  `art_${digestCanonicalValue({ sha256 }, "Artifact inventory")}`;
-
 /** Build one complete, content-addressed inventory page for pure projection tests. */
 const inventoryEvidence = (
   rootFormat: RootFormat,
@@ -33,19 +35,18 @@ const inventoryEvidence = (
   entries: readonly FixtureEntry[],
 ): Evidence => {
   const rootSha = sha(`${rootFormat}:${subjectName}`);
-  const rootId = artifactId(rootSha);
-  const node = (sha256: string, format: string) => ({
-    artifact_id: artifactId(sha256),
-    format: [
-      "directory",
-      "mach-o",
-      "mach-o-universal",
-      "elf",
-      "pe",
-      "plist",
-    ].includes(format)
-      ? format
-      : "file",
+  const rootId = artifactIdForContent(rootSha);
+  const node = (sha256: string, format: string): ArtifactNode => ({
+    artifact_id: artifactIdForContent(sha256),
+    format:
+      format === "directory" ||
+      format === "mach-o" ||
+      format === "mach-o-universal" ||
+      format === "elf" ||
+      format === "pe" ||
+      format === "plist"
+        ? format
+        : "file",
     sha256,
     size: 1,
     media_type: null,
@@ -59,13 +60,11 @@ const inventoryEvidence = (
     id: string | null,
     format: ArtifactOccurrence["artifact_format"] = "file",
   ): ArtifactOccurrence => ({
-    occurrence_id:
-      path === "."
-        ? `occ_${digestCanonicalValue({ root: rootId }, "Artifact inventory")}`
-        : `occ_${digestCanonicalValue(
-            { root_artifact_id: rootId, logical_path: path, entry_kind: kind },
-            "Artifact inventory",
-          )}`,
+    occurrence_id: occurrenceIdForLocation({
+      rootArtifactId: rootId,
+      logicalPath: path,
+      entryKind: kind,
+    }),
     artifact_id: id,
     parent_occurrence_id: null,
     logical_path: path,
@@ -106,7 +105,7 @@ const inventoryEvidence = (
       continue;
     }
     const contentSha = sha(`${kind}:${path}`);
-    const id = artifactId(contentSha);
+    const id = artifactIdForContent(contentSha);
     nodes.set(
       id,
       node(contentSha, kind === "directory" ? "directory" : format),
@@ -121,15 +120,12 @@ const inventoryEvidence = (
   const sortedOccurrences = occurrences.sort((left, right) =>
     compareUnicodeCodePoints(left.logical_path, right.logical_path),
   );
-  const graphSha256 = digestCanonicalValue(
-    {
-      nodes: sortedNodes,
-      occurrences: sortedOccurrences,
-      edges: [],
-      integrity_contradictions: [],
-    },
-    "Artifact inventory",
-  );
+  const graphSha256 = artifactGraphDigest({
+    nodes: sortedNodes,
+    occurrences: sortedOccurrences,
+    edges: [],
+    contradictions: [],
+  });
   return createEvidence(
     {
       path: `/fixtures/${subjectName}`,
@@ -144,10 +140,7 @@ const inventoryEvidence = (
       authority: "shipped-artifact",
       result: {
         manifest: {
-          manifest_id: `agm_${digestCanonicalValue(
-            { root_artifact_id: rootId, graph_sha256: graphSha256 },
-            "Artifact inventory",
-          )}`,
+          manifest_id: artifactManifestId(rootId, graphSha256),
           root_artifact_id: rootId,
           root_sha256: rootSha,
           root_format: rootFormat,

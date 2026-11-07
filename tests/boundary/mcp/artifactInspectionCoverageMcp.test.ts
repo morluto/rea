@@ -31,6 +31,7 @@ const writeBundle = async (withFifo: boolean): Promise<string> => {
     "<plist><dict><key>CFBundleExecutable</key><string>main</string></dict></plist>",
   );
   await writeFile(join(bundle, "main"), machoImage({}));
+  await writeFile(join(bundle, "main.js"), "export const value = 1;\n");
   if (withFifo) execFileSync("mkfifo", [join(bundle, "omitted.fifo")]);
   return bundle;
 };

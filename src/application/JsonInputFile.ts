@@ -21,6 +21,7 @@ import streamArray from "stream-json/streamers/stream-array.js";
 import {
   assertRegularFileActive,
   RegularFileChangedError,
+  RegularFileOperationCancelled,
 } from "../filesystem/RegularFile.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { sealOwnedJsonInput } from "./OwnedJsonInput.js";
@@ -112,9 +113,54 @@ const withJsonInputPipeline = async <Value>(
   else signal.addEventListener("abort", cancel, { once: true });
   try {
     return await run(controller.signal);
+  } catch (cause: unknown) {
+    // Node can combine the source's checkpoint cancellation with the abort it
+    // delivers to the parser. Normalize only that pipeline-owned combination,
+    // before the descriptor owner records its outcome and closes the file.
+    if (isJsonPipelineCancellation(cause, signal, controller.signal))
+      throw new RegularFileOperationCancelled(signal.reason);
+    throw cause;
   } finally {
     signal.removeEventListener("abort", cancel);
   }
+};
+
+const isJsonPipelineCancellation = (
+  cause: unknown,
+  caller: AbortSignal,
+  pipeline: AbortSignal,
+): boolean => {
+  if (!caller.aborted || !pipeline.aborted) return false;
+  const pending = [cause];
+  const seen = new Set<unknown>();
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (current === pipeline.reason) continue;
+    // The caller's value is opaque, even if it resembles a cancellation or
+    // contains an aggregate. It is never a pipeline-produced error envelope.
+    if (current === caller.reason) return false;
+    if (
+      current instanceof RegularFileOperationCancelled &&
+      current.reason === caller.reason
+    )
+      continue;
+    if (
+      current instanceof Error &&
+      current.name === "AbortError" &&
+      "code" in current &&
+      current.code === "ABORT_ERR" &&
+      current.cause === pipeline.reason
+    )
+      continue;
+    if (seen.has(current)) return false;
+    seen.add(current);
+    if (current instanceof AggregateError && current.errors.length > 0) {
+      pending.push(...current.errors);
+      continue;
+    }
+    return false;
+  }
+  return true;
 };
 
 /** Heap a whole-file native JSON.parse may need: the assembler's 64x container expansion plus byte and text copies. */
