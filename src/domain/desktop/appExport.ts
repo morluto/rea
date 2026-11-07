@@ -193,20 +193,31 @@ export const capturedHomePath = (
     for (const { physical, logical } of spellings) {
       if (!isWithinAny(path, [physical])) continue;
       const spelled = relative(`${logical}${path.slice(physical.length)}`);
-      if (spelled !== null) return spelled;
+      if (spelled !== null) return { spelled, specificity: physical.length };
     }
-    return relative(path);
+    const plain = relative(path);
+    return plain === null ? undefined : { spelled: plain, specificity: 0 };
   };
   return (path) => {
-    // A database log follows the database's spelling. The log name is one file,
-    // not a directory, including when the database was a walked state link.
+    const own = spell(path);
+    // A database log follows the database only when that database's mapping is
+    // more specific than the log file's own. A selected file whose name ends
+    // in -wal or -journal keeps its own spelling.
     for (const { suffix } of SQLITE_SIDECARS) {
       if (!path.endsWith(suffix)) continue;
       const database = path.slice(0, -suffix.length);
-      const spelled = spell(database);
-      if (spelled !== null) return `${spelled}${suffix}`;
+      const base = spell(database);
+      const plain = relative(database);
+      if (
+        base === undefined ||
+        plain === null ||
+        base.spelled === plain ||
+        (own !== undefined && base.specificity <= own.specificity)
+      )
+        continue;
+      return `${base.spelled}${suffix}`;
     }
-    return spell(path);
+    return own?.spelled ?? null;
   };
 };
 
