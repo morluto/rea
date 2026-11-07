@@ -634,6 +634,7 @@ const requireExtractableFormat = async (
     | "inputPath"
     | "selectedPath"
     | "inputFormat"
+    | "environment"
     | "resourceScope"
     | "expectedRootSha256"
   >,
@@ -673,6 +674,8 @@ const requireExtractableFormat = async (
         }
         return { pack, probeFacts: probes.completedFacts() };
       },
+      "reject",
+      input.environment,
     );
     if (!detected.pack)
       throw new AnalysisUnsupportedTargetError(
@@ -705,7 +708,12 @@ const createReader = async (
   if (containerFormat === "ines" && transferredSource === undefined) {
     let source: Awaited<ReturnType<typeof openRootArtifact>>;
     try {
-      source = await openRootArtifact(path, input.resourceScope, signal);
+      source = await openRootArtifact(
+        path,
+        input.resourceScope,
+        signal,
+        input.environment,
+      );
     } catch (cause: unknown) {
       abortIfNeeded(signal);
       if (

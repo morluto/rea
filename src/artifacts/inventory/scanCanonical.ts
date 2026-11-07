@@ -177,6 +177,7 @@ const scanCanonical = async (
         rootDigest,
         rootSource,
         resourceScope: options.resourceScope,
+        environment: options.environment,
         reader,
         signal: options.signal,
         nodes,
@@ -210,6 +211,7 @@ const scanCanonical = async (
           rootDigest,
           rootSource,
           resourceScope: options.resourceScope,
+          environment: options.environment,
           reader,
           signal: options.signal,
           nodes: new Map(),
@@ -407,6 +409,7 @@ const cleanupInventoryOwners = async ({
 
 interface SnapshotBuildInput {
   readonly resourceScope: ArtifactInventoryOptions["resourceScope"];
+  readonly environment: ArtifactInventoryOptions["environment"];
   readonly path: string;
   readonly metadata: Stats;
   readonly rootFormat: ArtifactOccurrence["artifact_format"];
@@ -493,6 +496,7 @@ const buildInventorySnapshot = async (
     rootSource,
     input.resourceScope,
     signal,
+    input.environment,
   );
 
   const graphSha256 = artifactGraphDigest({
@@ -582,11 +586,12 @@ const verifyRootDigest = async (
   rootSource: RootInventorySource | undefined,
   resourceScope: ArtifactInventoryOptions["resourceScope"],
   signal: AbortSignal | undefined,
+  environment: ArtifactInventoryOptions["environment"],
 ): Promise<void> => {
   if (rootDigest === null) return;
   const verified =
     rootSource === undefined
-      ? await hashStableRootArtifact(path, resourceScope, signal)
+      ? await hashStableRootArtifact(path, resourceScope, signal, environment)
       : await hashStableRootArtifactHandle(
           path,
           rootSource.handle,
