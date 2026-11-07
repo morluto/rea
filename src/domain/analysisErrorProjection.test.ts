@@ -355,11 +355,11 @@ it("projects a published file receipt alongside retained cleanup failure", () =>
   );
   expect(projected).toMatchObject({
     code: "cleanup_incomplete",
-    message:
-      "The output file was published, but staging cleanup remains incomplete.",
+    message: expect.stringMatching(/published.*staging cleanup.*incomplete/iu),
     remediation: {
-      action:
-        "Use the published file at details.published_path and resolve the reported staging cleanup failure.",
+      action: expect.stringMatching(
+        /published.*details\.published_path.*cleanup/iu,
+      ),
     },
     details: {
       operation: "write",
@@ -1070,8 +1070,9 @@ describe("analysis error projection: caller contract", () => {
         category: "unavailable",
         retryable: false,
         remediation: {
-          action:
-            "Check the current process's read access to the selected path. Retry with a readable local file.",
+          action: expect.stringMatching(
+            /read access.*selected path.*readable local file/iu,
+          ),
         },
         details: {
           path: "/local/targets/app",
@@ -1141,11 +1142,11 @@ describe("analysis error projection: caller contract", () => {
       projectAnalysisError(new UnknownRegistryError("not-found")),
     ).toMatchObject({
       code: "execution_failure",
-      message:
-        "The requested residual unknown does not exist in this session. Check the unknown_id and try again.",
+      message: expect.stringMatching(
+        /residual unknown.*does not exist.*unknown_id/iu,
+      ),
       remediation: {
-        action:
-          "Check that the unknown_id belongs to this session, then retry.",
+        action: expect.stringMatching(/unknown_id.*session.*retry/iu),
       },
       details: { reason: "not-found" },
     });

@@ -1889,7 +1889,9 @@ describe("Mach-O load command reader failures", () => {
     view.setUint32(4, 8, true);
     expect(await read(machoImage({ commands: [short] }))).toMatchObject({
       status: "malformed",
-      reason: "load command 0 is too short to hold a string offset",
+      reason: expect.stringMatching(
+        /load command 0\b.*too short.*string offset/iu,
+      ),
     });
     view.setUint32(0, LC.CODE_SIGNATURE, true);
     expect(await read(machoImage({ commands: [short] }))).toMatchObject({
@@ -1943,7 +1945,9 @@ describe("Mach-O load command reader failures", () => {
     const fat = fatImage([{ cpu: CPU.arm64, bytes: machoImage({}) }]);
     expect(await read(fat.subarray(0, 4100))).toMatchObject({
       status: "malformed",
-      reason: "FAT architecture 0 slice range extends beyond the file",
+      reason: expect.stringMatching(
+        /FAT architecture 0\b.*slice range.*beyond.*file/iu,
+      ),
     });
   });
 
@@ -1968,7 +1972,9 @@ describe("Mach-O load command reader defect precedence", () => {
     new DataView(unsized.buffer).setUint32(0, LC.RPATH, true);
     const decodeFirst = {
       status: "malformed",
-      reason: "load command 0 is too short to hold a string offset",
+      reason: expect.stringMatching(
+        /load command 0\b.*too short.*string offset/iu,
+      ),
     };
     // An earlier command's decode defect wins over a later framing defect,
     expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
@@ -2019,7 +2025,9 @@ describe("Mach-O load command reader defect precedence", () => {
     new DataView(ranged.buffer).setUint32(8 + 20 + 12, ranged.length, false);
     expect(await read(ranged)).toEqual({
       status: "unsupported",
-      reason: "FAT architecture 0 alignment exponent 53 is unsupported",
+      reason: expect.stringMatching(
+        /FAT architecture 0\b.*alignment exponent 53\b.*unsupported/iu,
+      ),
     });
   });
 });

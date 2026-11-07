@@ -108,7 +108,6 @@ describe("native load-image result projection", () => {
       "inspect_native_load_image",
       observations,
     );
-    expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value.value).toEqual(observations);
     expect(parsed.value.rawResult).toBeUndefined();
@@ -125,7 +124,6 @@ describe("native load-image result projection", () => {
       "inspect_native_load_image",
       observations,
     );
-    expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value.value).toMatchObject({ entry_context: [] });
   });
@@ -137,7 +135,6 @@ it("validates large masked byte queries at the provider boundary without changin
     mask: "ff00".repeat(1024 * 1024),
   };
   const parsed = parseGhidraInventoryInput("search_bytes", input);
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.pattern === input.pattern).toBe(true);
   expect(parsed.value.mask === input.mask).toBe(true);
@@ -405,7 +402,6 @@ it.each([
       throw new Error("Expected an address fixture");
     Reflect.set(object as object, field, address.replace("%3A", "%3a"));
     const result = parseGhidraInventoryResult("search_bytes", value);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected canonical-address refusal");
     expect(result.error.cause).toBeInstanceOf(z.ZodError);
     if (!(result.error.cause instanceof z.ZodError))

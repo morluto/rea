@@ -12,10 +12,7 @@ import {
   compareManagedMemberPaths,
 } from "../../../../src/application/managed/ManagedMemberComparisonService.js";
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import {
-  managedMemberComparisonResultSchema,
-  compareManagedMembersInputSchema,
-} from "../../../../src/domain/managed/managedMemberComparison.js";
+import { managedMemberComparisonResultSchema } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";
 import { comparisonLimitations } from "../../../../src/domain/managed/managedMemberComparisonCoverage.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
@@ -230,12 +227,10 @@ const compare = (
         authority: "shipped-artifact",
       },
     );
-  const result = executeManagedMemberComparison(
-    compareManagedMembersInputSchema.parse({
-      left: observe(left, edit.left),
-      right: observe(right, edit.right),
-    }),
-  );
+  const result = executeManagedMemberComparison({
+    left: observe(left, edit.left),
+    right: observe(right, edit.right),
+  });
   if (!result.ok) throw result.error;
   return managedMemberComparisonResultSchema.parse(
     result.value.evidence.normalized_result,
@@ -688,12 +683,10 @@ describe("managed call-target comparison", () => {
             : edge,
         ),
     );
-    const result = executeManagedMemberComparison(
-      compareManagedMembersInputSchema.parse({
-        left,
-        right: rightWithOneUnknownTarget,
-      }),
-    );
+    const result = executeManagedMemberComparison({
+      left,
+      right: rightWithOneUnknownTarget,
+    });
     if (!result.ok) throw result.error;
     const report = managedMemberComparisonResultSchema.parse(
       result.value.evidence.normalized_result,
@@ -709,9 +702,10 @@ describe("managed call-target comparison", () => {
       "/fixture/no-edges.dll",
       () => [],
     );
-    const unknown = executeManagedMemberComparison(
-      compareManagedMembersInputSchema.parse({ left, right: unavailableEdges }),
-    );
+    const unknown = executeManagedMemberComparison({
+      left,
+      right: unavailableEdges,
+    });
     if (!unknown.ok) throw unknown.error;
     expect(
       managedMemberComparisonResultSchema.parse(
@@ -744,10 +738,10 @@ describe("managed member comparison path workflow", () => {
         },
       );
     };
-    const input = compareManagedMembersInputSchema.parse({
+    const input = {
       left: observe(0xff, "/tmp/partial-left.dll"),
       right: observe(0xfe, "/tmp/partial-right.dll"),
-    });
+    };
     const result = executeManagedMemberComparison(input);
     if (!result.ok) throw result.error;
     const comparison = managedMemberComparisonResultSchema.parse(

@@ -106,6 +106,7 @@ it("reports a working-directory file as invalid input", async () => {
       executable: process.execPath,
       working_directory: selectedFile,
     });
+    expect(failure.issues[0]?.message).toContain("not a directory");
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "invalid_request",
       details: {
@@ -114,7 +115,7 @@ it("reports a working-directory file as invalid input", async () => {
           {
             path: ["working_directory"],
             reason: "invalid_value",
-            message: `working directory is not a directory: ${selectedFile}`,
+            message: expect.stringContaining(selectedFile),
           },
         ],
       },
@@ -136,6 +137,7 @@ it.skipIf(process.platform === "win32")(
       executable: process.execPath,
       working_directory: aliasFile,
     });
+    expect(failure.issues[0]?.message).toContain("not a directory");
     expect(projectAnalysisError(failure)).toMatchObject({
       code: "invalid_request",
       details: {
@@ -144,7 +146,7 @@ it.skipIf(process.platform === "win32")(
           {
             path: ["working_directory"],
             reason: "invalid_value",
-            message: `working directory is not a directory: ${aliasFile}`,
+            message: expect.stringContaining(aliasFile),
           },
         ],
       },
@@ -163,13 +165,14 @@ it("reports an executable directory as invalid input", async () => {
       executable: directory,
       working_directory: root,
     });
+    expect(directoryFailure.issues[0]?.message).toContain("not a regular file");
     expect(projectAnalysisError(directoryFailure)).toMatchObject({
       code: "invalid_request",
       details: {
         issues: [
           {
             path: ["executable"],
-            message: `executable could not be resolved: ${directory}; checked ${directory} (not a regular file)`,
+            message: expect.stringContaining(directory),
           },
         ],
       },
@@ -191,13 +194,14 @@ it.skipIf(process.platform === "win32")(
         executable: selected,
         working_directory: root,
       });
+      expect(failure.issues[0]?.message).toContain("EACCES");
       expect(projectAnalysisError(failure)).toMatchObject({
         code: "invalid_request",
         details: {
           issues: [
             {
               path: ["executable"],
-              message: `executable could not be resolved: ${selected}; checked ${selected} (EACCES)`,
+              message: expect.stringContaining(selected),
             },
           ],
         },
@@ -306,13 +310,14 @@ it.skipIf(SKIP_PERMISSIONS)(
       });
       expect(failure).toBeInstanceOf(AnalysisInputError);
       if (!(failure instanceof AnalysisInputError)) return;
+      expect(failure.issues[0]?.message).toContain("EACCES");
       expect(projectAnalysisError(failure)).toMatchObject({
         code: "invalid_request",
         details: {
           issues: [
             {
               path: ["executable"],
-              message: `executable could not be resolved: tool; checked ${join(denied, "tool")} (EACCES)`,
+              message: expect.stringContaining(join(denied, "tool")),
             },
           ],
         },

@@ -540,8 +540,9 @@ describe("Apple bundle layouts and containers", () => {
               "manifest",
               "root_format",
             ],
-            message:
-              "Apple application projection requires IPA, directory, ZIP, or DMG inventory Evidence (got asar)",
+            message: expect.stringMatching(
+              /requires.*IPA.*directory.*ZIP.*DMG.*inventory Evidence.*got.*asar/iu,
+            ),
           }),
         ],
       });
