@@ -52,11 +52,29 @@ const bounds = (schema: unknown): Array<{ min: number; max: number }> => {
 const flagName = (name: string): string =>
   `--${name.replace(/[A-Z]/gu, (character) => `-${character.toLowerCase()}`)}`;
 
+/** Fields whose decimal admission this catalog must actually exercise. */
+const REQUIRED_NUMERIC_FIELDS = [
+  "read-bytes options.length",
+  "search-bytes options.limit",
+  "read-adb-logcat options.count",
+  "read-adb-logcat options.pid",
+  "inspect-sqlite-database options.rowLimit",
+  "decompile-all options.limit",
+  "instrument-with-frida options.durationMs",
+  "compare-web-screenshots options.channelThreshold",
+  "inspect-byte-entropy options.blockSize",
+  "inspect-elf-notes options.maxFileBytes",
+  "inspect-web-page options.observationMs",
+  "observe-web-execution options.observationMs",
+  "extract-firmware options.maxDepth",
+] as const;
+
 describe("decimal integer CLI admission", () => {
   it("rejects 0x10 and 1e3 for every numeric input and keeps an in-range decimal", () => {
     const cli = createCli({});
     const ajv = new Ajv2020({ strict: false, allErrors: true });
     const failures: string[] = [];
+    const checked: string[] = [];
     visitRegisteredCommands(cli, (command, path) => {
       for (const group of ["args", "options"] as const) {
         const parser = command[group];
@@ -133,13 +151,19 @@ describe("decimal integer CLI admission", () => {
                 `${label}: leading-zero decimal was rejected (${error instanceof Error ? error.message : String(error)})`,
               );
           }
-          if (validate(decimal) || validate(candidate)) continue;
-          failures.push(
-            `${label}: advertised schema rejects in-range ${decimal}`,
-          );
+          if (!(validate(decimal) || validate(candidate)))
+            failures.push(
+              `${label}: advertised schema rejects in-range ${decimal}`,
+            );
+          checked.push(label);
         }
       }
     });
+    expect(checked).toEqual(
+      expect.arrayContaining([...REQUIRED_NUMERIC_FIELDS]),
+    );
+    expect(checked.length).toBeGreaterThan(REQUIRED_NUMERIC_FIELDS.length);
+    expect(new Set(checked).size).toBe(checked.length);
     expect(failures).toEqual([]);
   });
 });
