@@ -723,6 +723,7 @@ const requiredModuleChanged = (
   state: JavaScriptSemanticAnalysisState,
   callableValue = false,
   savedObjectCapture?: t.Node,
+  descendantsMatter = false,
 ): boolean => {
   const identity = semanticRequireExportsIdentity(specifier, selected);
   return builtinModuleEffects(identity.specifier, state).some(
@@ -736,7 +737,12 @@ const requiredModuleChanged = (
           state.parentsByNode,
         )
       ) &&
-      affectsBuiltinPath(path, identity.path) &&
+      (affectsBuiltinPath(path, identity.path) ||
+        (descendantsMatter &&
+          path.length > identity.path.length &&
+          identity.path.every((key, index) =>
+            semanticPropertyPathKeyMatches(path[index]!, key),
+          ))) &&
       !semanticTopLevelEffectFollowsCapture(
         capture,
         node,
@@ -755,6 +761,16 @@ export const builtinModuleSlotUnmodified = (
   use: t.Node,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => !requiredModuleChanged(specifier, path, use, state);
+
+/** Whether a built-in object and its descendants retain their known behavior. */
+export const builtinModuleSubtreeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  requiredModuleChanged(specifier, path, use, state, false, undefined, true) ===
+  false;
 
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (

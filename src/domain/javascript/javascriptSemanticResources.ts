@@ -26,6 +26,7 @@ import {
 import {
   builtinDataEffectMethod,
   builtinModuleSlotUnmodified,
+  builtinModuleSubtreeUnmodified,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -77,7 +78,7 @@ export const collectJavaScriptSemanticResources = (
   const acquisitions = collectAcquisitions(program, context)
     .map((candidate): ResourceCandidate =>
       streamOptionsInSecondArgument(candidate) &&
-      !builtinModuleSlotUnmodified(
+      (!builtinModuleSlotUnmodified(
         "fs",
         [
           candidate.method === "createReadStream"
@@ -86,7 +87,18 @@ export const collectJavaScriptSemanticResources = (
         ],
         candidate.node,
         state,
-      )
+      ) ||
+        !builtinModuleSubtreeUnmodified(
+          "fs",
+          [
+            candidate.method === "createReadStream"
+              ? "ReadStream"
+              : "WriteStream",
+            "prototype",
+          ],
+          candidate.node,
+          state,
+        ))
         ? { ...candidate, constructorUncertain: true }
         : candidate,
     )

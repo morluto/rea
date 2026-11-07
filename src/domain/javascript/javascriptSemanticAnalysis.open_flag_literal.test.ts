@@ -460,6 +460,18 @@ it.each(["createReadStream", "createWriteStream"] as const)(
   },
 );
 
+it("keeps native rejection when the other stream prototype changes or the change is later", () => {
+  for (const setup of [
+    'Object.defineProperty(fs.WriteStream.prototype, "start", { set(value) {} }); fs.createReadStream("input", { start: -1 });',
+    'fs.createReadStream("input", { start: -1 }); Object.defineProperty(fs.ReadStream.prototype, "start", { set(value) {} });',
+  ]) {
+    const operations = analyzeJavaScriptSemantics(
+      `const fs = require("node:fs"); ${setup}`,
+    ).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  }
+});
+
 it.each([
   ["createReadStream", "ReadStream"],
   ["createWriteStream", "WriteStream"],
@@ -498,6 +510,49 @@ it("still rejects a bad read option when only the write constructor changed", ()
   `).resourceOperations;
   expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
 });
+
+it.each([
+  ["ReadStream", "createReadStream"],
+  ["WriteStream", "createWriteStream"],
+] as const)(
+  "retains %s acquisition and release when its prototype intercepts start",
+  (constructor, method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs.${constructor}.prototype, "start", { get() { return 0; }, set(value) {} });
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+  },
+);
+
+it.each(["createReadStream", "createWriteStream"] as const)(
+  "does not attribute %s to fs after mutating the result of defineProperty",
+  (method) => {
+    const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const alias = Object.defineProperty(fs, "tag", { value: 1 });
+    alias.${method} = () => null;
+    const stream = fs.${method}("input");
+    stream.close();
+  `).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+  },
+);
 
 it("checks the constructor at the factory call even when the factory was saved earlier", () => {
   const operations = analyzeJavaScriptSemantics(`

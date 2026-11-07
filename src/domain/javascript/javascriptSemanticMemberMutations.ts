@@ -1724,7 +1724,10 @@ export function* collectSemanticMemberMutationsSteps(
               module.specifier.replace(/^node:/u, "") === "fs" &&
               module.path.length === 0
             ) {
-              definedTarget = target;
+              // defineProperty returns its target. When the result is used,
+              // callers may mutate the same module through that result, whose
+              // identity is not otherwise tracked by this traversal.
+              if (t.isExpressionStatement(parent)) definedTarget = target;
               propertyDefinitions.add(node);
               markValue(target, [String(key.value)], new Set(), "write", node);
             }
