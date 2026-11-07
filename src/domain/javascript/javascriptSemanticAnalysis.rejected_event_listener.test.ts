@@ -909,3 +909,24 @@ it("retains candidates when await target is a callable or dynamic expression", (
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("propagates non-nullishness through conditional results when exploring ?? fallback", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", (flag ? 1 : 2) ?? (() => {}));
+    child.on("error", (flag ? "bad" : "also-bad") ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when conditional branch in ?? left operand may be nullish", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", (flag ? 1 : null) ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});

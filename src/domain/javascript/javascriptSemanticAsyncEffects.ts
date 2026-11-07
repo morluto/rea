@@ -342,15 +342,163 @@ const isProvablyNonThenablePrimitive = (
 const staticExpressionNullishness = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  depth = 0,
 ): boolean | undefined => {
-  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return undefined;
+  const unwrappedWrapper = unwrapJavaScriptExpression(node);
+  const currentDepth = depth + unwrappedWrapper.depth;
+  if (currentDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return undefined;
+  const unwrapped = unwrappedWrapper.node;
+
   if (t.isNullLiteral(unwrapped) || isNullishJavaScriptSyntax(unwrapped))
     return true;
   if (
     t.isAwaitExpression(unwrapped) &&
-    isProvablyNonThenablePrimitive(unwrapped.argument, state)
+    isProvablyNonThenablePrimitive(unwrapped.argument, state, currentDepth)
   ) {
-    return staticExpressionNullishness(unwrapped.argument, state);
+    return staticExpressionNullishness(
+      unwrapped.argument,
+      state,
+      currentDepth + 1,
+    );
+  }
+  if (t.isSequenceExpression(unwrapped)) {
+    const last = unwrapped.expressions.at(-1);
+    return last !== undefined
+      ? staticExpressionNullishness(last, state, currentDepth + 1)
+      : undefined;
+  }
+  if (t.isConditionalExpression(unwrapped)) {
+    const truthiness = staticExpressionTruthiness(
+      unwrapped.test,
+      state,
+      currentDepth,
+    );
+    if (truthiness === true) {
+      return staticExpressionNullishness(
+        unwrapped.consequent,
+        state,
+        currentDepth + 1,
+      );
+    }
+    if (truthiness === false) {
+      return staticExpressionNullishness(
+        unwrapped.alternate,
+        state,
+        currentDepth + 1,
+      );
+    }
+    const consequentNullishness = staticExpressionNullishness(
+      unwrapped.consequent,
+      state,
+      currentDepth + 1,
+    );
+    const alternateNullishness = staticExpressionNullishness(
+      unwrapped.alternate,
+      state,
+      currentDepth + 1,
+    );
+    if (consequentNullishness === false && alternateNullishness === false) {
+      return false;
+    }
+    if (consequentNullishness === true && alternateNullishness === true) {
+      return true;
+    }
+    return undefined;
+  }
+  if (t.isLogicalExpression(unwrapped)) {
+    if (unwrapped.operator === "??") {
+      const leftNullishness = staticExpressionNullishness(
+        unwrapped.left,
+        state,
+        currentDepth + 1,
+      );
+      if (leftNullishness === false) return false;
+      if (leftNullishness === true) {
+        return staticExpressionNullishness(
+          unwrapped.right,
+          state,
+          currentDepth + 1,
+        );
+      }
+      const rightNullishness = staticExpressionNullishness(
+        unwrapped.right,
+        state,
+        currentDepth + 1,
+      );
+      if (rightNullishness === false) return false;
+      return undefined;
+    }
+    if (unwrapped.operator === "||") {
+      const leftTruthiness = staticExpressionTruthiness(
+        unwrapped.left,
+        state,
+        currentDepth,
+      );
+      if (leftTruthiness === true) {
+        return staticExpressionNullishness(
+          unwrapped.left,
+          state,
+          currentDepth + 1,
+        );
+      }
+      if (leftTruthiness === false) {
+        return staticExpressionNullishness(
+          unwrapped.right,
+          state,
+          currentDepth + 1,
+        );
+      }
+      const leftNullishness = staticExpressionNullishness(
+        unwrapped.left,
+        state,
+        currentDepth + 1,
+      );
+      const rightNullishness = staticExpressionNullishness(
+        unwrapped.right,
+        state,
+        currentDepth + 1,
+      );
+      if (leftNullishness === false && rightNullishness === false) {
+        return false;
+      }
+      return undefined;
+    }
+    if (unwrapped.operator === "&&") {
+      const leftTruthiness = staticExpressionTruthiness(
+        unwrapped.left,
+        state,
+        currentDepth,
+      );
+      if (leftTruthiness === false) {
+        return staticExpressionNullishness(
+          unwrapped.left,
+          state,
+          currentDepth + 1,
+        );
+      }
+      if (leftTruthiness === true) {
+        return staticExpressionNullishness(
+          unwrapped.right,
+          state,
+          currentDepth + 1,
+        );
+      }
+      const leftNullishness = staticExpressionNullishness(
+        unwrapped.left,
+        state,
+        currentDepth + 1,
+      );
+      const rightNullishness = staticExpressionNullishness(
+        unwrapped.right,
+        state,
+        currentDepth + 1,
+      );
+      if (leftNullishness === false && rightNullishness === false) {
+        return false;
+      }
+      return undefined;
+    }
   }
   if (t.isUnaryExpression(unwrapped)) {
     if (unwrapped.operator === "void") return true;
@@ -579,7 +727,11 @@ export const rejectsEventListener = (
         continue;
       }
       if (value.operator === "??") {
-        const nullishness = staticExpressionNullishness(value.left, state);
+        const nullishness = staticExpressionNullishness(
+          value.left,
+          state,
+          depth,
+        );
         if (nullishness === false) {
           pending.push({ node: value.left, depth: depth + 1 });
         } else if (nullishness === true) {
@@ -626,7 +778,11 @@ export const rejectsEventListener = (
         continue;
       }
       if (value.operator === "??=") {
-        const nullishness = staticExpressionNullishness(value.left, state);
+        const nullishness = staticExpressionNullishness(
+          value.left,
+          state,
+          depth,
+        );
         if (nullishness === false) {
           pending.push({ node: value.left, depth: depth + 1 });
         } else if (nullishness === true) {
