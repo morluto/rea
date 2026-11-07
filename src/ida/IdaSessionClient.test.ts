@@ -2083,7 +2083,7 @@ it("binds retained transport diagnostics to the requested operation and recovery
       operation: "list_procedures",
       diagnostics: {
         reason: "upstream closed",
-        recovery: expect.stringContaining("docs/ida-provider.md"),
+        recovery: expect.stringContaining("docs/providers/ida-provider.md"),
       },
       captured_output: { stderr: "IDA diagnostic" },
     },
