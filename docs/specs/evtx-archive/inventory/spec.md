@@ -25,8 +25,10 @@ contacted and no event-provided content is executed.
   and timestamps of its first and last record, and whether its header checksum
   matched. A checksum mismatch is reported, not corrected.
 - A chunk is numbered by physical position, never by a value stored in the
-  chunk. A disagreement between the first record number at `0x08` and the first
-  record identifier at `0x18` is a `first-record-id-mismatch` diagnostic.
+  chunk. The first record number at `0x08` and the first record identifier at
+  `0x18` are distinct header fields, and a healthy log may have them differ. A
+  disagreement between the identifier at `0x18` and the first record's own
+  identifier is a `first-record-id-mismatch` diagnostic.
 - A wrapped log leaves stale bytes after its last record; those are not a
   truncation and do not discard the events the chunk did contain. Bytes after
   the last record are not inventoried.
