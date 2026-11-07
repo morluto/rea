@@ -500,7 +500,11 @@ napi_value inspect(napi_env env, std::unique_ptr<Runtime>& pending) {
   auto result = object(env);
   set(env, result, "abiVersion", number(env, 1));
   set(env, result, "nodeApiVersion", number(env, 8));
+#if defined(_M_ARM64) || defined(__aarch64__)
+  set(env, result, "architecture", string(env, std::string("arm64")));
+#else
   set(env, result, "architecture", string(env, std::string("x64")));
+#endif
   set(env, result, "filesystem", filesystem);
   set(env, result, "privateDacl", boolean(env, true));
   set(env, result, "privateBridgeDescriptorAccess", boolean(env, true));
