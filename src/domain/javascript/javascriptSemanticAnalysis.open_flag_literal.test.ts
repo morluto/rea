@@ -460,6 +460,76 @@ it.each(["createReadStream", "createWriteStream"] as const)(
   },
 );
 
+it.each([
+  ["createReadStream", "ReadStream"],
+  ["createWriteStream", "WriteStream"],
+] as const)(
+  "retains %s when its constructor may be replaced",
+  (method, constructor) => {
+    const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    const Native = fs.${constructor};
+    fs.${constructor} = class extends Native { constructor(p, opts) { super(p, { ...opts, start: 0 }); } };
+    const stream = fs.${method}("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: "acquire", method }),
+        expect.objectContaining({ kind: "release", method: "close" }),
+      ]),
+    );
+  },
+);
+
+it("still rejects a bad read option when only the write constructor changed", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    import fs from "node:fs";
+    fs.WriteStream = Custom;
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("checks the constructor at the factory call even when the factory was saved earlier", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const read = fs.createReadStream;
+    fs.ReadStream = Custom;
+    const stream = read("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createReadStream" }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
+
+it("still rejects a bad option when the matching constructor changes afterward", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    fs.createReadStream("input", { start: -1 });
+    fs.ReadStream = Custom;
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("retains a stream when its constructor is replaced through a module alias", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("fs");
+    const alias = require("node:fs");
+    alias.ReadStream = Custom;
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method: "createReadStream" }),
+    ]),
+  );
+});
+
 it("still rejects a bad option when a prototype change is definitely later", () => {
   const operations = analyzeJavaScriptSemantics(`
     import fs from "node:fs";

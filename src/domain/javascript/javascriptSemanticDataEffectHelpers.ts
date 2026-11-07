@@ -748,6 +748,14 @@ const requiredModuleChanged = (
   );
 };
 
+/** Whether a built-in export can still be relied on at this use site. */
+export const builtinModuleSlotUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => !requiredModuleChanged(specifier, path, use, state);
+
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (
   node: t.Node | undefined,

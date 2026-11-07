@@ -25,6 +25,7 @@ import {
 } from "./javascriptSemanticState.js";
 import {
   builtinDataEffectMethod,
+  builtinModuleSlotUnmodified,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -81,6 +82,16 @@ export const collectJavaScriptSemanticResources = (
     .filter(
       (candidate) =>
         !streamOptionsInSecondArgument(candidate) ||
+        !builtinModuleSlotUnmodified(
+          "fs",
+          [
+            candidate.method === "createReadStream"
+              ? "ReadStream"
+              : "WriteStream",
+          ],
+          candidate.node,
+          state,
+        ) ||
         !rejectsStreamOptionsLiteral(
           candidate.node,
           candidate.method === "createReadStream",
