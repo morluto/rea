@@ -8,7 +8,10 @@ import {
   seedEndCapture,
   writeCaptureFolder,
 } from "../../src/application/desktop/desktopCapture.fixture.js";
-import type { DesktopPackage } from "../../src/domain/desktop/desktopCapture.js";
+import type {
+  DesktopApplicationCapture,
+  DesktopPackage,
+} from "../../src/domain/desktop/desktopCapture.js";
 import { serveCli } from "../boundary/cli/cliServeHarness.js";
 import { buildComputerFakes, connectBuildServer } from "./buildComputerMcp.js";
 import { fakeBuildComputerRea } from "./fakeBuildComputerRea.js";
@@ -36,9 +39,17 @@ export interface CapturedInstall {
   readonly packageUrl?: string;
 }
 
-/** What the real CLI writes for a capture made between seed and end: the draft, and the export with BUILD_TASK. */
-const realCliOutputs = async (install: CapturedInstall | undefined) => {
-  const recorded = seedEndCapture();
+/**
+ * What the real CLI writes for a capture made between seed and end, by
+ * default `seedEndCapture`: the draft, and the export with BUILD_TASK, which
+ * must succeed unless `exportRefused`.
+ */
+const realCliOutputs = async (
+  install: CapturedInstall | undefined,
+  recorded: DesktopApplicationCapture = seedEndCapture(),
+  exportRefused = false,
+  extraContent: readonly string[] = [],
+) => {
   const capture = await writeCaptureFolder(
     install === undefined
       ? recorded
@@ -47,7 +58,7 @@ const realCliOutputs = async (install: CapturedInstall | undefined) => {
           application: { ...recorded.application, package: install.package },
         },
     undefined,
-    [EDITED_NOTE],
+    [EDITED_NOTE, ...extraContent],
   );
   const work = await createTestTempDirectory("build-cli-");
   const task = join(work, "task.json");
@@ -66,12 +77,17 @@ const realCliOutputs = async (install: CapturedInstall | undefined) => {
     "--task",
     task,
     ...ENDS,
+    "--synthetic-seed",
     ...(install?.packageUrl === undefined
       ? []
       : ["--package-url", install.packageUrl]),
     "--json",
   ]);
-  expect(exported.exitCode, exported.stdout).toBe(0);
+  // A refusal prints its error; the exit code alone does not tell them apart.
+  expect(
+    Object.hasOwn(JSON.parse(exported.stdout) as object, "code"),
+    exported.stdout,
+  ).toBe(exportRefused);
   await writeFile(join(work, "draft.json"), draft.stdout);
   await writeFile(join(work, "export.json"), exported.stdout);
   return {
@@ -88,7 +104,10 @@ const realCliOutputs = async (install: CapturedInstall | undefined) => {
  * names controller commands, in order, whose reply is lost after they run;
  * `env` adds to the stand-in's environment; `install` replaces the captured
  * package, the archive's `notes`; `screenshotDelaysMs` delays the computer's
- * screenshots in order.
+ * screenshots in order. `recorded` replaces what the capture records, with
+ * `exportRefused` when its export refuses BUILD_TASK, and `extraContent` the
+ * retained bytes it holds beyond the note's; `selected` is what it records
+ * when given exactly the `--state-path` of `path`, under the home.
  */
 export const buildCaptureFakes = async (
   options: {
@@ -96,10 +115,37 @@ export const buildCaptureFakes = async (
     readonly env?: Readonly<Record<string, string>>;
     readonly install?: CapturedInstall;
     readonly screenshotDelaysMs?: readonly number[];
+    readonly recorded?: DesktopApplicationCapture;
+    readonly exportRefused?: boolean;
+    readonly extraContent?: readonly string[];
+    readonly selected?: {
+      readonly path: string;
+      readonly recorded: DesktopApplicationCapture;
+    };
   } = {},
 ) => {
-  const outputs = await realCliOutputs(options.install);
+  const outputs = await realCliOutputs(
+    options.install,
+    options.recorded,
+    options.exportRefused,
+    options.extraContent,
+  );
   const rea = await fakeBuildComputerRea(outputs);
+  const chosen = options.selected;
+  const written =
+    chosen === undefined
+      ? undefined
+      : await realCliOutputs(options.install, chosen.recorded);
+  const selected =
+    chosen === undefined || written === undefined
+      ? {}
+      : {
+          FAKE_REA_STATE_PATH: join(rea.home, chosen.path),
+          FAKE_REA_SELECTED_CAPTURE: written.capture,
+          FAKE_REA_SELECTED_DRAFT: written.draft,
+          FAKE_REA_SELECTED_EXPORT: written.export,
+          FAKE_REA_SELECTED_BUNDLE: written.bundle,
+        };
   const { computer, runner } = await buildComputerFakes({
     ...(options.screenshotDelaysMs === undefined
       ? {}
@@ -107,7 +153,7 @@ export const buildCaptureFakes = async (
     exec: {
       home: rea.home,
       bin: rea.bin,
-      env: { ...rea.env, ...options.env },
+      env: { ...rea.env, ...selected, ...options.env },
       dropReplies: options.dropReplies ?? [],
     },
   });

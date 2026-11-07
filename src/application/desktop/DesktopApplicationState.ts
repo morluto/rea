@@ -24,6 +24,7 @@ import {
   applicationNames,
   isApplicationDconfGroup,
   roleFacts,
+  selectedHomePath,
   stateReasons,
   stateRole,
 } from "../../domain/desktop/stateRoles.js";
@@ -375,10 +376,14 @@ const describePath = async (
     ),
   ];
   const home = capture.host.home;
+  const role = stateRole(reasons, selectedHomePath(facts, path));
   return {
     path,
     home_path: path.startsWith(`${home}/`) ? path.slice(home.length + 1) : null,
-    role: stateRole(reasons),
+    role:
+      facts.sqliteSidecars?.has(path) === true && role === "unrelated"
+        ? "application_state"
+        : role,
     reasons,
     format:
       versions.findLast((version) => version.format !== null)?.format ?? null,

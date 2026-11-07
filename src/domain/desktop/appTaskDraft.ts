@@ -401,18 +401,14 @@ export interface TaskDraftFile {
   readonly suggested: readonly Suggestion[];
 }
 
-/**
- * Each file under the owned paths whose state differs between its versions at
- * the seed and end checkpoints, with suggested checks for the files the user
- * worked on: documents, or the app's own state when no document changed.
- */
-export const draftTaskFiles = (
+/** Each file `include` takes whose state differs between its versions at the seed and end checkpoints, by home path. */
+export const changedStateFiles = (
   files: ReadonlyMap<string, DesktopStatePath>,
-  served: (home: string) => boolean,
   ends: StateEnds,
-): readonly TaskDraftFile[] => {
-  const changed = [...files]
-    .filter(([home]) => served(home))
+  include: (home: string) => boolean = () => true,
+) =>
+  [...files]
+    .filter(([home]) => include(home))
     .flatMap(([home, path]) => {
       const baseline = versionAt(path, ends.seed);
       const final = versionAt(path, ends.end);
@@ -427,6 +423,18 @@ export const draftTaskFiles = (
         : [{ home, path, baseline, final, change }];
     })
     .sort((left, right) => (left.home < right.home ? -1 : 1));
+
+/**
+ * Each file under the owned paths whose state differs between its versions at
+ * the seed and end checkpoints, with suggested checks for the files the user
+ * worked on: documents, or the app's own state when no document changed.
+ */
+export const draftTaskFiles = (
+  files: ReadonlyMap<string, DesktopStatePath>,
+  served: (home: string) => boolean,
+  ends: StateEnds,
+): readonly TaskDraftFile[] => {
+  const changed = changedStateFiles(files, ends, served);
   const role = changed.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";

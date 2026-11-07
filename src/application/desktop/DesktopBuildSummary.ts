@@ -6,6 +6,7 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { installsFromPackageFile } from "../../domain/desktop/appExportInstall.js";
+import { DRAFT_NOTE_CODES } from "../../domain/desktop/appTaskDraftNotes.js";
 import { desktopApplicationCaptureSchema } from "../../domain/desktop/desktopCapture.js";
 import {
   jsonObjectSchema,
@@ -15,9 +16,9 @@ import {
 import { err, ok, type Result } from "../../domain/result.js";
 import type { ControlledComputer } from "../../desktop/BuildComputerController.js";
 import {
-  adapterError,
   ENDS,
   readOutput,
+  reportedFailure,
   runRea,
 } from "./DesktopBuildCommands.js";
 
@@ -36,6 +37,19 @@ const draftResultSchema = z.looseObject({
     prompt: z.string(),
     checks: z.array(jsonObjectSchema),
   }),
+  notes: z
+    .array(
+      z.looseObject({
+        code: z.enum(DRAFT_NOTE_CODES),
+        message: z.string(),
+        files: z
+          .array(z.looseObject({ file: z.string(), role: z.string() }))
+          .optional(),
+        more: z.int().nonnegative().optional(),
+        error: z.string().optional(),
+      }),
+    )
+    .default([]),
 });
 
 /** A stopped capture: its checkpoints, what it found of the app and the draft between seed and end. */
@@ -67,6 +81,14 @@ export type StoppedCapture = {
       readonly prompt: string;
       readonly checks: Readonly<Record<string, JsonValue>>[];
     };
+    /** Why the draft has no files; empty when it has some. */
+    readonly notes: {
+      readonly code: string;
+      readonly message: string;
+      readonly files?: { readonly file: string; readonly role: string }[];
+      readonly more?: number;
+      readonly error?: string;
+    }[];
   } | null;
   readonly draft_refusal?: string;
 };
@@ -115,6 +137,15 @@ const draftTask = async (
         prompt: draft.task.prompt,
         checks: draft.task.checks,
       },
+      notes: draft.notes.map(({ code, message, files, more, error }) => ({
+        code,
+        message,
+        ...(files === undefined
+          ? {}
+          : { files: files.map(({ file, role }) => ({ file, role })) }),
+        ...(more === undefined ? {} : { more }),
+        ...(error === undefined ? {} : { error }),
+      })),
     },
   };
 };
@@ -147,9 +178,7 @@ export const summarizeCapture = async (
     signal,
   );
   if (output.kind === "failure")
-    return err(
-      adapterError(STOP, `The capture failed: ${output.failure.message}`),
-    );
+    return err(reportedFailure(STOP, output, "The capture failed: "));
   const recorded = desktopApplicationCaptureSchema.parse(output.result);
   const checkpoints = new Set(
     recorded.state.checkpoints.map((checkpoint) => checkpoint.name),
