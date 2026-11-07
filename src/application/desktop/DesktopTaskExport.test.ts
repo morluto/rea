@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
+import { namesApp, shippedSeedCheckView } from "./DesktopTaskExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
   NOTE as NOTE_PATH,
@@ -360,6 +361,40 @@ describe("exportDesktopApplication with a task", () => {
   });
 });
 
+describe("exportDesktopApplication with a task's prompt", () => {
+  it("names a prompt that does not name the app in its limitations, since a solver's shell cannot see the computer", async () => {
+    const checks = [
+      { id: "milk", kind: "lines_present", file: NOTE, lines: ["milk"] },
+    ];
+    const unnamed = await exportWithTasks(task(checks));
+    const named = await exportWithTasks({
+      ...task(checks),
+      prompt: "In Notes, write down that I need milk.",
+    });
+
+    if (unnamed.result instanceof Error) throw unnamed.result;
+    if (named.result instanceof Error) throw named.result;
+    const naming = (limitations: readonly string[]) =>
+      limitations.filter((line) => line.includes("prompt"));
+    expect(naming(unnamed.result.limitations)).toHaveLength(1);
+    expect(naming(unnamed.result.limitations)[0]).toContain("notes");
+    expect(naming(named.result.limitations)).toEqual([]);
+  });
+
+  it("does not treat a word that only contains the app's name as naming it", () => {
+    const dia = { title: "Dia", name: "dia", aptPackage: "dia" };
+    expect(namesApp("Update the diagram and save it.", dia)).toBe(false);
+    expect(namesApp("In Dia, add a box.", dia)).toBe(true);
+    expect(
+      namesApp("In Notes, write down milk.", {
+        title: "Notes",
+        name: "notes",
+        aptPackage: "notes",
+      }),
+    ).toBe(true);
+  });
+});
+
 describe("draftDesktopApplicationTask", () => {
   it("drafts checks of the document that changed, which the export then accepts", async () => {
     const folder = await writeCaptureFolder(capture());
@@ -386,5 +421,16 @@ describe("draftDesktopApplicationTask", () => {
       prompt: "Write down that I need milk.",
     });
     expect(exported).not.toBeInstanceOf(Error);
+  });
+});
+
+describe("shippedSeedCheckView", () => {
+  const captured = { format: "binary" as const, view: null };
+  const shipped = { format: "text" as const, view: { text: "shipped" } };
+
+  it("treats a file the bundle omits as absent and keeps a shipped non-text file", () => {
+    expect(shippedSeedCheckView(false, undefined, captured)).toBeUndefined();
+    expect(shippedSeedCheckView(true, undefined, captured)).toBe(captured);
+    expect(shippedSeedCheckView(true, shipped, captured)).toBe(shipped);
   });
 });

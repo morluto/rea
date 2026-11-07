@@ -28,6 +28,7 @@ import {
 } from "./DesktopSessionObservations.js";
 import type { WindowSample, X11WindowObserver } from "./X11WindowObserver.js";
 
+/** The most of the launched process's stderr a session keeps: its latest bytes, where a failing app's last words are. */
 const STDERR_BYTES = 8 * 1024;
 const TERMINATION_GRACE_MS = 5_000;
 
@@ -76,11 +77,15 @@ export interface DesktopSessionPlan {
   readonly maxDurationMs: number;
   readonly pollIntervalMs: number;
   readonly nextRequest: () => SessionRequest | undefined;
+  /** Record a checkpoint, given the files the app holds open and the titles its windows have shown so far. */
   readonly checkpoint: (
     name: string,
     trigger: CheckpointTrigger,
     atMs: number,
-    openedFiles: ReadonlySet<string>,
+    seen: {
+      readonly openedFiles: ReadonlySet<string>;
+      readonly titles: readonly string[];
+    },
   ) => Promise<void>;
   /** Progress text, with the event a driver waits on when there is one. */
   readonly report: (
@@ -151,12 +156,12 @@ const checkpointNow = (
   name: string,
   trigger: CheckpointTrigger,
 ): Promise<void> =>
-  plan.checkpoint(
-    name,
-    trigger,
-    observations.now(),
-    new Set(observations.openedFiles.keys()),
-  );
+  plan.checkpoint(name, trigger, observations.now(), {
+    openedFiles: new Set(observations.openedFiles.keys()),
+    titles: [...observations.windows.values()]
+      .filter((window) => window.application)
+      .flatMap((window) => window.titles),
+  });
 
 /** Record a requested checkpoint, or report why its name was refused and carry on. */
 const requestCheckpoint = async (
@@ -278,15 +283,19 @@ const unreleased = (
  * The caller's environment without the agent environment's own variables,
  * such as its control token: agentenv launches the exported app without
  * them, and the app must not hold a credential to the computer it runs on.
+ * glibc writes a fatal error, such as an abort's reason, to stderr rather
+ * than the terminal, so a failed launch reports it.
  */
 const applicationEnvironment = (
   environment: NodeJS.ProcessEnv,
-): NodeJS.ProcessEnv =>
-  Object.fromEntries(
+): NodeJS.ProcessEnv => ({
+  ...Object.fromEntries(
     Object.entries(environment).filter(
       ([name]) => !name.startsWith("AGENTENV_"),
     ),
-  );
+  ),
+  LIBC_FATAL_STDERR_: "1",
+});
 
 const launch = async (
   plan: DesktopSessionPlan,
@@ -312,7 +321,10 @@ const launch = async (
       cleanup:
         spawned.cleanup ?? (() => cleanupOwnedProcessGroup(spawned.ownership)),
     },
-    { maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES } },
+    {
+      maxDiagnosticBytes: { stdout: 0, stderr: STDERR_BYTES },
+      diagnosticRetention: "tail",
+    },
   );
   return { spawned, supervisor };
 };

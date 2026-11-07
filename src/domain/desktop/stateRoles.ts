@@ -3,6 +3,8 @@ import type {
   DesktopStateChange,
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
+import { isLockName } from "./runtimeFiles.js";
+import { SQLITE_SIDECARS } from "./stateFormats.js";
 
 /** Why a path is, or is not, treated as the application's state. */
 export type DesktopStateReason =
@@ -112,9 +114,38 @@ export interface DesktopRoleFacts {
   readonly stateDirectories: readonly string[];
   readonly stateTails: readonly string[];
   readonly selectedRoots: readonly string[];
+  /** Every selected path as named and as walked, innermost walked path first. */
+  readonly selections: readonly {
+    readonly path: string;
+    readonly physical: string;
+  }[];
   readonly titles: readonly string[];
   readonly openedFiles: ReadonlySet<string>;
+  /** SQLite `-wal` and `-journal` files added beside a selected database. */
+  readonly sqliteSidecars?: ReadonlySet<string>;
 }
+
+/**
+ * Content roots that are the `-wal` or `-journal` of another root, not
+ * selections of their own. A folder the caller selected is not one of those
+ * logs, even when its name ends in `-wal` or `-journal`.
+ */
+export const sqliteSidecarRoots = (
+  roots: readonly string[],
+  directories: ReadonlySet<string> = new Set(),
+): ReadonlySet<string> => {
+  const present = new Set(roots);
+  return new Set(
+    roots.filter(
+      (root) =>
+        !directories.has(root) &&
+        SQLITE_SIDECARS.some(
+          ({ suffix }) =>
+            root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
+        ),
+    ),
+  );
+};
 
 /** Compute the shared role facts once per capture. */
 export const roleFacts = (
@@ -129,17 +160,32 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
+  const directories = new Set(
+    (state.selected_paths ?? []).flatMap((entry) =>
+      entry.kind === "directory" ? [entry.path, entry.physical] : [],
+    ),
+  );
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, directories);
   return {
     home: host.home,
     stateDirectories,
     stateTails,
+    sqliteSidecars,
     selectedRoots: state.content_roots.filter((root) => {
       const relative = homePath(root, host.home);
+      const chosen = (state.selected_paths ?? []).some(
+        (entry) => entry.path === root || entry.physical === root,
+      );
       return (
-        !stateDirectories.includes(root) &&
-        (relative === null || !stateTails.includes(relative))
+        !sqliteSidecars.has(root) &&
+        (chosen ||
+          (!stateDirectories.includes(root) &&
+            (relative === null || !stateTails.includes(relative))))
       );
     }),
+    selections: [...(state.selected_paths ?? [])].sort(
+      (left, right) => right.physical.length - left.physical.length,
+    ),
     titles: session.windows
       .filter((window) => window.application)
       .flatMap((window) => window.titles),
@@ -149,8 +195,15 @@ export const roleFacts = (
 
 const FILENAME_CHARACTER = /[\p{L}\p{M}\p{N}._~-]/u;
 
-/** Whether a title holds a spelling not joined to other file name characters. */
-const spelledIn = (title: string, spelling: string): boolean => {
+/** Home folders whose files a title never names as a document: caches, and dconf's databases. */
+const NEVER_NAMED = [".cache", ".config/dconf"];
+
+/**
+ * Whether a title holds a spelling as a whole token: not joined to other file
+ * name characters, and not a folder of a longer path shown there (followed by
+ * `/`); a bare name without an extension, not even its last segment.
+ */
+const spelledIn = (title: string, spelling: string, bare = false): boolean => {
   for (
     let at = title.indexOf(spelling);
     at >= 0;
@@ -160,23 +213,35 @@ const spelledIn = (title: string, spelling: string): boolean => {
     const after = title[at + spelling.length];
     if (
       (before === undefined || !FILENAME_CHARACTER.test(before)) &&
-      (after === undefined || !FILENAME_CHARACTER.test(after))
+      (after === undefined || !FILENAME_CHARACTER.test(after)) &&
+      after !== "/" &&
+      !(bare && before === "/")
     )
       return true;
   }
   return false;
 };
 
-/** Whether an application window title spells the file's name or home path. */
-const namedInTitle = (path: string, facts: DesktopRoleFacts): boolean => {
+/**
+ * Whether one of an application's window titles names the file: its whole
+ * name, with its extension, or its `~/` or absolute path. A file under a
+ * cache or a dconf database is never named, whatever a title shows.
+ */
+export const namedInTitles = (
+  path: string,
+  home: string,
+  titles: readonly string[],
+): boolean => {
   const name = path.split("/").at(-1) ?? "";
-  const relative = homePath(path, facts.home);
-  const spellings = [
-    ...(name.length >= 3 ? [name] : []),
-    ...(relative === null ? [] : [`~/${relative}`]),
-  ];
-  return facts.titles.some((title) =>
-    spellings.some((spelling) => spelledIn(title, spelling)),
+  const relative = homePath(path, home);
+  if (relative !== null && isWithinAny(relative, NEVER_NAMED)) return false;
+  // A dot after the first character starts an extension; `.bashrc` has none.
+  const bare = name.lastIndexOf(".") <= 0;
+  return titles.some(
+    (title) =>
+      (name.length >= 3 && spelledIn(title, name, bare)) ||
+      (relative !== null && spelledIn(title, `~/${relative}`)) ||
+      spelledIn(title, path),
   );
 };
 
@@ -201,7 +266,8 @@ export const stateReasons = (
     facts.openedFiles.has(path)
   )
     reasons.push("opened_by_application");
-  if (namedInTitle(path, facts)) reasons.push("named_in_window_title");
+  if (namedInTitles(path, facts.home, facts.titles))
+    reasons.push("named_in_window_title");
   if (isWithinAny(path, facts.selectedRoots)) reasons.push("selected_path");
   if (dconfApplicationKeys) reasons.push("dconf_application_keys");
   if (relative !== null && isWithinAny(relative, SHARED_DESKTOP_PATHS))
@@ -212,13 +278,42 @@ export const stateReasons = (
 };
 
 /**
+ * A path's home-relative spelling as the caller selected it: the name given
+ * to the innermost selected path holding it, directly or through a link, so
+ * a file in `~/settings/MuseScore` selected as `~/.config/MuseScore` lies
+ * under `.config/MuseScore`, while a score selected itself keeps its own
+ * name; otherwise its own.
+ */
+export const selectedHomePath = (
+  facts: DesktopRoleFacts,
+  path: string,
+): string | null => {
+  const selection = facts.selections.find(({ physical }) =>
+    isWithinAny(path, [physical]),
+  );
+  return (
+    (selection === undefined
+      ? null
+      : homePath(
+          `${selection.path}${path.slice(selection.physical.length)}`,
+          facts.home,
+        )) ?? homePath(path, facts.home)
+  );
+};
+
+/**
  * The role that follows from a path's reasons, strongest first. A file in the
  * desktop Trash is shared whatever else names it, since the user deleted it.
  * A file the application holds open is a document when a title or the caller
- * names it.
+ * names it. A file the caller selects under a hidden folder of the home, such
+ * as `~/.config/app`, or a dotfile there, is the application's own state, as
+ * is a lock the app holds, such as LibreOffice's `.~lock.<name>#` beside a
+ * document; `selectedAs` is its home path as selected, before links are
+ * resolved.
  */
 export const stateRole = (
   reasons: readonly DesktopStateReason[],
+  selectedAs: string | null = null,
 ): DesktopStateRole => {
   if (reasons.includes("desktop_trash")) return "shared_desktop";
   const shared = reasons.includes("desktop_service");
@@ -227,11 +322,12 @@ export const stateRole = (
     (reasons.includes("state_directory") && !shared)
   )
     return "application_state";
-  if (
-    reasons.includes("named_in_window_title") ||
-    reasons.includes("selected_path")
-  )
-    return "document";
+  if (reasons.includes("named_in_window_title")) return "document";
+  if (reasons.includes("selected_path"))
+    return selectedAs !== null &&
+      (selectedAs.startsWith(".") || isLockName(selectedAs))
+      ? "application_state"
+      : "document";
   if (reasons.includes("opened_by_application") && !shared)
     return "application_state";
   if (shared) return "shared_desktop";

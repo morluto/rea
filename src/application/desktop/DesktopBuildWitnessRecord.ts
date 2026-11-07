@@ -213,6 +213,29 @@ const logLimitations = (
     : []),
 ];
 
+/** Which stages graded files that had not settled by the bound, and which of them had a read cut there. */
+const unsettledLimitation = (
+  stages: readonly WitnessStageRecord[],
+): string[] => {
+  const named = (cut: boolean) =>
+    stages.flatMap(({ stage, settled, read_cut }) =>
+      settled || (cut && !read_cut) ? [] : [stage],
+    );
+  const [unsettled, cut] = [named(false), named(true)];
+  return [
+    ...(unsettled.length === 0
+      ? []
+      : [
+          `The app's files had not held for the settle window by its bound when these stages were checked, so each graded its last completed read, with settled false: ${unsettled.join(", ")}.`,
+        ]),
+    ...(cut.length === 0
+      ? []
+      : [
+          `A read still running at the settle bound was cut, with read_cut true, in: ${cut.join(", ")}.`,
+        ]),
+  ];
+};
+
 /** How a witness write ended: saved, retryable, or published with cleanup still open. */
 export type WitnessWrite =
   | { readonly kind: "saved"; readonly record: WitnessRecord }
@@ -286,6 +309,7 @@ export const writeWitnessRecord = async (
         ? [`The recording is missing: ${recording.error}`]
         : []),
       ...logLimitations(actions, dropped),
+      ...unsettledLimitation(witness.stages),
     ],
   });
   const files = [

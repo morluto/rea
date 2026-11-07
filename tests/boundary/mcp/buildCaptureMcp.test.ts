@@ -3,7 +3,16 @@ import { join } from "node:path";
 
 import { expect, it } from "vitest";
 
+import {
+  HOME,
+  change,
+  retained,
+  seedEndCapture,
+} from "../../../src/application/desktop/desktopCapture.fixture.js";
 import { toolContract } from "../../../src/contracts/toolContracts.js";
+import type { DesktopApplicationCapture } from "../../../src/domain/desktop/desktopCapture.js";
+import { seedWording } from "../../../src/domain/desktop/appExport.js";
+import { parseEvidence } from "../../../src/domain/evidence.js";
 import {
   BUILD_REQUEST as REQUEST,
   BUILD_TASK as TASK,
@@ -68,6 +77,8 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
     changes: 1,
     retained_files: 1,
     retained_bytes: 5,
+    changed_files: ["Documents/today.txt"],
+    more_changed_files: 0,
   });
   expect(parseMcpToolError(await mark("seed")).error.message).toContain(
     "already taken",
@@ -169,31 +180,146 @@ it("captures the app inside the computer, acknowledges checkpoints, drafts the t
       "seed",
       "--end-checkpoint",
       "end",
+      // The agent made the seed in the computer, so the README need not keep it local.
+      "--synthetic-seed",
     ]),
   ]);
+  expect(
+    parseEvidence(JSON.parse(await readFile(outputs.export, "utf8")))
+      .parameters,
+  ).toMatchObject({ synthetic_seed: true });
+  expect(await readFile(join(directory, "README.md"), "utf8")).toContain(
+    seedWording({
+      name: exported.environment,
+      seedCheckpoint: "seed",
+      syntheticSeed: true,
+    }).notice,
+  );
   expectNoToken(computer, [started, seed, stopped, exported]);
 });
 
-it("refuses a task too large for one command argument before the export runs in the computer", async () => {
+it("takes checkpoints from a REA in the computer that predates their changed files, saying which changed is unknown, also from its log", async () => {
+  const { client } = await fakes({
+    env: { FAKE_REA_UNLISTED_CHANGES: "1" },
+    dropReplies: ["mark"],
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  const mark = async (name: string) =>
+    toolContract("mark_build_checkpoint").outputSchema.parse(
+      (
+        await callOk(client, "mark_build_checkpoint", {
+          computer_id: id,
+          name,
+        })
+      ).structuredContent,
+    ).checkpoint;
+  // The first reply is lost, so the second call reads the checkpoint from the capture's log.
+  expect(
+    (
+      await client.callTool({
+        name: "mark_build_checkpoint",
+        arguments: { computer_id: id, name: "seed" },
+      })
+    ).isError,
+  ).toBe(true);
+
+  const seed = await mark("seed");
+  const end = await mark("end");
+
+  for (const [taken, name, atMs] of [
+    [seed, "seed", 1000],
+    [end, "end", 2000],
+  ] as const)
+    expect(taken).toEqual({
+      name,
+      trigger: "request",
+      at_ms: atMs,
+      entries: 5,
+      changes: 1,
+      retained_files: 1,
+      retained_bytes: 5,
+      changed_files: null,
+      more_changed_files: null,
+    });
+  await callOk(client, "stop_build_capture", { computer_id: id });
+});
+
+it("returns a draft note's read error when only a dconf database REA cannot read changed between seed and end", async () => {
+  const database = `${HOME}/.config/dconf/user`;
+  const [before, after] = ["GVariant wrap=false", "GVariant wrap=true"];
+  const base = seedEndCapture();
+  const recorded: DesktopApplicationCapture = {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: base.state.checkpoints.map((point) =>
+        point.name === "baseline"
+          ? {
+              ...point,
+              retained: [...point.retained, retained(database, before)],
+            }
+          : point.name === "end"
+            ? {
+                ...point,
+                changes: [change(database, { before, after })],
+                retained: [retained(database, after)],
+              }
+            : point,
+      ),
+    },
+  };
+  // The draft runs with no dconf on its PATH, so it cannot read the database; the note never gets eggs, so the export refuses the task.
+  const { client } = await fakes({
+    recorded,
+    extraContent: [before, after],
+    exportRefused: true,
+  });
+  const id = await startBuildComputer(client, REQUEST);
+  await callOk(client, "start_build_capture", { computer_id: id });
+  for (const name of ["seed", "end"])
+    await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
+
+  const stopped = toolContract("stop_build_capture").outputSchema.parse(
+    (await callOk(client, "stop_build_capture", { computer_id: id }))
+      .structuredContent,
+  );
+
+  expect(stopped.draft?.files).toEqual([]);
+  expect(stopped.draft?.notes).toEqual([
+    {
+      code: "unreadable_changes",
+      message: expect.any(String),
+      files: [{ file: ".config/dconf/user", role: expect.any(String) }],
+      error: "dconf is not installed (dconf-cli); set REA_DCONF_COMMAND",
+    },
+  ]);
+});
+
+it("exports a task larger than the old 96 KiB refusal and keeps its prompt", async () => {
   const { rea, client } = await fakes();
   const id = await startBuildComputer(client, REQUEST);
   await callOk(client, "start_build_capture", { computer_id: id });
   for (const name of ["seed", "end"])
     await callOk(client, "mark_build_checkpoint", { computer_id: id, name });
   await callOk(client, "stop_build_capture", { computer_id: id });
-  const { error } = parseMcpToolError(
-    await client.callTool({
-      name: "export_build_environment",
-      arguments: {
+  const task = {
+    ...TASK,
+    prompt: `X${"Add eggs. ".repeat(10 * 1024)}Y`,
+  };
+  const exported = toolContract("export_build_environment").outputSchema.parse(
+    (
+      await callOk(client, "export_build_environment", {
         computer_id: id,
-        task: { ...TASK, prompt: "Add eggs. ".repeat(10 * 1024) },
+        task,
         directory: join(await createTestTempDirectory("build-out-"), "b"),
-      },
-    }),
+      })
+    ).structuredContent,
   );
-  expect(error.code).toBe("invalid_request");
+  expect(exported.task).toMatchObject({ name: task.name });
+  expect(await rea.notes("tasks.jsonl")).toEqual([task]);
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls.map(({ argv }) => argv[0])).not.toContain(
+  expect(calls.map(({ argv }) => argv[0])).toContain(
     "export-desktop-application",
   );
 });
