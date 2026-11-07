@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { posix } from "node:path";
 
 import { z } from "zod";
 
@@ -41,25 +42,59 @@ export const consentFileSchema = z.strictObject({
   consents: z.array(buildConsentSchema),
 });
 
-/** A home path without a leading `~/`. */
-const homeRelative = (path: string): string =>
-  path.startsWith("~/") ? path.slice(2) : path;
+/** A named path as the seed keys it, relative to the home and normalized; undefined when it leaves the home or names it whole. */
+const homeRelative = (
+  path: string,
+  homePath: (path: string) => string | null,
+): string | undefined => {
+  const relative = path.startsWith("/")
+    ? homePath(posix.normalize(path))
+    : path.replace(/^~(?:\/|$)/u, "");
+  if (relative === null) return undefined;
+  const normalized = posix.normalize(relative).replace(/\/+$/u, "");
+  return normalized === "." ||
+    normalized === ".." ||
+    normalized.startsWith("../") ||
+    normalized.startsWith("/")
+    ? undefined
+    : normalized;
+};
 
-/** The owned files that changed in the window's checkpoints and those the selection names, sorted; refused for a window it cannot place or a path outside the owned ones. */
+/** The home paths a selection names, normalized as the seed keys them; refused, naming each, for one outside the home or the owned paths. */
+export const namedWithheldPaths = (
+  paths: readonly string[],
+  homePath: (path: string) => string | null,
+  owned: readonly string[],
+): Result<string[], string> => {
+  const named = paths.map((path) => ({
+    path,
+    home: homeRelative(path, homePath),
+  }));
+  const outsideHome = named.filter(({ home }) => home === undefined);
+  if (outsideHome.length > 0)
+    return err(
+      `${outsideHome.map(({ path }) => path).join(", ")} names no path inside the home; name a file or folder under it, as .config/app/settings.ini`,
+    );
+  const outside = named
+    .map(({ home }) => home ?? "")
+    .filter((home) => !isWithinAny(home, owned));
+  if (outside.length > 0)
+    return err(
+      `${outside.join(", ")} lies under none of the paths the bundle owns (${owned.join(", ") || "none"}), so it is not seeded and needs no withholding`,
+    );
+  return ok([...new Set(named.map(({ home }) => home ?? ""))]);
+};
+
+/** The owned files that changed in the window's checkpoints and the paths the selection names, normalized and sorted; refused for a window it cannot place or a path outside the owned ones. */
 export const withheldFiles = (
   checkpoints: readonly DesktopCheckpoint[],
   homePath: (path: string) => string | null,
   owned: readonly string[],
   { from, to, paths = [] }: WithholdSelection,
 ): Result<string[], string> => {
-  const outside = paths
-    .map(homeRelative)
-    .filter((path) => !isWithinAny(path, owned));
-  if (outside.length > 0)
-    return err(
-      `${outside.join(", ")} lies under none of the paths the bundle owns (${owned.join(", ") || "none"}), so it is not seeded and needs no withholding`,
-    );
-  const named = paths.map(homeRelative);
+  const normalized = namedWithheldPaths(paths, homePath, owned);
+  if (!normalized.ok) return normalized;
+  const named = normalized.value;
   if (from === undefined && to === undefined)
     return ok([...new Set(named)].sort());
   if (from === undefined || to === undefined)

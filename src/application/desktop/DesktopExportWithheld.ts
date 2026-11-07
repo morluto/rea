@@ -1,11 +1,13 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { Readable } from "node:stream";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import {
   consentFileSchema,
   MAX_WITHHELD_BYTES,
+  namedWithheldPaths,
   SIGN_IN_END,
   SIGN_IN_START,
   withheldFiles,
@@ -14,9 +16,10 @@ import {
   type WithholdSelection,
 } from "../../domain/desktop/appWithheld.js";
 import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
+import { isWithinAny } from "../../domain/desktop/desktopStateDiff.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type { SeedVersion } from "./DesktopExportFiles.js";
-import { writeOutputTree } from "./DesktopOutputTree.js";
+import { writeOutputTree, type FailedRelease } from "./DesktopOutputTree.js";
 import {
   withRetainedContent,
   type RetainedContent,
@@ -25,6 +28,8 @@ import {
 const OPERATION = "export_desktop_application";
 /** Largest retained file read back, as the export reads seeds. */
 const SEED_MAX_BYTES = 1024 * 1024 * 1024;
+/** An empty file's digest: an empty withheld file holds nothing another can copy. */
+const EMPTY_SHA256 = createHash("sha256").digest("hex");
 
 const refused = (
   field: string,
@@ -69,6 +74,33 @@ const readConsent = async (path: string | undefined) => {
   return consent.data;
 };
 
+/** Refuse a seed file whose bytes equal a withheld file's, as a backup or a copy under another name, naming both and never the bytes. */
+const refuseWithheldCopies = (
+  seeds: ReadonlyMap<string, SeedVersion>,
+  left: ReadonlySet<string>,
+) => {
+  const withheld = new Map(
+    [...left].flatMap((file) => {
+      const digest = seeds.get(file)?.sha256;
+      return digest === undefined || digest === EMPTY_SHA256
+        ? []
+        : [[digest, file] as const];
+    }),
+  );
+  const copies = [...seeds].flatMap(([home, { sha256 }]) => {
+    const original = withheld.get(sha256);
+    return left.has(home) || original === undefined
+      ? []
+      : [`${home} (a copy of ${original})`];
+  });
+  if (copies.length > 0)
+    throw refused(
+      "withhold",
+      `The seed holds withheld bytes under another name: ${copies.join(", ")}, so REA wrote no bundle.`,
+      "Trash each copy in the app or the file manager before marking seed and capture again, or name it in withhold too, then export again.",
+    );
+};
+
 /**
  * Decide what the seed withholds: files changed in the sign-in window and
  * those named, under the owned paths, each becoming a secret setting the
@@ -99,8 +131,25 @@ export const planWithheld = async (
       `REA cannot withhold the sign-in state: ${files.error}.`,
       `Mark ${SIGN_IN_START} before signing in and ${SIGN_IN_END} after it, and name only files under the owned paths.`,
     );
+  const seedFiles = [...state.seeds.keys()];
+  const named = namedWithheldPaths(
+    request.withhold?.paths ?? [],
+    state.homePath,
+    state.paths,
+  );
+  const unmatched = (named.ok ? named.value : []).filter(
+    (path) => !seedFiles.some((file) => isWithinAny(file, [path])),
+  );
+  if (unmatched.length > 0)
+    throw refused(
+      "withhold",
+      `${unmatched.join(", ")} names no file the seed holds, so REA cannot tell what to withhold.`,
+      "Name each file, or the folder holding it, as the draft's files list them.",
+    );
   const consent = await readConsent(request.consent);
-  const seeded = files.value.filter((file) => state.seeds.has(file));
+  const seeded = seedFiles
+    .filter((file) => isWithinAny(file, files.value))
+    .sort();
   const shipped =
     consent === undefined ? undefined : `${JSON.stringify(consent, null, 2)}\n`;
   if (request.seedWithheld === true) {
@@ -113,6 +162,7 @@ export const planWithheld = async (
     return { ...state, withheld: [], consented: seeded, consent: shipped };
   }
   const left = new Set(seeded);
+  refuseWithheldCopies(state.seeds, left);
   return {
     seeds: new Map([...state.seeds].filter(([home]) => !left.has(home))),
     textSeeds: state.textSeeds.filter((home) => !left.has(home)),
@@ -151,13 +201,13 @@ const readWithheld = async (
   return bytes;
 };
 
-/** Write the withheld files, by home path, into a new or empty folder outside the bundle. */
-const writeWithheldCopy = async (
+/** Write the withheld files, by home path, into a new or empty folder outside the bundle; a failed release of a written copy is returned. */
+const writeWithheldCopy = (
   directory: string,
   files: ReadonlyMap<string, Buffer>,
   signal: AbortSignal | undefined,
-): Promise<void> => {
-  await writeOutputTree(
+): Promise<FailedRelease | undefined> =>
+  writeOutputTree(
     directory,
     async (tree) => {
       for (const [file, bytes] of files)
@@ -174,26 +224,64 @@ const writeWithheldCopy = async (
     { operation: OPERATION, field: "withheld_copy" },
     signal,
   );
+
+/** A path with every link in its existing part resolved, so two spellings of one folder compare equal. */
+const resolvedPath = async (path: string): Promise<string> => {
+  const rest: string[] = [];
+  for (let current = resolve(path); ; current = dirname(current)) {
+    try {
+      return join(await realpath(current), ...rest);
+    } catch {
+      if (dirname(current) === current) return resolve(path);
+      rest.unshift(basename(current));
+    }
+  }
 };
 
-/** The withheld files read before the bundle is written, so one too large refuses the export first, and a write of them into the request's copy folder after; nothing without one. */
+const isWithin = (path: string, root: string) =>
+  path === root || path.startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+
+/** Refuse a copy folder that is the bundle's, inside it or holding it, also through a link, before either is written. */
+const refuseCopyInBundle = async (copy: string, bundle: string) => {
+  const [copied, bundled] = await Promise.all([
+    resolvedPath(copy),
+    resolvedPath(bundle),
+  ]);
+  if (isWithin(copied, bundled) || isWithin(bundled, copied))
+    throw refused(
+      "withheld_copy",
+      `The withheld copy ${copy} lies in the bundle ${bundle}, or holds it, so the withheld files would ship with it.`,
+      "Name a copy folder outside the bundle's folder.",
+    );
+};
+
+/** The withheld files read before the bundle is written, so one too large refuses the export first, whether or not a copy is asked for, and a write of them into the request's copy folder after; nothing without one. */
 export const withheldCopy = async (
   request: {
     readonly capture: string;
+    readonly directory: string;
     readonly withheldCopy?: string | undefined;
   },
   plan: { readonly withheld?: readonly WithheldFile[] | undefined },
   captured: ReadonlyMap<string, SeedVersion>,
   signal: AbortSignal | undefined,
-): Promise<{ readonly write: () => Promise<void> }> => {
+): Promise<{
+  readonly write: () => Promise<FailedRelease | undefined>;
+}> => {
   const directory = request.withheldCopy;
   const withheld = plan.withheld ?? [];
-  if (directory === undefined || withheld.length === 0)
-    return { write: () => Promise.resolve() };
+  if (directory !== undefined)
+    await refuseCopyInBundle(directory, request.directory);
+  if (withheld.length === 0) return { write: () => Promise.resolve(undefined) };
   const files = await withRetainedContent(
     request.capture,
     (content) => readWithheld(content, withheld, captured, signal),
     SEED_MAX_BYTES,
   );
-  return { write: () => writeWithheldCopy(directory, files, signal) };
+  return {
+    write: () =>
+      directory === undefined
+        ? Promise.resolve(undefined)
+        : writeWithheldCopy(directory, files, signal),
+  };
 };

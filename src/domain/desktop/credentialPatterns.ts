@@ -1,4 +1,9 @@
 import type { JsonValue } from "../jsonValue.js";
+import {
+  derKeySpans,
+  holdsDerPrivateKey,
+  redactDerKeys,
+} from "./derPrivateKeys.js";
 import { gunzip, isGzip } from "./gzipDocument.js";
 
 /** A kind of credential found by its shape, whatever its value, and the pattern that finds it. */
@@ -7,21 +12,12 @@ interface CredentialPattern {
   readonly pattern: RegExp;
 }
 
-const BASE64 = "[A-Za-z0-9+/]";
-
-/** Credentials no handle names, by the shape their issuers give them; a private key as PEM or as base64 DER, as apps keep generated keys. */
+/** Credentials no handle names, by the shape their issuers give them; a private key as PEM here, and as DER, as apps keep generated keys, by `derKeySpans`. */
 const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   {
     name: "private-key",
     pattern:
       /-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----(?:[\s\S]*?-----END (?:[A-Z]+ )*PRIVATE KEY-----|[\s\S]*)/gu,
-  },
-  {
-    name: "private-key",
-    pattern: new RegExp(
-      `MII${BASE64}{3}(?:IBADANBgkqhkiG9w0BAQEFAAS|IBAAKCA)${BASE64}{40,}={0,2}|MIG${BASE64}AgEAMBMGByqGSM49AgEG${BASE64}{40,}={0,2}|MC4CAQAwBQYDK2Vw${BASE64}{20,}={0,2}`,
-      "gu",
-    ),
   },
   {
     name: "url-credentials",
@@ -45,26 +41,36 @@ const MAX_GUNZIPPED_BYTES = 64 * 1024 * 1024;
 
 /** The kinds of credential a text holds, each once, in pattern order. */
 export const credentialsIn = (text: string): string[] => [
-  ...new Set(
-    CREDENTIAL_PATTERNS.filter(({ pattern }) => {
+  ...new Set([
+    ...(derKeySpans(text).length > 0 ? ["private-key"] : []),
+    ...CREDENTIAL_PATTERNS.filter(({ pattern }) => {
       pattern.lastIndex = 0;
       return pattern.test(text);
     }).map(({ name }) => name),
-  ),
+  ]),
 ];
 
-/** The kinds of credential a file holds: its bytes read as Latin-1, so any byte matches, and a gzip file's inside too. */
+/** The texts a file's bytes may spell: Latin-1, so any byte matches, and UTF-16 of either byte order. */
+const textsOf = (bytes: Buffer): string[] => [
+  bytes.toString("latin1"),
+  bytes.toString("utf16le"),
+  bytes.subarray(1).toString("utf16le"),
+];
+
+/** The kinds of credential a file holds: in its bytes as text of any encoding, as raw DER, and inside a gzip file too. */
 export const credentialsInBytes = (bytes: Uint8Array): string[] => {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.length);
   const inner = isGzip(bytes) ? gunzip(bytes, MAX_GUNZIPPED_BYTES) : undefined;
-  return [
-    ...new Set([
-      ...credentialsIn(buffer.toString("latin1")),
-      ...(inner?.ok === true
-        ? credentialsIn(inner.value.toString("latin1"))
-        : []),
+  const files = inner?.ok === true ? [buffer, inner.value] : [buffer];
+  const found = new Set(
+    files.flatMap((file) => [
+      ...(holdsDerPrivateKey(file) ? ["private-key"] : []),
+      ...textsOf(file).flatMap(credentialsIn),
     ]),
-  ];
+  );
+  return ["private-key", ...CREDENTIAL_PATTERNS.map(({ name }) => name)].filter(
+    (name, index, names) => found.has(name) && names.indexOf(name) === index,
+  );
 };
 
 /** Text with each credential found by its shape replaced by `<credential:kind>`. */
@@ -72,7 +78,7 @@ export const redactCredentials = (text: string): string =>
   CREDENTIAL_PATTERNS.reduce(
     (redacted, { name, pattern }) =>
       redacted.replace(pattern, `<credential:${name}>`),
-    text,
+    redactDerKeys(text),
   );
 
 /** A JSON value with every string in it, member names included, rid of credentials found by their shape. */

@@ -1,3 +1,4 @@
+import { createHash, generateKeyPairSync } from "node:crypto";
 import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
@@ -19,6 +20,71 @@ QuietSuccess=true
 `;
 const PEM = `-----BEGIN PRIVATE KEY-----\n${FAKE_DER_BODY}\n-----END PRIVATE KEY-----`;
 const JWT = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJyZWEtdGVzdCJ9.ZmFrZS1zaWduYXR1cmU";
+
+/** Keys generated for the test run, never stored anywhere, each as base64 DER in the encodings apps keep them in. */
+const generatedKeys = () => {
+  const der = (
+    pair: { privateKey: Buffer; publicKey: Buffer },
+    name: string,
+  ) => [
+    { name: `${name} private`, der: pair.privateKey },
+    { name: `${name} public`, der: pair.publicKey, isPublic: true },
+  ];
+  const ec = (namedCurve: string, type: "pkcs8" | "sec1") =>
+    der(
+      generateKeyPairSync("ec", {
+        namedCurve,
+        privateKeyEncoding: { type, format: "der" },
+        publicKeyEncoding: { type: "spki", format: "der" },
+      }),
+      `${namedCurve} ${type}`,
+    );
+  const rsa = (type: "pkcs8" | "pkcs1") =>
+    der(
+      generateKeyPairSync("rsa", {
+        modulusLength: 1024,
+        privateKeyEncoding: { type, format: "der" },
+        publicKeyEncoding: { type: "spki", format: "der" },
+      }),
+      `rsa ${type}`,
+    );
+  const edwards = (type: "ed25519" | "x25519" | "ed448") =>
+    der(
+      generateKeyPairSync(type as "ed25519", {
+        privateKeyEncoding: { type: "pkcs8", format: "der" },
+        publicKeyEncoding: { type: "spki", format: "der" },
+      }),
+      type,
+    );
+  const encrypted = generateKeyPairSync("ec", {
+    namedCurve: "secp384r1",
+    privateKeyEncoding: {
+      type: "pkcs8",
+      format: "der",
+      cipher: "aes-256-cbc",
+      passphrase: "e-made-up-passphrase",
+    },
+    publicKeyEncoding: { type: "spki", format: "der" },
+  });
+  return [
+    ...["prime256v1", "secp384r1", "secp521r1", "secp256k1"].flatMap(
+      (curve) => [...ec(curve, "pkcs8"), ...ec(curve, "sec1")],
+    ),
+    ...rsa("pkcs8"),
+    ...rsa("pkcs1"),
+    ...edwards("ed25519"),
+    ...edwards("x25519"),
+    ...edwards("ed448"),
+    { name: "encrypted pkcs8", der: encrypted.privateKey },
+  ];
+};
+
+/** `base64` cut into lines of 64 characters joined by `separator`. */
+const lines = (base64: string, separator: string) =>
+  (base64.match(/.{1,64}/gu) ?? []).join(separator);
+
+/** UTF-16 big-endian bytes of `text`. */
+const utf16be = (text: string) => Buffer.from(text, "utf16le").swap16();
 
 describe("credential patterns", () => {
   it("finds the private key KeePassXC generates into its settings, and replaces it with its kind", () => {
@@ -72,5 +138,72 @@ describe("credential patterns", () => {
     expect(redactCredentialsInJson({ [JWT]: [`a ${PEM} b`, 1, null] })).toEqual(
       { "<credential:jwt>": ["a <credential:private-key> b", 1, null] },
     );
+  });
+
+  it("finds private keys of every common kind by their DER structure, whatever the curve or line breaks, and never a public key", () => {
+    for (const { name, der, isPublic } of generatedKeys()) {
+      const base64 = der.toString("base64");
+      const middle = base64.slice(8, 40);
+      for (const text of [
+        `key=${base64}\n`,
+        `<PrivateKey>${base64}</PrivateKey>`,
+        `key=${lines(base64, "\n")}\nnext=1\n`,
+        `{"key":"${lines(base64, "\\n")}"}`,
+        `key=${lines(base64, "\r\n")}\r\n`,
+      ]) {
+        if (isPublic === true) {
+          expect(credentialsIn(text), `${name} ${text}`).toEqual([]);
+          expect(redactCredentials(text), name).toBe(text);
+          continue;
+        }
+        expect(credentialsIn(text), `${name} ${text}`).toEqual(["private-key"]);
+        expect(credentialsInBytes(Buffer.from(text)), name).toEqual([
+          "private-key",
+        ]);
+        expect(redactCredentials(text), name).toContain(
+          "<credential:private-key>",
+        );
+        expect(
+          redactCredentials(text).replace(/\\n|\s/gu, ""),
+          name,
+        ).not.toContain(middle);
+      }
+    }
+  });
+
+  it("finds a private key kept as raw DER bytes, and nothing in other binary data", () => {
+    for (const { name, der, isPublic } of generatedKeys()) {
+      const file = Buffer.concat([Buffer.from("KEYS\0\x01"), der]);
+      expect(credentialsInBytes(file), name).toEqual(
+        isPublic === true ? [] : ["private-key"],
+      );
+    }
+    let block = createHash("sha256").update("e-seed").digest();
+    const noise: Buffer[] = [];
+    for (let index = 0; index < 4096; index += 1) {
+      block = createHash("sha256").update(block).digest();
+      noise.push(
+        index % 7 === 0 ? Buffer.from([0x30, 0x82, 0x01, 0x22]) : block,
+      );
+    }
+    expect(credentialsInBytes(Buffer.concat(noise))).toEqual([]);
+  });
+
+  it("reads UTF-16 files of either byte order, with or without a byte order mark, inside gzip too", () => {
+    const [key] = generatedKeys().filter(({ isPublic }) => isPublic !== true);
+    const text = `token=${JWT}\nkey=${PEM}\nder=${key?.der.toString("base64") ?? ""}\n`;
+    const expected = ["private-key", "jwt"];
+    for (const bytes of [
+      Buffer.from(text, "utf16le"),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(text, "utf16le")]),
+      utf16be(text),
+      Buffer.concat([Buffer.from([0xfe, 0xff]), utf16be(text)]),
+    ]) {
+      expect(credentialsInBytes(bytes)).toEqual(expected);
+      expect(credentialsInBytes(gzipSync(bytes))).toEqual(expected);
+    }
+    expect(
+      credentialsInBytes(Buffer.from("[ui]\nwrap=true\n", "utf16le")),
+    ).toEqual([]);
   });
 });

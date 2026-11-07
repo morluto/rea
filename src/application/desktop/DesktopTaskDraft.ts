@@ -81,10 +81,10 @@ const draft = async (
       userMessage: `REA cannot withhold the sign-in state: ${withheld.error}.`,
       conformsToInputContract: true,
     });
-  const held = new Set(withheld.value);
+  const held = (home: string) => isWithinAny(home, withheld.value);
   const drafted = draftTaskFiles(
     files,
-    (home) => isWithinAny(home, paths) && !held.has(home),
+    (home) => isWithinAny(home, paths) && !held(home),
     ends,
   );
   const notes = draftNotes(files, {
@@ -130,7 +130,9 @@ const draft = async (
       drafted.flatMap((file) => file.guards),
     ),
     notes,
-    withheld_files: withheld.value,
+    withheld_files: [...files.keys()]
+      .filter((home) => isWithinAny(home, paths) && held(home))
+      .sort(),
   } as unknown as JsonValue;
   signal?.throwIfAborted();
   return createEvidence(undefined, DESKTOP_PROVIDER, {

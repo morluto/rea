@@ -75,6 +75,9 @@ licence file, changes before you can mark anything: name it in
 `export_build_environment`'s `withhold`. The export lists each withheld file
 in `withheld_files` with the environment variable a deploy reads it from and
 the handle of the secret REA keeps its bytes in; a check may not name one.
+The export refuses a seed file holding a withheld file's exact bytes, such as
+a `.bak` copy, but a backup that differs from it is not caught: trash backups
+before `seed`.
 When an export refuses a seed for a credential it found by its shape, such
 as a private key the app generated, withhold that file too, or seed it only
 with the person's consent as above.

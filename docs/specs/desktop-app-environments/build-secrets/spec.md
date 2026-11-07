@@ -67,6 +67,9 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   withheld files to `--withheld-copy`, outside the bundle, and the build host
   keeps each one's base64 as the secret `rea-<app>-<file>` (`0600`), named in
   the export's `withheld_files`.
+- The export refuses a seed file whose bytes equal a withheld file's, by
+  SHA-256, naming both files; a backup that differs from the withheld file is
+  not caught, so the agent trashes backups before `seed`.
 - Witness: `start_build_computer` from a bundle takes `settings`, each
   `REA_*` variable mapped to a handle, whose value, up to 64 Ki characters,
   REA puts in the deploy's environment only.
@@ -75,12 +78,13 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   every consent into the bundle's `consent.json`. `seed_sign_in: true` seeds
   the withheld files instead, refused unless a `seed_sign_in` consent was
   recorded; the CLI refuses `--seed-withheld` without one in `--consent`.
-- Credentials by shape: PEM private keys and base64 DER ones in PKCS#8 (RSA,
-  EC, Ed25519) or PKCS#1, URL user info, `sk-` keys, GitHub, AWS, Slack,
-  Google and Hugging Face tokens, and JWTs. Every build tool result shows each
-  as `<credential:<kind>>`, the draft included. The export refuses a bundle
-  whose seed holds one, also inside a gzip file, unless the file was seeded
-  with consent, naming each file and kind, never the value.
+- Credentials by shape: PEM private keys and DER ones, in base64 or raw, in
+  PKCS#8 (plain or encrypted), PKCS#1 or SEC1, URL user info, `sk-` keys,
+  GitHub, AWS, Slack, Google and Hugging Face tokens, and JWTs. Every build
+  tool result shows each as `<credential:<kind>>`, the draft included. The
+  export refuses a bundle whose seed holds one, also in UTF-16 or inside a
+  gzip file, unless the file was seeded with consent, naming each file and
+  kind, never the value.
 
 ## Non-goals
 

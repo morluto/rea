@@ -60,7 +60,12 @@ export const readBuildSecretFile = async (
   {
     searchOnly = false,
     maxCharacters = MAX_SECRET_CHARACTERS,
-  }: { readonly searchOnly?: boolean; readonly maxCharacters?: number } = {},
+    minCharacters,
+  }: {
+    readonly searchOnly?: boolean;
+    readonly maxCharacters?: number;
+    readonly minCharacters?: number;
+  } = {},
 ): Promise<Result<string, string>> => {
   const path = join(directory, handle);
   if (!buildSecretHandleSchema.safeParse(handle).success)
@@ -103,7 +108,7 @@ export const readBuildSecretFile = async (
       return err(`${path} is not UTF-8 text.`);
     }
     const value = text.replace(/\r?\n$/u, "");
-    const refusal = secretValueRefusal(value, maxCharacters);
+    const refusal = secretValueRefusal(value, maxCharacters, minCharacters);
     return refusal === undefined
       ? ok(value)
       : err(`The secret in ${path} cannot be typed: ${refusal}.`);

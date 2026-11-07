@@ -1,15 +1,26 @@
-import { access, readFile, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  readdir,
+  readFile,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
+import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
+import type { DesktopApplicationCapture } from "../../domain/desktop/desktopCapture.js";
 import type { Evidence } from "../../domain/evidence.js";
 import { exportDesktopApplication } from "./DesktopApplicationExport.js";
 import { draftDesktopApplicationTask } from "./DesktopTaskDraft.js";
 import {
+  HOME,
   capture,
   readers,
+  retained,
   writeCaptureFolder,
 } from "./desktopCapture.fixture.js";
 
@@ -33,10 +44,14 @@ const exists = (path: string) =>
     () => false,
   );
 
-/** Export the notes capture with `options`, into a fresh folder beside a folder for the withheld copies. */
+/** Export the notes capture, or `recorded` with its extra content, with `options`, into a fresh folder beside a folder for the withheld copies. */
 const exportWithheld = async (
   options: Record<string, unknown>,
   tasks: readonly unknown[] = [],
+  recorded?: {
+    readonly capture: DesktopApplicationCapture;
+    readonly content: readonly string[];
+  },
 ) => {
   const root = await createTestTempDirectory("desktop-withheld-");
   const directory = join(root, "bundle");
@@ -50,7 +65,14 @@ const exportWithheld = async (
   );
   const result = await exportDesktopApplication(
     {
-      capture: await writeCaptureFolder(capture()),
+      capture:
+        recorded === undefined
+          ? await writeCaptureFolder(capture())
+          : await writeCaptureFolder(
+              recorded.capture,
+              undefined,
+              recorded.content,
+            ),
       directory,
       name: undefined,
       tasks: taskPaths,
@@ -60,6 +82,71 @@ const exportWithheld = async (
     readers,
   );
   return { result, directory, withheldCopy, root };
+};
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
+
+/** The notes capture with its settings file at the baseline replaced by `text`. */
+const withSettings = (text: string): DesktopApplicationCapture => {
+  const base = capture();
+  const [first, ...rest] = base.state.checkpoints;
+  if (first === undefined) throw new Error("fixture");
+  return {
+    ...base,
+    state: {
+      ...base.state,
+      checkpoints: [
+        {
+          ...first,
+          retained: first.retained.map((file) =>
+            file.path === `${HOME}/${SETTINGS}`
+              ? retained(file.path, text)
+              : file,
+          ),
+        },
+        ...rest,
+      ],
+    },
+  };
+};
+
+/** The notes capture with Documents owned and, at the baseline, a made-up database and a backup of it holding `backup`. */
+const withBackup = (
+  database: string,
+  backup: string,
+): DesktopApplicationCapture => {
+  const base = capture();
+  const [first, ...rest] = base.state.checkpoints;
+  if (first === undefined) throw new Error("fixture");
+  const documents = `${HOME}/Documents`;
+  return {
+    ...base,
+    application: {
+      ...base.application,
+      state_directories: [
+        ...base.application.state_directories,
+        { path: documents, exists_at_start: true },
+      ],
+    },
+    state: {
+      ...base.state,
+      content_roots: [...base.state.content_roots, documents],
+      state_directories: [...(base.state.state_directories ?? []), documents],
+      checkpoints: [
+        {
+          ...first,
+          retained: [
+            ...first.retained,
+            retained(`${documents}/e-test.kdbx`, database),
+            retained(`${documents}/e-test.kdbx.bak`, backup),
+          ],
+        },
+        ...rest,
+      ],
+    },
+  };
 };
 
 const evidence = (result: Evidence | Error): Evidence => {
@@ -196,5 +283,133 @@ describe("exportDesktopApplication of withheld sign-in state", () => {
         { file: ".local/share/notes/notes.db" },
       ],
     });
+  });
+});
+
+describe("exportDesktopApplication of withheld paths and copies", () => {
+  it("withholds a file however its path is spelled, every file of a folder named, and refuses a path that names none", async () => {
+    for (const spelling of [
+      ".config/notes/./settings.ini",
+      ".config//notes/settings.ini",
+      `${HOME}/.config/notes/settings.ini`,
+      "~/.config/notes/settings.ini",
+    ]) {
+      const { result } = await exportWithheld({
+        withhold: { paths: [spelling] },
+      });
+      expect(evidence(result).normalized_result, spelling).toMatchObject({
+        seed_files: [".local/share/notes/notes.db"],
+        withheld_files: [{ file: SETTINGS }],
+      });
+    }
+    const folder = await exportWithheld({
+      withhold: { paths: [".config/notes"] },
+    });
+    expect(evidence(folder.result).normalized_result).toMatchObject({
+      withheld_files: [{ file: SETTINGS }],
+    });
+    for (const path of [
+      ".config/notes/absent.ini",
+      ".config/notes/../../.bashrc",
+    ]) {
+      const { result, directory } = await exportWithheld({
+        withhold: { paths: [path] },
+      });
+      expect(result, path).toBeInstanceOf(Error);
+      expect(await exists(directory)).toBe(false);
+    }
+  });
+
+  it("refuses a withheld file too large for its setting, with no copy asked for", async () => {
+    // A made-up settings file past the 48 KiB a setting takes back.
+    const large = `[ui]\nnote=${"x".repeat(50 * 1024)}\n`;
+    const { result, directory } = await exportWithheld(
+      { withhold: { paths: [SETTINGS] }, withheldCopy: undefined },
+      [],
+      { capture: withSettings(large), content: [large] },
+    );
+    expect(result).toBeInstanceOf(Error);
+    expect(
+      String((result as Error & { userMessage?: string }).userMessage),
+    ).toContain("49152");
+    expect(await exists(directory)).toBe(false);
+  });
+
+  it("refuses a withheld copy inside the bundle, also through a link, and writes neither", async () => {
+    const root = await createTestTempDirectory("desktop-withheld-inside-");
+    const directory = join(root, "bundle");
+    const inside = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory,
+      withheldCopy: join(directory, "private"),
+    });
+    expect(inside.result).toBeInstanceOf(Error);
+    expect(await exists(directory)).toBe(false);
+    await mkdir(directory);
+    await symlink(directory, join(root, "alias"));
+    const linked = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+      directory,
+      withheldCopy: join(root, "alias", "private"),
+    });
+    expect(linked.result).toBeInstanceOf(Error);
+    expect(await readdir(directory)).toEqual([]);
+  });
+
+  it("reports a written copy whose handles cannot be closed, with the export's Evidence", async () => {
+    const original = Object.getOwnPropertyDescriptor(
+      SafeOutputTree.prototype,
+      "closeHandles",
+    )?.value as SafeOutputTree["closeHandles"];
+    const bundleTree = new Set<SafeOutputTree>();
+    vi.spyOn(SafeOutputTree.prototype, "closeHandles").mockImplementation(
+      async function (this: SafeOutputTree) {
+        if (bundleTree.size === 0) bundleTree.add(this);
+        if (bundleTree.has(this)) return original.apply(this);
+        throw new Error("close failed");
+      },
+    );
+    const { result, withheldCopy } = await exportWithheld({
+      withhold: { paths: [SETTINGS] },
+    });
+    expect(result).toMatchObject({
+      _tag: "ProviderAdapterError",
+      cleanup: { resources: [withheldCopy] },
+      partialObservation: { operation: "export_desktop_application" },
+    });
+    expect(await readFile(join(withheldCopy, SETTINGS), "utf8")).toBe(
+      "[ui]\nwrap=false\n",
+    );
+  });
+
+  it("refuses a seed file holding a withheld file's bytes under another name, naming both, and seeds a backup that differs", async () => {
+    // Made-up database bytes, never a real vault.
+    const database = "e-made-up-kdbx-bytes-0001";
+    const copied = await exportWithheld(
+      { withhold: { paths: ["Documents/e-test.kdbx"] } },
+      [],
+      { capture: withBackup(database, database), content: [database] },
+    );
+    expect(copied.result).toBeInstanceOf(Error);
+    const message = String(
+      (copied.result as Error & { userMessage?: string }).userMessage,
+    );
+    expect(message).toContain("Documents/e-test.kdbx.bak");
+    expect(message).toContain("a copy of Documents/e-test.kdbx");
+    expect(message).not.toContain(database);
+    expect(await exists(copied.directory)).toBe(false);
+    const older = "e-made-up-kdbx-bytes-0000";
+    const differs = await exportWithheld(
+      { withhold: { paths: ["Documents/e-test.kdbx"] } },
+      [],
+      { capture: withBackup(database, older), content: [database, older] },
+    );
+    expect(evidence(differs.result).normalized_result).toMatchObject({
+      withheld_files: [{ file: "Documents/e-test.kdbx" }],
+    });
+    expect(
+      (evidence(differs.result).normalized_result as { seed_files: string[] })
+        .seed_files,
+    ).toContain("Documents/e-test.kdbx.bak");
   });
 });

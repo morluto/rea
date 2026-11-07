@@ -393,7 +393,7 @@ const runExport = async (
       ),
     SEED_MAX_BYTES,
   );
-  await copy.write();
+  const opened = { unclosed, copyUnclosed: await copy.write() };
   const limitations = exportLimitations(capture, plan, {
     install: install.limitations,
     collisions,
@@ -427,7 +427,7 @@ const runExport = async (
     withheld_files: plan.withheld ?? [],
     consented_files: plan.consentedFiles ?? [],
   };
-  return { result, captureEvidenceId: evidence.evidence_id, unclosed };
+  return { result, captureEvidenceId: evidence.evidence_id, ...opened };
 };
 
 /** Export one capture folder as an agentenv computer app bundle, reported as Evidence. */
@@ -437,11 +437,8 @@ export const exportDesktopApplication = async (
   signal?: AbortSignal,
 ): Promise<Evidence | AnalysisError> => {
   try {
-    const { result, captureEvidenceId, unclosed } = await runExport(
-      request,
-      readers,
-      signal,
-    );
+    const { result, captureEvidenceId, unclosed, copyUnclosed } =
+      await runExport(request, readers, signal);
     const evidence = createEvidence(undefined, DESKTOP_PROVIDER, {
       predicateType: "rea.desktop-application-export",
       operation: OPERATION,
@@ -477,18 +474,26 @@ export const exportDesktopApplication = async (
       authority: "analyst-inference",
       limitations: [...result.limitations],
     });
-    return unclosed === undefined
-      ? evidence
-      : writtenWithOpenHandles(
-          {
-            provider: DESKTOP_PROVIDER.id,
-            operation: OPERATION,
-            what: "bundle",
-          },
-          request.directory,
-          unclosed,
-          evidence,
-        );
+    const open = [
+      { what: "bundle", directory: request.directory, release: unclosed },
+      {
+        what: "withheld copy",
+        directory: request.withheldCopy ?? "",
+        release: copyUnclosed,
+      },
+    ].flatMap(({ release, ...written }) =>
+      release === undefined ? [] : [{ ...written, release }],
+    );
+    const [first, ...rest] = open;
+    if (first === undefined) return evidence;
+    const error = writtenWithOpenHandles(
+      { provider: DESKTOP_PROVIDER.id, operation: OPERATION, what: first.what },
+      first.directory,
+      first.release,
+      evidence,
+    );
+    for (const { release } of rest) release.lease.bindCleanupError(error);
+    return error;
   } catch (cause: unknown) {
     return desktopOperationFailure(cause, signal, OPERATION, "Desktop export");
   }

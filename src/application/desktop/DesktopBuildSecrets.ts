@@ -5,6 +5,7 @@ import {
   AnalysisInputError,
 } from "../../domain/analysisErrorCore.js";
 import {
+  isScannableSecret,
   MAX_SETTING_CHARACTERS,
   redactSecrets,
   redactSecretsInJson,
@@ -32,11 +33,12 @@ const ACT = "act_on_build_computer";
 
 /** The secrets one REA server types, kept only in memory so results, logs and records can show their handles instead. */
 export class DesktopBuildSecrets {
-  readonly #typed = new Map<string, string>();
+  /** Every value each handle named while this server ran, an earlier one still held by the app after the person changed it. */
+  readonly #seen = new Map<string, Set<string>>();
 
   constructor(readonly directory: string) {}
 
-  /** A handle's value, read afresh from its file, a setting's up to a withheld file's size; a refusal names the file, never its text. */
+  /** A handle's value, read afresh from its file, a setting's up to a withheld file's size, even empty; a refusal names the file, never its text. */
   async resolve(
     handle: string,
     use: "typed" | "setting" = "typed",
@@ -44,9 +46,11 @@ export class DesktopBuildSecrets {
     const read = await readBuildSecretFile(
       this.directory,
       handle,
-      use === "setting" ? { maxCharacters: MAX_SETTING_CHARACTERS } : {},
+      use === "setting"
+        ? { maxCharacters: MAX_SETTING_CHARACTERS, minCharacters: 0 }
+        : {},
     );
-    if (read.ok) this.#typed.set(handle, read.value);
+    if (read.ok) this.#remember(handle, read.value);
     return read;
   }
 
@@ -54,30 +58,37 @@ export class DesktopBuildSecrets {
   async keep(handle: string, bytes: Buffer): Promise<void> {
     const value = bytes.toString("base64");
     await writeBuildSecretFile(this.directory, handle, value);
-    this.#typed.set(handle, value);
+    this.#remember(handle, value);
+  }
+
+  #remember(handle: string, value: string): void {
+    if (!isScannableSecret(value)) return;
+    const values = this.#seen.get(handle) ?? new Set<string>();
+    values.add(value);
+    this.#seen.set(handle, values);
   }
 
   #known(): KnownSecret[] {
-    return [...this.#typed].map(([handle, value]) => ({ handle, value }));
+    return [...this.#seen].flatMap(([handle, values]) =>
+      [...values].map((value) => ({ handle, value })),
+    );
   }
 
   /** Text with each typed secret's value replaced by its handle, and each credential found by its shape by its kind. */
   readonly redact = (text: string): string =>
     redactCredentials(
-      this.#typed.size === 0 ? text : redactSecrets(text, this.#known()),
+      this.#seen.size === 0 ? text : redactSecrets(text, this.#known()),
     );
 
   /** A JSON value redacted as `redact` redacts text. */
   readonly redactJson = (value: JsonValue): JsonValue =>
     redactCredentialsInJson(redactSecretsInJson(value, this.#known()));
 
-  /** Every secret no bundle may hold: those typed here, then each other one the folder holds now, readable by others or not. */
+  /** Every secret no bundle may hold: each value typed or kept here, then each the folder holds now, readable by others or not. */
   async all(): Promise<KnownSecret[]> {
-    const others = (await listBuildSecretHandles(this.directory)).filter(
-      (handle) => !this.#typed.has(handle),
-    );
+    const handles = await listBuildSecretHandles(this.directory);
     const read = await Promise.all(
-      others.map(async (handle) => ({
+      handles.map(async (handle) => ({
         handle,
         file: await readBuildSecretFile(this.directory, handle, {
           searchOnly: true,
@@ -85,10 +96,16 @@ export class DesktopBuildSecrets {
         }),
       })),
     );
+    const known = this.#known();
+    const held = new Set(
+      known.map(({ handle, value }) => `${handle}\0${value}`),
+    );
     return [
-      ...this.#known(),
+      ...known,
       ...read.flatMap(({ handle, file }) =>
-        file.ok ? [{ handle, value: file.value }] : [],
+        file.ok && !held.has(`${handle}\0${file.value}`)
+          ? [{ handle, value: file.value }]
+          : [],
       ),
     ];
   }

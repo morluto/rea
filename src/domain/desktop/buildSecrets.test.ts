@@ -125,4 +125,44 @@ describe("build secrets", () => {
     expect(redacted).not.toContain(VALUE);
     expect(redacted).not.toContain(ACCENTED);
   });
+
+  it("hides the part of a value a view cut short, at any length, and its XML-escaped spelling", () => {
+    // A made-up 800-character value, longer than the 600 a draft value keeps.
+    const long = `e-${"Fake9Kite".repeat(88)}x`;
+    const secrets = [{ handle: "long", value: long }];
+    for (const kept of [600, 37, 1])
+      expect(
+        redactSecrets(`"after": "${long.slice(0, kept)}…"`, secrets),
+        String(kept),
+      ).toBe(`"after": "<secret:long>…"`);
+    const element = `<entry name="pw">${long.slice(0, 590)}…`;
+    expect(redactSecrets(element, secrets)).toBe(
+      '<entry name="pw"><secret:long>…',
+    );
+    const marked = 'e-a&b<c"d-Fake';
+    expect(
+      redactSecrets(
+        `<p title="${marked.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll('"', "&quot;")}">`,
+        [{ handle: "xml", value: marked }],
+      ),
+    ).toBe('<p title="<secret:xml>">');
+    expect(redactSecrets("text… unrelated", secrets)).toBe("text… unrelated");
+    const quoted = 'e-say"hi"\\now-Fake';
+    expect(
+      redactSecrets(JSON.stringify({ after: JSON.stringify({ pw: quoted }) }), [
+        { handle: "quoted", value: quoted },
+      ]),
+    ).toBe(
+      JSON.stringify({ after: JSON.stringify({ pw: "<secret:quoted>" }) }),
+    );
+  });
+
+  it("never treats an empty or short value as one to find", () => {
+    const empty = [
+      { handle: "empty", value: "" },
+      { handle: "short", value: "ab" },
+    ];
+    expect(redactSecrets("abc def", empty)).toBe("abc def");
+    expect(secretsIn(Buffer.from("abc def"), empty)).toEqual([]);
+  });
 });
