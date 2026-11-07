@@ -542,6 +542,14 @@ const verifierEvaluator = (source: string): string | undefined => {
 const describedPointers = (description: string): readonly string[] =>
   [...description.matchAll(/"pointer": "((?:\\.|[^"\\])*)"/gu)].flatMap(
     (match) => {
+      const before = description.slice(0, match.index ?? 0);
+      let depth = 0;
+      for (const character of before) {
+        if (character === "{") depth += 1;
+        else if (character === "}") depth -= 1;
+      }
+      // A check's own pointer is one object deep. A pointer inside its value is deeper.
+      if (depth !== 1) return [];
       const token = match[1];
       return token === undefined ? [] : [JSON.parse(`"${token}"`) as string];
     },

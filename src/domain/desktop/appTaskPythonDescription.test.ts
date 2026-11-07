@@ -84,4 +84,26 @@ describe("sameTaskVerifier", () => {
 
     expect(sameTaskVerifier(hosted, older)).toBe(true);
   });
+
+  it("accepts the older index helper when a leading zero is only inside a check value", () => {
+    const stored: DesktopTask = {
+      ...task,
+      checks: [
+        {
+          id: "settings",
+          kind: "value_equals",
+          file: "Documents/settings.json",
+          pointer: "/settings",
+          value: { pointer: "/lines/01" },
+        },
+      ],
+    };
+    const hosted = renderTaskVerifier(stored, "notes");
+    const older = hosted.replace(
+      'INDEX = re.compile(r"0|[1-9][0-9]*")',
+      'INDEX = re.compile(r"[0-9]+")',
+    );
+
+    expect(sameTaskVerifier(hosted, older)).toBe(true);
+  });
 });

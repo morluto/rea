@@ -436,7 +436,7 @@ describe("draftTaskFiles for an added record whose words the seed already has", 
     expect(
       values.some((value) => value.includes(stamp) || value.includes(later)),
     ).toBe(false);
-    expect(values).toEqual(["AdaLin", "LinAda"]);
+    expect(values).toEqual(["LinAda"]);
     expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
     expect(
       passing(
@@ -454,10 +454,21 @@ describe("draftTaskFiles for an added record whose words the seed already has", 
       passing(FILE, xml(before), file.suggested).some((passed) => !passed),
     ).toBe(true);
     expect(
-      passing(FILE, xml(dated([["Lin", "Ada", later]])), file.suggested).some(
-        (passed) => !passed,
+      passing(FILE, xml(dated([["Lin", "Ada", later]])), file.suggested).every(
+        Boolean,
       ),
     ).toBe(true);
+    const duplicate = xmlDraft(
+      before,
+      dated([
+        ["Ada", "Lin", stamp],
+        ["Ada", "Lin", later],
+      ]),
+    );
+    const duplicateValues = duplicate.suggested.flatMap((check) =>
+      "value" in check && typeof check.value === "string" ? [check.value] : [],
+    );
+    expect(duplicateValues).not.toContain("AdaLin");
   });
 
   it("does not check a long list whole when the added record only repeats its words", () => {
