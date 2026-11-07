@@ -1,10 +1,12 @@
+import { mapArtifactInspectionEvidence } from "./artifactInspection.js";
+import { parseArtifactInspectionInventoryResult } from "./artifactInventoryEvidence.js";
 import {
   computeEvidenceId,
   parseEvidence,
   redactEvidence,
   type Evidence,
 } from "./evidence.js";
-import { jsonObjectSchema } from "./jsonValue.js";
+import { jsonObjectSchema, jsonValueSchema } from "./jsonValue.js";
 import type { ResolvedLogicalPathConfig } from "./logicalPath.js";
 import {
   mappedUnknownIdentity,
@@ -25,6 +27,20 @@ export const mapEvidenceIdentityGraph = (
   const byId = new Map(
     authenticated.records.map((record) => [record.evidence_id, record]),
   );
+  const inspectionSources = new Map<string, readonly Evidence[]>();
+  for (const record of byId.values()) {
+    if (record.operation !== "inspect_artifact") continue;
+    const parsed = parseArtifactInspectionInventoryResult(
+      record.normalized_result,
+      record.subject,
+    );
+    const sources = parsed.inspection.substeps.map((step) =>
+      parseEvidence(step.evidence),
+    );
+    inspectionSources.set(record.evidence_id, sources);
+    for (const source of sources)
+      if (!byId.has(source.evidence_id)) byId.set(source.evidence_id, source);
+  }
   const unknownById = new Map(
     authenticated.unknowns.map((unknown) => [unknown.unknown_id, unknown]),
   );
@@ -46,6 +62,11 @@ export const mapEvidenceIdentityGraph = (
     const record = byId.get(key.slice(2));
     if (record === undefined) return [];
     const output = record.evidence_links.map((id) => `e:${id}`);
+    output.push(
+      ...(inspectionSources.get(record.evidence_id) ?? []).map(
+        (source) => `e:${source.evidence_id}`,
+      ),
+    );
     if (!isMutation(record)) return output;
     const input = parseUnknownMutationInput(
       record.operation,
@@ -114,8 +135,54 @@ export const mapEvidenceIdentityGraph = (
               ),
             )
           : redacted.parameters;
+        const normalizedResult =
+          source.operation === "inspect_artifact"
+            ? jsonValueSchema.parse(
+                mapArtifactInspectionEvidence(
+                  source.normalized_result,
+                  config,
+                  (nested) => {
+                    const mappedSource = rewritten.get(nested.evidence_id);
+                    if (mappedSource === undefined)
+                      throw new TypeError("Missing mapped inspection source");
+                    const nestedDisplay = redactEvidence(nested, config);
+                    const {
+                      caller_input_path: _path,
+                      caller_input_paths: _paths,
+                      ...withoutDisplay
+                    } = mappedSource;
+                    return parseEvidence({
+                      ...withoutDisplay,
+                      subject: nestedDisplay.subject,
+                      ...(nestedDisplay.caller_input_path === undefined
+                        ? {}
+                        : {
+                            caller_input_path: nestedDisplay.caller_input_path,
+                          }),
+                      ...(nestedDisplay.caller_input_paths === undefined
+                        ? {}
+                        : {
+                            caller_input_paths:
+                              nestedDisplay.caller_input_paths,
+                          }),
+                    });
+                  },
+                  evidenceId,
+                ),
+              )
+            : redacted.normalized_result;
         const { evidence_id: _id, ...value } = redacted;
-        const updated = { ...value, parameters, evidence_links: links };
+        const updated = {
+          ...value,
+          parameters,
+          normalized_result: normalizedResult,
+          evidence_links: links,
+        };
+        if (source.operation === "inspect_artifact")
+          parseArtifactInspectionInventoryResult(
+            normalizedResult,
+            updated.subject,
+          );
         rewritten.set(
           id,
           parseEvidence({

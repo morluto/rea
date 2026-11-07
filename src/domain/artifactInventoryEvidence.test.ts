@@ -17,6 +17,10 @@ import {
   parseArtifactInspectionInventoryResult,
 } from "./artifactInventoryEvidence.js";
 import { createEvidence } from "./evidence.js";
+import {
+  createEvidenceBundle,
+  redactEvidenceBundle,
+} from "./evidenceBundle.js";
 
 const inventoryEvidence = ARTIFACT_COMPARISON_EXAMPLE.left;
 const target = inventoryEvidence.subject;
@@ -293,3 +297,87 @@ it.each(
     ).toThrow(EvidenceIntegrityError);
   },
 );
+
+it("preserves authenticated embedded inventory after bundle path mapping", () => {
+  const parent = createEvidence(
+    {
+      path: target.local_path,
+      sha256: target.digest.sha256,
+      format: target.format,
+    },
+    inventoryEvidence.provider,
+    {
+      operation: "inspect_artifact",
+      parameters: {},
+      result: inspection,
+      evidenceLinks: [inventoryEvidence.evidence_id],
+    },
+  );
+  const bundle = redactEvidenceBundle(
+    createEvidenceBundle([inventoryEvidence, parent]),
+    "/tmp/private",
+  );
+  const mapped = bundle.records.find(
+    (record) => record.operation === "inspect_artifact",
+  );
+  if (mapped === undefined) throw new Error("Missing inspection");
+  const parsed = parseArtifactInventoryEvidence(mapped);
+  const source = bundle.records.find(
+    (record) => record.operation === "inventory_artifact",
+  );
+  expect(source).toBeDefined();
+  expect(parsed.evidence).toHaveLength(1);
+  expect(
+    parseArtifactInspectionInventoryResult(
+      mapped.normalized_result,
+      mapped.subject,
+    ).evidenceIds,
+  ).toEqual([source?.evidence_id]);
+  expect(mapped.evidence_links).toContain(source?.evidence_id);
+});
+
+it("rekeys an embedded-only inventory while preserving its own selected display path", () => {
+  const source = createEvidence(
+    {
+      path: "/tmp/private/nested.bin",
+      sha256: target.digest.sha256,
+      format: target.format,
+    },
+    inventoryEvidence.provider,
+    {
+      operation: "inventory_artifact",
+      parameters: { path: "/tmp/private/nested.bin" },
+      result: inventoryEvidence.normalized_result,
+    },
+  );
+  const result = createArtifactInspection(source);
+  const parent = createEvidence(
+    {
+      path: "/tmp/private/parent.bin",
+      sha256: target.digest.sha256,
+      format: target.format,
+    },
+    inventoryEvidence.provider,
+    {
+      operation: "inspect_artifact",
+      parameters: {},
+      result,
+      evidenceLinks: [source.evidence_id],
+    },
+  );
+  const bundle = redactEvidenceBundle(
+    createEvidenceBundle([parent]),
+    "/tmp/private",
+  );
+  const mapped = bundle.records[0]!;
+  const parsed = parseArtifactInspectionInventoryResult(
+    mapped.normalized_result,
+    mapped.subject,
+  );
+  const nested = parsed.inspection.substeps[0]!.evidence;
+  expect(nested.subject?.local_path).toBe("$WORKSPACE/nested.bin");
+  expect(mapped.subject?.local_path).toBe("$WORKSPACE/parent.bin");
+  expect(nested.parameters.path).toBe("$WORKSPACE/nested.bin");
+  expect(parsed.evidenceIds).toEqual([nested.evidence_id]);
+  expect(mapped.evidence_links).toEqual([nested.evidence_id]);
+});
