@@ -368,7 +368,12 @@ To discover existing records without their large payloads, call
 Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
 `target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
-ID with `inspect_analysis_view`; neither discovery nor retained selection starts
+ID with `inspect_analysis_view` when its parent operation supports a compatible
+view. Summary rows are not the complete record. Retained `procedure_pseudo_code`
+Evidence supports `summary` and `native`/`pseudocode` views of that original
+observation, including `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`;
+pages do not start a provider or create another decompilation. An
+`analyze_function` dossier is a different observation. Neither discovery nor retained selection starts
 a provider. `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
