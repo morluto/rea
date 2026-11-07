@@ -927,6 +927,13 @@ complete observation.
   section lengths and unsupported non-PowerPC big-endian CPU declarations return
   `unsupported_target` with the selected path and precise reason. Recovery
   selects a well-formed or supported artifact and reopens that target.
+  An unreadable adopted-protocol sublist leaves its class, category or
+  `objc_protocol_records` entry available with partial decode status and
+  `protocol_list_unreadable`. Independently decoded metadata and any readable
+  protocol-name prefix remain available; an empty partial list does not
+  establish that its owner adopts no protocols. Existing list and record
+  limits remain in effect. Reader v3 uses a new analysis profile; snapshots
+  bound to reader v2 are incompatible and must be regenerated for this recovery.
   The byte reader holds the whole selected file in memory, so it admits files up
   to 64 MiB / 67108864 bytes by default. Select a larger budget with
   `max_input_bytes` (CLI `--max-input-bytes`), at most 1 GiB / 1073741824
@@ -1146,6 +1153,25 @@ class. Breakpoints stop at the symbol itself, so the registers hold the ABI
 arguments. The receiver class comes from LLDB's Objective-C runtime reader
 without running target code; no expression is evaluated, and REA never
 attaches to a process it did not launch.
+
+Resolved breakpoint locations, entries and caller frames also retain
+`source_location` from LLDB's line tables when available. Its `file_path`,
+one-based `line` and one-based `column` are independently nullable. An invalid
+line entry is null; historical captures may omit the field. This is debug metadata
+attribution: REA does not read that source path or verify the source file bytes.
+Absent coordinates do not imply that the executable has no source code.
+
+Free Pascal programs with retained native symbols and usable DWARF can use this
+same bounded call observation on macOS. Select an exact emitted symbol from the
+binary rather than assuming a source procedure name. The owned Pascal fixture
+uses an explicit C calling convention and a public symbol; its verification
+covers call entries, raw integer registers and source coordinates, without
+establishing typed Pascal locals or interactive stepping. After building REA,
+run the real lane with an existing caller-selected compiler:
+
+```sh
+REA_VERIFY_FPC_COMMAND=/absolute/path/to/fpc npm run verify:native:pascal-calls
+```
 
 The run ends when the process exits, `max_events` entries are recorded,
 `duration_ms` elapses, or the aggregate trace resource budget is exhausted.

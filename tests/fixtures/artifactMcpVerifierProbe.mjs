@@ -19,12 +19,24 @@ assert.ok(
     "duplicate-last",
     "override",
     "request-options",
+    "cancel-finalization",
+    "failure-cancel-finalization",
   ].includes(mode),
 );
 assert.equal(typeof target, "string");
 
 // Isolate the fault to this child client. The server, resource admission and
 // advertised schema are real; alter only the reply before tool validation.
+const controller = new AbortController();
+if (mode === "cancel-finalization" || mode === "failure-cancel-finalization") {
+  const close = Client.prototype.close;
+  Client.prototype.close = async function () {
+    const settled = close.call(this);
+    controller.abort(new Error("cancelled during final cleanup"));
+    return settled;
+  };
+}
+
 // Count one schema discovery per listTools call: pagination turns one
 // discovery into several tools/list requests, which must not look like
 // repeated discovery.
@@ -170,27 +182,34 @@ try {
   if (mode === "concurrent" || mode === "reconnect")
     await standaloneConnections();
   else
-    await artifact.withBundleResourcesMcp(target, async (client) => {
-      if (mode === "reuse") await Promise.all([status(client), status(client)]);
-      if (mode === "override")
-        await artifact.artifactMcpCall(
-          client,
-          { name: "binary_session", arguments: {} },
-          {
-            toolDefinition: {
-              name: "binary_session",
-              inputSchema: { type: "object" },
-              outputSchema: { type: "object" },
+    await artifact.withBundleResourcesMcp(
+      target,
+      async (client) => {
+        if (mode === "failure-cancel-finalization")
+          throw new Error("work failed before cancellation");
+        if (mode === "reuse")
+          await Promise.all([status(client), status(client)]);
+        if (mode === "override")
+          await artifact.artifactMcpCall(
+            client,
+            { name: "binary_session", arguments: {} },
+            {
+              toolDefinition: {
+                name: "binary_session",
+                inputSchema: { type: "object" },
+                outputSchema: { type: "object" },
+              },
             },
-          },
-        );
-      if (mode === "request-options")
-        await artifact.artifactMcpCall(
-          client,
-          { name: "binary_session", arguments: {} },
-          { timeout: 12_345 },
-        );
-    });
+          );
+        if (mode === "request-options")
+          await artifact.artifactMcpCall(
+            client,
+            { name: "binary_session", arguments: {} },
+            { timeout: 12_345 },
+          );
+      },
+      { signal: controller.signal },
+    );
 } catch (cause) {
   error = {
     name: cause instanceof Error ? cause.name : "unknown",

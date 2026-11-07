@@ -318,6 +318,8 @@ Retained `xrefs` Evidence also supports `native-observation` address pages and
 default and does not accept `detail`; when its MCP response exceeds the budget,
 follow the returned continuation to page the retained result. These addresses
 remain untyped; paging does not add reference kinds or establish completeness.
+The page tells callers that any additional provider detail recorded in the parent
+requires retrieving or exporting the complete Evidence.
 
 These views reference complete source context through `source_context.digest`
 and caveat counts. Read it using the same parent with
@@ -2007,6 +2009,7 @@ bundle import/export; it does not include those view and settings tools.
 | Web investigation                                 | `browser,pcap,session,javascript-runtime`                 | page, bundle and session inspection, packet captures, JS runtime observation, evidence workflow                                                              |
 | Android application analysis                      | `android,adb,apktool,session`                             | class and method inspection, device bridge, resource decoding; add `frida` for dynamic instrumentation, `jeb` for JEB projects, `flutter` for Flutter builds |
 | Native macOS or iOS binary                        | `native,artifact,session`                                 | Mach-O, signature and property-list inspection plus container extraction                                                                                     |
+| Native analysis of a known function               | `session,enhanced,application`                            | open a binary, analyze a known function, page retained pseudocode, and export Evidence; add `direct` for focused procedure search or assembly                |
 | Managed .NET assembly                             | `managed,session`                                         | managed member comparison and reconstruction against the evidence workflow                                                                                   |
 | Electron or browser-hosted JavaScript application | `browser,electron,application,javascript-runtime,session` | runtime targets, live page inspection, bundle and capture tools, feature tracing, JavaScript semantics and reconstruction obligations                        |
 | Evidence bookkeeping only                         | `session`                                                 | open and close binaries, bundles, comparisons, unknown tracking                                                                                              |
