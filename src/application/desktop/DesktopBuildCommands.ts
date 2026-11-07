@@ -6,12 +6,16 @@ import {
   SEED_CHECKPOINT,
 } from "../../domain/desktop/buildCapture.js";
 import { parseEvidence } from "../../domain/evidence.js";
-import type { JsonValue } from "../../domain/jsonValue.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import {
-  runBuildController,
+  runRea as runControllerRea,
   type ControlledComputer,
+} from "../../desktop/BuildComputerController.js";
+
+export {
+  controller,
+  type Answer,
 } from "../../desktop/BuildComputerController.js";
 
 /** The work folder REA keeps under the computer user's home; every capture leaves it out. */
@@ -23,25 +27,6 @@ export const ENDS = [
   "--end-checkpoint",
   END_CHECKPOINT,
 ] as const;
-
-/** What REA's build controller answers a command with. */
-export const answerSchema = z.looseObject({
-  error: z.string().optional(),
-  absent: z.boolean().optional(),
-  line: z.string().optional(),
-  exited: z.int().optional(),
-  timed_out: z.boolean().optional(),
-  progress: z.string().optional(),
-  output: z.string().optional(),
-  exit_code: z.int().nullable().optional(),
-  output_bytes: z.int().nonnegative().optional(),
-  stdout_bytes: z.int().nonnegative().optional(),
-  stderr: z.string().optional(),
-  apt: z
-    .looseObject({ lists: z.int().nonnegative(), error: z.string().optional() })
-    .optional(),
-});
-export type Answer = z.infer<typeof answerSchema>;
 
 const cliFailureSchema = z.looseObject({
   code: z.string(),
@@ -82,22 +67,8 @@ export const refused = (
     conformsToInputContract: true,
   });
 
-/** One controller command, its answer parsed. */
-export const controller = async (
-  computer: ControlledComputer,
-  command: "start" | "mark" | "stop",
-  argumentsJson: Readonly<Record<string, JsonValue>>,
-  options: { readonly timeoutS: number; readonly signal: AbortSignal },
-): Promise<Answer> =>
-  answerSchema.parse(
-    await runBuildController(computer, command, argumentsJson, options),
-  );
-
-/**
- * Run one `rea` command in the computer with its output in a file under the
- * work folder, after writing the files it reads; the output's size.
- */
-export const runRea = async (
+/** Run one `rea` command in the computer; the controller owns the reply's fields. */
+export const runRea = (
   computer: ControlledComputer,
   argv: readonly string[],
   options: {
@@ -105,27 +76,8 @@ export const runRea = async (
     readonly files?: Readonly<Record<string, string>>;
     readonly signal: AbortSignal;
   },
-): Promise<number> => {
-  const answer = answerSchema.parse(
-    await runBuildController(
-      computer,
-      "run",
-      {
-        work: WORK,
-        argv: [...argv],
-        stdout: options.stdout,
-        files: { ...options.files },
-        timeout_s: 1800,
-      },
-      { timeoutS: 1800, signal: options.signal },
-    ),
-  );
-  if (answer.exit_code === undefined || answer.stdout_bytes === undefined)
-    throw new Error(
-      answer.error ?? `rea ${argv[0] ?? ""} did not finish in the computer.`,
-    );
-  return answer.stdout_bytes;
-};
+): Promise<number> =>
+  runControllerRea(computer, argv, { ...options, work: WORK });
 
 /** The Evidence result, or the reported failure, a REA command wrote to a file of `bytes` in the computer. */
 export const readOutput = async (
