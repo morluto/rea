@@ -20,8 +20,8 @@ import {
   createAnalysisSnapshotEntry,
   createAnalysisSnapshotWorkflowEntry,
   snapshotBinding,
+  snapshotBindingMismatch,
   snapshotMatchesProfile,
-  snapshotMatchesTarget,
   snapshotTarget,
   parseAnalysisSnapshot,
   immutableAnalysisSnapshot,
@@ -30,11 +30,13 @@ import {
   type AnalysisSnapshotWorkflowEntry,
   type AnalysisSnapshotBinding,
   type AnalysisSnapshotTarget,
+  type SnapshotBindingMismatch,
 } from "../../domain/analysisSnapshot.js";
 import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
+  ExecutionOptions,
 } from "../AnalysisProvider.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../../contracts/officialToolContracts.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
@@ -44,6 +46,7 @@ import {
   snapshotReplayBinding,
   type SnapshotReplayBinding,
 } from "./AnalysisSnapshotReplayBinding.js";
+import { createInvestigationEvidenceClosureChecker } from "../investigation/InvestigationEvidence.js";
 
 const RELATIONSHIP_OPERATIONS: ReadonlySet<AnalysisOperation> = new Set([
   "procedure_callers",
@@ -93,6 +96,16 @@ const replayDocumentSelected = (
   !DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
   typeof parameters.document === "string";
 
+/** Ghidra's private Program belongs to this one-shot target; GUI defaults do not. */
+const isOneShotPseudocode = (
+  operation: AnalysisOperation,
+  descriptor: CapabilityDescriptor | undefined,
+  context: ExecutionOptions["snapshotContext"],
+): boolean =>
+  context === "one-shot-target" &&
+  operation === "procedure_pseudo_code" &&
+  descriptor?.provider.id === "ghidra";
+
 /**
  * Caller and callee walks omit `document`. Their observations are still
  * Evidence. Other document-scoped reads, including `procedure_pseudo_code`
@@ -111,12 +124,14 @@ export const isSourceEvidenceRetainable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
+  context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
   !STATEFUL_OPERATIONS.has(operation) &&
   !RESOURCE_SCOPED_OPERATIONS.has(operation) &&
   (!DOCUMENT_SCOPED_OPERATIONS.has(operation) ||
     typeof parameters.document === "string" ||
-    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation)) &&
+    DOCUMENTLESS_SOURCE_EVIDENCE_OPERATIONS.has(operation) ||
+    isOneShotPseudocode(operation, descriptor, context)) &&
   (!CURSOR_DEFAULT_OPERATIONS.has(operation) ||
     typeof parameters.address === "string") &&
   descriptor?.effects.mutatesArtifact === false &&
@@ -129,9 +144,11 @@ export const isSnapshotCacheable = (
   operation: AnalysisOperation,
   descriptor: CapabilityDescriptor | undefined,
   parameters: Readonly<Record<string, JsonValue>>,
+  context?: ExecutionOptions["snapshotContext"],
 ): descriptor is CapabilityDescriptor =>
-  isSourceEvidenceRetainable(operation, descriptor, parameters) &&
-  replayDocumentSelected(operation, parameters) &&
+  isSourceEvidenceRetainable(operation, descriptor, parameters, context) &&
+  (replayDocumentSelected(operation, parameters) ||
+    isOneShotPseudocode(operation, descriptor, context)) &&
   descriptor.cachePolicy !== "live";
 
 /** Windows Ghidra must admit the selected source through its native snapshot owner. */
@@ -146,9 +163,12 @@ export const SNAPSHOT_REPLAY_LIMITATION =
 /** Bounded in-memory cache for one immutable binary identity. */
 export class AnalysisSnapshotCache {
   readonly #entries = new Map<string, AnalysisSnapshotEntry>();
-  // Null means imported provenance cannot be faithfully replayed. It is distinct
-  // from an entry recorded before an Evidence ID was assigned.
-  readonly #replayBindings = new Map<string, SnapshotReplayBinding | null>();
+  // Null is ambiguous provenance; a pending ID is an exact parent whose source
+  // closure was missing and can be checked again against the owning ledger.
+  readonly #replayBindings = new Map<
+    string,
+    SnapshotReplayBinding | { readonly pendingEvidenceId: string } | null
+  >();
   readonly #workflowEntries = new Map<string, AnalysisSnapshotWorkflowEntry>();
   #target: AnalysisSnapshotTarget | undefined;
   #binding: AnalysisSnapshotBinding | undefined;
@@ -158,13 +178,22 @@ export class AnalysisSnapshotCache {
     target: BinaryTarget,
     profile: AnalysisProfileCommitment | undefined,
   ): boolean {
-    return (
-      (this.#target === undefined && this.#binding === undefined) ||
-      (this.#target !== undefined &&
-        this.#binding !== undefined &&
-        profile !== undefined &&
-        snapshotMatchesTarget(this.#target, target) &&
-        snapshotMatchesProfile(this.#binding, profile))
+    return this.mismatch(target, profile) === undefined;
+  }
+
+  /** Explain staged mismatch without treating missing binding facts as absent. */
+  mismatch(
+    target: BinaryTarget,
+    profile: AnalysisProfileCommitment | undefined,
+  ): SnapshotBindingMismatch | undefined {
+    if (this.#target === undefined && this.#binding === undefined)
+      return undefined;
+    if (this.#target === undefined || this.#binding === undefined)
+      return { staged_binding: "incomplete" };
+    return snapshotBindingMismatch(
+      { target: this.#target, binding: this.#binding },
+      target,
+      profile,
     );
   }
 
@@ -208,6 +237,10 @@ export class AnalysisSnapshotCache {
         record,
       ]),
     );
+    const lookup = (id: string) => records.get(id);
+    const checkClosure = createInvestigationEvidenceClosureChecker({
+      evidenceForAnalysis: lookup,
+    });
     const ambiguous = new Set<string>();
     for (const evidence of snapshot.evidence_bundle.records) {
       const queryId = analysisQueryId(
@@ -232,11 +265,15 @@ export class AnalysisSnapshotCache {
       else evidenceByQuery.set(queryId, evidence);
     }
     for (const [queryId, evidence] of evidenceByQuery) {
+      if (ambiguous.has(queryId)) {
+        this.#replayBindings.set(queryId, null);
+        continue;
+      }
       this.#replayBindings.set(
         queryId,
-        ambiguous.has(queryId)
-          ? null
-          : snapshotReplayBinding(evidence, records),
+        snapshotReplayBinding(evidence, lookup, checkClosure) ?? {
+          pendingEvidenceId: evidence.evidence_id,
+        },
       );
     }
     for (const entry of snapshot.workflow_entries) {
@@ -262,7 +299,12 @@ export class AnalysisSnapshotCache {
       replacements.map(({ current }) => [current.evidence_id, current]),
     );
     for (const [queryId, binding] of this.#replayBindings) {
-      if (binding === null || binding.sourceEvidence === undefined) continue;
+      if (
+        binding === null ||
+        "pendingEvidenceId" in binding ||
+        binding.sourceEvidence === undefined
+      )
+        continue;
       const sources = binding.sourceEvidence;
       if (!sources.some((source) => currentRecords.has(source.evidence_id)))
         continue;
@@ -388,16 +430,20 @@ export class AnalysisSnapshotCache {
         }),
       );
     }
-    if (
-      active !== undefined &&
-      (!snapshotMatchesTarget(validated.target, active.target) ||
-        !snapshotMatchesProfile(validated.binding, active.profile))
-    )
-      return err(
-        new AnalysisSnapshotMismatchError(
-          "Analysis snapshot profile_mismatch: target, provider, or analysis profile does not match the active binary",
-        ),
+    if (active !== undefined) {
+      const mismatch = snapshotBindingMismatch(
+        validated,
+        active.target,
+        active.profile,
       );
+      if (mismatch !== undefined)
+        return err(
+          new AnalysisSnapshotMismatchError(
+            "Analysis snapshot target, provider, or analysis profile does not match the active binary",
+            mismatch,
+          ),
+        );
+    }
     const importedEvidence = mergeEvidence(validated.evidence_bundle);
     return importedEvidence.ok ? ok(this.stage(validated)) : importedEvidence;
   }
@@ -461,6 +507,7 @@ export class AnalysisSnapshotCache {
     profile: AnalysisProfileCommitment,
     operation: AnalysisOperation,
     parameters: Readonly<Record<string, JsonValue>>,
+    lookup?: (id: string) => Evidence | undefined,
   ): AnalysisExecution | undefined {
     const queryId = analysisQueryId(
       snapshotTarget(target),
@@ -470,10 +517,18 @@ export class AnalysisSnapshotCache {
     );
     const cached = this.#entries.get(queryId);
     if (cached === undefined) return undefined;
-    const binding = this.#replayBindings.get(queryId);
+    let binding = this.#replayBindings.get(queryId);
     // Do not turn a refused provenance selection into a fresh, unlinked record.
     // The provider must produce a new observation before this query can replay.
     if (binding === null) return undefined;
+    if (binding !== undefined && "pendingEvidenceId" in binding) {
+      const parent = lookup?.(binding.pendingEvidenceId);
+      if (parent === undefined || lookup === undefined) return undefined;
+      const restored = snapshotReplayBinding(parent, lookup);
+      if (restored === null) return undefined;
+      this.#replayBindings.set(queryId, restored);
+      binding = restored;
+    }
     const cachedSubject = cached.execution.subject;
     const subject =
       cachedSubject == null
@@ -521,21 +576,31 @@ export class AnalysisSnapshotCache {
   }
 
   /** Record one successful immutable call unless the cache is full. */
-  record(input: {
-    readonly target: BinaryTarget;
-    readonly profile: AnalysisProfileCommitment;
-    readonly operation: AnalysisOperation;
-    readonly parameters: Readonly<Record<string, JsonValue>>;
-    readonly execution: AnalysisExecution;
-  }): void {
+  record(
+    input: {
+      readonly target: BinaryTarget;
+      readonly profile: AnalysisProfileCommitment;
+      readonly operation: AnalysisOperation;
+      readonly parameters: Readonly<Record<string, JsonValue>>;
+      readonly execution: AnalysisExecution;
+      readonly evidence?: Evidence;
+    },
+    lookup?: (id: string) => Evidence | undefined,
+  ): void {
     const { target, profile, operation, parameters, execution } = input;
     this.select(target, profile);
     // The snapshot format does not carry reference truncation; a replay would
     // present a capped read as complete, so it is not recorded.
     if (execution.referencesTruncated === true) return;
-    // Provider snapshot entries do not carry execution source records. Replay
-    // must not discard the source closure that supplies the parent's Evidence links.
-    if ((execution.sourceEvidence?.length ?? 0) > 0) return;
+    let sourceBinding: SnapshotReplayBinding | undefined;
+    if ((execution.sourceEvidence?.length ?? 0) > 0) {
+      if (execution.evidenceId === undefined || lookup === undefined) return;
+      const parent = lookup(execution.evidenceId);
+      if (parent === undefined) return;
+      const closed = snapshotReplayBinding(parent, lookup);
+      if (closed === null) return;
+      sourceBinding = closed;
+    }
     const queryId = analysisQueryId(
       snapshotTarget(target),
       snapshotBinding(profile),
@@ -567,9 +632,15 @@ export class AnalysisSnapshotCache {
     if (execution.evidenceId === undefined)
       this.#replayBindings.delete(entry.query_id);
     else
-      this.#replayBindings.set(entry.query_id, {
-        evidenceId: execution.evidenceId,
-      });
+      this.#replayBindings.set(
+        entry.query_id,
+        sourceBinding ?? {
+          evidenceId: execution.evidenceId,
+          ...(input.evidence === undefined
+            ? {}
+            : { sourceEvidence: Object.freeze([input.evidence]) }),
+        },
+      );
   }
 
   /** Forget all target-bound entries. */

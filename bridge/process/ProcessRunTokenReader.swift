@@ -15,6 +15,8 @@ struct ProcessIdentityObservation: Encodable {
   let effective_uid: UInt32?
   let lifecycle: String?
   let relation: ProcessRelationObservation?
+  /** Display-only kernel accounting name (p_comm, at most MAXCOMLEN bytes). */
+  let name: String?
   let reason: String?
 }
 
@@ -31,6 +33,7 @@ struct ProcessMetadata {
   let parentPid: Int32
   let processGroupId: Int32
   let pointerSize: Int
+  let name: String
 }
 
 struct ProcessSnapshot {
@@ -92,7 +95,8 @@ func readProcessSnapshot(
             lifecycle: process.kp_proc.p_stat == SZOMB ? "zombie" : "non-zombie",
             parentPid: process.kp_eproc.e_ppid,
             processGroupId: process.kp_eproc.e_pgid,
-            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4
+            pointerSize: process.kp_proc.p_flag & P_LP64 != 0 ? 8 : 4,
+            name: processName(process)
           )
         )
       },
@@ -101,6 +105,13 @@ func readProcessSnapshot(
     return ProcessSnapshot(metadata: metadata, failure: nil)
   }
   return ProcessSnapshot(metadata: [:], failure: "process_table_failed_\(ENOMEM)")
+}
+
+/** Decode the NUL-terminated accounting name; invalid UTF-8 is replaced for display. */
+private func processName(_ process: kinfo_proc) -> String {
+  withUnsafeBytes(of: process.kp_proc.p_comm) { bytes in
+    String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+  }
 }
 
 func readProcessIdentities(pids: [Int32]) -> [ProcessIdentityObservation] {
@@ -130,6 +141,7 @@ func readProcessIdentities(
         effective_uid: nil,
         lifecycle: nil,
         relation: nil,
+        name: nil,
         reason: "not-in-snapshot"
       )
     }
@@ -144,6 +156,7 @@ func readProcessIdentities(
         parent_pid: metadata.parentPid,
         process_group_id: metadata.processGroupId
       ),
+      name: metadata.name,
       reason: nil
     )
   }
@@ -157,6 +170,7 @@ private func unavailableIdentity(pid: Int32, reason: String) -> ProcessIdentityO
     effective_uid: nil,
     lifecycle: nil,
     relation: nil,
+    name: nil,
     reason: reason
   )
 }
@@ -214,6 +228,22 @@ func processRunTokenObservation(
   parse: Result<ParsedRunToken, RunTokenReadError>,
   codeSigningFlags: () -> UInt32?
 ) -> RunTokenObservation {
+  // Native inspection restrictions apply even when argv is incomplete or
+  // overwritten, before parsing reaches the environment. Keep this fact at
+  // the native boundary; cleanup still decides whether the process is related.
+  func withheldEnvironment() -> RunTokenObservation? {
+    guard let flags = codeSigningFlags() else { return nil }
+    if (flags & csPlatformBinary) != 0 {
+      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
+    }
+    if (flags & csRestrict) != 0 {
+      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
+    }
+    return nil
+  }
+  func unavailableEnvironment(_ reason: String) -> RunTokenObservation {
+    withheldEnvironment() ?? unavailable(pid: pid, reason: reason)
+  }
   switch parse {
   case .success(let parsed):
     if let runId = parsed.runId {
@@ -224,40 +254,25 @@ func processRunTokenObservation(
     if parsed.environmentEntryCount > 0 {
       return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
     }
-    let flags = codeSigningFlags()
-    if let flags, (flags & csPlatformBinary) != 0 {
-      return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-    }
-    if let flags, (flags & csRestrict) != 0 {
-      return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-    }
+    if let withheld = withheldEnvironment() { return withheld }
     return RunTokenObservation(pid: pid, state: "readable", run_id: nil, reason: nil)
   case .failure(let failure):
     switch failure {
     case .environmentUnavailable:
-      let flags = codeSigningFlags()
-      if let flags, (flags & csPlatformBinary) != 0 {
-        return unavailable(pid: pid, reason: "platform_binary_environment_withheld")
-      }
-      if let flags, (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "environment_unavailable")
+      return unavailableEnvironment("environment_unavailable")
     case .ambiguousEnvironmentBoundary:
-      if let flags = codeSigningFlags(), (flags & csRestrict) != 0 {
-        return unavailable(pid: pid, reason: "restricted_process_environment_withheld")
-      }
-      return unavailable(pid: pid, reason: "ambiguous_environment_boundary")
+      return unavailableEnvironment("ambiguous_environment_boundary")
+    // These failures already establish that token bytes were available.
     case .duplicateToken:
       return unavailable(pid: pid, reason: "duplicate_run_token")
     case .invalidTokenEncoding:
       return unavailable(pid: pid, reason: "invalid_run_token_encoding")
     case .appleVectorUnavailable:
-      return unavailable(pid: pid, reason: "apple_vector_unavailable")
+      return unavailableEnvironment("apple_vector_unavailable")
     case .invalidBuffer:
-      return unavailable(pid: pid, reason: "malformed_procargs")
+      return unavailableEnvironment("malformed_procargs")
     case .invalidBufferAt(let stage):
-      return unavailable(pid: pid, reason: "malformed_procargs_\(stage.rawValue)")
+      return unavailableEnvironment("malformed_procargs_\(stage.rawValue)")
     }
   }
 }
