@@ -149,10 +149,116 @@ After extraction:
 
 ## Comparison
 
-Artifact comparison reports changes to an image's payload interpretation,
-including load and entry declarations. Equivalent external offset forms and
-inventory positions leave those declarations unchanged. Unavailable
-interpretations remain unknown, while independently known changes survive.
+Use the shared `compare-artifacts` / `compare_artifacts` workflow for exact
+component paths and stored content identities. Neither extraction nor an external
+firmware engine is required. This compares the bytes exposed by this FIT reader;
+it does not inspect files inside a compressed root filesystem, match renamed
+components, or establish runtime equivalence.
+
+### CLI
+
+Retain each complete inspection while returning a summary:
+
+```sh
+rea inspect-artifact /absolute/baseline.itb --detail summary \
+  --evidence_output /absolute/baseline-evidence.json --json
+rea inspect-artifact /absolute/candidate.itb --detail summary \
+  --evidence_output /absolute/candidate-evidence.json --json
+```
+
+The CLI returns a `{summary, evidence_bundle}` receipt. Use each response's
+`summary.normalized_result.parent_evidence_id` as the corresponding
+`evidence_id` below. Save this request as `comparison.json`, replacing the paths
+and IDs with the returned values, then run `rea compare-artifacts comparison.json
+--json`. Evidence-file paths must be absolute. Naming the exact complete parent
+avoids ambiguity when a bundle contains several inspection or inventory records.
+
+```json
+{
+  "left": {
+    "kind": "evidence-file",
+    "path": "/absolute/baseline-evidence.json",
+    "evidence_id": "COMPLETE_BASELINE_EVIDENCE_ID"
+  },
+  "right": {
+    "kind": "evidence-file",
+    "path": "/absolute/candidate-evidence.json",
+    "evidence_id": "COMPLETE_CANDIDATE_EVIDENCE_ID"
+  }
+}
+```
+
+### MCP
+
+For each file, call `open_binary` with its path, then `inspect_artifact` with
+`{"detail":"summary"}`. Opening the second file retains the first inspection's
+Evidence. Compare the two complete parent IDs without resending their graphs:
+
+```json
+{
+  "name": "compare_artifacts",
+  "arguments": {
+    "left": {
+      "kind": "retained-evidence",
+      "evidence_id": "COMPLETE_BASELINE_EVIDENCE_ID"
+    },
+    "right": {
+      "kind": "retained-evidence",
+      "evidence_id": "COMPLETE_CANDIDATE_EVIDENCE_ID"
+    }
+  }
+}
+```
+
+The result counts unchanged, added, removed, changed, unknown and contradictory
+paths, returning every delta inline with source Evidence links. The root `.` is
+the outer FIT and is counted separately from `images/<unit-name>.bin`. A changed
+outer hash therefore does not imply every component changed. Additions and
+removals require complete container-entry coverage; ambiguous duplicate paths or
+missing observations cannot prove absence or equivalence.
+
+Artifact comparison includes an image's payload interpretation, including load
+and entry declarations. Equivalent external offset forms and inventory positions
+leave those declarations unchanged. Unavailable interpretations remain unknown,
+while independently known changes survive; a changed row with an `availability`
+dimension does not establish the unavailable field's value.
+
+For supporting facts, batch selected paths rather than requesting the entire
+inspection again:
+
+```json
+{
+  "name": "inspect_analysis_view",
+  "arguments": {
+    "source": {
+      "kind": "retained-evidence",
+      "evidence_id": "COMPLETE_BASELINE_EVIDENCE_ID"
+    },
+    "view": {
+      "kind": "inventory",
+      "collection": "occurrences",
+      "logical_paths": ["images/kernel-1.bin", "images/fdt-1.bin"],
+      "fields": [
+        "artifact_id",
+        "logical_path",
+        "hash_status",
+        "source_location",
+        "source_path"
+      ],
+      "offset": 0,
+      "limit": 64
+    }
+  }
+}
+```
+
+Read `collection: "nodes"` with those `artifact_ids` and `fields: ["sha256",
+"size"]` to obtain content facts. Join by `artifact_id`, not array position.
+Continue using the returned page metadata when necessary. Source locations are
+ranges in the original FIT, not decoded filesystem offsets. Complete Evidence
+remains available through the retained parent and `export_evidence_bundle`.
+Summary and field selection reduce delivery only; they do not skip inventory
+hashing or change coverage.
 
 ## Verification
 
@@ -170,3 +276,18 @@ No image was executed.
 For small containers, complete delivery avoids an additional view request.
 Choose summary and selected views when the omitted facts justify that extra
 request; summary delivery does not reduce the underlying inventory work.
+
+The component comparison workflow was additionally checked on the official
+[OpenWrt 24.10.0](https://downloads.openwrt.org/releases/24.10.0/targets/mediatek/filogic/)
+and [24.10.1](https://downloads.openwrt.org/releases/24.10.1/targets/mediatek/filogic/)
+`abt_asr3000-initramfs-recovery.itb` images (8,519,680 and 8,585,216 bytes).
+Their SHA-256 values are
+`083b174e81ed373f2d2f2ea5366f9291767d95375383528fd6b9955ad815b85a` and
+`41129cce68ad6269e5c8c48ef110f97682d6c4202ff2198bfd0d300c3dac132a`.
+An independent FDT byte-range/hash oracle found changed kernel and initrd bytes
+and an identical DTB; REA reported those two changed components, the changed
+outer `.` and one unchanged component. A controlled copy changing only the root
+timestamp reported only `.` changed and all three components unchanged. Public
+CLI comparison of the exported source Evidence matched the MCP Evidence exactly;
+summary and selected inventory views matched the independent ranges and hashes.
+These checks did not decompress either initrd or execute the firmware.

@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { FakeSetupHost, options } from "./Setup.fixture.js";
 import { runSetup } from "./Setup.js";
 import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.js";
@@ -9,6 +11,7 @@ import { discoverSetupState } from "./SetupPlan.js";
 import type { MsixPackageView } from "./MsixPackageStorage.js";
 import {
   registrationWriteBlocker,
+  supportedClients,
   type SetupClient,
 } from "./SupportedClients.js";
 
@@ -242,6 +245,53 @@ describe("optional Hopper installation failures", () => {
     expect(result.remediation).toContain("Download failed.");
     expect(result.remediation).toContain("injected skill write failure");
     expect(host.skillInstalls).toBe(1);
+  });
+
+  it("returns the failed Hopper request facts beside its code, including after a later failure", async () => {
+    const download = {
+      request: "package",
+      url: "https://www.hopperapp.com:443/downloader/public/Hopper-demo.dmg",
+      kind: "http_status",
+      httpStatus: 503,
+    } as const;
+    const ready = new FakeSetupHost();
+    ready.hopperInstallSucceeds = false;
+    ready.hopperInstallFailure = {
+      status: "failed",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    };
+    expect(await runSetup(options(true, true), ready)).toMatchObject({
+      status: "needs_human",
+      code: "download_failed",
+      remediation: "Package returned HTTP 503.",
+      download,
+    });
+
+    const skillFailure = new FakeSetupHost();
+    skillFailure.hopperInstallSucceeds = false;
+    skillFailure.hopperInstallFailure = ready.hopperInstallFailure;
+    skillFailure.skill = "failed";
+    skillFailure.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+    expect(
+      await runSetup(
+        {
+          ...options(true, true),
+          clientIds: ["cursor"],
+          skillClientIds: ["cursor"],
+        },
+        skillFailure,
+      ),
+    ).toMatchObject({ code: "skill_install_failed", download });
+  });
+
+  it("omits request facts when the Hopper failure observed none", async () => {
+    const host = new FakeSetupHost();
+    host.hopperInstallSucceeds = false;
+    expect(await runSetup(options(true, true), host)).not.toHaveProperty(
+      "download",
+    );
   });
 });
 
@@ -577,6 +627,49 @@ describe("MSIX Claude Desktop setup", () => {
     );
     expect(homeOnly.status).toBe("ready");
     expect(host.configurations).toBe(1);
+  });
+
+  it("blocks redirected AppData writes when migrated Claude storage is unresolved", async () => {
+    const home = await createTestTempDirectory("setup-claude-migrated-");
+    const local = join(home, "Local");
+    const roaming = join(home, "Roaming");
+    const family = "Claude_pzs8sxrjxfjjc";
+    const privateRoaming = join(
+      local,
+      "Packages",
+      family,
+      "LocalCache",
+      "Roaming",
+    );
+    const privateClaude = join(privateRoaming, "Claude");
+    await mkdir(privateClaude, { recursive: true });
+    await writeFile(join(privateClaude, "claude_desktop_config.json"), "{}");
+    await mkdir(join(local, "Claude-Data", family.toLowerCase()), {
+      recursive: true,
+    });
+    await symlink(privateRoaming, roaming, "junction");
+
+    const host = new FakeSetupHost("win32");
+    host.hopper = join(home, "Hopper");
+    host.skill = "unchanged";
+    host.clients = supportedClients(home, "win32", {
+      APPDATA: roaming,
+      LOCALAPPDATA: local,
+    });
+    expect(
+      host.clients.find(({ name }) => name === "claude_desktop")
+        ?.configPathError,
+    ).toContain("migrated Claude Desktop storage");
+
+    const blocked = await runSetup(
+      { ...options(true), clientIds: ["vscode"] },
+      host,
+    );
+    expect(blocked.status).toBe("needs_human");
+    expect(blocked.remediation).toContain(
+      `Changes to ${join(roaming, "Code", "User", "mcp.json")} would not reach the files other apps read.`,
+    );
+    expect(host.configurations).toBe(0);
   });
 
   it("refuses registrations whose launcher only one MSIX package can see", async () => {
