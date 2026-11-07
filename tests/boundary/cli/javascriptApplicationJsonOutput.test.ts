@@ -103,6 +103,24 @@ cliTest(
   },
 );
 
+cliTest("retains stream resources after inherited prototype mutations and constructor escapes", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-js-stream-shared-prototype-");
+  await writeFile(join(root, "main.mjs"), `
+    import fs, { ReadStream } from "node:fs";
+    import { Writable } from "node:stream";
+    import { Buffer as B } from "node:buffer";
+    configure(ReadStream); configure(B);
+    Object.defineProperty(Writable.prototype, "start", { get() { return 0; }, set(value) {} });
+    const reader = fs.createReadStream("input", { start: -1 }); reader.close();
+    const writer = fs.createWriteStream("output", { start: -1 }); writer.close();
+  `);
+  const output = await cli.run({ arguments: ["analyze-javascript-application", root, "--json"] });
+  expect(output.exitCode).toBe(0);
+  const graph = z.object({ normalized_result: javascriptApplicationAnalysisResultSchema }).parse(output.json).normalized_result.semantic_graph;
+  expect(graph.relations.filter(({ relation }) => relation === "acquires")).toHaveLength(2);
+  expect(graph.relations.filter(({ relation }) => relation === "releases")).toHaveLength(2);
+});
+
 for (const scenario of [
   {
     command: "analyze-javascript-application",

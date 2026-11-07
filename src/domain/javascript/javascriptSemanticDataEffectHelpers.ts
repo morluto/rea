@@ -724,10 +724,12 @@ const requiredModuleChanged = (
   callableValue = false,
   savedObjectCapture?: t.Node,
   descendantsMatter = false,
+  ignoreRootSlotWrite = false,
 ): boolean => {
   const identity = semanticRequireExportsIdentity(specifier, selected);
   return builtinModuleEffects(identity.specifier, state).some(
     ({ path, node, kind }) =>
+      !(ignoreRootSlotWrite && kind === "write" && path.length === 1 && path[0] === identity.path[0]) &&
       !(
         savedObjectCapture !== undefined &&
         path.length < identity.path.length &&
@@ -771,6 +773,15 @@ export const builtinModuleSubtreeUnmodified = (
 ): boolean =>
   requiredModuleChanged(specifier, path, use, state, false, undefined, true) ===
   false;
+
+/** A saved constructor's shared prototype survives reassignment of its export slot. */
+export const builtinSharedPrototypeUnmodified = (
+  specifier: string,
+  path: readonly string[],
+  use: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): boolean =>
+  !requiredModuleChanged(specifier, path, use, state, false, undefined, true, true);
 
 /** Calling an unchanged built-in as a member is not an escape to unknown code. */
 const originalBuiltinReceiver = (

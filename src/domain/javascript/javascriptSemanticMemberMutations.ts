@@ -1153,7 +1153,7 @@ export function* collectSemanticMemberMutationsSteps(
         let retainsInitializers = true;
         if (!primitiveWrite) {
           for (const origin of origins.directOrigins) {
-            const shared = semanticMutableBuiltinOrigin(origin, path);
+            const shared = semanticMutableBuiltinOrigin(origin, path, effect === "escape");
             if (shared !== undefined)
               recordRequiredEffect(
                 shared.specifier,

@@ -541,6 +541,46 @@ it.each([
 );
 
 it.each([
+  ["ReadStream", "createReadStream", "FileReadStream", "Readable"],
+  ["WriteStream", "createWriteStream", "FileWriteStream", "Writable"],
+] as const)("retains %s after shared constructor escapes or inherited mutations", (constructor, method, alias, parent) => {
+  for (const setup of [
+    `import { ${constructor} } from "node:fs"; configure(${constructor});`,
+    `Object.defineProperty(fs.${alias}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+    `Object.defineProperty(require("node:stream").${parent}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+    `import { ${parent} } from "node:stream"; Object.defineProperty(${parent}.prototype, "start", { get() { return 0; }, set(value) {} });`,
+  ]) {
+    const preamble = setup.includes('require("node:stream")')
+      ? 'const fs = require("node:fs");'
+      : 'import fs from "node:fs";';
+    const operations = analyzeJavaScriptSemantics(`${preamble} ${setup} const stream = fs.${method}("input", { start: -1 }); stream.close();`).resourceOperations;
+    expect(operations, setup).toEqual(expect.arrayContaining([
+      expect.objectContaining({ kind: "acquire", method }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]));
+  }
+});
+
+it("retains write streams when the named Buffer constructor escapes", () => {
+  const operations = analyzeJavaScriptSemantics(`import fs from "node:fs"; import { Buffer as B } from "node:buffer"; configure(B); const stream = fs.createWriteStream("input", { encoding: "nope" }); stream.close();`).resourceOperations;
+  expect(operations).toEqual(expect.arrayContaining([
+    expect.objectContaining({ kind: "acquire", method: "createWriteStream" }),
+    expect.objectContaining({ kind: "release", method: "close" }),
+  ]));
+});
+
+it("keeps native rejection after unrelated prototype or local binding changes", () => {
+  for (const setup of [
+    'const { Writable } = require("node:stream"); Object.defineProperty(Writable.prototype, "start", { set(value) {} });',
+    'let { ReadStream } = require("node:fs"); ReadStream = Custom;',
+    'fs.FileReadStream = Custom;',
+  ]) {
+    const operations = analyzeJavaScriptSemantics(`const fs = require("node:fs"); ${setup} fs.createReadStream("input", { start: -1 });`).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire"), setup).toEqual([]);
+  }
+});
+
+it.each([
   "Buffer.isEncoding = () => true",
   "globalThis.Buffer.isEncoding = () => true",
   "const { Buffer: B } = require('node:buffer'); B.isEncoding = () => true",

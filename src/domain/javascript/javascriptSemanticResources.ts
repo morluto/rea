@@ -28,6 +28,7 @@ import {
   builtinDataEffectMethod,
   builtinModuleSlotUnmodified,
   builtinModuleSubtreeUnmodified,
+  builtinSharedPrototypeUnmodified,
   dataEffectMemberCallee,
   outerDataEffectBinding,
   traverseDataEffects,
@@ -89,6 +90,12 @@ export const collectJavaScriptSemanticResources = (
         candidate.node,
         state,
       ) ||
+        !builtinSharedPrototypeUnmodified(
+          "fs",
+          [candidate.method === "createReadStream" ? "FileReadStream" : "FileWriteStream", "prototype"],
+          candidate.node,
+          state,
+        ) ||
         !builtinModuleSubtreeUnmodified(
           "fs",
           [
@@ -97,6 +104,12 @@ export const collectJavaScriptSemanticResources = (
               : "WriteStream",
             "prototype",
           ],
+          candidate.node,
+          state,
+        ) ||
+        !builtinSharedPrototypeUnmodified(
+          "stream",
+          [candidate.method === "createReadStream" ? "Readable" : "Writable", "prototype"],
           candidate.node,
           state,
         ))
