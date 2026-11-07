@@ -401,6 +401,47 @@ it("names exact offset and nesting limits instead of the retained report allowan
   }
 });
 
+it.each([
+  [MODEL_METADATA_NESTING, "empty", true],
+  [MODEL_METADATA_NESTING, "scalar", true],
+  [MODEL_METADATA_NESTING + 1, "empty", false],
+  [MODEL_METADATA_NESTING + 1, "scalar", false],
+  [MODEL_METADATA_NESTING + 2, "empty", false],
+] as const)(
+  "bounds GGUF metadata at %i array frames with a %s innermost array",
+  async (frames, innermost, admitted) => {
+    const base = ggufFixture({ tensors: [] });
+    // The advertised unit is the array frame, so an empty innermost array
+    // occupies one exactly like an array holding a scalar child.
+    let nested =
+      innermost === "scalar"
+        ? Buffer.concat([base.u32(7), base.u64(1n), Buffer.from([1])])
+        : Buffer.concat([base.u32(7), base.u64(0n)]);
+    for (let frame = 1; frame < frames; frame += 1)
+      nested = Buffer.concat([base.u32(9), base.u64(1n), nested]);
+    const { provider, path } = await providerAt(
+      ggufFixture({
+        metadata: [{ key: "custom.nested", type: 9, value: nested }],
+        tensors: [],
+      }).bytes,
+    );
+    const result = await provider.inspect({ path, hash: "header" });
+    if (admitted) {
+      if (!result.ok) throw result.error;
+      expect(
+        result.value.metadata.find((row) => row.key === "custom.nested"),
+      ).toMatchObject({ type: "ARRAY", element_count: 1 });
+      return;
+    }
+    if (result.ok) throw new Error(`${String(frames)} frames were admitted`);
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      retryable: false,
+      reportedLimits: { maximum_array_frames: MODEL_METADATA_NESTING },
+    });
+  },
+);
+
 it("preserves safetensors scalar, empty and packed tensor declarations and raw string metadata", async () => {
   const fixture = safetensorsFixture();
   const { provider, path } = await providerAt(fixture.bytes);
