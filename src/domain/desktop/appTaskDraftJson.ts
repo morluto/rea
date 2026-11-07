@@ -45,36 +45,44 @@ const ownNameRecord = (pointer: string): string | undefined => {
   return at === -1 ? undefined : spelled.slice(0, at + 1).join("/");
 };
 
+/** A check kept only when no other check reads its record. */
+export interface RecordFallback {
+  readonly record: string;
+  readonly check: Suggestion;
+}
+
 /**
- * The checks without those of a field its record's selector names it by
- * (`ownNameRecord`), but for the first of a record no other check reads, as
- * a new record holding only a generated uid and its title, so its addition
- * is still checked.
+ * The checks without their records' fallbacks: a field its record's selector
+ * names it by (`ownNameRecord`), and a default every like record holds
+ * (`likeDefaultRecord`). The first fallback of a record no other check reads
+ * is kept, as for a new record holding only a generated uid and its title, so
+ * its addition is still checked.
  */
-export const ownNamesUnreadOtherwise = (
+export const withRecordFallbacks = (
   checks: readonly Suggestion[],
+  defaults: readonly RecordFallback[] = [],
 ): Suggestion[] => {
-  const records = checks.map((check) =>
-    "pointer" in check ? ownNameRecord(check.pointer) : undefined,
-  );
+  const fallbacks: RecordFallback[] = [];
+  const kept: Suggestion[] = [];
+  for (const check of checks) {
+    const record =
+      "pointer" in check ? ownNameRecord(check.pointer) : undefined;
+    if (record === undefined) kept.push(check);
+    else fallbacks.push({ record, check });
+  }
   const read = new Set<string>();
-  const reads = (pointer: string) => {
-    const parts = pointer.split("/");
+  const reads = (check: Suggestion) => {
+    if (!("pointer" in check)) return;
+    const parts = check.pointer.split("/");
     for (let end = 1; end < parts.length; end += 1)
       read.add(parts.slice(0, end).join("/"));
   };
-  const kept = checks.filter((check, index) => {
-    if (records[index] !== undefined) return false;
-    if ("pointer" in check) reads(check.pointer);
-    return true;
-  });
-  checks.forEach((check, index) => {
-    const record = records[index];
-    if (record === undefined || read.has(record) || !("pointer" in check))
-      return;
-    reads(check.pointer);
-    kept.push(check);
-  });
+  kept.forEach(reads);
+  for (const { record, check } of [...fallbacks, ...defaults])
+    if (!read.has(record)) {
+      reads(check);
+      kept.push(check);
+    }
   return kept;
 };
 
@@ -270,22 +278,22 @@ const addedRecordOf = (
   return undefined;
 };
 
-/** Whether a field of a record added whole holds what every like record at the end holds there, as the empty `children` of every TreeLine book: a default, not what the user entered. */
-export const isLikeDefault = (
+/** The record added whole whose field a pointer reads, when the field holds what every like record at the end holds there, as the empty `children` of every TreeLine book: a default, not what the user entered. */
+export const likeDefaultRecord = (
   ends: Ends,
   added: ReadonlySet<string>,
   pointer: string,
   value: JsonValue,
-): boolean => {
+): string | undefined => {
   const record = addedRecordOf(ends, added, pointer);
-  return (
-    record !== undefined &&
+  return record !== undefined &&
     record.field !== "/" &&
     record.likes.final.length > 0 &&
     record.likes.final.every(({ item }) =>
       sameJson(resolvePointer(item, record.field), value),
     )
-  );
+    ? `${record.list}/${record.member}`
+    : undefined;
 };
 
 /** Whether a member's selector reads a field, as `[format=BOOK][>data~1Title=SPQR]` reads `/data/Title`: a guard of it proves only that such a member exists. */

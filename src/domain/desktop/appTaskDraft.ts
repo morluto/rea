@@ -4,12 +4,13 @@ import { leftOutFiles } from "./appExportUnowned.js";
 import { isGeneratedUid } from "./attributeRank.js";
 import {
   decisive,
-  isLikeDefault,
+  likeDefaultRecord,
   jsonCounts,
   outermost,
-  ownNamesUnreadOtherwise,
   positionalNotes,
   recordGuards,
+  withRecordFallbacks,
+  type RecordFallback,
 } from "./appTaskDraftJson.js";
 import {
   fileNotes,
@@ -269,6 +270,7 @@ const valueSuggestions = (
   const wholes = (entries: readonly string[]) =>
     format === "keyfile" ? entries : outermost(entries);
   const edits: Suggestion[] = [];
+  const defaults: RecordFallback[] = [];
   const ends = versions(baseline, final);
   // A key file's entries hold no array, so no record of one is added whole.
   const added = new Set(change.added);
@@ -277,16 +279,24 @@ const valueSuggestions = (
     const value = at === undefined ? undefined : resolvePointer(final.view, at);
     // An id the app generates, as TreeLine's uuid1 `uid`, holds nothing another save repeats.
     if (
-      at !== undefined &&
-      at !== "" &&
-      value !== undefined &&
-      !isTimestamp(value) &&
-      !(typeof value === "string" && isGeneratedUid(value)) &&
-      !isLikeDefault(ends, added, at, value)
+      at === undefined ||
+      at === "" ||
+      value === undefined ||
+      isTimestamp(value) ||
+      (typeof value === "string" && isGeneratedUid(value))
     )
-      edits.push({ kind: "value_equals", file, pointer: at, value });
+      continue;
+    const check: Suggestion = {
+      kind: "value_equals",
+      file,
+      pointer: at,
+      value,
+    };
+    const record = likeDefaultRecord(ends, added, at, value);
+    if (record === undefined) edits.push(check);
+    else defaults.push({ record, check });
   }
-  const listed = ownNamesUnreadOtherwise(edits);
+  const listed = withRecordFallbacks(edits, defaults);
   for (const entry of wholes(change.removed)) {
     const at = pointer(entry);
     if (at !== undefined && at !== "")

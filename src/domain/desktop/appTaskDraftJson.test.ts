@@ -215,6 +215,20 @@ describe("draftTaskFiles for a new JSON record named by a field inside it", () =
     );
   });
 
+  it("checks a record added to a top-level array that repeats its like records' fields, since no count reaches that array", () => {
+    const note = (uid: string) => ({ data: { Title: "Same" }, uid });
+    const seed = [note("812403bed9f511f19fc4edd4f1920549")] as JsonValue;
+    const end = [
+      note("812403bed9f511f19fc4edd4f1920549"),
+      note("fc11808dd9f511f181b7edd4f1920549"),
+    ] as JsonValue;
+    const file = drafted(seed, end);
+
+    expect(file.suggested.map(pointerOf)).toEqual(["/1/data/Title"]);
+    expect(passing(seed, file.suggested).some((passed) => !passed)).toBe(true);
+    expect(passing(end, file.suggested).every(Boolean)).toBe(true);
+  });
+
   it("names a new record by a later name-like field when the first three name another record too", () => {
     const item = (uid: string, last: string, done: boolean) => ({
       aname: "Shared",
