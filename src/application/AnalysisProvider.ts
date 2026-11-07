@@ -20,6 +20,10 @@ import type {
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
 import {
+  pseudocodeAbsenceSchema,
+  type PseudocodeAbsence,
+} from "../domain/native/pseudocodeAbsence.js";
+import {
   analysisSourceDescriptorSchema,
   type AnalysisSourceDescriptor,
 } from "../domain/analysisSource.js";
@@ -65,6 +69,8 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /** Provider-observed cause of a null pseudocode result, when known. */
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   /**
    * Compact provider-owned facts for this execution. This is not an Evidence
    * record and is not restored by snapshot replay; consumers must treat its
@@ -82,6 +88,22 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /** The producer needs this observation retained as source Evidence for composed workflows. */
+  readonly requiresSourceEvidence?: true;
+  /** Known reference-discovery gaps; absent means coverage was not reported. */
+  readonly referenceCoverageGaps?: readonly {
+    readonly code: string;
+    readonly scope: "image" | "observation";
+    readonly description: string;
+  }[];
+  /** Typed source facts for this live xref observation; absent means unreported. */
+  readonly referenceClassifications?: readonly {
+    readonly sourceAddress: string;
+    readonly targetAddress: string;
+    readonly kind: "stored_pointer";
+    readonly provenance: string;
+    readonly width: number;
+  }[];
   /**
    * Sibling operations known to be unavailable at the provider level when this
    * operation answered from a standalone or fallback path.
@@ -91,12 +113,16 @@ export interface AnalysisExecution extends AnalysisObservation {
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly requiresSourceEvidence?: true;
+  readonly referenceClassifications?: AnalysisExecution["referenceClassifications"];
+  readonly referenceCoverageGaps?: AnalysisExecution["referenceCoverageGaps"];
   readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
@@ -132,6 +158,13 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.pseudocodeAbsence === undefined
+      ? {}
+      : {
+          pseudocodeAbsence: pseudocodeAbsenceSchema.parse(
+            options.pseudocodeAbsence,
+          ),
+        }),
     ...(options.sourceDescriptor === undefined
       ? {}
       : {
@@ -156,6 +189,15 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.requiresSourceEvidence === undefined
+      ? {}
+      : { requiresSourceEvidence: options.requiresSourceEvidence }),
+    ...(options.referenceCoverageGaps === undefined
+      ? {}
+      : { referenceCoverageGaps: options.referenceCoverageGaps }),
+    ...(options.referenceClassifications === undefined
+      ? {}
+      : { referenceClassifications: options.referenceClassifications }),
     ...(options.siblingUnavailability === undefined
       ? {}
       : { siblingUnavailability: options.siblingUnavailability }),
@@ -311,6 +353,7 @@ export type CapabilityDescriptor = CapabilityAvailability & {
    * exclusions apply to every policy.
    */
   readonly cachePolicy?: "snapshot" | "live";
+  readonly independentDecompile?: true;
   /** Exact source profile for an operation implemented by a versioned local reader. */
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly provider: ProviderIdentity;

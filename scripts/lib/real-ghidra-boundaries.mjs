@@ -13,6 +13,7 @@ import { promisify } from "node:util";
 import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
+import { OFFICIAL_TOOL_CONTRACTS } from "../../dist/contracts/officialToolContracts.js";
 
 import { verifyLegacyGhidraReferenceSnapshot } from "./ghidra-reference-snapshot-e2e.mjs";
 import { verifyGhidraSnapshotLifecycle } from "./real-ghidra-snapshot-lifecycle.mjs";
@@ -31,6 +32,14 @@ export async function verifyGhidraBoundaries(
 ) {
   const options = { timeout: 180000 };
   const catalog = await client.listTools();
+  const annotation = catalog.tools.find(
+    (tool) => tool.name === "annotate_native_function",
+  );
+  const annotationContract = OFFICIAL_TOOL_CONTRACTS.find(
+    (tool) => tool.name === "annotate_native_function",
+  );
+  assert.ok(annotationContract, "Annotation contract is missing");
+  assert.equal(annotation?.description, annotationContract.description);
   const ajv = new Ajv({ strict: false });
   addFormats(ajv);
   const validators = new Map();

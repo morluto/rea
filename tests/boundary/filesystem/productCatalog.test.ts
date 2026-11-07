@@ -53,7 +53,7 @@ afterEach(async () => {
 describe("canonical product catalog", () => {
   it("admits every documented browser scenario through the named contract", async () => {
     const guide = await readFile(
-      join(root, "docs/browser-scenario-contract.md"),
+      join(root, "docs/guides/web/browser-scenario-contract.md"),
       "utf8",
     );
     const examples = [
@@ -194,7 +194,9 @@ describe("canonical product catalog drift", () => {
       ],
     };
     const issues = await documentationFactIssues(root, drifted);
-    expect(issues).toContain("docs/installation.md: missing Future Client");
+    expect(issues).toContain(
+      "docs/getting-started/installation.md: missing Future Client",
+    );
     expect(issues).not.toContain("README.md: missing Future Client");
   });
 
