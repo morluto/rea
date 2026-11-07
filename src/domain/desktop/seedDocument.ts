@@ -1,6 +1,6 @@
 import { posix } from "node:path";
 
-import { execTakesFiles } from "./desktopEntry.js";
+import { desktopArgumentIndex, execTakesFiles } from "./desktopEntry.js";
 
 /** What the exported app opens at launch. */
 export type LaunchDocument =
@@ -88,11 +88,12 @@ export const openSeedDocument = (
     if (path === undefined) return argument;
     return absoluteSeed(path) ?? argument;
   };
+  const firstArgument = desktopArgumentIndex(argv);
   const argvSpelled = argv.map((argument, index) =>
-    index === 0 ? argument : retarget(argument),
+    index < firstArgument ? argument : retarget(argument),
   );
   const named = argv
-    .slice(1)
+    .slice(firstArgument)
     .map((argument) => {
       const equals = argument.indexOf("=");
       const value =
