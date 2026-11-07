@@ -743,12 +743,15 @@ export const listItems = (
 /** An observed item count, retaining the original value separately for rendering. */
 export const recordedItemCount = (
   value: JsonValue | undefined,
-): number | undefined =>
-  typeof value === "number"
-    ? value
-    : typeof value === "string" && /^\d+$/u.test(value)
-      ? Number(value)
-      : undefined;
+): number | undefined => {
+  if (typeof value === "number")
+    return Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+  if (typeof value === "string" && /^\d+$/u.test(value)) {
+    const number = Number(value);
+    return Number.isSafeInteger(number) ? number : undefined;
+  }
+  return undefined;
+};
 
 /** Spell a changed count with the recorded numeric/string type and digit width. */
 export const formatItemCount = (
