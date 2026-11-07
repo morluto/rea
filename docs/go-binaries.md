@@ -123,8 +123,9 @@ deduplicated printable UTF-8 literals referenced by word-aligned two-word
 read-only string data contiguously without NUL terminators, slicing by `(ptr, len)`
 recovers exact literal boundaries instead of concatenated C-string runs. Each
 target slice (`1`–`4096` bytes) must stay within a single read-only mapped
-section or segment, decode as printable UTF-8 (`\t`, `\n`, `\r` and printable
-Unicode scalar values, excluding control and format characters), and fit within
+section or segment, decode as printable UTF-8 (`\t`, `\n`, `\r`, joiners
+`U+200C` / `U+200D` and printable Unicode scalar values, excluding control and
+other format characters), and fit within
 a 64 MiB header-scan budget and 512 KiB aggregate string budget
 (`truncated: true` when capped). Compiler-inlined or
 stack-constructed strings without static headers, unapplied relocation addends

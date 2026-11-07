@@ -26,7 +26,7 @@ const PE_CNT_INITIALIZED_DATA = 0x00000040;
 const MACHO_ATTR_INSTRUCTIONS = 0x80000400;
 const MACHO_ATTR_DEBUG = 0x02000000;
 const DISALLOWED_GO_STRING_CODE_POINT =
-  /(?![\t\n\r])[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u;
+  /(?![\t\n\r\u200c\u200d])[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u;
 
 interface CandidateLiteral {
   readonly offset: number;

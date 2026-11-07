@@ -372,15 +372,19 @@ it.each([false, true])(
   },
 );
 
-it("rejects Unicode Cf format controls while keeping visible Unicode text", () => {
+it("rejects invisible/bidi Cf format controls while keeping U+200C ZWNJ, U+200D ZWJ and visible Unicode", () => {
   const zeroWidthSpace = Buffer.from("zero\u200Bwidth", "utf8");
   const rtlOverride = Buffer.from("rtl\u202Eoverride", "utf8");
   const byteOrderMark = Buffer.from("\uFEFFbom", "utf8");
   const softHyphen = Buffer.from("soft\u00ADhyphen", "utf8");
+  const persianZwnj = Buffer.from("می\u200cخواهم", "utf8");
+  const zwjEmoji = Buffer.from("👩\u200d💻", "utf8");
   const visibleUnicode = Buffer.from("visible-café", "utf8");
   const slices = [
     zeroWidthSpace,
+    persianZwnj,
     rtlOverride,
+    zwjEmoji,
     byteOrderMark,
     softHyphen,
     visibleUnicode,
@@ -405,7 +409,11 @@ it("rejects Unicode Cf format controls while keeping visible Unicode text", () =
   const recovered = readGoBinaryImage(fixture.bytes, {
     includeStringLiterals: true,
   }).string_literals;
-  expect(recovered?.items.map((item) => item.value)).toEqual(["visible-café"]);
+  expect(recovered?.items.map((item) => item.value)).toEqual([
+    "می\u200cخواهم",
+    "👩\u200d💻",
+    "visible-café",
+  ]);
   expect(recovered?.truncated).toBe(false);
 });
 
