@@ -3,9 +3,6 @@ import {
   EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
-  checkpointCapabilities,
-  ghidraCheckpointOriginLimitations,
-  ghidraHealthLimitations,
   ghidraEmptyIncomingReferencesLimitation,
   ghidraEmptyDossierIncomingLimitation,
   ghidraEmptyExternalOutgoingLimitation,
@@ -112,48 +109,6 @@ import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
 const INSTALL = "/opt/ghidra_12.1.4_PUBLIC";
-it.skipIf(process.platform === "win32")(
-  "health describes checkpoint recovery without ephemeral reimport advice",
-  async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-checkpoint-health-"));
-    const source = {
-      path: join(directory, "verified.gzf"),
-      sha256: "a".repeat(64),
-    };
-    const ghidra = provider(
-      installationHost(),
-      () => ({
-        start: async () => ok(sessionInfo()),
-        callTool: async () => ok([]),
-        close: async () => ok(null),
-        checkpointRestore: () => source,
-      }),
-      { REA_GHIDRA_CHECKPOINT_DIR: directory },
-    );
-    const client = await createElfClient(ghidra);
-    try {
-      const health = await client.execute("health", {});
-      if (!health.ok) throw health.error;
-      expect(health.value.limitations).toEqual(
-        expect.arrayContaining([
-          ...ghidraHealthLimitations("owned-checkpoint"),
-          ...ghidraCheckpointOriginLimitations(source),
-        ]),
-      );
-      for (const capability of checkpointCapabilities()) {
-        expect(capability.limitations).toEqual(
-          expect.arrayContaining([
-            ...ghidraHealthLimitations("owned-checkpoint"),
-          ]),
-        );
-      }
-    } finally {
-      await client.close();
-      await ghidra.closeOwnedResources();
-      await rm(directory, { recursive: true, force: true });
-    }
-  },
-);
 afterEach(() => vi.restoreAllMocks());
 const installationHost = (
   platform: NodeJS.Platform = "linux",

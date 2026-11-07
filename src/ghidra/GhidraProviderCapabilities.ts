@@ -8,7 +8,6 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
-import type { GhidraPackedProgram } from "./GhidraCheckpoint.js";
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -38,20 +37,6 @@ export type GhidraSessionSource =
   | "fresh-import"
   | "existing-project"
   | "owned-checkpoint";
-
-/** Project only the origin confirmed by the current startup attempt. */
-export const ghidraCheckpointOriginLimitations = (
-  source: GhidraPackedProgram | null | undefined,
-): readonly string[] =>
-  source === undefined
-    ? []
-    : source === null
-      ? [
-          "Created the initial owned Ghidra Program from the executable and saved its analysis checkpoint; metadata edits are saved on normal close.",
-        ]
-      : [
-          `Restored owned Program ${source.path} (SHA-256 ${source.sha256}); auto-analysis was not rerun.`,
-        ];
 
 /** Existing databases have their own unknown analysis history; reopening does not complete it. */
 export const ghidraHealthLimitations = (
