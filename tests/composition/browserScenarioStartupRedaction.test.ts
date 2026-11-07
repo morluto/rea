@@ -2,6 +2,8 @@ import { BrowserObservationError } from "../../src/domain/browserObservationErro
 import { PlaywrightScenarioSession } from "../../src/browser/PlaywrightScenarioSession.js";
 import { chromium, type BrowserContext } from "playwright-core";
 import { expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../fixtures/lifecycleAcknowledgement.js";
 import { captureBrowserScenario } from "../../src/application/BrowserScenarioCaptureService.js";
 import { createBrowserScenarioProvider } from "../../src/composition/browserScenario.js";
 import { browserScenarioSchema } from "../../src/domain/browserScenario.js";
@@ -68,11 +70,12 @@ it.each([
     const closeProvider = provider.close.bind(provider);
     const cancellation = new AbortController();
     const reason = { caller: "cancelled opening" };
-    try {
-      const capturing = captureBrowserScenario(provider, scenario, {
+    let capturing: ReturnType<typeof captureBrowserScenario> | undefined;
+    await withVerifierCleanup(async () => {
+      capturing = captureBrowserScenario(provider, scenario, {
         signal: cancellation.signal,
       });
-      await started;
+      await awaitAcknowledgement(started, capturing, "browser launch");
       if (late) cancellation.abort(reason);
       const result = await capturing;
       if (result.ok) throw new Error("Expected startup failure");
@@ -113,12 +116,17 @@ it.each([
       expect(result.error.cleanupIncomplete).toBe(false);
       expect(retry.cleanupIncomplete).toBe(false);
       expect(result.error.cleanupResources).toEqual([]);
-    } finally {
-      blocked = false;
-      finishOpening();
-      await closeProvider();
-      launch.mockRestore();
-    }
+    }, [
+      () => {
+        blocked = false;
+        finishOpening();
+      },
+      async () => {
+        await capturing;
+      },
+      closeProvider,
+      () => launch.mockRestore(),
+    ]);
   },
 );
 

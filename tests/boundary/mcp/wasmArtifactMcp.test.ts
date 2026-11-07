@@ -8,7 +8,6 @@ import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createHash } from "node:crypto";
@@ -798,6 +797,92 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     });
     expect(inspect).toHaveBeenCalledTimes(2);
     await client.ping();
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
+
+it("compares caller-owned complete inline WASM sources on a fixed server without a recorder", async () => {
+  const leftReport = wasmArtifactFixture("/artifacts/left.wasm");
+  leftReport.interface = { state: "complete", issues: [], entries: [] };
+  const rightReport = wasmArtifactFixture("/artifacts/right.wasm");
+  rightReport.interface = {
+    state: "complete",
+    issues: [],
+    entries: [
+      {
+        direction: "export",
+        module: null,
+        name: "new_export",
+        kind: "func",
+        index: 0,
+        signature: { kind: "func", params: [], results: [] },
+        wat_form: '(export "new_export" (func 0))',
+        issue: null,
+      },
+    ],
+  };
+  const source = (report: ReturnType<typeof wasmArtifactFixture>) =>
+    createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture-wabt", name: "Source-owned WABT seam", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+  const left = source(leftReport);
+  const right = source(rightReport);
+  const inspect = vi.fn<WasmArtifactService["provider"]["inspect"]>(() => {
+    throw new Error(
+      "Comparison must reuse caller Evidence without provider work",
+    );
+  });
+  const service = new WasmArtifactService({
+    close: () => Promise.resolve(),
+    inspect,
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("Comparison must not start a deep provider");
+  });
+  const server = createServer(
+    { kind: "fixed", analysis: session },
+    { wasmArtifact: service },
+  );
+  const client = new Client({ name: "wasm-fixed-comparison", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const reply = await client.callTool({
+      name: "compare_wasm_interfaces",
+      arguments: { left, right, scope: "both" },
+    });
+    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
+      true,
+    );
+    const comparison = parseEvidence(reply.structuredContent);
+    expect(comparison.operation).toBe("compare_wasm_interfaces");
+    expect(comparison.evidence_links).toEqual([
+      left.evidence_id,
+      right.evidence_id,
+    ]);
+    expect(comparison.normalized_result).toMatchObject({
+      coverage: "complete-within-inputs",
+      summary: { added: 1, changed: 0, removed: 0, unchanged: 0, unknown: 0 },
+      changes: [{ name: "new_export", state: "added" }],
+    });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(session.exportEvidenceBundle().records).toEqual([]);
   } finally {
     await client.close();
     await server.close();

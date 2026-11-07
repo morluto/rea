@@ -205,9 +205,20 @@ describe("MCP_HOST and MCP_PORT", () => {
       "MCP_HOST",
       "MCP_PORT",
     ]);
-    const projected = JSON.stringify(projectAnalysisError(result.error));
-    expect(projected).toContain("MCP_PORT must be a decimal integer");
-    expect(projected).not.toContain("65536");
+    const projected = projectAnalysisError(result.error);
+    expect(projected).toMatchObject({
+      details: {
+        settings: expect.arrayContaining([
+          expect.objectContaining({
+            setting: "MCP_PORT",
+            constraint: expect.stringContaining(
+              "MCP_PORT must be a decimal integer",
+            ),
+          }),
+        ]),
+      },
+    });
+    expect(JSON.stringify(projected)).not.toContain("65536");
   });
 });
 

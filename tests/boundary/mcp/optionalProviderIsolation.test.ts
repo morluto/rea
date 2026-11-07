@@ -2,7 +2,7 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/server";
-import { afterAll, afterEach, expect } from "vitest";
+import { afterAll, expect, it, onTestFinished, vi } from "vitest";
 import { z } from "zod";
 
 import type { BinarySessionPort } from "../../../src/application/binary/BinarySessionPort.js";
@@ -45,20 +45,14 @@ const failedAdapters = [
   ],
 ] as const;
 
-const resources: Array<() => Promise<void>> = [];
-afterEach(async () => {
-  for (const close of resources.splice(0).reverse()) await close();
-});
-
-const boot = async (factories: OptionalObservationFactories) => {
+const boot = async (
+  factories: OptionalObservationFactories,
+  configureServer?: (server: McpServer) => void,
+) => {
   const loaded = await loadOptionalObservationProviders(factories);
   let server: McpServer | undefined;
   let session: BinarySessionPort | undefined;
-  let shutdown: (() => void) | undefined;
-  let resolveClose: (() => void) | undefined;
-  const closed = new Promise<void>((resolve) => {
-    resolveClose = resolve;
-  });
+  let shutdown: (() => Promise<void>) | undefined;
   const output: string[] = [];
   const exitCodes: number[] = [];
   expect(
@@ -70,7 +64,7 @@ const boot = async (factories: OptionalObservationFactories) => {
           throw new Error("Expected a session-owned server source");
         session = source.session;
         // A configured policy cannot hide an actual adapter loading failure.
-        return createServer(source, {
+        const created = createServer(source, {
           ...options,
           availabilityPolicy: () => ({
             processCaptureEnabled: true,
@@ -81,22 +75,20 @@ const boot = async (factories: OptionalObservationFactories) => {
             v8InspectorObservationEnabled: true,
           }),
         });
+        configureServer?.(created);
+        return created;
       },
       serve: (factory) => {
         const created = factory({ era: "legacy" });
         if (!(created instanceof McpServer))
           throw new Error("Expected the production synchronous MCP factory");
         server = created;
-        return {
-          close: async () => {
-            await server?.close();
-            resolveClose?.();
-          },
-        };
+        return { close: () => Promise.resolve() };
       },
-      registerShutdown: (handler) => {
-        shutdown = handler;
-        return () => {};
+      registerShutdown: () => () => {},
+      captureShutdown: (close) => {
+        shutdown = close;
+        onTestFinished(close);
       },
       writeStderr: (message) => output.push(message),
       setExitCode: (code) => exitCodes.push(code),
@@ -105,14 +97,8 @@ const boot = async (factories: OptionalObservationFactories) => {
   expect(output).toEqual([]);
   if (server === undefined || session === undefined || shutdown === undefined)
     throw new Error("Runtime did not construct the MCP server and session");
-  const close = shutdown;
-  resources.push(async () => {
-    close();
-    await closed;
-    await new Promise<void>((resolve) => setImmediate(resolve));
-    expect(exitCodes).toEqual([]);
-  });
-  return { server, session, loaded };
+  expect(exitCodes).toEqual([]);
+  return { server, session, loaded, shutdown };
 };
 
 mcpTest.for(failedAdapters)(
@@ -243,6 +229,15 @@ mcpTest.for(failedAdapters)(
       arguments: { unexpected: true },
     });
     expect(malformed.isError).toBe(true);
+    expect(parseMcpToolError(malformed)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        category: "invalid_input",
+        retryable: false,
+        recovery: { kind: "inspect_input_contract", operation },
+        details: { operation },
+      },
+    });
     expect(JSON.stringify(malformed)).not.toContain(failure);
   },
 );
@@ -275,3 +270,28 @@ mcpTest(
     expect(second.loaded.browserObservation).toBeDefined();
   },
 );
+
+it("reports a server close failure and retries the runtime owner", async () => {
+  const failure = new Error("controlled close failure");
+  let denied = true;
+  let close: ReturnType<typeof vi.fn> | undefined;
+  const connected = await boot(optionalObservationFactories([]), (server) => {
+    const realClose = server.close.bind(server);
+    close = vi.spyOn(server, "close").mockImplementation(async () => {
+      if (denied) throw failure;
+      await realClose();
+    });
+  });
+  try {
+    await expect(connected.shutdown()).rejects.toMatchObject({
+      errors: [failure],
+    });
+    expect(close).toHaveBeenCalledTimes(1);
+    denied = false;
+    await connected.shutdown();
+    await connected.shutdown();
+    expect(close).toHaveBeenCalledTimes(2);
+  } finally {
+    denied = false;
+  }
+});

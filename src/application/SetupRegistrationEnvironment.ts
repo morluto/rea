@@ -72,11 +72,15 @@ const SELECTED_REGISTRATION_SETTINGS = [
   "REA_MCP_INPUT_SCHEMA_PROFILE",
   "REA_MCP_TOOL_FAMILIES",
   "REA_MCP_OUTPUT_SCHEMA_PROFILE",
+  "REA_MCP_TOOL_CATALOG_PROFILE",
   "REA_MCP_MAX_RESPONSE_BYTES",
   "REA_MCP_MAX_INPUT_ELEMENTS",
   "REA_NATIVE_MATCHING_REPRESENTATION_BYTES",
   "REA_REGEX_MATCHING_DEADLINE_MS",
   "REA_REGEX_WORKER_HEAP_REQUEST_MIB",
+  "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
+  "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
+  "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
   "REA_MCP_INITIALIZE_BUDGET_MS",
   "REA_MCP_TOOLS_LIST_BUDGET_MS",
   "REA_MCP_FIRST_CATALOG_BUDGET_MS",
@@ -107,3 +111,17 @@ export const providerRegistrationEnvironment = (
       )
       .sort(([left], [right]) => compareUnicodeCodePoints(left, right)),
   );
+
+/** Spell selected settings as setup records them: an explicit selection wins. */
+export const registrationSpelledSettings = (
+  settings: Readonly<Record<string, string>>,
+  environment: Readonly<Record<string, string | undefined>>,
+): Readonly<Record<string, string>> => {
+  const explicit = explicitSetupRegistrationEnvironment(environment);
+  return Object.fromEntries(
+    Object.entries(settings).map(([key, value]) => [
+      key,
+      explicit[key] ?? value,
+    ]),
+  );
+};
