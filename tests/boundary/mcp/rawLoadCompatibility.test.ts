@@ -105,8 +105,8 @@ describe("raw-binary snapshots saved before base_address", () => {
     const profile = await ghidraProfile(target);
     expect(snapshotMatchesTarget(snapshot.target, target)).toBe(true);
     // Upstream's instruction-status (#7823), load-image observation (#8531),
-    // procedure search (#8520), reference, byte-search (#8840) and data-type
-    // (#8602) revisions keep every Ghidra snapshot saved before them from
+    // procedure search (#8520), reference, byte-search (#8840), data-type
+    // (#8602) and inventory-search (#8376) revisions keep every Ghidra snapshot saved before them from
     // replaying. Apart from those parameters, the profile is the one this
     // snapshot recorded.
     const mismatch = snapshotBindingMismatch(snapshot, target, profile);
@@ -120,6 +120,7 @@ describe("raw-binary snapshots saved before base_address", () => {
       instruction_references: instructionReferences,
       byte_search_boundary: byteSearch,
       data_type_observations: dataTypes,
+      inventory_search_projection: inventorySearch,
       ...parameters
     } = profile.parameters;
     expect(status).toBe("unlisted-address-without-decode-v1");
@@ -129,6 +130,7 @@ describe("raw-binary snapshots saved before base_address", () => {
     expect(search).toBe("primary-and-exact-entry-symbol-names-v1");
     expect(byteSearch).toBe("contiguous-eligible-initialized-blocks-v1");
     expect(dataTypes).toBe("bit-field-base-and-lookup-v1");
+    expect(inventorySearch).toBe("provider-inventory-facts-v1");
     const {
       load_image_observations: savedObservations,
       function_references: savedFunctionReferences,

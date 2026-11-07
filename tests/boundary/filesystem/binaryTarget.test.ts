@@ -1099,7 +1099,6 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       cwd: directory,
       hostArchitecture: "x64",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       format: "pe",
@@ -1128,7 +1127,6 @@ describe("binary target I/O: explicit kinds and executable headers", () => {
       cwd: directory,
       hostArchitecture: "ia32",
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     expect(result.value).toMatchObject({
       format: "pe",

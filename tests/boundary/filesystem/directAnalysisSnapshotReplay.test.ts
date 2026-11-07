@@ -625,7 +625,6 @@ describe("snapshot output cleanup lifecycle", () => {
           fixture.snapshotPath,
           false,
         );
-        expect(closed.ok).toBe(false);
         if (closed.ok) throw new Error("Expected close failure");
         const committed = await readFile(fixture.snapshotPath);
         const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);

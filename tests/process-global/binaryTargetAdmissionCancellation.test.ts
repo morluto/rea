@@ -114,7 +114,6 @@ it.each([
         entryPoint: "0x1000",
       },
     });
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("cancelled target was admitted");
     expect(projectAnalysisError(resolved.error)).toMatchObject({
       code: "cancelled",

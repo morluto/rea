@@ -2482,7 +2482,6 @@ it.each([
     const detail = await client.execute("inspect_native_data_type", {
       address,
     });
-    expect(detail.ok).toBe(true);
     if (!detail.ok) throw detail.error;
     expect(detail.value.result).toMatchObject({ address: resolvedAddress });
     if (expectedTable === null) {
@@ -6421,7 +6420,18 @@ it.each(["search_procedures", "search_strings"] as const)(
       { address: "0x1001", value: "SOURCE" },
       { address: "0x1002", value: "İource" },
       { address: "0x1003", value: "unrelated" },
-    ];
+    ].map((row) => ({
+      ...row,
+      ...(operation === "search_procedures"
+        ? { procedure: { external: false, thunk: false, thunk_target: null } }
+        : {
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: Buffer.byteLength(row.value, "utf8") + 1,
+            },
+          }),
+    }));
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),

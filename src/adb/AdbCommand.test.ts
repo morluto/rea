@@ -233,7 +233,6 @@ it.each([true, false])(
       { timeoutMs: 100, maxOutputBytes: 1024, volatileOutput },
       undefined,
     );
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a capture allowance refusal");
     const projected = projectAnalysisError(result.error);
     expect(projected.retryable).toBe(volatileOutput);
@@ -263,7 +262,6 @@ it("reports the effective fixed adb deadline", async () => {
     { timeoutMs: 600_000, maxOutputBytes: 1024 },
     undefined,
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected an adb deadline");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({
