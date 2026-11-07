@@ -53,6 +53,7 @@ describe("tool effects", () => {
       "rizin_debug_command",
       "start_adb_activity",
       "start_adb_app",
+      "start_build_capture",
       "start_build_computer",
       "start_rizin_debug_session",
       "stop_adb_app",
