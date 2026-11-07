@@ -48,6 +48,39 @@ const passing = (view: JsonValue, checks: readonly DesktopTaskCheckInput[]) =>
     new Map([[FILE, { format: "json" as const, view }]]),
   ).map(({ passed }) => passed);
 
+it("suggests and evaluates counts for a top-level JSON array", () => {
+  const before = [{ name: "one" }, { name: "two" }];
+  const after = [...before, { name: "three" }];
+  const file = drafted(before, after);
+  const counts = file.suggested.filter(
+    (check) => check.kind === "member_count",
+  );
+  expect(counts).toContainEqual({
+    kind: "member_count",
+    file: FILE,
+    pointer: "",
+    equals: 3,
+  });
+  expect(passing(before, counts)).toEqual([false]);
+  expect(passing(after, counts)).toEqual([true]);
+});
+
+it("guards the count of a top-level JSON array when a member is edited", () => {
+  const before = [
+    { name: "one", done: false },
+    { name: "two", done: false },
+  ];
+  const after = [{ name: "one", done: true }, before[1]!];
+  const file = drafted(before, after);
+  expect(file.guards).toContainEqual({
+    kind: "member_count",
+    file: FILE,
+    pointer: "",
+    equals: 2,
+  });
+  expect(passing(after, file.guards).every(Boolean)).toBe(true);
+});
+
 describe("draftTaskFiles for records in a JSON array, as TreeLine saves its nodes", () => {
   it("names kept records by name fields of at most 64 kinds, each a pass over the records, and those past them by their uid", () => {
     /** Seventy records with a generated uid, each with a name field of its own key and `done` as `edited` says. */

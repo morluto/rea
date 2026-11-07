@@ -90,7 +90,7 @@ const listAt = (view: JsonValue | null, list: string) =>
 /** The array a member pointer sits in, when its parent is one in a view. */
 const arrayOf = (view: JsonValue | null, pointer: string) => {
   const list = pointer.replace(/\/[^/]+$/u, "");
-  return list !== pointer && Array.isArray(resolvePointer(view, list))
+  return list !== pointer && Array.isArray(listAt(view, list))
     ? list
     : undefined;
 };
@@ -115,7 +115,7 @@ const kindOf = (member: JsonValue | undefined, items: readonly JsonValue[]) => {
 };
 
 const membersOf = (view: JsonValue | null, { list, kind }: Counted) => {
-  const items = resolvePointer(view, list);
+  const items = listAt(view, list);
   return (Array.isArray(items) ? items : []).filter(
     (item) =>
       kind === undefined || (isRecord(item) && item[kind.key] === kind.value),
@@ -158,7 +158,7 @@ export const jsonCounts = (
   const lists = new Map<string, Counted>();
   const note = (pointer: string, view: JsonValue | null) => {
     const list = arrayOf(view, pointer);
-    const items = list === undefined ? [] : resolvePointer(view, list);
+    const items = list === undefined ? [] : listAt(view, list);
     if (
       list === undefined ||
       !named(list, ends.baseline) ||
@@ -191,13 +191,13 @@ export const jsonCounts = (
   const tried = new Set<string>();
   for (const pointer of change.changed) {
     const segments = pointer.split("/");
-    for (let index = segments.length - 1; index > 1; index -= 1) {
+    for (let index = segments.length - 1; index >= 1; index -= 1) {
       const list = segments.slice(0, index).join("/");
       const counted = { list };
       if (tried.has(list)) continue;
       tried.add(list);
       if (
-        Array.isArray(resolvePointer(ends.final, list)) &&
+        Array.isArray(listAt(ends.final, list)) &&
         !lists.has(JSON.stringify(counted)) &&
         named(list, ends.baseline) &&
         named(list, ends.final) &&
