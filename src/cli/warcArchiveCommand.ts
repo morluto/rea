@@ -18,6 +18,7 @@ import {
 } from "../domain/warcArchive/warcArchiveQuery.js";
 import { z } from "incur";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { cliDecimalField } from "./options.js";
 import {
   analysisEvidenceDeliveryOptions,
   parseCliAnalysisEvidenceDelivery,
@@ -41,9 +42,11 @@ export const registerWarcArchiveCommand = (
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      maxFileBytes: warcArchiveFileBytesSchema,
-      maxDecodedBytes: warcArchiveDecodedBytesSchema,
-      maxRecords: warcArchiveRecordsSchema,
+      // Decimal tokens only: numeric coercion would read "0x10" as 16 and
+      // "1e2" as 100. The shared fields keep their bounds and defaults.
+      maxFileBytes: cliDecimalField(warcArchiveFileBytesSchema),
+      maxDecodedBytes: cliDecimalField(warcArchiveDecodedBytesSchema),
+      maxRecords: cliDecimalField(warcArchiveRecordsSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
