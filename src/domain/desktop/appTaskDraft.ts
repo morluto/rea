@@ -455,24 +455,17 @@ export const draftTaskFiles = (
   selected: readonly string[] = [],
 ): readonly TaskDraftFile[] => {
   const changed = changedStateFiles(files, ends, served);
-  const { isLeftOut, isLeftOutLog } = leftOutFiles(
-    files,
-    [],
-    selected,
-    selected,
-  );
+  const { isLeftOut } = leftOutFiles(files, [], selected, selected);
   // A lock the seed leaves out is not the document the user worked on.
-  const considered = changed.filter(
-    ({ home, path }) => !(path.role === "document" && isLeftOut(home)),
-  );
+  const considered = changed.filter(({ home }) => !isLeftOut(home));
   const role = considered.some(({ path }) => path.role === "document")
     ? "document"
     : "application_state";
-  // The app's logs, which the export leaves out of the seed, never hold a check.
-  // A log the caller selected is a document of the task, so it stays.
+  // A file absent from the seed cannot supply a useful check. The same owner
+  // keeps explicitly selected files, including a selected lock.
   return withinDraftBudget(
     changed.map(({ home, path, baseline, final, change }) => {
-      const drafted = path.role === role && !isLeftOutLog(home);
+      const drafted = path.role === role && !isLeftOut(home);
       const draft: FileDraft = drafted
         ? suggestedChecks(home, baseline, final, role === "document")
         : { suggested: [], ...NO_VALUES };
