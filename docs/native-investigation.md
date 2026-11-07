@@ -252,8 +252,18 @@ The manifest reports the procedure-inventory limitations of the current call in
 call's filters, selected and excluded counts, and inventory limitations; older
 runs remain represented only by their retained function records, so a later
 inventory warning is not presented as the history of every file.
+Use `retry_failed: "independent_fresh"` (CLI: `--retry-failed independent_fresh`)
+to request an independent attempt after a null pseudocode observation that the
+provider explicitly reports as a function failure. The failed observation is
+appended before the retry, so cancellation or a later failure keeps it. The
+retry can use different analysis context. Other errors and entries merely
+missing from an export are not retried. A null without a reported function
+failure carries a limitation explaining why no independent retry was attempted.
+A provider that does not report this distinction leaves the cause unknown.
 Each function's `decompile-index.json` record, whatever its status, keeps the
-complete limitations of the observations it used.
+complete limitations of the observations it used. The index keeps the latest
+record for each function; `decompile-journal.jsonl` keeps earlier attempts and
+their separate limitations.
 When available, `provider_source` records the source of that attempt's
 pseudocode observation: a file path, SHA-256 and byte range, or a
 single-function decompile. The latter describes the method, not a unique run. A file

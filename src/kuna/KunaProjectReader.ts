@@ -35,6 +35,7 @@ import {
   type KunaProjectFunction,
 } from "./KunaProjectFiles.js";
 import { KUNA_PROVIDER_ID } from "./KunaRelease.js";
+import type { PseudocodeAbsence } from "../domain/native/pseudocodeAbsence.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "./KunaLimits.js";
 import { kunaUnavailable } from "./KunaUnavailable.js";
 
@@ -49,6 +50,7 @@ export interface KunaProjectFileSpan {
 export interface KunaProjectText {
   readonly result: string | null;
   readonly unavailableReason?: string;
+  readonly pseudocodeAbsence?: PseudocodeAbsence;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly limitations: readonly string[];
 }
@@ -317,10 +319,11 @@ export class KunaProjectReader {
     const block = this.#blocks.get(address);
     if (block === undefined) {
       const reason =
-        "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.";
+        "Kuna's project export contains no decompiled block for this inventory entry. Import slots may have no body; other omissions are not classified.";
       return ok({
         result: null,
         unavailableReason: reason,
+        pseudocodeAbsence: { kind: "not-in-export", reason },
         limitations: [reason],
       });
     }
@@ -337,6 +340,7 @@ export class KunaProjectReader {
       return ok({
         result: null,
         unavailableReason: reason,
+        pseudocodeAbsence: { kind: "provider-failure", reason },
         files,
         limitations: [
           reason,
