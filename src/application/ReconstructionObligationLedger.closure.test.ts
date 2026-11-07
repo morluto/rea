@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
+import { createEvidence } from "../domain/evidence.js";
 import {
+  boundProofEvidence,
   build,
   deriveCandidates,
   resolveRequest,
@@ -487,5 +489,667 @@ describe("reconstruction obligation manifest reference controls", () => {
       }),
     );
     expect(validSurplus.evidence_links).toContain(surplusEvidence.evidence_id);
+  });
+});
+
+const buildSharedVerifierControlBinding = (options: {
+  readonly obligationId: string;
+  readonly modulePath: string;
+  readonly symbol: string;
+  readonly originalEvidenceId: string;
+  readonly candidateProofEvidenceId: string;
+  readonly controlProofEvidenceId: string;
+  readonly enumeratedIds: readonly string[];
+  readonly controlId: string;
+  readonly candidateId: string;
+  readonly candidateSha256: string;
+  readonly defect: string;
+  readonly status: "pass" | "fail";
+}) => ({
+  obligation_id: options.obligationId,
+  owner: {
+    module_path: options.modulePath,
+    symbol: options.symbol,
+    owner_sha256: "a".repeat(64),
+  },
+  parser_type: null,
+  original_cases: [
+    {
+      kind: "positive" as const,
+      evidence_id: options.originalEvidenceId,
+      location: "/normalized_result",
+    },
+  ],
+  fixtures: [
+    {
+      fixture_id: `fixture.${options.obligationId}`,
+      case_kind: "positive" as const,
+      authority: "unit" as const,
+      evidence_ids: [options.candidateProofEvidenceId],
+    },
+  ],
+  verifier: {
+    verifier_id: "verifier.shared",
+    claim_id: `claim.${options.obligationId}`,
+    command: "npm test -- shared-verifier",
+    authority: "unit" as const,
+    status: "pass" as const,
+    result_evidence_id: options.candidateProofEvidenceId,
+    enumerated_obligation_ids: [...options.enumeratedIds],
+    nondeterminism: {
+      mode: "total-order" as const,
+      specification: "Deterministic unit assertion.",
+    },
+    controls: [
+      {
+        control_id: options.controlId,
+        candidate_id: options.candidateId,
+        candidate_sha256: options.candidateSha256,
+        defect: options.defect,
+        status: options.status,
+        result_evidence_id: options.controlProofEvidenceId,
+      },
+    ],
+  },
+});
+
+describe("reconstruction verifier negative controls (#4396)", () => {
+  it("closes an obligation when its verifier passes on the candidate and fails on a negative control", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const result = build(ledgerRequest);
+
+    expect(result.status).toBe("ready");
+    expect(result.obligations[0]).toMatchObject({
+      status: "verified",
+      verifier_control_status: "challenged",
+      diagnostics: [],
+    });
+  });
+
+  it("withholds closure and flags missing-verifier-control when negative controls are omitted or empty", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const binding = ledgerRequest.manifest.bindings[0]!;
+    const verifier = binding.verifier!;
+    const { controls: _omitted, ...verifierWithoutControls } = verifier;
+
+    for (const candidateVerifier of [
+      verifierWithoutControls,
+      { ...verifier, controls: [] },
+    ]) {
+      const open = build({
+        ...ledgerRequest,
+        manifest: {
+          ...ledgerRequest.manifest,
+          bindings: [{ ...binding, verifier: candidateVerifier }],
+        },
+      });
+      expect(open.status).toBe("open");
+      expect(open.obligations[0]).toMatchObject({
+        status: "implemented",
+        verifier_control_status: "unchallenged",
+        diagnostics: [
+          {
+            code: "missing-verifier-control",
+            detail:
+              "Verifier binding does not include a failing negative control.",
+          },
+        ],
+      });
+    }
+  });
+});
+
+describe("reconstruction verifier vacuous and invalid control handling (#4396)", () => {
+  it("reports a vacuous verifier and refuses closure when a negative control passes on a defective candidate", () => {
+    const original = createEvidence(
+      undefined,
+      { id: "fixture", name: "Fixture", version: "1" },
+      {
+        operation: "observe",
+        parameters: { label: "two-obligation-control" },
+        result: { present: true },
+        confidence: "observed",
+        authority: "shipped-artifact",
+      },
+    );
+    const vacuousObligation = reviewedObligation(
+      "obl.control.vacuous",
+      original.evidence_id,
+    );
+    const challengedObligation = reviewedObligation(
+      "obl.control.challenged",
+      original.evidence_id,
+    );
+    const enumeratedIds = [
+      vacuousObligation.obligation_id,
+      challengedObligation.obligation_id,
+    ];
+    const candidateProof = boundProofEvidence("unit", {
+      bindings: [vacuousObligation, challengedObligation].map((obligation) => ({
+        obligation_id: obligation.obligation_id,
+        obligation_version: obligation.obligation_version,
+        owner_sha256: "a".repeat(64),
+        fixtures: [
+          {
+            fixture_id: `fixture.${obligation.obligation_id}`,
+            case_kind: "positive",
+            passed: true,
+          },
+        ],
+        verifiers: [
+          {
+            verifier_id: "verifier.shared",
+            claim_id: `claim.${obligation.obligation_id}`,
+            passed: true,
+          },
+        ],
+      })),
+    });
+    const controlProof = boundProofEvidence("unit", {
+      bindings: [
+        {
+          obligation_id: vacuousObligation.obligation_id,
+          obligation_version: vacuousObligation.obligation_version,
+          owner_sha256: "b".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: "verifier.shared",
+              claim_id: `claim.${vacuousObligation.obligation_id}`,
+              passed: true,
+            },
+          ],
+        },
+        {
+          obligation_id: challengedObligation.obligation_id,
+          obligation_version: challengedObligation.obligation_version,
+          owner_sha256: "c".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: "verifier.shared",
+              claim_id: `claim.${challengedObligation.obligation_id}`,
+              passed: false,
+            },
+          ],
+        },
+      ],
+    });
+
+    const result = build(
+      request([original, candidateProof, controlProof], {
+        reviewed_obligations: [vacuousObligation, challengedObligation],
+        manifest: {
+          bindings: [
+            buildSharedVerifierControlBinding({
+              obligationId: vacuousObligation.obligation_id,
+              modulePath: "src/vacuousOwner.ts",
+              symbol: "verifyVacuous",
+              originalEvidenceId: original.evidence_id,
+              candidateProofEvidenceId: candidateProof.evidence_id,
+              controlProofEvidenceId: controlProof.evidence_id,
+              enumeratedIds,
+              controlId: "control.vacuous.pass",
+              candidateId: "candidate.vacuous.defective",
+              candidateSha256: "b".repeat(64),
+              defect: "Drops required payload field without error.",
+              status: "pass",
+            }),
+            buildSharedVerifierControlBinding({
+              obligationId: challengedObligation.obligation_id,
+              modulePath: "src/challengedOwner.ts",
+              symbol: "verifyChallenged",
+              originalEvidenceId: original.evidence_id,
+              candidateProofEvidenceId: candidateProof.evidence_id,
+              controlProofEvidenceId: controlProof.evidence_id,
+              enumeratedIds,
+              controlId: "control.challenged.fail",
+              candidateId: "candidate.challenged.defective",
+              candidateSha256: "c".repeat(64),
+              defect: "Corrupts frame checksum.",
+              status: "fail",
+            }),
+          ],
+          contradictions: [],
+        },
+      }),
+    );
+
+    expect(result.status).toBe("failed");
+    expect(result.summary.required_open).toBe(1);
+    expect(
+      result.obligations.find(
+        ({ obligation_id: id }) => id === vacuousObligation.obligation_id,
+      ),
+    ).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "vacuous",
+      diagnostics: [
+        {
+          code: "vacuous-verifier",
+          detail: expect.stringContaining("control.vacuous.pass"),
+        },
+      ],
+    });
+    expect(
+      result.obligations.find(
+        ({ obligation_id: id }) => id === challengedObligation.obligation_id,
+      ),
+    ).toMatchObject({
+      status: "verified",
+      verifier_control_status: "challenged",
+      diagnostics: [],
+    });
+  });
+});
+
+describe("reconstruction verifier invalid control evidence (#4396)", () => {
+  it("rejects negative controls with missing Evidence, unavailable status, or passing proof records", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const binding = ledgerRequest.manifest.bindings[0]!;
+    const verifier = binding.verifier!;
+    const control = verifier.controls![0]!;
+    const absent = `ev_${"d".repeat(64)}`;
+
+    const missingResult = build({
+      ...ledgerRequest,
+      manifest: {
+        ...ledgerRequest.manifest,
+        bindings: [
+          {
+            ...binding,
+            verifier: {
+              ...verifier,
+              controls: [{ ...control, result_evidence_id: absent }],
+            },
+          },
+        ],
+      },
+    });
+    expect(missingResult.status).toBe("unknown");
+    expect(missingResult.limitations.join("\n")).toContain(
+      "absent from the input bundle",
+    );
+    expect(missingResult.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "missing-control-result",
+      diagnostics: [
+        {
+          code: "missing-verifier-control-result",
+          detail: expect.stringContaining(control.control_id),
+        },
+      ],
+    });
+    expect(missingResult.evidence_links).toContain(absent);
+
+    const unavailableControl = build({
+      ...ledgerRequest,
+      manifest: {
+        ...ledgerRequest.manifest,
+        bindings: [
+          {
+            ...binding,
+            verifier: {
+              ...verifier,
+              controls: [{ ...control, status: "unknown" }],
+            },
+          },
+        ],
+      },
+    });
+    expect(unavailableControl.status).toBe("open");
+    expect(unavailableControl.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "control-unavailable",
+      diagnostics: [
+        {
+          code: "verifier-control-unavailable",
+          detail: expect.stringContaining("status is unknown"),
+        },
+      ],
+    });
+
+    const passingControlProof = boundProofEvidence("packaged", {
+      bindings: [
+        {
+          obligation_id: binding.obligation_id,
+          obligation_version: 1,
+          owner_sha256: "3".repeat(64),
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: verifier.verifier_id,
+              claim_id: verifier.claim_id,
+              passed: true,
+            },
+          ],
+        },
+      ],
+    });
+    const vacuousByProof = build(
+      request([...ledgerRequest.evidence_bundle.records, passingControlProof], {
+        manifest: {
+          ...ledgerRequest.manifest,
+          bindings: [
+            {
+              ...binding,
+              verifier: {
+                ...verifier,
+                controls: [
+                  {
+                    ...control,
+                    status: "fail",
+                    result_evidence_id: passingControlProof.evidence_id,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    expect(vacuousByProof.status).toBe("failed");
+    expect(vacuousByProof.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "vacuous",
+      diagnostics: [
+        {
+          code: "vacuous-verifier",
+          detail: expect.stringContaining("proof reported passed: true"),
+        },
+      ],
+    });
+  });
+});
+
+describe("reconstruction verifier negative control edge cases (#4396)", () => {
+  it("records vacuous-verifier before skipping missing control Evidence", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const binding = ledgerRequest.manifest.bindings[0]!;
+    const verifier = binding.verifier!;
+    const control = verifier.controls![0]!;
+    const absent = `ev_${"d".repeat(64)}`;
+
+    const vacuousMissingEvidence = build({
+      ...ledgerRequest,
+      manifest: {
+        ...ledgerRequest.manifest,
+        bindings: [
+          {
+            ...binding,
+            verifier: {
+              ...verifier,
+              controls: [
+                {
+                  ...control,
+                  status: "pass",
+                  result_evidence_id: absent,
+                },
+              ],
+            },
+          },
+        ],
+      },
+    });
+    expect(vacuousMissingEvidence.status).toBe("failed");
+    expect(vacuousMissingEvidence.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "vacuous",
+      diagnostics: expect.arrayContaining([
+        {
+          code: "vacuous-verifier",
+          detail: expect.stringContaining(control.control_id),
+        },
+        {
+          code: "missing-verifier-control-result",
+          detail: expect.stringContaining(control.control_id),
+        },
+      ]),
+    });
+  });
+});
+
+describe("reconstruction verifier negative control identity and authority (#4396)", () => {
+  it("requires candidate_sha256 for candidate_id controls and keeps weak-authority controls out of challenged status", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const binding = ledgerRequest.manifest.bindings[0]!;
+    const verifier = binding.verifier!;
+    const control = verifier.controls![0]!;
+    const { candidate_sha256: _omittedDigest, ...controlWithoutDigest } =
+      control;
+    const ownerDigestNegativeProof = boundProofEvidence("packaged", {
+      bindings: [
+        {
+          obligation_id: binding.obligation_id,
+          obligation_version: 1,
+          owner_sha256: binding.owner.owner_sha256,
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: verifier.verifier_id,
+              claim_id: verifier.claim_id,
+              passed: false,
+            },
+          ],
+        },
+      ],
+    });
+    const candidateWithoutDigest = build(
+      request(
+        [...ledgerRequest.evidence_bundle.records, ownerDigestNegativeProof],
+        {
+          manifest: {
+            ...ledgerRequest.manifest,
+            bindings: [
+              {
+                ...binding,
+                verifier: {
+                  ...verifier,
+                  controls: [
+                    {
+                      ...controlWithoutDigest,
+                      result_evidence_id: ownerDigestNegativeProof.evidence_id,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ),
+    );
+    expect(candidateWithoutDigest.status).toBe("open");
+    expect(candidateWithoutDigest.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "inapplicable-control-proof",
+      diagnostics: [
+        {
+          code: "inapplicable-verifier-control-proof",
+          detail: expect.stringContaining("distinct candidate_sha256"),
+        },
+      ],
+    });
+
+    const weakAuthorityControlProof = boundProofEvidence(
+      "packaged-weak-control",
+      {
+        bindings: [
+          {
+            obligation_id: binding.obligation_id,
+            obligation_version: 1,
+            owner_sha256: control.candidate_sha256!,
+            fixtures: [],
+            verifiers: [
+              {
+                verifier_id: verifier.verifier_id,
+                claim_id: verifier.claim_id,
+                passed: false,
+              },
+            ],
+          },
+        ],
+      },
+      "shipped-artifact",
+    );
+    const weakAuthorityControl = build(
+      request(
+        [...ledgerRequest.evidence_bundle.records, weakAuthorityControlProof],
+        {
+          manifest: {
+            ...ledgerRequest.manifest,
+            bindings: [
+              {
+                ...binding,
+                verifier: {
+                  ...verifier,
+                  controls: [
+                    {
+                      ...control,
+                      result_evidence_id: weakAuthorityControlProof.evidence_id,
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      ),
+    );
+    expect(weakAuthorityControl.status).toBe("open");
+    expect(weakAuthorityControl.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "inapplicable-control-proof",
+      diagnostics: [
+        {
+          code: "weak-verifier-authority",
+          detail: expect.stringContaining("insufficient-authority"),
+        },
+      ],
+    });
+  });
+});
+
+describe("reconstruction verifier negative control subject identity (#4396)", () => {
+  it("refuses a negative control that reuses the positive owner digest or a positive fixture id", () => {
+    const ledgerRequest = readyProcessLedgerRequest();
+    const binding = ledgerRequest.manifest.bindings[0]!;
+    const verifier = binding.verifier!;
+    const control = verifier.controls![0]!;
+    const positiveFixtureId = binding.fixtures.find(
+      (fixture) => fixture.case_kind === "positive",
+    )?.fixture_id;
+    if (positiveFixtureId === undefined)
+      throw new Error("Expected a positive fixture");
+
+    const sameOwnerFailure = boundProofEvidence("same-owner-control", {
+      bindings: [
+        {
+          obligation_id: binding.obligation_id,
+          obligation_version: 1,
+          owner_sha256: binding.owner.owner_sha256,
+          fixtures: [],
+          verifiers: [
+            {
+              verifier_id: verifier.verifier_id,
+              claim_id: verifier.claim_id,
+              passed: false,
+            },
+          ],
+        },
+      ],
+    });
+    const reusedOwner = build(
+      request([...ledgerRequest.evidence_bundle.records, sameOwnerFailure], {
+        manifest: {
+          ...ledgerRequest.manifest,
+          bindings: [
+            {
+              ...binding,
+              verifier: {
+                ...verifier,
+                controls: [
+                  {
+                    control_id: control.control_id,
+                    defect: control.defect,
+                    status: "fail" as const,
+                    result_evidence_id: sameOwnerFailure.evidence_id,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    expect(reusedOwner.status).toBe("open");
+    expect(reusedOwner.obligations[0]).toMatchObject({
+      status: "implemented",
+      verifier_control_status: "inapplicable-control-proof",
+      diagnostics: [
+        {
+          code: "inapplicable-verifier-control-proof",
+          detail: expect.stringContaining("distinct candidate_sha256"),
+        },
+      ],
+    });
+
+    const explicitOwnerReuse = build(
+      request([...ledgerRequest.evidence_bundle.records, sameOwnerFailure], {
+        manifest: {
+          ...ledgerRequest.manifest,
+          bindings: [
+            {
+              ...binding,
+              verifier: {
+                ...verifier,
+                controls: [
+                  {
+                    ...control,
+                    candidate_sha256: binding.owner.owner_sha256,
+                    result_evidence_id: sameOwnerFailure.evidence_id,
+                  },
+                ],
+              },
+            },
+          ],
+        },
+      }),
+    );
+    expect(explicitOwnerReuse.status).toBe("open");
+    expect(explicitOwnerReuse.obligations[0]).toMatchObject({
+      verifier_control_status: "inapplicable-control-proof",
+      diagnostics: [
+        {
+          code: "inapplicable-verifier-control-proof",
+          detail: expect.stringContaining("positive owner digest"),
+        },
+      ],
+    });
+
+    const reusedFixture = build({
+      ...ledgerRequest,
+      manifest: {
+        ...ledgerRequest.manifest,
+        bindings: [
+          {
+            ...binding,
+            verifier: {
+              ...verifier,
+              controls: [{ ...control, candidate_id: positiveFixtureId }],
+            },
+          },
+        ],
+      },
+    });
+    expect(reusedFixture.status).toBe("open");
+    expect(reusedFixture.obligations[0]).toMatchObject({
+      verifier_control_status: "inapplicable-control-proof",
+      diagnostics: [
+        {
+          code: "inapplicable-verifier-control-proof",
+          detail: expect.stringContaining(positiveFixtureId),
+        },
+      ],
+    });
   });
 });

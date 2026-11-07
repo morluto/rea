@@ -24,6 +24,7 @@ type ExpectedProof = {
       readonly kind: "verifier";
       readonly verifierId: string;
       readonly claimId: string;
+      readonly expectedPassed?: boolean;
     }
 );
 
@@ -36,7 +37,8 @@ type ProofRejection =
   | "owner-mismatch"
   | "revision-mismatch"
   | "claim-mismatch"
-  | "failed-proof";
+  | "failed-proof"
+  | "passed-negative-control";
 
 type ParsedProof = Result<
   {
@@ -151,6 +153,11 @@ export const qualifyReconstructionProof = (
           .map(({ passed }) => passed),
   );
   if (outcomes.length === 0) return err("claim-mismatch");
+  if (expected.kind === "verifier" && expected.expectedPassed === false) {
+    return outcomes.every((passed) => !passed)
+      ? ok(null)
+      : err("passed-negative-control");
+  }
   return outcomes.every((passed) => passed) ? ok(null) : err("failed-proof");
 };
 

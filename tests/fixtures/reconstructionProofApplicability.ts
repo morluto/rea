@@ -63,7 +63,11 @@ const applicabilitySpecifications = [
   },
   {
     name: "changed obligation revision",
-    codes: ["inapplicable-fixture-proof", "inapplicable-verifier-proof"],
+    codes: [
+      "inapplicable-fixture-proof",
+      "inapplicable-verifier-control-proof",
+      "inapplicable-verifier-proof",
+    ],
     status: "open",
     reason: "revision-mismatch",
   },
@@ -170,13 +174,13 @@ export const reconstructionProofApplicabilityCases = () =>
         replaceProof(input, result);
         break;
       case "failed proof for stale implementation":
-        input.manifest.bindings[0]!.owner.owner_sha256 = "2".repeat(64);
+        input.manifest.bindings[0]!.owner.owner_sha256 = "4".repeat(64);
         proof.fixtures[0]!.passed = false;
         proof.verifiers[0]!.passed = false;
         replaceProof(input, result);
         break;
       case "changed implementation":
-        input.manifest.bindings[0]!.owner.owner_sha256 = "2".repeat(64);
+        input.manifest.bindings[0]!.owner.owner_sha256 = "4".repeat(64);
         break;
       case "changed obligation revision":
         input.reviewed_obligations[0]!.obligation_version = 2;
