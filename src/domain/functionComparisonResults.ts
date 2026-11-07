@@ -5,6 +5,16 @@ import type {
   FunctionDimension,
 } from "./functionComparisonSchemas.js";
 
+/** Source links of every exact finding and opt-in normalized view. */
+export const functionComparisonFindingLinks = (
+  result: FunctionComparisonResult,
+): string[] => [
+  ...result.dimensions.flatMap(({ evidence_links }) => evidence_links),
+  ...(result.normalized_views?.views.flatMap(
+    ({ evidence_links }) => evidence_links,
+  ) ?? []),
+];
+
 export interface DimensionResultInput {
   readonly dimension: DimensionName;
   readonly status: "unchanged" | "changed";

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { IDENTIFIER_PATTERN } from "./stringPatterns.js";
 import { digestSchema, prefixedDigestSchema } from "./../domain/digests.js";
 import { PROCESS_COMPARISON_DIMENSIONS } from "./process/processComparison.js";
-import { functionComparisonDimensionNameSchema } from "./functionComparisonSchemas.js";
+import {
+  functionComparisonDimensionNameSchema,
+  NORMALIZED_VIEW_DIMENSIONS,
+} from "./functionComparisonSchemas.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const unknownIdSchema = prefixedDigestSchema("unk");
@@ -27,6 +30,7 @@ const functionClaimSchema = z.object({
   dimension: z.enum([
     "overall",
     ...functionComparisonDimensionNameSchema.options,
+    ...NORMALIZED_VIEW_DIMENSIONS,
   ]),
 });
 const artifactClaimSchema = z.object({
