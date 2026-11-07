@@ -347,3 +347,51 @@ describe("artifact decimal options", () => {
     });
   });
 });
+
+describe("SQLite limit options", () => {
+  // Both options are documented as integer values. Numeric coercion would read
+  // "0x14" as 20 rows and "0x1e240" as a 123456 ms deadline before the missing
+  // artifact was even consulted.
+  for (const [flag, field, values, extra] of [
+    ["--row-limit", "rowLimit", NON_INTEGER_OPTION_TEXT, ["--table", "t"]],
+    ["--worker-timeout-ms", "workerTimeoutMs", NON_INTEGER_OPTION_TEXT, []],
+  ] as const) {
+    cliTest.for(values)(
+      "rejects %j as inspect-sqlite-database " + flag,
+      async (value, { cli }) => {
+        const result = await runFileCli(cli, {
+          arguments: [
+            "inspect-sqlite-database",
+            "/nonexistent/missing.db",
+            ...extra,
+            `${flag}=${value}`,
+            "--json",
+          ],
+        });
+
+        expectCliValidationError(result, field);
+      },
+    );
+  }
+
+  cliTest("keeps decimal SQLite limits", async ({ cli }) => {
+    const result = await runFileCli(cli, {
+      arguments: [
+        "inspect-sqlite-database",
+        "/nonexistent/missing.db",
+        "--table",
+        "t",
+        "--row-limit=020",
+        "--worker-timeout-ms=60000",
+        "--json",
+      ],
+    });
+
+    // Both limits are admitted; the missing file is refused afterwards.
+    expect(result.exitCode).toBe(1);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "invalid_request",
+      details: { issues: [expect.objectContaining({ path: ["path"] })] },
+    });
+  });
+});
