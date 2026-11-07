@@ -82,6 +82,8 @@ export interface AnalysisProviderBinding {
   readonly selectionSource: "request" | "environment" | "auto-single-candidate";
   readonly profile: AnalysisProfileCommitment;
   readonly releaseVerification?: ProviderReleaseVerification;
+
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   /** The provider's capabilities, attributed to its resolved identity. */
   readonly capabilities: readonly CapabilityDescriptor[];
@@ -838,6 +840,10 @@ const selectedResult = (
         : {
             releaseVerification: structuredClone(evaluated.releaseVerification),
           }),
+
+      ...(evaluated.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: evaluated.refreshAfterRetirement }),
       ...(evaluated.createClient === undefined
         ? {}
         : { createClient: evaluated.createClient }),
@@ -921,6 +927,7 @@ const selectedRejection = (
   origin,
   code: rejection.code,
   reason: rejection.reason,
+  ...("remediation" in rejection ? { remediation: rejection.remediation } : {}),
   // ProviderSelectionError owns the single defensive diagnostic copy.
   diagnostics: rejection.diagnostics,
 });

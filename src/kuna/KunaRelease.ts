@@ -1,5 +1,5 @@
 /** Kuna release whose CLI and project layout REA verified; others report as unverified. */
-export const KUNA_VERIFIED_VERSION = "1.986";
+export const KUNA_VERIFIED_VERSION = "1.990";
 
 /** Scope of the version comparison, shared by session output and verification. */
 export const KUNA_RELEASE_VERIFICATION_EXPLANATION =

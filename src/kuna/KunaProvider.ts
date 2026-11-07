@@ -114,15 +114,8 @@ export class KunaProvider implements AnalysisProviderCandidate {
   }
 
   capabilities() {
-    const availability = this.inspectAvailability();
     return kunaCapabilities(
-      availability.status === "available"
-        ? { available: true }
-        : {
-            available: false,
-            reason: availability.reason,
-            code: availability.code,
-          },
+      this.inspectAvailability(),
       this.#deadline,
       this.#heapRequest,
     );
@@ -138,6 +131,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: configuration.error.code,
         reason: configuration.error.reason,
+        remediation: configuration.error.remediation,
         diagnostics: {
           configured: configuration.error.code !== "not_configured",
           version_probed: false,
@@ -153,6 +147,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: "executable_missing",
         reason: `Cannot execute REA_KUNA_COMMAND ${command}: ${cause instanceof Error ? cause.message : String(cause)}. ${KUNA_COMMAND_REMEDIATION}`,
+        remediation: KUNA_COMMAND_REMEDIATION,
         diagnostics: { configured: true, command, version_probed: false },
       };
     }
@@ -288,7 +283,6 @@ export class KunaProvider implements AnalysisProviderCandidate {
           kuna_sha256: value.sha256,
           kuna_command: value.configuration.command,
           kuna_executable: value.executable,
-          verified_release: value.verified,
           jobs: value.configuration.jobs,
           export: "decompile-project",
           reference_graph: {
@@ -305,6 +299,7 @@ export class KunaProvider implements AnalysisProviderCandidate {
             termination: "any",
             xrefs: false,
           },
+          value_flow: "explicitly-unavailable-v1",
           cache_policy: "live",
         },
       ),

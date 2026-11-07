@@ -80,6 +80,30 @@ const javaScriptType = (
 const asciiLowercase = (value: string): string =>
   value.replace(/[A-Z]/gu, (letter) => letter.toLowerCase());
 
+/** SVG uses href/XLink and has no HTML language fallback or src attribute. */
+const scriptAttributes = (node: DefaultTreeAdapterTypes.Element) => {
+  const html = node.namespaceURI === "http://www.w3.org/1999/xhtml";
+  const source = html
+    ? node.attrs.find(({ name }) => name === "src")
+    : (node.attrs.find(
+        ({ name, namespace }) => name === "href" && namespace === undefined,
+      ) ??
+      node.attrs.find(
+        ({ name, namespace }) =>
+          name === "href" && namespace === "http://www.w3.org/1999/xlink",
+      ));
+  return {
+    source,
+    scriptType: javaScriptType(
+      html
+        ? node.attrs
+        : node.attrs.filter(
+            ({ name, namespace }) => name === "type" && namespace === undefined,
+          ),
+    ),
+  };
+};
+
 /**
  * Extract inert HTML script references, inline JavaScript bodies, and the
  * first document base href.
@@ -105,15 +129,19 @@ export const htmlArtifactReferences = (
     if (node === undefined) continue;
     if (
       defaultTreeAdapter.isElementNode(node) &&
-      node.namespaceURI === "http://www.w3.org/1999/xhtml"
+      (node.namespaceURI === "http://www.w3.org/1999/xhtml" ||
+        node.namespaceURI === "http://www.w3.org/2000/svg")
     ) {
-      if (node.tagName === "base" && baseHref === null) {
+      if (
+        node.namespaceURI === "http://www.w3.org/1999/xhtml" &&
+        node.tagName === "base" &&
+        baseHref === null
+      ) {
         const href = node.attrs.find(({ name }) => name === "href");
         if (href !== undefined) baseHref = href.value;
       }
       if (node.tagName === "script") {
-        const scriptType = javaScriptType(node.attrs);
-        const src = node.attrs.find(({ name }) => name === "src");
+        const { scriptType, source: src } = scriptAttributes(node);
         const location = node.sourceCodeLocation?.startTag;
         if (src !== undefined && src.value !== "" && location !== undefined) {
           scripts.push({

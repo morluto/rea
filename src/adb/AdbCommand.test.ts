@@ -65,7 +65,21 @@ it("recognizes only the completed empty false result as absence", async () => {
       killed: false,
     }),
   );
-  await expect(probe()).resolves.toEqual({ ok: true, value: false });
+  await expect(probe()).resolves.toEqual({
+    ok: true,
+    value: {
+      matches: false,
+      capturedOutput: {
+        exit_code: 1,
+        stdout: "",
+        stderr: "",
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        signal: null,
+        truncated: false,
+      },
+    },
+  });
 });
 
 it.each([
@@ -124,7 +138,21 @@ it("recognizes an empty successful probe as existence", async () => {
     stdout: Buffer.alloc(0),
     stderr: Buffer.alloc(0),
   });
-  await expect(probe()).resolves.toEqual({ ok: true, value: true });
+  await expect(probe()).resolves.toEqual({
+    ok: true,
+    value: {
+      matches: true,
+      capturedOutput: {
+        exit_code: 0,
+        stdout: "",
+        stderr: "",
+        stdout_bytes: 0,
+        stderr_bytes: 0,
+        signal: null,
+        truncated: false,
+      },
+    },
+  });
 });
 
 it.each(["stdout", "stderr"] as const)(
@@ -263,5 +291,141 @@ it("keeps a physical failure even when the later abort reason is that same error
   expect(result).toMatchObject({
     ok: false,
     error: { _tag: "AnalysisProtocolError", cause: failure },
+  });
+});
+
+const STARTUP_NOTICES = [
+  "* daemon not running; starting now at tcp:5037\n* daemon started successfully\n",
+  "* daemon not running. starting it now on port 5037 *\r\n* daemon started successfully *\r\n",
+];
+it.each(STARTUP_NOTICES)(
+  "recognizes completed true and false probes with successful startup: %j",
+  async (stderr) => {
+    vi.mocked(execFileBytes).mockResolvedValueOnce({
+      stdout: Buffer.alloc(0),
+      stderr: Buffer.from(stderr),
+    });
+    await expect(probe()).resolves.toMatchObject({
+      ok: true,
+      value: {
+        matches: true,
+        capturedOutput: {
+          stdout: "",
+          stderr,
+          exit_code: 0,
+          stderr_bytes: Buffer.byteLength(stderr),
+        },
+      },
+    });
+    vi.mocked(execFileBytes).mockRejectedValueOnce(
+      Object.assign(new Error("false"), {
+        code: 1,
+        stdout: "",
+        stderr,
+        signal: null,
+        killed: false,
+      }),
+    );
+    await expect(probe()).resolves.toMatchObject({
+      ok: true,
+      value: {
+        matches: false,
+        capturedOutput: {
+          stdout: "",
+          stderr,
+          exit_code: 1,
+          stderr_bytes: Buffer.byteLength(stderr),
+        },
+      },
+    });
+  },
+);
+
+it.each([
+  "* daemon not running; starting now at tcp:5037\n",
+  "* daemon failed to start\n",
+  "* daemon started successfully\n* daemon not running; starting now at tcp:5037\n",
+  "* daemon started successfully\nunexpected\n",
+  "\n",
+  " ",
+])("refuses an incomplete or unknown startup output: %j", async (stderr) => {
+  vi.mocked(execFileBytes).mockResolvedValueOnce({
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.from(stderr),
+  });
+  await expect(probe()).resolves.toMatchObject({
+    ok: false,
+    error: { capturedOutput: { stderr, exit_code: 0 } },
+  });
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("false"), {
+      code: 1,
+      stdout: "",
+      stderr,
+      signal: null,
+      killed: false,
+    }),
+  );
+  await expect(probe()).resolves.toMatchObject({
+    ok: false,
+    error: { capturedOutput: { stderr, exit_code: 1 } },
+  });
+});
+
+it("reports an adb that never started without claiming an exit code", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn ENOTDIR"), {
+      code: "ENOTDIR",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisProtocolError",
+      commandFailure: { code: "ENOTDIR", spawnFailed: true, signal: null },
+    },
+  });
+});
+
+it("reports exhausted host capacity rather than an adb protocol failure", async () => {
+  vi.mocked(execFileBytes).mockRejectedValueOnce(
+    Object.assign(new Error("spawn EAGAIN"), {
+      code: "EAGAIN",
+      spawnFailed: true,
+      stdout: "",
+      stderr: "",
+      signal: null,
+      killed: false,
+    }),
+  );
+  const result = await runAdbCapture(
+    "list_adb_devices",
+    { device: "device" },
+    { binary: "/host/adb", pathSource: "environment", environment: {} },
+    ["devices"],
+    { timeoutMs: 100, maxOutputBytes: 1024 },
+    undefined,
+  );
+  expect(result).toMatchObject({
+    ok: false,
+    error: {
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+      retryable: true,
+      reportedLimits: { spawn_error: "EAGAIN" },
+    },
   });
 });

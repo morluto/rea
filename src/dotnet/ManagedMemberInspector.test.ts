@@ -12,6 +12,7 @@ import {
   type ManagedMetadataLayout,
 } from "./ManagedMetadataLayout.js";
 import { readManagedPeLayout } from "./ManagedPeReader.js";
+import { managedMemberListStartsFixture } from "../../tests/fixtures/managedMemberListStarts.js";
 import { memberListIndexSize } from "./ManagedMemberPointers.js";
 import { edges } from "./ManagedMemberRows.js";
 import { parseUserStrings } from "./ManagedUserStrings.js";
@@ -101,14 +102,6 @@ it.each([
 );
 
 describe("managed compressed integer framing", () => {
-  it.each([[0x80], [0xc0], [0xc0, 1], [0xc0, 1, 2]])(
-    "keeps an incomplete width %j distinct from a reserved prefix",
-    (...value) => {
-      expect(() => readCompressed(Buffer.from(value), 0)).toThrow(
-        "truncated compressed integer",
-      );
-    },
-  );
   it("preserves complete widths and rejects reserved leading bits", () => {
     expect(readCompressed(Buffer.from([0x80, 1]), 0)).toEqual({
       value: 1,
@@ -2220,6 +2213,127 @@ describe("managed TypeDef list ownership bounds", () => {
   });
 });
 
+describe("managed TypeDef ordering across invalid coordinates", () => {
+  it.each([
+    {
+      label: "both lists decrease",
+      fields: [2, 0, 1],
+      methods: [2, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "out-of-range nonzero coordinates are skipped",
+      fields: [2, 65535, 1],
+      methods: [2, 65535, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 4,
+      decreases: [
+        ["FieldList", 3],
+        ["MethodList", 3],
+      ],
+    },
+    {
+      label: "known coordinates stay ordered",
+      fields: [1, 0, 1],
+      methods: [1, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [],
+    },
+    {
+      label: "only fields decrease",
+      fields: [2, 0, 1],
+      methods: [1, 1, 1],
+      fieldOwner: null,
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["FieldList", 3]],
+    },
+    {
+      label: "only methods decrease",
+      fields: [1, 1, 1],
+      methods: [2, 0, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: null,
+      issues: 2,
+      decreases: [["MethodList", 3]],
+    },
+    {
+      label: "multiple invalid rows",
+      fields: [2, 0, 0, 1],
+      methods: [2, 0, 0, 1],
+      fieldOwner: null,
+      methodOwner: null,
+      issues: 6,
+      decreases: [
+        ["FieldList", 4],
+        ["MethodList", 4],
+      ],
+    },
+    {
+      label: "one invalid column does not hide another column or a valid tail",
+      fields: [1, 0, 1],
+      methods: [2, 1, 1],
+      fieldOwner: "0x02000003",
+      methodOwner: "0x02000003",
+      issues: 2,
+      decreases: [["MethodList", 2]],
+    },
+  ] as const)(
+    "checks independent ordering across invalid starts: $label",
+    (test) => {
+      const bytes = managedMemberListStartsFixture(test.fields, test.methods);
+      const result = inspectManagedMembersBytes(
+        bytes,
+        managedPeFixtureTarget(bytes),
+      );
+      expect(result.fields).toMatchObject([
+        {
+          token: "0x04000001",
+          declaring_type: test.fieldOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.fieldOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.methods).toMatchObject([
+        {
+          token: "0x06000001",
+          declaring_type: test.methodOwner === null ? null : "Fixture.Program",
+          declaring_type_token: test.methodOwner,
+          signature: { parse_status: "decoded" },
+        },
+      ]);
+      expect(result.types.at(-1)).toMatchObject({
+        field_list: { count: test.fieldOwner === null ? 0 : 1 },
+        method_list: { count: test.methodOwner === null ? 0 : 1 },
+      });
+      expect(result.coverage.state).toBe("partial");
+      expect(result.coverage.issues).toHaveLength(test.issues);
+      expect(
+        result.coverage.issues.filter(({ detail }) =>
+          detail.includes("decreases"),
+        ),
+      ).toMatchObject(
+        test.decreases.map(([list, row]) => ({
+          code: "invalid-row",
+          scope: `metadata.TypeDef:0x0200000${String(row)}`,
+          detail: expect.stringContaining(
+            `${list} start 1 decreases from preceding start 2`,
+          ),
+        })),
+      );
+    },
+  );
+});
+
 describe("managed TypeDef list ordering", () => {
   it("leaves adjacent ownership unknown when valid list starts decrease", () => {
     const bytes = buildManagedPeFixture({
@@ -2418,6 +2532,9 @@ it.each([
 it.each([
   [[], "truncated compressed integer"],
   [[0x80], "truncated compressed integer"],
+  [[0xc0], "truncated compressed integer"],
+  [[0xc0, 1], "truncated compressed integer"],
+  [[0xc0, 1, 2], "truncated compressed integer"],
   [[0xc0, 0, 0], "truncated compressed integer"],
   [[0xe0], "reserved compressed integer"],
 ] as const)(
@@ -3046,6 +3163,94 @@ it("retains names of unselected fields without admitting their malformed signatu
     ),
   ).toEqual([]);
 });
+
+it("keeps names on call edges into unselected types", () => {
+  const bytes = buildManagedNestedTypeFixture({ topLevelTypes: true });
+  const pe = readManagedPeLayout(bytes);
+  if (pe.cli === null) throw new Error("Expected CLI fixture");
+  const { rva, size } = pe.cli.metadata;
+  const layout = readManagedMetadataLayout(
+    bytes,
+    pe.rvaToOffset(rva, size, "cli.metadata"),
+    size,
+  );
+  // The selected method calls the MethodDef row owned by the unselected
+  // Inner type: skipping that row must not lose the edge target's name.
+  const method = metadataRowOffset(layout, 6, 2);
+  const methodRva = bytes.readUInt32LE(method);
+  const body = tokenBody([[call, 0x06000001]]);
+  bytes.set(body, pe.rvaToOffset(methodRva, body.length, "fixture CIL"));
+  const result = inspectManagedMembersBytes(
+    bytes,
+    managedPeFixtureTarget(bytes),
+    {
+      typeNames: ["OtherInner"],
+    },
+  );
+  expect(result.methods).toMatchObject([{ token: "0x06000002", name: "M" }]);
+  expect(result.call_edges).toMatchObject([
+    {
+      target_token: "0x06000001",
+      target_name: "M",
+      target_declaring_type: "Inner",
+    },
+  ]);
+  expect(result.coverage).toEqual({ state: "complete", issues: [] });
+});
+
+it.each([false, true])(
+  "keeps selected and unselected generic call targets named (malformed=%s)",
+  (malformed) => {
+    const bytes = buildManagedPeFixture({
+      additionalEmptyTypes: 1,
+      methodRowCount: 2,
+      firstTypeMethodRowCount: 1,
+      distinctMemberNames: true,
+      methodSignature: genericDef,
+      methodSpecMethods: [2 << 1, 1 << 1],
+      ...(malformed
+        ? { methodSpecInstantiation: Buffer.from([0x0a, 0x00]) }
+        : {}),
+      ilBody: tokenBody([
+        [call, 0x2b00_0001],
+        [call, 0x2b00_0002],
+      ]),
+    });
+    const result = inspectManagedMembersBytes(
+      bytes,
+      managedPeFixtureTarget(bytes),
+      { typeNames: ["Fixture.Empty0"] },
+    );
+    expect(result.methods).toMatchObject([
+      { token: "0x06000001", name: "Method0" },
+    ]);
+    expect(result.call_edges).toMatchObject([
+      {
+        target_token: "0x2b000001",
+        target_kind: "method-spec",
+        target_name: "Method1",
+        target_declaring_type: "Fixture.Program",
+      },
+      {
+        target_token: "0x2b000002",
+        target_kind: "method-spec",
+        target_name: "Method0",
+        target_declaring_type: "Fixture.Empty0",
+      },
+    ]);
+    expect(result.coverage.state).toBe(malformed ? "partial" : "complete");
+    expect(
+      result.coverage.issues.map(({ code, scope }) => [code, scope]),
+    ).toEqual(
+      malformed
+        ? [
+            ["invalid-blob", "metadata.MethodSpec:0x2b000001"],
+            ["invalid-blob", "metadata.MethodSpec:0x2b000002"],
+          ]
+        : [],
+    );
+  },
+);
 
 it.each([false, true])(
   "keeps ordinary TypeSpec operands distinct from GENERICINST heads (generic=%s)",

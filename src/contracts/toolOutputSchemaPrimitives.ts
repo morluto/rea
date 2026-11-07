@@ -3,6 +3,7 @@ import { z } from "zod";
 import { providerReleaseVerificationSchema } from "../domain/providerReleaseVerification.js";
 import { investigationStatisticsSchema } from "../domain/investigationLifecycle.js";
 import { utcDateTimeSchema } from "../domain/offsetDateTime.js";
+import { analysisCleanupRetrySchema } from "../domain/analysisErrorRecovery.js";
 
 import { functionDossierSchema } from "../domain/native/functionDossier.js";
 import { analysisProfileSchema } from "../domain/analysisProfile.js";
@@ -50,6 +51,9 @@ export const requireOutputSchema = <
   return schema;
 };
 
+/** The readiness owner's repair instruction; never the failure description. */
+const providerRemediation = z.string().min(1);
+
 const providerCapabilityFacts = {
   operation: z.string(),
   effects: z.object({
@@ -76,6 +80,8 @@ export const providerCapability = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
+    remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 export type ProviderCapability = z.output<typeof providerCapability>;
@@ -109,6 +115,8 @@ const providerCapabilityGroup = z.discriminatedUnion("available", [
     available: z.literal(false),
     reason: z.string().nullable(),
     availability_code: z.enum(PROVIDER_REJECTION_CODES).nullable(),
+    remediation: providerRemediation.exactOptional(),
+    runtime_unavailable: z.literal(true).exactOptional(),
   }),
 ]);
 
@@ -134,6 +142,13 @@ export const expandProviderCapabilities = (
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,
+          ...("remediation" in group && group.remediation !== undefined
+            ? { remediation: group.remediation }
+            : {}),
+          ...("runtime_unavailable" in group &&
+          group.runtime_unavailable === true
+            ? { runtime_unavailable: true }
+            : {}),
           effects: Object.fromEntries(
             PROVIDER_EFFECT_NAMES.map((name) => [
               name,
@@ -256,6 +271,7 @@ const providerAvailability = z.discriminatedUnion("status", [
     diagnostics: jsonObjectSchema,
   }),
   providerAvailabilityStates.unavailable.extend({
+    remediation: providerRemediation,
     diagnostics: jsonObjectSchema,
   }),
 ]);
@@ -305,7 +321,7 @@ export const analysisProviderCandidate = z.object({
   capabilities: z.array(providerCapabilitySet),
 });
 
-/** Summary candidate: the same status, code, and reason without diagnostics or capabilities. */
+/** Summary candidate: the same status, code, and reason without remediation, diagnostics or capabilities. */
 export const analysisProviderCandidateSummary = z.strictObject({
   provider: providerIdentity,
   availability: z.discriminatedUnion("status", [
@@ -536,6 +552,7 @@ export const sessionProviderFacts = z
   .object({
     investigation: investigationStatisticsSchema,
     cleanup_pending: z.boolean(),
+    cleanup_retry: analysisCleanupRetrySchema.optional(),
     capabilities: z.array(providerCapabilitySet),
     analysis_run: analysisRun,
     analysis_activity: analysisActivity,

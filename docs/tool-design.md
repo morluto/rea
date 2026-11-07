@@ -8,8 +8,11 @@ Extend a tool when intent and result contract match; add one for a distinct
 outcome or materially different authority. Public names and semantics remain
 provider-neutral, with exact coverage reported per provider.
 
-Keep the catalog complete; report capability/session availability instead of
-truncating schemas. Serialized bytes alone do not establish agent usability.
+Keep the discoverable inventory complete within the caller's selected scope;
+report capability/session availability independently of catalog visibility.
+An opt-in dynamic catalog must retain canonical named contracts and provide
+discovery and recovery for clients without refresh. Serialized bytes alone do
+not establish agent usability.
 
 ## Choose the tool shape
 
@@ -84,6 +87,13 @@ Inspect the live CLI help or MCP descriptions and schemas alongside the owning
 contracts and documentation. Choose representative tasks and their nearest REA
 and native alternatives rather than counting upstream commands.
 
+For those tasks, inspect relevant rendered MCP prompts, guided workflows and
+packaged skill advice in the versions actually in use. Follow the suggested
+producer-to-consumer handoff against the live contracts, including source
+identity, session lifetime and available alternatives. Matching text between
+two renderers does not establish that their shared advice is correct or that an
+agent selected the workflow.
+
 Exercise the selected public workflows, including the steps before and after a
 tool call. Check task selection, input choices, returned facts and their source,
 partial or unsupported outcomes, and applicable session and recovery behavior.
@@ -109,6 +119,23 @@ caller's exact selector, the observed reason and any candidates, and give a
 next step that addresses that outcome. An inventory miss does not prove that
 the artifact lacks the requested item.
 
+For prerequisite failures, identify what the requested operation actually needs.
+A missing executable, a wrong path, an incompatible host or version, denied
+permission, and a download timeout need different repairs. Preserve the observed
+failure instead of calling all of them "not installed".
+
+Derive the required engine from the operation's execution contract. For example,
+`inspect_firmware_regions` needs Binwalk; `extract_firmware` needs Unblob.
+Configuring the other tool cannot enable the requested operation. An installed
+JDK outside the selected PATH may need `JAVA_HOME`, not another installation.
+Say where a setting must change: a shell export does not change an already
+running MCP server's environment.
+
+Keep repair instructions with the contract that owns the failure, and preserve
+them through provider readiness, capability discovery, doctor and CLI/MCP output.
+An error description is not a repair instruction. Do not make each consumer
+guess the fix from diagnostic text or invent another list of prerequisites.
+
 Keep recovery within the selected target, provider, project and authority. If
 another context could help, describe it as an explicit choice and state any
 relevant loss of state; do not switch or select a candidate automatically.
@@ -119,6 +146,11 @@ Verify recovery through the public workflow: reproduce the failure, follow
 the suggested next step when feasible, and check the result and session state.
 Include a malformed-input control so schema guidance remains available when it
 is actually needed. Compare CLI and MCP when both expose the operation.
+
+For each confirmed bug, check sibling adapters and other consumers of the same
+facts. Reproduce suspected matches and retain a working comparison where one
+exists. Group reports and fixes around the shared cause; similar wording alone
+does not establish another instance.
 
 ## Define the contract
 
