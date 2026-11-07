@@ -129,6 +129,9 @@ class WebsiteLinkAuditChecks(unittest.TestCase):
             ('latest', 'latest', 'ok'),
             ('latest/download/tool%20kit.zip', 'latest', 'ok'),
             ('latest/download/absent.zip', 'latest', 'broken'),
+            ('latest/%64ownload/absent.zip', 'latest', 'broken'),
+            ('%64ownload/series/v1/absent.zip', 'tags/series%2Fv1', 'broken'),
+            ('latest/%64ownload/tool%20kit.zip', 'latest', 'ok'),
         )
         for route, endpoint, status in cases:
             with self.subTest(route=route), patch.object(AUDIT, 'github_api', return_value={'assets': [{'name': 'tool kit.zip'}]}) as request:
