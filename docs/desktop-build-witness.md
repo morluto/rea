@@ -90,7 +90,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `uncheckable_changes` when the app's keys in dconf were read and changed,
    listing the database in `files`, since no check reads dconf (a version
    the capture kept no copy of, as it keeps none of the database at the
-   start, counts as holding none of the app's keys);
+   start, is `unreadable_changes`, not an empty key list);
    `unreadable_changes` when a dconf database changed but REA could not read
    it, such as without `dconf-cli`, with the read `error`, so whose keys
    changed is unknown; and `no_document` when no file has the document role.

@@ -1,6 +1,10 @@
 import { posix } from "node:path";
 
-import { desktopArgumentIndex, execTakesFiles } from "./desktopEntry.js";
+import {
+  desktopArgumentIndex,
+  execTakesFiles,
+  unwrapDesktopCommand,
+} from "./desktopEntry.js";
 
 /** What the exported app opens at launch. */
 export type LaunchDocument =
@@ -88,10 +92,25 @@ export const openSeedDocument = (
     if (path === undefined) return argument;
     return absoluteSeed(path) ?? argument;
   };
+  const command = unwrapDesktopCommand(argv);
   const firstArgument = desktopArgumentIndex(argv);
-  const argvSpelled = argv.map((argument, index) =>
-    index < firstArgument ? argument : retarget(argument),
-  );
+  const retargetEnvValue = (argument: string) => {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*=/u.test(argument)) return argument;
+    const split = argument.indexOf("=");
+    const value = argument.slice(split + 1);
+    const path = homePathOf(value, home, facts.workingDirectory);
+    const absolute = path === undefined ? undefined : absoluteSeed(path);
+    return absolute === undefined
+      ? argument
+      : `${argument.slice(0, split + 1)}${absolute}`;
+  };
+  const argvSpelled = argv.map((argument, index) => {
+    if (index === 0 || (command.kind === "direct" && index === command.index))
+      return argument;
+    return index < firstArgument
+      ? retargetEnvValue(argument)
+      : retarget(argument);
+  });
   const named = argv
     .slice(firstArgument)
     .map((argument) => {
