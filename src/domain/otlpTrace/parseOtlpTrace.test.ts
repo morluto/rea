@@ -423,6 +423,19 @@ describe("parseOtlpTrace parent links", () => {
     expect(report.summary.with_parent).toBe(1);
   });
 
+  it("identifies the source of malformed and unidentifiable span entries", () => {
+    const report = parse(envelope([null, span({ spanId: "broken" })]));
+    expect(
+      report.diagnostics
+        .filter((entry) => entry.code === "invalid-record")
+        .map((entry) => entry.source_pointer)
+        .sort(),
+    ).toEqual([
+      "/resourceSpans/0/scopeSpans/0/spans/0",
+      "/resourceSpans/0/scopeSpans/0/spans/1",
+    ]);
+  });
+
   it("keeps a span-local diagnostic pointed at its own record", () => {
     const report = parse(
       envelope([

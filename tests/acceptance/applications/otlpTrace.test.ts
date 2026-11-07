@@ -19,6 +19,8 @@ const exportDocument = {
         {
           scope: { name: "net.peer", version: "0.9" },
           spans: [
+            null,
+            { traceId: "1".repeat(32), spanId: "broken" },
             {
               traceId: "1".repeat(32),
               spanId: "2".repeat(16),
@@ -99,6 +101,16 @@ cliTest(
       parent_span_id_raw: "broken",
     });
     expect(report.roots).toEqual(["2".repeat(16)]);
+    expect(
+      report.diagnostics
+        .filter((entry) => entry.code === "invalid-record")
+        .map((entry) => entry.source_pointer)
+        .sort(),
+    ).toEqual([
+      "/resourceSpans/0/scopeSpans/0/spans/0",
+      "/resourceSpans/0/scopeSpans/0/spans/1",
+      "/resourceSpans/0/scopeSpans/0/spans/3",
+    ]);
     expect(report.spans[2]).toMatchObject({
       span_id: "3".repeat(16),
       parent_span_id: "2".repeat(16),

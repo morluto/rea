@@ -194,6 +194,7 @@ const parseSpan = (
       problems: [
         {
           code: "invalid-record",
+          pointer,
           message: `Span at ${pointer} is missing a valid 16-byte traceId or 8-byte spanId.`,
         },
       ],
@@ -431,6 +432,7 @@ const walkResourceSpans = (
           walked.droppedRecords += 1;
           problems.add(() => ({
             code: "invalid-record",
+            pointer,
             message: `Span entry at ${pointer} is not an object and was not inventoried.`,
           }));
           continue;
