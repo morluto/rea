@@ -46,16 +46,19 @@ diagnostic and no records, rather than a silent empty result.
 Each diagnostic carries the ordinal of the record that produced it (or `null`
 for an archive-wide fact) and a stable code:
 
-| code                         | meaning                                                |
-| ---------------------------- | ------------------------------------------------------ |
-| `not-a-warc-stream`          | the decoded bytes do not begin a WARC record           |
-| `truncated-record`           | the header block or the declared payload is incomplete |
-| `unsupported-compression`    | the gzip member could not be decoded                   |
-| `invalid-header-line`        | a header line is not a single field                    |
-| `invalid-content-length`     | the record has no usable `Content-Length`              |
-| `record-limit-reached`       | inventory stopped at `max_records`                     |
-| `decoded-size-limit-reached` | decompression would exceed `max_decoded_bytes`         |
-| `trailing-bytes`             | bytes between or after records are not a WARC record   |
+| code                         | meaning                                                             |
+| ---------------------------- | ------------------------------------------------------------------- |
+| `not-a-warc-stream`          | the decoded bytes do not begin a WARC record                        |
+| `truncated-record`           | the header block or the declared payload is incomplete              |
+| `unsupported-compression`    | the gzip member could not be decoded                                |
+| `invalid-header-line`        | a header line is not a single field                                 |
+| `invalid-content-length`     | the record has no usable `Content-Length`                           |
+| `record-limit-reached`       | inventory stopped at `max_records`                                  |
+| `decoded-size-limit-reached` | decompression would exceed `max_decoded_bytes`                      |
+| `trailing-bytes`             | bytes between or after records are not a WARC record                |
+| `header-line-limit-reached`  | a header line exceeds 8 KiB                                         |
+| `header-block-limit-reached` | a header exceeds 1 MiB or 20000 retained fields and malformed lines |
+| `diagnostic-limit-reached`   | further diagnostics were omitted after 10000                        |
 
 A record whose header block cannot be read ends the scan, because the next
 record's offset cannot be established without inventing one. Records read before
@@ -70,7 +73,9 @@ that point are still reported and counted.
 | `max_records`       | 20000   | 20000   |
 
 These are resource allowances, not WARC or HTTP format limits. The decoded
-stream is bounded during inflation, so an archive that expands past
+stream is bounded during inflation, and each record header is bounded before
+fields and diagnostics are collected. A header exceeding 8 KiB per line,
+1 MiB total, or 20000 retained fields and malformed lines stops the scan with partial coverage. An archive that expands past
 `max_decoded_bytes` is reported instead of exhausting memory.
 
 ## Identity

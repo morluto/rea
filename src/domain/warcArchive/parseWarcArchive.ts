@@ -3,6 +3,8 @@ import { gunzipSync } from "node:zlib";
 import { ok, type Result } from "../result.js";
 import {
   WARC_ARCHIVE_HEADER_LINE_BYTES,
+  WARC_ARCHIVE_HEADER_BLOCK_BYTES,
+  WARC_ARCHIVE_HEADER_FIELDS,
   WARC_ARCHIVE_MAX_DIAGNOSTICS,
   type WarcArchive,
   type WarcArchiveArtifact,
@@ -76,8 +78,8 @@ const findLineEnd = (data: Buffer, from: number) => {
 
 interface HeaderBlockResult {
   readonly block: HeaderBlock | null;
-  /** True when the reader gave up on a line's length, not on the record. */
-  readonly lineLimitHit: boolean;
+  /** Resource allowance reached while reading this header, if any. */
+  readonly limit: "line" | "block-bytes" | "block-fields" | null;
 }
 
 /**
@@ -87,22 +89,24 @@ interface HeaderBlockResult {
  */
 const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
   const versionLine = findLineEnd(data, start);
-  if (versionLine === null) return { block: null, lineLimitHit: false };
+  if (versionLine === null) return { block: null, limit: null };
   // A version line past the allowance is a reader ceiling, not damage: the
   // caller names the ceiling so nobody hunts for a bad archive that is intact.
   if (versionLine.contentEnd - start > WARC_ARCHIVE_HEADER_LINE_BYTES)
-    return { block: null, lineLimitHit: true };
+    return { block: null, limit: "line" };
   const version = data.toString("utf8", start, versionLine.contentEnd);
-  if (!version.startsWith("WARC/")) return { block: null, lineLimitHit: false };
+  if (!version.startsWith("WARC/")) return { block: null, limit: null };
   const fields = new Map<string, string>();
   const malformed: string[] = [];
   let cursor = versionLine.end;
   for (;;) {
-    if (cursor >= data.length) return { block: null, lineLimitHit: false };
+    if (cursor >= data.length) return { block: null, limit: null };
     const line = findLineEnd(data, cursor);
-    if (line === null) return { block: null, lineLimitHit: false };
+    if (line === null) return { block: null, limit: null };
     if (line.contentEnd - cursor > WARC_ARCHIVE_HEADER_LINE_BYTES)
-      return { block: null, lineLimitHit: true };
+      return { block: null, limit: "line" };
+    if (line.end - start > WARC_ARCHIVE_HEADER_BLOCK_BYTES)
+      return { block: null, limit: "block-bytes" };
     if (line.contentEnd === cursor) {
       return {
         block: {
@@ -111,7 +115,7 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
           malformed,
           bytes: line.end - start,
         },
-        lineLimitHit: false,
+        limit: null,
       };
     }
     const text = data.toString("utf8", cursor, line.contentEnd);
@@ -120,16 +124,15 @@ const readHeaderBlock = (data: Buffer, start: number): HeaderBlockResult => {
     // A colon was the only check before, so "Bad Name: value" passed and the
     // field was dropped without a diagnostic. Spaces are not allowed in a
     // WARC field name, and an unreported drop is a silent loss.
-    if (colon <= 0 || !FIELD_NAME.test(name)) {
-      malformed.push(text);
-    } else {
-      const value = text.slice(colon + 1).trim();
-      // RFC 2616 folding is malformed for WARC, and so is a repeated field
-      // unless WARC defines it as repeatable. The first occurrence stays
-      // authoritative either way.
-      const first = fields.get(name);
-      if (first === undefined) fields.set(name, value);
-      else if (!REPEATABLE_FIELDS.has(name)) malformed.push(text);
+    const invalid = colon <= 0 || !FIELD_NAME.test(name);
+    const first = invalid ? undefined : fields.get(name);
+    const malformedLine =
+      invalid || (first !== undefined && !REPEATABLE_FIELDS.has(name));
+    if (malformedLine || first === undefined) {
+      if (fields.size + malformed.length >= WARC_ARCHIVE_HEADER_FIELDS)
+        return { block: null, limit: "block-fields" };
+      if (malformedLine) malformed.push(text);
+      else fields.set(name, text.slice(colon + 1).trim());
     }
     cursor = line.end;
   }
@@ -265,16 +268,22 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
         "trailing-bytes",
         `${nextVersion - searchFrom} unexpected byte(s) between records.`,
       );
-    const { block, lineLimitHit } = readHeaderBlock(data, nextVersion);
+    const { block, limit } = readHeaderBlock(data, nextVersion);
     if (block === null) {
       // Name the ceiling when the reader stopped on one: a long but intact
       // header is not archive damage, and reporting it as truncation sends the
       // operator looking for a defect that is not there.
-      if (lineLimitHit)
+      if (limit === "line")
         diagnostic(
           ordinal,
           "header-line-limit-reached",
           `The record starting at decoded offset ${nextVersion} has a version or header line longer than ${WARC_ARCHIVE_HEADER_LINE_BYTES} bytes; later records were not read.`,
+        );
+      else if (limit !== null)
+        diagnostic(
+          ordinal,
+          "header-block-limit-reached",
+          `The record starting at decoded offset ${nextVersion} exceeds the header ${limit === "block-bytes" ? `byte allowance of ${WARC_ARCHIVE_HEADER_BLOCK_BYTES}` : `retained field and malformed-line allowance of ${WARC_ARCHIVE_HEADER_FIELDS}`}; later records were not read.`,
         );
       else
         diagnostic(

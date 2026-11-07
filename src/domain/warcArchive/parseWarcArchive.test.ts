@@ -381,6 +381,41 @@ describe("bounded archives", () => {
     expect(archive.source_coverage.status).toBe("partial");
   });
 
+  it("stops an oversized header while preserving earlier records and partial coverage", () => {
+    const first = record("resource", [["WARC-Record-ID", "<urn:1>"]]);
+    const manyShortLines = "bad\r\n".repeat(20_001);
+    const archive = parsed(
+      first + `WARC/1.1\r\n${manyShortLines}Content-Length: 0\r\n\r\n`,
+      { maxDecodedBytes: 2 * 1024 * 1024 },
+    );
+    expect(archive.records.map((entry) => entry.warc_record_id)).toEqual([
+      "<urn:1>",
+    ]);
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "header-block-limit-reached",
+    );
+    expect(archive.diagnostics.map((entry) => entry.code)).not.toContain(
+      "truncated-record",
+    );
+  });
+
+  it("stops a header whose total bytes exceed its allowance even when each line fits", () => {
+    const lines = Array.from(
+      { length: 150 },
+      (_, i) => `X-${i}: ${"x".repeat(7200)}`,
+    ).join("\r\n");
+    const archive = parsed(
+      `WARC/1.1\r\n${lines}\r\nContent-Length: 0\r\n\r\n`,
+      { maxDecodedBytes: 2 * 1024 * 1024 },
+    );
+    expect(archive.records).toEqual([]);
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.diagnostics.map((entry) => entry.code)).toContain(
+      "header-block-limit-reached",
+    );
+  });
+
   it("stops allocating diagnostics past the diagnostic ceiling", () => {
     // One record may carry millions of short malformed lines; `max_records`
     // does not bound that growth, and the reply-size check ran afterwards.

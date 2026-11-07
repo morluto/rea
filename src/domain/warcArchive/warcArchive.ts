@@ -7,6 +7,9 @@ export const WARC_ARCHIVE_MAX_FILE_BYTES = 64 * 1024 * 1024;
 export const WARC_ARCHIVE_MAX_DECODED_BYTES = 256 * 1024 * 1024;
 export const WARC_ARCHIVE_MAX_RECORDS = 20_000;
 export const WARC_ARCHIVE_HEADER_LINE_BYTES = 8 * 1024;
+/** Bound per-record header representation before collecting fields or malformed lines. */
+export const WARC_ARCHIVE_HEADER_BLOCK_BYTES = 1024 * 1024;
+export const WARC_ARCHIVE_HEADER_FIELDS = 20_000;
 /**
  * Diagnostics are per-record growth that `max_records` does not bound: one
  * record may carry millions of short malformed header lines. Past this count
@@ -80,6 +83,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "trailing-bytes",
     "diagnostic-limit-reached",
     "header-line-limit-reached",
+    "header-block-limit-reached",
   ]),
   message: z.string(),
 });
