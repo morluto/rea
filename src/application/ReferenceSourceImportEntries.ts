@@ -391,7 +391,19 @@ const selectPackageMain = (
 const importLookupPath = (
   fromPath: string,
   specifier: string,
-): Result<{ readonly path: string; readonly directory: boolean }, string> => {
+): Result<
+  {
+    readonly path: string;
+    readonly directory: boolean;
+    /** Raw `?query` or `#fragment`, marker included. Empty when neither is present. */
+    readonly suffix: string;
+  },
+  string
+> => {
+  // The same cut URL.parse uses: the pathname ends at the first raw `?` or `#`.
+  // Keep that tail verbatim so an unresolved `to` can show it unchanged.
+  const componentStart = specifier.search(/[?#]/u);
+  const suffix = componentStart === -1 ? "" : specifier.slice(componentStart);
   // A private origin is only a logical pathname base, never a filesystem access.
   let source: URL;
   try {
@@ -414,7 +426,11 @@ const importLookupPath = (
     target.pathname.slice("/rea-reference/".length),
   );
   return decoded.ok
-    ? ok({ path: decoded.value, directory: target.pathname.endsWith("/") })
+    ? ok({
+        path: decoded.value,
+        directory: target.pathname.endsWith("/"),
+        suffix,
+      })
     : decoded;
 };
 
@@ -445,8 +461,14 @@ const resolveInternalSpecifier = (
       ? imported.value.path
       : posix.normalize(posix.join(posix.dirname(fromPath), specifier));
   const normalized = normalizedPath.replace(/(?<=.)\/+$/u, "") || ".";
-  if (logicalPathEscapesRoot(normalized))
-    return { to: normalized, resolution: "unresolved" };
+  // A missing source-import keeps main's normalized pathname and the raw
+  // query or fragment. Require lookups have no suffix, so their `to` is unchanged.
+  const requestSuffix = imported?.ok === true ? imported.value.suffix : "";
+  const unresolvedAt = (path: string) => ({
+    to: requestSuffix === "" ? path : `${path}${requestSuffix}`,
+    resolution: "unresolved" as const,
+  });
+  if (logicalPathEscapesRoot(normalized)) return unresolvedAt(normalized);
   // Preserve directory intent before normalization removes terminal dot segments.
   const directoryReference =
     imported?.ok === true
@@ -495,13 +517,13 @@ const resolveInternalSpecifier = (
       if (files.ok && files.value === undefined)
         return selectPackageMain(normalized, undefined, context, mode);
     }
-    return { to: normalized, resolution: "unresolved" };
+    return unresolvedAt(normalized);
   }
   const match = selection.value;
   if (match === undefined)
     return packageMainForDirectory(normalized, context) !== undefined
       ? selectPackageMain(normalized, undefined, context, mode)
-      : { to: normalized, resolution: "unresolved" };
+      : unresolvedAt(normalized);
   // posix.normalize preserves the specifier's trailing slash while
   // dirname(match) never carries one; derive the directory identity with path
   // semantics (joining "." collapses trailing slashes, including ones a regex
