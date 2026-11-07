@@ -4,7 +4,10 @@ import type {
   SetupProviderEnvironment,
   SetupProgressEvent,
 } from "./SetupTypes.js";
-import type { SetupClient } from "./SupportedClients.js";
+import {
+  clientRegistrationGroups,
+  type SetupClient,
+} from "./SupportedClients.js";
 
 export const failedConfigurationMessage = (
   result: Extract<ClientConfigurationResult, { readonly status: "failed" }>,
@@ -64,7 +67,9 @@ export const configureDetectedClients = async (options: {
   readonly onProgress?: (event: SetupProgressEvent) => void;
 }): Promise<string | undefined> => {
   let failure: string | undefined;
-  for (const client of options.detectedClients) {
+  for (const group of clientRegistrationGroups(options.detectedClients)) {
+    const client = group[0];
+    if (client === undefined) continue;
     const actionId = `configure_client:${client.name}`;
     const label = client.displayName ?? client.name;
     options.onProgress?.({ actionId, label, state: "started" });
@@ -73,7 +78,7 @@ export const configureDetectedClients = async (options: {
       options.providerEnvironment,
       options.command,
     );
-    options.clients[client.name] = result;
+    for (const surface of group) options.clients[surface.name] = result;
     if (result.status === "failed") {
       failure ??= failedConfigurationMessage(result);
       options.onProgress?.({

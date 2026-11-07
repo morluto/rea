@@ -642,6 +642,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Devin              | `devin`          |
 | OpenCode           | `opencode`       |
 | Antigravity        | `antigravity`    |
+| Antigravity CLI    | `antigravity_cli` |
 | GitHub Copilot CLI | `copilot_cli`    |
 | Command Code       | `commandcode`    |
 | Qwen Code          | `qwen_code`      |
