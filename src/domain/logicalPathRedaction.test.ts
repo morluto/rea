@@ -388,3 +388,39 @@ it("maps and reseals profile paths and limitation text at creation and export", 
     expect(parseEvidence(evidence).evidence_id).toBe(evidence.evidence_id);
   }
 });
+
+it("rewrites multi-level bundle links to final Evidence IDs independent of order", () => {
+  const source = createEvidence(undefined, TEST_PROVIDER, {
+    operation: "source",
+    parameters: {},
+    result: { path: "/tmp/work/a" },
+  });
+  const middle = createEvidence(undefined, TEST_PROVIDER, {
+    operation: "middle",
+    parameters: {},
+    result: {},
+    evidenceLinks: [source.evidence_id],
+  });
+  const parent = createEvidence(undefined, TEST_PROVIDER, {
+    operation: "parent",
+    parameters: {},
+    result: {},
+    evidenceLinks: [middle.evidence_id],
+  });
+  const redacted = redactEvidenceBundle(
+    createEvidenceBundle([parent, source, middle]),
+    "/tmp/work",
+  );
+  expect(safeParseEvidenceBundle(redacted).ok).toBe(true);
+  const byOperation = new Map(
+    redacted.records.map((record) => [record.operation, record]),
+  );
+  expect(byOperation.get("middle")?.evidence_links).toEqual([
+    byOperation.get("source")?.evidence_id,
+  ]);
+  expect(byOperation.get("parent")?.evidence_links).toEqual([
+    byOperation.get("middle")?.evidence_id,
+  ]);
+  for (const record of redacted.records)
+    expect(parseEvidence(record).evidence_id).toBe(record.evidence_id);
+});

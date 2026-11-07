@@ -699,32 +699,57 @@ export const redactEvidenceBundle = (
   const config = resolveLogicalPathConfig(options);
   if (config === undefined) return bundle;
 
-  const idMap = new Map<string, string>();
-  const initialRedacted = bundle.records.map((record) => {
-    const redacted = redactEvidence(record, config);
-    idMap.set(record.evidence_id, redacted.evidence_id);
-    return redacted;
-  });
-
-  const records = initialRedacted.map((record) => {
-    const updatedLinks = record.evidence_links.map(
-      (link) => idMap.get(link) ?? link,
-    );
-    if (isDeepStrictEqual(updatedLinks, record.evidence_links)) {
-      return record;
+  // A record commits to its links. Rewrite each source first so every parent
+  // hashes final, rather than provisional, identities regardless of order.
+  const byId = new Map(
+    bundle.records.map((record) => [record.evidence_id, record]),
+  );
+  const rewritten = new Map<string, Evidence>();
+  const active = new Set<string>();
+  for (const root of bundle.records) {
+    const pending = [{ record: root, next: 0 }];
+    while (pending.length > 0) {
+      const frame = pending[pending.length - 1]!;
+      const id = frame.record.evidence_id;
+      if (rewritten.has(id)) {
+        pending.pop();
+        continue;
+      }
+      active.add(id);
+      const next = frame.record.evidence_links[frame.next++];
+      if (next !== undefined) {
+        const source = byId.get(next);
+        if (source !== undefined && !rewritten.has(next)) {
+          if (active.has(next))
+            throw new TypeError("Evidence link graph contains a cycle");
+          pending.push({ record: source, next: 0 });
+        }
+        continue;
+      }
+      const redacted = redactEvidence(frame.record, config);
+      const links = redacted.evidence_links.map(
+        (link) => rewritten.get(link)?.evidence_id ?? link,
+      );
+      if (isDeepStrictEqual(links, redacted.evidence_links)) {
+        rewritten.set(id, redacted);
+      } else {
+        const { evidence_id: _id, ...value } = redacted;
+        const updated = { ...value, evidence_links: links };
+        rewritten.set(
+          id,
+          parseEvidence({
+            ...updated,
+            evidence_id: computeEvidenceId(updated),
+          }),
+        );
+      }
+      active.delete(id);
+      pending.pop();
     }
-    const { evidence_id: _id, ...withoutId } = record;
-    const withUpdatedLinks = {
-      ...withoutId,
-      evidence_links: updatedLinks,
-    };
-    const newId = computeEvidenceId(withUpdatedLinks);
-    idMap.set(record.evidence_id, newId);
-    return parseEvidence({
-      ...withUpdatedLinks,
-      evidence_id: newId,
-    });
-  });
+  }
+  const records = bundle.records.map((record) =>
+    rewritten.get(record.evidence_id)!,
+  );
 
   return createEvidenceBundle(records, bundle.unknowns);
 };
