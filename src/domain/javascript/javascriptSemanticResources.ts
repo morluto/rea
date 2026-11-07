@@ -470,22 +470,6 @@ const socketPortInFirstArgument = (
   candidate: Pick<AcquisitionReference, "specifier">,
 ): boolean => candidate.specifier === "net" || candidate.specifier === "tls";
 
-/**
- * Whether a later argument may evaluate to an options object.
- *
- * Measured on Node 24.22.1: `tls.connect({port:-1}, null)`, `(…, undefined)`,
- * `(…, 0)`, `(…, "x")` and `(…, [80])` all still throw, so only an object
- * argument overrides the port. Those primitive shapes are decided exactly; an
- * expression that could hold an object stays undecided.
- */
-const laterArgumentMayBeOptionsObject = (argument: t.Node): boolean => {
-  if (t.isSpreadElement(argument)) return true;
-  const value = unwrapJavaScriptExpression(argument).node;
-  if (t.isObjectExpression(value)) return true;
-  if (isExactlyNonObjectExpression(value)) return false;
-  return true;
-};
-
 /** Expressions whose runtime value can never supply an options `port`. */
 const isExactlyNonObjectExpression = (value: t.Node): boolean => {
   if (
