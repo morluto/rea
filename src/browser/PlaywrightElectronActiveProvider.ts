@@ -1,3 +1,4 @@
+import { loadPlaywrightCore } from "./androidPlaywrightHost.js";
 import { runWithExecutionLimits } from "./PlaywrightElectronExecution.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import { bindArtifactFileCleanup } from "../artifacts/ArtifactFileOperation.js";
@@ -79,7 +80,7 @@ export class PlaywrightElectronActiveProvider implements ElectronActiveObservati
     private readonly environment: Readonly<Record<string, string | undefined>>,
     // Load Playwright only when a capture launches; MCP startup stays off its module graph.
     private readonly launch: typeof electron.launch = async (options) =>
-      (await import("playwright-core"))._electron.launch(options),
+      (await loadPlaywrightCore(this.environment))._electron.launch(options),
     private readonly readFuseImage: typeof readElectronFuseImage = readElectronFuseImage,
   ) {}
 
