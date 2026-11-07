@@ -19,6 +19,7 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { ghidraHealthLimitations } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -701,9 +702,10 @@ describe("Ghidra MCP evidence parity", () => {
             ),
           ]),
         },
+        // Delivered guidance is compared with the owning formatter rather than a
+        // frozen sentence, so rewording the provider message cannot fail this test.
         limitations: expect.arrayContaining([
-          expect.stringContaining("default auto-analysis complete"),
-          expect.stringContaining("original executable bytes are unchanged"),
+          ...ghidraHealthLimitations("fresh-import"),
         ]),
       });
       const directAnalyzed = await new EnhancedTools(session).execute(
