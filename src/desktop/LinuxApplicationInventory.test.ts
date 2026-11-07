@@ -1,5 +1,6 @@
-import { chmod, mkdir, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, realpath, symlink, writeFile } from "node:fs/promises";
+import { basename, join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
@@ -36,6 +37,91 @@ const fixture = async () => {
     },
   };
 };
+
+describe.skipIf(process.platform === "win32")(
+  "inspectLinuxApplication executable lookup",
+  () => {
+    it.each(["directory", "directory-link", "dangling-link"] as const)(
+      "skips a PATH %s and records the executable link the launch finds",
+      async (kind) => {
+        const { home, bin, environment } = await fixture();
+        const first = join(home, "first");
+        await mkdir(first);
+        const candidate = join(first, "lookup-notes");
+        if (kind === "directory") await mkdir(candidate);
+        else
+          await symlink(
+            kind === "directory-link" ? home : join(home, "missing"),
+            candidate,
+          );
+        const selected = join(bin, "lookup-notes");
+        const target = join(home, "notes-launcher");
+        await writeFile(target, "#!/bin/sh\nprintf '%s\\n' \"$1\"\n");
+        await chmod(target, 0o755);
+        await symlink(target, selected);
+        const program = basename(selected);
+        const launchEnvironment = { ...environment, PATH: `${first}:${bin}` };
+
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: undefined,
+          executable: program,
+          arguments: ["selected"],
+          environment: launchEnvironment,
+          home,
+          callerDirectory: home,
+        });
+        const launched = spawnSync(program, ["selected"], {
+          env: launchEnvironment,
+          cwd: home,
+          encoding: "utf8",
+          timeout: 5_000,
+        });
+
+        expect(
+          launched.status,
+          launched.error?.message ?? launched.stderr,
+        ).toBe(0);
+        expect(launched.stdout.trim()).toBe("selected");
+        if (!inspected.ok) throw new Error(inspected.error.reason);
+        expect(inspected.value.inventory.executable).toEqual({
+          path: selected,
+          resolved_path: await realpath(target),
+          electron_markers: [],
+        });
+        expect(inspected.value.inventory.argv).toEqual([program, "selected"]);
+      },
+    );
+
+    it.each(["PATH", "absolute", "relative"] as const)(
+      "refuses a directory symlink selected through %s when no executable exists",
+      async (selection) => {
+        const { home, environment } = await fixture();
+        const candidate = join(home, "not-a-program");
+        await symlink(home, candidate);
+        const executable =
+          selection === "absolute"
+            ? candidate
+            : selection === "relative"
+              ? "./not-a-program"
+              : "not-a-program";
+
+        const inspected = await inspectLinuxApplication({
+          desktopEntry: undefined,
+          executable,
+          arguments: [],
+          environment: { ...environment, PATH: home },
+          home,
+          callerDirectory: home,
+        });
+
+        expect(inspected).toMatchObject({
+          ok: false,
+          error: { reason: "executable_not_found" },
+        });
+      },
+    );
+  },
+);
 
 describe.skipIf(process.platform === "win32")("inspectLinuxApplication", () => {
   it("resolves a desktop entry id into a launch command and state directories", async () => {

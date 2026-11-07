@@ -1,11 +1,12 @@
 import { constants } from "node:fs";
-import { access, lstat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute } from "node:path";
 
 const isExecutable = async (path: string): Promise<boolean> => {
   try {
     await access(path, constants.X_OK);
-    return (await lstat(path)).isDirectory() === false;
+    // Match access() and the launch: inspect the link's target, not the link.
+    return (await stat(path)).isDirectory() === false;
   } catch {
     return false;
   }
