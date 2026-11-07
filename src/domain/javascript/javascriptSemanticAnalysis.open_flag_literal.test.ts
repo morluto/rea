@@ -600,3 +600,36 @@ it.each([
 ] as const)("keeps the stream acquisition for %s", (_name, call) => {
   expect(streamAcquisitionsFor(call)).toHaveLength(1);
 });
+/**
+ * A getter in the options literal runs while Node enumerates and copies the object, so
+ * it can replace another member before that member is read. Measured on Node 24.22.1:
+ *
+ *   createReadStream(p, {get reset(){this.start=0}, start:-1})  -> stream
+ *   createReadStream(p, {get reset(){}, start:-1})              -> stream
+ *   createReadStream(p, {set x(v){}, start:-1})                 -> THREW
+ *   createReadStream(p, {reset(){this.start=0}, start:-1})      -> THREW (methods are not invoked)
+ *   createReadStream(p, {start:-1, get z(){}})                  -> THREW (the getter runs after)
+ *
+ * A `set` accessor and a plain method do not run during the copy, so a bad member there
+ * is still decided.
+ */
+it.each([
+  [`fs.createReadStream(p, {get reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {get reset(){}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1, get z(){}})`],
+  [`fs.createReadStream(p, {get z(){this.highWaterMark=-1}, highWaterMark:0})`],
+  [`fs.createWriteStream(p, {get reset(){this.start=0}, start:-1})`],
+] as const)("leaves a getter-bearing options literal undecided: %s", (call) => {
+  expect(streamAcquisitionsFor(call)).toHaveLength(1);
+});
+
+it.each([
+  [`fs.createReadStream(p, {set x(v){}, start:-1})`],
+  [`fs.createReadStream(p, {reset(){this.start=0}, start:-1})`],
+  [`fs.createReadStream(p, {start:-1})`],
+] as const)(
+  "still decides a literal whose accessors do not run: %s",
+  (call) => {
+    expect(streamAcquisitionsFor(call)).toEqual([]);
+  },
+);

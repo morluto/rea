@@ -149,7 +149,8 @@ const streamMemberValue = (
           value: value.name === "NaN" ? Number.NaN : Number.POSITIVE_INFINITY,
         }
       : undefined;
-  // Every remaining exactly readable value is a type Node refuses for these members.
+  // `!` and `typeof` yield a boolean or a string, and `delete` leaves a boolean; every
+  // one of those is a type Node refuses for these members.
   if (
     t.isStringLiteral(value) ||
     t.isTemplateLiteral(value) ||
@@ -164,6 +165,26 @@ const streamMemberValue = (
     return { kind: "refused" };
   return undefined;
 };
+
+/**
+ * Whether an options literal has a member that runs code when Node copies it.
+ *
+ * Node enumerates the literal's own keys and copies them in declaration order, so a
+ * getter listed before a plain member can replace that member's value before it is
+ * read. Measured on Node 24.22.1, `createReadStream(p, {get reset(){this.start=0},
+ * start:-1})` constructs a stream while the same literal without the getter throws
+ * `ERR_OUT_OF_RANGE`, so the getter's presence makes every other member undecided.
+ *
+ * A `set` accessor is not enumerated and a plain method is not invoked during the copy,
+ * so neither affects a later member.
+ */
+const optionsHasEagerAccessor = (object: t.ObjectExpression): boolean =>
+  object.properties.some(
+    (property) =>
+      t.isObjectMethod(property) &&
+      property.kind === "get" &&
+      !property.computed,
+  );
 
 /**
  * Whether a stream's options object provably throws before the handle exists.
@@ -198,6 +219,9 @@ const rejectsStreamOptionsLiteral = (
   if (options === undefined || t.isSpreadElement(options)) return false;
   const value = unwrapJavaScriptExpression(options).node;
   if (!t.isObjectExpression(value)) return false;
+  // A getter anywhere in the literal can replace another member before Node reads it,
+  // so no member's declared value is what Node sees.
+  if (optionsHasEagerAccessor(value)) return false;
   const member = (name: string): StreamMemberValue => {
     const read = staticObjectProperty(value, name);
     if (read.status !== "explicit") return undefined;
@@ -277,10 +301,6 @@ const rejectsStreamEncoding = (
 };
 
 /** Whether a stream `encoding` member is one Node's `Buffer` refuses. */
-/** Whether a value is an index Node accepts for `start`, `end`, `fd` or a budget. */
-const isUsableIndexNumber = (value: number): boolean =>
-  Number.isInteger(value) && value >= 0;
-
 /**
  * `fs.open`/`fs.openSync` validate the flag before touching the filesystem, so
  * a flag Node rejects at the call site throws synchronously and no descriptor
