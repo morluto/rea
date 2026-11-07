@@ -1,5 +1,10 @@
 import { err, ok } from "./result.js";
 
+export type ElfSectionHeader = Extract<
+  ReturnType<typeof readElfSectionHeader>,
+  { readonly ok: true }
+>["value"];
+
 /** Fixed ELF32/ELF64 section declarations; consumers own names, numbering and mapping admission. */
 export const readElfSectionHeader = (
   bytes: Uint8Array,
