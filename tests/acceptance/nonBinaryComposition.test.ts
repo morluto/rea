@@ -270,6 +270,54 @@ cliTest(
         "REA_WAKARU_COMMAND",
       );
     }
+    const path = join(root, "bundle.js");
+    const output = join(root, "output");
+    const result = await cli.run({
+      arguments: [
+        "recover-javascript-sources",
+        path,
+        output,
+        "--additional-path",
+        "relative.js",
+        "--json",
+      ],
+      environment,
+      timeoutMs: 10_000,
+    });
+    const response = await client.callTool({
+      name: "recover_javascript_sources",
+      arguments: {
+        path,
+        output_directory: output,
+        additional_paths: ["relative.js"],
+      },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(response.isError).toBe(true);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [
+        expect.objectContaining({
+          path: "additionalPath.0",
+          code: "invalid_format",
+          message: expect.stringContaining("relative.js"),
+        }),
+      ],
+    });
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "invalid_request",
+        details: {
+          issues: [
+            {
+              path: ["additional_paths", 0],
+              reason: "invalid_format",
+              message: expect.stringContaining("relative.js"),
+            },
+          ],
+        },
+      },
+    });
   },
 );
 

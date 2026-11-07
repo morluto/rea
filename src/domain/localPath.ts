@@ -25,13 +25,34 @@ export const localPathStringSchema = nulFreeStringSchema.min(1);
  * unescaped `/` inside a class, and Windows hosts advertise this pattern.
  */
 export const windowsAbsolutePathPattern =
-  /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])/u;
+  /^(?:[\x5C\x2F]|[A-Za-z]:[\x5C\x2F])[^\x00]*$/u;
+
+// One portable pattern expresses both invariants. Multiple Zod regex checks
+// convert to allOf, which forces the compact MCP profile to reduce the whole
+// tool input and discard otherwise useful constraints.
+export const absoluteLocalPathSchema = (
+  invalidPathMessage: (path: string) => string = () =>
+    "must be an absolute local filesystem path",
+) =>
+  z
+    .string()
+    .min(1)
+    .regex(
+      process.platform === "win32"
+        ? windowsAbsolutePathPattern
+        : /^\/[^\x00]*$/u,
+      {
+        error: (issue) => {
+          const path = typeof issue.input === "string" ? issue.input : "";
+          return path.includes("\0")
+            ? "Local filesystem paths cannot contain NUL"
+            : invalidPathMessage(path);
+        },
+      },
+    );
 
 /** A caller-selected path that is absolute on the host running REA. */
-export const absoluteLocalPathStringSchema = localPathStringSchema.regex(
-  process.platform === "win32" ? windowsAbsolutePathPattern : /^\//u,
-  "must be an absolute local filesystem path",
-);
+export const absoluteLocalPathStringSchema = absoluteLocalPathSchema();
 
 /** Test lexical containment on the host platform; callers must resolve symlinks first. */
 export const isPathWithinRoot = (root: string, path: string): boolean => {

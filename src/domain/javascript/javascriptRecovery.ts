@@ -1,7 +1,10 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import { analyzeJavaScriptApplicationInputSchema } from "./javascriptApplicationAnalysis.js";
-import { absoluteLocalPathStringSchema } from "../localPath.js";
+import {
+  absoluteLocalPathSchema,
+  absoluteLocalPathStringSchema,
+} from "../localPath.js";
 
 /** Recover derived readable modules from explicitly selected local scripts. */
 export const javascriptRecoveryInputSchema = z.strictObject({
@@ -9,7 +12,12 @@ export const javascriptRecoveryInputSchema = z.strictObject({
     "Absolute path to a UTF-8 JavaScript file; never executed",
   ),
   additional_paths: z
-    .array(absoluteLocalPathStringSchema)
+    .array(
+      absoluteLocalPathSchema(
+        (path) =>
+          `additional_paths entries must be absolute filesystem paths on this host: ${path}`,
+      ),
+    )
     .max(16)
     .optional()
     .describe(

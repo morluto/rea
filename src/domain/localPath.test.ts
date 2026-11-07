@@ -39,6 +39,17 @@ it("matches the host path module for absolute local paths", () => {
   expect(
     absoluteLocalPathStringSchema.safeParse("/absolute/with\0nul").success,
   ).toBe(false);
+  for (const path of [
+    "/absolute/with\nnewline\0nul",
+    "/absolute/with\0nul\n",
+  ]) {
+    const result = absoluteLocalPathStringSchema.safeParse(path);
+    expect(result.success).toBe(false);
+    if (!result.success)
+      expect(result.error.issues[0]?.message).toBe(
+        "Local filesystem paths cannot contain NUL",
+      );
+  }
 });
 
 it("keeps the Windows absolute-path pattern valid in every client mode", () => {
@@ -63,4 +74,8 @@ it("keeps the Windows absolute-path pattern valid in every client mode", () => {
       "/absolute/path",
     ]),
   );
+  for (const path of ["C:\\absolute\npath\0nul", "C:\\absolute\0nul\n"])
+    expect(windowsAbsolutePathPattern.test(path), JSON.stringify(path)).toBe(
+      false,
+    );
 });
