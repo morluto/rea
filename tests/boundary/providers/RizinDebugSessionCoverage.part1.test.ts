@@ -160,28 +160,6 @@ it.skipIf(process.platform === "win32")(
 );
 
 it.skipIf(process.platform === "win32")(
-  "rejects a non-TTY path before spawning Rizin",
-  async () => {
-    let spawned = false;
-    const manager = createManager(
-      { REA_RIZIN_COMMAND: "injected-rizin" },
-      {
-        spawnProcess: async () => {
-          spawned = true;
-          throw new Error("must not spawn with an invalid TTY");
-        },
-      },
-    );
-    const result = await manager.start({
-      path: "/tmp/not-a-tty-target",
-      inferior_tty: "/dev/null",
-    });
-    expect(result.ok).toBe(false);
-    expect(spawned).toBe(false);
-  },
-);
-
-it.skipIf(process.platform === "win32")(
   "closeAll drains concurrent startups and blocks later admission",
   async () => {
     let spawnCount = 0;

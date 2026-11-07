@@ -10,6 +10,7 @@ import { access, readFile, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
+import { GHIDRA_ANNOTATIONS_RETAINED } from "../../dist/ghidra/GhidraProviderClient.js";
 import Ajv from "ajv/dist/2020.js";
 import addFormats from "ajv-formats";
 
@@ -504,6 +505,9 @@ export async function verifyGhidraBoundaries(
   // Prime both inventories before editing so stale names cannot hide in caches.
   await call("list_names");
   await call("list_procedures");
+  const traceInput = { procedure: address, max_depth: 0, max_functions: 1 };
+  const traceBefore = await evidence("trace_native_values", traceInput);
+  const sourceBefore = traceBefore.normalized_result.procedures[0].evidence_id;
   const changes = {
     procedure: address,
     name: "dead",
@@ -517,6 +521,16 @@ export async function verifyGhidraBoundaries(
     comment: changes.comment,
     inline_comment: changes.inline_comment,
   });
+  const traceAfter = await evidence("trace_native_values", traceInput);
+  const sourceAfter = traceAfter.normalized_result.procedures[0].evidence_id;
+  assert.notEqual(sourceBefore, sourceAfter);
+  const sourceProcedure = (evidenceId) =>
+    call("inspect_analysis_view", {
+      source: { kind: "retained-evidence", evidence_id: evidenceId },
+      view: { kind: "native", facet: "procedure", offset: 0, limit: 1 },
+    });
+  assert.equal((await sourceProcedure(sourceBefore)).item.name, name);
+  assert.equal((await sourceProcedure(sourceAfter)).item.name, changes.name);
   const regexPattern = "^(a|aa)*b$";
   const regexFailure = await client.callTool(
     {
@@ -534,12 +548,10 @@ export async function verifyGhidraBoundaries(
     regexError.remediation.action,
     /literal mode or simplify the regex/u,
   );
-  // The retry advice lives in the remediation; the reason states that the
-  // session survived the overflow.
-  assert.match(
-    regexError.details.reason,
-    /exhausted its stack.*session and annotations remain available/u,
-  );
+  // The producer reason describes the failure; continuing-session guidance
+  // is projected separately and the following live calls verify it.
+  assert.match(regexError.details.reason, /stack while matching pattern/u);
+  assert.ok(regexError.message.includes(GHIDRA_ANNOTATIONS_RETAINED));
   rejectedCalls++;
   const nestedPattern = "(".repeat(12000) + "a" + ")".repeat(12000);
   const compileFailure = await client.callTool(

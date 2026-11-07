@@ -19,7 +19,7 @@ import {
 } from "../../fixtures/binarySession.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { silentLogger } from "../../../src/logger.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../../../src/ghidra/GhidraProviderMetadata.js";
 import { RAW_ONLY_ARCHITECTURES } from "../../../src/domain/binaryTargetTypes.js";
 import type { CallToolResult } from "@modelcontextprotocol/server";
 
