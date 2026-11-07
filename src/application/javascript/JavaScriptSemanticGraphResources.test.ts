@@ -50,6 +50,27 @@ it("projects literal events and exact timer cancellation", () => {
   ).toMatchObject({ status: "partial" });
 });
 
+it("keeps unknown emitter overloads as candidate event relationships", () => {
+  const graph = graphFor(
+    `function update(bus) { bus.off("x"); bus.on("x", "named-handler"); }`,
+  );
+  expect(graph.relations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        relation: "removes-listener",
+        resolution: "candidate",
+      }),
+      expect.objectContaining({
+        relation: "registers-listener",
+        resolution: "candidate",
+      }),
+    ]),
+  );
+  expect(
+    graph.coverage.families.find(({ family }) => family === "event"),
+  ).toMatchObject({ status: "partial" });
+});
+
 it("projects child-process creation, I/O, listeners, and signals", () => {
   const graph = graphFor(`
       import { spawn } from "node:child_process";

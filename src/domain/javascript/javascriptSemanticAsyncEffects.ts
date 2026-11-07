@@ -247,6 +247,46 @@ export const rejectsEventListener = (
   return true;
 };
 
+/** Only a stable instance of Node's EventEmitter has Node's listener contract. */
+const isProvenNodeEmitter = (
+  receiver: t.Expression | t.Super,
+  call: t.CallExpression | t.OptionalCallExpression,
+  state: JavaScriptSemanticAnalysisState,
+): boolean => {
+  if (!t.isIdentifier(receiver)) return false;
+  const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+  if (
+    binding === undefined ||
+    binding.mutable ||
+    binding.memberWrites.length > 0 ||
+    binding.escapedPaths.some((effect) => effect.node !== call)
+  )
+    return false;
+  const initializers = [
+    ...binding.initializers,
+    ...binding.referenceInitializers,
+  ];
+  if (initializers.length !== 1 || !t.isNewExpression(initializers[0]?.node))
+    return false;
+  const constructor = initializers[0].node.callee;
+  if (!t.isIdentifier(constructor)) return false;
+  const owner = resolveSemanticBindingState(
+    state,
+    constructor,
+    constructor.name,
+  );
+  if (
+    owner === undefined ||
+    owner.memberWrites.length > 0 ||
+    owner.escapedPaths.some((effect) => effect.node !== initializers[0]?.node)
+  )
+    return false;
+  return (
+    builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
+    "EventEmitter"
+  );
+};
+
 const collectEvent = (
   node: t.CallExpression | t.OptionalCallExpression,
   ownerCallableId: string | null,
@@ -268,11 +308,11 @@ const collectEvent = (
   // A leading spread shifts the runtime argument positions, so argument 1 is not
   // provably the listener: `e.on(...["x", fn], 1)` registers `fn` and ignores the
   // trailing `1`.
-  if (
+  const invalidNodeListener =
     listenerMethod &&
     !t.isSpreadElement(eventArgument) &&
-    rejectsEventListener(listenerArgument, state)
-  )
+    rejectsEventListener(listenerArgument, state);
+  if (invalidNodeListener && isProvenNodeEmitter(member.object, node, state))
     return;
   const emitter = emitterIdentity(member.object, state);
   const eventName = dataEffectLiteralString(eventArgument);
@@ -292,7 +332,7 @@ const collectEvent = (
     resolution:
       eventName === null
         ? "unresolved"
-        : emitter.complete
+        : emitter.complete && !invalidNodeListener
           ? "complete"
           : "partial",
   });

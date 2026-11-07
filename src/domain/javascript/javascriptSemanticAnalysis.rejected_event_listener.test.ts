@@ -2,6 +2,52 @@ import { expect, it } from "vitest";
 
 import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
+it("keeps optional and non-function listener candidates for unknown emitter APIs", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    function update(bus) {
+      bus.off("x");
+      bus.on("x", "named-handler");
+    }
+  `).eventOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "remove",
+        method: "off",
+        eventName: "x",
+        resolution: "partial",
+      }),
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "x",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it.each([
+  `e.off = function () {};`,
+  `EventEmitter.prototype.off = function () {};`,
+])("retains a candidate when emitter behavior is modified: %s", (mutation) => {
+  const operations = analyzeJavaScriptSemantics(`
+    import { EventEmitter } from "node:events";
+    const e = new EventEmitter();
+    ${mutation}
+    e.off("x");
+  `).eventOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "remove",
+        method: "off",
+        eventName: "x",
+      }),
+    ]),
+  );
+});
+
 /**
  * A listener must be a function, and Node throws `ERR_INVALID_ARG_TYPE` before
  * anything is registered or removed when it is not.

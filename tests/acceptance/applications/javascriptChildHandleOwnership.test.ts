@@ -44,6 +44,27 @@ const analyzeThroughCliAndMcp = async (source: string) => {
   return evidence;
 };
 
+it("retains unknown emitter overloads as candidates through CLI and MCP", async () => {
+  const evidence = await analyzeThroughCliAndMcp(`function update(bus) {
+    bus.off("x");
+    bus.on("x", "named-handler");
+  }`);
+  const { semantic_graph: graph } =
+    javascriptApplicationAnalysisResultSchema.parse(evidence.normalized_result);
+  expect(graph.relations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        relation: "removes-listener",
+        resolution: "candidate",
+      }),
+      expect.objectContaining({
+        relation: "registers-listener",
+        resolution: "candidate",
+      }),
+    ]),
+  );
+}, 60000);
+
 it("keeps only possibly callable child listeners through CLI and MCP", async () => {
   const evidence =
     await analyzeThroughCliAndMcp(`import { spawn } from 'node:child_process';
