@@ -65,6 +65,37 @@ const expectUnknownLoaderCandidates = (
       ]),
     },
   });
+  expect(graph.edges).toContainEqual(
+    expect.objectContaining({
+      relation: "imports",
+      properties: expect.objectContaining({
+        kind: "require",
+        operation: "resolve",
+        specifier: "./dep.cjs",
+        loader_authority: "candidate",
+        resolved_path: null,
+        resolution_mode: null,
+      }),
+      evidence: expect.objectContaining({
+        confidence: "low",
+        location: expect.objectContaining({
+          value: expect.objectContaining({ source: "upper-resolve.MJS" }),
+        }),
+      }),
+    }),
+  );
+  for (const source of ["upper-shadow.MJS", "upper-mutated.MJS"]) {
+    expect(
+      graph.edges.some(
+        ({ properties, evidence }) =>
+          properties.loader_authority === "candidate" &&
+          properties.specifier === "./dep.cjs" &&
+          evidence.location.available &&
+          evidence.location.value.kind === "source-range" &&
+          evidence.location.value.source === source,
+      ),
+    ).toBe(false);
+  }
   const candidateExports = graph.edges.filter(
     ({ relation, properties, evidence }) =>
       relation === "exposes" &&
@@ -143,6 +174,11 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         'const value = require("./dep.cjs"); console.log(value);',
       "dep.cjs": "module.exports = 42;",
       "upper-export.MJS": "module.exports = { value: 42 };",
+      "upper-resolve.MJS": 'require.resolve("./dep.cjs");',
+      "upper-shadow.MJS":
+        'const require = { resolve() {} }; require.resolve("./dep.cjs");',
+      "upper-mutated.MJS":
+        'require.resolve = custom; require.resolve("./dep.cjs");',
       "upper-alias.MJS":
         'var module; const dep = require("./dep.cjs"); module.exports = dep;',
       "upper-var-export.MJS": "var exports; exports.name = 42;",
