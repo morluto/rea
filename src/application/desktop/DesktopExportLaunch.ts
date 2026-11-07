@@ -87,11 +87,18 @@ export const planLaunch = (
   const { application, host } = capture;
   const isDocument = (home: string) => files.get(home)?.role === "document";
   const homeOf = capturedHomePath(capture);
+  const workingDirectory = (() => {
+    const directory = application.working_directory;
+    if (!directory.startsWith(`${host.home}/`)) return directory;
+    const relative = directory.slice(host.home.length + 1);
+    const seed = homeOf(directory) ?? relative;
+    return seed === relative ? directory : `${host.home}/${seed}`;
+  })();
   const launch = openSeedDocument(
     electronLaunchArguments(application.argv, electron),
     {
       home: host.home,
-      workingDirectory: application.working_directory,
+      workingDirectory,
       exec: application.desktop_entry?.exec ?? null,
       documents: [...seeds.keys()].filter(isDocument).sort(),
       isDocument,
@@ -99,11 +106,7 @@ export const planLaunch = (
     },
   );
   return {
-    command: launchCommand(
-      launch.argv,
-      host.home,
-      application.working_directory,
-    ),
+    command: launchCommand(launch.argv, host.home, workingDirectory),
     opens: launch.opens,
   };
 };
