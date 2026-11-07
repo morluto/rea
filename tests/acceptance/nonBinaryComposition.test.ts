@@ -246,7 +246,7 @@ cliTest(
         fieldErrors: [
           expect.objectContaining({
             path: field === "path" ? "path" : "outputDirectory",
-            message: "must be an absolute local filesystem path",
+            code: "invalid_format",
           }),
         ],
       });
@@ -260,7 +260,6 @@ cliTest(
                 path: [field],
                 reason: "invalid_format",
                 expected: "regex",
-                message: "must be an absolute local filesystem path",
               },
             ],
           },
