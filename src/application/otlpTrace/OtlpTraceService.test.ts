@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { expect, it, onTestFinished } from "vitest";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
+import { otlpTraceSchema } from "../../domain/otlpTrace/otlpTrace.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
 import { inspectOtlpTraceEvidence } from "./OtlpTraceService.js";
 
@@ -328,4 +329,53 @@ it("bounds retained numeric-loss coordinates and keeps the file identity", async
     path,
     sha256: createHash("sha256").update(input).digest("hex"),
   });
+});
+
+it("ignores overwritten containers before charging the numeric-coordinate limit", async () => {
+  const span = (digit: number) => ({
+    traceId: "1".repeat(32),
+    spanId: "2".repeat(16),
+    attributes: Array.from({ length: 128 }, (_, i) => ({
+      key: `key-${i}`,
+      value: { intValue: digit },
+    })),
+  });
+  const previous = JSON.stringify(Array.from({ length: 129 }, () => span(0)));
+  const final = JSON.stringify(Array.from({ length: 129 }, () => span(1)));
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":${previous},"spans":${final}}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-duplicate-container-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(true);
+  if (!result.ok) throw new Error("Expected the surviving spans");
+  const trace = otlpTraceSchema.parse(result.value.evidence.normalized_result);
+  expect(trace.spans).toHaveLength(129);
+  expect(
+    trace.spans.every(
+      (item) =>
+        item.attributes.length === 128 &&
+        item.attributes.every((entry) => entry.int_value === "1"),
+    ),
+  ).toBe(true);
+});
+
+it("refuses an imprecise number in a surviving duplicate container", async () => {
+  const prefix = `{"traceId":"${"1".repeat(32)}","spanId":"${"2".repeat(16)}","startTimeUnixNano":`;
+  const input = `{"resourceSpans":[{"scopeSpans":[{"spans":[${prefix}1}],"spans":[${prefix}1.0000000000000001}]}]}]}`;
+  const path = join(
+    await createTestTempDirectory("rea-otlp-duplicate-loss-"),
+    "trace.json",
+  );
+  await writeFile(path, input);
+  const resources = new ArtifactResourceScope();
+  onTestFinished(() => resources.close());
+  const result = await inspectOtlpTraceEvidence({ path }, resources);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a numeric refusal");
+  expect(result.error._tag).toBe("AnalysisInputError");
 });

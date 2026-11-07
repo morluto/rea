@@ -100,6 +100,13 @@ export const scanOtlpNumbers = (
     if (plan.kind === "object" && text[position] === "{" && record(node)) {
       position++;
       whitespace();
+      // JSON.parse keeps the last occurrence of each object key. Find those
+      // source coordinates before interpreting children, so overwritten arrays
+      // never acquire metadata for the surviving parsed values.
+      const members = new Map<
+        string,
+        { readonly child: Plan; readonly from: number; readonly end: number }
+      >();
       while (text[position] !== "}") {
         const start = position;
         stringEnd();
@@ -110,43 +117,43 @@ export const scanOtlpNumbers = (
         const child = Object.hasOwn(plan.fields, key)
           ? plan.fields[key]
           : undefined;
-        if (child?.kind === "number") {
-          const from = position;
-          skip();
-          const current = node[key];
-          const numericSource =
-            text[from] === "-" ||
-            (text[from] !== undefined &&
-              text[from]! >= "0" &&
-              text[from]! <= "9");
-          // Last occurrence wins, just as in JSON.parse. A prior duplicate must
-          // not mark a subsequently overwritten value.
-          const seen = lossy.get(node);
-          if (seen?.delete(key) === true) marked--;
-          if (
-            typeof current === "number" &&
-            numericSource &&
-            (position - from > 256 ||
-              !exact(current, text.slice(from, position)))
-          ) {
-            if (marked >= OTLP_MAX_LOSSY_FIELDS)
-              throw new OtlpNumberScanLimitError(
-                "Too many imprecise numeric fields to retain source coordinates.",
-              );
-            marked++;
-            const fields = seen ?? new Set<string>();
-            fields.add(key);
-            lossy.set(node, fields);
-          }
-        } else if (child !== undefined) visit(child, node[key]);
-        else skip();
+        const from = position;
+        skip();
+        if (child !== undefined)
+          members.set(key, { child, from, end: position });
         whitespace();
         if (text[position] === ",") {
           position++;
           whitespace();
         } else break;
       }
-      position++;
+      const objectEnd = position + 1;
+      for (const [key, { child, from, end }] of members) {
+        position = from;
+        if (child.kind === "number") {
+          const current = node[key];
+          const numericSource =
+            text[from] === "-" ||
+            (text[from] !== undefined &&
+              text[from]! >= "0" &&
+              text[from]! <= "9");
+          if (
+            typeof current === "number" &&
+            numericSource &&
+            (end - from > 256 || !exact(current, text.slice(from, end)))
+          ) {
+            if (marked >= OTLP_MAX_LOSSY_FIELDS)
+              throw new OtlpNumberScanLimitError(
+                "Too many imprecise numeric fields to retain source coordinates.",
+              );
+            marked++;
+            const fields = lossy.get(node) ?? new Set<string>();
+            fields.add(key);
+            lossy.set(node, fields);
+          }
+        } else visit(child, node[key]);
+      }
+      position = objectEnd;
     } else if (
       plan.kind === "array" &&
       text[position] === "[" &&
