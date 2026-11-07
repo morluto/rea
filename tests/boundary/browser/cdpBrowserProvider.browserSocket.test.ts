@@ -17,6 +17,7 @@ import {
 import { observeWebSessionInputSchema } from "../../../src/domain/browserSession.js";
 import { captureWebScreenshotInputSchema } from "../../../src/domain/webScreenshot.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
 
 describe("CdpBrowserProvider: browser socket without HTTP discovery", () => {
@@ -473,14 +474,17 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
     const observationArmed = new Promise<void>((resolve) => {
       armed = resolve;
     });
+    const controller = new AbortController();
+    let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
     try {
-      const observing = provider.observeSession(
+      observing = provider.observeSession(
         observeWebSessionInputSchema.parse({
           cdp_endpoint: browser.browserWebSocketUrl,
           target_id: "allowed-page",
           observation_ms: 15_000,
         }),
         {
+          signal: controller.signal,
           progress: {
             report: async (update) => {
               if (update.completed === 1) armed();
@@ -488,7 +492,11 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
           },
         },
       );
-      await observationArmed;
+      await awaitAcknowledgement(
+        observationArmed,
+        observing,
+        "peer session observation start",
+      );
       expect(browser.openedConnectionCount()).toBe(1);
       expect(browser.activeConnectionCount()).toBe(1);
 
@@ -508,6 +516,8 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
       if (!session.ok) throw session.error;
       expect(session.value.window.end_reason).toBe("transport_disconnected");
     } finally {
+      controller.abort(new Error("test teardown"));
+      await observing?.catch(() => undefined);
       closeSpy.mockRestore();
       await provider.close();
     }
@@ -536,8 +546,9 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
       armed = resolve;
     });
     const controller = new AbortController();
+    let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
     try {
-      const observing = provider.observeSession(
+      observing = provider.observeSession(
         observeWebSessionInputSchema.parse({
           cdp_endpoint: browser.browserWebSocketUrl,
           target_id: "allowed-page",
@@ -552,7 +563,11 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
           },
         },
       );
-      await observationArmed;
+      await awaitAcknowledgement(
+        observationArmed,
+        observing,
+        "peer session observation start",
+      );
       denyClose = true;
       const inspected = await provider.inspectPage(
         inspectWebPageInputSchema.parse({
@@ -573,6 +588,9 @@ describe("CdpBrowserProvider: shared browser socket lifecycle regressions", () =
       expect(inspected.error.cleanupIncomplete).toBe(false);
       await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
     } finally {
+      denyClose = false;
+      controller.abort(new Error("test teardown"));
+      await observing?.catch(() => undefined);
       closeSpy.mockRestore();
       await provider.close();
     }
@@ -688,14 +706,17 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
   const observationArmed = new Promise<void>((resolve) => {
     armed = resolve;
   });
+  const controller = new AbortController();
+  let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
   try {
-    const observing = provider.observeSession(
+    observing = provider.observeSession(
       observeWebSessionInputSchema.parse({
         cdp_endpoint: browser.browserWebSocketUrl,
         target_id: "allowed-page",
         observation_ms: 15_000,
       }),
       {
+        signal: controller.signal,
         progress: {
           report: async (update) => {
             if (update.completed === 1) armed();
@@ -703,7 +724,11 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
         },
       },
     );
-    await observationArmed;
+    await awaitAcknowledgement(
+      observationArmed,
+      observing,
+      "peer session observation start",
+    );
     expect(browser.openedConnectionCount()).toBe(1);
 
     denyClose = true;
@@ -746,6 +771,9 @@ it("blocks new admissions while forced shared-socket cleanup fails with an activ
     if (!session.ok) throw session.error;
     expect(session.value.window.end_reason).toBe("transport_disconnected");
   } finally {
+    denyClose = false;
+    controller.abort(new Error("test teardown"));
+    await observing?.catch(() => undefined);
     closeSpy.mockRestore();
     await provider.close();
   }
