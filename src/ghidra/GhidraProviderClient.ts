@@ -1,4 +1,5 @@
 import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -147,6 +148,7 @@ export type GhidraProviderClientFactory = (
     Pick<
       GhidraClient,
       | "callToolIfReady"
+      | "checkpointRestore"
       | "operationHealthSnapshot"
       | "runtimeLineage"
       | "readTargetSnapshot"
@@ -288,6 +290,22 @@ export const createGhidraProviderClient = (input: {
   const prerequisites = ghidraClientPrerequisites(profile, installation);
   if (!prerequisites.ok) return err(prerequisites.error);
   const committedProfile = prerequisites.value.profile;
+  const checkpoint = ghidraCheckpointSelectionSchema
+    .optional()
+    .safeParse(committedProfile.parameters.owned_checkpoint);
+  if (
+    !checkpoint.success ||
+    (config.ghidraCheckpointDirectory !== undefined) !==
+      (checkpoint.data !== undefined)
+  )
+    return err(
+      new ProviderAdapterError("ghidra", "open_binary", {
+        diagnostics: {
+          reason:
+            "Resolve REA_GHIDRA_CHECKPOINT_DIR into the analysis profile before opening the session.",
+        },
+      }),
+    );
   const psp = isGhidraPspTarget(target);
   const pspExtension = psp
     ? ghidraPspExtensionSchema.safeParse(
@@ -556,6 +574,7 @@ export const createGhidraProviderClient = (input: {
       }),
     );
   const client = clientFactory({
+    ...(checkpoint.data === undefined ? {} : { checkpoint: checkpoint.data }),
     startupTimeoutMs: config.ghidraStartupTimeoutMs,
     readStartupTimeoutMs: () => config.ghidraStartupTimeoutMs,
     bridgeMaxRequestBytes: config.bridgeMaxRequestBytes,
@@ -789,18 +808,26 @@ export const createGhidraProviderClient = (input: {
   const releaseLimitation = unverifiedGhidraBuildLimitation(
     prerequisites.value.providerVersion,
   );
-  const sessionLimitations = (): readonly string[] => [
-    ...providerLimitations,
-    ...targetLimitations,
-    ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
-    ...softFloatLimitations,
-    ...riscvCallingConventionLimitations,
-    ...ghidraExtensionLimitations(extensions),
-    ...seedLimitations,
-    ...disabledAnalyzerLimitations,
-    ...pdbLimitations,
-    ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
-  ];
+  const sessionLimitations = (): readonly string[] => {
+    const restored = client.checkpointRestore?.();
+    return [
+      ...(restored === undefined
+        ? []
+        : [
+            `Restored owned Program ${restored.path} (SHA-256 ${restored.sha256}); auto-analysis was not rerun.`,
+          ]),
+      ...providerLimitations,
+      ...targetLimitations,
+      ...(psp ? GHIDRA_PSP_LIMITATIONS : []),
+      ...softFloatLimitations,
+      ...riscvCallingConventionLimitations,
+      ...ghidraExtensionLimitations(extensions),
+      ...seedLimitations,
+      ...disabledAnalyzerLimitations,
+      ...pdbLimitations,
+      ...(releaseLimitation === undefined ? [] : [releaseLimitation]),
+    ];
+  };
   const nativeAotOwner =
     target.format === "pe"
       ? new GhidraNativeAotSnapshotOwner({
@@ -828,7 +855,11 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       limitations: [
-        ...limitationsFor(operation, project !== undefined),
+        ...limitationsFor(
+          operation,
+          project !== undefined,
+          checkpoint.data !== undefined,
+        ),
         ...(observation.limitations ?? []),
         ...sessionLimitations(),
       ],
@@ -1205,6 +1236,15 @@ const projectPrimarySessionError = (
       ? {}
       : { partialObservation: failure.partialObservation }),
   };
+  if (failure.kind === "checkpoint")
+    return new ConfigurationError(failure.message, {
+      ...context,
+      settings: [
+        { setting: "REA_GHIDRA_CHECKPOINT_DIR", constraint: failure.message },
+      ],
+      remediationAction:
+        "Preserve the checkpoint directory. Correct the reported file, permission or competing-session problem, then reopen the target. Select a new checkpoint directory only if you explicitly want fresh analysis.",
+    });
   // Launch-time copies, such as the verified existing-project copy, report a
   // changed source as the launcher's primary failure; read it through the
   // launch wrapper so the refusal keeps its typed projection.

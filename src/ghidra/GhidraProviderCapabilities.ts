@@ -36,6 +36,7 @@ export const windowsP0Limitations = Object.freeze([
 /** Existing databases have their own unknown analysis history; reopening does not complete it. */
 export const ghidraHealthLimitations = (
   existingProject = false,
+  checkpoint = false,
 ): readonly string[] =>
   existingProject
     ? [
@@ -43,7 +44,13 @@ export const ghidraHealthLimitations = (
         "The original project is never opened by Ghidra or modified. The private copy is read-only to bridge operations and deleted on close; original executable bytes are never written.",
         "The analysis profile records the selected project content fingerprint and program name. The imported program SHA-256 must match the admitted target; the project may contain caller annotations or earlier edits, which are not fresh REA discoveries.",
       ]
-    : healthLimitations;
+    : checkpoint
+      ? [
+          "Opt-in Ghidra checkpoints retain the last successfully saved owned Program, including its names, comments and types. Restoring a checkpoint skips auto-analysis; its analysis is retained state, not a fresh discovery.",
+          "REA saves initial completed analysis and saves metadata changes on normal close. A failed save retains the live session for retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
+          "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
+        ]
+      : healthLimitations;
 
 const stringInventoryLimitation =
   "Only Ghidra-defined string Data is observed; packed or undefined string bytes may be absent. Completeness applies to that inventory, and an empty search does not establish that text is absent from the artifact. If an address is known, use read_bytes and xrefs to inspect bytes and references.";
@@ -83,9 +90,10 @@ export const ghidraEmptyInstructionOutgoingLimitation =
 export const limitationsFor = (
   operation: string,
   existingProject = false,
+  checkpoint = false,
 ): readonly string[] => {
   const common = [
-    ...ghidraHealthLimitations(existingProject),
+    ...ghidraHealthLimitations(existingProject, checkpoint),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
@@ -240,6 +248,13 @@ export const CAPABILITIES: readonly CapabilityDescriptor[] = Object.freeze(
     });
   }),
 );
+
+/** Preserve operation-specific caveats while describing the opted-in lifecycle. */
+export const checkpointCapabilities = (): readonly CapabilityDescriptor[] =>
+  CAPABILITIES.map((capability) => ({
+    ...capability,
+    limitations: limitationsFor(capability.operation, false, true),
+  }));
 
 /** The selected database mode is not part of Windows P0 authority. */
 export const EXISTING_PROJECT_WINDOWS_UNAVAILABLE =
