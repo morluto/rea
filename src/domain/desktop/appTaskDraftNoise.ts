@@ -74,7 +74,7 @@ const DATE_PART = /^(?:year|month|day|hour|minute|second)$/u;
 const BOOKKEEPING =
   /^[cm]date$|creat(?:ed|ion)|modif(?:ied|ication)|updated|saved|changed|accessed|timestamp/u;
 
-const isBookkeeping = (element: Element) =>
+export const isBookkeeping = (element: Element) =>
   BOOKKEEPING.test(
     (element.name.split(":").at(-1) ?? element.name).toLowerCase(),
   );

@@ -3,6 +3,7 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 import { elementText, isXmlElement } from "./appTaskChecks.js";
 import {
   holdsSplitDate,
+  isBookkeeping,
   isStamp,
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
@@ -175,12 +176,23 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
 const MAX_TAG_CLIMB = 3;
 
 /** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
-export const holdsNoisyText = (value: JsonValue | undefined): boolean => {
+export const holdsNoisyText = (
+  value: JsonValue | undefined,
+  bookkeeping = false,
+): boolean => {
   if (typeof value === "string") {
     const text = value.trim();
-    return text.length > 0 && (isStamp(text) || isVolatileValue(text));
+    return (
+      text.length > 0 &&
+      (isStamp(text) || (bookkeeping && isVolatileValue(text)))
+    );
   }
-  return isXmlElement(value) && value.children.some(holdsNoisyText);
+  return (
+    isXmlElement(value) &&
+    value.children.some((child) =>
+      holdsNoisyText(child, bookkeeping || isBookkeeping(value)),
+    )
+  );
 };
 
 /**
