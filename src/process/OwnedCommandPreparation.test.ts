@@ -472,3 +472,41 @@ it("times out stalled Linux baseline capture before the default launcher starts 
   await vi.advanceTimersByTimeAsync(50);
   expect(await outcome).toMatchObject({ reason: "timeout" });
 });
+
+it("bounds a stalled Darwin baseline without charging helper preparation to the baseline budget", async () => {
+  hostPlatform("darwin");
+  vi.useFakeTimers();
+  const preparation = createDeferred<void>();
+  const entered = createDeferred<void>();
+  vi.spyOn(systemProcessOwnershipHost, "prepare").mockImplementation(
+    async () => preparation.promise,
+  );
+  vi.spyOn(systemProcessOwnershipHost, "captureBaseline").mockImplementation(
+    async (signal) => {
+      entered.resolve();
+      return await new Promise((_resolve, reject) =>
+        signal?.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        }),
+      );
+    },
+  );
+  const pending = prepareOwnedCommandLaunch({
+    command: "never-launched",
+    arguments: [],
+    runId: "darwin-stalled",
+    platform: "darwin",
+    sweepTokenOwnedProcesses: true,
+  });
+  const outcome = pending.then(
+    () => {
+      throw new Error("Expected timeout");
+    },
+    (cause: unknown) => cause,
+  );
+  await vi.advanceTimersByTimeAsync(20_000);
+  preparation.resolve();
+  await entered.promise;
+  await vi.advanceTimersByTimeAsync(15_000);
+  expect(await outcome).toMatchObject({ reason: "timeout" });
+});

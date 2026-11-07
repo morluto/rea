@@ -272,6 +272,13 @@ export const prepareOwnedProviderProcess = async (
 ): Promise<PreparedOwnedProviderProcess> => {
   options.signal?.throwIfAborted();
   await prepareProcessOwnershipInspection(options.signal);
+  return capturePreparedProviderOwnership(options);
+};
+
+/** Capture the launch baseline after the host preparation has completed. */
+export const capturePreparedProviderOwnership = async (
+  options: OwnedProviderProcessSpawnOptions,
+): Promise<PreparedOwnedProviderProcess> => {
   options.signal?.throwIfAborted();
   const platform = options.platform ?? process.platform;
   const sweepTokenOwnedProcesses =

@@ -382,3 +382,39 @@ it("preserves each prerequisite cleanup retry outcome until the same owner relea
   expect(failures.every((failure) => !failure.cleanupIncomplete)).toBe(true);
   expect(result.error.cleanupIncomplete).toBe(false);
 });
+
+it.skipIf(process.platform !== "darwin")(
+  "reports a stalled prelaunch baseline as a Java probe timeout",
+  async () => {
+    vi.useFakeTimers();
+    const prepare = vi
+      .spyOn(systemProcessOwnershipHost, "prepare")
+      .mockResolvedValue();
+    const capture = vi
+      .spyOn(systemProcessOwnershipHost, "captureBaseline")
+      .mockImplementation(
+        async (signal) =>
+          await new Promise((_resolve, reject) =>
+            signal?.addEventListener("abort", () => reject(signal.reason), {
+              once: true,
+            }),
+          ),
+      );
+    try {
+      const pending = probeGhidraJava(
+        "/unused/java",
+        {},
+        { resourceOwner: resources.owner },
+      );
+      await vi.advanceTimersByTimeAsync(15_000);
+      expect(await pending).toMatchObject({
+        ok: false,
+        error: { code: "runtime_unavailable", processErrorCode: "ETIMEDOUT" },
+      });
+    } finally {
+      prepare.mockRestore();
+      capture.mockRestore();
+      vi.useRealTimers();
+    }
+  },
+);
