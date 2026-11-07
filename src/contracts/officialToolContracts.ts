@@ -57,7 +57,7 @@ const official = <
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "annotate_native_function",
-    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra resolves an interior address to its containing function and applies edits at the function entry, not at the selected instruction; use procedure_address first to find that entry. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
   ),
   official(
@@ -231,13 +231,13 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "search_procedures",
-    `Search every analyzed procedure name, including secondary names exact lookup accepts, using literal matching by default or regex when requested. Each procedure appears once under its primary name; matched_aliases lists matching secondary names. Results are deterministic and complete. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    `Search every analyzed procedure name, including secondary names exact lookup accepts, using literal matching by default or regex when requested. Each procedure appears once under its primary name; matched_aliases lists matching secondary names. Results are deterministic and complete. For Ghidra case-insensitive literal searches, raw_result contains unfiltered candidates; normalized_result contains matches. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
   official(
     "search_strings",
-    `Search every provider-reported string object or candidate using literal matching by default or regex when requested. Results are deterministic and complete over that provider inventory, not every text sequence in artifact bytes. Kuna scans mapped sequences of at least five characters, including unterminated fragments, without computing references. Ghidra may omit packed or undefined literals, including Rust strings; an empty result does not prove text is absent. For known encoded bytes, Ghidra search_bytes can find byte matches; a hit does not establish a string or use. If an address is known, xrefs can look for references; read_bytes can inspect bytes where supported (not available with Kuna). Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
+    `Search every provider-reported string object or candidate using literal matching by default or regex when requested. Results are deterministic and complete over that provider inventory, not every text sequence in artifact bytes. Kuna scans mapped sequences of at least five characters, including unterminated fragments, without computing references. Ghidra may omit packed or undefined literals, including Rust strings; an empty result does not prove text is absent. For known encoded bytes, Ghidra search_bytes can find byte matches; a hit does not establish a string or use. If an address is known, xrefs can look for references; read_bytes can inspect bytes where supported (not available with Kuna). Hopper retains typed byte decoding, native display, and explicit decoding unknowns. Adjacent long-literal fragments match independently. For Ghidra case-insensitive literal searches, raw_result contains unfiltered candidates; normalized_result contains matches. ${hopperRegexDeadline} Select detail summary for counts and retained native-inventory pages; complete remains the default.`,
     z.object({ ...nativeSearchInput, detail: analysisDetailSchema }),
     { evidenceParameters: "omit-detail" },
   ),
@@ -273,7 +273,7 @@ export const OFFICIAL_TOOL_CONTRACTS = [
   ),
   official(
     "xrefs",
-    "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
+    "Return analyzed references to a code or data address. Hopper may default to its current cursor; headless providers such as Ghidra require an explicit address. Kuna also accepts names in its own inventory, including data names; an unlisted name may still exist in the target. Use to connect strings, globals, selectors, and functions; bare addresses are untyped and indirect references may be incomplete. Page a retained result with inspect_analysis_view and native-observation; use native-context for source caveats. Use inspect_native_instruction at the target address for typed incoming references where supported.",
     z.object({ document, address: optionalAddress }),
   ),
 ] as const satisfies readonly ToolContract[];
