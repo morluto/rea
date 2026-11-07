@@ -3,7 +3,7 @@ import type {
   DesktopStateChange,
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import { isLockName } from "./runtimeFiles.js";
+import { isLockName, isSiblingLockName } from "./runtimeFiles.js";
 import { SQLITE_SIDECARS } from "./stateFormats.js";
 
 /** Why a path is, or is not, treated as the application's state. */
@@ -170,10 +170,14 @@ export const roleFacts = (
     sqliteSidecars,
     selectedRoots: state.content_roots.filter((root) => {
       const relative = homePath(root, host.home);
+      const chosen = (state.selected_paths ?? []).some(
+        (entry) => entry.path === root || entry.physical === root,
+      );
       return (
         !sqliteSidecars.has(root) &&
-        !stateDirectories.includes(root) &&
-        (relative === null || !stateTails.includes(relative))
+        (chosen ||
+          (!stateDirectories.includes(root) &&
+            (relative === null || !stateTails.includes(relative))))
       );
     }),
     selections: [...(state.selected_paths ?? [])].sort(
@@ -318,7 +322,9 @@ export const stateRole = (
   if (reasons.includes("named_in_window_title")) return "document";
   if (reasons.includes("selected_path"))
     return selectedAs !== null &&
-      (selectedAs.startsWith(".") || isLockName(selectedAs))
+      (selectedAs.startsWith(".") ||
+        isLockName(selectedAs) ||
+        isSiblingLockName(selectedAs))
       ? "application_state"
       : "document";
   if (reasons.includes("opened_by_application") && !shared)

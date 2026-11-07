@@ -470,6 +470,38 @@ describe("draftTaskFiles for an added record whose words the seed already has", 
   });
 });
 
+describe("draftTaskFiles for a formatted list", () => {
+  const list = (items: string) => `<shopping><list>${items}</list></shopping>`;
+  const plain = "<list-item>milk</list-item>";
+  const item = (text: string) => `<list-item><bold>${text}</bold></list-item>`;
+
+  it("checks a new formatted item by the list's whole text, so a different item fails", () => {
+    const before = list(plain);
+    const after = list(`${plain}${item("olive oil")}`);
+    const file = xmlDraft(before, after);
+
+    expect(
+      file.suggested.some(
+        (check) =>
+          check.kind === "text_contains" &&
+          "value" in check &&
+          check.value === "olive oil",
+      ),
+    ).toBe(false);
+    expect(file.suggested.some(({ kind }) => kind === "text_equals")).toBe(
+      true,
+    );
+    expect(passing(FILE, xml(after), file.suggested).every(Boolean)).toBe(true);
+    expect(
+      passing(
+        FILE,
+        xml(list(`${plain}${item("no olive oil")}`)),
+        file.suggested,
+      ),
+    ).toContain(false);
+  });
+});
+
 describe("draftTaskFiles for a paragraph made of runs", () => {
   /** A Writer document's body: a paragraph, and any added after it. */
   const body = (added: string) =>

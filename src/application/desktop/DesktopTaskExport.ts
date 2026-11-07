@@ -234,7 +234,7 @@ whose summary line says \`passed\`; a run that says \`failed\` did not finish an
 
 /** Read, validate and render the task a caller passed with the export, if any. */
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
-const namesApp = (
+export const namesApp = (
   prompt: string,
   {
     title,
@@ -242,10 +242,13 @@ const namesApp = (
     aptPackage,
   }: Pick<TaskTarget, "title" | "name" | "aptPackage">,
 ): boolean => {
-  const said = prompt.toLowerCase();
-  return [title, name, aptPackage].some((app) =>
-    said.includes(app.toLowerCase()),
-  );
+  return [title, name, aptPackage].some((app) => {
+    const spelled = app.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(
+      `(?<![\\p{L}\\p{N}_])${spelled}(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ).test(prompt);
+  });
 };
 
 export const admitDesktopTask = async (

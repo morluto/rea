@@ -35,6 +35,10 @@ import {
   type WitnessStageRecord,
 } from "../../domain/desktop/buildWitness.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import {
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+} from "../../desktop/AgentEnvComputer.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
 import type {
@@ -115,8 +119,14 @@ const usableFolder = async (directory: string): Promise<boolean> =>
       (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
   );
 
-/** The most bytes REA reads of each of the bundle's files for the task. */
-const BUNDLE_FILE_BYTES = 1024 * 1024;
+/**
+ * The most bytes REA reads of each of the bundle's task files. A task the
+ * export accepts has no smaller file cap, and the steps file holds the whole
+ * prompt. The bound is the same working budget as a guest file answer: a
+ * quarter of the heap, divided by the copies a read and a parse hold.
+ */
+const bundleFileBytes = () =>
+  guestFileAnswerWorkingBytes(guestFileAnswerCeiling());
 const stepsSchema = z.array(
   z.looseObject({ type: z.string(), env_id: z.string().optional() }),
 );
@@ -131,7 +141,7 @@ const bundleTaskDifference = async (
   const verifierPath = `artifacts/${taskVerifierArtifact(task)}/verify.py`;
   const [steps, verifier] = await Promise.all(
     [stepsPath, verifierPath].map((path) =>
-      readHostFile(join(bundle, path), BUNDLE_FILE_BYTES, signal),
+      readHostFile(join(bundle, path), bundleFileBytes(), signal),
     ),
   );
   if (!Buffer.isBuffer(steps) || !Buffer.isBuffer(verifier))
