@@ -1,6 +1,7 @@
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
@@ -13,8 +14,9 @@ import {
   API_CONTRACT_PROVIDER,
 } from "../domain/apiContract/apiContract.js";
 import {
-  apiContractViewRequestSchema,
-  inspectApiContractInputSchema,
+  apiContractViewSelectionSchema,
+  apiContractFormatSchema,
+  apiContractFileBytesSchema,
 } from "../domain/apiContract/apiContractQuery.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
@@ -26,7 +28,7 @@ import {
 const deliverySchema = z
   .object({
     detail: analysisEvidenceDeliveryOptions.detail,
-    view: apiContractViewRequestSchema.optional(),
+    view: apiContractViewSelectionSchema.optional(),
   })
   .superRefine((value, context) => {
     if (value.view !== undefined && value.detail !== "summary")
@@ -45,18 +47,28 @@ export const registerApiContractCommand = (
 ): void => {
   cli.command(CLI_COMMANDS.inspectApiContract, {
     description:
-      "Inventory local OpenAPI 3.0/3.1/3.2 JSON declarations offline without resolving references",
+      "Inspect local OpenAPI JSON or GraphQL SDL declarations and field bindings offline",
     args: z.object({
-      path: localPathStringSchema.describe("Local OpenAPI JSON path"),
+      path: localPathStringSchema.describe(
+        "Local OpenAPI JSON or GraphQL SDL path",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      maxFileBytes: inspectApiContractInputSchema.shape.max_file_bytes,
+      maxFileBytes: cliDecimalField(apiContractFileBytesSchema),
+      contractFormat: apiContractFormatSchema
+        .default("openapi-json")
+        .describe("Input API contract syntax: OpenAPI JSON or GraphQL SDL"),
+      operationsPath: localPathStringSchema
+        .optional()
+        .describe(
+          "Local operation/fragment document, only with --contractFormat graphql-sdl",
+        ),
       view: z
         .string()
         .optional()
         .describe(
-          "JSON api-contract page; requires --detail summary and --evidence_output",
+          "JSON api-contract or graphql-contract page; requires --detail summary and --evidence_output",
         ),
     }),
     run: ({ args, options }) =>
@@ -73,12 +85,28 @@ export const registerApiContractCommand = (
             await import("../application/apiContract/ApiContractService.js");
           return deliverCliAnalysisEvidence({
             callerInputPath: args.path,
+            ...(options.operationsPath === undefined
+              ? {}
+              : {
+                  callerInputPaths: { operations_path: options.operationsPath },
+                }),
             run: () =>
               inspectApiContractEvidence(
                 {
                   path: absoluteCallerPath(args.path),
+                  format: options.contractFormat,
+                  ...(options.operationsPath === undefined
+                    ? {}
+                    : {
+                        operations_path: absoluteCallerPath(
+                          options.operationsPath,
+                        ),
+                      }),
                   max_file_bytes: options.maxFileBytes,
                   detail: "complete",
+                  ...(selected.value.view === undefined
+                    ? {}
+                    : { view: selected.value.view }),
                 },
                 resources,
                 { signal },
