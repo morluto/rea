@@ -308,6 +308,8 @@ import {
   pageViewSchema,
   summaryViewSchema,
 } from "./analysisViewShape.js";
+import { recordedArrayViewSchema } from "./analysisViewRequest.js";
+
 const artifactSchema = z.strictObject({
   path: z
     .string()
@@ -1202,6 +1204,20 @@ const machoPageViewResultSchema = z
 
 /** Projected facts for one selected view of retained analysis Evidence. */
 export const analysisViewResultSchema = z.discriminatedUnion("kind", [
+  z.strictObject({
+    ...viewResultBase,
+    ...nativeViewSourceContext,
+    source_parameters: jsonObjectSchema
+      .nullable()
+      .describe(
+        "Null means source parameters were omitted to fit the page; retrieve the parent Evidence.",
+      ),
+    parent_operation: z.string(),
+    artifact: artifactSchema.nullable(),
+    kind: z.literal("recorded-array"),
+    view: recordedArrayViewSchema,
+    rows: z.array(jsonValueSchema),
+  }),
   playwrightTracePageViewResultSchema,
   z.strictObject({
     ...viewResultBase,
