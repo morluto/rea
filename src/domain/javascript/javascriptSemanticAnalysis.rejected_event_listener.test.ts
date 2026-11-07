@@ -965,3 +965,15 @@ it("resolves nullish optional chains in ?? fallback operands", () => {
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("evaluates deep optional chains in linear time without exponential checks", () => {
+  let longChain = "opts";
+  for (let i = 0; i < 30; i++) longChain += `?.p${i}`;
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${longChain});
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});

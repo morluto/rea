@@ -345,6 +345,8 @@ const isProvablyNonThenablePrimitive = (
   return false;
 };
 
+const staticallyNullishOptionalChainCache = new WeakMap<t.Node, boolean>();
+
 /**
  * Identify optional member or call chains (e.g. `null?.handler`, `undefined?.()`,
  * `null?.a.b`) whose base is provably nullish, meaning the optional chain
@@ -368,42 +370,48 @@ function isStaticallyNullishOptionalChain(
     return false;
   }
 
+  const cached = staticallyNullishOptionalChainCache.get(value);
+  if (cached !== undefined) return cached;
+
   let curr: t.Node = value;
-  let chainDepth = currentDepth;
-  while (chainDepth <= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+  let chainLength = currentDepth;
+  let hasOptionalLink = false;
+  const chainNodes: t.Node[] = [];
+
+  while (chainLength <= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
     const unwrapCurr = unwrapJavaScriptExpression(curr);
-    chainDepth += unwrapCurr.depth;
-    if (chainDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+    chainLength += unwrapCurr.depth;
+    if (chainLength > SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+      staticallyNullishOptionalChainCache.set(value, false);
+      return false;
+    }
     const inner = unwrapCurr.node;
 
     if (t.isOptionalMemberExpression(inner)) {
-      if (inner.optional) {
-        if (
-          staticExpressionNullishness(inner.object, state, chainDepth + 1) ===
-          true
-        ) {
-          return true;
-        }
-      }
+      chainNodes.push(inner);
+      if (inner.optional) hasOptionalLink = true;
       curr = inner.object;
-      chainDepth++;
+      chainLength++;
     } else if (t.isOptionalCallExpression(inner)) {
-      if (inner.optional) {
-        if (
-          staticExpressionNullishness(inner.callee, state, chainDepth + 1) ===
-          true
-        ) {
-          return true;
-        }
-      }
+      chainNodes.push(inner);
+      if (inner.optional) hasOptionalLink = true;
       curr = inner.callee;
-      chainDepth++;
+      chainLength++;
     } else {
       break;
     }
   }
 
-  return false;
+  if (!hasOptionalLink) {
+    staticallyNullishOptionalChainCache.set(value, false);
+    return false;
+  }
+
+  const result = staticExpressionNullishness(curr, state, chainLength) === true;
+  for (const n of chainNodes) {
+    staticallyNullishOptionalChainCache.set(n, result);
+  }
+  return result;
 }
 
 /** Determine whether syntax definitely evaluates to null or undefined. */
