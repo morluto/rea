@@ -1069,6 +1069,14 @@ concrete version, selection source, and complete analysis profile through
 choices return typed selection details. A selected provider is never replaced
 automatically after a runtime failure.
 
+When the selected provider reports `release_verification` in its binding,
+the status compares its reported release version at binding with the provider's
+verified baseline. It does not recheck the executable, authenticate its bytes,
+or guarantee results.
+An unverified release may still be usable; the optional remediation preserves
+the caller's choice. Omission means verification was not reported. Target-free
+discovery does not probe a version solely to populate this fact.
+
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
 records the canonical binary path and SHA-256, resource root (including its
 caller-selected path), or absence of selection at
