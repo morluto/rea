@@ -350,6 +350,21 @@ describe("field validation", () => {
     expect(archive.summary.malformed_headers).toBeGreaterThan(0);
   });
 
+  it("bounds rejected version lines that never produce a record", () => {
+    // These reach `continue`, so max_records never stops them; a small gzip
+    // can carry millions and the whole scan runs synchronously. The genuine
+    // record past the ceiling proves the scan stopped rather than merely
+    // reporting: the diagnostic itself can be masked by the 10000-diagnostic
+    // ceiling, which these lines fill on their own.
+    const junk = "WARC/not-a-version\r\n\r\n".repeat(10_001);
+    const archive = parsed(
+      junk + record("response", [["WARC-Record-ID", "<urn:late>"]], "late"),
+      { maxRecords: 100 },
+    );
+    expect(archive.records).toHaveLength(0);
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
   it("rejects a version line without a version instead of inventing a record", () => {
     // Any line starting `WARC/` used to be a record, so this passed as a clean
     // inventory and its declared length could consume the real record after it.
@@ -391,6 +406,20 @@ describe("response status line", () => {
     const padded = `HTTP/1.1 200${" ".repeat(9000)}ok\r\n\r\n`;
     const archive = parsed(
       record("response", [["WARC-Record-ID", "<urn:1>"]], padded),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+  });
+
+  it("rejects a bare carriage return in a status line below the size cap", () => {
+    // The quadratic-input case above is rejected by the size cap, so it never
+    // exercises the character check. Without it this line produced
+    // status_code 200 with reason_phrase "ok\rX".
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Record-ID", "<urn:1>"]],
+        "HTTP/1.1 200 ok\rX\r\n\r\n",
+      ),
     );
     expect(archive.records[0]?.http).toBeNull();
   });

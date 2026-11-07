@@ -7,6 +7,7 @@ import {
   WARC_ARCHIVE_HEADER_FIELDS,
   WARC_ARCHIVE_HTTP_STATUS_LINE_BYTES as HTTP_STATUS_LINE_BYTES,
   WARC_ARCHIVE_MAX_DIAGNOSTICS,
+  WARC_ARCHIVE_MAX_INVALID_VERSIONS,
   type WarcArchive,
   type WarcArchiveArtifact,
   type WarcRecord,
@@ -226,6 +227,11 @@ const readHttpStatus = (payload: Buffer): HttpFacts | null => {
     reasonFrom += 1;
   while (reasonEnd > reasonFrom && isSpace(payload[reasonEnd - 1] ?? -1))
     reasonEnd -= 1;
+  // `findLineEnd` strips one trailing CR, so any CR left in the content is a
+  // bare one that ended the line early; the reader used to keep it inside the
+  // reason phrase and hand out facts for a line that is not well formed.
+  for (let index = reasonFrom; index < reasonEnd; index += 1)
+    if (payload[index] === 0x0d) return null;
   return {
     status_code: status.code,
     reason_phrase:
@@ -272,6 +278,24 @@ type DiagnosticSink = (
   code: WarcArchive["diagnostics"][number]["code"],
   message: string,
 ) => void;
+
+/**
+ * Rejected version lines never produce a record, so `max_records` cannot stop
+ * them; this is the ceiling that does, and it is named when it fires.
+ */
+const versionLineAllowanceSpent = (
+  rejected: number,
+  ordinal: number,
+  diagnostic: DiagnosticSink,
+): boolean => {
+  if (rejected < WARC_ARCHIVE_MAX_INVALID_VERSIONS) return false;
+  diagnostic(
+    ordinal,
+    "invalid-version-limit-reached",
+    `Inventory stopped after ${WARC_ARCHIVE_MAX_INVALID_VERSIONS} version lines that carry no parseable version; later records were not read.`,
+  );
+  return true;
+};
 
 /**
  * Report why a header block could not be read. Returns how to resume: null
@@ -366,6 +390,7 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
 
   let cursor = 0;
   let ordinal = 0;
+  let rejectedVersions = 0;
   while (cursor < data.length) {
     // Records are separated by CRLF pairs or blank padding. Skip the separator
     // before searching: from a separator the next `WARC/` prefix also matches
@@ -399,6 +424,10 @@ const parseDecodedStream = (data: Buffer, maxRecords: number): ParsedStream => {
       if (resume === null) break;
       cursor = resume;
       ordinal += 1;
+      rejectedVersions += 1;
+      if (versionLineAllowanceSpent(rejectedVersions, ordinal, diagnostic)) {
+        break;
+      }
       continue;
     }
     if (records.length >= maxRecords) {

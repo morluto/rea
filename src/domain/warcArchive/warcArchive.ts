@@ -22,6 +22,13 @@ export const WARC_ARCHIVE_HEADER_FIELDS = 20_000;
  * the remaining lines are summarised rather than each allocated a diagnostic.
  */
 export const WARC_ARCHIVE_MAX_DIAGNOSTICS = 10_000;
+/**
+ * Rejected `WARC/x.y` version lines reach `continue` without returning a
+ * record, so `max_records` never bounds how many an archive can carry. A small
+ * gzip can hold millions of them and the scan is synchronous, so stop after
+ * this many and report the stop instead of scanning the whole expansion.
+ */
+export const WARC_ARCHIVE_MAX_INVALID_VERSIONS = 10_000;
 export const WARC_ARCHIVE_OPERATION = "inspect_warc_archive" as const;
 export const WARC_ARCHIVE_PROVIDER = {
   id: "rea-warc-archive",
@@ -91,6 +98,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "header-line-limit-reached",
     "header-block-limit-reached",
     "invalid-version-line",
+    "invalid-version-limit-reached",
   ]),
   message: z.string(),
 });
