@@ -83,6 +83,8 @@ it("keeps parameters that still fit one level below the Evidence root", () => {
   const parameters = nested(MAX_JSON_DEPTH - 2);
   const projected = project(parent(parameters));
   if (!projected.ok) throw projected.error;
+  if (projected.value.kind !== "recorded-array")
+    throw new Error("expected a recorded-array page");
   expect(projected.value.source_parameters).toEqual(parameters);
 });
 
