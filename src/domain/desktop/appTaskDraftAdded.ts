@@ -107,10 +107,11 @@ const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
       for (const [key, value] of Object.entries(node.attributes))
         if (typeof value === "string" && /^(?:[^:]*:)?(?:id|key)$/iu.test(key))
           ids.add(value);
-      pending.push(...node.children);
-    } else if (isRecord(node)) pending.push(...Object.values(node));
-    // An archive keeps its documents in an `entries` array.
-    else if (Array.isArray(node)) pending.push(...node);
+      for (const child of node.children) pending.push(child);
+    } else if (isRecord(node))
+      for (const child of Object.values(node)) pending.push(child);
+    // An archive keeps its documents in an `entries` array; one at a time, as a spread overflows on a wide one.
+    else if (Array.isArray(node)) for (const child of node) pending.push(child);
   }
   return ids;
 };

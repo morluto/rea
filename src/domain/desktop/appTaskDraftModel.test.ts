@@ -26,6 +26,26 @@ describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
     model(attribute("ubcgF2AWfBmHh", "email", type), "67", "ubcgF2AWfBmHh");
   const MEMBER =
     "/root/children/[name=uml:Model]/children/[name=packagedElement]/children/[name=packagedElement][@name=Member]";
+  const ZIP = "Documents/library.zip";
+  /** The model zipped as `library.xmi`, with `others` beside it. */
+  const zipped = (
+    text: string,
+    others: readonly JsonValue[] = [],
+  ): JsonValue => ({
+    entries: [
+      {
+        name: "library.xmi",
+        size: text.length,
+        sha256: "a".repeat(64),
+        format: "xml",
+        view: xml(text),
+        view_error: null,
+      },
+      ...others,
+    ],
+    entry_count: 1 + others.length,
+    truncated: false,
+  });
 
   it("checks the new attribute's type, never its class's visibility values as runs of text, so an attribute of another type fails", () => {
     const file = xmlDraft(SEED, email(STRING));
@@ -94,22 +114,31 @@ describe("draftTaskFiles for a UML model, as Umbrello saves one", () => {
     ]);
   });
 
-  it("checks the new attribute's type in a zipped model, whose data types only the archive's entries hold", () => {
-    const ZIP = "Documents/library.zip";
-    const zipped = (text: string): JsonValue => ({
-      entries: [
-        {
-          name: "library.xmi",
-          size: text.length,
-          sha256: "a".repeat(64),
-          format: "xml",
-          view: xml(text),
-          view_error: null,
-        },
-      ],
-      entry_count: 1,
-      truncated: false,
+  it("drafts the zipped model's edit beside an entry holding a JSON array of 2,000,000 numbers, within the 4 MiB view limit", () => {
+    const wide = {
+      name: "samples.json",
+      size: 4_000_001,
+      sha256: "b".repeat(64),
+      format: "json",
+      view: Array.from({ length: 2_000_000 }, () => 0),
+      view_error: null,
+    };
+
+    const [file] = draftOf({
+      [ZIP]: statePath(
+        "document",
+        "zip",
+        zipped(SEED, [wide]),
+        zipped(email(STRING), [wide]),
+      ),
     });
+
+    expect(file?.suggested.map(pointerOf)).toContain(
+      `/entries/[name=library.xmi]/view${MEMBER}/children/[name=ownedAttribute][@name=email]/attributes/type`,
+    );
+  });
+
+  it("checks the new attribute's type in a zipped model, whose data types only the archive's entries hold", () => {
     const [file] = draftOf({
       [ZIP]: statePath("document", "zip", zipped(SEED), zipped(email(STRING))),
     });
