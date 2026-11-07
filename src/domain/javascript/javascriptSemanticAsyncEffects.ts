@@ -173,53 +173,66 @@ export const collectJavaScriptSemanticAsyncEffects = (
 const staticExpressionTruthiness = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
+  initialDepth = 0,
 ): boolean | undefined => {
-  const unwrapped = unwrapJavaScriptExpression(node).node;
-  const direct = staticJavaScriptTruthiness(unwrapped);
-  if (direct !== undefined) return direct;
-  if (t.isRegExpLiteral(unwrapped) || t.isClassExpression(unwrapped))
-    return true;
-  if (t.isTemplateLiteral(unwrapped)) {
-    if (
-      unwrapped.quasis.some(
-        (q) => typeof q.value.cooked === "string" && q.value.cooked.length > 0,
-      )
-    ) {
-      return true;
+  let current: t.Node = node;
+  let inverted = false;
+  let depth = initialDepth;
+
+  while (depth <= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+    const unwrapped = unwrapJavaScriptExpression(current).node;
+    if (t.isUnaryExpression(unwrapped) && unwrapped.operator === "!") {
+      inverted = !inverted;
+      current = unwrapped.argument;
+      depth++;
+      continue;
+    }
+    const direct = staticJavaScriptTruthiness(unwrapped);
+    if (direct !== undefined) return inverted ? !direct : direct;
+    if (t.isRegExpLiteral(unwrapped) || t.isClassExpression(unwrapped))
+      return !inverted;
+    if (t.isTemplateLiteral(unwrapped)) {
+      if (
+        unwrapped.quasis.some(
+          (q) =>
+            typeof q.value.cooked === "string" && q.value.cooked.length > 0,
+        )
+      ) {
+        return !inverted;
+      }
+      if (
+        unwrapped.expressions.length === 0 &&
+        unwrapped.quasis.every((q) => q.value.cooked === "")
+      ) {
+        return inverted;
+      }
+    }
+    if (t.isUnaryExpression(unwrapped)) {
+      if (unwrapped.operator === "void") return inverted;
+      if (unwrapped.operator === "typeof") return !inverted;
+      if (
+        (unwrapped.operator === "+" || unwrapped.operator === "-") &&
+        t.isNumericLiteral(unwrapped.argument)
+      ) {
+        const val =
+          unwrapped.argument.value !== 0 &&
+          !Number.isNaN(unwrapped.argument.value);
+        return inverted ? !val : val;
+      }
     }
     if (
-      unwrapped.expressions.length === 0 &&
-      unwrapped.quasis.every((q) => q.value.cooked === "")
+      t.isIdentifier(unwrapped) &&
+      isUnmodifiedGlobalReference(unwrapped, state, unwrapped.name) &&
+      !semanticOpaqueNameMayHaveChanged(unwrapped, state)
     ) {
-      return false;
+      if (unwrapped.name === "undefined" || unwrapped.name === "NaN")
+        return inverted;
+      if (unwrapped.name === "Infinity") return !inverted;
     }
+    return undefined;
   }
-  if (t.isUnaryExpression(unwrapped)) {
-    if (unwrapped.operator === "void") return false;
-    if (unwrapped.operator === "typeof") return true;
-    if (unwrapped.operator === "!") {
-      const inner = staticExpressionTruthiness(unwrapped.argument, state);
-      return inner === undefined ? undefined : !inner;
-    }
-    if (
-      (unwrapped.operator === "+" || unwrapped.operator === "-") &&
-      t.isNumericLiteral(unwrapped.argument)
-    ) {
-      return (
-        unwrapped.argument.value !== 0 &&
-        !Number.isNaN(unwrapped.argument.value)
-      );
-    }
-  }
-  if (
-    t.isIdentifier(unwrapped) &&
-    isUnmodifiedGlobalReference(unwrapped, state, unwrapped.name) &&
-    !semanticOpaqueNameMayHaveChanged(unwrapped, state)
-  ) {
-    if (unwrapped.name === "undefined" || unwrapped.name === "NaN")
-      return false;
-    if (unwrapped.name === "Infinity") return true;
-  }
+
+  state.valueResourceLimits.add("expression-depth");
   return undefined;
 };
 
@@ -418,7 +431,7 @@ export const rejectsEventListener = (
     }
     const value = unwrapped.node;
     if (t.isConditionalExpression(value)) {
-      const truthiness = staticExpressionTruthiness(value.test, state);
+      const truthiness = staticExpressionTruthiness(value.test, state, depth);
       if (truthiness === true) {
         pending.push({ node: value.consequent, depth: depth + 1 });
       } else if (truthiness === false) {
@@ -433,7 +446,7 @@ export const rejectsEventListener = (
     }
     if (t.isLogicalExpression(value)) {
       if (value.operator === "||") {
-        const truthiness = staticExpressionTruthiness(value.left, state);
+        const truthiness = staticExpressionTruthiness(value.left, state, depth);
         if (truthiness === true) {
           pending.push({ node: value.left, depth: depth + 1 });
         } else if (truthiness === false) {
@@ -447,7 +460,7 @@ export const rejectsEventListener = (
         continue;
       }
       if (value.operator === "&&") {
-        const truthiness = staticExpressionTruthiness(value.left, state);
+        const truthiness = staticExpressionTruthiness(value.left, state, depth);
         if (truthiness === false) {
           // A falsy value in JavaScript can never be a callable function.
           continue;
@@ -481,7 +494,7 @@ export const rejectsEventListener = (
         continue;
       }
       if (value.operator === "||=") {
-        const truthiness = staticExpressionTruthiness(value.left, state);
+        const truthiness = staticExpressionTruthiness(value.left, state, depth);
         if (truthiness === true) {
           pending.push({ node: value.left, depth: depth + 1 });
         } else if (truthiness === false) {
@@ -495,7 +508,7 @@ export const rejectsEventListener = (
         continue;
       }
       if (value.operator === "&&=") {
-        const truthiness = staticExpressionTruthiness(value.left, state);
+        const truthiness = staticExpressionTruthiness(value.left, state, depth);
         if (truthiness === false) {
           continue;
         }

@@ -786,3 +786,25 @@ it("retains candidate for EventEmitter when namespace import escapes", () => {
   `);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("iteratively evaluates truthiness for deep chains of logical NOT without recursion", () => {
+  const nots = "!".repeat(50);
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${nots}true ? 1 : () => {});
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("preserves candidate when chain of logical NOT exceeds expression depth limit", () => {
+  const nots = "!".repeat(300);
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", ${nots}true ? 1 : () => {});
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
