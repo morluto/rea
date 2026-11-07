@@ -36,11 +36,15 @@ REA does not verify that the mapping belongs to the APK build.
 
 The provider requires a separately supplied headless JADX MCP JAR 0.7.1 and
 Java 17 or newer. `REA_JADX_MCP_JAR` selects the absolute JAR path; `JAVA_HOME`
-can select Java. Use `rea doctor --provider jadx --json` to check the JADX
-configuration and obtain remediation for missing prerequisites. Java and the
-headless JADX MCP JAR remain caller-supplied; REA setup does not install or
-configure them. Configuration readiness does not establish successful analysis
-of a particular APK.
+can select Java. Obtain the JAR from the pinned
+[jadx-headless-mcp v0.7.1](https://github.com/1013503897/jadx-headless-mcp/releases/tag/v0.7.1)
+release and verify its SHA-256 against [REA’s release metadata](https://github.com/morluto/rea/blob/main/src/android/JadxRelease.ts). The same
+name identifies an unrelated package on npm and other repositories. Use
+`rea doctor --provider jadx --json` to check the JADX configuration and obtain
+remediation for missing prerequisites. Java and the headless JADX MCP JAR
+remain caller-supplied; REA setup does not install or configure them.
+Configuration readiness does not establish successful analysis of a particular
+APK.
 
 Linux and macOS use the POSIX owned-process boundary. Windows x64 requires the
 matching bundled native controls and uses an owned Job Object with bidirectional

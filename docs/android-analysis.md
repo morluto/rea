@@ -148,7 +148,9 @@ Use a **full JDK 17 or newer** (including its compiler module) and
 [**jadx-headless-mcp 0.7.1**](https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar).
 Verify the downloaded JAR's SHA-256 against
 [REA's pinned release metadata](https://github.com/morluto/rea/blob/main/src/android/JadxRelease.ts)
-before using it. The following download and verification commands work for npm
+before using it. The name `jadx-headless-mcp` also identifies an unrelated
+package on npm and other repositories; only this pinned release matches that
+digest. The following download and verification commands work for npm
 package consumers as well as repository checkouts; the repository-only
 `npm run fixtures:android` helper is not included in the npm package.
 
