@@ -533,10 +533,15 @@ it.each([undefined, "../selected-link/./artifact"])(
     const parent =
       callerInputPath === undefined
         ? original
-        : withEvidenceCallerInputPath(original, callerInputPath);
+        : withEvidenceCallerInputPath(original, callerInputPath, {
+            operations_path: "./query 雪.graphql",
+          });
     const delivered = await deliverAnalysisEvidence(parent, path, "summary");
     if (!delivered.ok) throw delivered.error;
     expect(delivered.value.caller_input_path).toBe(callerInputPath);
+    expect(delivered.value.caller_input_paths).toEqual(
+      parent.caller_input_paths,
+    );
     expect(delivered.value.evidence_links).toContain(parent.evidence_id);
     expect(original.caller_input_path).toBeUndefined();
     const saved = await readEvidenceBundle(path);
@@ -545,6 +550,7 @@ it.each([undefined, "../selected-link/./artifact"])(
       (record) => record.evidence_id === parent.evidence_id,
     );
     expect(savedParent?.caller_input_path).toBe(callerInputPath);
+    expect(savedParent?.caller_input_paths).toEqual(parent.caller_input_paths);
   },
 );
 

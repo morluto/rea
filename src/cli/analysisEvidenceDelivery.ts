@@ -62,6 +62,8 @@ interface CliEvidenceDelivery {
   readonly evidenceOutput: string | undefined;
   /** Exact one-shot CLI target spelling, when this invocation selects a file. */
   readonly callerInputPath?: string;
+  /** Verbatim named auxiliary path choices for the same direct invocation. */
+  readonly callerInputPaths?: Readonly<Record<string, string>>;
   /** Derived workflows publish their selected source closure with the result. */
   readonly sourceEvidence?: readonly Evidence[];
   /** Invocation exclusions cover final cleanup and publication paths/diagnostics. */
@@ -198,7 +200,11 @@ export const deliverCliAnalysisEvidence = async (
   const complete = await finishAnalysisCommand(
     input.callerInputPath === undefined
       ? run
-      : bindCliEvidenceCallerPath(input.callerInputPath, run),
+      : bindCliEvidenceCallerPath(
+          input.callerInputPath,
+          run,
+          input.callerInputPaths,
+        ),
     service,
     providerId,
     operation,
@@ -345,7 +351,12 @@ const isPublishablePartialFailure = (
   if (signal.aborted) return false;
   if (!isObject(failure)) return false;
   const code = failure.code;
-  if (code === "cancelled" || code === "cleanup_incomplete") return false;
+  if (
+    code === "cancelled" ||
+    code === "cleanup_incomplete" ||
+    code === "evidence_integrity_mismatch"
+  )
+    return false;
   return true;
 };
 
@@ -493,7 +504,11 @@ export const publishCliAnalysisEvidence = async (
   // inspect_analysis_view calls own their own input and do not inherit it.
   const selected =
     detail === "summary" && complete.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, complete.caller_input_path)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          complete.caller_input_path,
+          complete.caller_input_paths,
+        )
       : delivered.value;
   const inspectionSources = analysisEvidenceSources(complete);
   if (!inspectionSources.ok) return undelivered(inspectionSources.error);
