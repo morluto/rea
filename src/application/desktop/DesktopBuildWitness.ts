@@ -145,6 +145,12 @@ interface OpenWitness extends EndedWitness {
   pendingManifest?: RecordingManifest | undefined;
   /** Close the published record's handles again, without rewriting it. */
   release?: (() => Promise<void>) | undefined;
+  /**
+   * The error from the publish whose handles are still open. A later cleanup
+   * failure returns this same error, so the record and the cleanup lease stay
+   * bound to it.
+   */
+  publishedError?: AnalysisError | undefined;
 }
 
 /** What the witness says of one filed stage. */
@@ -172,6 +178,22 @@ const counted = (task: DesktopTask, results: TaskCheckOutcome[]) => {
  * verifier does, and witnesses it: the seed, the edit, a near miss and the
  * seed again after a reset, recorded, with the action log, as Evidence.
  */
+/**
+ * Retry closing a published witness. A further failure returns the original
+ * error, which already carries the record and the cleanup lease.
+ */
+export const retryPublishedCleanup = async (
+  published: AnalysisError,
+  release: () => Promise<void>,
+): Promise<Result<void, AnalysisError>> => {
+  try {
+    await release();
+    return ok(undefined);
+  } catch {
+    return err(published);
+  }
+};
+
 export class DesktopBuildWitness {
   #witness: OpenWitness | undefined;
   /**
@@ -326,19 +348,28 @@ export class DesktopBuildWitness {
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
     if (witness.record !== undefined && witness.release !== undefined) {
-      try {
-        await witness.release();
-      } catch (cause: unknown) {
-        return err(
-          new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
-            userMessage: `The witness record was written to ${witness.directory} and is complete, but its output handles could not be closed: ${errorText(cause)}.`,
-            cause,
-            remediationAction:
-              "Check this stage again to release the handles; the record is not rewritten.",
-          }),
-        );
-      }
+      const published = witness.publishedError;
+      const released =
+        published === undefined
+          ? await witness
+              .release()
+              .then(() => ok(undefined))
+              .catch((cause: unknown) =>
+                err(
+                  new ProviderAdapterError(
+                    AGENTENV_PROVIDER,
+                    "check_build_task",
+                    {
+                      userMessage: `The witness record was written to ${witness.directory} and is complete, but its output handles could not be closed: ${errorText(cause)}.`,
+                      cause,
+                    },
+                  ),
+                ),
+              )
+          : await retryPublishedCleanup(published, witness.release);
+      if (!released.ok) return released;
       witness.release = undefined;
+      witness.publishedError = undefined;
       witness.state = "saved";
       return ok(summaryOf(filed, null, witness.record));
     }
@@ -358,6 +389,7 @@ export class DesktopBuildWitness {
     witness.record = written.record;
     if (written.kind === "published") {
       witness.release = written.release;
+      witness.publishedError = written.error;
       return err(written.error);
     }
     witness.state = "saved";
