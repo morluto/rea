@@ -16,7 +16,7 @@ const evidence = (result: Record<string, unknown>): Evidence =>
       right_evidence_id: source,
     },
     normalized_result: result,
-  }) as Evidence;
+  }) as unknown as Evidence;
 
 const dimension = (
   status: "changed" | "unchanged",
