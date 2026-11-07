@@ -3,6 +3,10 @@ import { describe, expect, it } from "vitest";
 import { providerCatalog } from "../../scripts/lib/catalog-builders.mjs";
 import { ADB_PROVIDER_IDENTITY } from "../../src/adb/AdbProviderIdentity.js";
 import {
+  BINARY_NINJA_OPERATIONS,
+  BINARY_NINJA_PROVIDER_IDENTITY,
+} from "../../src/binaryNinja/BinaryNinjaProviderCapabilities.js";
+import {
   CAPABILITY_DECLARATIONS,
   type CapabilityDeclaration,
 } from "../../src/composition/capabilityDeclarations.js";
@@ -90,6 +94,17 @@ describe("whole canonical contract groups", () => {
 });
 
 describe("static capability provider declarations", () => {
+  it("retains Binary Ninja's supported operations in the shared provider catalog", () => {
+    expect(
+      catalog(CAPABILITY_DECLARATIONS).find(
+        ({ id }) => id === BINARY_NINJA_PROVIDER_IDENTITY.id,
+      ),
+    ).toEqual({
+      ...BINARY_NINJA_PROVIDER_IDENTITY,
+      capabilities: [...BINARY_NINJA_OPERATIONS].sort(),
+    });
+  });
+
   it("reports the actual trace, Harmony and qlog provenance without changing their public operations", () => {
     const providers = catalog(CAPABILITY_DECLARATIONS);
     for (const [identity, operation] of [
