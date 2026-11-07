@@ -1,4 +1,5 @@
 import { posix } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { execTakesFiles } from "./desktopEntry.js";
 
@@ -19,8 +20,18 @@ const homePathOf = (
   home: string,
   workingDirectory: string,
 ): string | undefined => {
-  if (argument.startsWith("-")) return undefined;
-  const path = posix.resolve(workingDirectory, argument);
+  if (argument === "" || argument.startsWith("-")) return undefined;
+  let input = argument;
+  if (/^[A-Za-z][A-Za-z0-9+.-]*:/u.test(argument)) {
+    try {
+      const url = new URL(argument);
+      if (url.protocol !== "file:") return undefined;
+      input = fileURLToPath(url);
+    } catch {
+      return undefined;
+    }
+  }
+  const path = posix.resolve(workingDirectory, input);
   return path.startsWith(`${home}/`) ? path.slice(home.length + 1) : undefined;
 };
 
