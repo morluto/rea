@@ -29,9 +29,12 @@ During package resolution, npm may print a deprecation warning for `prebuild-ins
 from transitive native dependencies (such as Frida). This warning originates from
 the upstream dependency tree and does not affect REA or indicate setup failure.
 
-For the latest published release, use `npx rea-agents@latest setup`.
+An unversioned or `@latest` request runs whichever release npm resolves at that
+moment. To run a known release, name its version as
+`npx rea-agents@<version> setup`.
 [Package-runner and global-installation options](#package-runners-and-global-installation)
-cover explicit versions, Bun, runtime requirements, and the curl wrapper.
+cover explicit versions, `@latest`, Bun, runtime requirements, and the reviewable
+curl wrapper.
 
 ## Review setup changes
 
@@ -1547,9 +1550,6 @@ reopen the target to resolve a new profile after intentionally changing it.
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
-For supported header-selected MIPS ELF targets, the profile also binds the
-selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
-used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.
@@ -1904,7 +1904,17 @@ Package runners can select project-local packages and read project configuration
 even for explicit version requests. Acquire REA from a trusted working directory,
 outside the target project, and pass absolute target paths to analysis commands.
 REA cannot validate package acquisition that happens before its entrypoint starts.
-To request the latest release explicitly, use:
+To run a known release, name its version:
+
+<!-- x-release-please-start-version -->
+
+```bash
+npx rea-agents@6.8.0 setup
+```
+
+<!-- x-release-please-end -->
+
+`@latest` is an explicit opt-in that follows every new publish:
 
 ```bash
 npx rea-agents@latest setup
@@ -1986,7 +1996,9 @@ without asking npm to resolve the workspace's dependency graph.
 
 ### Global installation wrapper
 
-The optional curl wrapper installs only the global npm package:
+The optional curl wrapper installs only the global npm package. Piping the
+`main`-branch script into bash runs whatever that branch holds at fetch time;
+the tagged download below gives a reviewable, version-pinned script instead:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh | bash
@@ -2004,11 +2016,15 @@ curl -fsSL https://raw.githubusercontent.com/morluto/rea/main/install.sh |
 To review a version-pinned installer before running it, select the release
 version, download its tagged script, and inspect the downloaded file:
 
+<!-- x-release-please-start-version -->
+
 ```bash
-rea_version=6.7.0
+rea_version=6.8.0
 curl -fsSL "https://raw.githubusercontent.com/morluto/rea/rea-agents-${rea_version}/install.sh" -o rea-install.sh
 less rea-install.sh
 ```
+
+<!-- x-release-please-end -->
 
 After reviewing it, install the same package version:
 
