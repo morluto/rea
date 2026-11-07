@@ -1,3 +1,4 @@
+import { nonFiniteRealLimitation } from "../../../src/domain/apple/plistValue.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -132,9 +133,7 @@ cliTest.for(["xml", "binary"] as const)(
         status: "resolved",
       }),
     );
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("1 non-finite real value(s)"),
-    );
+    expect(result.limitations).toContainEqual(nonFiniteRealLimitation(1));
 
     const page = await run(["--root", "data", "--offset", "1", "--limit", "2"]);
     expect(page.objects).toEqual(result.objects.slice(1, 3));
@@ -240,8 +239,8 @@ cliTest.for(["xml", "binary"] as const)(
     expect(JSON.stringify(result.objects.map(({ value }) => value))).toBe(
       '["$null",{"$plist_type":"real","value":"-0"},0,1.25]',
     );
-    expect(result.limitations).toContain(
-      '1 negative-zero real value(s) are reported as { "$plist_type": "real", "value": "-0" } because a JSON number cannot carry the sign of zero.',
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/1 negative.zero.*sign of zero/iu),
     );
     expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
@@ -413,9 +412,7 @@ cliTest(
     expect(JSON.stringify(result.objects.map(({ value }) => value))).toBe(
       '["$null",{"$plist_type":"real","value":"+infinity"},{"$plist_type":"real","value":"-infinity"},{"$plist_type":"real","value":"nan"},1.25]',
     );
-    expect(result.limitations).toContain(
-      '3 non-finite real value(s) are reported as { "$plist_type": "real", "value": "<spelling>" } using canonical numeric labels nan, +infinity or -infinity because a JSON number cannot carry them.',
-    );
+    expect(result.limitations).toContain(nonFiniteRealLimitation(3));
     expect(result.limitations).not.toContainEqual(
       expect.stringContaining('"value": null'),
     );

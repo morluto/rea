@@ -456,7 +456,7 @@ describe("shared registration maintenance", () => {
   it("retains FreeBuff when ZCode reads the shared fallback", async () => {
     // Both products load the one shared row, but their setup actions write
     // different files: ZCode writes ~/.zcode/cli/config.json and deliberately
-    // leaves ~/.agents/mcp.json untouched (docs/client-configuration.md), so
+    // leaves ~/.agents/mcp.json untouched (docs/getting-started/client-configuration.md), so
     // its fallback view cannot cover FreeBuff's registration. The shared row
     // would stay pinned to the old version without FreeBuff's own action.
     await writeClient("zcode", JSON.stringify({ mcp: { servers: {} } }));
