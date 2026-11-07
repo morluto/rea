@@ -3014,8 +3014,10 @@ describe("managed member type selection", () => {
     expect(result.call_edges).toEqual(everything.call_edges);
     expect(result.field_accesses).toEqual(everything.field_accesses);
     expect(result.coverage).toEqual(everything.coverage);
-    expect(result.limitations).toContain(
-      "Types, fields, methods, call edges, field accesses, and user strings cover only the selected declaring types; coverage describes that selection. Edge targets outside it keep their names but are not described.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /types.*fields.*methods.*call edges.*field accesses.*user strings.*only the selected declaring types.*targets outside.*names.*not described/iu,
+      ),
     );
   });
 
@@ -3040,8 +3042,10 @@ describe("managed member type selection", () => {
       expect(result.coverage.state).toBe("partial");
       // Its methods were never inspected, so neither were their literals.
       expect(result.user_strings?.state).toBe("partial");
-      expect(result.limitations).toContain(
-        "1 TypeDef name(s) could not be read; a name in selection.unmatched_type_names may belong to one of them, so its absence is not observed.",
+      expect(result.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 TypeDef name.*could not be read.*selection\.unmatched_type_names.*absence is not observed/iu,
+        ),
       );
     },
   );

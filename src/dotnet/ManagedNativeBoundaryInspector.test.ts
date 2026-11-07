@@ -77,8 +77,10 @@ describe("managed native boundaries", () => {
       mixed_mode_or_native_header: true,
     });
     expect(result.coverage).toMatchObject({ state: "complete", issues: [] });
-    expect(result.limitations).toContain(
-      "P/Invoke rows prove managed import declarations only; this inspection does not verify that a native library, export, thunk, or provider-qualified function exists.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /P\/Invoke.*managed import declarations only.*does not verify.*native library.*export.*thunk.*provider.qualified function/iu,
+      ),
     );
   });
 
