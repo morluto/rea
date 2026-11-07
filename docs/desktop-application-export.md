@@ -57,6 +57,10 @@ could shadow a standard library module such as `calendar`. A class name that
 would collide with a name the module imports or defines, such as `Path`, takes
 an `App` suffix.
 
+Captured application titles and checkpoint labels keep their original text in
+the generated Python documentation strings, with source quoting applied so
+their punctuation and control characters do not break the module.
+
 The class declares:
 
 - `Packages(apt=[...])` with the package the capture found. A vendor package
