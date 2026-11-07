@@ -111,6 +111,7 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
 const expectUnknownProviderKeepsBinding = async (
   mcp: Client,
   session: ReturnType<typeof composeBinarySession>,
+  workspace: string,
   target: string,
   opened: Awaited<ReturnType<Client["callTool"]>>,
 ): Promise<void> => {
@@ -143,7 +144,7 @@ const expectUnknownProviderKeepsBinding = async (
     mcp,
     session,
     target,
-    directory,
+    workspace,
     opened,
     refusal,
   );
@@ -285,7 +286,13 @@ describe("provider selection over MCP", () => {
       ],
     });
 
-    await expectUnknownProviderKeepsBinding(mcp, session, target, opened);
+    await expectUnknownProviderKeepsBinding(
+      mcp,
+      session,
+      directory,
+      target,
+      opened,
+    );
   });
 });
 
