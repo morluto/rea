@@ -3,7 +3,7 @@ import type {
   DesktopStateChange,
 } from "./desktopCapture.js";
 import { isWithinAny } from "./desktopStateDiff.js";
-import { isLockName, isSiblingLockName } from "./runtimeFiles.js";
+import { isLockName } from "./runtimeFiles.js";
 import { SQLITE_SIDECARS } from "./stateFormats.js";
 
 /** Why a path is, or is not, treated as the application's state. */
@@ -313,9 +313,7 @@ export const stateRole = (
   if (reasons.includes("named_in_window_title")) return "document";
   if (reasons.includes("selected_path"))
     return selectedAs !== null &&
-      (selectedAs.startsWith(".") ||
-        isLockName(selectedAs) ||
-        isSiblingLockName(selectedAs))
+      (selectedAs.startsWith(".") || isLockName(selectedAs))
       ? "application_state"
       : "document";
   if (reasons.includes("opened_by_application") && !shared)
