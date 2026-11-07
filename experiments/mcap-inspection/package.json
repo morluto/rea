@@ -1,0 +1,22 @@
+{
+  "name": "rea-mcap-inspection-experiment",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc",
+    "inspect": "node build/experiments/mcap-inspection/cli.js",
+    "test": "npm run build && node --test build/experiments/mcap-inspection/*.node-test.js",
+    "check": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=24.18.0"
+  },
+  "packageManager": "npm@11.16.0",
+  "dependencies": {
+    "@mcap/core": "2.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "26.6.4",
+    "typescript": "7.0.2"
+  }
+}
