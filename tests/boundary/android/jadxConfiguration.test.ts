@@ -19,6 +19,10 @@ import {
   resolveJadxConfigurationInputs,
   validateJadxConfiguration,
 } from "../../../src/android/JadxConfiguration.js";
+import {
+  JADX_JAR_CONFIGURATION_REMEDIATION,
+  JADX_RELEASE,
+} from "../../../src/android/JadxRelease.js";
 import { AnalysisCapabilityUnavailableError } from "../../../src/domain/analysisErrorCore.js";
 import {
   LinuxOwnedProcessPrerequisiteError,
@@ -99,6 +103,55 @@ it("rejects malformed or unrelated engine archives with JAR-specific recovery", 
     });
     expect(availability.reason).not.toContain("Select a full JDK");
   }
+});
+
+it("names the observed v1.x layout and the pinned artifact when a JAR is incompatible", async () => {
+  const root = await createTestTempDirectory("rea-jadx-v1-layout-");
+  const jar = join(root, "jadx-headless-mcp-v2.jar");
+  const javaHome = await createFakeJdk(root);
+  await writeOrderedZip(jar, [
+    "com/zin/jadxheadless/mcp/StdioMcpServer.class",
+    "com/zin/jadxheadless/jadx/JadxService$Session.class",
+    "jadx/api/JadxDecompiler.class",
+    "com/google/gson/Gson.class",
+    "antlr/ANTLRError.class",
+    "module-info.class",
+    "META-INF/versions/9/com/example/Versioned.class",
+  ]);
+  const environment = { REA_JADX_MCP_JAR: jar, JAVA_HOME: javaHome };
+  const availability = await inspectJadxAvailability(environment);
+  expect(availability).toMatchObject({
+    status: "unavailable",
+    code: "unsupported_version",
+    reason: expect.stringContaining("unrelated jadx-headless-mcp v1.x"),
+    diagnostics: {
+      missing_classes: [
+        "com/atxx/jhmcp/JadxSession.class",
+        "com/atxx/jhmcp/SessionHolder.class",
+        "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
+      ],
+      observed_class_packages: ["antlr", "com/google", "com/zin", "jadx/api"],
+      observed_class_packages_truncated: false,
+    },
+  });
+  expect(availability.reason).toContain(
+    "Observed class packages: antlr, com/google, com/zin, jadx/api",
+  );
+  expect(availability.reason).not.toContain("META-INF");
+  expect(availability.reason).not.toContain("ANTLRError.class");
+  await expect(
+    resolveConfiguration(environment, "inspect_android_package"),
+  ).rejects.toMatchObject({
+    _tag: "AnalysisCapabilityUnavailableError",
+    reason: expect.stringContaining(JADX_RELEASE.url),
+    userMessage: expect.stringContaining(JADX_RELEASE.sha256),
+  });
+});
+
+it("points JAR remediation at the published pinned artifact", () => {
+  expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain(JADX_RELEASE.url);
+  expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain(JADX_RELEASE.sha256);
+  expect(JADX_JAR_CONFIGURATION_REMEDIATION).toContain("com/zin/jadxheadless");
 });
 
 it("rejects an explicit JAVA_HOME without an executable java binary", async () => {

@@ -115,14 +115,18 @@ export async function verifyAndroidFailureRecovery({
       {
         label: "missing java",
         env: { ...withoutJavaHome, PATH: empty },
-        observation: `Cannot find an executable ${javaName}`,
+        observation:
+          process.platform === "win32"
+            ? `Cannot find an executable ${javaName} on the selected Windows PATH`
+            : `Cannot find an executable ${javaName} on the selected PATH`,
         diagnostics: {
           failure_kind: "java_runtime",
           failure_code: "runtime_missing",
+          java_executable: javaName,
           phase: "path-lookup",
         },
         message: /Cannot find an executable java/u,
-        remediation: /JAVA_HOME|PATH/u,
+        remediation: /JAVA_HOME or PATH/u,
       },
       {
         label: "invalid engine archive with a working JDK",

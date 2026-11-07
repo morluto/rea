@@ -152,6 +152,15 @@ before using it. The following download and verification commands work for npm
 package consumers as well as repository checkouts; the repository-only
 `npm run fixtures:android` helper is not included in the npm package.
 
+The pinned artifact is published by the
+[`1013503897/jadx-headless-mcp`](https://github.com/1013503897/jadx-headless-mcp)
+repository. A separate, similarly named project
+([`Samael-Z/jadx-headless-mcp`](https://github.com/Samael-Z/jadx-headless-mcp))
+publishes v1.x JARs whose bridge classes live under `com/zin/jadxheadless`;
+those JARs use a different bridge layout, are not compatible with REA's metadata
+bridge, and are rejected by `rea doctor`. Use the pinned 0.7.1 asset above when
+the check reports missing bridge classes.
+
 On macOS or Linux, choose a destination and verify the pinned digest:
 
 ```sh

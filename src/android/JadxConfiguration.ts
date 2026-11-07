@@ -53,6 +53,11 @@ import {
 // Bound ZIP metadata allocation during discovery. The audited 0.7.1 JAR's
 // central directory occupies 2,294,350 bytes; class bodies are not read here.
 const JAR_METADATA_READ_MAX_BYTES = 8 * 1024 * 1024;
+// A rejected archive reports the class packages it actually contains so a
+// wrong-project JAR is distinguishable from a corrupt one without unpacking it.
+// The message carries a short sample; diagnostics retain a larger bounded list.
+const OBSERVED_CLASS_PACKAGES_REPORTED = 12;
+const OBSERVED_CLASS_PACKAGES_DIAGNOSED = 64;
 
 /** Caller-supplied tools, resolved only when an Android operation is selected. */
 export interface JadxConfiguration {
@@ -355,18 +360,57 @@ const requireEngineArchive = async (
               "com/google/gson/Gson.class",
               "io/modelcontextprotocol/kotlin/sdk/server/Server.class",
             ]);
+            const observedPackages = new Set<string>();
+            let unrelatedV1Layout = false;
             for await (const entry of reader.entries(options.signal)) {
-              if (entry.kind === "file" && !entry.encrypted)
+              if (entry.kind === "file" && !entry.encrypted) {
                 missing.delete(entry.path);
+                if (entry.path.endsWith(".class")) {
+                  unrelatedV1Layout ||= entry.path.startsWith(
+                    "com/zin/jadxheadless/",
+                  );
+                  // Report the containing package, not the class file: a
+                  // single-segment package yields one entry, root-level classes
+                  // have no package, and multi-release copies under META-INF
+                  // are not application packages.
+                  const separator = entry.path.lastIndexOf("/");
+                  if (separator > 0 && !entry.path.startsWith("META-INF/")) {
+                    const directory = entry.path.slice(0, separator);
+                    const [packageRoot, packageGroup] = directory.split("/");
+                    observedPackages.add(
+                      packageRoot && packageGroup
+                        ? `${packageRoot}/${packageGroup}`
+                        : directory,
+                    );
+                  }
+                }
+              }
               if (missing.size === 0) return;
             }
+            const observed = [...observedPackages].sort();
+            const reported = observed.slice(
+              0,
+              OBSERVED_CLASS_PACKAGES_REPORTED,
+            );
+            const observedSummary = reported.length
+              ? ` Observed class packages: ${reported.join(", ")}${observed.length > reported.length ? ", ..." : ""}.`
+              : "";
+            const layoutSummary = unrelatedV1Layout
+              ? " This archive uses the unrelated jadx-headless-mcp v1.x bridge layout (com/zin/jadxheadless), which REA does not support."
+              : "";
             throw configurationFailure(
               "unsupported_version",
-              `REA_JADX_MCP_JAR ${jar} does not contain the required metadata bridge classes: ${[...missing].join(", ")}. ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
+              `REA_JADX_MCP_JAR ${jar} does not contain the required metadata bridge classes: ${[...missing].join(", ")}.${observedSummary}${layoutSummary} ${JADX_JAR_CONFIGURATION_REMEDIATION}`,
               {
                 jar_path: jar,
                 phase: "jar-inspection",
                 missing_classes: [...missing],
+                observed_class_packages: observed.slice(
+                  0,
+                  OBSERVED_CLASS_PACKAGES_DIAGNOSED,
+                ),
+                observed_class_packages_truncated:
+                  observed.length > OBSERVED_CLASS_PACKAGES_DIAGNOSED,
               },
               "jar",
             );
