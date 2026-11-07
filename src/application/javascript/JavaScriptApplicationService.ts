@@ -125,7 +125,11 @@ export const analyzeJavaScriptApplicationValidated = async (
       acceptedAdmission,
       overrides,
     );
-    const { electron_summary: summary, ...application } = reconstructed;
+    const {
+      electron_summary: summary,
+      inventory: _inventory,
+      ...application
+    } = reconstructed;
     await options.progress?.report({
       phase: "validate_javascript_application_result",
       completed: 0,
@@ -176,7 +180,11 @@ export const analyzeJavaScriptApplicationValidated = async (
     ) {
       try {
         if (result === undefined) {
-          const { electron_summary: summary, ...application } = reconstructed;
+          const {
+            electron_summary: summary,
+            inventory: _inventory,
+            ...application
+          } = reconstructed;
           result = await completeJavaScriptAnalysisSteps(
             parseOwnedJavaScriptApplicationAnalysisSteps({
               ...application,
@@ -203,6 +211,15 @@ export const analyzeJavaScriptApplicationValidated = async (
       }
     }
     // Preserve execution constraints and their completed partial Evidence.
+    if (
+      cause instanceof AnalysisResourceConstraintError &&
+      reconstructed !== undefined &&
+      cause.partialObservation === undefined
+    )
+      cause.retainPartialObservation({
+        kind: "artifact-inventory",
+        inventory: reconstructed.inventory,
+      });
     if (cause instanceof AnalysisError) return err(cause);
     if (cause instanceof ArtifactReaderFailure)
       return err(translateArtifactFailure(OPERATION, cause));

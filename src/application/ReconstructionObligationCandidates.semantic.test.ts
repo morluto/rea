@@ -85,10 +85,8 @@ const semanticApplication = (
           family.family === "event" && (unknowns.length > 0 || incomplete)
             ? "unknown"
             : "complete",
-        unknown_ids:
-          family.family === "event"
-            ? unknowns.map(({ unknown_id }) => unknown_id).sort()
-            : [],
+        retained_unknowns: family.family === "event" ? unknowns.length : 0,
+        omitted_unknowns: 0,
       })),
     },
     limitations:

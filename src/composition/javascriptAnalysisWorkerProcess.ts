@@ -82,7 +82,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     analyzeParsedJavaScriptSemanticsSteps(
       parsed,
       moduleResolutionModeForJavaScriptReference(file.path, "static-import"),
-      capacity.nodes ?? undefined,
+      capacity.nodes,
     ),
   );
   parsed = null;

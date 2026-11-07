@@ -57,6 +57,8 @@ import {
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
+  /** Inventory retained for a later delivery refusal, not part of application Evidence. */
+  readonly inventory: ArtifactInventorySnapshot;
   readonly route_inventory?: JavaScriptRouteInventory;
   readonly input_path: string;
   readonly format: "asar" | "directory";
@@ -351,6 +353,7 @@ export const reconstructJavaScriptArtifact = async (
         snapshot.coverage,
       );
       const completed = {
+        inventory: snapshot,
         route_inventory: await completeJavaScriptAnalysisSteps(
           buildJavaScriptRouteInventorySteps([
             ...analysis.files
@@ -438,7 +441,11 @@ export const reconstructJavaScriptArtifact = async (
                 OPERATION,
               ).bindCleanupDependencies([interruption, cleanupFailure]);
       if (failure !== null) {
-        const { electron_summary: summary, ...application } = completed;
+        const {
+          electron_summary: summary,
+          inventory: _inventory,
+          ...application
+        } = completed;
         const partial = await completeJavaScriptAnalysisSteps(
           parseOwnedJavaScriptApplicationAnalysisSteps({
             ...application,

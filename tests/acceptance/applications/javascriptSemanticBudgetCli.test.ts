@@ -10,6 +10,50 @@ import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "keeps more than 20000 expression operands when no node ceiling is selected",
+  { timeout: 60_000 },
+  async () => {
+    const root = await createTestTempDirectory("rea-js-expression-capacity-");
+    await writeFile(join(root, "app.js"), "input + 1;\n".repeat(10_001));
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "analyze-javascript-application",
+        root,
+        "--max-semantic-unknowns",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NODE_OPTIONS: "--max-old-space-size=1024 --max-semi-space-size=8",
+        },
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+        timeout: 50_000,
+      },
+    );
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(JSON.parse(stdout)).normalized_result,
+    ).semantic_graph;
+    expect(
+      graph.relations.filter(({ relation }) => relation === "influences"),
+    ).toHaveLength(20_002);
+    expect(
+      graph.coverage.limits.some(({ name }) => name.includes("node_ceiling")),
+    ).toBe(false);
+    expect(graph.coverage.limits).toContainEqual({
+      name: "max_semantic_unknowns",
+      value: 1,
+      unit: "items",
+    });
+  },
+);
+
 // A 448 MiB parent heap gives one Evidence a budget of about 39 MB, which this
 // source's semantic facts exceed while the small source fits its share.
 cliTest.skipIf(process.versions.bun !== undefined)(
