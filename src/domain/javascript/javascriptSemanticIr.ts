@@ -1,6 +1,7 @@
 import type { JavaScriptSourceRange } from "./javascriptStaticAnalysisTypes.js";
 import type {
   JavaScriptSemanticResourceLimit,
+  JavaScriptSemanticSlotPresence,
   JavaScriptSemanticValue,
 } from "./javascriptSemanticValueTypes.js";
 import type {
@@ -394,6 +395,8 @@ export interface JavaScriptSemanticResourceOperation {
 /** One static property read/write, spread, or destructuring candidate. */
 export interface JavaScriptSemanticObjectOperation {
   readonly objectOperationId: string;
+  /** Own-path presence captured by the value owner at a destructuring RHS read. */
+  readonly sourcePresence?: JavaScriptSemanticSlotPresence;
   readonly kind: "read" | "write" | "spread" | "destructure";
   readonly location: JavaScriptSourceRange;
   readonly ownerCallableId: string | null;
