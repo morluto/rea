@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { analyzeJavaScriptSemantics, analyzeParsedJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import {
   onlyBinding,
   topLevelBinding,
@@ -46,7 +47,7 @@ describe("JavaScript semantic binding provenance", () => {
   });
 
   it("recognizes explicit local values and preserves exact module aliases", () => {
-    const ir = analyzeJavaScriptSemantics(`
+    const source = `
       const object = { value: 1 };
       const array = [1, 2];
       const template = \`feature\`;
@@ -60,7 +61,15 @@ describe("JavaScript semantic binding provenance", () => {
       const alias = imported;
       const sequence = (0, require("sequence-feature"));
       const assignment = (slot = require("assignment-feature"));
-    `);
+    `;
+    const parsed = parseJavaScriptSource(source, "main.cjs");
+    if (parsed === null) throw new Error("fixture did not parse");
+    const ir = analyzeParsedJavaScriptSemantics(parsed);
+    const candidate = analyzeJavaScriptSemantics(source);
+    expect(topLevelBinding(candidate, "alias").provenance).toMatchObject({
+      status: "ambiguous",
+      origins: [{ specifier: "feature", loaderAuthority: "candidate" }],
+    });
 
     for (const name of [
       "object",

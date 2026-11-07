@@ -28,6 +28,10 @@ const findingContext = {
   module_runtime: z.string().optional(),
   location: range,
 };
+const electronFindingContext = {
+  ...findingContext,
+  loader_authority: z.literal("candidate").exactOptional(),
+};
 const withRuntime = <
   Value extends {
     module_runtime?: string | undefined;
@@ -78,7 +82,7 @@ const ipcReceiver = z
 const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
   z.union([
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
       receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
@@ -87,7 +91,7 @@ const ipcChannel = <Shape extends z.ZodRawShape>(shape: Shape) =>
       channel_expression: z.null(),
     }),
     z.strictObject({
-      ...findingContext,
+      ...electronFindingContext,
       receiver: ipcReceiver,
       invocation_location: range.optional(),
       resolution_basis: z.literal("wrapper-substitution").optional(),
@@ -148,7 +152,7 @@ const ipc = z
     };
   });
 const windowShape = {
-  ...findingContext,
+  ...electronFindingContext,
   options_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences_status: z.enum(["object-literal", "dynamic", "missing"]),
   web_preferences: z.array(
@@ -158,22 +162,26 @@ const windowShape = {
 };
 const bridgeShape = {
   resolution_basis: z.literal("wrapper-substitution").optional(),
-  ...findingContext,
+  ...electronFindingContext,
   world: z.enum(["main", "isolated"]),
   world_id: staticValue.nullable(),
   api_status: z.enum(["object-literal", "dynamic", "missing"]),
   members: strings,
   unknown_members: count,
 };
-const utilityShape = { ...findingContext, service_name: z.string().nullable() };
+const utilityShape = {
+  ...electronFindingContext,
+  service_name: z.string().nullable(),
+};
 const electron = z
   .strictObject({
     app_path_changes: z
-      .array(z.strictObject(findingContext).transform(withRuntime))
+      .array(z.strictObject(electronFindingContext).transform(withRuntime))
       .optional(),
     call_paths: z
       .array(
         z.strictObject({
+          loader_authority: z.literal("candidate").exactOptional(),
           entry_kind: z.enum(["bridge-member", "ipc-handler"]),
           entry: z.string(),
           entry_path: strings.optional(),
@@ -255,7 +263,7 @@ const electron = z
     ipc: z.array(ipc),
     sender_validations: z.array(
       z.strictObject({
-        ...findingContext,
+        ...electronFindingContext,
         subject: z.enum([
           "sender-url",
           "sender-origin",
@@ -291,7 +299,7 @@ const electron = z
     ),
     native_addon_bindings: z.array(
       z.strictObject({
-        ...findingContext,
+        ...electronFindingContext,
         specifier: z.string(),
         binding_kind: z.enum(["import", "require", "re-export"]),
         module_kind: z.enum(["import", "require"]),
@@ -303,7 +311,7 @@ const electron = z
     protocols: z.array(
       z
         .strictObject({
-          ...findingContext,
+          ...electronFindingContext,
           api: z.string(),
           role: z.enum([
             "os-default-client",
@@ -425,6 +433,7 @@ export const javaScriptWorkerStaticAnalysisSchema = z
       z.strictObject({
         ...findingContext,
         role: z.enum(["preload", "renderer"]),
+        loader_authority: z.literal("candidate").exactOptional(),
         path: z.string(),
         path_base: z.literal("source-directory").exactOptional(),
         resolution_context: pathContext,

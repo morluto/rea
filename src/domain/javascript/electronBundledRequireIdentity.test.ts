@@ -33,10 +33,14 @@ const expectUnresolved = (source: string) => {
 };
 
 it("does not claim Electron host identity from an unbound require in unknown context", () => {
-  expect(
-    analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER)).electron
-      .browser_windows,
-  ).toEqual([]);
+  const analysis = analyzeUnknownHostSource(bootstrap(EXTERNAL, CONSUMER));
+  expect(analysis.electron.browser_windows).toContainEqual(
+    expect.objectContaining({
+      preload_path: "./preload.js",
+      loader_authority: "candidate",
+    }),
+  );
+  expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
 });
 
 describe("Electron identity through Webpack externals", () => {

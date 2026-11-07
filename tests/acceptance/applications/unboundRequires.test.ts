@@ -39,8 +39,8 @@ const expectUnknownLoaderCandidates = (
   );
   expect(candidate?.properties.resolution_mode).toBeNull();
   expect(candidate?.evidence.confidence).toBe("low");
-  expect(candidate?.evidence.limitations).toContain(
-    "The module loader is unknown, so this dependency cannot be resolved against the source file.",
+  expect(candidate?.evidence.limitations.join(" ")).toContain(
+    "loader is unknown",
   );
   const staticCandidate = graph.edges.find(
     ({ relation, properties, evidence }) =>
@@ -60,11 +60,11 @@ const expectUnknownLoaderCandidates = (
     },
     evidence: {
       confidence: "low",
-      limitations: expect.arrayContaining([
-        "The module loader is unknown, so this dependency cannot be resolved against the source file.",
-      ]),
     },
   });
+  expect(staticCandidate?.evidence.limitations.join(" ")).toContain(
+    "loader is unknown",
+  );
   expect(graph.edges).toContainEqual(
     expect.objectContaining({
       relation: "imports",
@@ -107,10 +107,10 @@ const expectUnknownLoaderCandidates = (
   expect(candidateExports.length).toBeGreaterThan(0);
   expect(candidateExports[0]?.evidence).toMatchObject({
     confidence: "low",
-    limitations: expect.arrayContaining([
-      "The module wrapper is unknown, so this export is only a candidate.",
-    ]),
   });
+  expect(candidateExports[0]?.evidence.limitations.join(" ")).toContain(
+    "wrapper is unknown",
+  );
   for (const path of ["upper-alias.MJS", "upper-var-export.MJS"]) {
     expect(graph.edges).toContainEqual(
       expect.objectContaining({
@@ -155,8 +155,8 @@ const expectUnknownLoaderCandidates = (
   expect(
     candidateExportSource?.properties.omitted_export_names,
   ).toBeGreaterThan(0);
-  expect(candidateExportSource?.evidence.limitations).toContain(
-    "Candidate CommonJS export names are not included in the proven export names; the candidate relationships are retained separately.",
+  expect(candidateExportSource?.evidence.limitations.join(" ")).toContain(
+    "candidate relationships are retained",
   );
 };
 
@@ -227,6 +227,126 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
           module_format: "commonjs",
         }),
       ]),
+    );
+  },
+);
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "retains conditional Electron boundaries without resolving their roles through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-candidate-electron-");
+    await writeFixtureFiles(root, {
+      "entry.MJS": [
+        'const { BrowserWindow, ipcMain, protocol, contextBridge, ipcRenderer } = require("electron");',
+        'const win = new BrowserWindow({ webPreferences: { preload: "./preload.cjs" } });',
+        'win.loadFile("./index.html");',
+        'win.loadURL("https://candidate.example.test/app");',
+        'ipcMain.handle("ping", () => 1);',
+        'protocol.handle("demo", () => null);',
+        'contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });',
+      ].join("\n"),
+      "preload.cjs": "console.log(1);",
+      "index.html": "<html></html>",
+      "dynamic.MJS": [
+        'const name = "electron";',
+        "const { contextBridge, ipcRenderer } = require(name);",
+        'contextBridge.exposeInMainWorld("dynamicApi", { ping: () => ipcRenderer.invoke("dynamicPing") });',
+      ].join("\n"),
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    for (const kind of ["browser-window", "ipc-handler", "url-scheme"]) {
+      expect(result.graph.nodes).toContainEqual(
+        expect.objectContaining({
+          kind,
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                loader_authority: "candidate",
+              }),
+              evidence: expect.objectContaining({
+                confidence: "low",
+              }),
+            }),
+          ]),
+        }),
+      );
+    }
+    expect(
+      result.graph.nodes.some(({ kind }) => kind === "electron-preload"),
+    ).toBe(false);
+    expect(
+      result.graph.nodes.some(({ kind }) => kind === "electron-renderer"),
+    ).toBe(false);
+    expect(result.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "unknown",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              candidate_role: "renderer",
+              loader_authority: "candidate",
+              declared_path: "./index.html",
+              resolution_status: "unavailable",
+              resolved_path: null,
+            }),
+            evidence: expect.objectContaining({ confidence: "low" }),
+          }),
+        ]),
+      }),
+    );
+    expect(result.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "endpoint",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              value: "https://candidate.example.test/app",
+              interpretation: "candidate",
+            }),
+            evidence: expect.objectContaining({ confidence: "low" }),
+          }),
+        ]),
+      }),
+    );
+    expect(result.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "javascript-expression",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              loader_authority: "candidate",
+              terminal: "electron.ipcRenderer.invoke",
+            }),
+            evidence: expect.objectContaining({
+              confidence: "low",
+            }),
+          }),
+        ]),
+      }),
+    );
+    expect(result.graph.nodes).toContainEqual(
+      expect.objectContaining({
+        kind: "javascript-expression",
+        observations: expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              loader_authority: "candidate",
+              terminal: "electron.ipcRenderer.invoke",
+              channel: "dynamicPing",
+            }),
+            evidence: expect.objectContaining({ confidence: "low" }),
+          }),
+        ]),
+      }),
+    );
+    expect(result.summary).toMatchObject({
+      browser_windows: 0,
+      preload_entrypoints: 0,
+      protocol_registrations: 0,
+      ipc: { operations: 0, main_handlers: 0 },
+    });
+    expect(result.graph.limitations.join(" ")).toContain(
+      "Conditional Electron findings",
     );
   },
 );

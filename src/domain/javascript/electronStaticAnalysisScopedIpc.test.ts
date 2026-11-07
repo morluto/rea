@@ -7,7 +7,13 @@ it("retains an unknown-host Electron request as a candidate without claiming IPC
   const analysis = analyzeUnknownHostSource(
     'const { BrowserWindow } = require("electron"); new BrowserWindow().webContents.ipc.handle("x", () => {});',
   );
-  expect(analysis.electron.ipc).toEqual([]);
+  expect(analysis.electron.ipc).toEqual([
+    expect.objectContaining({
+      channel: "x",
+      operation: "handle",
+      loader_authority: "candidate",
+    }),
+  ]);
   expect(analysis.analysis_coverage?.applicability.electron).toBe("unknown");
   expect(analysis.references).toContainEqual(
     expect.objectContaining({

@@ -5,7 +5,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 /** An unshadowed literal require and the member path selected from its result. */
 export interface JavaScriptRequireOrigin {
   readonly origin: JavaScriptModuleOrigin;
-  readonly call: t.CallExpression;
+  readonly call: t.CallExpression | t.OptionalCallExpression;
 }
 
 export type JavaScriptRequireLoaderFact =

@@ -17,6 +17,7 @@ import {
   semanticMutableBuiltinOrigin,
   semanticRequireExportsIdentity,
   semanticRequireOrigin,
+  semanticRequireOriginCandidate,
   semanticRequireLoaderAt,
   hasSemanticCreateRequireFactoryOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
@@ -2108,7 +2109,7 @@ const observableMutationPaths = (
     // exact member paths instead of widening the first path to a wildcard.
     const hasParsedRequireOrigin = binding.initializers.some(
       ({ node }) =>
-        semanticRequireOrigin(node, state) !== undefined ||
+        semanticRequireOriginCandidate(node, state) !== undefined ||
         hasSemanticCreateRequireFactoryOrigin(node, state),
     );
     if (

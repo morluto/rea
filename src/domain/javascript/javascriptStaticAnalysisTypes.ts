@@ -130,6 +130,7 @@ export interface JavaScriptBundlerRegistration {
 /** Static Electron role paths discovered from package or JavaScript syntax. */
 export interface JavaScriptRolePath {
   readonly role: "preload" | "renderer";
+  readonly loader_authority?: "candidate";
   readonly path: string;
   readonly resolution_context: JavaScriptStaticPathContext;
   /** Inferred from intact source-directory intrinsics; not a runtime/bundler guarantee. */
