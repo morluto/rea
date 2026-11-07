@@ -8,6 +8,7 @@ import { workflowUnknownInput } from "../application/investigation/WorkflowUnkno
 import {
   getNavigationContext,
   inspectAddressContext,
+  omitContextEvidenceForDelivery,
 } from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
 import {
@@ -323,11 +324,30 @@ const registerContextTools = (
       const admitted = await admission(
         addressContract.name,
         context.mcpReq.signal,
-        async (analysis) =>
-          server.delivery.toCallToolResult(
-            await inspectAddressContext(analysis, input, context.mcpReq.signal),
+        async (analysis) => {
+          const result = await inspectAddressContext(
+            analysis,
+            input,
+            context.mcpReq.signal,
+          );
+          if (!result.ok)
+            return server.delivery.toCallToolResult(result, addressContract);
+          const value = result.value;
+          return server.delivery.toCallToolResult(
+            result,
             addressContract,
-          ),
+            {},
+            (failure, budgetBytes) =>
+              (function* () {
+                for (const alternative of omitContextEvidenceForDelivery(
+                  value,
+                  failure,
+                  budgetBytes,
+                ))
+                  yield { result: alternative };
+              })(),
+          );
+        },
       );
       return admitted.ok
         ? admitted.value

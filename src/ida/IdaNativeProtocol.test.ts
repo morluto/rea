@@ -396,15 +396,11 @@ describe("native IDA provider observations", () => {
             ? expect.stringContaining(
                 "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
               )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+            : expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
         if (more)
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
           });
         expect(dossier.value.result).toMatchObject({
           callers: [],

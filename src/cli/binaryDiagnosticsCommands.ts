@@ -266,12 +266,10 @@ export const registerBinaryDiagnosticsCommands = (
       // "0x10" or "1e2".
       blockSize: cliDecimalField(
         inspectByteEntropyInputSchema.shape.block_size,
-      ).describe(
-        "Power-of-two block size from 256 to 65536 bytes (default 4096)",
-      ),
+      ).describe("Power-of-two block size from 256 to 65536 bytes"),
       offset: cliDecimalField(
         inspectByteEntropyInputSchema.shape.offset,
-      ).describe("Window start as a decimal file byte offset (default 0)"),
+      ).describe("Window start as a decimal file byte offset"),
       length: cliDecimalField(
         inspectByteEntropyInputSchema.shape.length,
       ).describe("Window length in bytes; omit to extend through EOF"),
@@ -429,16 +427,16 @@ export const registerBinaryDiagnosticsCommands = (
     options: z.object({
       maxFileBytes: cliDecimalField(
         inspectDevicetreeInputSchema.shape.max_file_bytes,
-      ).describe("Maximum FDT file size in bytes (default 4194304)"),
+      ).describe("Maximum FDT file size in bytes"),
       maxNodes: cliDecimalField(
         inspectDevicetreeInputSchema.shape.max_nodes,
-      ).describe("Maximum number of device-tree nodes (default 8192)"),
+      ).describe("Maximum number of device-tree nodes"),
       maxProperties: cliDecimalField(
         inspectDevicetreeInputSchema.shape.max_properties,
-      ).describe("Maximum number of device-tree properties (default 32768)"),
+      ).describe("Maximum number of device-tree properties"),
       maxDepth: cliDecimalField(
         inspectDevicetreeInputSchema.shape.max_depth,
-      ).describe("Maximum device-tree nesting depth (default 64)"),
+      ).describe("Maximum device-tree nesting depth"),
       ...analysisEvidenceDeliveryOptions,
     }),
     run: ({ args, options }) =>

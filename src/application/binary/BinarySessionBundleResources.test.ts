@@ -132,7 +132,6 @@ it("opens a resource-only bundle without executable identity and keeps snapshot 
   );
 
   const opened = await session.openBundleResources(rootPath);
-  expect(opened.ok).toBe(true);
   if (!opened.ok) throw opened.error;
   expect(session.allowsSnapshotReplay("inspect_plist")).toBe(false);
   expect(opened.value.executableSha256).toBeNull();
@@ -837,7 +836,6 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   );
   expect((await session.openBundleResources(rootPath)).ok).toBe(true);
   const observed = await session.execute("inspect_plist", {});
-  expect(observed.ok).toBe(true);
   if (!observed.ok) throw observed.error;
   const recorded = session.recordEvidence(
     createEvidence(undefined, identity, {

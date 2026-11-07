@@ -258,6 +258,7 @@ def run(arguments: dict) -> int:
     rea = shutil.which("rea")
     if rea is None:
         return _say({"error": "REA is not installed in this computer"})
+    os.makedirs(os.path.dirname(arguments["stdout"]), exist_ok=True)
     for path, text in arguments.get("files", {}).items():
         os.makedirs(os.path.dirname(path), exist_ok=True)
         with open(path, "w", encoding="utf-8") as handle:
