@@ -908,7 +908,11 @@ export const clientOwnershipEvidencePaths = (
 export const clientSharedRegistrationPaths = (
   client: Pick<
     SetupClient,
-    "configPath" | "configPaths" | "sharedRegistration" | "zcodeFallbackPath"
+    | "configPath"
+    | "configPaths"
+    | "sharedRegistration"
+    | "registrationGroup"
+    | "zcodeFallbackPath"
   >,
 ): ReadonlySet<string> =>
   new Set([

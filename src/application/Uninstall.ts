@@ -564,7 +564,6 @@ export const systemUninstallHost = (
     inspectClient: (client) =>
       configurationOperations.run(async () => {
         const ownershipEstablished =
-          client.sharedRegistration === true &&
           clientOwnershipEvidencePaths(client).length > 0 &&
           (await hasOwnershipEvidence(client, fileSystem));
         const read = await readClientConfiguration(

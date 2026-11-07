@@ -168,6 +168,20 @@ cliTest(
     const removed = await run(["uninstall", "--json"]);
     expect(removed.exitCode, removed.stderr).toBe(0);
     expect(removed.json).toMatchObject({ status: "complete" });
+    expect(removed.json).toMatchObject({
+      items: expect.arrayContaining([
+        expect.objectContaining({
+          name: "antigravity",
+          status: "removed",
+          configuration_path: config,
+        }),
+        expect.objectContaining({
+          name: "antigravity_cli",
+          status: "removed",
+          configuration_path: config,
+        }),
+      ]),
+    });
     expect(JSON.parse(await readFile(config, "utf8"))).toEqual(unrelated);
     for (const [client, skill] of [
       ["antigravity_cli", cliSkill],
