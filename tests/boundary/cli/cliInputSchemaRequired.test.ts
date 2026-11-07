@@ -223,7 +223,9 @@ describe("CLI advertised input schemas", () => {
     });
     expect(advertised.options?.properties?.["limit"]).toMatchObject({
       default: 20_000,
-      minimum: 1,
+      anyOf: expect.arrayContaining([
+        expect.objectContaining({ type: "integer", minimum: 1 }),
+      ]),
     });
     expect(
       parserSchema(cli, "inspect-keyed-archive", "args")?.parse({ path: "x" }),
