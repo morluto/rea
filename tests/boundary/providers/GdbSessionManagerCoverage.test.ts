@@ -9,6 +9,7 @@ import { afterEach, expect, it } from "vitest";
 
 import {
   AnalysisCancelledError,
+  AnalysisCapabilityUnavailableError,
   AnalysisTimeoutError,
 } from "../../../src/domain/analysisErrorCore.js";
 import {
@@ -3093,7 +3094,7 @@ it("retains ownership and sends no signal when MI state is saturated or unknown"
   expect(fake.children[0]?.killSignals).toEqual([]);
 });
 
-it("routes protocol failure cleanup through detach verification without direct signals", async () => {
+it("routes protocol failure cleanup through direct termination on sync loss", async () => {
   const fake = createFakeSpawner();
   const manager = managerWithFakeSpawner(fake.spawnProcess);
   const started = await expectGdbSessionStarted(manager);
@@ -3114,7 +3115,86 @@ it("routes protocol failure cleanup through detach verification without direct s
   const failed = await manager.execute(started.value.session_id, "will-fail");
   expect(failed.ok).toBe(false);
   await new Promise((resolve) => setImmediate(resolve));
-  expect(child.killSignals).toEqual([]);
+  expect(child.killSignals).toEqual(["SIGTERM"]);
+});
+
+it("terminates owned debugger on protocol line overflow and cleans up on close", async () => {
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes("print 1")) {
+      child.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\n");
+    } else {
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+    }
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess);
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0];
+  if (child === undefined) throw new Error("Expected child");
+
+  const failed = await manager.execute(started.value.session_id, "print 1");
+
+  expect(failed.ok).toBe(false);
+  expect(child.killSignals).toEqual(["SIGTERM"]);
+
+  const closed = await manager.close(started.value.session_id);
+  expect(closed.ok).toBe(true);
+  expect(manager.status(started.value.session_id)).toBeUndefined();
+});
+
+it("handles incomplete stop after line overflow and cleans up on close retry", async () => {
+  let stopAttempts = 0;
+  const fake = createFakeSpawner((child, token, command) => {
+    if (command.includes("print 1")) {
+      child.stdout.write("x".repeat(16 * 1024 * 1024 + 1) + "\n");
+    } else {
+      child.stdout.write(
+        command.includes("list-thread-groups")
+          ? `${token}^done,groups=[]\n`
+          : `${token}^done\n`,
+      );
+    }
+  });
+  const manager = managerWithFakeSpawner(fake.spawnProcess, {
+    stopProcess: async (session, name, options) => {
+      stopAttempts++;
+      if (stopAttempts === 1) {
+        return {
+          status: "incomplete",
+          reason: "simulated output stream timeout",
+        };
+      }
+      return stopOwnedDebuggerProcess(session, name, options);
+    },
+  });
+  const started = await expectGdbSessionStarted(manager);
+  const child = fake.children[0];
+  if (child === undefined) throw new Error("Expected child");
+
+  const failed = await manager.execute(started.value.session_id, "print 1");
+
+  expect(failed.ok).toBe(false);
+  if (!failed.ok) {
+    expect(failed.error).toBeInstanceOf(AnalysisCapabilityUnavailableError);
+    if (failed.error instanceof AnalysisCapabilityUnavailableError) {
+      expect(failed.error.userMessage).toContain(
+        "simulated output stream timeout",
+      );
+      expect(failed.error.remediationAction).toContain(
+        `Retry close_gdb_session with session_id "${started.value.session_id}"`,
+      );
+    }
+  }
+
+  expect(manager.status(started.value.session_id)).toBeDefined();
+
+  child.exit(0, null);
+  const retried = await manager.close(started.value.session_id);
+  expect(retried.ok).toBe(true);
+  expect(manager.status(started.value.session_id)).toBeUndefined();
 });
 
 it("retains ownership without signaling when detach confirmation fails", async () => {

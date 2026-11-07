@@ -196,6 +196,111 @@ it("retries provider detachment after a rejected attempt", async () => {
   expect(detachInferior).toHaveBeenCalledTimes(2);
 });
 
+it("terminates the debugger process immediately when forced despite failed or pending detachment", async () => {
+  const detachInferior = vi
+    .fn()
+    .mockRejectedValue(
+      new Error("GDB MI state is not synchronized; inferior state is unknown."),
+    );
+  const kill = vi.fn(() => true);
+  const session = {
+    id: "force-terminate-on-sync-loss",
+    exited: false,
+    launched: { process: { kill } },
+    detachInferior,
+    supervisor: createFakeSupervisor(),
+  };
+
+  const result = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+
+  expect(result).toEqual({ status: "stopped" });
+  expect(detachInferior).not.toHaveBeenCalled();
+  expect(kill).toHaveBeenCalledWith("SIGTERM");
+});
+
+it("unrefs output streams on forced stop when output streams fail to close", async () => {
+  let exited = false;
+  const supervisor = {
+    ...createFakeSupervisor(),
+    waitForOutputClose: vi.fn(async () => false),
+  };
+  const session = {
+    id: "forced-stop-open-output",
+    get exited() {
+      return exited;
+    },
+    launched: {
+      process: {
+        kill: vi.fn(() => {
+          exited = true;
+          return true;
+        }),
+      },
+    },
+    detachInferior: async () => ({ status: "no-inferior" }) as const,
+    supervisor,
+  };
+
+  const result = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+
+  expect(result).toMatchObject({
+    status: "incomplete",
+    reason: /inherited output streams are still open/i,
+  });
+  expect(supervisor.unrefOutputStreams).toHaveBeenCalledOnce();
+  expect(supervisor.dispose).not.toHaveBeenCalled();
+
+  supervisor.waitForOutputClose.mockResolvedValue(true);
+  const retried = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+  expect(retried).toEqual({ status: "already_exited" });
+  expect(supervisor.dispose).toHaveBeenCalledOnce();
+});
+
+it("permits close of previously forced session after exit without inferior verification", async () => {
+  let exited = false;
+  const supervisor = createFakeSupervisor();
+  const verifyInferiorsEndedAfterExit = vi.fn(async () => false);
+  const session = {
+    id: "forced-session-subsequent-close",
+    get exited() {
+      return exited;
+    },
+    inferiorStateUnknown: () => true,
+    verifyInferiorsEndedAfterExit,
+    launched: {
+      process: {
+        kill: vi.fn(() => {
+          exited = true;
+          return true;
+        }),
+      },
+    },
+    supervisor,
+  };
+
+  const first = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+    force: true,
+  });
+  expect(first).toEqual({ status: "stopped" });
+  expect(verifyInferiorsEndedAfterExit).not.toHaveBeenCalled();
+
+  const retry = await stopOwnedDebuggerProcess(session, "GDB", {
+    platform: "linux",
+  });
+  expect(retry).toEqual({ status: "already_exited" });
+  expect(verifyInferiorsEndedAfterExit).not.toHaveBeenCalled();
+});
+
 it("retains ownership after stop until inherited output writers close", async () => {
   let exited = false;
   let outputClosed = false;
