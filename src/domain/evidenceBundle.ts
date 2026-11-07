@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { mapEvidenceIdentityGraph } from "./mappedEvidenceIdentityGraph.js";
 import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js";
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
@@ -13,12 +13,10 @@ import canonicalize from "canonicalize";
 import { compareUnicodeCodePoints } from "./unicodeCodePointOrder.js";
 
 import {
-  computeEvidenceId,
   evidenceSchema,
   immutableEvidence,
   parseEvidence,
   providerSchema,
-  redactEvidence,
   type Evidence,
 } from "./evidence.js";
 import {
@@ -699,57 +697,9 @@ export const redactEvidenceBundle = (
   const config = resolveLogicalPathConfig(options);
   if (config === undefined) return bundle;
 
-  // A record commits to its links. Rewrite each source first so every parent
-  // hashes final, rather than provisional, identities regardless of order.
-  const byId = new Map(
-    bundle.records.map((record) => [record.evidence_id, record]),
+  const authenticated = parseEvidenceBundle(bundle);
+  const mapped = mapEvidenceIdentityGraph(authenticated, config);
+  return parseEvidenceBundle(
+    createEvidenceBundle(mapped.records, mapped.unknowns),
   );
-  const rewritten = new Map<string, Evidence>();
-  const active = new Set<string>();
-  for (const root of bundle.records) {
-    const pending = [{ record: root, next: 0 }];
-    while (pending.length > 0) {
-      const frame = pending[pending.length - 1]!;
-      const id = frame.record.evidence_id;
-      if (rewritten.has(id)) {
-        pending.pop();
-        continue;
-      }
-      active.add(id);
-      const next = frame.record.evidence_links[frame.next++];
-      if (next !== undefined) {
-        const source = byId.get(next);
-        if (source !== undefined && !rewritten.has(next)) {
-          if (active.has(next))
-            throw new TypeError("Evidence link graph contains a cycle");
-          pending.push({ record: source, next: 0 });
-        }
-        continue;
-      }
-      const redacted = redactEvidence(frame.record, config);
-      const links = redacted.evidence_links.map(
-        (link) => rewritten.get(link)?.evidence_id ?? link,
-      );
-      if (isDeepStrictEqual(links, redacted.evidence_links)) {
-        rewritten.set(id, redacted);
-      } else {
-        const { evidence_id: _id, ...value } = redacted;
-        const updated = { ...value, evidence_links: links };
-        rewritten.set(
-          id,
-          parseEvidence({
-            ...updated,
-            evidence_id: computeEvidenceId(updated),
-          }),
-        );
-      }
-      active.delete(id);
-      pending.pop();
-    }
-  }
-  const records = bundle.records.map((record) =>
-    rewritten.get(record.evidence_id)!,
-  );
-
-  return createEvidenceBundle(records, bundle.unknowns);
 };
