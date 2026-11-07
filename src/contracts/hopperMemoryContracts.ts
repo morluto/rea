@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { address, document } from "./toolContractHelpers.js";
 import {
+  MAX_BYTE_SEARCH_MATCHES,
   bytePatternFields,
   validateBytePattern,
 } from "../domain/native/bytePattern.js";
@@ -10,14 +11,14 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "search_bytes",
     description:
-      "Find masked byte signatures in initialized analyzed memory. Hex byte pairs and ?? wildcards are supported; an optional equal-length hex mask selects bits. Bounds are inclusive. Matches are ordered by provider address and never span blocks. Coverage describes this page; reuse the same query with next_cursor to continue. Uninitialized blocks are listed separately. Ghidra only; Hopper is unavailable.",
+      "Find masked byte signatures in initialized analyzed memory. Hex byte pairs and ?? wildcards are supported; an optional equal-length hex mask selects bits. Bounds are inclusive. Matches are ordered by provider address and may span adjacent eligible initialized blocks; gaps and excluded blocks end a contiguous range. A match’s segment and file offset describe its starting address. Coverage describes this page; reuse the same query with next_cursor to continue. Uninitialized blocks are listed separately. Ghidra only; Hopper is unavailable.",
     inputSchema: z
       .strictObject({
         ...bytePatternFields,
         document,
         start: address.optional(),
         end: address.optional(),
-        limit: z.int().min(1).max(1000).default(100),
+        limit: z.int().min(1).max(MAX_BYTE_SEARCH_MATCHES).default(100),
         cursor: z.string().min(1).optional(),
       })
       .superRefine(validateBytePattern),
@@ -25,7 +26,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "read_bytes",
     description:
-      "Read analyzed bytes from one provider-normalized virtual address. The hexadecimal payload reports the exact returned length; incomplete reads remain explicit and unsupported provider APIs return typed capability unavailability.",
+      "Read analyzed bytes from one provider-normalized virtual address. Ghidra reads initialized memory, which can include loader fixups; these bytes can differ from the original file. The hexadecimal payload reports the exact returned length; incomplete reads remain explicit and unsupported provider APIs return typed capability unavailability.",
     inputSchema: z.object({
       address,
       length: z.int().min(1).default(256),
@@ -35,7 +36,7 @@ export const HOPPER_MEMORY_TOOL_DEFINITIONS = [
   {
     name: "address_to_file_offset",
     description:
-      "Map one provider-normalized virtual address to its original nonnegative file offset. Hopper verifies the original bytes against the selected executable digest and translates FAT image-relative offsets using the loaded header. Results preserve the provider coordinate, image base, and source path. Unmapped addresses fail explicitly; changed or unavailable sources return typed errors retaining native mapping facts as partial evidence.",
+      "Map one provider-normalized virtual address to its original nonnegative file offset. The mapping is for that address; it does not imply a contiguous file range or that analyzed memory bytes equal file bytes. Hopper verifies the original bytes against the selected executable digest and translates FAT image-relative offsets using the loaded header. Results preserve the provider coordinate, image base, and source path. Unmapped addresses fail explicitly; changed or unavailable sources return typed errors retaining native mapping facts as partial evidence.",
     inputSchema: z.object({ address, document }),
   },
 ] as const;

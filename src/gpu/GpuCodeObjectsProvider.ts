@@ -1,3 +1,4 @@
+import { GPU_CODE_OBJECTS_PROVIDER_IDENTITY } from "./GpuCodeObjectsProviderIdentity.js";
 import { lstat, type FileHandle } from "node:fs/promises";
 import type { GpuCodeObjectsPort } from "../application/gpu/GpuCodeObjectsPort.js";
 import {
@@ -29,7 +30,7 @@ import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import {
   withArtifactRegularFile,
   bindArtifactFileCleanup,
-  artifactFilePrimaryFailure,
+  artifactFilePrimaryFacts,
   artifactFileCancellationCause,
   artifactFileCompletion,
 } from "../artifacts/ArtifactFileOperation.js";
@@ -51,11 +52,6 @@ import {
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
-export const GPU_CODE_OBJECTS_PROVIDER_IDENTITY = {
-  id: "gpu-code-objects",
-  name: "REA static GPU code-object reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_gpu_code_objects";
 
 /** One admitted descriptor and bounded report at a time; retained cleanup blocks new work. */
@@ -102,7 +98,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
             input.path,
             this.#resources,
             options?.signal,
-            (file) =>
+            ({ handle: file }) =>
               this.#read(file, input, options?.signal, (value) => {
                 progress = value;
               }),
@@ -110,9 +106,10 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
         ),
       );
     } catch (cause) {
-      const primary = artifactFilePrimaryFailure(cause);
+      const { cause: primary, origin } = artifactFilePrimaryFacts(cause);
       let error: AnalysisError;
-      if (primary instanceof AnalysisError) error = primary;
+      if (origin === "owned-or-classified" && primary instanceof AnalysisError)
+        error = primary;
       else if (primary instanceof BinaryResourceFailure)
         error = new AnalysisResourceConstraintError(
           OPERATION,
@@ -142,6 +139,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
                 constraint: "file_format_rejected",
               });
       } else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "cancelled"
       )
@@ -149,6 +147,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
           cause: artifactFileCancellationCause(primary),
         });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "integrity"
       )
@@ -172,6 +171,7 @@ export class GpuCodeObjectsProvider implements GpuCodeObjectsPort {
       else if (isSelectedRegularFileError(primary))
         error = new BinaryTargetError(input.path, primary.message, { cause });
       else if (
+        origin === "owned-or-classified" &&
         primary instanceof ArtifactReaderFailure &&
         primary.reason === "limit"
       )

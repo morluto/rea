@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { firstProcedureAddress } from "../dist/application/RealHopperAssertions.js";
+import { firstProcedureAddress } from "./lib/real-hopper-assertions.mjs";
 import { parseBinaryTarget } from "../dist/application/BinaryTargetResolver.js";
 import { ArtifactResourceScope } from "../dist/artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../dist/artifacts/AnalysisCleanupLease.js";
 import { resolveHopperAnalysisProfile } from "../dist/hopper/HopperAnalysisProfile.js";
 import { HopperApplicationLauncher } from "../dist/hopper/BridgeLauncher.js";
 import { HopperClient } from "../dist/hopper/HopperClient.js";
-import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderCapabilities.js";
+import { HOPPER_PROVIDER_IDENTITY } from "../dist/hopper/HopperProviderMetadata.js";
 import { loadRealHopperFixtureTargets } from "./lib/real-hopper-fixture.mjs";
 
 // These options belong to the native client, below the CLI/MCP tool surface.

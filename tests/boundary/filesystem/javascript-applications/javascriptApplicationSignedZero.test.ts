@@ -1,3 +1,7 @@
+import {
+  javaScriptSemanticQueryInputSchema,
+  javaScriptSemanticQueryResultSchema,
+} from "../../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
@@ -5,7 +9,6 @@ import { expect, it } from "vitest";
 
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../../src/domain/javascript/javascriptApplicationAnalysis.js";
-import { javaScriptSemanticQueryResultSchema } from "../../../../src/domain/javascript/javascriptSemanticQuerySchemas.js";
 import { queryJavaScriptSemanticGraph } from "../../../../src/domain/javascript/javascriptSemanticQuery.js";
 import { analyzeJavaScriptApplication } from "../../../support/javascriptApplicationScope.js";
 
@@ -43,11 +46,14 @@ it.each([
           );
     if (node === undefined)
       throw new Error("Expected the selected semantic node");
-    const query = queryJavaScriptSemanticGraph(analysis.semantic_graph, {
-      seed: { kind: "semantic-node", node_id: node.node_id },
-      direction: "backward-provenance",
-      allowed_relations: ["defines"],
-    });
+    const query = queryJavaScriptSemanticGraph(
+      analysis.semantic_graph,
+      javaScriptSemanticQueryInputSchema.parse({
+        seed: { kind: "semantic-node", node_id: node.node_id },
+        direction: "backward-provenance",
+        allowed_relations: ["defines"],
+      }),
+    );
     const transportedQuery = javaScriptSemanticQueryResultSchema.parse(
       JSON.parse(JSON.stringify(query)),
     );

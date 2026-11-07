@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "keeps unavailable source-selection scopes unknown in version comparisons",
@@ -55,10 +55,13 @@ cliTest(
             properties.operation === "select-javascript-sources",
         ),
     );
-    expect(parseScope?.observations[0]?.evidence).toMatchObject({
+    const scopeEvidence = parseScope?.observations[0]?.evidence;
+    if (scopeEvidence === undefined)
+      throw new Error("Missing source scope evidence");
+    expect(scopeEvidence).toMatchObject({
       state: "unavailable",
       limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
+        expect.stringMatching(/source_paths.*inventoried.*not analyzed/iu),
       ],
     });
 
@@ -69,7 +72,7 @@ cliTest(
     ) => {
       const inputPath = join(root, `${name}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
@@ -89,9 +92,7 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
       evidence_links: expect.arrayContaining([
         full.evidence_id,
         selected.evidence_id,
@@ -104,9 +105,7 @@ cliTest(
     ).toMatchObject({
       status: "unknown",
       dimensions: ["availability"],
-      limitations: [
-        "Source is outside the caller-selected source_paths; it was inventoried but not analyzed.",
-      ],
+      limitations: scopeEvidence.limitations,
     });
     expect(forward.summary.added).toBe(0);
     expect(forward.summary.removed).toBe(0);
@@ -493,7 +492,7 @@ cliTest(
     const compare = async (left: unknown, right: unknown) => {
       const inputPath = join(root, `comparison-${Math.random()}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });

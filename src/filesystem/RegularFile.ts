@@ -3,6 +3,7 @@ import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
 import { lstat, open, stat, type FileHandle } from "node:fs/promises";
 
+import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
 
 /** Cancellation observed at a file operation's explicit checkpoint. */
@@ -63,11 +64,20 @@ export class RegularFileChangedError extends Error {
   }
 }
 
-const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+/** Errnos establishing that no file resolves at the path as written. */
+const UNRESOLVED_PATH_ERROR_CODES: ReadonlySet<string> = new Set([
   "ENOENT",
   "ENOTDIR",
   "ELOOP",
   "ENAMETOOLONG",
+]);
+
+/** Whether an errno establishes that nothing resolves at the selected path. */
+export const isUnresolvedPathErrorCode = (code: unknown): boolean =>
+  typeof code === "string" && UNRESOLVED_PATH_ERROR_CODES.has(code);
+
+const SELECTED_REGULAR_FILE_ERROR_CODES = new Set([
+  ...UNRESOLVED_PATH_ERROR_CODES,
   "EISDIR",
   "ENOTFILE",
   "ESTALE",
@@ -90,14 +100,22 @@ export interface StableRegularFileDescriptor {
   readonly initial: Stats;
 }
 
-/** Open and verify the selected file descriptor without blocking on pipes. */
+/**
+ * Whether admission waits out a fresh Windows ChangeTime.
+ * External files settle. A private file REA just wrote is recorded as written.
+ */
+export type ChangeTimeAdmission = "settle" | "as-written";
+
+/** Admit a non-blocking regular-file descriptor with its validated initial facts. */
 export const openRegularFile = async (
   path: string,
   options: {
     readonly symlinks: "follow" | "reject";
     readonly signal?: AbortSignal | undefined;
+    /** Omission settles. Private files REA just wrote pass "as-written". */
+    readonly changeTime?: ChangeTimeAdmission | undefined;
   },
-): Promise<FileHandle> => {
+): Promise<StableRegularFileDescriptor> => {
   assertRegularFileActive(options.signal);
   const handle = await open(
     path,
@@ -117,9 +135,28 @@ export const openRegularFile = async (
   const owner = new OwnedFileHandle(handle);
   try {
     assertRegularFileActive(options.signal);
-    const metadata = await handle.stat();
-    if (!metadata.isFile())
-      throw new NonRegularFileReadError(path, metadata.isDirectory());
+    // The admitted facts become the baseline every later comparison tests
+    // against. External files wait out a Windows ChangeTime that can still
+    // move. A private file REA just wrote is recorded as written: settling
+    // each one costs about a second, and a compressed PYZ spool does that
+    // once per image. The first observation still validates the file type,
+    // so a directory is refused before any settling delay.
+    const readMetadata = async (): Promise<Stats> => {
+      assertRegularFileActive(options.signal);
+      const observed = await handle.stat();
+      if (!observed.isFile())
+        throw new NonRegularFileReadError(path, observed.isDirectory());
+      return observed;
+    };
+    const metadata =
+      options.changeTime === "as-written"
+        ? await readMetadata()
+        : await settleChangeTimeBaseline(readMetadata, {
+            signal: options.signal,
+            // Callers match on this type to tell cancellation from a read fault.
+            cancellationError: (reason) =>
+              new RegularFileOperationCancelled(reason),
+          });
     assertRegularFileActive(options.signal);
     // O_NOFOLLOW is unavailable on Windows. Recheck the name only on hosts
     // where open could have followed a symlink, while the descriptor is owned.
@@ -131,7 +168,7 @@ export const openRegularFile = async (
         throw new RegularFileChangedError(path);
       assertRegularFileActive(options.signal);
     }
-    return handle;
+    return { handle, initial: metadata };
   } catch (cause: unknown) {
     try {
       await owner.close();
@@ -177,9 +214,24 @@ const isUnopenableFileTypeError = (cause: unknown): boolean =>
   typeof cause.errno === "number" &&
   UNOPENABLE_FILE_TYPE_ERRNOS.has(cause.errno);
 
+/** Stable content identity; access times are deliberately excluded. */
+export type RegularFileState = Pick<
+  Stats,
+  "dev" | "ino" | "size" | "mode" | "mtimeMs" | "ctimeMs"
+>;
+
+export const regularFileState = (stats: Stats): RegularFileState => ({
+  dev: stats.dev,
+  ino: stats.ino,
+  size: stats.size,
+  mode: stats.mode,
+  mtimeMs: stats.mtimeMs,
+  ctimeMs: stats.ctimeMs,
+});
+
 /** Compare one regular file's identity and mutable metadata across a read. */
 export const sameRegularFileState = (
-  expected: Stats | BigIntStats,
+  expected: RegularFileState | BigIntStats,
   observed: Stats | BigIntStats,
 ): boolean =>
   observed.isFile() &&
@@ -192,3 +244,36 @@ export const sameRegularFileState = (
       expected.ctimeNs === observed.ctimeNs
     : expected.mtimeMs === observed.mtimeMs &&
       expected.ctimeMs === observed.ctimeMs);
+
+/** Validate an admitted descriptor and selected name at the same precision as admission. */
+export const assertStableRegularFileIdentity = async (
+  file: FileHandle,
+  path: string,
+  before: Stats | BigIntStats,
+  options: {
+    readonly symlinks: "follow" | "reject";
+    readonly signal?: AbortSignal;
+  },
+): Promise<void> => {
+  assertRegularFileActive(options.signal);
+  const bigint = typeof before.dev === "bigint";
+  const named = async () => {
+    try {
+      const lookup = options.symlinks === "follow" ? stat : lstat;
+      return bigint ? await lookup(path, { bigint: true }) : await lookup(path);
+    } catch (cause: unknown) {
+      if (isSelectedRegularFileError(cause))
+        throw new RegularFileChangedError(path, { cause });
+      throw cause;
+    }
+  };
+  const selected = await named();
+  assertRegularFileActive(options.signal);
+  const opened = await file.stat({ bigint });
+  assertRegularFileActive(options.signal);
+  if (
+    !sameRegularFileState(before, opened) ||
+    !sameRegularFileState(before, selected)
+  )
+    throw new RegularFileChangedError(path);
+};

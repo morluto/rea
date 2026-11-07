@@ -357,8 +357,8 @@ it.each(expressionWrappers)(
       )
       .toEqual([
         ["local-window", "candidate"],
-        ["/local-db", null],
-        ["/local-cache", null],
+        ["/local-db", "candidate"],
+        ["/local-cache", "candidate"],
         ["changed-window", "candidate"],
         ["uncertain-window", "candidate"],
       ]);

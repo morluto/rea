@@ -57,7 +57,7 @@ export const javaScriptRouteOccurrenceSchema = z.strictObject({
 });
 export const javaScriptInventoryRouteSchema = z.strictObject({
   id: z.string().regex(/^jsr:[a-f0-9]{32}$/u),
-  path: z.string().startsWith("/"),
+  path: z.string().regex(/^\//u),
   classification: z.enum(["page", "system", "unknown"]),
   classification_basis: z.enum([
     "next-app-page",

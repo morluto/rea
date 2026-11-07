@@ -199,7 +199,7 @@ it.each(kinds)(
       detail: "summary",
       evidence_output: destination,
     });
-    expect(await readFile(destination)).toEqual(original);
+    expect(Buffer.compare(await readFile(destination), original)).toBe(0);
     expect(output).toHaveProperty("code");
     expect(output).not.toHaveProperty("summary");
     expect(output).toHaveProperty("details.partial_observation.evidence_id");

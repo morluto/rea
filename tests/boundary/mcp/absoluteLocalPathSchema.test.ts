@@ -13,7 +13,7 @@ interface PathInputCase {
   readonly field: string;
   readonly valid: Readonly<Record<string, unknown>>;
   readonly invalid: Readonly<Record<string, unknown>>;
-  readonly issuePath?: readonly string[];
+  readonly issuePath: readonly string[];
 }
 
 const createMcp = async (
@@ -74,6 +74,8 @@ const standaloneAnalysisCases = (
 ): readonly PathInputCase[] =>
   [
     { name: "inspect_go_binary", input: {} },
+    { name: "inspect_recorded_crash", input: {} },
+    { name: "inspect_binary_layout", input: {} },
     { name: "inspect_rust_binary", input: {} },
     { name: "inspect_evm_interface", input: { encoding: "hex" } },
     { name: "inspect_sqlite_database", input: {} },
@@ -102,10 +104,22 @@ const inputCases = (
     field: string,
     valid: Readonly<Record<string, unknown>>,
     invalid: Readonly<Record<string, unknown>>,
-  ): PathInputCase => ({ name, field, valid, invalid });
+  ): PathInputCase => ({
+    name,
+    field,
+    valid,
+    invalid,
+    issuePath: field.split("."),
+  });
 
   return [
     pathCase("open_binary", "path", { path: absolute }, { path: relative }),
+    pathCase(
+      "extract_artifact",
+      "output_root",
+      { output_root: absolute },
+      { output_root: relative },
+    ),
     pathCase(
       "analyze_javascript_application",
       "input_path",
@@ -129,6 +143,24 @@ const inputCases = (
       "path",
       { path: absolute },
       { path: relative },
+    ),
+    pathCase(
+      "import_evidence_bundle",
+      "path",
+      { path: absolute },
+      { path: relative },
+    ),
+    pathCase(
+      "compare_bundles",
+      "left_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: relative, right_bundle_path: absolute },
+    ),
+    pathCase(
+      "compare_bundles",
+      "right_bundle_path",
+      { left_bundle_path: absolute, right_bundle_path: absolute },
+      { left_bundle_path: absolute, right_bundle_path: relative },
     ),
     pathCase(
       "binary_session",
@@ -220,11 +252,38 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
     const ajv = new Ajv2020({ strict: false, validateFormats: false });
     const absolute = resolve("rea-absolute-input");
     const relative = "relative-input";
-
-    for (const { name, field, valid, invalid } of inputCases(
-      absolute,
-      relative,
-    )) {
+    const schemaCases = [
+      ...inputCases(absolute, relative),
+      {
+        name: "inspect_go_binary",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "import_evidence_bundle",
+        field: "path NUL",
+        valid: { path: absolute },
+        invalid: { path: `${absolute}\0` },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path empty",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: { left_bundle_path: "", right_bundle_path: absolute },
+      },
+      {
+        name: "compare_bundles",
+        field: "left_bundle_path NUL",
+        valid: { left_bundle_path: absolute, right_bundle_path: absolute },
+        invalid: {
+          left_bundle_path: `${absolute}\0`,
+          right_bundle_path: absolute,
+        },
+      },
+    ];
+    const checked: string[] = [];
+    for (const { name, field, valid, invalid } of schemaCases) {
       const schema = listed.tools.find(
         (tool) => tool.name === name,
       )?.inputSchema;
@@ -236,7 +295,16 @@ it("advertises full host-absolute path constraints after SDK schema conversion",
         validate(valid),
         `${name}.${field}: ${JSON.stringify(validate.errors)}`,
       ).toBe(true);
+      checked.push(`${name}.${field}`);
     }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "extract_firmware.output_directory",
+        "inspect_go_binary.path NUL",
+        "compare_bundles.left_bundle_path empty",
+      ]),
+    );
     expect(firmwareCalls).toEqual([]);
   } finally {
     await close();
@@ -247,19 +315,39 @@ it("rejects relative paths through in-memory MCP handlers", async () => {
   const firmwareCalls: string[] = [];
   const { client, close } = await createMcp(firmwareCalls);
   try {
-    for (const { name, field, invalid, issuePath } of inputCases(
-      resolve("rea-absolute-input"),
-      "relative-input",
-    )) {
+    const cases = inputCases(resolve("rea-absolute-input"), "relative-input");
+    const checked: string[] = [];
+    for (const { name, field, invalid, issuePath } of cases) {
       const result = await client.callTool({ name, arguments: invalid });
       expect(result.isError, `${name}.${field}`).toBe(true);
-      expect(JSON.stringify(result), `${name}.${field}`).toContain("absolute");
-      if (issuePath !== undefined)
-        expect(parseMcpToolError(result).error.details).toMatchObject({
-          operation: name,
-          issues: [{ path: issuePath, reason: "invalid_format" }],
-        });
+      expect(parseMcpToolError(result).error, `${name}.${field}`).toMatchObject(
+        {
+          code: "invalid_request",
+          details: {
+            operation: name,
+            issues: [
+              expect.objectContaining({
+                path: issuePath,
+                reason: "invalid_format",
+                expected: "regex",
+              }),
+            ],
+          },
+        },
+      );
+      checked.push(`${name}.${field}`);
     }
+    expect(checked).toEqual(
+      expect.arrayContaining([
+        "open_binary.path",
+        "open_binary.snapshot_path",
+        "extract_firmware.path",
+        "extract_firmware.output_directory",
+        "inspect_analysis_view.source.path",
+        "capture_browser_scenario.browser.executable_path",
+        "capture_electron_scenario.application_root",
+      ]),
+    );
     expect(firmwareCalls).toEqual([]);
   } finally {
     await close();

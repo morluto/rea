@@ -12,6 +12,16 @@ import { HopperReleaseError } from "./HopperReleaseFeed.js";
 import { MAC_HOPPER_SYSTEM_LAUNCHER } from "./MacHopperPaths.js";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 
+const configurationHost = (
+  environment: Readonly<NodeJS.ProcessEnv>,
+): DoctorHost => ({
+  ...systemDoctorHost({ environment: { ...environment } }),
+  ...host({
+    installationPaths: () => Promise.resolve([]),
+    clientRegistrations: () => Promise.resolve([]),
+  }),
+});
+
 describe("doctor Hopper startup timeout", () => {
   const timeoutHost = (
     value: string | undefined,
@@ -157,16 +167,6 @@ describe("doctor Hopper startup timeout", () => {
 });
 
 describe("doctor native analysis configuration", () => {
-  const configurationHost = (
-    environment: Readonly<NodeJS.ProcessEnv>,
-  ): DoctorHost => ({
-    ...systemDoctorHost({ environment: { ...environment } }),
-    ...host({
-      installationPaths: () => Promise.resolve([]),
-      clientRegistrations: () => Promise.resolve([]),
-    }),
-  });
-
   it.each([
     ["REA_ANALYSIS_PROVIDER", "Hopper"],
     ["REA_REGEX_MATCHING_DEADLINE_MS", "0"],
@@ -202,8 +202,77 @@ describe("doctor native analysis configuration", () => {
           details: { setting },
         }),
       );
+      expect(
+        result.checks.some(({ name }) => name === "hopper-startup-timeout"),
+      ).toBe(false);
     },
   );
+
+  it.each([
+    ["REA_GHIDRA_STARTUP_TIMEOUT_MS", "abc"],
+    ["HOPPER_LOADER_ARGS_JSON", "{"],
+    ["REA_GHIDRA_COMPILER_SPEC_ID", "gcc"],
+    ["CALLER_SETTING", "private\0value"],
+  ] as const)(
+    "keeps a valid supplied Hopper timeout when %s rejects native admission",
+    async (setting, value) => {
+      const result = await runDoctor(
+        undefined,
+        configurationHost({
+          [setting]: value,
+          REA_HOPPER_STARTUP_TIMEOUT_MS: "120001",
+        }),
+        { providers: ["hopper"] },
+      );
+      expect(result.healthy).toBe(false);
+      expect(result.scope_checks).toContainEqual(
+        expect.objectContaining({
+          name: "hopper-startup-timeout",
+          ok: true,
+          detail: "REA_HOPPER_STARTUP_TIMEOUT_MS=120001",
+        }),
+      );
+      expect(result.scope_checks).toContainEqual(
+        expect.objectContaining({
+          name: `runtime-configuration:${setting}`,
+          ok: false,
+        }),
+      );
+    },
+  );
+
+  it("reports an invalid Hopper timeout alongside an unrelated NUL admission refusal", async () => {
+    const result = await runDoctor(
+      undefined,
+      configurationHost({
+        CALLER_SETTING: "private\0value",
+        REA_HOPPER_STARTUP_TIMEOUT_MS: "0",
+      }),
+      { providers: ["hopper"] },
+    );
+    expect(result.healthy).toBe(false);
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "hopper-startup-timeout",
+        ok: false,
+        detail:
+          "REA_HOPPER_STARTUP_TIMEOUT_MS: must be a positive decimal integer",
+      }),
+    );
+    expect(result.scope_checks).toContainEqual(
+      expect.objectContaining({
+        name: "runtime-configuration:CALLER_SETTING",
+        ok: false,
+        detail: expect.stringContaining("NUL"),
+      }),
+    );
+    expect(
+      result.scope_checks.filter(
+        ({ name }) => name === "hopper-startup-timeout",
+      ),
+    ).toHaveLength(1);
+    expect(JSON.stringify(result.checks)).not.toContain("private");
+  });
 
   it("keeps a lowercase provider preference ready for the selected engine", async () => {
     const result = await runDoctor(
@@ -257,15 +326,6 @@ describe("doctor native analysis configuration", () => {
 });
 
 describe("doctor MCP startup readiness", () => {
-  const configurationHost = (
-    environment: Readonly<NodeJS.ProcessEnv>,
-  ): DoctorHost => ({
-    ...systemDoctorHost({ environment: { ...environment } }),
-    ...host({
-      installationPaths: () => Promise.resolve([]),
-      clientRegistrations: () => Promise.resolve([]),
-    }),
-  });
   const alignedCodex: ClientRegistrationStatus = {
     client: "codex",
     config_path: "/home/user/.codex/config.toml",
@@ -435,6 +495,43 @@ describe("doctor runtime check", () => {
   );
 });
 
+it.each([
+  undefined,
+  "",
+  "not-a-version",
+  "14garbage",
+  "14.garbage",
+  "14.",
+  "14.0\n",
+  "99999999999999999",
+])("retains unknown host support for macOS probe value %s", async (version) => {
+  const result = await runDoctor(
+    undefined,
+    host({ macosVersion: () => Promise.resolve(version) }),
+  );
+  expect(result.checks).toContainEqual(
+    expect.objectContaining({
+      name: "host",
+      ok: false,
+      classification: "unknown",
+    }),
+  );
+});
+
+it.skipIf(process.platform !== "darwin")(
+  "reads the macOS version without PATH utilities",
+  async () => {
+    const system = systemDoctorHost({
+      environment: { PATH: "/nonexistent" },
+    });
+    try {
+      expect(await system.macosVersion()).toMatch(/^\d+(?:\.\d+)*$/u);
+    } finally {
+      await system.close?.();
+    }
+  },
+);
+
 describe("doctor", () => {
   it("returns exact recovery for every failed diagnostic", async () => {
     const result = await runDoctor(
@@ -458,22 +555,19 @@ describe("doctor", () => {
     });
   });
 
-  it.each(["11.7", undefined])(
-    "rejects unsupported macOS version %s",
-    async (version) => {
-      const result = await runDoctor(
-        undefined,
-        host({ macosVersion: () => Promise.resolve(version) }),
-      );
-      expect(result.checks).toContainEqual(
-        expect.objectContaining({
-          name: "host",
-          ok: false,
-          classification: "unsupported_host",
-        }),
-      );
-    },
-  );
+  it.each(["11.7"])("rejects unsupported macOS version %s", async (version) => {
+    const result = await runDoctor(
+      undefined,
+      host({ macosVersion: () => Promise.resolve(version) }),
+    );
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "host",
+        ok: false,
+        classification: "unsupported_host",
+      }),
+    );
+  });
 
   it("admits only the experimental Windows x64 host boundary", async () => {
     const windows = await runDoctor(
@@ -666,6 +760,36 @@ describe("doctor installation identity", () => {
       detail: "Installed REA skill identity is missing.",
       remediation: "Run rea setup to update the installed REA skill.",
     });
+  });
+  it("classifies an unreadable installed skill as unknown, not drift", async () => {
+    const result = await runDoctor(
+      undefined,
+      host({
+        installedSkillIdentity: () =>
+          Promise.resolve({
+            version: null,
+            toolCount: null,
+            canonical: false,
+            issues: [
+              {
+                client: "shared",
+                path: "/home/.agents/skills/rea",
+                kind: "unreadable",
+                detail: "Selected skill copy could not be read",
+              },
+            ],
+          }),
+      }),
+    );
+
+    expect(result.identity?.skill).toMatchObject({ state: "unknown" });
+    expect(result.checks).toContainEqual(
+      expect.objectContaining({
+        name: "skill:identity",
+        ok: false,
+        classification: "unknown",
+      }),
+    );
   });
   it("reports stale client registration paths without claiming live state", async () => {
     const result = await runDoctor(

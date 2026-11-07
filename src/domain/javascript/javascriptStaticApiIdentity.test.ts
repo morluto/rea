@@ -37,6 +37,42 @@ it.each([
 );
 
 it.each([
+  [
+    "named import",
+    "import {URL as Constructor} from 'node:url';",
+    "./native.js",
+  ],
+  [
+    "captured export",
+    "import url from 'node:url'; const Constructor = url.URL;",
+    "./native.js",
+  ],
+  [
+    "replaced export",
+    "import url from 'node:url'; url.URL = class {}; const Constructor = url.URL;",
+    null,
+  ],
+  [
+    "local constructor",
+    "class Constructor {constructor(input, base) {return new globalThis.URL('./actual.js', base);}}",
+    null,
+  ],
+] as const)(
+  "uses the proven URL constructor identity for a %s alias",
+  (_kind, declaration, expected) => {
+    const analysis =
+      analyzeJavaScriptStaticSource(`${windowPrefix}${declaration}
+    new BrowserWindow({webPreferences:{preload:fileURLToPath(new Constructor('./native.js', import.meta.url))}});`);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: expected },
+    ]);
+    expect(analysis.role_paths.map(({ path }) => path)).toEqual(
+      expected === null ? [] : [expected],
+    );
+  },
+);
+
+it.each([
   '["a", "b"].join("/")',
   'settings.join("/app", "preload.js")',
   'settings.fileURLToPath("file:///decoy.js")',
@@ -99,4 +135,20 @@ it("requires an intact Electron instance for renderer roles", () => {
     `import {BrowserWindow as Win} from 'electron';const window = new Win(); window.loadFile = () => {};window.loadFile("data.json");`,
   );
   expect(replaced.role_paths).toEqual([]);
+});
+
+it("keeps a reused renderer receiver uncertain after its native method call", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+    import {BrowserWindow} from 'electron';
+    const win = new BrowserWindow();
+    win.loadFile("first.html");
+    win.loadFile("later.html");
+    new BrowserWindow().loadFile("independent.html");
+  `);
+  // Proven constructor/method identity does not establish that invoking native
+  // code leaves this receiver unchanged: callbacks and hooks remain unknown.
+  expect(analysis.role_paths.map(({ path }) => path)).toEqual([
+    "first.html",
+    "independent.html",
+  ]);
 });

@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { evaluateCodexEvents } from "../../../src/evaluation/CodexAgentEval.js";
-import { agentEvaluationPassed } from "../../../src/evaluation/AgentEvaluationReport.js";
+import { evaluateCodexEvents } from "./CodexAgentEval.js";
+import { agentEvaluationPassed } from "./AgentEvaluationReport.js";
 import {
   MISSING_TARGET_SCENARIO,
   nativeProviderScenario,
-} from "../../../src/evaluation/AgentEvaluationScenarios.js";
+} from "./AgentEvaluationScenarios.js";
 
 const call = (id: string, tool: string, errorCode?: string) => ({
   type: "item.completed",

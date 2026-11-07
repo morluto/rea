@@ -257,3 +257,28 @@ it("does not recognize embedded Swift runtime markers in Objective-C selectors",
   });
   expect(discoverObjcProtocols(names)).toEqual({ count: 0, protocols: [] });
 });
+
+it("distinguishes protocol identity from protocol member contexts", () => {
+  const symbols = [
+    "_$s4main7ScoringMp",
+    "$s4main7ScoringPMp",
+    "_TtP4main7Scoring_",
+    "_$s4main7ScoringP5scoreSiyFTq",
+    "_$s4main7ScoringTL",
+    "_$s4main7ScoringP5scoreSiyF",
+  ].map((name, index) => ({ name, address: `0x${index}` }));
+  expect(discoverObjcProtocols(symbols)).toEqual({
+    count: 3,
+    protocols: symbols.slice(0, 3),
+  });
+  // Function/requirement categorization still describes the enclosing nominal
+  // context; it does not turn that member into a protocol inventory identity.
+  expect(
+    categorizeSwiftTypes([
+      { address: "0x3", name: "_$s4main7ScoringP5scoreSiyFTq" },
+    ]),
+  ).toMatchObject({
+    categories: { protocols: { count: 1 } },
+    unclassified: [],
+  });
+});

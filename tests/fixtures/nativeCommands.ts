@@ -10,7 +10,14 @@ import type {
   NativeCommandCapture,
   NativeCommandOptions,
   NativeCommandRunner,
+  ResolvedTool,
 } from "../../src/native/CommandRunner.js";
+
+/** Resolver seam for fixtures with identical invocation and physical paths. */
+export const nativeResolvedToolFixture = (
+  path: string,
+  sha256: string,
+): ResolvedTool => ({ invocationPath: path, resolvedPath: path, sha256 });
 
 /** Replay captured native command outputs through the production runner seam. */
 export class NativeFixtureRunner implements NativeCommandRunner {
@@ -40,7 +47,6 @@ const outputFor = async (
   arguments_: readonly string[],
 ): Promise<string> => {
   if (tool === "lipo") return nativeFixture("lipo-fat.txt");
-  if (tool === "otool") return nativeFixture("otool-load.txt");
   if (tool === "nm") return "_main\n_$s4Test3fooyyF\n";
   if (tool === "dyld_info")
     return nativeFixture(
@@ -134,23 +140,6 @@ export const nativeMachoTargetForFile = async (
 /** Load one captured native tool output. */
 export const nativeFixture = (name: string): Promise<string> =>
   readFile(new URL(`./native-macos/${name}`, import.meta.url), "utf8");
-
-/** Add consistent Mach command-count metadata to a command-only test capture. */
-export const withOtoolMachHeader = (output: string): string => {
-  const count = [...output.matchAll(/^Load command (\d+)$/gmu)].length;
-  const sizes = [...output.matchAll(/^\s*cmdsize\s+(\d+)\s*$/gmu)].map(
-    ([, size]) => Number(size),
-  );
-  if (sizes.length !== count)
-    throw new TypeError("command-only fixture must provide every cmdsize");
-  const bytes = sizes.reduce((sum, size) => sum + size, 0);
-  return [
-    "Mach header",
-    "      magic cputype cpusubtype caps filetype ncmds sizeofcmds flags",
-    ` 0xfeedfacf 16777228 0 0x00 2 ${count} ${bytes} 0x00000000`,
-    output,
-  ].join("\n");
-};
 
 /** Parsed signature facts for lifecycle controls that do not invoke native tools. */
 export const signatureInspectionFixture = (): InspectSignature => ({

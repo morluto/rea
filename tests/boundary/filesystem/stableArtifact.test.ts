@@ -1,5 +1,6 @@
 import {
   lstat,
+  appendFile,
   open,
   rename,
   symlink,
@@ -23,9 +24,12 @@ it("reads exact binary and empty bytes and rejects symlink/size/cancellation bou
   const root = await createTestTempDirectory("rea-stable-artifact-");
   const path = join(root, "source.bin");
   await writeFile(path, Buffer.from([0, 255, 254]));
-  expect((await readStableArtifact(path, 3)).bytes).toEqual(
-    Buffer.from([0, 255, 254]),
-  );
+  expect(
+    Buffer.compare(
+      (await readStableArtifact(path, 3)).bytes,
+      Buffer.from([0, 255, 254]),
+    ),
+  ).toBe(0);
   await expect(readStableArtifact(path, 2)).rejects.toMatchObject({
     reason: "limit",
   });
@@ -45,6 +49,247 @@ it("reads exact binary and empty bytes and rejects symlink/size/cancellation bou
     reason: "cancelled",
     cause: controller.signal.reason,
   });
+});
+
+it("preserves exact binary bytes and digest across physical chunks and a partial tail", async () => {
+  const root = await createTestTempDirectory("rea-stable-chunks-");
+  const path = join(root, "source.bin");
+  const bytes = Buffer.from(
+    Array.from({ length: 3 * 65536 + 7 }, (_, i) => i % 251),
+  );
+  await writeFile(path, bytes);
+  const snapshot = await readStableArtifact(path, bytes.length);
+  expect(snapshot.sha256).toBe(
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+  expect(snapshot.bytes.equals(bytes)).toBe(true);
+});
+
+it("joins short descriptor reads into the exact snapshot without gaps", async () => {
+  const root = await createTestTempDirectory("rea-stable-short-read-");
+  const path = join(root, "source.bin");
+  const bytes = Buffer.from(Array.from({ length: 1031 }, (_, i) => i % 251));
+  await writeFile(path, bytes);
+  const snapshot = await readStableArtifact(path, bytes.length, undefined, {
+    lstat: (selected) => lstat(selected, { bigint: true }),
+    open: async (...args) => {
+      const handle = await open(...args);
+      const read = handle.read.bind(handle);
+      Object.defineProperty(handle, "read", {
+        value: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => read(buffer, offset, Math.min(length, 17), position),
+      });
+      return handle;
+    },
+  });
+  expect(snapshot.bytes.equals(bytes)).toBe(true);
+  expect(snapshot.sha256).toBe(
+    createHash("sha256").update(bytes).digest("hex"),
+  );
+});
+
+it.each([-1, Number.NaN, "oversized"] as const)(
+  "refuses malformed descriptor byte counts: %s",
+  async (count) => {
+    const root = await createTestTempDirectory("rea-stable-read-count-");
+    const path = join(root, "source.bin");
+    await writeFile(path, "base");
+    await expect(
+      readStableArtifact(path, 64, undefined, {
+        lstat: (selected) => lstat(selected, { bigint: true }),
+        open: async (...args) => {
+          const handle = await open(...args);
+          Object.defineProperty(handle, "read", {
+            value: async (buffer: Buffer, _offset: number, length: number) => ({
+              bytesRead: count === "oversized" ? length + 1 : count,
+              buffer,
+            }),
+          });
+          return handle;
+        },
+      }),
+    ).rejects.toMatchObject({ reason: "format" });
+  },
+);
+
+it.each(["complete", "fail"] as const)(
+  "joins an admitted descriptor read before cancellation finalization: %s",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-stable-read-cancel-");
+    const path = join(root, "source.bin");
+    const bytes = Buffer.from("base");
+    await writeFile(path, bytes);
+    const controller = new AbortController();
+    const reason = { request: "cancelled while descriptor read was pending" };
+    const physical = Object.assign(new Error("pending physical read failed"), {
+      code: "EIO",
+    });
+    let enter!: () => void;
+    const entered = new Promise<void>((resolve) => {
+      enter = resolve;
+    });
+    let release!: () => void;
+    let reject!: (cause: unknown) => void;
+    const blocked = new Promise<void>((resolve, fail) => {
+      release = resolve;
+      reject = fail;
+    });
+    let descriptor: Awaited<ReturnType<typeof open>> | undefined;
+    const reading = readStableArtifact(path, 64, controller.signal, {
+      lstat: (selected) => lstat(selected, { bigint: true }),
+      open: async (...args) => {
+        const handle = await open(...args);
+        descriptor = handle;
+        Object.defineProperty(handle, "read", {
+          value: async (buffer: Buffer, offset: number) => {
+            enter();
+            await blocked;
+            buffer.set(bytes, offset);
+            return { bytesRead: bytes.length, buffer };
+          },
+        });
+        return handle;
+      },
+    });
+    let settled = false;
+    const result = reading
+      .catch((cause: unknown) => cause)
+      .finally(() => {
+        settled = true;
+      });
+    try {
+      await entered;
+      controller.abort(reason);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      expect(settled).toBe(false);
+      expect(descriptor?.fd).toBeGreaterThanOrEqual(0);
+      if (outcome === "fail") reject(physical);
+      else release();
+      const failure = await result;
+      if (outcome === "fail") expect(failure).toBe(physical);
+      else
+        expect(failure).toMatchObject({ reason: "cancelled", cause: reason });
+      expect(artifactFileCompletion(failure)).toBeUndefined();
+      expect(descriptor?.fd).toBe(-1);
+    } finally {
+      release();
+      await result;
+    }
+  },
+);
+
+it.each(["integrity", "limit", "io"] as const)(
+  "preserves %s precedence after growth beyond the initial snapshot size",
+  async (outcome) => {
+    const root = await createTestTempDirectory("rea-stable-growth-");
+    const path = join(root, "source.bin");
+    await writeFile(path, "base");
+    const extra = Buffer.from("expanded");
+    const physical = Object.assign(new Error("late physical read failure"), {
+      code: "EIO",
+    });
+    const reading = readStableArtifact(
+      path,
+      outcome === "limit" ? 12 : 1024,
+      undefined,
+      {
+        lstat: (selected) => lstat(selected, { bigint: true }),
+        open: async (...args) => {
+          const handle = await open(...args);
+          const read = handle.read.bind(handle);
+          let appended = 0;
+          Object.defineProperty(handle, "read", {
+            value: async (
+              buffer: Buffer,
+              offset: number,
+              length: number,
+              position: number,
+            ) => {
+              if (appended < 2 && position >= 4 + appended * extra.length) {
+                await appendFile(path, extra);
+                appended += 1;
+              }
+              if (outcome === "io" && position >= 4 + 2 * extra.length)
+                throw physical;
+              return read(buffer, offset, length, position);
+            },
+          });
+          return handle;
+        },
+      },
+    );
+    if (outcome === "io") await expect(reading).rejects.toBe(physical);
+    else
+      await expect(reading).rejects.toMatchObject({
+        reason: outcome,
+        ...(outcome === "limit" ? { boundary: "file-size" } : {}),
+      });
+  },
+);
+
+it("bounds allocation when the opened descriptor exceeds the selected byte budget", async () => {
+  const root = await createTestTempDirectory("rea-stable-admission-race-");
+  const path = join(root, "source.bin");
+  await writeFile(path, "base");
+  await expect(
+    readStableArtifact(path, 64, undefined, {
+      lstat: (selected) => lstat(selected, { bigint: true }),
+      open: async (...args) => {
+        const handle = await open(...args);
+        const stat = handle.stat.bind(handle);
+        Object.defineProperty(handle, "stat", {
+          value: async () =>
+            Object.assign(await stat({ bigint: true }), { size: 1n << 62n }),
+        });
+        return handle;
+      },
+    }),
+  ).rejects.toMatchObject({ reason: "integrity" });
+});
+
+it("does not start a read when cancellation arrives during descriptor admission", async () => {
+  const root = await createTestTempDirectory("rea-stable-admission-cancel-");
+  const path = join(root, "source.bin");
+  await writeFile(path, "base");
+  const controller = new AbortController();
+  const reason = { request: "cancelled while admitting descriptor" };
+  let reads = 0;
+  const reading = readStableArtifact(path, 64, controller.signal, {
+    lstat: (selected) => lstat(selected, { bigint: true }),
+    open: async (...args) => {
+      const handle = await open(...args);
+      const stat = handle.stat.bind(handle);
+      const read = handle.read.bind(handle);
+      Object.defineProperty(handle, "stat", {
+        value: async () => {
+          const facts = await stat({ bigint: true });
+          controller.abort(reason);
+          return facts;
+        },
+      });
+      Object.defineProperty(handle, "read", {
+        value: async (
+          buffer: Buffer,
+          offset: number,
+          length: number,
+          position: number,
+        ) => {
+          reads += 1;
+          return read(buffer, offset, length, position);
+        },
+      });
+      return handle;
+    },
+  });
+  await expect(reading).rejects.toMatchObject({
+    reason: "cancelled",
+    cause: reason,
+  });
+  expect(reads).toBe(0);
 });
 
 const checkChange = async (
@@ -118,6 +363,46 @@ const heldDescriptor = async () => {
     },
   };
 };
+
+it.each(["scoped", "transferred"])(
+  "keeps incomplete private bytes unavailable through %s close failure",
+  async (ownership) => {
+    const file = await heldDescriptor();
+    const read = file.handle.read.bind(file.handle);
+    Object.defineProperty(file.handle, "read", {
+      value: async (
+        buffer: Buffer,
+        offset: number,
+        length: number,
+        position: number,
+      ) =>
+        position >= 2
+          ? { bytesRead: 0, buffer }
+          : read(buffer, offset, Math.min(length, 2 - position), position),
+    });
+    const scope =
+      ownership === "scoped" ? new ArtifactResourceScope() : undefined;
+    const failure = await readStableArtifact(
+      file.path,
+      1024,
+      undefined,
+      file.fileSystem,
+      scope,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+    if (!(failure instanceof ArtifactFileCleanupFailure))
+      throw new Error("Missing incomplete read owner");
+    expect(failure.fileCleanupFailure.outcome).toMatchObject({
+      kind: "failed",
+      cause: { reason: "integrity" },
+    });
+    expect(artifactFileCompletion(failure)).toBeUndefined();
+    file.release();
+    if (scope !== undefined) await scope.close();
+    else await failure.cleanupLease.release();
+    expect(file.handle.fd).toBe(-1);
+  },
+);
 
 it.each(["scoped", "transferred"])(
   "retains exact completed bytes and descriptor cleanup under %s ownership",

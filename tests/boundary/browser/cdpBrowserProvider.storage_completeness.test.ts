@@ -223,6 +223,119 @@ it("does not fingerprint a filtered partial object-store schema as complete", as
   });
 });
 
+it("compares a change to the observed IndexedDB database version", async () => {
+  let version = 1;
+  const { capture } = await inspect({
+    commandResult: (command) =>
+      command.method === "IndexedDB.requestDatabase"
+        ? {
+            databaseWithObjectStores: {
+              name: "app-db",
+              version,
+              objectStores: [
+                {
+                  name: "records",
+                  keyPath: { type: "string", string: "id" },
+                  autoIncrement: false,
+                  indexes: [],
+                },
+              ],
+            },
+          }
+        : undefined,
+  });
+  const before = await capture();
+  version = 2;
+  const after = await capture();
+  const schema = after.storage.content_fingerprints.find(
+    ({ scope }) => scope === "indexed_db_schema",
+  );
+  expect(schema).toMatchObject({ complete: true, projection_version: 2 });
+  expect(before.storage.fingerprints_complete).toBe(true);
+  expect(after.storage.fingerprints_complete).toBe(true);
+  expect(compareStorage(before, after)).toMatchObject({
+    status: "changed",
+    total_changes: 1,
+    changes: [expect.objectContaining({ change: "modified" })],
+  });
+});
+
+it("retains complete IndexedDB schema additions and removals", async () => {
+  let present = false;
+  const { capture } = await inspect({
+    commandResult: ({ method }) => {
+      if (method === "IndexedDB.requestDatabaseNames")
+        return { databaseNames: present ? ["app-db"] : [] };
+      if (method === "IndexedDB.requestDatabase")
+        return {
+          databaseWithObjectStores: {
+            name: "app-db",
+            version: 1,
+            objectStores: [],
+          },
+        };
+      return undefined;
+    },
+  });
+  const before = await capture();
+  present = true;
+  const after = await capture();
+  expect(before.storage.fingerprints_complete).toBe(true);
+  expect(after.storage.fingerprints_complete).toBe(true);
+  for (const [left, right, change] of [
+    [before, after, "added"],
+    [after, before, "removed"],
+  ] as const)
+    expect(compareStorage(left, right)).toMatchObject({
+      status: "changed",
+      total_changes: 2,
+      changes: expect.arrayContaining([
+        { change, identity: "storage:indexed_db:app-db" },
+        { change, identity: expect.stringContaining("indexed_db_schema:") },
+      ]),
+    });
+});
+
+it.each([undefined, null, -1, 1.5, Number.MAX_SAFE_INTEGER + 1])(
+  "keeps IndexedDB store facts but marks invalid version %s incomplete",
+  async (version) => {
+    const { capture } = await inspect({
+      commandResult: (command) =>
+        command.method === "IndexedDB.requestDatabase"
+          ? {
+              databaseWithObjectStores: {
+                name: "app-db",
+                ...(version === undefined ? {} : { version }),
+                objectStores: [
+                  {
+                    name: "records",
+                    keyPath: { type: "string", string: "id" },
+                    autoIncrement: false,
+                    indexes: [],
+                  },
+                ],
+              },
+            }
+          : undefined,
+    });
+    const captured = await capture();
+    expect(
+      captured.storage.content_fingerprints.find(
+        ({ scope }) => scope === "indexed_db_schema",
+      ),
+    ).toMatchObject({
+      projection_version: 2,
+      value_sha256: expect.any(String),
+      complete: false,
+    });
+    expect(captured.storage.fingerprints_complete).toBe(false);
+    expect(captured.limitations).toContain(
+      "An IndexedDB schema fingerprint is incomplete because its database version is unavailable, invalid, or outside exact integer precision.",
+    );
+    expect(compareStorage(captured, captured).status).toBe("unknown");
+  },
+);
+
 const incompleteRemoteObjects = [
   undefined,
   null,

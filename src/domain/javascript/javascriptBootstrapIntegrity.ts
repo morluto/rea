@@ -2,12 +2,13 @@ import * as t from "@babel/types";
 
 import type { javascriptBootstrapAt } from "./javascriptBootstrap.js";
 import { semanticStaticPropertyKey } from "./javascriptAstValues.js";
+import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticExpression } from "./javascriptSemanticValues.js";
 
 type Bootstrap = NonNullable<ReturnType<typeof javascriptBootstrapAt>>;
@@ -89,7 +90,7 @@ const loaderShape = (
   const calls: t.CallExpression[] = [];
   const modules = new Set<string>();
   const returns: (t.Expression | null | undefined)[] = [];
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node) => {
       if (t.isReturnStatement(node)) returns.push(node.argument);
@@ -284,11 +285,12 @@ const moduleObjectContained = (
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       if (!contained || !t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       if (bindingOf(state, node) !== moduleId) return;
       contained =
         !ancestors.some((ancestor) => t.isFunction(ancestor)) &&
@@ -328,7 +330,7 @@ const withCacheReads = (
   if (shape.cacheId === undefined) return shape;
   const sites = new Set(shape.cacheSites);
   let contained = true;
-  traverseJavaScriptAst(loader.body, {
+  traverseJavaScriptValueAst(loader.body, state.erasedSyntaxNodes, {
     skip: (node) => t.isFunction(node),
     enter: (node, parent) => {
       if (
@@ -445,13 +447,14 @@ const referencesAreContained = (
     state,
   );
   let contained = true;
-  traverseJavaScriptAst(call, {
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
     skip: () => !contained,
     enter: (node, parent, readAncestors) => {
       if (!t.isIdentifier(node) || !names.has(node.name) || parent === null)
         return;
       const ancestors = readAncestors();
-      if (!t.isReferenced(node, parent, ancestors.at(-2))) return;
+      if (semanticIdentifierRole(node, parent, () => ancestors) === null)
+        return;
       const id = bindingOf(state, node);
       const role = id === undefined ? undefined : tracked.get(id);
       if (role === undefined) return;
@@ -486,7 +489,7 @@ const unreadRuntimeDefinitions = (
   const definitions = new Map<t.Node, string>();
   const readKeys = new Set<string>();
   let confined = true;
-  traverseJavaScriptAst(call, {
+  traverseJavaScriptValueAst(call, state.erasedSyntaxNodes, {
     enter: (node, parent, readAncestors) => {
       // A helper invoked as `loader.helper()` can obtain the namespace through
       // its receiver instead of a tracked loader identifier.
@@ -494,7 +497,7 @@ const unreadRuntimeDefinitions = (
       if (!t.isIdentifier(node) || parent === null) return;
       const ancestors = readAncestors();
       if (
-        !t.isReferenced(node, parent, ancestors.at(-2)) ||
+        semanticIdentifierRole(node, parent, () => ancestors) === null ||
         !loaderIds.has(bindingOf(state, node) ?? "")
       )
         return;

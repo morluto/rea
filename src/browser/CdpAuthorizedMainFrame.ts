@@ -1,5 +1,6 @@
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import { cdpOriginScopeRefusal } from "./CdpOriginScopeError.js";
 import type { CdpConnection } from "./CdpConnection.js";
 import {
   classifyCdpFrameUrl,
@@ -33,7 +34,7 @@ export const authorizedMainFrame = async ({
     const observed = observeMainFrameUrl(result);
     const facts = classifyCdpFrameUrl(observed, allowedOrigins);
     if (facts.scope === "outside_policy")
-      throw new BrowserObservationError(operation, "target_not_allowed");
+      throw cdpOriginScopeRefusal(operation);
     if (facts.scope === "approved" && observed.kind === "invalid_fragment")
       throw new BrowserObservationError(operation, "protocol_error");
     if (facts.url !== undefined) return result;

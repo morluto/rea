@@ -3,7 +3,6 @@ import { describe, expect, it } from "vitest";
 import { JAVASCRIPT_APPLICATION_EVIDENCE_EXAMPLE } from "../contracts/javascript/javascriptRuntimeReconciliationExample.js";
 import { createEvidence } from "../domain/evidence.js";
 import { createEvidenceBundle } from "../domain/evidenceBundle.js";
-import { jsonValueSchema } from "../domain/jsonValue.js";
 import { javascriptApplicationAnalysisResultSchema } from "../domain/javascript/javascriptApplicationAnalysis.js";
 import { artifactEvidence } from "../domain/javascript/javascriptApplicationGraph.fixture.js";
 import {
@@ -108,7 +107,7 @@ const semanticApplication = (
       predicateType: example.predicate_type,
       operation: example.operation,
       parameters: example.parameters,
-      result: jsonValueSchema.parse({ ...base, semantic_graph: graph }),
+      result: { ...base, semantic_graph: graph },
       confidence: "derived",
       authority: "shipped-artifact",
     },

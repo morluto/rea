@@ -3,15 +3,17 @@ import { z } from "zod";
 import { digestCanonicalValue } from "../canonicalDigest.js";
 import { emptyArraySchema } from "../emptyArraySchema.js";
 import { evidenceSchema } from "../evidence.js";
+import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
   managedMetadataTokenSchema,
+  managedMemberInspectionSchema,
   type ManagedMemberInspection,
 } from "./managedArtifact.js";
 import {
   buildComparisonCoverage,
   hasCompleteMethodRows,
-  selectedDeclaringTypes,
+  managedComparisonScope,
   buildComparisonMatching,
   buildComparisonSummary,
   comparisonLimitations,
@@ -23,26 +25,43 @@ import {
 } from "./managedMemberComparisonItems.js";
 import { keyMembers } from "./managedMemberComparisonMatch.js";
 import { hasSignatureResolution } from "./managedMemberSignatureIdentity.js";
-import { digestSchema } from "../digests.js";
-import { prefixedDigestSchema } from "../digests.js";
+import { digestSchema, prefixedDigestSchema } from "../digests.js";
 
 const evidenceIdSchema = prefixedDigestSchema("ev");
 const boundedTextSchema = z.string().min(1);
 
-/** Two authenticated managed member observations. */
+const memberComparisonShape = <Source extends z.ZodType>(source: Source) => ({
+  left: source,
+  right: source,
+});
+
+const distinctMemberSources = (
+  input: {
+    readonly left: { readonly evidence_id: string };
+    readonly right: { readonly evidence_id: string };
+  },
+  context: z.RefinementCtx,
+): void => {
+  if (
+    typeof input.left?.evidence_id === "string" &&
+    input.left.evidence_id === input.right?.evidence_id
+  )
+    context.addIssue({
+      code: "custom",
+      path: ["right"],
+      message: "Managed member Evidence must be distinct",
+    });
+};
+
+/** Two complete managed member observations for semantic consumers. */
 export const compareManagedMembersInputSchema = z
-  .strictObject({
-    left: evidenceSchema,
-    right: evidenceSchema,
-  })
-  .superRefine((input, context) => {
-    if (input.left.evidence_id === input.right.evidence_id)
-      context.addIssue({
-        code: "custom",
-        path: ["right"],
-        message: "Managed member Evidence must be distinct",
-      });
-  });
+  .strictObject(memberComparisonShape(evidenceSchema))
+  .superRefine(distinctMemberSources);
+
+/** Public member comparison selects records inline or by exact retained identity. */
+export const compareManagedMembersRequestSchema = z
+  .strictObject(memberComparisonShape(evidenceInputSchema))
+  .superRefine(distinctMemberSources);
 
 const concreteMatchBasisSchema = z.enum([
   "exact-il-signature",
@@ -155,6 +174,26 @@ const fieldComparisonItemSchema = comparisonItemSchema(
   memberIdentitySchema.omit({ normalized_il_sha256: true }),
 );
 
+const comparisonSideSchema = z.strictObject({
+  evidence_id: evidenceIdSchema,
+  artifact_sha256: digestSchema,
+  mvid: cliMetadataGuidSchema.nullable(),
+  module_name: z.string().nullable(),
+  metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
+  methods_total: z.int().min(0),
+  fields_total: z.int().min(0),
+  resource_limits: z
+    .array(
+      managedMemberInspectionSchema.shape.coverage.shape.issues.element.extend({
+        code: z.literal("resource-limit"),
+      }),
+    )
+    .optional()
+    .describe(
+      "Resource-limit diagnostics reported by this source; an empty array means none were reported. Historical comparisons omit this field; omission does not establish that no resource limit occurred.",
+    ),
+});
+
 /** Obfuscation-resistant, execution-free managed member comparison. */
 export const managedMemberComparisonResultSchema = z.strictObject({
   comparison_id: prefixedDigestSchema("mmc"),
@@ -163,24 +202,8 @@ export const managedMemberComparisonResultSchema = z.strictObject({
     token_identity: z.literal("build-local"),
     name_matching: z.literal("exact-signature-fallback"),
   }),
-  left: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    artifact_sha256: digestSchema,
-    mvid: cliMetadataGuidSchema.nullable(),
-    module_name: z.string().nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.int().min(0),
-    fields_total: z.int().min(0),
-  }),
-  right: z.strictObject({
-    evidence_id: evidenceIdSchema,
-    artifact_sha256: digestSchema,
-    mvid: cliMetadataGuidSchema.nullable(),
-    module_name: z.string().nullable(),
-    metadata_status: z.enum(["absent", "complete", "partial", "malformed"]),
-    methods_total: z.int().min(0),
-    fields_total: z.int().min(0),
-  }),
+  left: comparisonSideSchema,
+  right: comparisonSideSchema,
   summary: z.strictObject({
     unchanged: z.int().min(0),
     changed: z.int().min(0),
@@ -259,7 +282,8 @@ export const compareManagedMembers = (
   left: ManagedMemberComparisonSide,
   right: ManagedMemberComparisonSide,
 ): ManagedMemberComparisonResult => {
-  const { methodMatches, fieldMatches } = keyMembers(left, right);
+  const scope = managedComparisonScope(left.result, right.result);
+  const { methodMatches, fieldMatches } = keyMembers(left, right, scope);
   const itemContext = {
     leftEvidenceId: left.evidenceId,
     rightEvidenceId: right.evidenceId,
@@ -271,11 +295,11 @@ export const compareManagedMembers = (
     rightMethodsComplete:
       right.result.metadata.status === "complete" &&
       hasCompleteMethodRows(right.result),
-    leftSelection: selectedDeclaringTypes(left.result),
-    rightSelection: selectedDeclaringTypes(right.result),
+    scope,
     signatureResolutionExamined:
       hasSignatureResolution(left.result) &&
       hasSignatureResolution(right.result),
+    sameArtifact: left.result.artifact.sha256 === right.result.artifact.sha256,
     leftAssembly: left.result.assembly,
     rightAssembly: right.result.assembly,
     leftCallEdgesByCaller: callEdgesByCaller(left.result),
@@ -288,11 +312,17 @@ export const compareManagedMembers = (
   const allItems = [...methodItems, ...fieldItems];
   const summary = buildComparisonSummary(allItems);
   const matching = buildComparisonMatching(methodItems, fieldItems);
+  const selectionAgreement = scope.agreement;
   const coverage = buildComparisonCoverage({
     left: left.result,
     right: right.result,
+    selectionAgreement,
   });
-  const limitations = comparisonLimitations(left.result, right.result);
+  const limitations = comparisonLimitations(
+    left.result,
+    right.result,
+    selectionAgreement,
+  );
   const result = {
     comparison_id: `mmc_${digestCanonicalValue(
       {

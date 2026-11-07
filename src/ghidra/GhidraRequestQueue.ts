@@ -160,7 +160,15 @@ export class GhidraRequestQueue {
         );
       }
       if (cancellation === undefined) return result;
-      const primary = result.ok ? cancellation.failure : result.error;
+      // An observed bridge reply stays primary, but it must carry the session
+      // close so its projection does not promise that the session is usable.
+      const primary = result.ok
+        ? cancellation.failure
+        : result.error.kind === "remote"
+          ? result.error.withConcurrentCancellation({
+              reason: entry.options.signal?.reason,
+            })
+          : result.error;
       const cleanup = await cancellation.cleanup;
       if (cleanup.kind === "rejected")
         return err(

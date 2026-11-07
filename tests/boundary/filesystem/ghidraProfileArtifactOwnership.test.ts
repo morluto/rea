@@ -1,6 +1,6 @@
 import * as extensionModule from "../../../src/ghidra/extensions/GhidraExtensions.js";
 import { createHash } from "node:crypto";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { GhidraClient } from "../../../src/ghidra/GhidraClient.js";
 import { GhidraHeadlessLauncher } from "../../../src/ghidra/GhidraLauncher.js";
 import { GhidraProvider } from "../../../src/ghidra/GhidraProvider.js";
@@ -15,7 +15,6 @@ import {
   writeFile,
   type FileHandle,
 } from "node:fs/promises";
-import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { parseConfig } from "../../../src/config/parseConfig.js";
@@ -353,7 +352,7 @@ it.each(["seed", "extension"] as const)(
         cleanupIncomplete: true,
         cleanupResources: [output],
       });
-      expect(await readFile(output)).toEqual(bytes);
+      expect(Buffer.compare(await readFile(output), bytes)).toBe(0);
       allowClose = true;
       await resources.retryCleanup();
       expect(error).toMatchObject({ cleanupIncomplete: false });
@@ -604,7 +603,12 @@ it.each(["seed", "extension"] as const)(
             ],
           },
         });
-      else expect(result.error.diagnostics?.reason).toContain("not a JAR");
+      else
+        expect(result.error.diagnostics).toMatchObject({
+          code: "not_jar",
+          reason: "not_jar",
+          path,
+        });
       allowClose = true;
       await scope.retryCleanup();
       expect(result.error.cleanupIncomplete).toBe(false);

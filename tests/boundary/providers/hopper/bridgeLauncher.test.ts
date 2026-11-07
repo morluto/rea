@@ -878,7 +878,7 @@ it("ordinary executable launches pass a verified private image with configured l
     expect(supervisor.snapshot().stdout.text).toBe(preparedPath);
     expect(launched.value.preparedImagePath).toBe(preparedPath);
     await writeFile(targetPath, "replacement bytes");
-    expect(await readFile(preparedPath)).toEqual(selected);
+    expect(Buffer.compare(await readFile(preparedPath), selected)).toBe(0);
   } finally {
     await supervisor.stop();
     await launched.value.releaseLease?.();

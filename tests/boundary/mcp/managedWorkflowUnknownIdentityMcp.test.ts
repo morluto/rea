@@ -5,7 +5,7 @@ import {
   MANAGED_RECONSTRUCTION_IMPORT_EXAMPLE,
 } from "../../../src/contracts/managed/managedWorkflowExamples.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
-import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
+
 import {
   managedMemberInspectionSchema,
   managedNativeBoundaryInspectionSchema,
@@ -34,7 +34,7 @@ const emptyExportEvidence = () => {
     {
       operation: "inspect_macho",
       parameters: original.parameters,
-      result: jsonValueSchema.parse({
+      result: {
         ...result,
         exports: {
           items: [],
@@ -42,7 +42,7 @@ const emptyExportEvidence = () => {
           exhaustive: true,
           limitations: [],
         },
-      }),
+      },
       rawResult: null,
       limitations: [],
     },
@@ -63,7 +63,7 @@ const secondDeclaration = () => {
   return createEvidence(undefined, original.provider, {
     operation: "inspect_managed_native_boundaries",
     parameters: original.parameters,
-    result: jsonValueSchema.parse({
+    result: {
       ...result,
       pinvoke_imports: [
         {
@@ -74,7 +74,7 @@ const secondDeclaration = () => {
           import_name: "open_native_again",
         },
       ],
-    }),
+    },
     rawResult: null,
     limitations: original.limitations,
   });
@@ -128,7 +128,7 @@ const memberEvidence = (
     {
       operation: "inspect_managed_members",
       parameters: original.parameters,
-      result: jsonValueSchema.parse(normalized),
+      result: normalized,
       rawResult: null,
       limitations: normalized.limitations,
     },

@@ -1,8 +1,10 @@
 import { Writable } from "node:stream";
 import { access } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { prepareCliProcessEnvironment } from "../../../scripts/lib/cli-process-environment.mjs";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import {
   createCliSessionFrameReader,
   encodeCliSessionFrame,
@@ -19,30 +21,18 @@ const { default: packageJson } = await import(
   { with: { type: "json" } }
 );
 
-const prepareCliProcess = () => {
-  process.env.REA_PACKAGE_VERSION = packageJson.version;
-  // Windows home lookup throws for an empty USERPROFILE. Dependencies resolve
-  // home during import, before REA's own resolver can apply its account fallback.
-  if (process.platform === "win32" && process.env.USERPROFILE === "") {
-    delete process.env.USERPROFILE;
-  }
-  if (
-    process.platform === "android" &&
-    process.env.PLAYWRIGHT_BROWSERS_PATH === undefined
-  ) {
-    const cacheRoot =
-      process.env.XDG_CACHE_HOME ?? join(process.env.HOME ?? ".", ".cache");
-    process.env.PLAYWRIGHT_BROWSERS_PATH = join(cacheRoot, "ms-playwright");
-  }
-};
-
 const runtimeFiles = [
   "dist/cli-runtime/cli.js",
   "dist/cli-runtime/cliOutput.js",
+  "dist/cli-runtime/cliBuiltinArguments.js",
   "dist/cli-runtime/cliResultOutput.js",
 ];
 
-prepareCliProcess();
+prepareCliProcessEnvironment(
+  process.env,
+  process.platform,
+  packageJson.version,
+);
 if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.stderr.write(
     `REA's compiled runtime is missing. Run \`npm ci && npm run build:cached\` in ${packageRoot} to install dependencies and build REA, then restart it. If this is an installed package, reinstall rea-agents.\n`,
@@ -50,13 +40,17 @@ if (!(await compiledRuntimeExists(runtimeFiles))) {
   process.exit(1);
 }
 
-const { closeCliJavaScriptResources, createCli } =
+const { closeCliResources, createCli } =
   await import("../../../dist/cli-runtime/cli.js");
 const { createCliResultOutput } =
   await import("../../../dist/cli-runtime/cliResultOutput.js");
 const {
-  cliConfigurationError,
+  cliCompletionShell,
   normalizeCliArguments,
+  splitIncurBuiltinArguments,
+} = await import("../../../dist/cli-runtime/cliBuiltinArguments.js");
+const {
+  cliConfigurationError,
   renderCliOutputArgumentError,
   renderEmptyFilteredCliOutput,
   parseCliOutputArguments,
@@ -73,28 +67,51 @@ const writeFrame = (value) =>
 await writeFrame({ ready: true });
 
 let chain = Promise.resolve();
+// EOF drains admitted commands; failure seals input and skips commands not yet started.
+/** @type {{ kind: "open" } | { kind: "ended" } | { kind: "failed", cause: unknown }} */
+let completion = { kind: "open" };
+/** @type {(() => void) | undefined} */
+let resolveInput;
+/** @type {Promise<void>} */
+const inputStopped = new Promise((resolve) => {
+  resolveInput = resolve;
+});
+const failInput = (cause) => {
+  if (completion.kind !== "failed") completion = { kind: "failed", cause };
+  process.stdin.pause();
+  resolveInput?.();
+};
+process.stdin.once("end", () => {
+  if (completion.kind === "open") completion = { kind: "ended" };
+  resolveInput?.();
+});
 const reader = createCliSessionFrameReader((value) => {
-  chain = chain.then(
-    () => handle(value),
-    () => handle(value),
-  );
+  if (completion.kind !== "open") return;
+  chain = chain
+    .then(async () => {
+      if (completion.kind !== "failed") await handle(value);
+    })
+    .catch(failInput);
 });
 process.stdin.on("data", (chunk) => {
+  if (completion.kind !== "open") return;
   try {
     reader(chunk);
-  } catch (error) {
-    process.stderr.write(
-      `${error instanceof Error ? error.message : String(error)}\n`,
-    );
-    process.exit(1);
+  } catch (cause) {
+    failInput(cause);
   }
 });
-process.stdin.on("end", () => {
-  chain.finally(async () => {
-    await closeCliJavaScriptResources();
-    process.exit(0);
-  });
-});
+try {
+  await withVerifierCleanup(async () => {
+    await inputStopped;
+    await chain;
+    if (completion.kind === "failed") throw completion.cause;
+  }, [closeCliResources]);
+} catch (cause) {
+  console.error(cause);
+  process.exit(1);
+}
+process.exit(0);
 
 async function handle(value) {
   const request = value;
@@ -115,7 +132,11 @@ async function handle(value) {
     }
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, request.env);
-    prepareCliProcess();
+    prepareCliProcessEnvironment(
+      process.env,
+      process.platform,
+      packageJson.version,
+    );
     process.chdir(request.cwd);
     const result = await runOneShot(request.arguments);
     await writeFrame({
@@ -125,6 +146,7 @@ async function handle(value) {
       ...result,
     });
   } catch (error) {
+    failInput(error);
     const id =
       request !== null && typeof request === "object" ? request.id : undefined;
     await writeFrame({
@@ -136,7 +158,6 @@ async function handle(value) {
         error instanceof Error ? (error.stack ?? error.message) : String(error),
       fatal: true,
     });
-    process.exit(1);
   } finally {
     for (const key of Object.keys(process.env)) delete process.env[key];
     Object.assign(process.env, savedEnv);
@@ -161,11 +182,18 @@ async function runOneShot(args) {
   process.exitCode = undefined;
   let explicitExit;
   try {
-    const cliArgs = normalizeCliArguments(args);
-    const outputOptions = parseCliOutputArguments(cliArgs);
+    const isShellCompletion = cliCompletionShell(process.env) !== undefined;
+    const cliArgs = isShellCompletion ? args : normalizeCliArguments(args);
+    const outputOptions = parseCliOutputArguments(
+      isShellCompletion ? [] : cliArgs,
+    );
     const outputArguments = outputOptions.validation;
     const configurationError = cliConfigurationError(process.env);
-    if (configurationError !== undefined && !isDoctorCommand(cliArgs)) {
+    if (
+      configurationError !== undefined &&
+      (isShellCompletion ||
+        splitIncurBuiltinArguments(cliArgs).command[0] !== "doctor")
+    ) {
       process.stderr.write(`${configurationError}\n`);
       process.exitCode = 1;
     } else if (!outputArguments.ok) {
@@ -229,26 +257,6 @@ function captureWrite(chunks) {
     if (typeof done === "function") done();
     return true;
   };
-}
-
-function isDoctorCommand(arguments_) {
-  const valuedFlags = new Set([
-    "--format",
-    "--filter-output",
-    "--token-limit",
-    "--token-offset",
-  ]);
-  for (let index = 0; index < arguments_.length; index += 1) {
-    const argument = arguments_[index];
-    if (argument === "--") return arguments_[index + 1] === "doctor";
-    if (valuedFlags.has(argument)) {
-      index += 1;
-      continue;
-    }
-    if (argument.startsWith("-")) continue;
-    return argument === "doctor";
-  }
-  return false;
 }
 
 async function compiledRuntimeExists(paths) {

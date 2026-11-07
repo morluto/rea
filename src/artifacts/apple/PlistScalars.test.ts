@@ -4,10 +4,10 @@ import { parseBinary } from "plist";
 
 import { createPlistNumberProjection } from "../../domain/apple/plistNumbers.js";
 import { projectPlistValue } from "../../domain/apple/plistValue.js";
+import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import {
   binaryDateRequiresExactSeconds,
   decodeBinaryPlistScalars,
-  decodeBinaryPlistUids,
   scanBinaryPlistScalars,
 } from "./PlistScalars.js";
 import {
@@ -262,12 +262,18 @@ describe("binary plist UID widths", () => {
           ? []
           : [{ offset: 8, width: normalizedWidth }],
       );
-      const compatible = decodeBinaryPlistUids(
+      const compatible = decodeBinaryPlistScalars(
         bytes,
-        plan.uidOffsetsToNormalize,
+        scanBinaryPlistScalars(bytes, plan),
+        plan,
       );
       if (normalizedWidth === undefined) expect(compatible).toBe(bytes);
-      else expect(compatible[8 + width + 1]).toBe(0x80 | (normalizedWidth - 1));
+      else {
+        const layout = readBinaryPlistLayout(compatible);
+        if (!layout.ok) throw new Error("Invalid compatible plist layout");
+        const [offset] = layout.value.objectOffsets();
+        expect(compatible[Number(offset)]).toBe(0x80 | (normalizedWidth - 1));
+      }
       expect(parseBinary(compatible)).toEqual({
         UID: Number(value),
       });
@@ -321,9 +327,12 @@ describe("binary plist number rewriting", () => {
         uidOffsetsToNormalize: [],
       }),
     ).toBe(bytes);
-    expect(bytes.subarray(13, 30)).toEqual(
-      Buffer.from([0x14, ...Array<number>(16).fill(0xff)]),
-    );
+    expect(
+      Buffer.compare(
+        bytes.subarray(13, 30),
+        Buffer.from([0x14, ...Array<number>(16).fill(0xff)]),
+      ),
+    ).toBe(0);
   });
 
   it("does not rewrite a wide integer when a date aliases its payload", () => {
@@ -351,7 +360,10 @@ describe("binary plist number rewriting", () => {
     ).toThrow(/budget/u);
     const decoded = decodeBinaryPlistScalars(bytes, metadata, plan);
     expect(decoded).not.toBe(bytes);
-    expect(decoded.readDoubleBE(29)).toBeNaN();
+    const layout = readBinaryPlistLayout(decoded);
+    if (!layout.ok) throw new Error("Invalid compatible plist layout");
+    const offsets = [...layout.value.objectOffsets()];
+    expect(decoded.readDoubleBE(Number(offsets[2]) + 1)).toBeNaN();
     const parsed = projectPlistValue(parseBinary(decoded));
     expect(
       createPlistNumberProjection(metadata.literals).project(parsed.value),
@@ -362,7 +374,7 @@ describe("binary plist number rewriting", () => {
       },
       { $plist_type: "date", iso8601: null },
     ]);
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
     expect(bytes[11]).toBe(0x14);
     expect(bytes[18]).toBe(0x33);
   });
@@ -424,7 +436,7 @@ describe("binary plist shared object-table entries", () => {
     expect(numbers.limitations().join("\n")).not.toContain(
       "could not be completely observed",
     );
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 
   it("rewrites a shared 16-byte integer once for every entry", () => {
@@ -450,7 +462,7 @@ describe("binary plist shared object-table entries", () => {
       { $plist_type: "integer", decimal: "18446744073709551618" },
       { $plist_type: "integer", decimal: "1152921504606846979" },
     ]);
-    expect(bytes).toEqual(original);
+    expect(Buffer.compare(bytes, original)).toBe(0);
   });
 
   it("records a shared date once and keeps its sibling exact", () => {
@@ -485,7 +497,15 @@ describe("binary plist shared object-table entries", () => {
     const table = Number(bytes.readBigUInt64BE(bytes.length - 8));
     bytes[table + 2] = 7;
     expect(bytes.subarray(0, 8).toString("ascii")).toBe("bplist00");
-    expect(scanBinaryPlistScalars(bytes).literals.incomplete).toBe(true);
+    const metadata = scanBinaryPlistScalars(bytes);
+    expect(metadata.literals.incomplete).toBe(true);
+    expect(metadata.literals.integers).toEqual(
+      new Map([
+        [9007199254740992, new Set(["9007199254740993"])],
+        [Number(1152921504606846979n), new Set(["1152921504606846979"])],
+      ]),
+    );
+    expect(metadata.literals.unsafeIntegerLiterals).toBe(2);
   });
 });
 
@@ -582,4 +602,71 @@ describe("binary plist scalar clone budgeting", () => {
     expect(bytes[13]).toBe(0x33);
     expect(bytes.readDoubleBE(14)).toBe(0.1005);
   });
+});
+
+it.each([4n, 0xffffffffffffffffn])(
+  "scans source scalars independently of invalid top object %s",
+  (topObject) => {
+    const bytes = sharedScalarEntries(int64(9007199254740993n));
+    const expected = scanBinaryPlistScalars(bytes);
+    bytes.writeBigUInt64BE(topObject, bytes.length - 16);
+    expect(scanBinaryPlistScalars(bytes)).toEqual(expected);
+    expect(expected.literals.incomplete).toBe(false);
+    expect(expected.literals.unsafeIntegerLiterals).toBe(2);
+    expect(() =>
+      estimateBinaryPlistExpansion(bytes, 1024 * 1024, {
+        numberProjection: true,
+      }),
+    ).toThrow("binary plist trailer or object table is invalid");
+  },
+);
+
+it("preserves exact pre-table integer precision when a string follows the offset table", () => {
+  const stringRecord = Buffer.from("\x55hello", "latin1");
+  const intRecord = int64(9007199254740993n);
+  const intOffset = 8;
+  const tableOffset = intOffset + intRecord.length;
+  const stringOffset = tableOffset + 2;
+  const trailerOffset = stringOffset + stringRecord.length;
+  const bytes = Buffer.alloc(trailerOffset + 32);
+  Buffer.from("bplist00", "ascii").copy(bytes, 0);
+  intRecord.copy(bytes, intOffset);
+  stringRecord.copy(bytes, stringOffset);
+  bytes[tableOffset] = intOffset;
+  bytes[tableOffset + 1] = stringOffset;
+  bytes[trailerOffset + 6] = 1;
+  bytes[trailerOffset + 7] = 1;
+  bytes.writeBigUInt64BE(2n, trailerOffset + 8);
+  bytes.writeBigUInt64BE(0n, trailerOffset + 16);
+  bytes.writeBigUInt64BE(BigInt(tableOffset), trailerOffset + 24);
+
+  const metadata = scanBinaryPlistScalars(bytes);
+  expect(metadata.literals.incomplete).toBe(false);
+  expect(metadata.literals.unsafeIntegerLiterals).toBe(1);
+  const decimals = metadata.literals.integers.get(Number(9007199254740993n));
+  expect(decimals).toBeDefined();
+  expect([...decimals!]).toEqual(["9007199254740993"]);
+});
+
+it("marks literals incomplete when a numeric scalar follows the offset table", () => {
+  const intRecord = int64(9007199254740993n);
+  const intOffset = 8;
+  const postInt = int64(42n);
+  const tableOffset = intOffset + intRecord.length;
+  const postOffset = tableOffset + 2;
+  const trailerOffset = postOffset + postInt.length;
+  const bytes = Buffer.alloc(trailerOffset + 32);
+  Buffer.from("bplist00", "ascii").copy(bytes, 0);
+  intRecord.copy(bytes, intOffset);
+  postInt.copy(bytes, postOffset);
+  bytes[tableOffset] = intOffset;
+  bytes[tableOffset + 1] = postOffset;
+  bytes[trailerOffset + 6] = 1;
+  bytes[trailerOffset + 7] = 1;
+  bytes.writeBigUInt64BE(2n, trailerOffset + 8);
+  bytes.writeBigUInt64BE(0n, trailerOffset + 16);
+  bytes.writeBigUInt64BE(BigInt(tableOffset), trailerOffset + 24);
+
+  const metadata = scanBinaryPlistScalars(bytes);
+  expect(metadata.literals.incomplete).toBe(true);
 });

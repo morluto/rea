@@ -7,7 +7,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { CdpConnection } from "../../dist/browser/CdpConnection.js";
 import { parseEvidence } from "../../dist/domain/evidence.js";
 import { artifactCliEvidence } from "./artifact-e2e.mjs";
-import { closeVerifierResources } from "./verifier-cleanup.mjs";
+import { withVerifierCleanup } from "./verifier-cleanup.mjs";
 
 /** Verify real V8 source labels, which retain spelling that navigation normalizes. */
 export async function verifyBrowserUrlUserInfo(endpoint, origin) {
@@ -30,8 +30,7 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
   let connection;
   let transport;
   let client;
-  let verificationError;
-  try {
+  return withVerifierCleanup(async () => {
     connection = await CdpConnection.connect(
       target.webSocketDebuggerUrl,
       "inspect_web_page",
@@ -120,27 +119,19 @@ export async function verifyBrowserUrlUserInfo(endpoint, origin) {
       original_source_digest: true,
       browser_url_parser_normalizes_backslash_and_dot_segments: true,
     };
-  } catch (cause) {
-    verificationError = cause;
-    throw cause;
-  } finally {
-    await closeVerifierResources(
-      [
-        async () => client?.close(),
-        async () => transport?.close(),
-        async () => connection?.close(),
-        async () => {
-          const closed = await fetch(`${endpoint}/json/close/${target.id}`);
-          assert.equal(
-            closed.ok,
-            true,
-            "Browser retained the owned URL fixture target",
-          );
-        },
-      ],
-      verificationError,
-    );
-  }
+  }, [
+    async () => client?.close(),
+    async () => transport?.close(),
+    async () => connection?.close(),
+    async () => {
+      const closed = await fetch(`${endpoint}/json/close/${target.id}`);
+      assert.equal(
+        closed.ok,
+        true,
+        "Browser retained the owned URL fixture target",
+      );
+    },
+  ]);
 }
 
 async function loadFixturePage(connection, url) {

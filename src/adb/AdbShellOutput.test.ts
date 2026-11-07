@@ -343,10 +343,15 @@ describe("parseWmDensityOutput", () => {
   it("reads labeled physical and override densities", () => {
     expect(
       parseWmDensityOutput("Physical density: 420\nOverride density: 480\n"),
-    ).toEqual({ physical: 420, override: 480 });
+    ).toEqual({
+      physical: 420,
+      override: 480,
+      numericIssues: { sample: [], total: 0 },
+    });
     expect(parseWmDensityOutput("Physical density: 420\n")).toEqual({
       physical: 420,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
   });
 
@@ -356,10 +361,12 @@ describe("parseWmDensityOutput", () => {
     expect(parseWmDensityOutput("420\n")).toEqual({
       physical: 420,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
     expect(parseWmDensityOutput("420\r\n")).toEqual({
       physical: 420,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
   });
 
@@ -367,6 +374,7 @@ describe("parseWmDensityOutput", () => {
     expect(parseWmDensityOutput("560\nPhysical density: 420\n")).toEqual({
       physical: 420,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
   });
 
@@ -374,10 +382,12 @@ describe("parseWmDensityOutput", () => {
     expect(parseWmDensityOutput("")).toEqual({
       physical: null,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
     expect(parseWmDensityOutput("420dpi\n")).toEqual({
       physical: null,
       override: null,
+      numericIssues: { sample: [], total: 0 },
     });
   });
 });

@@ -36,7 +36,9 @@ it("compares identical complete plist inventories across CLI and MCP and creates
     throw new Error("CLI inspection did not retain inventory Evidence");
   expect(cliInventory.normalized_result).toMatchObject({
     coverage: { scope: "root", status: "complete" },
-    limitations: ["Artifact has no child container entries."],
+    limitations: [
+      expect.stringMatching(/root bytes only.*child.*not examined/iu),
+    ],
   });
 
   const { call } = await connectLocalToolsMcp();
@@ -53,7 +55,9 @@ it("compares identical complete plist inventories across CLI and MCP and creates
     throw new Error("MCP inspection did not retain inventory Evidence");
   expect(mcpInventory.normalized_result).toMatchObject({
     coverage: { scope: "root", status: "complete" },
-    limitations: ["Artifact has no child container entries."],
+    limitations: [
+      expect.stringMatching(/root bytes only.*child.*not examined/iu),
+    ],
   });
 
   const compared = await call("compare_artifacts", {

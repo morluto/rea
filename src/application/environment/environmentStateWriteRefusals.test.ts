@@ -1,3 +1,7 @@
+import { EnvironmentStateStore } from "./environmentStateStore.js";
+import { environmentToolAnswer } from "./environmentToolAnswer.js";
+import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
+import type { StateWritePlan } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { describe, expect, it } from "vitest";
 
 import type { TimedCaptureRow } from "../../../tests/fixtures/analysisView.js";
@@ -120,20 +124,27 @@ describe("served document writes", () => {
 });
 
 describe("values the state can load back", () => {
+  it("preserves nested prototype-named data through writes and reload", () => {
+    const settings = servedFrom(SETTINGS_ROWS);
+    const meta = JSON.parse(
+      '{"__proto__":{"n":1},"constructor":2,"prototype":3}',
+    );
+    expect(
+      settings.answer(PATCH_SETTINGS, { id: "1", body: { meta } }).body,
+    ).toEqual({ theme: "dark", meta });
+    expect(settings.answer(READ_SETTINGS, { id: "1" }).body).toEqual({
+      theme: "dark",
+      meta,
+    });
+    expectReloadsUnchanged(settings);
+  });
+
   it("refuses a body value data/add would refuse, whatever member carries it", () => {
     const settings = servedFrom(SETTINGS_ROWS);
     const unexact =
       "Member meta would hold a value that is not exactly representable JSON";
     expectRefusedUnchanged(settings, [
       [PATCH_SETTINGS, { id: "1", body: { meta: { n: 1e20 } } }, unexact],
-      [
-        PATCH_SETTINGS,
-        {
-          id: "1",
-          body: JSON.parse('{"meta":{"__proto__":{"n":1}}}') as JsonValue,
-        },
-        unexact,
-      ],
       [
         PATCH_SETTINGS,
         { id: "1", body: { meta: { n: nested(MAX_JSON_DEPTH) } } },
@@ -267,3 +278,48 @@ describe("the state size limit", () => {
     expect(books.snapshot()).toBe(before);
   });
 });
+
+it.each(["clock", "held-clock", "nested-clock"] as const)(
+  "refuses a legacy served %s plan with an unknown clock before changing state or generators",
+  (rule) => {
+    const fixture = servedFrom();
+    const original = fixture.state.writes.get("patch_books_by_id");
+    if (original === undefined || !original.served)
+      throw new Error("Expected served fixture update");
+    const format = { kind: "epoch", unit: "ms" } as const;
+    const plan: StateWritePlan = {
+      ...original,
+      rules:
+        rule === "nested-clock"
+          ? [{ field: "updated_at", rule, format, members: ["at"] }]
+          : [{ field: "updated_at", rule, format }],
+    };
+    const writes = new Map(fixture.state.writes).set(plan.tool, plan);
+    const state = { ...fixture.state, writeClock: null, writes };
+    const store = new EnvironmentStateStore(state);
+    const respond = environmentToolAnswer(fixture.source, store);
+    const tool = fixture.source.manifest.tools.find(
+      (candidate) => candidate.name === plan.tool,
+    );
+    const deletion = fixture.source.manifest.tools.find(
+      (candidate) => candidate.name === "delete_books_by_id",
+    );
+    if (tool === undefined || deletion === undefined)
+      throw new Error("Expected fixture tools");
+    const before = JSON.stringify(store.snapshot());
+    const pending = store.pendingWrite();
+    const result = respond(tool, { id: "1", body: { name: "Refused" } });
+    if (result.ok) throw new Error("Expected unknown clock refusal");
+    expect(result.error._tag).toBe("AnalysisInputError");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("requires a known write clock"),
+    });
+    expect(JSON.stringify(store.snapshot())).toBe(before);
+    expect(store.pendingWrite()).toEqual(pending);
+    expect(store.state.writes.get(plan.tool)).toBe(plan);
+    // Independent writes keep working; the guard does not erase imported metadata.
+    expect(respond(deletion, { id: "1" }).ok).toBe(true);
+    expect(JSON.stringify(store.snapshot())).not.toBe(before);
+  },
+);

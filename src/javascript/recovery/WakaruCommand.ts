@@ -1,6 +1,7 @@
+import { selectArtifactCommandPath } from "../../process/ArtifactCommandPath.js";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
-import { access, realpath, stat } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import { isAbsolute } from "node:path";
 import {
   AnalysisArtifactChangedError,
@@ -30,7 +31,7 @@ import { RECOVERY_LIMITS, wakaruFixedLimitRecovery } from "./WakaruRelease.js";
 
 const OPERATION = "recover_javascript_sources";
 const WAKARU_REQUIREMENT =
-  "Provide an absolute REA_WAKARU_COMMAND pointing to a Wakaru ^1.13.0 Linux x64 binary (verified with 1.14.0); no tool is installed by REA. See docs/javascript-recovery.md#install-wakaru.";
+  "Provide an absolute REA_WAKARU_COMMAND pointing to a Wakaru ^1.13.0 Linux x64 binary (verified with 1.14.0); no tool is installed by REA. See docs/guides/javascript/javascript-recovery.md#install-wakaru.";
 
 /** Wakaru recovery runs only on Linux x64; discovery and execution share this check. */
 export const wakaruHostSupported = (
@@ -87,10 +88,10 @@ export const resolveWakaruCommand = async (
       { userMessage: WAKARU_REQUIREMENT },
     );
   try {
-    const command = await realpath(configured);
-    await access(command, constants.R_OK | constants.X_OK);
+    const selection = await selectArtifactCommandPath(configured, signal);
+    await access(selection.resolvedPath, constants.R_OK | constants.X_OK);
     const fingerprint = await fingerprintRecoveryFile(
-      command,
+      selection.resolvedPath,
       RECOVERY_LIMITS.outputBytes,
       signal,
       resources,
@@ -99,10 +100,11 @@ export const resolveWakaruCommand = async (
       environment.REA_JAVASCRIPT_PRLIMIT_COMMAND ?? "/usr/bin/prlimit";
     if (!isAbsolute(limiter))
       throw new TypeError("REA_JAVASCRIPT_PRLIMIT_COMMAND must be absolute");
-    await access(limiter, constants.X_OK);
+    const limiterSelection = await selectArtifactCommandPath(limiter, signal);
+    await access(limiterSelection.resolvedPath, constants.X_OK);
     if (!(await stat(limiter)).isFile())
       throw new TypeError(`Resource limiter is not a regular file: ${limiter}`);
-    return { command, limiter, ...fingerprint };
+    return { command: selection, limiter: limiterSelection, ...fingerprint };
   } catch (cause: unknown) {
     if (
       cause instanceof AnalysisCancelledError ||

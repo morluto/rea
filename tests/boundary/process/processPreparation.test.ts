@@ -3,13 +3,15 @@ import { expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../src/domain/analysisErrorBase.js";
 import { AnalysisAccessDeniedError } from "../../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
-import { ProcessCaptureResourceScope } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
+import {
+  ProcessCaptureResourceScope,
+  prepareProcessCapture,
+} from "../../../src/process/capture/ProcessCaptureLifecycle.js";
 import {
   ProcessCaptureSnapshotFailure,
   snapshotRoots,
 } from "../../../src/process/capture/FilesystemSnapshot.js";
-import { prepareProcessCapture } from "../../../src/process/capture/ProcessCaptureLifecycle.js";
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import { emptyProcessCapture } from "../../../src/domain/process/processCapture.fixture.js";
 
 const emptyFilesystemCoverage =
@@ -28,7 +30,7 @@ it("prepares ownership inspection before snapshotting or allocating a target run
 
   await expect(
     prepareProcessCapture(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: "/bin/true",
         working_directory: "/tmp",
       }),
@@ -59,7 +61,7 @@ it("cleans the temporary root when cancellation arrives during identity capture"
 
   await expect(
     prepareProcessCapture(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: "/bin/true",
         working_directory: "/tmp",
       }),
@@ -98,7 +100,7 @@ it.each([false, true])(
       if (failing) throw new Error("controlled temporary-root removal denial");
     });
     const observed = await prepareProcessCapture(
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: "/bin/true",
         filesystem_observation_paths: [path],
       }),

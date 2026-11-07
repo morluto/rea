@@ -3,7 +3,10 @@ import { dirname, join } from "node:path";
 import { beforeEach, expect, onTestFinished, test, vi } from "vitest";
 
 import { runAdbCapture } from "../../../../src/adb/AdbCommand.js";
-import { inspectAdbClient } from "../../../../src/adb/AdbConfiguration.js";
+import {
+  inspectAdbClient,
+  resolveAdbBinary,
+} from "../../../../src/adb/AdbConfiguration.js";
 import { AdbDeviceAnalysisService } from "../../../../src/application/adb/AdbDeviceAnalysisService.js";
 import {
   execFileOutput,
@@ -12,6 +15,7 @@ import {
 import { AdbProvider } from "../../../../src/adb/AdbProvider.js";
 import { parseEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { AnalysisTimeoutError } from "../../../../src/domain/analysisErrorCore.js";
 import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 
 const hooks = vi.hoisted(() => ({
@@ -56,7 +60,7 @@ beforeEach(() => {
   hooks.failure = undefined;
 });
 
-const capture = (
+const capture = async (
   script: string,
   signal?: AbortSignal,
   limits = { timeoutMs: 1000, maxOutputBytes: 1024 },
@@ -64,7 +68,7 @@ const capture = (
   runAdbCapture(
     "inspect_adb_device",
     { device: "device" },
-    process.execPath,
+    await resolveAdbBinary({ ...process.env, REA_ADB_PATH: process.execPath }),
     ["-e", script],
     limits,
     signal,
@@ -151,7 +155,7 @@ const clientScript = async (source: string) => {
   await writeFile(binary, `#!${process.execPath}\n${source}\n`, {
     mode: 0o755,
   });
-  return { binary, pathSource: "environment" as const };
+  return resolveAdbBinary({ ...process.env, REA_ADB_PATH: binary });
 };
 const nativeClientTest = test.skipIf(process.platform === "win32");
 
@@ -161,7 +165,7 @@ test.each([null, "caller stopped", new Error("caller stopped")] as const)(
     const controller = new AbortController();
     controller.abort(reason);
     const error: unknown = await inspectAdbClient(
-      { binary: "/must-not-start", pathSource: "environment" },
+      await resolveAdbBinary({ REA_ADB_PATH: process.execPath }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -206,7 +210,7 @@ nativeClientTest(
     const controller = new AbortController();
     hooks.afterCommand = () => controller.abort(null);
     const error: unknown = await inspectAdbClient(
-      { binary: join(root, "missing"), pathSource: "environment" },
+      await resolveAdbBinary({ REA_ADB_PATH: join(root, "missing") }),
       controller.signal,
     ).catch((cause: unknown) => cause);
     expect(error).toMatchObject({
@@ -288,9 +292,30 @@ nativeClientTest.each([false, true])(
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "provider_timeout",
       retryable: true,
-      details: { timeout_ms: 10000 },
+      details: {
+        timeout_ms: 10000,
+        diagnostics: { prerequisite_operation: "inspect_adb_client" },
+      },
     });
-    expect(result.error.cause).toBe(hooks.failure);
+    expect(result.error).toBeInstanceOf(AnalysisTimeoutError);
+    expect(result.error.cause).toBeInstanceOf(AnalysisTimeoutError);
+    const prerequisite = result.error.cause;
+    if (!(prerequisite instanceof AnalysisTimeoutError))
+      throw new Error("Expected the authored client-probe timeout frame");
+    expect(prerequisite.operation).toBe("inspect_adb_client");
+    expect(prerequisite.timeoutMs).toBe(10000);
+    expect(prerequisite.cause).toBe(hooks.failure);
+    const capturedOutput = {
+      stdout: "",
+      stderr: "",
+      stdout_bytes: 0,
+      stderr_bytes: 0,
+      exit_code: null,
+      signal: "SIGTERM",
+      truncated: false,
+    };
+    expect(prerequisite.capturedOutput).toEqual(capturedOutput);
+    expect(result.error.capturedOutput).toEqual(capturedOutput);
   },
   20000,
 );

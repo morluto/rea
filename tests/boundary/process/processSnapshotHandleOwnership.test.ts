@@ -74,7 +74,7 @@ vi.mock("node:fs/promises", async (importOriginal) => {
 });
 
 import { AnalysisCleanupLease } from "../../../src/artifacts/AnalysisCleanupLease.js";
-import { parseProcessScenario } from "../../../src/domain/process/processScenario.js";
+import { processScenarioSchema } from "../../../src/domain/process/processScenario.js";
 import {
   hashFile,
   snapshotRoots,
@@ -97,7 +97,7 @@ type DirectoryReadCallback = (
 type DirectoryCloseCallback = (error?: NodeJS.ErrnoException | null) => void;
 
 const scenarioFor = (root: string) =>
-  parseProcessScenario({
+  processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [root],

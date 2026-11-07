@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { digestSchema } from "../digests.js";
 import type { JavaScriptSourceSelection } from "./javascriptSourceSelection.js";
+import type { JavaScriptStaticAnalysis } from "./javascriptStaticAnalysisTypes.js";
 import type {
   ArtifactInventoryCoverage,
   ArtifactOccurrence,
@@ -59,6 +60,20 @@ export const javaScriptArtifactTextExclusion = (
   return file.text.reason === "outside-analysis-scope"
     ? "Source was not analyzed because it is outside the caller-selected source_paths."
     : "Source bytes are not valid UTF-8; JavaScript semantics were not analyzed.";
+};
+
+/** Source availability shared by semantic consumers of parsed artifact facts. */
+export const javaScriptSemanticSourceExclusion = (
+  file: JavaScriptArtifactFile,
+  parseStatus: JavaScriptStaticAnalysis["parse_status"] | null,
+): string | null => {
+  if (file.kind !== "javascript") return null;
+  return (
+    javaScriptArtifactTextExclusion(file) ??
+    (parseStatus === "failed"
+      ? "JavaScript syntax could not be parsed; JavaScript semantics were not analyzed."
+      : null)
+  );
 };
 
 /**

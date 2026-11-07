@@ -204,14 +204,8 @@ export const importReferenceSource = async (
   if (isAborted(options.signal)) return err(cancelled(readResult.value));
 
   const read = readResult.value;
-  const filePaths = new Set(
-    read.entries
-      .filter((entry) => entry.status === "read" && entry.kind === "file")
-      .map((entry) => entry.path),
-  );
-
   const { entries, relationships, parseFailures, limitations } =
-    parseReferenceSourceEntries(read, filePaths, exclusions, options.signal);
+    parseReferenceSourceEntries(read, exclusions, options.signal);
 
   if (isAborted(options.signal)) return err(cancelled(read));
 
@@ -289,6 +283,9 @@ const combineReadFailures = (
         );
   return {
     ...failure(code, message),
+    ...(primary.remediationAction === undefined || code !== primary.code
+      ? {}
+      : { remediationAction: primary.remediationAction }),
     ...(cleanup === undefined ? {} : { cleanup }),
     ...(partial === undefined ? {} : { partial }),
     ...(cause === undefined ? {} : { cause }),

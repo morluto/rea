@@ -22,6 +22,7 @@ import {
 import type { z } from "zod";
 import { authorizeCdpTarget } from "../CdpAuthorizedTarget.js";
 import { authorizedMainFrame } from "../CdpAuthorizedMainFrame.js";
+import { cdpOriginScopeRefusal } from "../CdpOriginScopeError.js";
 import {
   discoverCdpEndpoint,
   type CdpEndpointDiscovery,
@@ -339,9 +340,8 @@ const runtimeFrameUrl = (
   detail?: string,
 ) => {
   if (frame.scope === "outside_policy" || frame.scope === "unsupported")
-    throw new BrowserObservationError(
+    throw cdpOriginScopeRefusal(
       operation,
-      "target_not_allowed",
       detail === undefined ? {} : { detail },
     );
   if (frame.url === undefined || frame.origin === null)

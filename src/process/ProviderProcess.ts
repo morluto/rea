@@ -1,3 +1,4 @@
+import { ProcessAdmissionError } from "./ProcessAdmissionError.js";
 import { spawn, type ChildProcess } from "node:child_process";
 import type { EventEmitter } from "node:events";
 import type { Readable, Writable } from "node:stream";
@@ -20,6 +21,7 @@ import {
   systemProcessOwnershipHost,
 } from "./ProcessOwnershipObservation.js";
 import { ProcessOwnershipEvidenceOwner } from "./ProcessOwnershipEvidence.js";
+import { mergeEnvironmentOverrides } from "./snapshotEnvironment.js";
 
 const DEFAULT_TERMINATION_GRACE_MS = 250;
 const DEFAULT_KILL_GRACE_MS = 1_000;
@@ -193,12 +195,22 @@ export type ProviderProcessDiagnostic =
       readonly cause?: Error;
     };
 
+/** Aggregate byte budget, or independent retained stdout and stderr byte budgets. */
+export type ProcessDiagnosticBudget =
+  | number
+  | { readonly stdout: number; readonly stderr: number };
+
 /** Options for process lifecycle diagnostics. */
 export interface ProviderProcessSupervisorOptions {
   /** Retain stdout for diagnostics; disable when it carries a parsed protocol. Defaults to true. */
   readonly captureStdout?: boolean;
-  /** Aggregate retained stdout/stderr byte budget; overflow is drained and reported, not retained. */
-  readonly maxDiagnosticBytes?: number;
+  /** Retained output budget; overflow is drained and reported, not retained. */
+  readonly maxDiagnosticBytes?: ProcessDiagnosticBudget;
+  /**
+   * Which bytes the budget keeps: the first ones (the default), or each
+   * stream's latest, where a failing command's last words are.
+   */
+  readonly diagnosticRetention?: "head" | "tail";
   /**
    * Single-line token ending at a non-ASCII-word byte or EOF, located before retention
    * applies, so its latest occurrence survives an exhausted budget.
@@ -257,16 +269,23 @@ export const spawnOwnedProviderProcess = async (
   if (sweepTokenOwnedProcesses) {
     const capture = systemProcessOwnershipHost.captureBaseline;
     if (capture === undefined)
-      throw new Error("Process ownership baseline is unavailable on this host");
+      throw new ProcessAdmissionError("baseline_unavailable");
     captureBaseline = await capture(options.signal);
     options.signal?.throwIfAborted();
   }
   const hostEnvironment = options.hostEnvironment ?? process.env;
-  const environment = {
-    ...hostEnvironment,
-    ...options.env,
-    REA_PROCESS_RUN_ID: options.runId,
-  };
+  const selectedEnvironment = mergeEnvironmentOverrides(
+    hostEnvironment,
+    options.env ?? {},
+    platform,
+  );
+  // Ownership is the final layer, including when a caller used another casing.
+  // Resolve undefined overrides before the launchers omit unset variables.
+  const environment = mergeEnvironmentOverrides(
+    selectedEnvironment,
+    { REA_PROCESS_RUN_ID: options.runId },
+    platform,
+  );
   if (platform === "win32" && process.platform === "win32") {
     const child = new WindowsOwnedProcess(
       options.command,
@@ -293,9 +312,7 @@ export const spawnOwnedProviderProcess = async (
     };
   }
   if (options.memoryLimitBytes !== undefined)
-    throw new Error(
-      "Owned process memory limits require the Windows Job Object launcher; no limit can be enforced on this host.",
-    );
+    throw new ProcessAdmissionError("memory_limit_unsupported");
   const child = spawn(options.command, [...options.arguments], {
     shell: false,
     windowsHide: true,
@@ -307,7 +324,8 @@ export const spawnOwnedProviderProcess = async (
   });
   await waitForSpawn(child);
   const pid = child.pid;
-  if (pid === undefined) throw new Error("Provider launcher has no process ID");
+  if (pid === undefined)
+    throw new ProcessAdmissionError("launcher_pid_missing");
   const ownership: OwnedProcessGroup = {
     runId: options.runId,
     leaderPid: pid,
@@ -395,7 +413,10 @@ export class ProviderProcessSupervisor {
   #stopPromise: Promise<ProviderProcessStopResult> | undefined;
   #stopRequested = false;
   #disposed = false;
-  #maxDiagnosticBytes: number | undefined;
+  #maxAggregateDiagnosticBytes: number | undefined;
+  readonly #maxStreamDiagnosticBytes:
+    | Exclude<ProcessDiagnosticBudget, number>
+    | undefined;
   #outputEpoch = 0;
 
   constructor(
@@ -403,7 +424,13 @@ export class ProviderProcessSupervisor {
     options: ProviderProcessSupervisorOptions = {},
   ) {
     this.#options = options;
-    this.#maxDiagnosticBytes = options.maxDiagnosticBytes;
+    const budget = options.maxDiagnosticBytes;
+    if (typeof budget === "number") this.#maxAggregateDiagnosticBytes = budget;
+    else if (budget !== undefined)
+      this.#maxStreamDiagnosticBytes = {
+        stdout: budget.stdout,
+        stderr: budget.stderr,
+      };
     this.#resetMarkers();
     if (options.captureStdout !== false)
       this.#attach(launch.process.stdout, "stdout");
@@ -593,10 +620,10 @@ export class ProviderProcessSupervisor {
       Number.MAX_SAFE_INTEGER,
       retained + maxBytes,
     );
-    this.#maxDiagnosticBytes =
-      this.#maxDiagnosticBytes === undefined
+    this.#maxAggregateDiagnosticBytes =
+      this.#maxAggregateDiagnosticBytes === undefined
         ? requestedLimit
-        : Math.min(this.#maxDiagnosticBytes, requestedLimit);
+        : Math.min(this.#maxAggregateDiagnosticBytes, requestedLimit);
   }
 
   /** Unreference inherited output pipes without closing streams shared with descendants. */
@@ -797,16 +824,38 @@ export class ProviderProcessSupervisor {
       this.#stderrMarker?.scan(bytes, this.#stderrObservedBytes);
       this.#stderrObservedBytes += bytes.byteLength;
     }
-    const remaining =
-      this.#maxDiagnosticBytes === undefined
+    const aggregateRemaining =
+      this.#maxAggregateDiagnosticBytes === undefined
         ? bytes.byteLength
         : Math.max(
             0,
-            this.#maxDiagnosticBytes - this.#stdout.bytes - this.#stderr.bytes,
+            this.#maxAggregateDiagnosticBytes -
+              this.#stdout.bytes -
+              this.#stderr.bytes,
           );
-    const retained = Math.min(bytes.byteLength, remaining);
-    if (retained < bytes.byteLength) this.#diagnosticTruncated = true;
-    if (retained > 0) capture.append(bytes.subarray(0, retained));
+    const streamLimit = this.#maxStreamDiagnosticBytes?.[stream];
+    const streamRemaining =
+      streamLimit === undefined
+        ? bytes.byteLength
+        : Math.max(0, streamLimit - capture.bytes);
+    let truncated: boolean;
+    if (this.#options.diagnosticRetention === "tail") {
+      // The stream may give up its own earlier bytes to keep these.
+      const limit = Math.min(
+        capture.bytes + aggregateRemaining,
+        streamLimit ?? Number.MAX_SAFE_INTEGER,
+      );
+      truncated = capture.appendTail(bytes, limit) > 0;
+    } else {
+      const retained = Math.min(
+        bytes.byteLength,
+        aggregateRemaining,
+        streamRemaining,
+      );
+      if (retained > 0) capture.append(bytes.subarray(0, retained));
+      truncated = retained < bytes.byteLength;
+    }
+    if (truncated) this.#diagnosticTruncated = true;
     this.#options.onDiagnostic?.({
       type: "output",
       stream,
@@ -815,7 +864,7 @@ export class ProviderProcessSupervisor {
         stream === "stdout"
           ? this.#stdoutObservedBytes
           : this.#stderrObservedBytes,
-      ...(retained < bytes.byteLength ? { truncated: true } : {}),
+      ...(truncated ? { truncated: true } : {}),
     });
   }
 
@@ -835,6 +884,8 @@ export class ProviderProcessSupervisor {
 class ProcessOutputCapture {
   readonly #chunks: Buffer[] = [];
   #bytes = 0;
+  /** Observed bytes before the first retained one, which tail retention dropped. */
+  #start = 0;
 
   get bytes(): number {
     return this.#bytes;
@@ -843,11 +894,51 @@ class ProcessOutputCapture {
   reset(): void {
     this.#chunks.length = 0;
     this.#bytes = 0;
+    this.#start = 0;
   }
 
   append(chunk: Buffer): void {
     this.#bytes += chunk.byteLength;
     this.#chunks.push(Buffer.from(chunk));
+  }
+
+  /**
+   * Keep the latest `limit` bytes; returns how many observed bytes this
+   * dropped. A UTF-8 character the cut splits is dropped whole.
+   */
+  appendTail(chunk: Buffer, limit: number): number {
+    const before = this.#start;
+    const kept = chunk.subarray(Math.max(0, chunk.byteLength - limit));
+    this.append(kept);
+    this.#start += chunk.byteLength - kept.byteLength;
+    const cut = kept.byteLength < chunk.byteLength || this.#bytes > limit;
+    this.#dropFront(this.#bytes - limit, cut);
+    return this.#start - before;
+  }
+
+  /** Drop the first `count` retained bytes and, after a cut, the rest of a character it split. */
+  #dropFront(count: number, cut: boolean): void {
+    let remaining = Math.max(0, count);
+    for (
+      let first = this.#chunks[0];
+      first !== undefined;
+      first = this.#chunks[0]
+    ) {
+      let drop = Math.min(remaining, first.byteLength);
+      // UTF-8 continuation bytes are 0b10xxxxxx.
+      while (
+        cut &&
+        drop < first.byteLength &&
+        ((first[drop] ?? 0) & 0xc0) === 0x80
+      )
+        drop += 1;
+      if (drop === first.byteLength) this.#chunks.shift();
+      else if (drop > 0) this.#chunks[0] = Buffer.from(first.subarray(drop));
+      this.#bytes -= drop;
+      this.#start += drop;
+      remaining -= Math.min(remaining, drop);
+      if (drop < first.byteLength) return;
+    }
   }
 
   snapshot(observedBytes: number): ProviderProcessSnapshot["stdout"] {
@@ -861,10 +952,12 @@ class ProcessOutputCapture {
     start: number,
     end: number,
   ): { stream: ProviderProcessSnapshot["stdout"]; complete: boolean } {
-    const availableEnd = Math.min(end, this.#bytes);
-    const availableStart = Math.min(start, availableEnd);
+    // Positions are observed bytes; the retained ones start at #start.
+    const retainedEnd = this.#start + this.#bytes;
+    const availableEnd = Math.max(this.#start, Math.min(end, retainedEnd));
+    const availableStart = Math.min(Math.max(start, this.#start), availableEnd);
     const chunks: Buffer[] = [];
-    let offset = 0;
+    let offset = this.#start;
     for (const chunk of this.#chunks) {
       const chunkEnd = offset + chunk.byteLength;
       const from = Math.max(availableStart, offset);
@@ -876,7 +969,9 @@ class ProcessOutputCapture {
     const buffer = Buffer.concat(chunks, availableEnd - availableStart);
     return {
       stream: this.#snapshotBuffer(buffer, Math.max(0, end - start)),
-      complete: start === end || (start <= this.#bytes && end <= this.#bytes),
+      complete:
+        start === end ||
+        (start >= this.#start && start <= retainedEnd && end <= retainedEnd),
     };
   }
 

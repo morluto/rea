@@ -160,6 +160,11 @@ describe("TypeScript type-only module links", () => {
       export type { hiddenFunction };
     `);
 
+    expect(ir.bindings.map(({ name }) => name).sort()).toEqual([
+      "hiddenFunction",
+      "value",
+    ]);
+
     const externalLinks = ir.moduleLinks
       .filter(({ specifier }) => specifier !== null)
       .map(
@@ -191,8 +196,10 @@ describe("TypeScript type-only module links", () => {
       [null, "LocalInterface", "LocalInterface", null],
       [null, "hiddenFunction", "hiddenFunction", null],
     ]);
-    expect(ir.limitations).toContain(
-      "Compiler options are unavailable; inline type-only imports or re-exports may preserve a module side-effect dependency.",
+    expect(ir.limitations).toContainEqual(
+      expect.stringMatching(
+        /compiler options.*unavailable.*type.only.*side.effect/iu,
+      ),
     );
   });
 });

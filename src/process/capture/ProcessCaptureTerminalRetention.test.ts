@@ -1,15 +1,17 @@
 import { expect, it } from "vitest";
 import type { IPty } from "@lydell/node-pty";
 
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
-import { createProcessIdentifierLookup } from "./ProcessNormalization.js";
+import {
+  createProcessIdentifierLookup,
+  createBoundedProcessTextNormalizer,
+} from "./ProcessNormalization.js";
 import type {
   TerminalFrame,
   ProcessSample,
 } from "../../domain/process/processCapture.js";
 import { captureTerminalFrames } from "./ProcessCaptureLifecycle.js";
-import { createBoundedProcessTextNormalizer } from "./ProcessNormalization.js";
 
 it("omits an expanding chunk whole and retains a later smaller normalized chunk", () => {
   let onData: ((data: string) => void) | undefined;
@@ -19,7 +21,7 @@ it("omits an expanding chunk whole and retains a later smaller normalized chunk"
       return { dispose: () => undefined };
     },
   } as unknown as IPty;
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: "unused",
     limits: { output_bytes: 1_000 },
     normalization: {
@@ -78,7 +80,7 @@ it.each([false, true])(
         return { dispose: () => undefined };
       },
     } as unknown as IPty;
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: "unused",
       limits: { output_bytes: overBudget ? 4 : 1000 },
       normalization: {
@@ -138,3 +140,42 @@ it.each([false, true])(
     }
   },
 );
+
+it("retains PTY chunk boundaries when two output messages arrive fragmented", () => {
+  let onData: ((data: string) => void) | undefined;
+  const terminal = {
+    onData: (listener: (data: string) => void) => {
+      onData = listener;
+      return { dispose: () => undefined };
+    },
+  } as unknown as IPty;
+  const scenario = processScenarioSchema.parse({
+    executable: "unused",
+    normalization: { paths: false, pids: false, ports: false },
+  });
+  const frames: TerminalFrame[] = [];
+  const captureRetention = captureTerminalFrames({
+    terminal,
+    scenario,
+    frames,
+    started: 0,
+    onOutput: () => undefined,
+    renderer: { write: () => undefined } as never,
+    normalizeText: createBoundedProcessTextNormalizer(scenario, "/tmp", -1),
+    recordEvent: () => undefined,
+    identifiers: () => [],
+  });
+  // A PTY transports chunks, independently of the child's write boundaries.
+  const chunks = ["SPARSE_CHILD_", "STARTED\r\n", "SPARSE_CHILD_", "DONE\r\n"];
+  for (const chunk of chunks) onData?.(chunk);
+
+  expect(frames.map(({ data }) => data)).toEqual(chunks);
+  expect(frames.map(({ sequence }) => sequence)).toEqual([0, 1, 2, 3]);
+  expect(frames.map(({ data }) => data).join("")).toBe(
+    "SPARSE_CHILD_STARTED\r\nSPARSE_CHILD_DONE\r\n",
+  );
+  expect(captureRetention().raw_terminal).toMatchObject({
+    observed_frames: 4,
+    retained_frames: 4,
+  });
+});

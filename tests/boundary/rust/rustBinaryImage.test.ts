@@ -5,6 +5,7 @@ import {
   createRustImageWithGoSection,
   createRustHashOverflowImage,
   compressRustElfSectionNames,
+  rustElfSectionNameFixture,
   RUSTC_HASH,
   rustDependencyPayload,
 } from "../../fixtures/rust/image.js";
@@ -33,6 +34,60 @@ const packages = [
     root: true,
   },
 ];
+
+it.each([
+  ["named", ".rodata"],
+  ["empty", ""],
+  ["unavailable", null],
+] as const)(
+  "retains read-only ELF section bytes with a %s name",
+  (name, expectedName) => {
+    const bytes = rustElfSectionNameFixture(name);
+    const container = readBinaryContainer(bytes);
+    expect(container.load_regions?.every(({ write }) => write)).toBe(true);
+    expect(container.sections).toContainEqual(
+      expect.objectContaining({
+        format: "elf",
+        name: expectedName,
+        offset: 2048,
+        read_only: true,
+        file_backed: true,
+      }),
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit?.hashes).toEqual([
+      { hash: RUSTC_HASH, file_offset: 2048 },
+    ]);
+  },
+);
+
+it.each([
+  ["writable", 1, 3n],
+  ["executable", 1, 6n],
+  ["unallocated", 1, 0n],
+  ["NOBITS", 8, 2n],
+  ["NULL", 0, 2n],
+] as const)(
+  "does not scan unnamed ELF %s sections for compiler paths",
+  (_kind, type, flags) => {
+    const bytes = rustElfSectionNameFixture("empty");
+    bytes.writeUInt32LE(type, 384 + 4);
+    bytes.writeBigUInt64LE(flags, 384 + 8);
+    expect(readBinaryContainer(bytes).sections).not.toContainEqual(
+      expect.objectContaining({ offset: 2048, read_only: true }),
+    );
+    expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
+  },
+);
+
+it("does not scan an unnamed ELF section whose declared range leaves the file", () => {
+  const bytes = rustElfSectionNameFixture("empty");
+  // The compiler path still exists at 2048, but its declared section no longer fits.
+  bytes.writeBigUInt64LE(BigInt(bytes.length), 384 + 32);
+  expect(readBinaryContainer(bytes).sections).not.toContainEqual(
+    expect.objectContaining({ read_only: true }),
+  );
+  expect(readRustBinaryImage(bytes).rustc_commit).toBeNull();
+});
 
 it.each(["elf", "pe"] as const)(
   "reads a .dep-v0 section and an inferred rustc hash from %s",
@@ -166,25 +221,31 @@ it("returns null metadata when the dependency section is absent", () => {
   ]);
 });
 
-it("reads dependency metadata through a compressed ELF section-name table", () => {
-  const image = readRustBinaryImage(
-    compressRustElfSectionNames(createRustImage({ format: "elf" })),
-  );
-  expect(image.auditable_metadata).toMatchObject({
-    section_name: ".dep-v0",
-    file_offset: 1024,
-    packages,
-    dependency_edges: [{ from_index: 1, to_index: 0 }],
-  });
-});
+it.each([1, 2])(
+  "reads dependency metadata through ELF section-name compression %i",
+  (compressionType) => {
+    const image = readRustBinaryImage(
+      compressRustElfSectionNames(
+        createRustImage({ format: "elf" }),
+        compressionType,
+      ),
+    );
+    expect(image.auditable_metadata).toMatchObject({
+      section_name: ".dep-v0",
+      file_offset: 1024,
+      packages,
+      dependency_edges: [{ from_index: 1, to_index: 0 }],
+    });
+  },
+);
 
 it("keeps dependency presence unknown for unsupported ELF name compression", () => {
   const image = readRustBinaryImage(
-    compressRustElfSectionNames(createRustImage({ format: "elf" }), 2),
+    compressRustElfSectionNames(createRustImage({ format: "elf" }), 3),
   );
   expect(image.auditable_metadata).toBeNull();
   expect(image.section_names_limitation).toMatch(
-    /compression type 2 is unsupported/u,
+    /compression type 3 is unsupported/u,
   );
   expect(image.rustc_commit?.hashes).toEqual([
     { hash: RUSTC_HASH, file_offset: 2048 },

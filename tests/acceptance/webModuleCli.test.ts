@@ -1,5 +1,5 @@
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, onTestFinished } from "vitest";
 import { createWebModuleTraceService } from "../../src/composition/webModules.js";
@@ -24,8 +24,14 @@ cliTest(
       join(root, "files", "modules", "main.js"),
       artifacts.source,
     );
-    const manifestPath = join(root, "manifest.json").replaceAll("\\", "/");
+    let manifestPath = join(root, "manifest.json").replaceAll("\\", "/");
     await writeFile(manifestPath, JSON.stringify(manifest));
+    if (process.platform !== "win32") {
+      await mkdir(join(root, "lexical"));
+      await mkdir(join(root, "nested"));
+      await symlink(join(root, "nested"), join(root, "lexical", "link"));
+      manifestPath = `${root}/lexical/link/../manifest.json`;
+    }
     const environment = {
       REA_LOG_LEVEL: "silent",
       REA_BROWSER_EXECUTABLE: "relative-missing-browser",
@@ -45,7 +51,11 @@ cliTest(
     expect(cliResponse.json).toMatchObject({
       normalized_result: {
         engine: null,
-        source: { script_index: 0 },
+        manifest: { path: manifestPath, reported_output_directory: root },
+        source: {
+          script_index: 0,
+          path: join(root, "files", "modules", "main.js"),
+        },
         imports: [
           { resolution: { state: "unknown", reason: "computed-specifier" } },
         ],
@@ -77,5 +87,84 @@ cliTest(
     expect(response.isError).not.toBe(true);
     const expected = cliResponse.json;
     expect(response.structuredContent).toEqual(expected);
+  },
+);
+
+cliTest(
+  "returns a failing outcome when the selected source digest disagrees",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-module-integrity-");
+    const artifacts = webModuleArtifactsFixture("export const a = 1;");
+    const files = join(root, "files");
+    await mkdir(join(files, "modules"), { recursive: true });
+    await writeFile(join(files, "modules", "main.js"), "export const a = 2;");
+    const manifest = join(root, "manifest.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        ...artifacts.manifest,
+        output_directory: root,
+        analysis_input: { input_path: files, format: "directory" },
+      }),
+    );
+    for (const full of [false, true]) {
+      const result = await cli.run({
+        arguments: [
+          "trace-web-module-imports",
+          manifest,
+          "0",
+          "--json",
+          ...(full ? ["--full-output"] : []),
+        ],
+      });
+      expect(result.exitCode, result.stdout + result.stderr).toBe(1);
+      const failure = {
+        code: "artifact_integrity_mismatch",
+        details: {
+          partial_observation: {
+            kind: "web-artifact-acquisition",
+            analysis: "not-performed",
+          },
+        },
+      };
+      if (full)
+        expect(result.json).toMatchObject({
+          ok: false,
+          error: failure,
+        });
+      else expect(result.json).toMatchObject(failure);
+    }
+  },
+);
+
+cliTest(
+  "retains an invalid caller-selected browser path in trace errors",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-module-browser-config-");
+    const artifacts = webModuleArtifactsFixture('import "./dep.js"');
+    const files = join(root, "files");
+    await mkdir(join(files, "modules"), { recursive: true });
+    await writeFile(join(files, "modules", "main.js"), artifacts.source);
+    const manifest = join(root, "manifest.json");
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        ...artifacts.manifest,
+        output_directory: root,
+        analysis_input: { input_path: files, format: "directory" },
+      }),
+    );
+    const result = await cli.run({
+      arguments: ["trace-web-module-imports", manifest, "0", "--json"],
+      environment: { REA_BROWSER_EXECUTABLE: "relative/chromium" },
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "capability_unavailable",
+      details: {
+        reason: "invalid_browser_executable",
+        diagnostics: { executable: "relative/chromium" },
+      },
+    });
   },
 );

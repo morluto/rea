@@ -21,8 +21,7 @@ const check = (
     path: `/api/books/${ordinal + 1}`,
     query: undefined,
     status: 200,
-    start: ordinal,
-    end: ordinal,
+    timing: { start: undefined, endMs: undefined },
   }));
   const bodies: JsonObject[] = clocks.map(([, stamp], index) => ({
     id: index + 1,
@@ -48,6 +47,7 @@ const check = (
     inCollection: () => entities,
     volatileOf: () => new Set(),
     idField: () => "id",
+    minted: new Map(),
   };
   const view = checkItemPlan(context, {
     tool: {

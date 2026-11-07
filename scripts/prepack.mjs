@@ -45,6 +45,7 @@ if (await pathExists(join(root, "src"))) {
   run(process.execPath, ["scripts/generate-skill-metadata.mjs", "--check"]);
 } else {
   for (const path of [
+    "scripts/lib/cli-process-environment.mjs",
     "dist/main.js",
     "dist/mcp/main.js",
     "dist/cli-runtime/cli.js",

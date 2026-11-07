@@ -122,6 +122,24 @@ it("retains high linked values and NOBITS without inventing file backing", () =>
 });
 
 it.each([
+  [{ machine: "EM_AARCH64", bits: 64, byte_order: "little" }, true],
+  [{ machine: "EM_AARCH64", bits: 64, byte_order: "big" }, false],
+  [{ machine: "EM_AARCH64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_386", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "little" }, true],
+  [{ machine: "EM_MIPS", bits: 32, byte_order: "big" }, true],
+  [{ machine: "EM_X86_64", bits: 32, byte_order: "little" }, false],
+  [{ machine: "EM_ARM", bits: 32, byte_order: "big" }, false],
+  [{ machine: "EM_386", bits: 64, byte_order: "little" }, false],
+  [{ machine: "EM_MIPS", bits: 64, byte_order: "big" }, false],
+])("admits only profiled architecture %j: %s", (architecture, admitted) => {
+  expect(
+    binaryLayoutSchema.safeParse({ ...report(), architecture }).success,
+  ).toBe(admitted);
+});
+
+it.each([
   "file-backed-outside",
   "header-outside",
   "wrong-index",
@@ -135,7 +153,7 @@ it.each([
   if (problem === "file-backed-outside") section.file_backing = "file";
   if (problem === "header-outside") section.header_location.offset = "0x80";
   if (problem === "wrong-index") section.index = 1;
-  if (problem === "wrong-machine") value.architecture.machine = "EM_AARCH64";
+  if (problem === "wrong-machine") value.architecture.machine = "EM_RISCV";
   if (problem === "outside-elf64")
     value.entry_point.reported_value = "0x10000000000000000";
   if (problem === "noncanonical-base64") section.name.bytes_base64 = "AR==";
@@ -276,6 +294,9 @@ it.each([
   "wrong-unknown-target",
   "missing-string-table",
   "wrong-string-table-kind",
+  "elf32-symbol-entry",
+  "elf32-undersized-symbol-entry",
+  "elf64-elf32-sized-symbol-entry",
 ])("validates relocation symbol reference semantics: %s", (problem) => {
   const value = binaryLayoutSchema.parse(report());
   value.artifact.bytes = 512;
@@ -359,6 +380,17 @@ it.each([
   if (problem === "owner-link-mismatch") owner.link = 0;
   if (problem === "wrong-meaning")
     relocation.symbol_reference_meaning = "zero-symbol-value";
+  // Elf32_Sym is 16 bytes and Elf64_Sym 24; the minimum follows the ELF class.
+  if (problem.includes("elf32")) {
+    if (problem.startsWith("elf32"))
+      value.architecture = {
+        machine: "EM_386",
+        bits: 32,
+        byte_order: "little",
+      };
+    table.size = "0x20";
+    table.entry_size = problem.includes("undersized") ? "0xc" : "0x10";
+  }
   if (problem.includes("target")) {
     value.image_type = "ET_REL";
     value.entry_point.meaning = "not-applicable";
@@ -411,6 +443,7 @@ it.each([
       "valid-section-target",
       "undefined-target",
       "inactive-target",
+      "elf32-symbol-entry",
     ].includes(problem),
   );
 });

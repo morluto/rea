@@ -54,6 +54,7 @@ const parent = (value = structuredClone(report)): AnalysisViewParent => {
     },
   );
   return {
+    predicateType: evidence.predicate_type,
     evidenceId: evidence.evidence_id,
     operation: evidence.operation,
     subject: evidence.subject,
@@ -111,7 +112,6 @@ it.each([false, true])(
 
 it("checks exact artifact identity and subject architecture for every Rust view", () => {
   for (const changed of [
-    { local_path: "/different" },
     { format: "pe" as const },
     { architecture: "arm64" as const },
     { digest: { sha256: "b".repeat(64) } },

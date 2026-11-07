@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveTreePath } from "../../domain/apple/dyldPaths.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import {
   dylibResolutionInputSchema,
   dylibResolutionResultSchema,
@@ -30,6 +31,7 @@ import { ArtifactResourceScope } from "../ArtifactResourceScope.js";
 import { assertArtifactReadActive } from "../ArtifactFileOperation.js";
 
 const OPERATION = "trace_dylib_resolution";
+const WINDOWS = process.platform === "win32";
 /** Concurrent four-byte magic reads while enumerating bundle roots. */
 const MAGIC_READ_CONCURRENCY = 8;
 
@@ -71,12 +73,7 @@ class FilesystemTreeView implements DylibTreeView {
   image(path: string): Promise<MachoImageFacts> {
     const cached = this.#images.get(path);
     if (cached !== undefined) return cached;
-    const pending = this.files
-      .image(join(this.root, path))
-      .then(({ facts, identity }) => {
-        this.#identities.set(path, identity);
-        return facts;
-      });
+    const pending = this.#readImage(path);
     this.#images.set(path, pending);
     return pending;
   }
@@ -86,13 +83,49 @@ class FilesystemTreeView implements DylibTreeView {
     return this.#identities.get(path);
   }
 
+  /**
+   * Host path of a root-relative dyld path. The resolver passes only plain
+   * components, so a path that lands outside the root is a reader defect and
+   * is refused before any file is opened.
+   */
+  hostPath(path: string): string {
+    const absolute = join(this.root, path);
+    const inside = relative(this.root, absolute);
+    if (inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside))
+      throw new ArtifactReaderFailure(
+        "path",
+        `${path} maps outside the analyzed root`,
+      );
+    return absolute;
+  }
+
+  async #readImage(path: string): Promise<MachoImageFacts> {
+    const { facts, identity } = await this.files.image(this.hostPath(path));
+    this.#identities.set(path, identity);
+    return facts;
+  }
+
   async #readEntry(path: string): Promise<DylibTreeEntry | undefined> {
     assertArtifactReadActive(this.signal);
-    const absolute = join(this.root, path);
+    // A dyld path component is a POSIX name. Windows reads `\` as a separator
+    // and `:` as a stream delimiter, so no file in this tree has that name.
+    if (WINDOWS && /[\\:]/u.test(path)) return undefined;
+    const absolute = this.hostPath(path);
     try {
       const metadata = await lstat(absolute);
-      if (metadata.isSymbolicLink())
-        return { kind: "symlink", target: await readlink(absolute) };
+      if (metadata.isSymbolicLink()) {
+        const observed = observedSymlinkTarget(
+          await readlink(absolute, { encoding: "buffer" }),
+        );
+        if (observed.text === null)
+          return { kind: "symlink", target: null, targetHex: observed.hex };
+        const target = observed.text;
+        // Windows link text separates components with `\`.
+        return {
+          kind: "symlink",
+          target: WINDOWS ? target.replaceAll("\\", "/") : target,
+        };
+      }
       if (metadata.isDirectory()) return { kind: "directory" };
       return metadata.isFile() ? { kind: "file" } : undefined;
     } catch (cause: unknown) {
@@ -168,7 +201,7 @@ export const traceDylibResolution = async (options: {
       for (const { path } of trace.images)
         digests.set(
           path,
-          await files.sha256(join(root, path), view.identity(path)),
+          await files.sha256(view.hostPath(path), view.identity(path)),
         );
       const targetDigest =
         digests.get(target) ??
@@ -306,6 +339,11 @@ const requireMachoRoots = async (
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);
+    if (lookup.kind === "undetermined")
+      throw reject(
+        "path",
+        `Root ${path} crosses symlink ${lookup.path} with non-UTF-8 target bytes ${lookup.targetHex}`,
+      );
     if (lookup.kind !== "file")
       throw reject(
         "path",

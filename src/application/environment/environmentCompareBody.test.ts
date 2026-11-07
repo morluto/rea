@@ -10,18 +10,21 @@ import {
   environmentStateServeFixture,
 } from "../../../tests/fixtures/environmentServe.js";
 import { compareEnvironment } from "./environmentCompare.js";
+import { requestBody } from "./environmentCompareProbe.js";
+import { REPLAY_BODY_LIMIT_BYTES } from "./environmentSource.js";
 
 const responseCapture = (
   text: string,
   base64?: string,
   mimeType = "application/octet-stream",
+  status = 200,
 ): ReturnType<typeof analysisViewCaptureEvidence> => {
   const capture = environmentManifestCaptureFixture([
     {
       startedDateTime: "2026-10-17T18:00:00.000Z",
       request: { method: "GET", url: "http://app.example/api/blob" },
       response: {
-        status: 200,
+        status,
         content: {
           mimeType,
           text,
@@ -81,9 +84,85 @@ describe("environment comparison response representation", () => {
     ).toBe(true);
   });
 
+  it.each([
+    { representation: "binary", status: 200 },
+    { representation: "binary", status: 503 },
+    { representation: "text", status: 200 },
+    { representation: "text", status: 503 },
+  ] as const)(
+    "compares a retained $representation body beyond the replay limit by status only ($status)",
+    ({ representation, status }) => {
+      const recorded = responseCapture("different recorded body");
+      const text =
+        representation === "binary"
+          ? Buffer.alloc(REPLAY_BODY_LIMIT_BYTES + 8, 0xff).toString("base64")
+          : "é".repeat(REPLAY_BODY_LIMIT_BYTES / 2 + 4);
+      const probe = responseCapture(
+        text,
+        representation === "binary" ? text : undefined,
+        representation === "binary" ? "application/octet-stream" : "text/plain",
+        status,
+      );
+      const result = compare(recorded, probe);
+      const equal = status === 200;
+      expect(result.probes).toMatchObject([
+        {
+          steps: 1,
+          equal: equal ? 1 : 0,
+          normalised: { large_bodies: 1, unobserved_bodies: 0 },
+          results: [
+            {
+              live_status: status,
+              env_status: 200,
+              equal,
+              categories: equal ? [] : ["status"],
+              differences: equal
+                ? []
+                : [
+                    {
+                      category: "status",
+                      pointer: "",
+                      live: "503",
+                      env: "200",
+                    },
+                  ],
+            },
+          ],
+        },
+      ]);
+      expect(result.summary).toMatchObject({
+        steps: 1,
+        equal: equal ? 1 : 0,
+        categories: { status: equal ? 0 : 1, value: 0 },
+        normalised: { large_bodies: 1, unobserved_bodies: 0 },
+      });
+    },
+  );
+
   it("does not conflate a JSON string value with identical plain text", () => {
     const json = responseCapture('"hello"', undefined, "application/json");
     const text = responseCapture("hello");
     expect(compare(json, text).probes[0]?.results[0]?.equal).toBe(false);
   });
 });
+
+it.each([
+  { mimeType: " TEXT/PLAIN ; charset=utf-8", expected: { value: 1 } },
+  { mimeType: "application/problem+json", expected: { value: 1 } },
+  { mimeType: "text/problem+json", expected: '{"value":1}' },
+])(
+  "reads probe request arguments independently of body-size and parameter admission: $mimeType",
+  ({ mimeType, expected }) => {
+    const capture = environmentManifestCaptureFixture([
+      {
+        request: {
+          method: "POST",
+          url: "http://app.example/api/value",
+          bodySize: "not-a-size",
+          postData: { mimeType, text: '{"value":1}', params: 7 },
+        },
+      },
+    ]);
+    expect(requestBody(capture.records[0]!)).toEqual(expected);
+  },
+);

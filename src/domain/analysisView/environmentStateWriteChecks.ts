@@ -2,11 +2,14 @@ import { ServedOrder } from "./environmentStateWriteOrder.js";
 import type { JsonValue } from "../jsonValue.js";
 import { compositeKey } from "../unicodeCodePointOrder.js";
 import {
+  ownMember,
   at,
   decodedSegment,
+  deletedFlag,
   isObject,
   listItems,
   listsAll,
+  markedDeleted,
   missingRequiredFields,
   pathSegmentMatches,
   renderStateEntity,
@@ -29,6 +32,7 @@ import { singleQueryValues } from "../recordedTransportUrl.js";
 import type { ServedLine } from "./environmentStateCheckedLines.js";
 import { insertIndex } from "./environmentStateWriteExplain.js";
 import type { InsertRule } from "./environmentStateWriteRules.js";
+import { withoutMembers } from "./environmentStateResponseMembers.js";
 
 export const entityTarget = (type: string, collection: string, id: string) =>
   `e${compositeKey([type, collection, id])}`;
@@ -44,22 +48,37 @@ interface RemovedTarget {
 }
 
 /** The gate's copy of the state: entities in collection order and documents, changed by modelled writes. */
+/** A write since a list in collection order last showed its entity, with the values it replaced (`null` for a create). */
+export interface PendingWrite {
+  readonly target: string;
+  readonly before: JsonObject | null;
+}
+
 export class SimulatedState {
   readonly #entities = new Map<string, StateEntity>();
   readonly #collections = new Map<string, string[]>();
   readonly #documents = new Map<string, JsonValue>();
-  readonly #removed: RemovedTarget[] = [];
+  readonly #removed: StateEntity[] = [];
   readonly #served = new ServedOrder();
+  /** Each held id's targets, of any type. */
+  readonly #named = new Map<string, Set<string>>();
+  /** The order a type's collections keep their entities in, as its creates insert them. */
+  #sortOf: (type: string) => InsertRule | undefined = () => undefined;
+  /** The values each entity put since `track` replaced, `null` for one a put added. */
+  readonly #prior = new Map<string, JsonObject | null>();
 
   constructor(
     entities: readonly StateEntity[],
     documents: readonly StateDocument[],
   ) {
-    for (const entity of entities) this.put(entity);
+    for (const entity of entities) {
+      if (markedDeleted(entity.fields)) this.#removed.push(entity);
+      else this.put(entity);
+    }
     this.#served.reset(
-      entities.map(({ type, collection, id }) =>
-        entityTarget(type, collection, id),
-      ),
+      entities
+        .filter((entity) => !markedDeleted(entity.fields))
+        .map(({ type, collection, id }) => entityTarget(type, collection, id)),
     );
     for (const document of documents)
       this.#documents.set(document.tool, document.value);
@@ -85,16 +104,36 @@ export class SimulatedState {
       .filter((entity) => entity.type === type);
   }
 
+  /** The entities of any type held under an id. */
+  named(id: string): StateEntity[] {
+    return [...(this.#named.get(id) ?? [])].map((key) =>
+      this.#entities.get(key)!,
+    );
+  }
+
   knownCollections(type: string): readonly string[] {
     return this.#served.known(type);
   }
 
-  /** Replace an entity in place, or add it at `index` of its collection (the end when omitted). */
+  /** Keep each type's collections in the order its creates insert by, which a change to the field sorted by moves an entity in. */
+  keepSorted(sortOf: (type: string) => InsertRule | undefined): void {
+    this.#sortOf = sortOf;
+  }
+
+  /** Replace an entity, moving it when its collection is sorted by a field it changed, or add it at `index` of its collection (the end when omitted). */
   put(entity: StateEntity, index?: number): void {
     const key = entityTarget(entity.type, entity.collection, entity.id);
-    const known = this.#entities.has(key);
+    const held = this.#entities.get(key);
+    if (!this.#prior.has(key)) this.#prior.set(key, held?.fields ?? null);
     this.#entities.set(key, entity);
-    if (known) return;
+    if (held !== undefined) {
+      this.#resort(held, entity);
+      return;
+    }
+    this.#named.set(
+      entity.id,
+      (this.#named.get(entity.id) ?? new Set()).add(key),
+    );
     const collection = collectionTarget(entity.type, entity.collection);
     const order = this.#collections.get(collection) ?? [];
     const at = index ?? order.length;
@@ -104,9 +143,118 @@ export class SimulatedState {
     this.#served.remember(entity.type, entity.collection);
   }
 
+  /** Start recording the values the next puts replace. */
+  track(): void {
+    this.#prior.clear();
+  }
+
+  /** The values an entity held before its first put since `track`: `null` when that put added it, undefined when none did. */
+  priorFields(key: string): JsonObject | null | undefined {
+    return this.#prior.get(key);
+  }
+
+  /**
+   * A collection's entity keys in the order serving gives when each of `writes` moves its entity in turn by `rule`,
+   * against the others' values before their own writes, or a create inserts it; undefined when that misses an entity.
+   */
+  replayedOrder(
+    type: string,
+    collection: string,
+    rule: Extract<InsertRule, { rule: "sorted" }>,
+    writes: readonly PendingWrite[],
+  ): string[] | undefined {
+    const before =
+      this.#collections.get(collectionTarget(type, collection)) ?? [];
+    const held = new Set(before);
+    const ours = writes.filter((write) => held.has(write.target));
+    const first = new Map<string, JsonObject | null>();
+    for (const write of ours)
+      if (!first.has(write.target)) first.set(write.target, write.before);
+    const order = before
+      .filter((key) => first.get(key) !== null)
+      .map((key) => ({
+        key,
+        fields: first.get(key) ?? this.#entities.get(key)!.fields,
+      }));
+    for (const [index, { target: key, before: prior }] of ours.entries()) {
+      const fields =
+        ours.slice(index + 1).find((later) => later.target === key)?.before ??
+        this.#entities.get(key)!.fields;
+      const at = order.findIndex((member) => member.key === key);
+      if ((prior === null) !== at < 0) continue;
+      if (at >= 0) order.splice(at, 1);
+      const moved =
+        prior === null ||
+        !same(ownMember(prior, rule.field), ownMember(fields, rule.field));
+      order.splice(
+        moved
+          ? insertIndex(
+              rule,
+              order.map((member) => member.fields),
+              fields,
+            )
+          : at,
+        0,
+        { key, fields },
+      );
+    }
+    return order.length === before.length
+      ? order.map((member) => member.key)
+      : undefined;
+  }
+
+  /** Put a collection's entities in the order `replayedOrder` gives, returning the order they had. */
+  replay(
+    type: string,
+    collection: string,
+    rule: Extract<InsertRule, { rule: "sorted" }>,
+    writes: readonly PendingWrite[],
+  ): string[] {
+    const before =
+      this.#collections.get(collectionTarget(type, collection)) ?? [];
+    const order = this.replayedOrder(type, collection, rule, writes);
+    if (order !== undefined) this.restore(type, collection, order);
+    return before;
+  }
+
+  /** Put a collection's entities back in an order `replay` returned. */
+  restore(type: string, collection: string, keys: readonly string[]): void {
+    this.#served.arrange(keys);
+    this.#collections.set(collectionTarget(type, collection), [...keys]);
+  }
+
+  /** Move an entity whose sorted field changed to where its collection's order now puts it. */
+  #resort(before: StateEntity, after: StateEntity): void {
+    const rule = this.#sortOf(after.type);
+    if (
+      rule?.rule !== "sorted" ||
+      same(
+        ownMember(before.fields, rule.field),
+        ownMember(after.fields, rule.field),
+      )
+    )
+      return;
+    const key = entityTarget(after.type, after.collection, after.id);
+    const collection = collectionTarget(after.type, after.collection);
+    const others = (this.#collections.get(collection) ?? []).filter(
+      (member) => member !== key,
+    );
+    if (others.length === 0) return;
+    const at = insertIndex(
+      rule,
+      others.map((member) => this.#entities.get(member)!.fields),
+      after.fields,
+    );
+    this.#served.remove(key);
+    this.#served.place(key, others, at);
+    others.splice(at, 0, key);
+    this.#collections.set(collection, others);
+  }
+
   remove(entity: StateEntity): void {
     const key = entityTarget(entity.type, entity.collection, entity.id);
     this.#entities.delete(key);
+    this.#named.get(entity.id)?.delete(key);
     this.#served.remove(key);
     const collection = collectionTarget(entity.type, entity.collection);
     const order = this.#collections.get(collection) ?? [];
@@ -121,11 +269,20 @@ export class SimulatedState {
         target.id === entity.id,
     );
     if (index >= 0) this.#removed.splice(index, 1);
-    this.#removed.push({
-      type: entity.type,
-      collection: entity.collection,
-      id: entity.id,
-    });
+    this.#removed.push(entity);
+  }
+
+  deleted(
+    type: string,
+    collection: string,
+    id: string,
+  ): StateEntity | undefined {
+    return this.#removed.find(
+      (entity) =>
+        entity.type === type &&
+        entity.collection === collection &&
+        entity.id === id,
+    );
   }
 
   /** Removed targets of this type the state does not hold again. */
@@ -240,12 +397,13 @@ const matchingTarget = (
     readonly ids: readonly string[];
     readonly written: string;
   },
-  collections: readonly string[],
+  /** Called only when the path's own collection holds none of its ids, since listing walks the type's entities. */
+  collections: () => readonly string[],
   held: (collection: string, id: string) => boolean,
 ): { readonly collection: string; readonly id: string } | undefined => {
   for (const id of path.ids)
     if (held(path.written, id)) return { collection: path.written, id };
-  const ranked = [...new Set(collections)]
+  const ranked = [...new Set(collections())]
     .flatMap((collection) => {
       const verbatim = segmentMatch(segmentsOf(collection), path.read);
       return verbatim === undefined ? [] : [{ collection, verbatim }];
@@ -269,21 +427,41 @@ export const itemTarget = (
 ): { readonly collection: string; readonly id: string } => {
   const read = segmentsOf(record.path);
   const raw = read.pop() ?? "";
-  const path = {
+  return targetFrom(state, type, {
     read,
     ids: [...new Set([decodedSegment(raw), raw])],
     written: `/${read.join("/")}`,
-  };
+  });
+};
+
+/** A JSON body's identity is literal, independent of URL escaping or path-segment syntax. */
+export const bodyTarget = (
+  state: SimulatedState,
+  type: string,
+  read: readonly string[],
+  id: string,
+): { readonly collection: string; readonly id: string } =>
+  targetFrom(state, type, { read, ids: [id], written: `/${read.join("/")}` });
+
+const targetFrom = (
+  state: SimulatedState,
+  type: string,
+  path: {
+    readonly read: readonly string[];
+    readonly ids: readonly string[];
+    readonly written: string;
+  },
+): { readonly collection: string; readonly id: string } => {
   const removed = state.removedTargets(type);
   return (
     matchingTarget(
       path,
-      state.ofType(type).map((entity) => entity.collection),
+      () => state.ofType(type).map((entity) => entity.collection),
       (collection, id) => state.entity(type, collection, id) !== undefined,
     ) ??
     matchingTarget(
       path,
-      removed.map((target) => target.collection),
+      () => removed.map((target) => target.collection),
       (collection, id) =>
         removed.some(
           (target) => target.collection === collection && target.id === id,
@@ -332,6 +510,20 @@ export const checkItemRead = (
     return check.body === undefined || entity === undefined
       ? undefined
       : { pass: false, targets, unheld: [] };
+  // Serving keeps a removed entity's fields and changes only the soft-delete flag.
+  const flag = deletedFlag(object);
+  if (flag !== undefined) {
+    const removed = state.deleted(view.type, collection, id);
+    if (entity !== undefined) return { pass: false, targets, unheld: [] };
+    if (removed === undefined) return { pass: true, targets, unheld: [] };
+    const deleted = { ...removed, fields: { ...removed.fields, [flag]: true } };
+    const shown = renderStateEntity(deleted, view, check.volatile, object);
+    return {
+      pass: same(replaceAt(check.base, view.pointer, shown), check.body),
+      targets,
+      unheld: [],
+    };
+  }
   if (entity === undefined) return { pass: false, targets, unheld: targets };
   // Serving refuses an entity lacking a field every recording carried, so no read can confirm one.
   if (missingRequiredFields(entity, view, check.volatile).length > 0)
@@ -372,7 +564,10 @@ const listCheck = (
   )
     return { pass: false };
   const observed = new Map(
-    check.items.map((item) => [scalarText(item[check.idField]) ?? "", item]),
+    check.items.map((item) => [
+      scalarText(ownMember(item, check.idField)) ?? "",
+      item,
+    ]),
   );
   const rendered = members.map((entity) =>
     renderStateEntity(entity, view, check.volatile, observed.get(entity.id)),
@@ -414,7 +609,7 @@ const listedTargets = (
   const targets: string[] = [];
   const unheld: string[] = [];
   const ids = [...check.baseItems, ...check.items].map(
-    (item) => scalarText(item[check.idField]) ?? "",
+    (item) => scalarText(ownMember(item, check.idField)) ?? "",
   );
   for (const id of new Set(ids))
     (state.entity(view.type, check.collection, id) === undefined
@@ -489,7 +684,7 @@ const checkAllList = (
       ),
     ],
     unheld: check.items
-      .map((item) => scalarText(item[check.idField]) ?? "")
+      .map((item) => scalarText(ownMember(item, check.idField)) ?? "")
       .filter((id) => !held.has(id))
       .map((id) => entityTarget(view.type, collection, id)),
   };
@@ -502,7 +697,8 @@ const checkRecordedList = (
   check: ListBodies,
 ): CheckOutcome => {
   const { collection } = check;
-  const idOf = (item: JsonObject) => scalarText(item[check.idField]) ?? "";
+  const idOf = (item: JsonObject) =>
+    scalarText(ownMember(item, check.idField)) ?? "";
   const members = check.baseItems.flatMap((item) => {
     const entity = state.entity(view.type, collection, idOf(item));
     return entity === undefined ? [] : [entity];
@@ -581,16 +777,17 @@ export const checkListRead = (
 /** A document read on its checked line must equal the held document. */
 export const checkDocumentRead = (
   state: SimulatedState,
-  tool: string,
+  view: Extract<StateView, { shape: "document" }>,
   record: StateRecordFacts,
   body: JsonValue | undefined,
 ): CheckOutcome | undefined => {
   if (!succeeded(record)) return undefined;
-  const value = state.document(tool);
+  const value = state.document(view.tool);
   if (body === undefined || value === undefined) return undefined;
+  const minted = view.per_response_members;
   return {
-    pass: same(value, body),
-    targets: [documentTarget(tool)],
+    pass: same(withoutMembers(value, minted), withoutMembers(body, minted)),
+    targets: [documentTarget(view.tool)],
     unheld: [],
   };
 };

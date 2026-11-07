@@ -34,9 +34,16 @@ const generic = <Code extends string>(code: Code) =>
     .object({ code: z.literal(code), ...common, details: genericDetails })
     .strict();
 
+/** The canonical invalid-input projection, also used for facet-local refusals. */
+export const analysisInputErrorProjectionSchema = generic("invalid_request");
+/** The canonical resource refusal, including its reported limits and recovery. */
+export const analysisResourceErrorProjectionSchema = generic(
+  "resource_constraint",
+);
+
 /** Stable discriminated schema shared by every CLI and MCP error surface. */
 export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
-  generic("invalid_request"),
+  analysisInputErrorProjectionSchema,
   generic("access_denied"),
   generic("artifact_changed"),
   generic("unreadable_output"),
@@ -44,29 +51,45 @@ export const analysisErrorProjectionSchema = z.discriminatedUnion("code", [
   generic("unsupported_target"),
   generic("provider_unavailable"),
   generic("provider_timeout"),
-  generic("resource_constraint"),
+  analysisResourceErrorProjectionSchema,
   generic("cancelled"),
   z
     .object({
       code: z.literal("artifact_integrity_mismatch"),
       ...common,
       details: z.union([
-        z.strictObject({
-          logical_path: z.string(),
-          declared_sha256: z.string().nullable(),
-          calculated_sha256: z.string().nullable(),
-          unpacked: z.boolean(),
-        }),
-        z.strictObject({
-          logical_path: z.string(),
-          algorithm: z.literal("md5"),
-          declared_md5: z.string().regex(/^[a-f0-9]{32}$/u),
-          calculated_md5: z
-            .string()
-            .regex(/^[a-f0-9]{32}$/u)
-            .nullable(),
-          unpacked: z.boolean(),
-        }),
+        z
+          .object({
+            logical_path: z.string(),
+            declared_sha256: z.string().nullable(),
+            calculated_sha256: z.string().nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
+        z
+          .object({
+            logical_path: z.string(),
+            algorithm: z.literal("md5"),
+            declared_md5: z.string().regex(/^[a-f0-9]{32}$/u),
+            calculated_md5: z
+              .string()
+              .regex(/^[a-f0-9]{32}$/u)
+              .nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
+        z
+          .object({
+            logical_path: z.string(),
+            algorithm: z.literal("dfu-crc32"),
+            declared_crc32: z.string().regex(/^[a-f0-9]{8}$/u),
+            calculated_crc32: z
+              .string()
+              .regex(/^[a-f0-9]{8}$/u)
+              .nullable(),
+            unpacked: z.boolean(),
+          })
+          .catchall(jsonValueSchema),
       ]),
     })
     .strict(),

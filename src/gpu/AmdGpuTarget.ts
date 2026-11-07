@@ -78,10 +78,13 @@ const ELF_PROCESSORS: Readonly<Record<number, string>> = {
   0xeb: "gfx1250-strict",
 };
 
+export interface AmdGpuTargetIdentity {
+  readonly key: string;
+  readonly processor: string;
+}
+
 /** Retain exact target spelling separately from its canonical processor identity. */
-export const parseAmdGpuTargetId = (
-  value: string,
-): { readonly key: string; readonly processor: string } | null => {
+const parseAmdGpuTargetId = (value: string): AmdGpuTargetIdentity | null => {
   const match = targetId.exec(value);
   return match?.[1] === undefined
     ? null
@@ -92,18 +95,18 @@ export const parseAmdGpuTargetId = (
 export const isAmdGpuBundleId = (name: string): boolean =>
   bundleTriple.test(name);
 
-export const readAmdGpuBundleTarget = (name: string): string | null => {
+export const readAmdGpuBundleTarget = (
+  name: string,
+): AmdGpuTargetIdentity | null => {
   if (!isAmdGpuBundleId(name)) return null;
   const target = bundleTarget.exec(name)?.[1];
-  return target === undefined
-    ? null
-    : (parseAmdGpuTargetId(target)?.key ?? null);
+  return target === undefined ? null : parseAmdGpuTargetId(target);
 };
 
 /** Preserve the full target ID separately from its processor identity. */
 export const readAmdGpuNoteTarget = (
   target: string,
-): { readonly key: string; readonly processor: string } | null => {
+): AmdGpuTargetIdentity | null => {
   const value = noteTarget.exec(target)?.[1];
   return value === undefined ? null : parseAmdGpuTargetId(value);
 };

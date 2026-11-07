@@ -13,7 +13,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "package.json": JSON.stringify({ main: "main.mjs", type: "module" }),
       "main.mjs": `
         import {BrowserWindow as Win} from 'electron';
-        import {fileURLToPath} from 'node:url';
+        import {fileURLToPath, URL as NativeConstructor} from 'node:url';
         class URL {constructor(input, base) {return new globalThis.URL('./actual.js', base);}}
         const cache = {loadFile(value) {return value;}};
         cache.loadFile('data.json');
@@ -22,11 +22,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         globalThis.localStorage.setItem('real', 'value');
         const unrelated = {preload: './decoy.js'};
         new Win({webPreferences:{preload:fileURLToPath(new URL('./decoy.js', import.meta.url))}});
+        new Win({webPreferences:{preload:fileURLToPath(new NativeConstructor('./native.js', import.meta.url))}});
         new Win({webPreferences:{preload:'./preload.js'}}).loadFile('index.html');
       `,
       "actual.js": "export {};",
       "decoy.js": "export {};",
       "preload.js": "export {};",
+      "native.js": "export {};",
       "data.json": "{}",
       "index.html": "<!doctype html><title>Fixture</title>",
     });
@@ -39,7 +41,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       roles.flatMap(({ observations }) =>
         observations.map(({ properties }) => properties.resolved_path),
       ),
-    ).toEqual(expect.arrayContaining(["preload.js", "index.html"]));
+    ).toEqual(
+      expect.arrayContaining(["preload.js", "native.js", "index.html"]),
+    );
     expect(
       roles.flatMap(({ observations }) =>
         observations.map(({ properties }) => properties.resolved_path),

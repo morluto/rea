@@ -54,6 +54,7 @@ const ENUM = 18;
 const MODULE = 0;
 const EXTENSION = 1;
 const ANONYMOUS = 2;
+const PROTOCOL = 3;
 const GENERIC = 0x80;
 const CLASS_IS_ACTOR = 0x80;
 /** Swift nesting is shallow; a longer chain is malformed or cyclic. */
@@ -102,15 +103,20 @@ export const createSwiftContextReader = (
   const contexts = new Map<bigint, SwiftContextFacts>();
   const names = new Map<bigint, string>();
 
-  const typeName = (descriptor: bigint): string => {
+  const namedContext = (
+    descriptor: bigint,
+    field: "typeName" | "protocolName",
+  ): string => {
     const known = names.get(descriptor);
     if (known !== undefined) return known;
-    const value = read.relative(descriptor + 8n, "typeName");
+    const value = read.relative(descriptor + 8n, field);
     if (value.kind !== "target")
-      throw new RangeError(unresolvedSwiftRelativeReason(value, "typeName"));
+      throw new RangeError(unresolvedSwiftRelativeReason(value, field));
     const name = read.string(value.target);
     if (name.length === 0)
-      throw new RangeError("Swift type descriptor name is empty");
+      throw new RangeError(
+        `Swift ${field === "protocolName" ? "protocol" : "type"} descriptor name is empty`,
+      );
     names.set(descriptor, name);
     return name;
   };
@@ -168,10 +174,14 @@ export const createSwiftContextReader = (
               walkLimited: false,
             };
       }
+      case PROTOCOL:
       case CLASS:
       case STRUCT:
       case ENUM: {
-        const name = typeName(context);
+        const name = namedContext(
+          context,
+          kind === PROTOCOL ? "protocolName" : "typeName",
+        );
         const parent = parentOf(context, walk);
         return child(parent, {
           path:
@@ -220,7 +230,9 @@ export const createSwiftContextReader = (
   };
 
   return {
-    typeName,
+    typeName: (descriptor: bigint) => namedContext(descriptor, "typeName"),
+    protocolName: (descriptor: bigint) =>
+      namedContext(descriptor, "protocolName"),
     contextOf: (descriptor: bigint) => contextOf(descriptor, 0),
   };
 };

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { runInNewContext } from "node:vm";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
@@ -178,6 +179,128 @@ describe("Electron identity through Webpack externals", () => {
     ],
   ])("keeps %s unresolved", (_name, source) => {
     expectUnresolved(source);
+  });
+});
+
+describe("Webpack loader alias bounds", () => {
+  const getterSource = (initializers: readonly string[], selection = "") =>
+    bootstrap(
+      EXTERNAL,
+      'const s=n.n(n(45840));new(s().BrowserWindow)({});s().ipcMain.handle("ready",()=>{});',
+      `let box={};${initializers.map((value) => `if(flag)box=${value};`).join("")}${selection}box.n=()=>0;n(100);`,
+    );
+
+  it.each([false, true])(
+    "preserves only proven Electron identity beside a large object union (loader=%s)",
+    (includesLoader) => {
+      const source = getterSource([
+        ...Array<string>(520).fill("{}"),
+        ...(includesLoader ? ["n"] : []),
+      ]);
+      const analysis = analyzeJavaScriptStaticSource(source);
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toHaveLength(
+        includesLoader ? 0 : 1,
+      );
+      expect(analysis.electron.ipc).toHaveLength(includesLoader ? 0 : 1);
+      if (!includesLoader)
+        expect(analysis.analysis_coverage).toMatchObject({
+          examination: {
+            semantic_resource_limits: expect.not.arrayContaining([
+              "alias-selections",
+            ]),
+          },
+        });
+    },
+  );
+
+  it.each(
+    [1, 520].flatMap((count) =>
+      [
+        "flag?n:{}",
+        "flag&&n",
+        "flag||n",
+        "(0,n)",
+        "getLoader()",
+        "new GetLoader()",
+        "holder.loader",
+        "unresolvedLoader",
+      ].map((value) => ({ count, value })),
+    ),
+  )(
+    "keeps $count possible loader values through $value unknown",
+    ({ count, value }) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(count).fill(value)),
+      );
+      expect(analysis.parse_error_count).toBe(0);
+      expect(analysis.electron.browser_windows).toEqual([]);
+      expect(analysis.electron.ipc).toEqual([]);
+    },
+  );
+
+  it.each(["[]", "()=>0", "class {}", "0", "'text'"])(
+    "retains the getter when terminal origins are %s",
+    (value) => {
+      const analysis = analyzeJavaScriptStaticSource(
+        getterSource(Array<string>(520).fill(value)),
+      );
+      expect(analysis.electron.browser_windows).toHaveLength(1);
+      expect(analysis.electron.ipc).toHaveLength(1);
+    },
+  );
+
+  it.each([1, 520])("keeps %s projected loader writes unknown", (count) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      getterSource([], "if(flag)({slot:box}={slot:n});".repeat(count)),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.electron.ipc).toEqual([]);
+  });
+
+  it.each(["conditional", "projected"])(
+    "observes no runtime window after a %s alias replaces the getter",
+    (kind) => {
+      let windows = 0;
+      const source =
+        kind === "conditional"
+          ? getterSource(Array<string>(520).fill("flag?n:{}"))
+          : getterSource([], "if(flag)({slot:box}={slot:n});");
+      expect(() =>
+        runInNewContext(source, {
+          flag: true,
+          require: () => ({
+            BrowserWindow: class {
+              constructor() {
+                windows += 1;
+              }
+            },
+            ipcMain: { handle() {} },
+          }),
+        }),
+      ).toThrow(/is not a function/u);
+      expect(windows).toBe(0);
+    },
+  );
+
+  it("keeps a limited loader-alias walk unknown", () => {
+    const aliases = Array.from(
+      { length: 520 },
+      (_, index) => `const box${index + 1}=box${index};`,
+    ).join("");
+    const analysis = analyzeJavaScriptStaticSource(
+      bootstrap(
+        EXTERNAL,
+        "const s=n.n(n(45840));new(s().BrowserWindow)({});",
+        `const box0={};${aliases}box520.n=()=>0;n(100);`,
+      ),
+    );
+    expect(analysis.electron.browser_windows).toEqual([]);
+    expect(analysis.analysis_coverage).toMatchObject({
+      examination: {
+        semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+      },
+    });
   });
 });
 
@@ -430,4 +553,70 @@ describe("Webpack externals through the loader's completion paths", () => {
       { preload_path: "./preload.js" },
     ]);
   });
+});
+
+describe("Webpack identity through erased TypeScript syntax", () => {
+  it.each([
+    [
+      "the module table",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "interface RuntimeShape { m(): void } n(100);",
+      ),
+    ],
+    [
+      "the fresh module object",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "interface ModuleShape { o(): void } return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the module table through a type query",
+      bootstrap(EXTERNAL, CONSUMER, "type RuntimeShape = typeof m; n(100);"),
+    ],
+    [
+      "the fresh module object through a type query",
+      bootstrap(EXTERNAL, CONSUMER).replace(
+        "return m[t](o,o.exports,n)",
+        "type ModuleShape = typeof o; return m[t](o,o.exports,n)",
+      ),
+    ],
+    [
+      "the loader beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};interface RuntimeShape { n(): void } n(100);",
+      ),
+    ],
+    [
+      "the loader through a type query beside an uncalled installer",
+      bootstrap(
+        EXTERNAL,
+        CONSUMER,
+        "n.m=m;n.i=e=>{for(var k in e)n.m[k]=e[k]};type RuntimeShape = typeof n; n(100);",
+      ),
+    ],
+  ])("does not let erased TypeScript syntax escape %s", (_name, source) => {
+    const electron = electronOf(source);
+    expect(electron.browser_windows).toMatchObject([
+      { preload_path: "./preload.js" },
+    ]);
+    expect(electron.ipc).toMatchObject([
+      { channel: "get-connections", side: "main" },
+    ]);
+  });
+
+  it.each([
+    "const shape = { [m]: true }; n(100);",
+    "const kind = typeof m; n(100);",
+    "m.extra; n(100);",
+  ])(
+    "keeps an actual table reference outside the loader unproven: %s",
+    (entry) => {
+      expectUnresolved(bootstrap(EXTERNAL, CONSUMER, entry));
+    },
+  );
 });

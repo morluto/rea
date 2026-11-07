@@ -1,7 +1,10 @@
 import { fitJavaScriptRouteSourceFacts } from "../../domain/javascript/javascriptRouteResultBudget.js";
 import { jsonValueByteLength } from "../../domain/jsonValueByteLength.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
-import type { JavaScriptSemanticProjectionCapacity } from "../../domain/javascript/javascriptSemanticFileProjection.js";
+import type {
+  JavaScriptSemanticProjectionCapacity,
+  JavaScriptSemanticFileProjection,
+} from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,9 +16,9 @@ import {
 import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
 import { javaScriptRuntime } from "../../domain/runtimeVersion.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
-import type { JavaScriptSemanticFileProjection } from "../../domain/javascript/javascriptSemanticFileProjection.js";
 import {
   javaScriptTransferByteBudget,
   writeJavaScriptAnalysisTransfer,
@@ -41,6 +44,8 @@ export interface JavaScriptSourceWorkerAnalyzer {
       ) => Promise<void>;
       readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
     },
+    packageType: JavaScriptPackageType,
+    purpose: "analysis" | "preload-discovery",
   ): Promise<{
     readonly module: JavaScriptModuleSemanticIr;
     readonly projection: JavaScriptSemanticFileProjection;
@@ -184,6 +189,8 @@ const analyzeJob = async (
           return resultBudgetBytes;
         },
       },
+      request.package_type,
+      request.purpose,
     );
     await send({ kind: "phase", id: request.id, phase: "transfer" });
     const descriptor =

@@ -3,6 +3,12 @@ import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { ensureGeneratedFile } from "./lib/generated-file.mjs";
+import { importVerifierSource } from "./lib/verifier-source-loader.mjs";
+
+const { addSkillManifestToolCount } = await importVerifierSource(
+  new URL("../src/domain/skillManifest.ts", import.meta.url).href,
+  import.meta.url,
+);
 
 const arguments_ = new Set(process.argv.slice(2));
 for (const argument of arguments_)
@@ -23,22 +29,15 @@ const { FULL_CATALOG_IDENTITY } = await import(
 const { PRODUCT_IDENTITY } = await import(
   `${pathToFileURL(join(root, "dist/identity.js")).href}?${cacheBust}`
 );
-if (/^\s{2}(?:tool_count|catalog_digest):/mu.test(current))
-  throw new Error(
-    "Catalog metadata belongs in the generated skill, not the authored source",
-  );
-const versionLine = /^ {2}version: "[^"\r\n]+"$/mu;
-if (!versionLine.test(current))
-  throw new Error("Missing authored skill version");
 // A shipped skill must run the version it ships with, not whatever `@latest` resolves to.
 const latestSpecifier = PRODUCT_IDENTITY.packageSpecifier;
 const pinnedSpecifier = PRODUCT_IDENTITY.registrationPackageSpecifier;
-const source = current
-  .replace(
-    versionLine,
-    `$&\n  tool_count: ${String(FULL_CATALOG_IDENTITY.counts.mcp_tools)}`,
-  )
-  .replaceAll(latestSpecifier, pinnedSpecifier);
+const generated = addSkillManifestToolCount(
+  current,
+  FULL_CATALOG_IDENTITY.counts.mcp_tools,
+);
+if (!generated.ok) throw generated.error;
+const source = generated.value.replaceAll(latestSpecifier, pinnedSpecifier);
 const paths = await filePaths(sourceRoot);
 // Rebuild this owned output directory so removed references cannot survive a build.
 if (!check) await rm(outputRoot, { recursive: true, force: true });

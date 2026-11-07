@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { javascriptRecoveryInputSchema } from "../domain/javascript/javascriptRecovery.js";
 import { z } from "incur";
 import { JavaScriptRecoveryService } from "../application/javascript/JavaScriptRecoveryService.js";
@@ -29,10 +30,16 @@ export const registerJavaScriptRecoveryCommands = (
       additionalPath: javascriptRecoveryInputSchema.shape.additional_paths,
       extractionMode: javascriptRecoveryInputSchema.shape.extraction_mode
         .removeDefault()
-        .optional(),
+        .optional()
+        .describe(
+          javascriptRecoveryInputSchema.shape.extraction_mode.description!,
+        ),
       rewriteLevel: javascriptRecoveryInputSchema.shape.rewrite_level
         .removeDefault()
-        .optional(),
+        .optional()
+        .describe(
+          javascriptRecoveryInputSchema.shape.rewrite_level.description!,
+        ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -59,7 +66,7 @@ export const registerJavaScriptRecoveryCommands = (
             "wakaru",
             "recover_javascript_sources",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

@@ -8,12 +8,13 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
-import { cliIntegerArgument } from "./options.js";
+import { cliDecimalField, cliIntegerArgument } from "./options.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import {
   analysisEvidenceDeliveryOptions,
   deliverCliAnalysisEvidence,
 } from "./analysisEvidenceDelivery.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { explicitSensitiveValueOptions } from "./explicitSensitiveArguments.js";
 
@@ -27,7 +28,7 @@ export const registerWebNetworkCaptureCommands = (
     description:
       "Inspect retained HAR, native mitmproxy, Fiddler SAZ or aioquic qlog records without fetching recorded URLs",
     args: z.object({
-      capturePath: z.string().describe("Absolute local capture path"),
+      capturePath: localPathStringSchema.describe("Local capture path"),
       format: z
         .enum(WEB_NETWORK_CAPTURE_FORMATS)
         .describe("Producer capture format"),
@@ -42,10 +43,9 @@ export const registerWebNetworkCaptureCommands = (
         .array(z.string())
         .optional()
         .describe("Exact body pointers; repeat to select several"),
-      protobufSchema: z
-        .string()
+      protobufSchema: localPathStringSchema
         .optional()
-        .describe("Absolute local compiled FileDescriptorSet path"),
+        .describe("Local compiled FileDescriptorSet path"),
       protobufMessage: z
         .string()
         .optional()
@@ -55,8 +55,10 @@ export const registerWebNetworkCaptureCommands = (
         .optional()
         .describe("Zero-based producer ordinals; repeat to select several"),
       ...explicitSensitiveValueOptions,
-      captureTimeoutMs:
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 ms.
+      captureTimeoutMs: cliDecimalField(
         inspectWebNetworkCaptureInputSchema.shape.capture_timeout_ms,
+      ),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -116,6 +118,7 @@ export const registerWebNetworkCaptureCommands = (
               signal,
               detail: options.detail,
               evidenceOutput: options.evidence_output,
+              sensitiveValues: options.sensitiveValue ?? [],
             });
           },
         ),

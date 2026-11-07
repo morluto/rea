@@ -1,3 +1,4 @@
+import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
@@ -7,7 +8,7 @@ import { createSingleEntryZip } from "../../fixtures/zipNames.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 
 cliTest.skipIf(process.platform === "win32")(
-  "retains the selected archive alias independently of its canonical subject",
+  "retains the selected archive alias without changing inventory identity",
   async ({ cli }) => {
     const root = await createTestTempDirectory("rea-artifact-selected-alias-");
     const target = join(root, "program.zip");
@@ -27,8 +28,28 @@ cliTest.skipIf(process.platform === "win32")(
     const observed = parseEvidence(selected.json);
     const direct = parseEvidence(control.json);
     expect(observed.parameters).toMatchObject({ input_path: alias });
-    expect(observed.subject).toEqual(direct.subject);
-    expect(observed.normalized_result).toEqual(direct.normalized_result);
+    expect(observed.subject?.local_path).toBe(join(root, alias));
+    expect(direct.subject?.local_path).toBe(target);
+    expect(observed.subject?.digest.sha256).toBe(direct.subject?.digest.sha256);
+    const selectedInspection = artifactInspectionResultSchema.parse(
+      observed.normalized_result,
+    );
+    const directInspection = artifactInspectionResultSchema.parse(
+      direct.normalized_result,
+    );
+    expect(selectedInspection.subject).toEqual(directInspection.subject);
+    const selectedInventory = selectedInspection.substeps.find(
+      ({ operation }) => operation === "inventory_artifact",
+    )?.evidence;
+    const directInventory = directInspection.substeps.find(
+      ({ operation }) => operation === "inventory_artifact",
+    )?.evidence;
+    if (selectedInventory === undefined || directInventory === undefined)
+      throw new Error("Missing nested inventory Evidence");
+    expect(selectedInventory.subject?.local_path).toBe(join(root, alias));
+    expect(selectedInventory.normalized_result).toEqual(
+      directInventory.normalized_result,
+    );
   },
 );
 
@@ -62,7 +83,7 @@ cliTest(
         action: "Evidence file already exists. Choose another output path.",
       },
     });
-    expect(await readFile(output)).toEqual(before);
+    expect(Buffer.compare(await readFile(output), before)).toBe(0);
     const next = await cli.run({
       arguments: [
         "inspect-artifact",

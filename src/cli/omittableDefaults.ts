@@ -40,9 +40,10 @@ const withOmittableDefaults = (schema: z.ZodObject): z.ZodObject => {
   );
 };
 
-/** Zod accepts an omitted value (`optin`) but always produces one (`optout`). */
+/** Let the object parser decide omission; Incur advertises required outputs. */
 const fillsOmission = (field: z.ZodType): boolean =>
-  field._zod.optin === "optional" && field._zod.optout === undefined;
+  field._zod.optout === undefined &&
+  z.object({ value: field }).safeParse({}).success;
 
 const optionalWithMetadata = (field: z.ZodType): z.ZodType => {
   const metadata = field.meta();

@@ -1,13 +1,13 @@
 import { objcClassSymbol } from "./objcClassSymbol.js";
 import type { JsonValue } from "./jsonValue.js";
-import type { AddressedName } from "./hopperValues.js";
+import type { AddressedName } from "./native/nativeInventory.js";
 import type {
   MachoImportBinding,
-  ObjcClassImportBindingCoverage,
+  ObjcClassDiscoveryCoverage,
 } from "./native/objcSwiftMetadata.js";
 import {
   classifySwiftSymbol,
-  isSwiftMangledSymbolName,
+  isSwiftSymbolName,
   type SwiftTypeCategory,
 } from "./swiftSymbolClassification.js";
 
@@ -19,14 +19,6 @@ const LEGACY_OBJC_CLASS_PREFIX = "l_OBJC_CLASS_" as const;
  * share the substring but are uses, not definitions.
  */
 const OBJC_PROTOCOL_MARKER = "OBJC_PROTOCOL_$_" as const;
-
-export interface ObjcClassDiscoveryCoverage {
-  readonly status:
-    | ObjcClassImportBindingCoverage["status"]
-    | "unknown"
-    | "not_applicable";
-  readonly reason: string | null;
-}
 
 export interface ObjcClassImportBindingScan {
   readonly bindings: readonly MachoImportBinding[];
@@ -54,16 +46,7 @@ export const selectObjcClassCandidates = (
 /** Project selected class labels, coalescing only exact proven import identities. */
 export const projectObjcClassCandidates = (
   candidates: readonly AddressedName[],
-  bindingScan: ObjcClassImportBindingScan = {
-    bindings: [],
-    coverage: {
-      status: candidates.length === 0 ? "not_applicable" : "unknown",
-      reason:
-        candidates.length === 0
-          ? null
-          : "Exact class-import binding identity is unavailable.",
-    },
-  },
+  bindingScan: ObjcClassImportBindingScan,
 ): JsonValue => {
   const classes = coalesceBoundClassAliases(candidates, bindingScan.bindings);
   return {
@@ -76,17 +59,6 @@ export const projectObjcClassCandidates = (
   };
 };
 
-/** Select, then project Objective-C class labels for provider-neutral callers. */
-export const discoverObjcClasses = (
-  names: readonly AddressedName[],
-  pattern: string,
-  bindingScan?: ObjcClassImportBindingScan,
-): JsonValue =>
-  projectObjcClassCandidates(
-    selectObjcClassCandidates(names, pattern),
-    bindingScan,
-  );
-
 /** Select and deduplicate Objective-C and Swift protocol labels. */
 export const discoverObjcProtocols = (
   names: readonly AddressedName[],
@@ -95,7 +67,7 @@ export const discoverObjcProtocols = (
     names.filter(
       ({ name }) =>
         name.includes(OBJC_PROTOCOL_MARKER) ||
-        classifySwiftSymbol(name)?.category === "protocols",
+        classifySwiftSymbol(name)?.protocolIdentity === true,
     ),
   );
   return {
@@ -103,16 +75,6 @@ export const discoverObjcProtocols = (
     protocols: protocols.map(toJsonEntry),
   };
 };
-
-/**
- * A Swift symbol carries either a demangler mangling or a name the category
- * decoder already accepts, including visible runtime class names (`_Tt…`) and
- * the optional leading underscore of legacy encodings (`__T0…`). Whether the
- * nominal category can be decoded is a separate question, so it must not decide
- * whether the symbol is Swift at all.
- */
-const isSwiftSymbolName = (name: string): boolean =>
-  isSwiftMangledSymbolName(name) || classifySwiftSymbol(name) !== undefined;
 
 /** Categorize procedure names using Swift manglings at their exact addresses. */
 export const categorizeSwiftTypes = (

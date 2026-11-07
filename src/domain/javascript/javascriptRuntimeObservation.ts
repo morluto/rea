@@ -30,7 +30,7 @@ const observedJavaScriptRuntimeKindSchema = javascriptRuntimeKindSchema.or(
 /** Input for one passive attach-only V8 Inspector observation. */
 export const observeJavaScriptRuntimeInputSchema = z.strictObject({
   ...runtimeEndpoint,
-  target_id: z.string().trim().min(1),
+  target_id: z.string().min(1),
   runtime_kind: javascriptRuntimeKindSchema.optional(),
   observation_ms: z.int().min(0).default(100),
 });
