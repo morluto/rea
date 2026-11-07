@@ -12,7 +12,8 @@
     "tests/conformance/**/*.c",
     "tests/conformance/**/*.m",
     "tests/conformance/**/*.swift",
-    "tests/conformance/**/*.xib"
+    "tests/conformance/**/*.xib",
+    "studio/**"
   ],
   "gitignore": true,
   "minLines": 5,

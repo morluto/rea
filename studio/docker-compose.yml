@@ -1,0 +1,19 @@
+services:
+  reall:
+    build:
+      context: ..
+      dockerfile: studio/docker/Dockerfile
+    init: true
+    ports:
+      - "127.0.0.1:${REALL_PORT:-4317}:4317"
+    volumes:
+      - reall-state:/data/reall
+      # Set REALL_CODE_DIR to choose a host folder before starting Compose.
+      - ${REALL_CODE_DIR:-./generated}:/data/reall/projects
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    shm_size: 1gb
+    stop_grace_period: 30s
+
+volumes:
+  reall-state:
