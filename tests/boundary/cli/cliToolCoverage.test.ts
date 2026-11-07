@@ -96,6 +96,9 @@ const MCP_TOOLS_WITHOUT_DEDICATED_CLI = Object.freeze([
   "unload_frida_script",
   "frida_session_status",
   "close_frida_session",
+  // Offline file inspectors that this slice exposes only through MCP; a CLI
+  // subcommand is a separate, independently mergeable step.
+  "inspect_maven_pom",
   // Build computers are held by the long-lived MCP server between actions.
   "start_build_computer",
   "act_on_build_computer",

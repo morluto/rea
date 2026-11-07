@@ -576,6 +576,112 @@ that the response budget accounts for. It does not alter `content` or
 such as requiring approval for process-launching or device-mutating tools
 after target content was read.
 
+## Offline Maven POM declarations
+
+`inspect_maven_pom` inventories the declarations in one local `pom.xml`
+without an active target, Maven, or network access. It reports coordinates,
+dependencies, `dependencyManagement`, properties, profiles and declared
+repositories, and never fetches a parent POM, imported BOM, plugin or
+transitive dependency. `modelVersion` must be `4.0.0`; other project XML and
+other models are refused as unsupported input rather than read as a POM. Text
+is read as UTF-8 or as byte-order-marked UTF-16; a POM declared in any other
+encoding is reported as unsupported rather than parsed.
+
+Each declaration keeps its `source_pointer` and `line`. A dependency without a
+declared version reports `version_origin`: `declared` for a literal version,
+`managed` when this POM's `dependencyManagement` supplies it, `property` for a
+retained `${...}` reference, and `unresolved` when nothing read supplies it.
+Management matching uses Maven's own key, groupId/artifactId/type/classifier,
+so a managed plain JAR does not make a classified variant look managed.
+
+```
+inspect_maven_pom { "path": "/artifacts/service/pom.xml" }
+```
+
+A representative result, shortened to two dependencies:
+
+```json
+{
+  "format": "maven-pom",
+  "model_version": "4.0.0",
+  "project": {
+    "group_id": "com.example",
+    "artifact_id": "service",
+    "version": "0.1.0",
+    "packaging": null
+  },
+  "dependencies": [
+    {
+      "group_id": "org.slf4j",
+      "artifact_id": "slf4j-api",
+      "version": null,
+      "version_origin": {
+        "kind": "managed",
+        "managed_by": "dependencyManagement"
+      },
+      "declared_by": "dependencies",
+      "scope": "compile",
+      "optional": null,
+      "type": null,
+      "classifier": null,
+      "profile": null,
+      "source_pointer": "/project/dependencies[0]/dependency[0]"
+    },
+    {
+      "group_id": "org.junit.jupiter",
+      "artifact_id": "junit-jupiter",
+      "version": "${junit.version}",
+      "version_origin": { "kind": "property" },
+      "declared_by": "dependencies",
+      "scope": "test",
+      "optional": null,
+      "type": null,
+      "classifier": null,
+      "profile": null,
+      "source_pointer": "/project/dependencies[0]/dependency[1]"
+    }
+  ],
+  "property_references": [
+    {
+      "name": "junit.version",
+      "declared": "5.10.2",
+      "resolution": "resolved",
+      "resolved": "5.10.2",
+      "source_pointer": "/project/properties[0]/junit.version[0]"
+    }
+  ],
+  "summary": {
+    "dependencies": 2,
+    "dependency_management": 1,
+    "managed_dependencies": 1,
+    "profile_dependencies": 0,
+    "unresolved_versions": 1
+  },
+  "source_coverage": {
+    "parent_pom": "not-read",
+    "bom_imports": "not-resolved",
+    "transitive_dependencies": "not-resolved",
+    "profile_activation": "declarations-only"
+  }
+}
+```
+
+`property_references[].resolution` separates the ways a `${...}` value can fail
+here: `unresolved` means the property is not declared in this POM, `cycle` means
+the declarations depend on each other, and `work-limit` means the bounded
+substitution allowance ran out before either could be established, so a
+declared property can be wide rather than circular. Only `resolved` carries a
+substituted value. Profile declarations carry the profile's `id` in `profile`
+and are counted separately; activation conditions are reported but never
+evaluated. `source_coverage` states what was not read, so an incomplete
+inventory is visible instead of appearing complete.
+
+Limits: the file allowance and the accounted retained-facts allowance are each
+32 MiB. A POM whose declarations expand past the retained allowance fails with
+a resource constraint naming both sizes rather than returning a truncated
+inventory. A `<project>` document without a supported `modelVersion` is refused
+before parsing declarations.
+
 ## Offline API contract declarations
 
 `inspect_api_contract` reads local OpenAPI 3.0/3.1/3.2 JSON (default) or
