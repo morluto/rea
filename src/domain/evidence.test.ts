@@ -1122,3 +1122,16 @@ it("maps a sealed result and retains outside-root subject disclosure", () => {
     current.value.evidence_id,
   );
 });
+
+it("discloses an outside-root target even when no observation path is mapped", () => {
+  const evidence = createEvidence(
+    { path: "/outside/file", sha256: "a".repeat(64), format: "file" },
+    PROVIDER,
+    { operation: "inspect", parameters: {}, result: {} },
+    { logicalRoot: { root: "/tmp/redaction-root", allowOutsideRoot: true } },
+  );
+  expect(evidence.subject?.local_path).toBe("/outside/file");
+  expect(evidence.limitations).toContain(
+    "logical-root redaction incomplete; host-local path retained.",
+  );
+});
