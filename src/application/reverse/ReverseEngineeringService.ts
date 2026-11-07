@@ -55,6 +55,8 @@ import {
 } from "../../process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../process/ProcessAdmissionError.js";
 import type { ProviderProcessSupervisor } from "../../process/ProviderProcess.js";
+import { RuntimeControlUnavailableError } from "../../process/RuntimeControlUnavailableError.js";
+import { WindowsNativeAuthorityUnavailableError } from "../../windows/WindowsNativeLoader.js";
 import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import { parseAnalysisInput } from "../AnalysisInput.js";
 
@@ -753,6 +755,42 @@ export class ReverseEngineeringService {
           earlyFailure.bindCleanupDependencies([darwinFailure.cleanupFailure]);
         }
       }
+      const controlFailure = runtimeControlPreparationError(cause);
+      if (
+        earlyFailure === undefined &&
+        controlFailure !== undefined &&
+        code !== "ETIMEDOUT" &&
+        !commandCancelled(signal, cause, code)
+      ) {
+        const setting =
+          operation === "inspect_with_objdump"
+            ? "REA_OBJDUMP_COMMAND"
+            : "REA_RIZIN_COMMAND";
+        const remediation =
+          controlFailure.remediationAction === undefined
+            ? `${setting} does not need to change.`
+            : `${controlFailure.remediationAction} ${setting} does not need to change.`;
+        earlyFailure = new AnalysisCapabilityUnavailableError(
+          "process-ownership",
+          "prepare_owned_process",
+          controlFailure.message,
+          {
+            cause,
+            retryable: controlFailure.retryable,
+            userMessage: controlFailure.message,
+            remediationAction: remediation,
+            diagnostics: {
+              boundary: "process-ownership",
+              control_code: controlFailure.code,
+              ...(controlFailure instanceof
+              WindowsNativeAuthorityUnavailableError
+                ? { failure_stage: controlFailure.failureStage }
+                : {}),
+            },
+            ...ownedCleanupOptions(cause),
+          },
+        );
+      }
       if (
         earlyFailure === undefined &&
         (capture === undefined ||
@@ -1281,6 +1319,17 @@ const darwinPreparationError = (
     return darwinPreparationError(cause.cause);
   if (cause instanceof Error && "cause" in cause && cause.cause !== undefined)
     return darwinPreparationError(cause.cause);
+  return undefined;
+};
+
+const runtimeControlPreparationError = (
+  cause: unknown,
+): RuntimeControlUnavailableError | undefined => {
+  if (cause instanceof RuntimeControlUnavailableError) return cause;
+  if (cause instanceof OwnedOutputFailure)
+    return runtimeControlPreparationError(cause.cause);
+  if (cause instanceof OwnedCommandFailure && cause.reason === "process")
+    return runtimeControlPreparationError(cause.cause);
   return undefined;
 };
 

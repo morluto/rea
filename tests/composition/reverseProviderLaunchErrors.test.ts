@@ -15,6 +15,7 @@ import {
   systemProcessOwnershipHost,
 } from "../../src/process/ProcessOwnershipObservation.js";
 import { ProcessAdmissionError } from "../../src/process/ProcessAdmissionError.js";
+import { WindowsNativeAuthorityUnavailableError } from "../../src/windows/WindowsNativeLoader.js";
 import { AnalysisCapabilityUnavailableError } from "../../src/domain/analysisErrorCore.js";
 import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import {
@@ -1160,6 +1161,55 @@ it("ignores older launch failure when newer successful launch completes first an
     if (call1Promise !== undefined) {
       await call1Promise.catch(() => {});
     }
+    await service.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+it("keeps Windows native runner load and self-test failures out of command-launch state", async () => {
+  const { directory } = await createArtifact();
+  const command = resolve(directory, "configured-objdump");
+  const authorityError = new WindowsNativeAuthorityUnavailableError({
+    available: false,
+    failureStage: "self-test",
+    retryable: true,
+    reason: "REA Windows native self-test failed: Job Object assignment denied",
+  });
+  const service = new TestReverseEngineeringService({
+    environment: { REA_OBJDUMP_COMMAND: command },
+    runOwned: async () => {
+      throw authorityError;
+    },
+  });
+  try {
+    const result = await service.inspectWithObjdump({
+      operation: "architectures",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
+        code: "capability_unavailable",
+        retryable: true,
+        details: {
+          provider_id: "process-ownership",
+          operation: "prepare_owned_process",
+          diagnostics: {
+            boundary: "process-ownership",
+            control_code: "windows-native-authority-unavailable",
+            failure_stage: "self-test",
+          },
+        },
+      });
+      expect(projected.remediation.action).toContain(
+        "REA_OBJDUMP_COMMAND does not need to change",
+      );
+      expect(projected.remediation.action).not.toContain(
+        "Set REA_OBJDUMP_COMMAND",
+      );
+    }
+    expect(service.observedLaunchFailures()).toEqual({});
+  } finally {
     await service.close();
     await rm(directory, { recursive: true, force: true });
   }
