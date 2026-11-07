@@ -173,18 +173,28 @@ export const capturedHomePath = (
   // settings folder. A broad selection of ~/settings must not hide
   // ~/.config/notes when that folder was walked at ~/settings/notes.
   const spellings = [
-    ...selections.map(({ physical, path: logical }) => ({ physical, logical })),
-    ...renamed,
+    ...selections.map(({ physical, path: logical }) => ({
+      physical,
+      logical,
+      exact: false,
+    })),
+    ...renamed.map(({ physical, logical }) => ({
+      physical,
+      logical,
+      exact: false,
+    })),
+    // A database log is that one file. Its name is not a directory of other files.
     ...selections.flatMap((selection) =>
       SQLITE_SIDECARS.map(({ suffix }) => ({
         physical: `${selection.physical}${suffix}`,
         logical: `${selection.path}${suffix}`,
+        exact: true,
       })),
     ),
   ].sort((left, right) => right.physical.length - left.physical.length);
   return (path) => {
-    for (const { physical, logical } of spellings) {
-      if (!isWithinAny(path, [physical])) continue;
+    for (const { physical, logical, exact } of spellings) {
+      if (exact ? path !== physical : !isWithinAny(path, [physical])) continue;
       const spelled = relative(`${logical}${path.slice(physical.length)}`);
       if (spelled !== null) return spelled;
     }
