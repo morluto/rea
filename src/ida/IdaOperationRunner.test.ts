@@ -6,6 +6,7 @@ import {
 } from "../../tests/fixtures/idaMcp.js";
 import { IdaOperationRunner } from "./IdaOperationRunner.js";
 import type { JsonValue } from "../domain/jsonValue.js";
+import { AnalysisProtocolError } from "../domain/analysisErrorCore.js";
 
 it.each(["legacy", "modern", "native"] as const)(
   "%s validates string address selectors independently of inventory contents",
@@ -232,3 +233,26 @@ it.each([
     }
   },
 );
+
+it("modern pseudocode surfaces an actionable error when the supervisor's decompile lacks pagination", async () => {
+  const { root, target } = await createIdaTarget();
+  const producer = new RecordingIdaMcp(target, "headless");
+  const runner = new IdaOperationRunner(producer, "modern");
+  producer.beforeCall = async (name) => {
+    if (name === "decompile")
+      throw new AnalysisProtocolError(
+        "IDA MCP tool failed: Invalid params: unexpected parameters: ['offset', 'max_lines']",
+      );
+  };
+  try {
+    await expect(
+      runner.run("procedure_pseudo_code", { procedure: "main" }),
+    ).rejects.toMatchObject({
+      _tag: "AnalysisProtocolError",
+      message: expect.stringContaining("pagination parameters"),
+    });
+  } finally {
+    await producer.close();
+    await rm(root, { recursive: true, force: true });
+  }
+});
