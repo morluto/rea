@@ -217,9 +217,7 @@ describe("runtime admission dispatch", () => {
       );
       expect(result.exitCode).toBe(1);
       expect(result.stdout).toBe("");
-      expect(result.stderr).toContain(
-        "REA requires Node.js 999.x (>=999.0.0)",
-      );
+      expect(result.stderr).toContain("REA requires Node.js 999.0.0+");
       expect(result.stderr).toContain(`runs Node.js ${process.versions.node}`);
       expect(result.stderr).not.toContain("compiled runtime was loaded");
     },
@@ -230,22 +228,28 @@ describe("runtime admission dispatch", () => {
     async ({ processes, workspace }) => {
       await installCliRuntime(
         workspace,
-        'export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => {} });\n',
+        "export const closeCliResources = () => {}; export const createCli = () => ({ serve: () => {} });\n",
       );
-      await workspace.write(
-        "package.json",
-        JSON.stringify({
-          type: "module",
-          version: "1.0.0",
-          engines: { node: `^${process.versions.node}` },
-        }),
-      );
-      const result = await processes.run(
-        process.execPath,
-        [workspace.path("scripts/rea.mjs"), "fixture"],
-        { cwd: workspace.root },
-      );
-      expect(result.stderr).toBe("");
+      const previousMajor = Number(process.versions.node.split(".")[0]) - 1;
+      for (const range of [
+        `^${process.versions.node}`,
+        `>=${previousMajor}.0.0`,
+      ]) {
+        await workspace.write(
+          "package.json",
+          JSON.stringify({
+            type: "module",
+            version: "1.0.0",
+            engines: { node: range },
+          }),
+        );
+        const result = await processes.run(
+          process.execPath,
+          [workspace.path("scripts/rea.mjs"), "fixture"],
+          { cwd: workspace.root },
+        );
+        expect(result.stderr).toBe("");
+      }
     },
   );
 });
