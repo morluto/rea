@@ -92,7 +92,9 @@ it("returns a checkpoint taken in the computer when its reply was lost and the n
 });
 
 it("finishes a stop whose draft reply was lost when stop is asked again, and repeats its result", async () => {
-  const { rea, client } = await fakes({ dropReplies: ["run"] });
+  const { rea, client } = await fakes({
+    dropReplies: ["run:describe-desktop-application-task"],
+  });
   const id = await startBuildComputer(client, BUILD_REQUEST);
   await captureSeedAndEnd(client, id);
   const stop = () => call(client, "stop_build_capture", { computer_id: id });
@@ -290,7 +292,10 @@ const captureRequest = async (
     ({ argv }) => argv,
   );
   const argv = (command: string) =>
-    calls.find((candidate) => candidate[0] === command) ?? [];
+    calls.find(
+      (candidate) =>
+        candidate[0] === command && !candidate.includes("--schema"),
+    ) ?? [];
   return { started, exported, directory, argv };
 };
 

@@ -35,6 +35,11 @@ const LOCATION = {
   module: "Fixture",
   module_path: "/tmp/Fixture",
   symbol: "-[Greeter greet:times:]",
+  source_location: {
+    file_path: "/not-acquired/é space/fixture.pas",
+    line: 23,
+    column: null,
+  },
 };
 
 const run = (
@@ -84,7 +89,7 @@ const run = (
         { name: "x0", value: "0x6000" },
         { name: "x1", value: "0x7000" },
       ],
-      backtrace: [],
+      backtrace: [{ ...LOCATION, source_location: null }],
     },
   ],
   other_stops: [],
@@ -207,7 +212,12 @@ describe("observe_native_calls projection: projects completed observations", () 
     expect(result.events[0]).toMatchObject({
       receiver_class: "Greeter",
       selector: "greet:times:",
+      source_location: LOCATION.source_location,
+      backtrace: [{ ...LOCATION, source_location: null }],
     });
+    expect(result.breakpoints[0]?.locations[0]?.source_location).toEqual(
+      LOCATION.source_location,
+    );
     expect(result.coverage).toEqual({
       status: "complete",
       event_limit_reached: false,
@@ -580,4 +590,25 @@ it("retains completed call facts when cancellation arrives with the tracer resul
     status: "partial",
     reason: "cancelled",
   });
+});
+
+it("grows repeated source-location JSON by the location object, not by a token estimate", () => {
+  const path = "/not-acquired/é space/fixture.pas";
+  const located = {
+    ...LOCATION,
+    source_location: { file_path: path, line: 23, column: null },
+  };
+  const absent = { ...located, source_location: null };
+  const copies = 3;
+  const withPath = Buffer.byteLength(
+    JSON.stringify(Array.from({ length: copies }, () => located)),
+  );
+  const withoutPath = Buffer.byteLength(
+    JSON.stringify(Array.from({ length: copies }, () => absent)),
+  );
+  const perCopy =
+    Buffer.byteLength(JSON.stringify(located.source_location)) -
+    Buffer.byteLength("null");
+  expect(withPath - withoutPath).toBe(copies * perCopy);
+  expect(perCopy).toBeGreaterThan(Buffer.byteLength(path));
 });
