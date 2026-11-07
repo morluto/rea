@@ -1037,9 +1037,12 @@ and cleanup status. Validation failures that do not enter the session have no
 such receipt. The original error and any cleanup recovery remain authoritative.
 
 `open_binary` resolves an Apple bundle directory (`.app`, `.appex`,
-`.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, compared
-case-insensitively) to the program file its `Info.plist` names in
-`CFBundleExecutable`; the Evidence subject is that program file. It reads the
+`.framework`, `.xpc`, `.systemextension`, `.bundle` or `.plugin`, or an audio
+plug-in bundle: `.component`, `.vst`, `.vst3`, `.aaxplugin` or `.clap`,
+compared case-insensitively) to the program file its `Info.plist` names in
+`CFBundleExecutable`; the Evidence subject is that program file. An audio
+plug-in bundle without `Info.plist`, such as the Windows VST3 layout, is
+refused rather than guessed; select its program file directly. It reads the
 macOS `Contents/` layout or the flat root layout. A framework with `Versions/`
 may instead keep `Info.plist` in `Versions/Current/Resources/` with its program
 file in `Versions/Current/`; a flattened framework without `Versions/`, as

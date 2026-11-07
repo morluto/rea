@@ -77,6 +77,11 @@ describe("Apple bundle directory admission", () => {
     "Plug.plugin",
     "Ext.systemextension",
     "Upper.FRAMEWORK",
+    "Reverb.component",
+    "Reverb.vst",
+    "Reverb.vst3",
+    "Reverb.aaxplugin",
+    "Reverb.clap",
   ])("opens %s through Contents/Info.plist", async (name) => {
     const root = await createTestTempDirectory("rea-bundle-target-");
     const { bundle, program: path } = await contentsBundle(root, name);
@@ -289,6 +294,19 @@ describe("Apple bundle directories that fail closed", () => {
     },
   );
 
+  it("refuses a VST3 bundle without Info.plist instead of guessing its program", async () => {
+    const root = await createTestTempDirectory("rea-bundle-target-");
+    // The Windows VST3 layout keeps its program under an architecture folder
+    // and declares no CFBundleExecutable.
+    const bundle = join(root, "Reverb.vst3");
+    const programs = join(bundle, "Contents", "x86_64-win");
+    await mkdir(programs, { recursive: true });
+    await writeFile(join(programs, "Reverb.vst3"), program());
+    expect((await failure(bundle, root)).details).toMatchObject({
+      constraint: "bundle_info_plist_missing",
+    });
+  });
+
   it("keeps the file-format refusal for a script program file", async () => {
     const root = await createTestTempDirectory("rea-bundle-target-");
     const bundle = join(root, "Script.bundle");
@@ -339,6 +357,8 @@ describe("directories this route does not open", () => {
     });
     expect(projected.message).toContain("analyze_javascript_application");
     expect(projected.message).toContain(".appex");
+    expect(projected.message).toContain(".component");
     expect(projected.remediation.action).toContain(".framework");
+    expect(projected.remediation.action).toContain(".vst3");
   });
 });
