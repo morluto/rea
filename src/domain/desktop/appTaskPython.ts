@@ -7,6 +7,7 @@ MISSING = object()
 INDEX = re.compile(r"0|[1-9][0-9]*")
 VIEW_FORMATS = ("text", "json", "keyfile", "xml")
 NUMERAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
 
 
 def _shown(value) -> str:
@@ -61,7 +62,11 @@ def _selects(member, conditions) -> bool:
 def _step(items: list, token: str, last: bool):
     """One step into an array, by index or by a selector that must match one member, or none when it is the last."""
     if INDEX.fullmatch(token):
-        return ("member", items[int(token)]) if int(token) < len(items) else ("none", None)
+        # A canonical decimal longer than the array length cannot name a member.
+        if len(token) > len(str(len(items))):
+            return "none", None
+        index = int(token)
+        return ("member", items[index]) if index < len(items) else ("none", None)
     conditions = _selector(token)
     if conditions is None:
         return ("unresolved", f"{token} is not a selector of the form [KEY=VALUE]") if _bracketed(token) else (
@@ -259,6 +264,104 @@ def _value(check, entry):
     return (True, f"{at} has no value") if kind == "none" else (False, f"{at} is {_shown(found)}")
 
 
+def _is_element(value) -> bool:
+    return (isinstance(value, dict) and isinstance(value.get("name"), str) and isinstance(value.get("attributes"), dict)
+            and isinstance(value.get("children"), list))
+
+
+def _element_text(element) -> str:
+    """An element's text as XPath's string() reads it from what the view keeps: every text node among its children
+    and its descendants', in document order."""
+    parts, pending = [], [element]
+    while pending:
+        node = pending.pop()
+        if isinstance(node, str):
+            parts.append(node)
+        elif _is_element(node):
+            pending.extend(reversed(node["children"]))
+    return "".join(parts)
+
+
+def _collapse_whitespace(text: str) -> str:
+    """Each run of XML whitespace (space, tab, CR, LF) made one space, none at either end, as normalize-space()."""
+    return WHITESPACE_RUN.sub(" ", text).strip(" ")
+
+
+def _text_at(view, pointer: str) -> bool:
+    """Whether a string a pointer reaches is text of the document: a member of an element's children (a text node)
+    or attributes (an attribute's value), rather than an element's name or a field of the DOCTYPE."""
+    segments = pointer.split("/")
+    if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
+        return False
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]))
+    return kind == "value" and _is_element(owner)
+
+
+def _not_xml_entry(check, view):
+    """Why a text check's pointer into an archive goes into no XML entry's view, or None when it does or names an
+    entry not listed."""
+    parts = check["pointer"].split("/")
+    if len(parts) < 4 or parts[3] != "view":
+        return f"{check['file']} at {check['pointer']} does not point into an entry's view"
+    if parts[1] != "entries":
+        return None
+    kind, item, _ = _locate(view, "/entries/" + parts[2])
+    if kind != "value" or not isinstance(item, dict) or item.get("format") == "xml":
+        return None
+    # An entry without a view failed before this, so its format is one with a view.
+    name, form = (value if isinstance(value, str) else "" for value in (item.get("name"), item.get("format")))
+    return f"{check['file']} entry {name} is read as {form}, not xml"
+
+
+def _whole_text(check, entry):
+    """An element's whole text, or a text node's, compared with the value or searched for it."""
+    view, truncated, problem = _view_of(check, entry, None)
+    if problem is not None:
+        return False, problem
+    at = f"{check['file']} at {check['pointer']}"
+    if entry is None:
+        return False, f"{at} has no value"
+    form = entry.get("format")
+    if form not in ("xml", "zip"):
+        return False, f"{check['file']} is read as {form}, not xml"
+    kind, found, searched = _locate(view, check["pointer"])
+    viewless = _viewless_entry(view, check["pointer"]) if form == "zip" else None
+    if viewless is not None:
+        return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
+    if any(_array_leaves_out(form, view, array) for array in searched):
+        return _undecided(check)
+    problem = _not_xml_entry(check, view) if form == "zip" else None
+    if problem is not None:
+        return False, problem
+    if kind == "unresolved":
+        return False, f"{at}: {found}"
+    if kind == "none":
+        return False, f"{at} has no value" if found is None else f"{at}: {found}"
+    if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
+        return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
+    # A text node is whole; an element's text is whole only if its view left nothing out.
+    if form == "zip":
+        truncated = _zip_leaves_out(view, check["pointer"])
+    if not isinstance(found, str) and truncated:
+        return _undecided(check)
+    return _compared_text(check, at, _element_text(found))
+
+
+def _compared_text(check, at: str, found: str):
+    """A text found at a pointer compared with the check's value or searched for it, both collapsed when it asks."""
+    collapse = check.get("normalize_whitespace") is True
+    text = _collapse_whitespace(found) if collapse else found
+    value = _collapse_whitespace(check["value"]) if collapse else check["value"]
+    how = " with whitespace collapsed" if collapse else ""
+    if check["kind"] == "text_equals":
+        if text == value:
+            return True, f"{at} has the text {_shown(value)}{how}"
+        return False, f"{at} has the text {_shown(text)}{how}, not {_shown(value)}"
+    if value in text:
+        return True, f"{at} has text containing {_shown(value)}{how}"
+    return False, f"{at} has the text {_shown(text)}{how}, without {_shown(value)}"
+
+
 def _rows(check, entry):
     view, _, problem = _view_of(check, entry, "sqlite")
     if problem is not None:
@@ -302,6 +405,8 @@ def _verdict(check, entry):
         return _lines(check, entry)
     if kind in ("value_equals", "value_absent"):
         return _value(check, entry)
+    if kind in ("text_equals", "text_contains"):
+        return _whole_text(check, entry)
     return _rows(check, entry)
 
 
