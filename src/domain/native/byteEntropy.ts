@@ -69,10 +69,26 @@ export const entropyFromCounts = (
   return Math.round(entropy * 10000) / 10000;
 };
 
+/**
+ * Counter for a whole-file byte census.
+ *
+ * A file may be larger than 4 GiB and one byte value may occur at least 2^32 times,
+ * so the bin has to hold counts a `Uint32Array` would wrap. Indexed reads into a
+ * `Float64Array` measure the same as into an integer bin, so exactness is free here.
+ */
+export const wholeFileByteCounts = (): Float64Array => new Float64Array(256);
+
 export const computeBlockEntropy = (bytes: Uint8Array): number => {
+  // Indexed reads into a float counter. Iterating a typed array with `for...of` and
+  // re-reading `counts[byte] ?? 0` measured several times slower than this loop, and
+  // the gain comes from the indexed reads rather than from an integer bin.
   const counts = new Float64Array(256);
-  for (const byte of bytes) counts[byte] = (counts[byte] ?? 0) + 1;
-  return entropyFromCounts(counts, bytes.length);
+  const length = bytes.length;
+  for (let index = 0; index < length; index += 1) {
+    const key = bytes[index] as number;
+    counts[key] = counts[key]! + 1;
+  }
+  return entropyFromCounts(counts, length);
 };
 
 /** Merge only adjacent classified blocks, using the reported rounded entropy. */
