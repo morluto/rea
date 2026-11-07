@@ -62,6 +62,18 @@ describe("project model", () => {
 });
 
 describe("dependencies", () => {
+  it("assigns positions per element name across a large sibling list", () => {
+    const declarations = Array.from({ length: 1000 }, (_, index) =>
+      `<other/><dependency><groupId>example</groupId><artifactId>item-${String(index)}</artifactId></dependency>`,
+    ).join("");
+    const result = parse(pom(`<dependencies>${declarations}</dependencies>`));
+    expect(result.dependencies).toHaveLength(1000);
+    expect(result.dependencies.map(({ source_pointer }) => source_pointer)).toEqual(
+      Array.from({ length: 1000 }, (_, index) =>
+        `/dependencies[0]/dependency[${String(index)}]`,
+      ),
+    );
+  });
   it("keeps a declared version distinct from a managed one", () => {
     const result = parse(
       pom(`

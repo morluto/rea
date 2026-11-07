@@ -57,24 +57,26 @@ const lineOf = (node: Node | null): number | null => {
 };
 
 /** Structural pointer from the project root, using sibling position per local name. */
-const pointer = (root: Element, node: Element): string => {
+const pointer = (root: Element, node: Element, collector: Collector): string => {
   const segments: string[] = [];
   let current: Element = node;
   while (current !== root) {
     const parent = current.parentNode;
     if (parent === null || parent.nodeType !== 1) break;
     const element = parent as Element;
-    let position = 0;
-    for (let index = 0; index < element.childNodes.length; index += 1) {
-      const sibling = element.childNodes.item(index);
-      if (sibling === current) break;
-      if (
-        sibling !== null &&
-        sibling.nodeType === 1 &&
-        (sibling as Element).localName === current.localName
-      )
-        position += 1;
+    if (!collector.indexedParents.has(element)) {
+      const counts = new Map<string | null, number>();
+      for (let index = 0; index < element.childNodes.length; index += 1) {
+        const sibling = element.childNodes.item(index);
+        if (sibling === null || sibling.nodeType !== 1) continue;
+        const child = sibling as Element;
+        const position = counts.get(child.localName) ?? 0;
+        collector.positions.set(child, position);
+        counts.set(child.localName, position + 1);
+      }
+      collector.indexedParents.add(element);
     }
+    const position = collector.positions.get(current) ?? 0;
     segments.unshift(`${current.localName}[${position}]`);
     if (element === root) break;
     current = element;
@@ -137,6 +139,8 @@ interface Collector {
   readonly diagnostics: MavenPomDiagnostic[];
   readonly properties: Map<string, string>;
   readonly propertyPointers: Map<string, string>;
+  readonly indexedParents: WeakSet<Element>;
+  readonly positions: WeakMap<Element, number>;
   /** Accounted UTF-8 size of every retained fact; bounds representation growth. */
   retainedBytes: number;
 }
@@ -246,7 +250,7 @@ const parseDependency = (
 ): MavenDependency | undefined => {
   const groupId = text(element, "groupId");
   const artifactId = text(element, "artifactId");
-  const sourcePointer = pointer(root, element);
+  const sourcePointer = pointer(root, element, collector);
   const line = lineOf(element);
   if (groupId === null || artifactId === null) {
     report(
@@ -271,7 +275,7 @@ const parseDependency = (
           collector,
           "invalid-exclusion",
           "Exclusion declares no groupId or artifactId, so it matches nothing.",
-          pointer(root, exclusion),
+          pointer(root, exclusion, collector),
           lineOf(exclusion),
         );
         return [];
@@ -350,7 +354,7 @@ const collectProperties = (
   return childElements(container).flatMap((property) => {
     const name = property.localName;
     if (name === null) return [];
-    const sourcePointer = pointer(project, property);
+    const sourcePointer = pointer(project, property, collector);
     if (collector.properties.has(name))
       report(
         collector,
@@ -380,6 +384,8 @@ export const parseMavenPom = (
     diagnostics: [],
     properties: new Map(),
     propertyPointers: new Map(),
+    indexedParents: new WeakSet(),
+    positions: new WeakMap(),
     retainedBytes: 0,
   };
 
@@ -435,7 +441,7 @@ export const parseMavenPom = (
           ? undefined
           : child(activation, "activeByDefault"),
       ),
-      source_pointer: pointer(root, profile),
+      source_pointer: pointer(root, profile, collector),
     });
     // Declarations that live inside the profile stay attributed to it rather
     // than being reported as top-level facts.
@@ -471,7 +477,7 @@ export const parseMavenPom = (
       id: text(repository, "id"),
       url: text(repository, "url"),
       layout: text(repository, "layout"),
-      source_pointer: pointer(root, repository),
+      source_pointer: pointer(root, repository, collector),
       line: lineOf(repository),
     };
     account(collector, fact);
