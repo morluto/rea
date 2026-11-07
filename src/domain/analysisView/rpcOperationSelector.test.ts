@@ -258,6 +258,68 @@ describe("selectRpcOperation encoded batchexecute form and query cases", () => {
       }),
     ).toEqual({ kind: "batchexecute", name: "FEPhDc" });
   });
+
+  it("parses valid JSON before form decoding when request media type is omitted or unknown", () => {
+    const jsonRpcWithEncodedFreqInUrl = JSON.stringify({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: {
+        name: "fetch",
+        url: "https://api.example/hook?a=1&f%2Ereq=bad&x=y",
+      },
+      id: 1,
+    });
+    for (const mimeType of [undefined, "", "not-a-valid-mime", "text/plain"]) {
+      expect(
+        selectRpcOperationFromText({
+          method: "POST",
+          path: "/rpc",
+          mimeType,
+          bodyText: jsonRpcWithEncodedFreqInUrl,
+        }),
+      ).toEqual({ kind: "json-rpc", name: "tools/call" });
+    }
+
+    const embeddedValidEnvelope = `a=1&f.req=${encodeURIComponent(
+      JSON.stringify([[["OtherOp", "[]", null, "generic"]]]),
+    )}`;
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/api/items",
+        bodyText: JSON.stringify({ note: embeddedValidEnvelope }),
+      }),
+    ).toBeUndefined();
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/graphql",
+        mimeType: "",
+        bodyText: JSON.stringify({
+          operationName: "GetViewer",
+          query: "query GetViewer { viewer { id } }",
+          variables: { raw: embeddedValidEnvelope },
+        }),
+      }),
+    ).toEqual({ kind: "graphql", name: "GetViewer" });
+
+    const mixedUnannotatedForm = `f%2Ereq=${encodeURIComponent(
+      JSON.stringify([
+        [
+          ["MaZiqc", "[]", null, "1"],
+          ["FEPhDc", "[]", null, "2"],
+        ],
+      ]),
+    )}`;
+    expect(
+      selectRpcOperationFromText({
+        method: "POST",
+        path: "/_/AppUi/data/batchexecute",
+        query: "?rpcids=MaZiqc",
+        bodyText: mixedUnannotatedForm,
+      }),
+    ).toBeUndefined();
+  });
 });
 
 describe("selectRpcOperation length and byte bounds", () => {

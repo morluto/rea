@@ -589,11 +589,11 @@ api-surface grouping, plus bounded single-operation RPC discrimination on
 with the most JSON-like records (`application/json`, `application/*+json`,
 `text/plain`, `text/markdown`, plus XSSI-guarded JSON responses of at most
 64 KiB of decoded UTF-8 text prefixed with `)]}'\n` or `)]}',\n` on JSON-like,
-JavaScript `text/javascript`, `application/javascript` or
+`text/javascript`, `application/javascript` or
 `application/x-javascript`, or empty response media types), whose path starts
 with `/api/` or `/apis/` or whose responses are JSON-like (including bounded
-XSSI JSON, which script media types do not exclude unless the path ends in a
-static asset extension), and the write groups answered with no body
+XSSI JSON, admitted before static-asset media-type or path-extension
+exclusion), and the write groups answered with no body
 (a bodiless `204 DELETE`). Empty retained response text establishes a bodiless
 write only when its encoding is understood and unredacted; an opaque or hidden
 encoding leaves the body unknown. Every other group is listed under
@@ -612,7 +612,8 @@ identifies one bounded operation name (`1`–`128` characters):
 - `json-rpc`: a JSON object body with `jsonrpc: "2.0"` and a non-empty
   printable ASCII `method`.
 - `batchexecute`: a form-encoded body (`f.req` decoded with `URLSearchParams`,
-  including percent-encoded field names) whose outer call array names one RPC
+  including percent-encoded field names, after valid JSON bodies on non-form
+  media types are handled as JSON) whose outer call array names one RPC
   ID (repeated calls of that same ID qualify; mixed RPC IDs or malformed
   `f.req` payloads stay undispatched without falling back to `?rpcids=`), or,
   when `f.req` is absent on a `/batchexecute` path, one unambiguous `rpcids`
@@ -685,10 +686,9 @@ and `/api/teams/search` stays its own tool. Opt-in placeholders use the
 parameter name; format-rule placeholders keep their api-surface spelling. Tool names are
 `<method>_<literals>` with `api`, `apis`, `namespaces`, `default`, `v`-prefixed
 version tokens and a `uid` literal before a parameter dropped, dotted literals
-cut to their first label, `_<operation>` words appended when `rpc_operation` is
-present (camelCase, PascalCase and punctuation split into snake_case words,
-omitting a leading `batchexecute` or `graphql` word already named by the path),
-`_by_<params>` appended when parameters exist,
+cut to their first label, every word of `rpc_operation.name` appended when
+`rpc_operation` is present (camelCase, PascalCase and punctuation split into
+snake_case words), `_by_<params>` appended when parameters exist,
 sanitized to `[a-z0-9_]`, at most 60 characters and made unique with numeric
 suffixes: `get_dashboards_by_uid`, `get_plugins_settings_by_plugin_id`,
 `post_graphql_get_viewer`.

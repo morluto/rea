@@ -253,14 +253,17 @@ export const selectRpcOperationFromText = (input: {
   const { bodyText } = input;
   if (bodyText !== undefined && bodyText !== null && bodyText.length > 0) {
     if (!withinBodyByteLimit(bodyText)) return undefined;
+    const parsedJson =
+      essence === "application/x-www-form-urlencoded"
+        ? undefined
+        : safeParseJson(bodyText);
+    if (parsedJson?.ok === true)
+      return isJsonCandidateMime(essence) && isPlainObject(parsedJson.value)
+        ? selectFromJsonObject(parsedJson.value, input.path)
+        : undefined;
     if (isFormCandidateMime(essence, input.path)) {
       const freqs = new URLSearchParams(bodyText).getAll("f.req");
       if (freqs.length > 0) return selectBatchExecuteFormValues(freqs);
-    }
-    if (isJsonCandidateMime(essence)) {
-      const parsed = safeParseJson(bodyText);
-      if (parsed.ok && isPlainObject(parsed.value))
-        return selectFromJsonObject(parsed.value, input.path);
     }
   }
   if (isBatchExecutePath(input.path)) {
