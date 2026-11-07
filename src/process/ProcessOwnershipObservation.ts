@@ -1462,8 +1462,11 @@ export const createSystemProcessOwnershipHost = (
           ? Reflect.get(cause, "code")
           : undefined);
       const systemCode = typeof rawCode === "string" ? rawCode : undefined;
-      if (platform === "linux" && systemCode === "ENOENT")
-        throw new LinuxOwnedProcessPrerequisiteError(cause);
+      if (platform === "linux")
+        throw new LinuxOwnedProcessPrerequisiteError(cause, {
+          missing: systemCode === "ENOENT",
+          systemCode,
+        });
       throw new ProcessAdmissionError(
         "baseline_unavailable",
         systemCode === undefined ? undefined : { system_code: systemCode },
@@ -1699,12 +1702,29 @@ export const LINUX_PROCESS_OWNERSHIP_REMEDIATION =
 
 /** Refusal before an owned launch when Linux `ps` is missing or incompatible. */
 export class LinuxOwnedProcessPrerequisiteError extends AnalysisCapabilityUnavailableError {
-  constructor(cause: unknown) {
-    const reason = `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`;
+  constructor(
+    cause: unknown,
+    options: {
+      readonly missing: boolean;
+      readonly systemCode?: string | undefined;
+    } = { missing: true },
+  ) {
+    const reason = options.missing
+      ? `Linux process ownership inspection requires a procps-compatible ps on REA's PATH before launching a child: ${errorMessage(cause)}`
+      : `Linux process ownership inspection could not obtain the process table using ps: ${errorMessage(cause)}`;
     super("process-ownership", "prepare_owned_process", reason, {
       cause,
       userMessage: reason,
-      remediationAction: LINUX_PROCESS_OWNERSHIP_REMEDIATION,
+      remediationAction: options.missing
+        ? LINUX_PROCESS_OWNERSHIP_REMEDIATION
+        : processOwnershipAdmissionRecovery(
+            "baseline_unavailable",
+            "linux",
+            options.systemCode,
+          ),
+      ...(options.systemCode === undefined
+        ? {}
+        : { diagnostics: { system_code: options.systemCode } }),
     });
   }
 }
