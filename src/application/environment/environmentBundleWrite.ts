@@ -15,7 +15,10 @@ import { streamChunkToBuffer } from "../../artifacts/StreamBytes.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
 import { SafeOutputTree } from "../../artifacts/SafeOutputTree.js";
-import { outputDirectoryAdmissionRefusal } from "../../artifacts/SafeOutputTreeAdmission.js";
+import {
+  outputDirectoryAdmissionRefusal,
+  SafeOutputTreeDestinationRefusal,
+} from "../../artifacts/SafeOutputTreeAdmission.js";
 import { SafeOutputTreeCreationFailure } from "../../artifacts/SafeOutputTreeCreationFailure.js";
 import { RegularFileChangedError } from "../../filesystem/RegularFile.js";
 import { withRegularFile } from "../RegularFileRead.js";
@@ -150,8 +153,23 @@ const writeBundleFiles = async (
       }
     | { readonly kind: "failed"; readonly cause: unknown };
   try {
-    if (input.exclusiveDestination !== true)
-      await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
+    if (input.exclusiveDestination !== true) {
+      try {
+        await mkdir(dirname(input.directory), { recursive: true, mode: 0o700 });
+      } catch (cause: unknown) {
+        // Parent creation precedes tree admission; a file in that path is
+        // still a refusal of the selected destination, not a host write fault.
+        if (
+          isHostSystemFailure(cause) &&
+          ["EEXIST", "ENOTDIR"].includes(String(Reflect.get(cause, "code")))
+        )
+          throw new SafeOutputTreeDestinationRefusal(
+            "Environment bundle output parent must be a directory",
+            { cause },
+          );
+        throw cause;
+      }
+    }
     try {
       tree = await SafeOutputTree.create(input.directory, process.platform, {
         acceptExistingEmpty: input.exclusiveDestination !== true,
