@@ -8,6 +8,7 @@ import { z } from "incur";
 import {
   isImmutableEvidence,
   parseEvidence,
+  tryParseEvidence,
   withEvidenceCallerInputPath,
   type Evidence,
 } from "../domain/evidence.js";
@@ -227,6 +228,99 @@ export const deliverCliAnalysisEvidence = async (
   });
 };
 
+const extractPartialEvidence = (
+  failure: JsonValue,
+):
+  | {
+      errorRecord: { [key: string]: JsonValue };
+      partialEvidence: Evidence;
+    }
+  | undefined => {
+  if (typeof failure !== "object" || failure === null || Array.isArray(failure))
+    return undefined;
+  const errorRecord = failure as { [key: string]: JsonValue };
+  const details =
+    typeof errorRecord.details === "object" &&
+    errorRecord.details !== null &&
+    !Array.isArray(errorRecord.details)
+      ? (errorRecord.details as { [key: string]: JsonValue })
+      : undefined;
+  if (details?.partial_observation === undefined) return undefined;
+  const partialEvidence = tryParseEvidence(details.partial_observation);
+  return partialEvidence === undefined
+    ? undefined
+    : { errorRecord, partialEvidence };
+};
+
+const formatEvidenceBundleReceipt = (
+  bundle: { readonly path: string; readonly bytes: number },
+  sensitiveValues?: readonly string[],
+): { readonly path?: string; readonly bytes: number } => ({
+  ...(sensitiveValues?.some(
+    (literal) => literal !== "" && bundle.path.includes(literal),
+  )
+    ? {}
+    : { path: bundle.path }),
+  bytes: bundle.bytes,
+});
+
+const committedReceiptFromError = (
+  error: unknown,
+): { readonly path: string; readonly bytes: number } | undefined => {
+  if (
+    typeof error === "object" &&
+    error !== null &&
+    "diagnostics" in error &&
+    typeof (error as Record<string, unknown>).diagnostics === "object" &&
+    (error as Record<string, unknown>).diagnostics !== null &&
+    "evidence_bundle" in
+      ((error as Record<string, unknown>).diagnostics as Record<
+        string,
+        unknown
+      >)
+  ) {
+    const raw = (
+      (error as Record<string, unknown>).diagnostics as Record<string, unknown>
+    ).evidence_bundle;
+    if (
+      typeof raw === "object" &&
+      raw !== null &&
+      "path" in raw &&
+      typeof (raw as Record<string, unknown>).path === "string" &&
+      "bytes" in raw &&
+      typeof (raw as Record<string, unknown>).bytes === "number"
+    )
+      return {
+        path: (raw as Record<string, unknown>).path as string,
+        bytes: (raw as Record<string, unknown>).bytes as number,
+      };
+  }
+  return undefined;
+};
+
+const sanitizeSaveError = (
+  error: AnalysisError,
+  sensitiveValues?: readonly string[],
+): JsonValue => {
+  const rawSaveError = projectAnalysisError(
+    redactExplicitFailure(error, sensitiveValues ?? []),
+  );
+  if (
+    rawSaveError.details !== undefined &&
+    typeof rawSaveError.details === "object" &&
+    rawSaveError.details !== null &&
+    "partial_observation" in rawSaveError.details
+  ) {
+    const { partial_observation: _, ...restDetails } =
+      rawSaveError.details as Record<string, JsonValue>;
+    return {
+      ...rawSaveError,
+      details: restDetails,
+    };
+  }
+  return rawSaveError;
+};
+
 /**
  * A requested bundle that never committed cannot silently drop what a completed
  * observation cites. Absent delivery or observation leaves the failure untouched.
@@ -248,6 +342,120 @@ const withUndeliveredSourceClosure = (
   return closure === undefined
     ? failure
     : { ...failure, details: { ...details, source_closure: closure } };
+};
+
+const isPublishablePartialFailure = (
+  failure: JsonValue,
+  signal: AbortSignal,
+): boolean => {
+  if (signal.aborted) return false;
+  if (!isObject(failure)) return false;
+  const code = failure.code;
+  if (
+    code === "cancelled" ||
+    code === "cleanup_incomplete" ||
+    code === "evidence_integrity_mismatch"
+  )
+    return false;
+  return true;
+};
+
+const publishPartialCliAnalysisEvidence = async (
+  failure: JsonValue,
+  input: CliEvidenceDelivery,
+): Promise<JsonValue> => {
+  const { operation, signal, detail, evidenceOutput } = input;
+  if (
+    evidenceOutput === undefined ||
+    !isPublishablePartialFailure(failure, signal)
+  )
+    return withUndeliveredSourceClosure(failure, input);
+  const extracted = extractPartialEvidence(failure);
+  if (extracted === undefined)
+    return withUndeliveredSourceClosure(failure, input);
+  const { errorRecord, partialEvidence } = extracted;
+
+  const delivered =
+    detail === "summary"
+      ? inspectAnalysisViewValidated({
+          source: { kind: "inline", evidence: partialEvidence },
+          view: input.view ?? { kind: "summary" },
+        })
+      : ok(partialEvidence);
+  const selected =
+    detail === "summary" &&
+    partialEvidence.caller_input_path !== undefined &&
+    delivered.ok
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          partialEvidence.caller_input_path,
+        )
+      : delivered.ok
+        ? delivered.value
+        : partialEvidence;
+  const inspectionSources = analysisEvidenceSources(partialEvidence);
+  if (!inspectionSources.ok)
+    return withUndeliveredSourceClosure(failure, input);
+  const records = [
+    ...new Map(
+      [...(input.sourceEvidence ?? []), ...inspectionSources.value].map(
+        (record) => [record.evidence_id, record],
+      ),
+    ).values(),
+  ];
+  const bundle = records.every(isImmutableEvidence)
+    ? createImmutableEvidenceBundle(records)
+    : createEvidenceBundle(records);
+  const published = await publishEvidenceDelivery({
+    bundle,
+    complete: partialEvidence,
+    delivered: selected,
+    outputPath: absoluteCallerPath(evidenceOutput),
+    operation,
+    signal,
+  });
+  if (!published.ok) {
+    const saveError = sanitizeSaveError(published.error, input.sensitiveValues);
+    const committedRaw = committedReceiptFromError(published.error);
+    const committedReceipt =
+      committedRaw !== undefined
+        ? formatEvidenceBundleReceipt(committedRaw, input.sensitiveValues)
+        : undefined;
+    const baseFailure = evidenceDeliveryCommitted(published.error)
+      ? failure
+      : withUndeliveredSourceClosure(failure, input);
+    const baseDetails =
+      isObject(baseFailure) && isObject(baseFailure.details)
+        ? (baseFailure.details as { [key: string]: JsonValue })
+        : (errorRecord.details as { [key: string]: JsonValue });
+    const updatedDetails: { [key: string]: JsonValue } = {
+      ...baseDetails,
+      publication_error: saveError,
+      ...(committedReceipt !== undefined
+        ? { evidence_bundle: committedReceipt }
+        : {}),
+    };
+    return {
+      ...(isObject(baseFailure) ? baseFailure : errorRecord),
+      details: updatedDetails,
+    };
+  }
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
+  recordCliEvidencePublication(receipt);
+  const updatedDetails: { [key: string]: JsonValue } = {
+    ...(errorRecord.details as { [key: string]: JsonValue }),
+    evidence_bundle: receipt,
+  };
+  if (detail === "summary" && delivered.ok) {
+    updatedDetails.partial_observation = selected;
+  }
+  return {
+    ...errorRecord,
+    details: updatedDetails,
+  };
 };
 
 /** Publish already finalized CLI analysis without opening a second provider/session. */
@@ -273,7 +481,7 @@ export const publishCliAnalysisEvidence = async (
   const undelivered = (error: AnalysisError) =>
     withUndeliveredSourceClosure(projectFailure(error), closureInput);
   if (!result.ok)
-    return withUndeliveredSourceClosure(result.error, closureInput);
+    return publishPartialCliAnalysisEvidence(result.error, closureInput);
   const complete = parseEvidence(result.value);
   const inputError = cliEvidenceDeliveryInputError(input);
   if (inputError !== undefined) {
@@ -329,15 +537,10 @@ export const publishCliAnalysisEvidence = async (
     return evidenceDeliveryCommitted(published.error)
       ? projectFailure(published.error)
       : undelivered(published.error);
-  const receipt = {
-    ...(input.sensitiveValues?.some(
-      (literal) =>
-        literal !== "" && published.value.evidenceBundle.path.includes(literal),
-    )
-      ? {}
-      : { path: published.value.evidenceBundle.path }),
-    bytes: published.value.evidenceBundle.bytes,
-  };
+  const receipt = formatEvidenceBundleReceipt(
+    published.value.evidenceBundle,
+    input.sensitiveValues,
+  );
   recordCliEvidencePublication(receipt);
   return detail === "summary"
     ? { summary: published.value.delivered, evidence_bundle: receipt }
