@@ -239,6 +239,52 @@ describe("getters reached through unknown receiver keys", () => {
   });
 });
 
+it("terminates widening through an unresolved super property on an empty base", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class A {}
+    class B extends A {
+      get s() { return super[key]; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.value = 2;
+    return shared.value;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+
+it("keeps the base lookup owner when widening an unknown super property", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class A { get base() { return { container: { alias: shared } }; } }
+    class B extends A {
+      get a() { return this[k1].alias; }
+      get b() { return super[k2].container; }
+    }
+    new B().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("follows static properties of a class-valued field during getter widening", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class R {
+      child = class { static container = { alias: shared }; };
+      get a() { return this[k1].alias; }
+      get b() { return this[k2].container; }
+    }
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
 it("terminates growing loop-carried destructuring paths without widening unrelated objects", () => {
   expect(
     resultValue(`

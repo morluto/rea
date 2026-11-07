@@ -110,6 +110,22 @@ export function objectReceiver() {
   class R { method() { return shared; } child = { method() { return {}; }, get container() { return this.method(); } }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
   new R().a.value = 2; return shared.value;
 }
+export function emptySuper() {
+  const shared = { value: 1 };
+  class A {} class B extends A { get s() { return super[key]; } get a() { return this[k1].x; } get b() { return this[k2].y; } }
+  new B().a.value = 2; return shared.value;
+}
+export function dynamicSuper() {
+  const shared = { value: 1 };
+  class A { get base() { return { container: { alias: shared } }; } }
+  class B extends A { get a() { return this[k1].alias; } get b() { return super[k2].container; } }
+  new B().a.value = 2; return shared.value;
+}
+export function classValuedField() {
+  const shared = { value: 1 };
+  class R { child = class { static container = { alias: shared }; }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
 `;
 
 cliTest.for(["CLI", "stdio MCP"] as const)(
@@ -155,6 +171,9 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       ["superGetter", "unknown"],
       ["computedGetter", "unknown"],
       ["objectReceiver", "literal"],
+      ["emptySuper", "literal"],
+      ["dynamicSuper", "unknown"],
+      ["classValuedField", "unknown"],
     ] as const) {
       const projection = graph.nodes
         .flatMap(({ observations }) => observations)
