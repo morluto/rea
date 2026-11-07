@@ -409,6 +409,16 @@ it("retains safe structured constraints for ADB selectors", async () => {
       path: "data-uri",
       maximum: 2048,
     },
+    {
+      argv: ["read-adb-setting", "S", "system", "k".repeat(257)],
+      path: "key",
+      maximum: 256,
+    },
+    {
+      argv: ["read-adb-setting", "S", "system", "bad key"],
+      path: "key",
+      expected: "regex",
+    },
   ];
   for (const { argv, path, expected, maximum } of cases) {
     const result = await serve([...argv, "--json"], {

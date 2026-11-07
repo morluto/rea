@@ -19,13 +19,6 @@ const invalidInputs = [
     },
   },
   {
-    command: "inspect-web-page",
-    arguments: [browserEndpoint, ""],
-    operation: "inspect_web_page",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
-  },
-  {
     command: "analyze-web-bundle",
     arguments: [malformedEndpoint, "target"],
     operation: "analyze_web_bundle",
@@ -35,31 +28,6 @@ const invalidInputs = [
       reason: "invalid_value",
       message: "Invalid CDP endpoint URL",
     },
-  },
-  {
-    command: "observe-web-session",
-    arguments: [browserEndpoint, ""],
-    operation: "observe_web_session",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
-  },
-  {
-    command: "list-javascript-runtime-targets",
-    arguments: [""],
-    operation: "list_javascript_runtime_targets",
-    error: "JavaScript runtime observation failed",
-    issue: {
-      path: ["inspector_endpoint"],
-      reason: "out_of_range",
-      minimum: 1,
-    },
-  },
-  {
-    command: "observe-javascript-runtime",
-    arguments: [inspectorEndpoint, ""],
-    operation: "observe_javascript_runtime",
-    error: "JavaScript runtime observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
   },
   {
     command: "discover-webmcp-tools",
@@ -72,12 +40,33 @@ const invalidInputs = [
       message: "Invalid CDP endpoint URL",
     },
   },
+] as const;
+
+const parserRejections = [
+  {
+    command: "inspect-web-page",
+    arguments: [browserEndpoint, ""],
+    path: "targetId",
+  },
+  {
+    command: "observe-web-session",
+    arguments: [browserEndpoint, ""],
+    path: "targetId",
+  },
+  {
+    command: "list-javascript-runtime-targets",
+    arguments: [""],
+    path: "endpoint",
+  },
+  {
+    command: "observe-javascript-runtime",
+    arguments: [inspectorEndpoint, ""],
+    path: "targetId",
+  },
   {
     command: "capture-web-screenshot",
     arguments: [browserEndpoint, ""],
-    operation: "capture_web_screenshot",
-    error: "Browser observation failed",
-    issue: { path: ["target_id"], reason: "out_of_range", minimum: 1 },
+    path: "targetId",
   },
 ] as const;
 
@@ -256,6 +245,30 @@ describe("browser and Inspector CLI input diagnostics", () => {
             code: "invalid_type",
             missing: true,
             expected: "string",
+          },
+        ],
+      });
+    },
+  );
+});
+
+describe("empty browser and Inspector selectors", () => {
+  cliTest.for(parserRejections)(
+    "$command rejects an empty selector in argument parsing",
+    async (input, { cli, workspace }) => {
+      const result = await cli.run({
+        arguments: [input.command, ...input.arguments, "--json"],
+        cwd: workspace.root,
+        environment: { ...workspace.environment, REA_LOG_LEVEL: "silent" },
+      });
+      expect(result.exitCode).toBe(1);
+      expect(result.json).toMatchObject({
+        code: "VALIDATION_ERROR",
+        fieldErrors: [
+          {
+            code: "too_small",
+            path: input.path,
+            message: "Too small: expected string to have >=1 characters",
           },
         ],
       });
