@@ -11,6 +11,7 @@ import {
   cdpCommandTimeoutIsSelectable,
   cdpCommandTimeoutUnrelatedControl,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  MAX_BROWSER_DEADLINE_MS,
   noRuntimeOverrideSentence,
 } from "../domain/browserDeadline.js";
 import { safeParseJson } from "../domain/safeJson.js";
@@ -230,8 +231,7 @@ class CdpTransportCore {
   }
 
   async #closeTransport(operation: BrowserObservationOperation): Promise<void> {
-    this.#closed = true;
-    this.#failPending("disconnected");
+    this.#disconnect("disconnected");
     if (socketIsClosed(this.socket)) return;
     await new Promise<void>((resolve, reject) => {
       let settled = false;
@@ -646,11 +646,15 @@ const waitForOpen = async (
       socket.off("close", onClose);
       signal?.removeEventListener("abort", onAbort);
     };
+    const boundedTimeoutMs = Math.min(
+      MAX_BROWSER_DEADLINE_MS,
+      commandTimeoutMs,
+    );
     const timer = setTimeout(() => {
       terminateSocket(socket);
       cleanup();
       const recovery = cdpCommandDeadlineRecovery(
-        commandTimeoutMs,
+        boundedTimeoutMs,
         "handshake",
         undefined,
         cdpCommandTimeoutIsSelectable(operation),
@@ -661,7 +665,7 @@ const waitForOpen = async (
           remediationAction: recovery.remediationAction,
         }),
       );
-    }, commandTimeoutMs);
+    }, boundedTimeoutMs);
     socket.once("open", onOpen);
     socket.once("error", onFailure);
     socket.once("close", onClose);

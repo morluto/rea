@@ -51,7 +51,7 @@ interface OwnedConnection {
   settle: () => void;
   reusableUrl: string | undefined;
   evicted: boolean;
-  disconnectUnsubscribe: (() => void) | undefined;
+  statusUnsubscribe: (() => void) | undefined;
   cleanup: (() => Promise<void>) | undefined;
   cleanupAttempted: boolean;
   failure: ProviderCleanupError | undefined;
@@ -113,9 +113,7 @@ export class CdpTargetSessionOwner {
       }
       this.#browserSockets.delete(url);
       if (existingRecord !== undefined) {
-        existingRecord.evicted = true;
-        existingRecord.disconnectUnsubscribe?.();
-        existingRecord.disconnectUnsubscribe = undefined;
+        this.#evictRecord(existingRecord);
         if (existingRecord.activeLeases === 0)
           await this.#releaseTransportRecord(existingRecord);
       }
@@ -154,22 +152,27 @@ export class CdpTargetSessionOwner {
         return;
       }
       this.#browserSockets.delete(url);
-      if (currentRecord !== undefined) {
-        currentRecord.evicted = true;
-        currentRecord.disconnectUnsubscribe?.();
-        currentRecord.disconnectUnsubscribe = undefined;
-      }
+      if (currentRecord !== undefined) this.#evictRecord(currentRecord);
     }
     this.#browserSockets.set(url, root);
-    record.disconnectUnsubscribe = root.onDisconnect(() => {
+    let offDisconnect: (() => void) | undefined;
+    let offProtocolFailure: (() => void) | undefined;
+    const onUnusable = (): void => {
       if (this.#browserSockets.get(url) === root)
         this.#browserSockets.delete(url);
       record.evicted = true;
-      record.disconnectUnsubscribe = undefined;
+      record.statusUnsubscribe?.();
+      record.statusUnsubscribe = undefined;
       if (record.activeLeases === 0 && !this.#closing) {
         void this.#releaseTransportRecord(record).catch(() => undefined);
       }
-    });
+    };
+    record.statusUnsubscribe = () => {
+      offDisconnect?.();
+      offProtocolFailure?.();
+    };
+    offDisconnect = root.onDisconnect(onUnusable);
+    offProtocolFailure = root.onProtocolFailure(onUnusable);
   }
 
   /** Release one operation's lease on a browser socket, closing it when tainted or closing. */
@@ -180,10 +183,9 @@ export class CdpTargetSessionOwner {
     const root = transportRoot(connection);
     const record = this.#connections.get(root);
     if (record === undefined) return;
-    if (record.failure !== undefined) throw record.failure;
-    let keepSocket = true;
+    let keepSocket = !record.cleanupLease.released;
     let cleanupFailure: unknown;
-    if (cleanup !== undefined) {
+    if (cleanup !== undefined && !record.cleanupLease.released) {
       try {
         keepSocket = await cleanup();
       } catch (cause: unknown) {
@@ -191,21 +193,24 @@ export class CdpTargetSessionOwner {
         cleanupFailure = cause;
       }
     }
+    const mustCloseImmediately =
+      !keepSocket || !root.isReusable() || record.failure !== undefined;
     const retain =
-      keepSocket &&
+      !mustCloseImmediately &&
       !this.#closing &&
       !record.evicted &&
       record.reusableUrl !== undefined &&
-      this.#browserSockets.get(record.reusableUrl) === root &&
-      root.isReusable();
+      this.#browserSockets.get(record.reusableUrl) === root;
     if (!retain) this.#evictRecord(record);
     if (record.activeLeases > 0) record.activeLeases -= 1;
     try {
-      if (!retain && record.activeLeases === 0)
-        await this.#releaseTransportRecord(record);
+      if (mustCloseImmediately || (!retain && record.activeLeases === 0))
+        await this.#releaseTransportRecord(record, cleanupFailure);
       if (cleanupFailure !== undefined) {
-        const failure = cleanupError(record, cleanupFailure);
-        record.failure = failure;
+        const failure =
+          cleanupFailure instanceof CdpTransportCleanupFailure
+            ? cleanupFailure
+            : cleanupError(record, cleanupFailure);
         throw failure;
       }
     } finally {
@@ -304,7 +309,7 @@ export class CdpTargetSessionOwner {
       settle,
       reusableUrl: undefined,
       evicted: false,
-      disconnectUnsubscribe: undefined,
+      statusUnsubscribe: undefined,
       cleanup: undefined,
       cleanupAttempted: false,
       failure: undefined,
@@ -322,14 +327,21 @@ export class CdpTargetSessionOwner {
     if (record.failure !== undefined) throw record.failure;
     this.#evictRecord(record);
     record.cleanup ??= cleanup;
+    record.activeLeases = 0;
     try {
       if (!record.cleanupAttempted && record.cleanup !== undefined) {
         record.cleanupAttempted = true;
         await record.cleanup();
       }
       await this.#releaseTransportRecord(record);
+    } catch (cause: unknown) {
+      const failure =
+        cause instanceof CdpTransportCleanupFailure
+          ? cause
+          : cleanupError(record, cause);
+      record.failure = failure;
+      throw failure;
     } finally {
-      record.activeLeases = 0;
       record.active = false;
       record.settle();
     }
@@ -350,7 +362,8 @@ export class CdpTargetSessionOwner {
   async retryPending(): Promise<void> {
     const failures: CdpTransportCleanupFailure[] = [];
     for (const record of this.#connections.values()) {
-      if (record.active || record.failure === undefined) continue;
+      if (record.active || (record.failure === undefined && !record.evicted))
+        continue;
       try {
         await this.#releaseTransportRecord(record);
       } catch (cause: unknown) {
@@ -379,18 +392,31 @@ export class CdpTargetSessionOwner {
       this.#browserSockets.get(record.reusableUrl) === record.connection
     )
       this.#browserSockets.delete(record.reusableUrl);
-    record.disconnectUnsubscribe?.();
-    record.disconnectUnsubscribe = undefined;
+    record.statusUnsubscribe?.();
+    record.statusUnsubscribe = undefined;
   }
 
-  async #releaseTransportRecord(record: OwnedConnection): Promise<void> {
-    record.disconnectUnsubscribe?.();
-    record.disconnectUnsubscribe = undefined;
+  async #releaseTransportRecord(
+    record: OwnedConnection,
+    primaryCleanupCause?: unknown,
+  ): Promise<void> {
+    record.statusUnsubscribe?.();
+    record.statusUnsubscribe = undefined;
     try {
       await record.cleanupLease.release();
-      this.#connections.delete(record.connection);
+      record.failure = undefined;
+      if (record.activeLeases === 0)
+        this.#connections.delete(record.connection);
     } catch (cause: unknown) {
-      const failure = cleanupError(record, cause);
+      const combinedCause =
+        primaryCleanupCause === undefined
+          ? cause
+          : new AggregateError(
+              [primaryCleanupCause, cause],
+              "Target cleanup and CDP transport close both failed.",
+              { cause: primaryCleanupCause },
+            );
+      const failure = cleanupError(record, combinedCause);
       record.failure = failure;
       throw failure;
     }

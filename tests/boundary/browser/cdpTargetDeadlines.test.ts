@@ -12,7 +12,10 @@ import {
 } from "../../../src/browser/PlaywrightScenarioServiceWorkers.js";
 import { AnalysisTimeoutError } from "../../../src/domain/analysisErrorCore.js";
 import { CdpWebRuntimeProvider } from "../../../src/browser/execution/CdpWebRuntimeProvider.js";
-import { CDP_DISCOVERY_RESPONSE_TIMEOUT_MS } from "../../../src/domain/browserDeadline.js";
+import {
+  CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
+  MAX_BROWSER_DEADLINE_MS,
+} from "../../../src/domain/browserDeadline.js";
 import { BrowserObservationError } from "../../../src/domain/browserObservationError.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
@@ -799,6 +802,69 @@ it("applies caller-selected discovery_timeout_ms to HTTP discovery independently
   } finally {
     await provider.close();
     server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it("clamps browser-socket handshake timers at MAX_BROWSER_DEADLINE_MS without 32-bit timer overflow", async () => {
+  const browser = await startFakeCdpBrowser({ handshakeDelayMs: 60 });
+  const provider = new CdpBrowserProvider();
+  try {
+    const listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        discovery_timeout_ms: MAX_BROWSER_DEADLINE_MS,
+      }),
+    );
+    if (!listed.ok) throw listed.error;
+    expect(listed.value.targets.length).toBeGreaterThan(0);
+    const scheduledDelays = vi
+      .mocked(globalThis.setTimeout)
+      .mock.calls.flatMap(([, delay]) =>
+        typeof delay === "number" ? [delay] : [],
+      );
+    expect(scheduledDelays).toContain(MAX_BROWSER_DEADLINE_MS);
+    expect(Math.max(...scheduledDelays)).toBeLessThanOrEqual(
+      MAX_BROWSER_DEADLINE_MS,
+    );
+  } finally {
+    await provider.close();
+    await browser.close();
+  }
+
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    sockets.add(socket);
+    socket.on("close", () => sockets.delete(socket));
+    socket.resume();
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  if (address === null || typeof address === "string")
+    throw new Error("Expected a TCP address");
+  try {
+    const pending = openCdpEndpoint(
+      browserObservationEndpointSchema.parse(
+        `ws://127.0.0.1:${String(address.port)}/devtools/browser/max-deadline`,
+      ),
+      "list_browser_targets",
+      undefined,
+      MAX_BROWSER_DEADLINE_MS,
+    ).catch((cause: unknown) => cause);
+    await vi.waitFor(() => expect(sockets.size).toBe(1), { timeout: 5_000 });
+    expireEveryTimer(MAX_BROWSER_DEADLINE_MS);
+    const failure = await pending;
+    expect(failure).toBeInstanceOf(BrowserObservationError);
+    if (!(failure instanceof BrowserObservationError))
+      throw new Error("Expected maximum discovery deadline failure");
+    expect(failure.userMessage).toContain(
+      `CDP browser-socket discovery exceeded its ${String(MAX_BROWSER_DEADLINE_MS)} ms discovery_timeout_ms deadline`,
+    );
+    expect(failure.remediationAction).toContain(
+      `discovery_timeout_ms is already at the maximum ${String(MAX_BROWSER_DEADLINE_MS)} ms`,
+    );
+  } finally {
+    for (const socket of sockets) socket.destroy();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });

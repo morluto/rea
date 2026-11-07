@@ -1,6 +1,7 @@
 import {
   CDP_DISCOVERY_RESPONSE_TIMEOUT_MS,
   DEFAULT_CDP_COMMAND_TIMEOUT_MS,
+  MAX_BROWSER_DEADLINE_MS,
 } from "../domain/browserDeadline.js";
 import type { BrowserObservationEndpoint } from "../domain/browserObservation.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -70,8 +71,11 @@ export const openCdpEndpoint = async (
   const discoveryLimits = {
     commandTimeoutMs: discoveryTimeoutMs,
     // Stay past the discovery abort so a stalled open is labeled as discovery,
-    // not as a command_timeout_ms handshake.
-    handshakeTimeoutMs: discoveryTimeoutMs + 1_000,
+    // not as a command_timeout_ms handshake, without overflowing 32-bit timers.
+    handshakeTimeoutMs: Math.min(
+      MAX_BROWSER_DEADLINE_MS,
+      discoveryTimeoutMs + 1_000,
+    ),
   };
   return await withCdpDiscoveryDeadline(
     operation,
