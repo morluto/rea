@@ -326,14 +326,57 @@ const hasInheritedListenerMethodOverride = (
   return false;
 };
 
+/** Check whether an expression is a proven native child process or EventEmitter creation. */
+const isProvenCreationNode = (
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  escapeLimitNode?: t.Node,
+): boolean => {
+  const unwrapped = unwrapJavaScriptExpression(node).node;
+  if (t.isCallExpression(unwrapped) || t.isOptionalCallExpression(unwrapped)) {
+    return (
+      builtinChildProcessMethod(unwrapped.callee, state) !== null &&
+      !hasInheritedListenerMethodOverride(state, "child_process")
+    );
+  }
+  if (!t.isNewExpression(unwrapped)) return false;
+  const constructor = unwrapped.callee;
+  if (!t.isIdentifier(constructor)) return false;
+  const owner = resolveSemanticBindingState(
+    state,
+    constructor,
+    constructor.name,
+  );
+  if (
+    owner === undefined ||
+    owner.memberWrites.length > 0 ||
+    owner.escapedPaths.some(
+      (effect) =>
+        escapeLimitNode !== undefined && effect.node !== escapeLimitNode,
+    )
+  )
+    return false;
+  return (
+    builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
+      "EventEmitter" && !hasInheritedListenerMethodOverride(state, "events")
+  );
+};
+
 /** Identify stable Node-owned emitter instances without inferring generic APIs. */
 export const isProvenNodeEmitter = (
   receiver: t.Expression | t.Super,
   call: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
 ): boolean => {
-  if (!t.isIdentifier(receiver)) return false;
-  const binding = resolveSemanticBindingState(state, receiver, receiver.name);
+  const unwrapped = unwrapJavaScriptExpression(receiver).node;
+  if (
+    t.isCallExpression(unwrapped) ||
+    t.isOptionalCallExpression(unwrapped) ||
+    t.isNewExpression(unwrapped)
+  )
+    return isProvenCreationNode(unwrapped, state, unwrapped);
+  if (!t.isIdentifier(unwrapped)) return false;
+  const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
   if (
     binding === undefined ||
     binding.mutable ||
@@ -347,30 +390,10 @@ export const isProvenNodeEmitter = (
   ];
   if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
     return false;
-  const initial = unwrapJavaScriptExpression(initializers[0].node).node;
-  if (t.isCallExpression(initial) || t.isOptionalCallExpression(initial)) {
-    return (
-      builtinChildProcessMethod(initial.callee, state) !== null &&
-      !hasInheritedListenerMethodOverride(state, "child_process")
-    );
-  }
-  if (!t.isNewExpression(initial)) return false;
-  const constructor = initial.callee;
-  if (!t.isIdentifier(constructor)) return false;
-  const owner = resolveSemanticBindingState(
+  return isProvenCreationNode(
+    initializers[0].node,
     state,
-    constructor,
-    constructor.name,
-  );
-  if (
-    owner === undefined ||
-    owner.memberWrites.length > 0 ||
-    owner.escapedPaths.some((effect) => effect.node !== initializers[0]?.node)
-  )
-    return false;
-  return (
-    builtinDataEffectMethod(constructor, state, ["events", "node:events"]) ===
-      "EventEmitter" && !hasInheritedListenerMethodOverride(state, "events")
+    initializers[0]?.node,
   );
 };
 

@@ -37,6 +37,15 @@ it("does not emit generic listener candidates for a rejected Node child listener
   expect(ir.childProcessInteractions).toEqual([]);
 });
 
+it("does not emit child listener interactions for a direct spawn call with a rejected listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    spawn("worker").on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+  expect(ir.childProcessInteractions).toEqual([]);
+});
+
 it.each([
   `ChildProcess.prototype.off = function (event) { return this.removeAllListeners(event); };`,
   `cp.ChildProcess.prototype.off = function (event) { return this.removeAllListeners(event); };`,
