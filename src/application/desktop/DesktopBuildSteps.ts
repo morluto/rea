@@ -68,12 +68,14 @@ export class DesktopBuildSteps {
       const shot = await steps.computer
         .callTool("computer_screenshot", {}, turn)
         .catch(() => undefined);
-      if (turn.aborted)
+      if (turn.aborted) {
+        steps.capture.abandon();
         return err(
           new AnalysisCancelledError("start_build_capture", {
             cause: turn.reason,
           }),
         );
+      }
       return ok({
         value: {
           computer_id: input.computer_id,
