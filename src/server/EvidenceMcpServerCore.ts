@@ -208,6 +208,40 @@ const partitionSdkDiagnostic = (
   };
 };
 
+/**
+ * Guarantee a 2026-07-28-valid tools/call result on the wire, regardless of
+ * the era the SDK encoded for. The SDK stamps resultType only for
+ * 2026-era results; a 2025-era result legitimately omits it, and the SDK's
+ * 2025 client codec strips it on decode, so adding it here does not change
+ * what a 2025-era SDK client sees. It does change what a downstream
+ * component that re-validates the raw wire result with the strict 2026
+ * rules sees — e.g. a client background task that replays a completed
+ * long call — from "missing required resultType" to a valid complete
+ * result. Only fill when absent; never overwrite a handler/SDK-provided
+ * discriminator such as input_required.
+ *
+ * Exported for unit tests: a tools/call wire result carrying a
+ * non-complete resultType cannot be produced through the public server
+ * API (the SDK turns a handler's input_required signal into
+ * multi-round-trip requests instead of a wire result), so the
+ * never-overwrite rule is covered directly here, not via the wire.
+ */
+export const ensureToolResultType = (
+  message: JSONRPCMessage,
+): JSONRPCMessage => {
+  if (!isJSONRPCResultResponse(message) || !isCallToolResult(message.result))
+    return message;
+  if (
+    (message.result as { readonly resultType?: unknown }).resultType !==
+    undefined
+  )
+    return message;
+  return {
+    ...message,
+    result: { ...message.result, resultType: "complete" },
+  };
+};
+
 /** Replace the tool payload after the SDK codec while retaining its envelope. */
 const replaceToolResultPayload = (
   original: CallToolResult,
@@ -776,16 +810,22 @@ class ErrorEvidenceTransport implements Transport {
     request: McpToolRequest | undefined,
   ): Promise<void> {
     request?.beginPublication();
+    // Fill a missing resultType on tools/call results at the wire, never
+    // overwriting a handler/SDK-provided value: under protocol 2025 the SDK
+    // legitimately omits it, and a strict 2026 re-validator rejects a
+    // replayed call without it. Stamping here covers both publication paths
+    // (admitted and admission-refused) since both funnel through publish.
+    const wire = ensureToolResultType(message);
     if (
-      !isJSONRPCResultResponse(message) ||
-      !isCallToolResult(message.result) ||
-      message.result.isError !== true
+      !isJSONRPCResultResponse(wire) ||
+      !isCallToolResult(wire.result) ||
+      wire.result.isError !== true
     ) {
-      await this.transport.send(message, options);
+      await this.transport.send(wire, options);
       return;
     }
     // Oversized recovery has already consumed this private structured carrier.
-    const { structuredContent: _diagnostic, ...result } = message.result;
+    const { structuredContent: _diagnostic, ...result } = wire.result;
     // SDK-built errors bypass ToolResultDelivery's target-content marker.
     const marked =
       tool !== undefined &&
@@ -796,7 +836,7 @@ class ErrorEvidenceTransport implements Transport {
             _meta: { ...result._meta, ...TARGET_CONTENT_RESULT_META },
           }
         : result;
-    await this.transport.send({ ...message, result: marked }, options);
+    await this.transport.send({ ...wire, result: marked }, options);
   }
 
   private recoverError(
