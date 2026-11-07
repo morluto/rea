@@ -1,3 +1,5 @@
+import { managedApplicationGraphReferenceInputSchema } from "../domain/managed/managedApplicationGraph.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { z } from "incur";
 
 import { projectManagedApplicationGraphEvidence } from "../application/managed/ManagedApplicationGraphService.js";
@@ -22,9 +24,10 @@ export const registerProjectManagedApplicationGraph = (
     description:
       "Project authenticated managed static Evidence into an application graph",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed application graph JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.projectManagedApplicationGraph,
+        managedApplicationGraphReferenceInputSchema,
+      ).describe("Inline managed application graph JSON or JSON file path"),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

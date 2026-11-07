@@ -1,3 +1,10 @@
+import { artifactComparisonInputSchema } from "../contracts/artifactComparisonContracts.js";
+import { localPathStringSchema } from "../domain/localPath.js";
+import {
+  evidenceInputSchema,
+  evidenceFileReferenceSchema,
+} from "../domain/evidenceReference.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 
@@ -15,6 +22,14 @@ import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { CliInstance } from "./types.js";
 
 const OPERATION = "compare_artifacts";
+const cliEvidenceSourceSchema = z.union([
+  evidenceInputSchema,
+  evidenceFileReferenceSchema.extend({ path: localPathStringSchema }),
+]);
+const artifactComparisonCliInputSchema = artifactComparisonInputSchema.extend({
+  left: cliEvidenceSourceSchema,
+  right: cliEvidenceSourceSchema,
+});
 
 /** Compare artifact inventories through the same source owners and workflow as MCP. */
 export const registerArtifactComparisonCommand = (
@@ -26,7 +41,10 @@ export const registerArtifactComparisonCommand = (
     description:
       'Compare two artifact inventories, including FIT and legacy uImage firmware components, named as {left, right}: complete Evidence or {kind:"evidence-file",path,evidence_id?}. A one-shot command retains no session Evidence for retained-evidence references.',
     args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        name,
+        artifactComparisonCliInputSchema,
+      ).describe("Inline workflow JSON or JSON file path"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>

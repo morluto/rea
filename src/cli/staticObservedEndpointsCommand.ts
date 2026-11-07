@@ -1,3 +1,4 @@
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { Evidence } from "../domain/evidence.js";
@@ -112,11 +113,12 @@ export const registerStaticObservedEndpointsCommand = (
     description:
       "Compare static JavaScript endpoints and HAR Evidence JSON offline; --detail summary with --evidence_output saves full facts for selected inspect-analysis-view pages",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or file containing application, capture and optional origin",
-        ),
+      inputJson: jsonInputArgument(
+        name,
+        compareStaticObservedEndpointsFactsSchema,
+      ).describe(
+        "Inline JSON or file containing application, capture and optional origin",
+      ),
     }),
     options: commandOptions,
     run: ({ args, options }) =>

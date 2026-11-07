@@ -1,3 +1,4 @@
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import { matchNativeFunctionsFromBundles } from "../application/native/NativeFunctionMatchingService.js";
@@ -29,11 +30,12 @@ export const registerNativeFunctionMatchingCommands = (
     description:
       "Match two observed native function inventories without executing targets",
     args: z.object({
-      input: z
-        .string()
-        .describe(
-          "JSON or JSON file: left/right inventories, optional observations and detail",
-        ),
+      input: jsonInputArgument(
+        CLI_COMMANDS.matchNativeFunctions,
+        matchNativeFunctionsInputSchema,
+      ).describe(
+        "JSON or JSON file: left/right inventories, optional observations and detail",
+      ),
     }),
     options: z.object({
       source_bundle: z

@@ -1,3 +1,4 @@
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
@@ -25,11 +26,12 @@ export const registerNativeCallCommands = (
       "Launch a Mach-O under LLDB and record entries into selected functions or Objective-C methods",
     args: z.object({
       path: z.string().describe("Mach-O or app path"),
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.observeNativeCalls,
+        nativeCallObservationInputSchema,
+      ).describe(
+        "Inline JSON or a JSON file path: breakpoints, arguments, environment, duration_ms, max_events, argument_registers, backtrace_frames",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, CLI_COMMANDS.observeNativeCalls, async () => {

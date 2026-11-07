@@ -1,3 +1,6 @@
+import { managedNativeVerificationRequestSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
+import { managedReconstructionImportRequestSchema } from "../domain/managed/managedReconstruction.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 
@@ -196,9 +199,10 @@ const registerImportManagedReconstruction = (
     description:
       "Import decompiler-produced managed reconstruction against exact static member evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed reconstruction JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.importManagedReconstruction,
+        managedReconstructionImportRequestSchema,
+      ).describe("Inline managed reconstruction JSON or JSON file path"),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
@@ -234,9 +238,10 @@ const registerVerifyManagedNativeBoundaries = (
     description:
       "Verify managed P/Invoke declarations against authenticated native Evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe("Inline managed/native verification JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.verifyManagedNativeBoundaries,
+        managedNativeVerificationRequestSchema,
+      ).describe("Inline managed/native verification JSON or JSON file path"),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

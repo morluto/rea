@@ -1,3 +1,6 @@
+import { localPathStringSchema } from "../domain/localPath.js";
+import { reconcileJavaScriptRuntimeRequestSchema } from "../contracts/javascript/applicationWorkflowInputContracts.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { parseCliAnalysisEvidenceDelivery } from "./analysisEvidenceDelivery.js";
 import { javaScriptRoutesDeliverySchema } from "../domain/analysisView/javascriptRoutesView.js";
@@ -36,6 +39,14 @@ import {
   evidenceBundleOption,
   runEvidenceInputCommand,
 } from "./evidenceInputCommand.js";
+
+// These three paths are resolved against the CLI caller's working directory.
+const electronActiveCliInputSchema =
+  electronActiveObservationInputSchema.extend({
+    executable_path: localPathStringSchema,
+    application_path: localPathStringSchema,
+    application_root: localPathStringSchema.optional(),
+  });
 
 /** Register CLI equivalents of the Electron MCP tools. */
 export const registerElectronCommands = (
@@ -112,11 +123,12 @@ const registerElectronActiveCommand = (
   cli.command(CLI_COMMANDS.captureElectronScenario, {
     description: "Run one owned Electron scenario with cancellable actions",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file matching capture_electron_scenario",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.captureElectronScenario,
+        electronActiveCliInputSchema,
+      ).describe(
+        "Inline JSON or a JSON file matching capture_electron_scenario",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -180,11 +192,12 @@ const registerJavaScriptRuntimeReconciliationCommand = (
     description:
       "Reconcile static application and passive runtime Evidence JSON",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.reconcileJavaScriptRuntime,
+        reconcileJavaScriptRuntimeRequestSchema,
+      ).describe(
+        "Inline JSON or a JSON file path matching reconcile_javascript_runtime",
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>
