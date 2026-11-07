@@ -380,4 +380,41 @@ describe("draftTaskFiles when a sibling lock changed", () => {
 
     expect(settings?.suggested).not.toEqual([]);
   });
+
+  it("keeps the settings draft when the selected folder also contains the lock", () => {
+    const marked = (
+      role: "application_state" | "document",
+      format: "json" | "text",
+      before: { size: number } | ReturnType<typeof text>,
+      after: { size: number } | ReturnType<typeof text>,
+    ) => ({
+      ...statePath(role, format, before, after),
+      reasons: ["selected_path" as const],
+    });
+    const files = draftOf({
+      ".config/app/settings.json": marked(
+        "application_state",
+        "json",
+        { size: 1 },
+        { size: 2 },
+      ),
+      "Documents/plan.vym": marked(
+        "document",
+        "text",
+        text("map"),
+        text("map"),
+      ),
+      "Documents/plan.vym.lock": marked(
+        "document",
+        "text",
+        text("lock"),
+        text("held"),
+      ),
+    });
+    const settings = files.find(
+      (file) => file.file === ".config/app/settings.json",
+    );
+
+    expect(settings?.suggested).not.toEqual([]);
+  });
 });
