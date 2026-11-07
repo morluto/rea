@@ -21,6 +21,8 @@ export interface FunctionSnapshot {
   readonly callCoverageBlockers: readonly string[];
   readonly unresolvedCallCaveats: readonly string[];
   readonly callCoverageDiagnostics: readonly string[];
+  readonly callDiscoveryLimitations: readonly string[];
+  readonly callDiscoveryStatus: "complete" | "partial" | "unknown";
 }
 
 /** Artifact identity and provider-owned mapping jointly establish coordinate applicability. */
@@ -110,5 +112,7 @@ export const parseFunctionEvidence = (
     callCoverageBlockers: callCoverage.blockers,
     unresolvedCallCaveats: callCoverage.unresolvedCallCaveats,
     callCoverageDiagnostics: callCoverage.diagnostics,
+    callDiscoveryLimitations: callCoverage.discoveryLimitations,
+    callDiscoveryStatus: callCoverage.discoveryStatus,
   });
 };

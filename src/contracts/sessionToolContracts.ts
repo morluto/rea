@@ -158,12 +158,12 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "record_unknown",
-    "Create one deterministic residual unknown and immutable mutation evidence. Validates all evidence and relationship references, and rejects duplicate stable identity.",
+    "Create one deterministic residual unknown and immutable mutation evidence. Its scope is the active binary analysis target digest, or null without an active target; supporting Evidence does not select the scope. Scope contributes to stable identity. Validates all evidence and relationship references, and rejects duplicate stable identity.",
     recordUnknownInputSchema,
   ),
   session(
     "update_unknown",
-    "Append one immutable full-state revision and mutation evidence. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
+    "Append one immutable full-state revision and mutation evidence. The unknown retains its original scope; the mutation Evidence subject is the active binary analysis target, or null without one, and can differ from that scope. Requires exact expected_revision; stale concurrent writers fail instead of overwriting newer analysis.",
     updateUnknownInputSchema,
   ),
   session(
@@ -173,7 +173,7 @@ export const SESSION_TOOL_CONTRACTS = [
   ),
   session(
     "get_evidence_bundle",
-    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. Use a discovered evidence_id with inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
+    "Return every retained Evidence record and residual unknown as a complete canonical bundle by default. detail=summary discovers retained records without copying or transferring their payloads; optionally filter by exact Evidence ID, operation, target SHA-256, analysis-profile digest or canonical native procedure address. Metadata distinguishes complete record retention from native value-flow truncation or unavailable/unknown coverage. detail=records returns a page (offset, limit) of the matching complete records with unchanged IDs and their missing direct evidence_links; it is not an importable bundle. detail=links reads which evidence_links of the selected records this session or bundle retains, without their payloads: traversal retained-closure also follows retained links, the walk composed workflows require, and rows default to missing links. For supported parent operations, use a discovered evidence_id with a compatible inspect_analysis_view without restarting a provider. Filters apply to summary, records and links delivery.",
     getEvidenceBundleInputSchema,
   ),
   {

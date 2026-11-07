@@ -6217,7 +6217,8 @@ msgstr ""
 "{ph0}ροή εργασίας εφαρμογών{ph1} για να ακολουθήσετε τα αρχεία και τα όρια "
 "διεργασιών."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/web-network-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-
 #. captures.md" >
 #. {ph1}: </a >
 #: website/public/guides/browser/index.html:487
@@ -13759,8 +13760,8 @@ msgstr ""
 
 #. {ph0}: <a href="https://claude.ai/download">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#claude-desktop" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#claude-desktop" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:597
 #, python-brace-format
@@ -13813,12 +13814,11 @@ msgctxt "page:get-started/index.html"
 msgid "Setup ID"
 msgstr "Αναγνωριστικό ρύθμισης"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md" >
 #. {ph1}: </a >
-#. {ph2}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#released-
-#. package-and-main" >
+#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#released-package-and-main" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:757
 #, python-brace-format
@@ -13847,8 +13847,8 @@ msgstr ""
 "διακομιστή MCP με όνομα {ph0}, χρησιμοποιώντας αυτή την εντολή στον "
 "υπολογιστή του Bot:"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/client-
-#. configuration.md#other-client-settings" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/client-configuration.md#other-client-settings" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:788
 #, python-brace-format
@@ -14121,9 +14121,8 @@ msgstr ""
 "Αν το macOS ζητήσει άδεια Automation, επιτρέψτε την εφαρμογή που ξεκινά το "
 "REA από System Settings → Privacy & Security → Automation και ξαναδοκιμάστε."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#hopper"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#hopper" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1099
 #, python-brace-format
@@ -14219,9 +14218,8 @@ msgstr ""
 "Στο macOS, η μεταγλώττιση χρειάζεται Xcode Command Line Tools, make και "
 "bison. Χρησιμοποιήστε τον οδηγό για τον υπολογιστή σας:"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#missing-
-#. macos-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#missing-macos-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1216
 #, python-brace-format
@@ -14229,9 +14227,8 @@ msgctxt "page:get-started/index.html"
 msgid "{ph0}macOS · Intel{ph1}"
 msgstr "{ph0}macOS · Intel{ph1}"
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#macos-
-#. arm64-native-decompiler" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#macos-arm64-native-decompiler" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1222
 #, python-brace-format
@@ -14267,11 +14264,11 @@ msgstr ""
 " ρύθμιση αφού ορίσετε τις διαδρομές, εγκρίνετε την ενημερωμένη διαμόρφωση "
 "της εφαρμογής και επανεκκινήστε τον βοηθό σας."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#ghidra"
-#. >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#ghidra" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/windows-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/windows-
 #. ghidra-p0.md" >
 #. {ph3}: </a >
 #: website/public/get-started/index.html:1258
@@ -14372,7 +14369,8 @@ msgstr ""
 "Χρησιμοποιήστε το αρχείο καταχώρισης JSON που προετοιμάσατε με τον οδηγό "
 "παρόχου ανάλυσης, εκτελέστε ξανά τη ρύθμιση και επανεκκινήστε τον βοηθό σας."
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/ida-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/providers/ida-
 #. provider.md" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1376
@@ -14531,13 +14529,16 @@ msgctxt "page:get-started/index.html"
 msgid "Process behavior"
 msgstr "Συμπεριφορά διεργασίας"
 
-#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/flutter-
+#. {ph0}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/flutter-
 #. analysis.md" >
 #. {ph1}: </a >
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/javascript-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/javascript/javascript-
 #. artifact-reconstruction.md" >
 #. {ph3}: </a >
-#. {ph4}: <a href="https://github.com/morluto/rea/blob/main/docs/evm-
+#. {ph4}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-
 #. bytecode.md" >
 #. {ph5}: </a >
 #. {ph6}: <a href="../guides/">
@@ -14652,9 +14653,8 @@ msgstr ""
 "Αν εγκαταστήσατε το καθολικό CLI, ενημερώστε το με {ph0}. Χρησιμοποιήστε το "
 "{ph1} για να αφαιρέσετε τη διαμόρφωση εφαρμογών και τη δεξιότητα του REA."
 
-#. {ph0}: <a
-#. href="https://github.com/morluto/rea/blob/main/docs/installation.md#diagnose-
-#. update-and-remove" >
+#. {ph0}: <a href="https://github.com/morluto/rea/blob/main/docs/getting-
+#. started/installation.md#diagnose-update-and-remove" >
 #. {ph1}: </a >
 #: website/public/get-started/index.html:1812
 #, python-brace-format
@@ -16055,7 +16055,8 @@ msgstr ""
 
 #. {ph0}: <a href="../../get-started/">
 #. {ph1}: </a>
-#. {ph2}: <a href="https://github.com/morluto/rea/blob/main/docs/android-
+#. {ph2}: <a
+#. href="https://github.com/morluto/rea/blob/main/docs/guides/android/android-
 #. analysis.md" >
 #. {ph3}: </a >
 #: website/public/showcase/aegis/index.html:714
