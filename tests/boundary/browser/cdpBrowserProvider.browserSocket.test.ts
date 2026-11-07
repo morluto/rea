@@ -1169,3 +1169,71 @@ it("isolates concurrent target sessions on one shared browser socket when a shor
   }
   await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });
+
+it("reuses one browser socket across equivalent normalized spellings while keeping 127.0.0.1 and [::1] distinct", async () => {
+  const ipv4Browser = await startFakeCdpBrowser();
+  const ipv6Browser = await startFakeCdpBrowser();
+  trackBrowser(ipv4Browser);
+  trackBrowser(ipv6Browser);
+  const port = new URL(ipv4Browser.endpoint).port;
+  const canonicalIpv6Url = `ws://[::1]:${port}/devtools/browser/fake`;
+  const originalConnect = CdpConnection.connect.bind(CdpConnection);
+  const connectUrls: string[] = [];
+  const connectSpy = vi
+    .spyOn(CdpConnection, "connect")
+    .mockImplementation((url, operation, signal, limits, onConnected) => {
+      connectUrls.push(url);
+      const wireUrl =
+        url === canonicalIpv6Url ? ipv6Browser.browserWebSocketUrl : url;
+      return originalConnect(wireUrl, operation, signal, limits, onConnected);
+    });
+  const provider = new CdpBrowserProvider();
+  try {
+    const ipv6Listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: `WS://[0:0:0:0:0:0:0:1]:0${port}/devtools/browser/fake`,
+      }),
+    );
+    if (!ipv6Listed.ok) throw ipv6Listed.error;
+    const ipv6Inspected = await provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: canonicalIpv6Url,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (!ipv6Inspected.ok) throw ipv6Inspected.error;
+    expect(ipv6Browser.openedConnectionCount()).toBe(1);
+    expect(ipv4Browser.openedConnectionCount()).toBe(0);
+
+    const ipv4Listed = await provider.listTargets(
+      listBrowserTargetsInputSchema.parse({
+        cdp_endpoint: `WS://127.0.0.1:0${port}/devtools/browser/fake`,
+      }),
+    );
+    if (!ipv4Listed.ok) throw ipv4Listed.error;
+    const ipv4Screenshot = await provider.captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: ipv4Browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+      }),
+    );
+    if (!ipv4Screenshot.ok) throw ipv4Screenshot.error;
+
+    expect(ipv6Browser.openedConnectionCount()).toBe(1);
+    expect(ipv4Browser.openedConnectionCount()).toBe(1);
+    expect(ipv6Browser.activeConnectionCount()).toBe(1);
+    expect(ipv4Browser.activeConnectionCount()).toBe(1);
+    expect(connectUrls).toEqual([
+      canonicalIpv6Url,
+      ipv4Browser.browserWebSocketUrl,
+    ]);
+  } finally {
+    connectSpy.mockRestore();
+    await provider.close();
+  }
+  await vi.waitFor(() => {
+    expect(ipv6Browser.activeConnectionCount()).toBe(0);
+    expect(ipv4Browser.activeConnectionCount()).toBe(0);
+  });
+});

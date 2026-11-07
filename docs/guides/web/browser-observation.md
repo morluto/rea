@@ -242,15 +242,18 @@ file for you.
 - An admitted browser socket is retained by the active browser provider across
   calls to the same normalized browser WebSocket URL, and concurrent cold-start
   calls share one handshake so MCP sessions do not re-open the browser socket on
-  every step. Each target operation detaches its flattened target session when
-  finished: unconfirmed target attach or detach cleanup closes the shared
-  browser socket for session containment, whereas a caller's own discovery
-  deadline or cancellation releases only its lease when transport state remains
-  clean. Provider shutdown closes the retained browser socket. One-shot CLI
-  invocations close their provider on exit, so Chrome may still ask you to
-  approve each separate CLI connection. Discovery (`Browser.getVersion`,
-  `Target.getTargets`) defaults to a 10-second deadline and can be adjusted per
-  call with `discovery_timeout_ms` (`--discovery-timeout-ms` on the CLI).
+  every step. Scheme case, uncompressed IPv6 loopback spellings, and leading
+  port zeros normalize to one reuse key, while `127.0.0.1`, `[::1]`, and
+  distinct `/devtools/browser/<id>` paths remain separate sockets. Each target
+  operation detaches its flattened target session when finished: unconfirmed
+  target attach or detach cleanup closes the shared browser socket for session
+  containment, whereas a caller's own discovery deadline or cancellation
+  releases only its lease when transport state remains clean. Provider shutdown
+  closes the retained browser socket. One-shot CLI invocations close their
+  provider on exit, so Chrome may still ask you to approve each separate CLI
+  connection. Discovery (`Browser.getVersion`, `Target.getTargets`) defaults to
+  a 10-second deadline and can be adjusted per call with `discovery_timeout_ms`
+  (`--discovery-timeout-ms` on the CLI).
 - The browser identifier controls access to the socket. Evidence records the
   endpoint as `ws://127.0.0.1:9222/devtools/browser/[REDACTED]`.
 - `browser.revision` is the socket's `Browser.getVersion` value, such as
