@@ -192,10 +192,15 @@ def _sqlite(path: Path) -> dict:
             for name in names[:MAX_TABLES]}
         encoding = {"UTF-8": "utf-8", "UTF-16le": "utf-16-le", "UTF-16be": "utf-16-be"}[
             db.execute("PRAGMA encoding").fetchone()[0]]
-        tables = {name: _table(db, name, keys[name], encoding) for name in names[:MAX_TABLES]}
+        tables = {}
+        for name in names[:MAX_TABLES]:
+            try:
+                tables[name] = _table(db, name, keys[name], encoding)
+            except sqlite3.Error as error:
+                tables[name] = {"error": str(error)}
     cut = len(names) > MAX_TABLES
     return {"format": "sqlite", "view": {"tables": tables, "tables_truncated": cut},
-            "truncated": cut or any(table["truncated"] for table in tables.values())}
+            "truncated": cut or any("error" in table or table["truncated"] for table in tables.values())}
 
 
 def _text(text: str) -> dict:
