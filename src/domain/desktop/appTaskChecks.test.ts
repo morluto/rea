@@ -765,6 +765,22 @@ describe("evaluateTaskChecks whole text", () => {
         value: "kept",
       })?.passed,
     ).toBe(true);
+    const missing = outcome({
+      kind: "text_contains",
+      file: cut,
+      pointer: "/root/children/2",
+      value: "later",
+    });
+    expect(missing?.passed).toBe(false);
+    expect(missing?.undecided).toBe(true);
+    const zipped = outcome({
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/2",
+      value: "later",
+    });
+    expect(zipped?.passed).toBe(false);
+    expect(zipped?.undecided).toBe(true);
   });
 });
 
