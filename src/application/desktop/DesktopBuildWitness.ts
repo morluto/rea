@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
@@ -49,6 +48,7 @@ import {
   type EndedWitness,
   type WitnessRecord,
 } from "./DesktopBuildWitnessRecord.js";
+import { checkOutputTreeDestination } from "./DesktopOutputTree.js";
 
 const CHECK = "check_build_task";
 const FRESH =
@@ -87,14 +87,6 @@ const refused = (userMessage: string, remediationAction: string) =>
 
 const taskDigest = (task: DesktopTask) =>
   createHash("sha256").update(JSON.stringify(task)).digest("hex");
-
-/** Whether a folder can take the record: absent, or empty. */
-const usableFolder = async (directory: string): Promise<boolean> =>
-  readdir(directory).then(
-    (entries) => entries.length === 0,
-    (cause: unknown) =>
-      (cause as NodeJS.ErrnoException | undefined)?.code === "ENOENT",
-  );
 
 /** The most bytes REA reads of each of the bundle's files for the task. */
 const BUNDLE_FILE_BYTES = 1024 * 1024;
@@ -484,13 +476,12 @@ export class DesktopBuildWitness {
           "Give directory, a new or empty folder on this host for the record and recording.",
         ),
       );
-    if (!(await usableFolder(directory)))
-      return err(
-        refused(
-          `${directory} exists and is not empty.`,
-          "Give a new or empty folder.",
-        ),
-      );
+    const destination = await checkOutputTreeDestination(directory, {
+      provider: AGENTENV_PROVIDER,
+      operation: CHECK,
+      field: "directory",
+    });
+    if (!destination.ok) return destination;
     const differs =
       this.bundle === undefined
         ? undefined

@@ -20,6 +20,7 @@ import {
   runRea,
 } from "./DesktopBuildCommands.js";
 import {
+  checkOutputTreeDestination,
   writeOutputTree,
   writtenWithOpenHandles,
 } from "./DesktopOutputTree.js";
@@ -136,6 +137,12 @@ export const exportBuild = async (
         "Shorten the task's prompt or checks and export again.",
       ),
     );
+  const destination = await checkOutputTreeDestination(request.directory, {
+    provider: AGENTENV_PROVIDER,
+    operation: EXPORT,
+    field: "directory",
+  });
+  if (!destination.ok) return destination;
   try {
     const bytes = await runRea(
       computer,
