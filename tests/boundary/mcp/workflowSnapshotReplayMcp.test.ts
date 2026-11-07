@@ -557,6 +557,7 @@ describe("MCP investigation history snapshot replay", () => {
         replay,
         "investigation-history-replay",
       );
+      await expectSnapshotImportGuidance(replayMcp, snapshotPath);
       const reopened = await replayMcp.callTool({
         name: "open_binary",
         arguments: { path: firstPath, snapshot_path: snapshotPath },
@@ -633,7 +634,13 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
   const secondEvidence = toolContract("list_strings").outputSchema.parse(
     second.structuredContent,
   );
-  expect(secondEvidence.evidence_links).toEqual(firstEvidence.evidence_links);
+  expect(secondEvidence.evidence_links).toEqual(
+    expect.arrayContaining([
+      ...firstEvidence.evidence_links,
+      firstEvidence.evidence_id,
+    ]),
+  );
+  expect(secondEvidence.evidence_links).toHaveLength(2);
   expect(secondEvidence.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("did not re-run the provider"),
@@ -665,7 +672,13 @@ it("replays a source-bearing observation through an exported MCP snapshot", asyn
   const replayed = toolContract("list_strings").outputSchema.parse(
     (await read(reopened)).structuredContent,
   );
-  expect(replayed.evidence_links).toEqual(firstEvidence.evidence_links);
+  expect(replayed.evidence_links).toEqual(
+    expect.arrayContaining([
+      ...firstEvidence.evidence_links,
+      firstEvidence.evidence_id,
+    ]),
+  );
+  expect(replayed.evidence_links).toHaveLength(2);
   expect(replayed.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("did not re-run the provider"),
@@ -752,7 +765,16 @@ const expectRestoredSourceReplay = async (
       })
     ).structuredContent,
   );
-  expect(replayed.evidence_links).toEqual([source.evidence_id]);
+  const parent = saved.value.evidence_bundle.records.find(
+    (record) =>
+      record.operation === "list_strings" &&
+      record.evidence_links.includes(source.evidence_id),
+  );
+  if (parent === undefined) throw new Error("Expected original observation");
+  expect(replayed.evidence_links).toEqual(
+    expect.arrayContaining([source.evidence_id, parent.evidence_id]),
+  );
+  expect(replayed.evidence_links).toHaveLength(2);
   expect(replayed.limitations).toEqual(
     expect.arrayContaining([
       expect.stringContaining("did not re-run the provider"),
@@ -762,6 +784,79 @@ const expectRestoredSourceReplay = async (
     calls.filter((operation) => operation === "list_strings"),
   ).toHaveLength(1);
 };
+
+const expectSnapshotImportGuidance = async (mcp: Client, path: string) => {
+  const before = await readFile(path);
+  const imported = await mcp.callTool({
+    name: "import_evidence_bundle",
+    arguments: { path },
+  });
+  const error = parseMcpToolError(imported).error;
+  expect(error.code).toBe("invalid_request");
+  expect(error.remediation.action).toContain("open_binary");
+  expect(error.remediation.action).toContain("snapshot_path");
+  expect(error.remediation.action).toContain("--snapshot");
+  expect(error.remediation.action).toContain("loads and updates");
+  expect(error.remediation.action).toContain("not been validated");
+  expect((await readFile(path)).equals(before)).toBe(true);
+};
+
+it("does not authenticate snapshot-shaped or unrelated malformed bundle input", async () => {
+  const { snapshotPath } = await createWorkflowFiles(
+    "rea-mcp-snapshot-kind-",
+    [],
+  );
+  const { mcp } = await connectWorkflowMcp(
+    createWorkflowSession(makeProvider([], [])),
+    "snapshot-kind",
+  );
+  await writeFile(
+    snapshotPath,
+    JSON.stringify({
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+    }),
+  );
+  const snapshotLike = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(snapshotLike.code).toBe("invalid_request");
+  expect(snapshotLike.remediation.action).toContain("not been validated");
+
+  await writeFile(
+    snapshotPath,
+    JSON.stringify({
+      target: {},
+      binding: {},
+      evidence_bundle: {},
+      entries: [],
+      workflow_entries: [],
+      records: [],
+    }),
+  );
+  const ambiguousBundle = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(ambiguousBundle.code).toBe("evidence_integrity_mismatch");
+
+  await writeFile(snapshotPath, JSON.stringify({ records: [] }));
+  const malformedBundle = parseMcpToolError(
+    await mcp.callTool({
+      name: "import_evidence_bundle",
+      arguments: { path: snapshotPath },
+    }),
+  ).error;
+  expect(malformedBundle.code).toBe("evidence_integrity_mismatch");
+});
 
 const createWorkflowFiles = async (
   prefix: string,
