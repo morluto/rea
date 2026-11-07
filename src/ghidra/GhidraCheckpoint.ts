@@ -14,6 +14,23 @@ import { join } from "node:path";
 import { z } from "zod";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
+
+/** Checkpoint saves require the Unix bridge's mutation authority. */
+export const ghidraCheckpointTransportConflict = (
+  directory: string | undefined,
+  transport: GhidraTransportKind,
+): ConfigurationError | null => {
+  if (directory === undefined || transport === "unix-socket") return null;
+  const constraint =
+    "Ghidra checkpoints require the Unix socket bridge; unset REA_GHIDRA_CHECKPOINT_DIR or select unix-socket with REA_GHIDRA_BRIDGE_TRANSPORT on a supported POSIX host.";
+  return new ConfigurationError(constraint, {
+    settings: [
+      { setting: "REA_GHIDRA_CHECKPOINT_DIR", constraint },
+      { setting: "REA_GHIDRA_BRIDGE_TRANSPORT", constraint },
+    ],
+  });
+};
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";

@@ -1,4 +1,7 @@
-import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import {
+  ghidraCheckpointTransportConflict,
+  resolveGhidraCheckpoint,
+} from "./GhidraCheckpoint.js";
 import {
   checkpointCapabilities,
   CAPABILITIES,
@@ -445,6 +448,16 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       "resolve_analysis_profile",
       options?.scope,
     );
+    if (installation.status === "available") {
+      const conflict = ghidraCheckpointTransportConflict(
+        this.config.ghidraCheckpointDirectory,
+        resolveGhidraTransport(
+          installation.platform,
+          this.config.ghidraBridgeTransport,
+        ),
+      );
+      if (conflict !== null) return err(conflict);
+    }
     if (
       this.config.ghidraExistingProject !== undefined &&
       target.kind === "executable" &&

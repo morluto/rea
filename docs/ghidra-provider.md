@@ -15,6 +15,8 @@ packed Program's digest is reported with restored observations. Initial analysis
 keeps one stable generation through its first save; later saved states bind their
 content digest in profile identity. Restoration does not turn prior
 database state into a fresh discovery. The default remains ephemeral.
+Checkpoint mode requires the Unix socket bridge and cannot be combined with
+`REA_GHIDRA_BRIDGE_TRANSPORT=authenticated-loopback-tcp`.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.

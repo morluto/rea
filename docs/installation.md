@@ -1712,7 +1712,8 @@ request for one of them fails as `capability_unavailable` with a reason naming
 the setting, and every result carries the transport in its limitations.
 Session diagnostics report the selected transport. `rea setup` does not forward
 this setting; add it to the environment of the REA process that runs inside
-the sandbox.
+the sandbox. Loopback cannot be combined with `REA_GHIDRA_CHECKPOINT_DIR`,
+because checkpoint saves require the Unix socket bridge.
 
 ### Ghidra heap and CPU controls
 

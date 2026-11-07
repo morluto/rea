@@ -21,6 +21,7 @@ import {
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
@@ -5045,6 +5046,36 @@ const annotation = (ghidra: GhidraProvider) =>
     .capabilities()
     .find(({ operation }) => operation === "annotate_native_function");
 
+it("rejects checkpoints over loopback before profile resolution or session startup", async () => {
+  const seen: unknown[] = [];
+  const ghidra = transportProvider(
+    {
+      REA_GHIDRA_CHECKPOINT_DIR: join(process.cwd(), "missing-checkpoint"),
+      REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
+    },
+    installationHost(),
+    seen,
+  );
+  const target = executableTarget("elf", "x86_64");
+  const result = await ghidra.resolveAnalysisProfile(target);
+  expect(result.ok).toBe(false);
+  if (result.ok) throw new Error("Expected a configuration conflict");
+  expect(result.error).toMatchObject({
+    _tag: "ConfigurationError",
+    settings: expect.arrayContaining([
+      expect.objectContaining({ setting: "REA_GHIDRA_CHECKPOINT_DIR" }),
+      expect.objectContaining({ setting: "REA_GHIDRA_BRIDGE_TRANSPORT" }),
+    ]),
+  });
+  const client = ghidra.createClient(target);
+  const direct = await client.execute("health", {});
+  expect(direct.ok).toBe(false);
+  if (!direct.ok) expect(direct.error._tag).toBe("ConfigurationError");
+  expect(seen).toEqual([]);
+  await client.close();
+  await ghidra.closeOwnedResources();
+});
+
 describe("Ghidra bridge transport selection", () => {
   it("keeps the Unix socket and full authority on POSIX hosts without a selection", async () => {
     const seen: unknown[] = [];
@@ -5118,48 +5149,44 @@ describe("Ghidra bridge transport selection", () => {
   });
 
   it("withholds a configured NativeAOT extension under loopback and keeps the session", async () => {
-    const directory = await mkdtemp(join(tmpdir(), "rea-loopback-extension-"));
-    try {
-      const jar = join(directory, "addon.jar");
-      await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
-      const target = executableTarget("elf", "x86_64");
-      const seen: unknown[] = [];
-      const ghidra = transportProvider(
-        {
-          REA_GHIDRA_NATIVEAOT_JAR: jar,
-          REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
-        },
-        installationHost(),
-        seen,
-      );
-      const resolved = await ghidra.resolveAnalysisProfile(target);
-      if (!resolved.ok || resolved.value.profile === null)
-        throw new Error("Expected a bound Ghidra profile");
-      // The loopback transport cannot serve extensions, so none is committed:
-      // the Java bridge would otherwise reject the profile before it opened the
-      // listener and fail the whole session.
-      expect(
-        resolved.value.profile.parameters.analysis_extensions,
-      ).toBeUndefined();
-      const client = ghidra.createClient(target, resolved.value.profile);
-      const listed = await client.execute("list_procedures", {});
-      expect(listed.ok).toBe(true);
-      if (!listed.ok) throw listed.error;
-      // The session opens over loopback instead of aborting at the bridge.
-      expect(seen).toEqual([
-        expect.objectContaining({
-          transport: "authenticated-loopback-tcp",
-          platform: "linux",
-        }),
-      ]);
-      // The withheld extension is named rather than silently dropped.
-      expect(listed.value.limitations).toEqual(
-        expect.arrayContaining([LOOPBACK_TRANSPORT_EXTENSION_REASON]),
-      );
-      await client.close();
-    } finally {
-      await rm(directory, { recursive: true, force: true });
-    }
+    const directory = await createTestTempDirectory("rea-loopback-extension-");
+    const jar = join(directory, "addon.jar");
+    await writeFile(jar, Buffer.from([0x50, 0x4b, 3, 4]));
+    const target = executableTarget("elf", "x86_64");
+    const seen: unknown[] = [];
+    const ghidra = transportProvider(
+      {
+        REA_GHIDRA_NATIVEAOT_JAR: jar,
+        REA_GHIDRA_BRIDGE_TRANSPORT: "authenticated-loopback-tcp",
+      },
+      installationHost(),
+      seen,
+    );
+    const resolved = await ghidra.resolveAnalysisProfile(target);
+    if (!resolved.ok || resolved.value.profile === null)
+      throw new Error("Expected a bound Ghidra profile");
+    // The loopback transport cannot serve extensions, so none is committed:
+    // the Java bridge would otherwise reject the profile before it opened the
+    // listener and fail the whole session.
+    expect(
+      resolved.value.profile.parameters.analysis_extensions,
+    ).toBeUndefined();
+    const client = ghidra.createClient(target, resolved.value.profile);
+    const listed = await client.execute("list_procedures", {});
+    expect(listed.ok).toBe(true);
+    if (!listed.ok) throw listed.error;
+    // The session opens over loopback instead of aborting at the bridge.
+    expect(seen).toEqual([
+      expect.objectContaining({
+        transport: "authenticated-loopback-tcp",
+        platform: "linux",
+      }),
+    ]);
+    // The withheld extension is named rather than silently dropped.
+    expect(listed.value.limitations).toEqual(
+      expect.arrayContaining([LOOPBACK_TRANSPORT_EXTENSION_REASON]),
+    );
+    await client.close();
   });
 
   it("refuses an explicit Unix socket on Windows before any readiness check", async () => {

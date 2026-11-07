@@ -1,5 +1,8 @@
 import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
-import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
+import {
+  ghidraCheckpointSelectionSchema,
+  ghidraCheckpointTransportConflict,
+} from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
 import { ghidraProjectCommitmentSchema } from "./GhidraProjectSnapshot.js";
@@ -1168,6 +1171,11 @@ export const admitGhidraClient = (
         },
       }),
     );
+  const checkpointConflict = ghidraCheckpointTransportConflict(
+    config.ghidraCheckpointDirectory,
+    resolveGhidraTransport(platform, config.ghidraBridgeTransport),
+  );
+  if (checkpointConflict !== null) return err(checkpointConflict);
   if (platform === "win32") {
     const readiness = inspectWindowsNativeReadiness(platform);
     if (!readiness.available)
