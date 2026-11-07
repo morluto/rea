@@ -18,6 +18,7 @@ import {
 } from "./mcp-verifier-results.mjs";
 import { verifyGhidraBoundaries } from "./real-ghidra-boundaries.mjs";
 import { verifyGhidraProjectIdentity } from "./real-ghidra-project-identity.mjs";
+import { verifyGhidraSocketBoundary } from "./real-ghidra-socket-boundary.mjs";
 
 const defaultEntrypoint = fileURLToPath(new URL("../rea.mjs", import.meta.url));
 const environment = () => ({
@@ -355,6 +356,12 @@ async function verifyNativeValueAdapters(
     entrypoint,
     env,
   });
+  const socketBoundary = await verifyGhidraSocketBoundary({
+    target,
+    procedure,
+    entrypoint,
+    env,
+  });
   return {
     mocked: false,
     cli: true,
@@ -363,6 +370,7 @@ async function verifyNativeValueAdapters(
     direct_function_comparison: true,
     boundaries,
     project_identity: projectIdentity,
+    socket_boundary: socketBoundary,
     nodes: cliGraph.total_nodes,
     edges: cliGraph.total_edges,
     decompilations: cliGraph.decompilations,
