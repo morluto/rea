@@ -129,7 +129,15 @@ side declares a required facet unavailable. An empty legacy facet without a
 coverage declaration is also unknown. A producer that actually observed an
 empty facet can declare it available so observed absence remains comparable.
 Call comparison additionally retains the Evidence relationship coverage
-checks. Ghidra and Hopper declare their observed dossier facets and complete
+checks. Its call status compares the provider-observed sets; discovery
+limitations stay on that dimension even when the observed sets match or differ.
+The calls dimension's `discovery_status` records whether discovery is complete,
+partial, or unknown across both sides and directions; older comparisons may omit
+it. Incomplete or unreported discovery also remains a residual unknown and an
+unresolved `find_changed_behavior` finding, including when observed sets match.
+A structural reconstruction claim about calls remains unknown unless both
+directions have established static direct-call discovery. An independent
+observed change in another dimension can still fail an overall claim. Ghidra and Hopper declare their observed dossier facets and complete
 provider-observed caller/callee sets, including empty sets. Missing decompiler
 output remains unavailable; complete call coverage does not claim every runtime
 target. When Ghidra's decompiler fails on one function, its dossier is still
@@ -206,11 +214,18 @@ relationship coverage and read-specific `limitations`, alongside observed
 `calls`. When a provider does not classify its caveats, they remain on that
 node and coverage is `unknown`. An empty call list with partial or unknown
 coverage is not proof that the function has no calls.
-`trace_call_path` reports each limited expansion in `residual_unknowns` and
-sets `truncated: true`; any path already supported by observed edges remains
-visible. When a requested goal is not reached but an expansion is unresolved,
-`goal_status` is `unknown`; `not_reached` means traversal exhausted without
-unresolved relationship reads. Cancellation remains a tool error.
+`trace_call_path` reports limited relationship reads in `residual_unknowns` and
+sets `truncated: true`; any path supported by observed edges remains visible.
+`search_scope.observed_goal_status` describes the search of the provider-observed
+graph, while `search_scope.discovery` describes whether discovery of applicable
+direct relationships is established. A missing goal is `unknown` when either
+discovery or a relationship read is unestablished. A found path is shortest
+within the observed graph; undiscovered calls may produce a shorter path.
+`truncated` describes relationship reads, not unestablished discovery.
+`build_call_path` applies the same distinction to supplied function Evidence:
+its `search_scope.exhaustive` describes the supplied graph and
+`search_scope.observed_status` preserves that graph's result. Evidence without
+discovery metadata has unknown discovery. Cancellation remains a tool error.
 
 `trace_feature` validates each reference's containing-procedure resolution using
 the same contract as navigation context. Explicit absence remains a successful
@@ -237,10 +252,11 @@ restart or recreate the server to apply changes. If a result cannot fit, REA ret
 `resource_constraint` with `details.resource: "transport"` before constructing
 a document-sized string. Analysis Evidence remains complete in the current
 session. Its exact reference is reported in
-`details.reported_limits.evidence_reference`; call `inspect_analysis_view` with
-that reference for a summary, one section/module, or a stable page, or call
-`export_evidence_bundle` with a destination path. Complete
-bundle exports stream canonical JSON into an atomically published file.
+`details.reported_limits.evidence_reference`; for supported parent operations,
+call `inspect_analysis_view` with that reference and a compatible view. To recover
+any retained record, export the complete session with `export_evidence_bundle`
+to a destination path. Complete bundle exports stream canonical JSON into an
+atomically published file.
 
 On protocol revision `2026-07-28`, completed replies retain the SDK's
 `resultType: "complete"`, including the replacement for an oversized error.
@@ -369,9 +385,13 @@ To discover existing records without their large payloads, call
 `get_evidence_bundle` with `detail: "summary"`. Its `result.records` contain
 Evidence IDs, artifact/provider identities, analysis-profile digests and native
 procedure metadata. Optional `filters` match exact `evidence_id`, `operation`,
-`target_sha256`, `analysis_profile_digest` or `procedure_address`. Use a discovered
-ID with `inspect_analysis_view`; neither discovery nor retained selection starts
-a provider. `retention: "complete-record"` describes stored Evidence, while
+`target_sha256`, `analysis_profile_digest` or `procedure_address`. For a supported
+parent operation, use a discovered ID with a compatible `inspect_analysis_view`;
+neither discovery nor retained selection starts a provider. For records without
+a supported view, use `detail: "records"` to retrieve selected complete records,
+or export the bundle to a caller-selected path. Record and bundle delivery are
+subject to the MCP response budget.
+`retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
 every matching record; actual transport admission still applies. Omitted
@@ -421,10 +441,18 @@ Automatically retained workflow questions include their immutable result
 Evidence ID. Distinct results retain independent questions and source links;
 repeating the same result does not create another unknown. Workflow Evidence
 keeps the original residual question text. Explicit `record_unknown` requests
-keep caller-selected identity and reject duplicate creation.
+keep caller-selected identity and reject duplicate creation. Explicit creation
+uses the active binary analysis target digest as `scope_digest`, or null when
+there is no active target. Supporting Evidence does not select the scope. Scope
+contributes to the stable unknown ID, so the same question can have different
+IDs under different scopes. Check the active target before recording a
+target-scoped unknown; creating one in a target-free session does not infer a
+target from its supporting Evidence.
 Duplicate creation is a nonretryable `invalid_request`; use the existing head
 or update it with its current `expected_revision`. A stale update remains a
-retryable `revision_conflict`.
+retryable `revision_conflict`. An `update_unknown` revision keeps the unknown’s
+original `scope_digest`. Its mutation Evidence subject is the active binary
+analysis target, or null without one, so it can differ from the unknown’s scope.
 
 If automatic question publication fails after a workflow completes,
 `details.workflow_unknown_publication` identifies the Evidence and states

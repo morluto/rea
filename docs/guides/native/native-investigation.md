@@ -83,6 +83,9 @@ its address when selecting the containing function. `search_procedures` matches
 the same names, in leaf or qualified spelling: the function appears once with
 its primary name as `value`, and `matched_aliases` lists the qualified names of
 the secondary symbols that matched.
+For Ghidra case-insensitive literal searches of procedures or strings,
+`raw_result` contains bridge candidates before REA applies Unicode-aware
+matching. Use `normalized_result` for matches; a raw candidate need not match.
 Overloads can share a fully qualified name; ambiguity errors return every
 matching entry address so the caller can select the intended function directly.
 
@@ -1256,7 +1259,9 @@ handle-based path admission. See [Windows Ghidra P0](../../providers/windows-ghi
 [issue #527](https://github.com/morluto/rea/issues/527).
 On Linux and macOS, `annotate_native_function` atomically edits a function name
 and entry comments in the ephemeral database, returning refreshed analysis
-without changing executable bytes. Annotation text must contain no NUL or
+without changing executable bytes. A Ghidra address inside a function selects
+the containing function; the name and comments are changed at its entry, not
+at the selected instruction. Annotation text must contain no NUL or
 unpaired Unicode surrogate; a rejection identifies the field and UTF-16 index
 and leaves every annotation unchanged. CRLF, supplementary Unicode characters,
 and combining characters are preserved. Windows P0 remains read-only. Ghidra has no
