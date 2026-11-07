@@ -343,6 +343,92 @@ describe("getters reached through unknown receiver keys", () => {
   });
 });
 
+describe("instance field calls through widened getters", () => {
+  it.each([
+    ["() => ({})", "shared", "literal"],
+    ["() => shared", "{}", "unknown"],
+    ["flag ? () => shared : () => ({})", "{}", "unknown"],
+    ["other || (() => shared)", "{}", "unknown"],
+  ])(
+    "uses an instance field override returning %s",
+    (initializer, baseResult, expected) => {
+      expect(
+        resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return ${baseResult}; } }
+      class B extends A {
+        method = ${initializer};
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+      ).toBe(expected);
+    },
+  );
+
+  it("keeps super method lookup separate from instance field overrides", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method = () => ({});
+        get s() { return super.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("follows the receiver of an invoked instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        value = shared;
+        method = () => this.value;
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+});
+
+describe("static field calls through widened getters", () => {
+  it.each([
+    ["() => ({})", "shared", "literal"],
+    ["() => shared", "{}", "unknown"],
+  ])(
+    "uses a static field override returning %s",
+    (initializer, baseResult, expected) => {
+      expect(
+        resultValue(`
+      const shared = { x: 1 };
+      class A { static method() { return ${baseResult}; } }
+      class B extends A {
+        static method = ${initializer};
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      B.a.x = 2;
+      return shared.x;
+    `)?.status,
+      ).toBe(expected);
+    },
+  );
+});
+
 it("widens private receiver aliases through repeated unknown getter reads", () => {
   expect(
     resultValue(`

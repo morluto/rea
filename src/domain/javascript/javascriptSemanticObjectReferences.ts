@@ -454,12 +454,65 @@ const escapedClassValues = (
             : t.isClass(lexicalOwner) && lexicalOwner.superClass != null
               ? semanticClassCandidates(lexicalOwner.superClass, state)
               : [];
-          for (const { owner, method } of classMethodCandidates(
-            roots,
-            methodName,
-            lookup.kind === "static",
-            state,
-          ))
+          let ownField = false;
+          if (t.isThisExpression(receiver) && lookup.kind === "instance") {
+            const owner = lookup.receiver ?? lookup.owner;
+            const fields = instanceFieldReferences(
+              owner,
+              methodName,
+              [],
+              state,
+            );
+            ownField = fields.definiteNames.has(methodName);
+            const candidates = fields.references.map(
+              (reference) => reference.node,
+            );
+            const visited = new Set<t.Node>();
+            for (let index = 0; index < candidates.length; index++) {
+              const candidate = candidates[index];
+              if (candidate === undefined) continue;
+              const value = unwrapJavaScriptExpression(candidate).node;
+              if (visited.has(value)) continue;
+              visited.add(value);
+              if (t.isIdentifier(value)) {
+                const binding = resolveSemanticBindingState(
+                  state,
+                  value,
+                  value.name,
+                );
+                if (binding !== undefined)
+                  for (const initializer of binding.initializers)
+                    candidates.push(initializer.node);
+              } else if (t.isConditionalExpression(value)) {
+                candidates.push(value.consequent, value.alternate);
+              } else if (t.isLogicalExpression(value)) {
+                candidates.push(value.left, value.right);
+              } else if (t.isSequenceExpression(value)) {
+                const last = value.expressions.at(-1);
+                if (last !== undefined) candidates.push(last);
+              } else if (
+                t.isArrowFunctionExpression(value) ||
+                t.isFunctionExpression(value)
+              ) {
+                for (const reference of getterResultReferences(
+                  { getter: value, owner, receiver: owner },
+                  [],
+                  state,
+                  activeGetters,
+                  true,
+                ))
+                  expressions.push(reference.node);
+              }
+            }
+          }
+          for (const { owner, method } of ownField
+            ? []
+            : classMethodCandidates(
+                roots,
+                methodName,
+                lookup.kind === "static",
+                state,
+              ))
             for (const reference of getterResultReferences(
               {
                 getter: method,
@@ -603,7 +656,12 @@ const objectReceiverReference = (
 // identity when translating `this`, private fields, and superclass reads into
 // the same reference paths used by ordinary member mutations.
 interface GetterInvocation {
-  readonly getter: t.ObjectMethod | t.ClassMethod | t.ClassPrivateMethod;
+  readonly getter:
+    | t.ObjectMethod
+    | t.ClassMethod
+    | t.ClassPrivateMethod
+    | t.ArrowFunctionExpression
+    | t.FunctionExpression;
   readonly owner: t.ObjectExpression | t.ClassDeclaration | t.ClassExpression;
   readonly receiver?:
     | t.ObjectExpression
