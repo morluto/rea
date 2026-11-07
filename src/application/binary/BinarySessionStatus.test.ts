@@ -18,6 +18,7 @@ import {
   type ProviderCapabilitySet,
 } from "../../contracts/toolOutputSchemaPrimitives.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import type { ResolvedAppBundleResourceRoot } from "../AppBundleExecutable.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import type {
   SessionProviderRoute,
@@ -167,6 +168,7 @@ const projectStatus = async (
     readonly detail?: "summary" | "complete" | "operation";
     readonly operation?: string;
     readonly deepOperations?: readonly string[];
+    readonly bundleResourceRoot?: ResolvedAppBundleResourceRoot;
   } = {},
 ) => {
   const route: SessionProviderRoute = {
@@ -214,6 +216,9 @@ const projectStatus = async (
     ...(options.operation === undefined
       ? {}
       : { operation: options.operation }),
+    ...(options.bundleResourceRoot === undefined
+      ? {}
+      : { bundleResourceRoot: options.bundleResourceRoot }),
   });
 };
 
@@ -1341,5 +1346,43 @@ describe("binary session direct composed operation projection", () => {
       "explicit_document",
     ]);
     expect(availability?.default_mode_available).toBe(false);
+  });
+});
+
+describe("binary session operation projection in a resource-only session", () => {
+  const resourceRoot: ResolvedAppBundleResourceRoot = {
+    callerPath: "/fixture/Probe.app",
+    canonicalPath: "/fixture/Probe.app",
+    infoPlistPath: "/fixture/Probe.app/Contents/Info.plist",
+    layout: "contents",
+    executableSha256: null,
+  };
+
+  it("reports target-free candidates instead of an empty list", async () => {
+    const candidates = searchCandidates();
+    const view = operationStatusSchema.parse(
+      await projectStatus([], candidates, {
+        detail: "operation",
+        operation: "search_bytes",
+        bundleResourceRoot: resourceRoot,
+      }),
+    );
+    expect(
+      view.operation_candidates.map(({ provider }) => provider.id),
+    ).toEqual(["provider-a", "provider-b", "provider-c"]);
+    expect(view.operation_candidates[0]).toMatchObject({
+      target_support: { status: "unknown" },
+      declaration: { status: "available" },
+    });
+  });
+
+  it("keeps summary and complete candidates unchanged in a resource-only session", async () => {
+    for (const detail of ["summary", "complete"] as const) {
+      const status = await projectStatus([], searchCandidates(), {
+        detail,
+        bundleResourceRoot: resourceRoot,
+      });
+      expect(status).toMatchObject({ analysis_provider_candidates: [] });
+    }
   });
 });

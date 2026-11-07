@@ -142,10 +142,13 @@ export const binarySessionStatus = async ({
                   ),
                 }),
           };
-  const candidateStatuses =
-    bundleResourceRoot !== undefined
-      ? []
-      : await router.candidateStatuses(route, signal);
+  const candidateStatuses = await sessionCandidateStatuses({
+    resourceOnly: bundleResourceRoot !== undefined,
+    operationView: operationRequirements !== undefined,
+    route,
+    router,
+    signal,
+  });
   // The operation view replaces the candidate list with per-operation facts
   // derived from the same candidate statuses.
   const candidateFacts =
@@ -208,6 +211,26 @@ export const binarySessionStatus = async ({
         ...binaryTargetSummary(target),
       };
 };
+
+/**
+ * A resource-only session has no binary route, so summary and complete keep
+ * their empty candidate list. The operation view still answers its question
+ * from target-free candidate statuses, whose target support stays unknown.
+ */
+const sessionCandidateStatuses = async ({
+  resourceOnly,
+  operationView,
+  route,
+  router,
+  signal,
+}: {
+  readonly resourceOnly: boolean;
+  readonly operationView: boolean;
+  readonly route: SessionProviderRoute;
+  readonly router: Pick<SessionProviderRouter, "candidateStatuses">;
+  readonly signal: AbortSignal | undefined;
+}): Promise<readonly AnalysisProviderCandidateStatus[]> =>
+  resourceOnly && !operationView ? [] : router.candidateStatuses(route, signal);
 
 /** Summary keeps each candidate's status facts; complete adds diagnostics and capability sets. */
 const projectCandidates = (
