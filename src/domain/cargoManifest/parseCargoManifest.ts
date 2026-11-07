@@ -288,7 +288,7 @@ class CargoInventory {
     const declaration =
       typeof value === "string" ? { version: value } : record(value);
     if (declaration === undefined) {
-      const admitted = this.retain(key, pointer);
+      const admitted = this.retain(key, pointer, table.target ?? "");
       if (!admitted.ok) return admitted;
       this.dependencies.push({
         dependency_id: identity("cargo_dependency", [
@@ -318,10 +318,7 @@ class CargoInventory {
     }
     const classified = classify(declaration);
     if (classified === undefined) {
-      // The declaration is not inventoried, so only the text the diagnostic
-      // repeats is charged.
-      const admitted = this.retain(key, pointer);
-      if (!admitted.ok) return admitted;
+      // The diagnostic owns the only emitted text for this declaration.
       return this.diagnostic(
         "invalid-dependency-declaration",
         pointer,
@@ -335,6 +332,8 @@ class CargoInventory {
     const retained = this.retain(
       pointer,
       name,
+      alias ?? "",
+      table.target ?? "",
       classified.sourceDetail ?? "",
       classified.registry ?? "",
       classified.requirement ?? "",
@@ -564,12 +563,13 @@ export const parseCargoManifest = (
         if (!recorded.ok) return recorded;
         continue;
       }
-      const admitted = inventory.retainSource(name, enables);
+      const pointer = `/features/${pointerPart(name)}`;
+      const admitted = inventory.retainSource(name, pointer, enables);
       if (!admitted.ok) return admitted;
       inventory.features.push({
         name,
         enables,
-        source_pointer: `/features/${pointerPart(name)}`,
+        source_pointer: pointer,
       });
     }
 

@@ -361,7 +361,9 @@ criterion = "0.5"
       source_pointer: "/dev_dependencies/criterion",
     });
   });
+});
 
+describe("parseCargoManifest retained-fact allowance", () => {
   it("charges retained array contents against the fact allowance", () => {
     // 2 bytes per retained character: 170 members of 100k characters exceeds 32 MiB.
     const members = Array.from({ length: 170 }, () => "x".repeat(100_000));
@@ -403,6 +405,49 @@ helper = { version = "1", features = [${features
       .join(", ")}] }
 `);
     expect(result.ok).toBe(true);
+  });
+
+  it("charges an emitted dependency alias and its source pointer", () => {
+    const alias = "a".repeat(9_000_000);
+    const result = parseCargoManifest(
+      {
+        package: { name: "demo" },
+        dependencies: { [alias]: { package: "real", version: "1" } },
+      },
+      artifact,
+    );
+    expect(result.ok).toBe(false);
+  });
+
+  it("charges repeated target selectors and feature source pointers", () => {
+    const condition = "x".repeat(5_000_000);
+    const target = parseCargoManifest(
+      {
+        package: { name: "demo" },
+        target: { [condition]: { dependencies: { a: "1", b: "1" } } },
+      },
+      artifact,
+    );
+    expect(target.ok).toBe(false);
+    const feature = "f".repeat(9_000_000);
+    const features = parseCargoManifest(
+      { package: { name: "demo" }, features: { [feature]: [] } },
+      artifact,
+    );
+    expect(features.ok).toBe(false);
+  });
+
+  it("charges only the emitted diagnostic for an unclassified dependency", () => {
+    const name = "d".repeat(6_000_000);
+    const result = parseCargoManifest(
+      {
+        package: { name: "demo" },
+        dependencies: { [name]: { unused: "ignored" } },
+      },
+      artifact,
+    );
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value.dependencies).toEqual([]);
   });
 
   it("charges workspace exclusions as well as members", () => {
