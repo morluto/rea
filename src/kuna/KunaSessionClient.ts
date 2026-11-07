@@ -1140,10 +1140,15 @@ export class KunaSessionClient implements AnalysisClient {
       if (entry === undefined)
         return err(
           new AnalysisInputError(operation, {
-            userMessage: `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
+            userMessage:
+              field === "address"
+                ? `Kuna's inventory contains no entry at ${address}; inspect the target's supported symbol/export inventory and pass a verified address.`
+                : `${address} is not a procedure entry Kuna found; list_procedures shows the entries it found.`,
             conformsToInputContract: true,
             remediationAction:
-              "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
+              field === "address"
+                ? "Inspect the target's supported symbol/export inventory and pass a verified address; exact addresses are checked by the graph and do not need to appear in Kuna's inventory. Do not repeat the unchanged call."
+                : "Inspect list_procedures and select a discovered entry if it answers your question. An unlisted address is not proof of a function; REA cannot use it as a Kuna procedure in this session. Do not repeat the unchanged call.",
           }),
         );
       return refused(entry) ? dataRefusal(entry) : selected(entry);
@@ -1159,17 +1164,17 @@ export class KunaSessionClient implements AnalysisClient {
         conformsToInputContract: true,
         remediationAction:
           matches.length === 0 && named.length === 0
-            ? field === "procedure"
-              ? "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
-              : "Inspect the selected target for the intended address and use that address explicitly. Do not repeat the unchanged call."
+            ? field === "address"
+              ? "Inspect the target's supported symbol/export inventory and pass a verified address; exact addresses are checked by the graph and do not need to appear in Kuna's inventory. Do not repeat the unchanged call."
+              : "Use search_procedures or list_procedures to inspect Kuna's discovered entries, then select a matching entry. Do not repeat the unchanged call."
             : matches.length === 0
               ? "Inspect the data addresses with address_name or xrefs, or select a procedure entry from list_procedures. Do not repeat the unchanged call."
               : "Select the intended entry by its exact address. Do not repeat the unchanged call.",
         userMessage:
           matches.length === 0 && named.length === 0
-            ? field === "procedure"
-              ? `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
-              : `Kuna found no inventory entry named ${selector}.`
+            ? field === "address"
+              ? `Kuna's inventory contains no entry named ${selector}; inspect the target's supported symbol/export inventory and pass a verified address.`
+              : `Kuna found no procedure named ${selector}; search_procedures finds similar names.`
             : matches.length === 0
               ? `${selector} names ${String(named.length)} Kuna entries that lie in Mach-O data regions (${named.map(({ address }) => address).join(", ")}); they are data, not procedures.`
               : `${selector} names ${String(matches.length)} Kuna entries (${matches.map(({ address }) => address).join(", ")}); select one by address.`,

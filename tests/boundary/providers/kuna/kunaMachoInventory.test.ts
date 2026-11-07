@@ -1,5 +1,6 @@
 import { expect, it as test } from "vitest";
 
+import { AnalysisInputError } from "../../../../src/domain/analysisErrorCore.js";
 import { functionDossierSchema } from "../../../../src/domain/native/functionDossier.js";
 import { fakeKunaCalls } from "./fakeKuna.js";
 import {
@@ -160,6 +161,69 @@ it("resolves a data symbol's name for xrefs, which accept data addresses", async
     expect(
       (await fakeKunaCalls(kuna)).find(({ argv }) => argv[0] === "xrefs")?.argv,
     ).toContain("0x100008000");
+  } finally {
+    expect(await client.close()).toEqual({ ok: true, value: null });
+  }
+});
+
+it("distinguishes an inventory miss from a missing procedure for xrefs", async () => {
+  const { open } = await machoSession("rea-kuna-macho-xrefs-miss-");
+  const client = open();
+  try {
+    const xrefsMiss = await client.execute("xrefs", { address: "not_in_kuna" });
+    expect(xrefsMiss).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "xrefs",
+        conformsToInputContract: true,
+      },
+    });
+    if (!xrefsMiss.ok) {
+      const error = xrefsMiss.error;
+      if (!(error instanceof AnalysisInputError)) throw error;
+      expect(error.userMessage).toContain("not_in_kuna");
+      expect(error.remediationAction).toContain("verified address");
+      expect(error.remediationAction).toContain(
+        "do not need to appear in Kuna's inventory",
+      );
+    }
+
+    const procedureMiss = await client.execute("procedure_address", {
+      procedure: "not_in_kuna",
+    });
+    expect(procedureMiss).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "procedure_address",
+        conformsToInputContract: true,
+      },
+    });
+    if (!procedureMiss.ok) {
+      const error = procedureMiss.error;
+      if (!(error instanceof AnalysisInputError)) throw error;
+      expect(error.userMessage).toContain("not_in_kuna");
+      expect(error.remediationAction).toContain("search_procedures");
+      expect(error.remediationAction).toContain("list_procedures");
+    }
+
+    const ambiguous = await client.execute("xrefs", { address: "puts" });
+    expect(ambiguous).toMatchObject({
+      ok: false,
+      error: {
+        _tag: "AnalysisInputError",
+        operation: "xrefs",
+        conformsToInputContract: true,
+      },
+    });
+    if (!ambiguous.ok) {
+      const error = ambiguous.error;
+      if (!(error instanceof AnalysisInputError)) throw error;
+      expect(error.userMessage).toContain("0x100000480");
+      expect(error.userMessage).toContain("0x100004000");
+      expect(error.remediationAction).toContain("exact address");
+    }
   } finally {
     expect(await client.close()).toEqual({ ok: true, value: null });
   }
