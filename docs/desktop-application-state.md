@@ -29,14 +29,16 @@ changed later. Each path records the evidence the capture holds about it:
 | `selected_path`          | It lies under a `--state-path` or absolute `--argument` of the capture    |
 | `dconf_application_keys` | It is a dconf database holding groups whose path names the application    |
 | `desktop_service`        | It lies where desktop services and toolkits keep shared files, or caches  |
+| `desktop_trash`          | It lies in the desktop Trash, `~/.local/share/Trash`                      |
 
 A folder beside a state directory whose name differs from it only in letter
 case counts as that state directory, so a profile the application first
 creates during the capture, such as GIMP's `~/.config/GIMP` beside the
 candidate `~/.config/gimp`, is its state too.
 
-The role follows from the reasons, in this order: `application_state` for
-application keys in dconf, or a state directory outside shared desktop
+The role follows from the reasons, in this order: `shared_desktop` for a file
+in the desktop Trash, which the user deleted, whatever else names it;
+`application_state` for application keys in dconf, or a state directory outside shared desktop
 locations; `document` for a file named in a window title or selected by the
 caller, even if the application holds it open; `application_state` for another
 open file outside shared locations; `shared_desktop` for other files in shared
@@ -62,16 +64,16 @@ Views hold the captured bytes as they are, the capture host's name and user
 included; the export removes those from the bundle. A version records
 whether the file was present, the SHA-256 of its retained bytes, and a view:
 
-| Format    | Detected by                                                            | View                                                                                    |
-| --------- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                          |
-| `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups             |
-| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                    |
-| `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                        |
-| `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DOCTYPEs refused |
-| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                  |
-| `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                      |
-| `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                    |
+| Format    | Detected by                                                            | View                                                                                   |
+| --------- | ---------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| `sqlite`  | The `SQLite format 3` header                                           | Every ordinary table's columns, primary key and up to 500 rows                         |
+| `dconf`   | The `GVariant` header                                                  | Groups whose path names the application, plus the names of the other groups            |
+| `zip`     | A zip local file header, `PK\x03\x04`, whatever the name               | Its file entries in archive order, each with its own format and view                   |
+| `json`    | A `.json` name or a leading `{` or `[` that parses                     | The parsed value, from files up to 4 MiB nested up to 500 levels                       |
+| `xml`     | An XML name or declaration that parses                                 | An element tree (`name`, `attributes`, `children`); text kept exactly, DTDs never read |
+| `keyfile` | Only `[group]`, `key=value` and comment lines, with at least one group | Groups of `key` → string value, from files up to 4 MiB                                 |
+| `text`    | Other UTF-8 text                                                       | Lines, up to 5,000                                                                     |
+| `binary`  | NUL bytes or invalid UTF-8                                             | None                                                                                   |
 
 A JSON value holding a number JavaScript would round, such as an integer above
 2^53, is not read rather than shown rounded.
@@ -81,10 +83,38 @@ included: a saved Inkscape drawing's root is `svg`, in its default namespace,
 with `sodipodi:docname` and the declarations `xmlns` and `xmlns:sodipodi`
 among its attributes, and a Writer paragraph is `text:p`. An element's
 `children` hold its elements and text in order, text split where a CDATA
-section, comment or processing instruction falls; whitespace-only text in an
-element that holds elements is dropped unless `xml:space="preserve"` applies.
-The view keeps up to 5,000 nodes, comments and processing instructions
-counted, nested up to 64 levels, and sets `truncated` when it leaves some out.
+section, comment or processing instruction falls. Whitespace-only text between
+child elements is formatting, and dropped, in an element that holds no other
+text, unless `xml:space="preserve"` applies; in mixed content, an element with
+text of its own beside its children such as a paragraph split into runs, it is
+kept, so `<p>Meet on <s>Sunday</s> <s>evening</s></p>` keeps the space between
+the runs. Whitespace here is XML's: space, tab, carriage return and line feed;
+a no-break space is text. The view keeps up to 5,000 nodes, comments and
+processing instructions counted, nested up to 64 levels, and sets `truncated`
+when it leaves some out.
+
+A document that begins with a DOCTYPE naming its DTD, as AbiWord's `.abw`
+does, reads as the same element tree, and the view records the declaration
+beside `root`, its public identifier normalized as XML matches it:
+
+```json
+{
+  "doctype": {
+    "name": "abiword",
+    "public_id": "-//ABISOURCE//DTD AWML 1.0 Strict//EN",
+    "system_id": "http://www.abisource.com/awml.dtd"
+  },
+  "root": { "name": "abiword", "attributes": {}, "children": [] },
+  "truncated": false
+}
+```
+
+An identifier the DOCTYPE leaves out is `null`, and a document without one
+has no `doctype`. The DTD is never fetched or read, so it adds no default
+attributes and declares no entities. A DOCTYPE with an internal subset
+(`<!DOCTYPE a [ … ]>`), which could declare entities, is not read as XML, nor is
+a document that refers to any entity but XML's five (`&amp;`, `&lt;`, `&gt;`,
+`&apos;`, `&quot;`); such a file is text.
 
 Exported XML views use REA's same formatting-whitespace classification, so
 retained XML text and the task checks that address it stay aligned.

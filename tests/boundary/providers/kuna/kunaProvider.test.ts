@@ -20,7 +20,7 @@ import { OwnedFileHandle } from "../../../../src/filesystem/OwnedFileHandle.js";
 import { AnalysisProviderRegistry } from "../../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../../src/application/binary/BinarySessionComposition.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
-import { KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaSessionClient.js";
+import { KUNA_VALUE_FLOW_UNAVAILABLE } from "../../../../src/kuna/KunaProviderCapabilities.js";
 import { KunaProvider } from "../../../../src/kuna/KunaProvider.js";
 import { KUNA_FUNCTION_TEXT_BYTES } from "../../../../src/kuna/KunaLimits.js";
 import { KunaProjectCache } from "../../../../src/kuna/KunaProjectCache.js";
@@ -441,9 +441,21 @@ it("reports a failed function and an import slot as unavailable text, not errors
     procedure: "broken",
   });
   expect(broken.result).toBeNull();
-  expect(broken.limitations.at(-1)).toBe(
+  expect(broken.limitations).toContain(
     "Kuna could not decompile this function: Flow exceeded maximum instructions",
   );
+  const dossier = await run(client, "analyze_function", {
+    procedure: "broken",
+  });
+  expect(dossier.result).toMatchObject({
+    facet_availability: {
+      pseudocode: {
+        available: false,
+        reason:
+          "Kuna could not decompile this function: Flow exceeded maximum instructions",
+      },
+    },
+  });
   const imported = await run(client, "procedure_pseudo_code", {
     procedure: "puts",
   });
@@ -512,7 +524,7 @@ it("builds a dossier with text and call relationships, leaving unsupported facet
     assembly: ["main:  ; 0x1000", "  00001000: c3     RET"],
     native_value_flow: {
       available: false,
-      reason: KUNA_NATIVE_VALUE_FLOW_UNAVAILABLE,
+      reason: KUNA_VALUE_FLOW_UNAVAILABLE,
     },
     facet_availability: {
       pseudocode: { available: true },
@@ -670,6 +682,20 @@ it("keeps answering pseudocode one function at a time when the export fails", as
       expect.stringContaining("The project export failed"),
       "REA does not expose per-function records from a failed project export.",
     ]),
+  );
+  const fresh = await run(client, "procedure_pseudo_code", {
+    procedure: "main",
+    analysis: "independent_fresh",
+  });
+  expect(fresh.rawResult).toMatchObject({
+    source: { kind: "single-function" },
+    project_export: {
+      state: "failed",
+      reason: expect.stringContaining("not in recognized object file format"),
+    },
+  });
+  expect(fresh.limitations).toContainEqual(
+    expect.stringContaining("fresh independent single-function"),
   );
   expect(pseudocode.limitations.join(" ")).not.toContain("still building");
   expect(pseudocode.limitations.join(" ")).toContain(

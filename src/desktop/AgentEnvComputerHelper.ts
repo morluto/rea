@@ -220,7 +220,12 @@ export class ComputerHelper {
     });
   }
 
-  /** Spawn the helper for a bundle folder; it deploys the bundle's smoke task. */
+  /**
+   * Spawn the helper for a bundle folder; it deploys the bundle's smoke task.
+   * Python writes no bytecode, in the helper or the children that inherit its
+   * environment, such as agentenv's own import of the bundle's app class, so
+   * the bundle's files stay as they were shared.
+   */
   static async spawn(options: {
     readonly bundle: string;
     readonly environment: Readonly<NodeJS.ProcessEnv>;
@@ -238,6 +243,7 @@ export class ComputerHelper {
       runId: randomUUID(),
       expectedCommand: null,
       hostEnvironment: environment,
+      env: { PYTHONDONTWRITEBYTECODE: "1" },
       stdin: "pipe",
       signal,
     });

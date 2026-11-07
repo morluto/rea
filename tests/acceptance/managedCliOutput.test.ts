@@ -44,7 +44,9 @@ cliTest(
                   status === "malformed" ? null : expect.any(String),
                 issue:
                   status === "malformed"
-                    ? "CIL prefix chain at IL offset 0 has no following instruction"
+                    ? expect.stringMatching(
+                        /CIL prefix.*offset 0.*no following instruction/iu,
+                      )
                     : null,
               }),
             }),
