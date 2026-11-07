@@ -24,6 +24,7 @@ export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   readonly profileError?: AnalysisError;
 }
@@ -118,6 +119,9 @@ export const evaluateAnalysisProviderCandidate = async (
       candidate,
       status,
       profile,
+      ...(resolved.value.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: resolved.value.refreshAfterRetirement }),
       ...(resolved.value.createClient === undefined
         ? {}
         : { createClient: resolved.value.createClient }),
