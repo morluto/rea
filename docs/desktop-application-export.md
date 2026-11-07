@@ -300,7 +300,9 @@ The views follow the [state view](desktop-application-state.md)'s formats and
 shapes: SQLite tables (at most 64 ordinary tables, `tables_truncated` past
 that, and per table `columns`, `primary_key`, at most 500 `rows` and
 `truncated`, with blobs, unsafe integers and text that is not UTF-8 tagged as
-REA tags them), JSON, XML as `{root, truncated}` with REA's node, depth and
+REA tags them). A table query that fails keeps an `error` on that table and
+marks the file's view incomplete; other readable tables remain available to
+task checks. Other views are JSON, XML as `{root, truncated}` with REA's node, depth and
 whitespace rules and its `doctype` when the document declares one, key file
 groups, text as
 `{lines, line_count, truncated}` split on `\n` and `\r\n`, and zip archives
