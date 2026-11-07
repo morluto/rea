@@ -12,7 +12,7 @@ Wakaru **1.14.0**. Another release in that range is accepted, the observed
 version is reported, and a limitation records that the parser was not verified
 against that release. Wakaru changes `--version`, `--json` and `provenance.json`
 only by addition within a major version
-([compatibility policy](https://github.com/pionxzh/wakaru/blob/v1.14.0/docs/getting-started/cli.md#machine-readable-output-compatibility)),
+([compatibility policy](https://github.com/pionxzh/wakaru/blob/v1.14.0/docs/cli.md#machine-readable-output-compatibility)),
 so the parser keeps unknown report fields and reported module statuses.
 
 Set `REA_WAKARU_COMMAND` to the absolute path of an executable supplied by the

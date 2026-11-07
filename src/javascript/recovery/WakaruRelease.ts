@@ -3,7 +3,7 @@ import { BOUNDED_PRODUCER_LIMITS } from "../../process/LinuxResourceLimits.js";
 /**
  * Releases the report parser accepts. Wakaru changes `--version`, `--json`
  * and `provenance.json` only by addition within a major version
- * (https://github.com/pionxzh/wakaru/blob/v1.14.0/docs/getting-started/cli.md#machine-readable-output-compatibility);
+ * (https://github.com/pionxzh/wakaru/blob/v1.14.0/docs/cli.md#machine-readable-output-compatibility);
  * 1.13.0 is the first release this adapter verified.
  */
 export const WAKARU_ACCEPTED_RANGE = "^1.13.0";
