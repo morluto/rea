@@ -1,0 +1,418 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>B5 Team Activity Dashboard</title>
+<style>
+:root{--bg:#f0f4f8;--sur:#fff;--sur2:#f8fafc;--brd:#e2e8f0;--pri:#0176d3;--prd:#014486;--prl:#e8f4fd;--txt:#1a1a2e;--muted:#64748b;--ok:#16a34a;--err:#dc2626;--warn:#d97706;--shm:0 4px 12px rgba(0,0,0,.08);--r:10px;--rl:14px}
+[data-dark]{--bg:#0f172a;--sur:#1e293b;--sur2:#263347;--brd:#334155;--pri:#38bdf8;--prd:#0ea5e9;--prl:#0c2a3e;--txt:#f1f5f9;--muted:#94a3b8;--ok:#4ade80;--err:#f87171;--warn:#fbbf24}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{font-family:'Segoe UI',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
+.hdr{background:linear-gradient(135deg,#0176d3,#014486);color:#fff;padding:12px 18px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px}
+[data-dark] .hdr{background:linear-gradient(135deg,#0c2a3e,#0a1628)}
+.hdr h1{font-size:16px;font-weight:700}.hdr .sub{font-size:11px;opacity:.75;margin-top:2px}
+.btn{padding:8px 14px;border-radius:var(--r);border:1px solid rgba(255,255,255,.25);cursor:pointer;font-size:12.5px;font-weight:600;background:rgba(255,255,255,.15);color:#fff;min-height:34px}
+.btn:hover{background:rgba(255,255,255,.28)}
+.btn.on{background:var(--ok);border-color:var(--ok)}
+.wrap{max-width:1320px;margin:0 auto;padding:14px 16px}
+.datastrip{background:var(--sur);border:1px solid var(--brd);border-radius:var(--rl);padding:10px 14px;margin-bottom:12px;box-shadow:var(--shm);display:flex;gap:12px;align-items:center;flex-wrap:wrap;font-size:12.5px}
+.datastrip b{color:var(--pri)}
+.repchip{font-size:11px;background:var(--sur2);border:1px solid var(--brd);border-radius:20px;padding:3px 10px;color:var(--muted)}
+.filters{background:var(--sur);border:1px solid var(--brd);border-radius:var(--rl);padding:12px 14px;margin-bottom:12px;box-shadow:var(--shm)}
+.frow{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:8px}
+.frow:last-child{margin-bottom:0}
+.flbl{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;min-width:58px}
+.chip{padding:5px 11px;border-radius:20px;border:2px solid var(--brd);background:var(--sur2);font-size:12px;font-weight:600;cursor:pointer;user-select:none;color:var(--txt)}
+.chip.sel{border-color:var(--pri);background:var(--prl);color:var(--pri)}
+input[type=date]{border:2px solid var(--brd);border-radius:var(--r);padding:5px 8px;background:var(--sur);color:var(--txt);font-size:13px;font-family:inherit}
+.preset{padding:5px 10px;border-radius:var(--r);border:1.5px solid var(--brd);background:var(--sur2);color:var(--txt);font-size:12px;font-weight:600;cursor:pointer}
+.preset:hover{border-color:var(--pri);color:var(--pri)}
+.preset.sel{background:var(--pri);color:#fff;border-color:var(--pri)}
+.rngnow{font-size:12px;font-weight:600;color:var(--muted)}
+.rngnow b{color:var(--pri)}
+.modebtn{padding:5px 12px;border-radius:var(--r);border:1.5px solid var(--brd);background:var(--sur2);color:var(--txt);font-size:12px;font-weight:700;cursor:pointer}
+.modebtn.sel{border-color:var(--pri);background:var(--prl);color:var(--pri)}
+.clearlink{font-size:12px;color:var(--pri);cursor:pointer;font-weight:600;text-decoration:underline}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:12px}
+.kpi{background:var(--sur);border:1px solid var(--brd);border-radius:var(--rl);padding:12px 14px;box-shadow:var(--shm)}
+.kpi .v{font-size:24px;font-weight:800;letter-spacing:-.5px}.kpi .l{font-size:11px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;margin-top:2px}
+.kpi .d{font-size:11px;color:var(--pri);font-weight:600;margin-top:4px}
+.emptynote{grid-column:1/-1;background:var(--prl);border:1px solid var(--pri);color:var(--txt);padding:10px 14px;border-radius:var(--r);font-weight:600;font-size:13px;margin-bottom:8px}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+@media(max-width:900px){.grid{grid-template-columns:1fr}}
+.pnl{background:var(--sur);border:1px solid var(--brd);border-radius:var(--rl);box-shadow:var(--shm);overflow:hidden;margin-bottom:12px}
+.ph{padding:10px 14px;border-bottom:1px solid var(--brd);background:var(--sur2);display:flex;justify-content:space-between;align-items:center;gap:8px}
+.ph h3{font-size:13px;font-weight:700}.ph .meta{font-size:11px;color:var(--muted)}
+.pb{padding:12px 14px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th{font-size:10.5px;text-transform:uppercase;letter-spacing:.3px;color:var(--muted);text-align:center;padding:6px 4px;border-bottom:2px solid var(--brd);cursor:pointer;white-space:nowrap}
+th:first-child{text-align:left}
+td{padding:5px 4px;border-bottom:1px solid var(--brd);text-align:center;vertical-align:top}
+td:first-child{text-align:left;font-weight:600;cursor:pointer}
+td:first-child:hover{color:var(--pri)}
+tr:hover td{background:var(--sur2)}
+.bar-row{display:flex;align-items:center;gap:8px;margin-bottom:5px}
+.bar-lbl{width:150px;font-size:11.5px;font-weight:600;text-align:right;color:var(--txt);overflow:hidden;white-space:nowrap;text-overflow:ellipsis}
+.bar-track{flex:1;height:16px;background:var(--sur2);border-radius:4px;overflow:hidden;position:relative}
+.bar-fill{height:100%;border-radius:4px;min-width:2px}
+.bar-val{width:44px;font-size:11.5px;font-weight:700;text-align:right}
+.legend{display:flex;gap:10px;flex-wrap:wrap;margin-top:8px;font-size:11px;color:var(--muted)}
+.legend span{display:flex;align-items:center;gap:4px}
+.sw{width:10px;height:10px;border-radius:2px;display:inline-block}
+.act{font-size:12px;line-height:1.9}.act .dt{color:var(--muted);font-family:monospace;font-size:11px;margin-right:6px}
+.hint{font-size:12px;color:var(--muted);margin-top:8px}
+.empty{text-align:center;padding:40px 20px;color:var(--muted)}
+.dropz{position:fixed;inset:0;background:rgba(1,118,211,.12);border:4px dashed var(--pri);z-index:400;display:none;align-items:center;justify-content:center;font-size:22px;font-weight:700;color:var(--pri);pointer-events:none}
+.dropz.sh{display:flex}
+.notif{position:fixed;bottom:20px;right:20px;background:var(--ok);color:#fff;padding:12px 20px;border-radius:var(--r);font-size:14px;font-weight:600;box-shadow:var(--shm);z-index:9999;transform:translateY(80px);opacity:0;transition:all .25s;max-width:340px}
+.notif.sh{transform:translateY(0);opacity:1}.notif.er{background:var(--err)}
+.confirmz{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:none;align-items:center;justify-content:center;padding:16px}
+.confirmz.sh{display:flex}
+.cfd{background:var(--sur);border-radius:var(--rl);padding:28px;max-width:420px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.cfd h3{font-size:18px;font-weight:700;margin-bottom:10px}.cfd p{font-size:14px;color:var(--muted);margin-bottom:24px;line-height:1.6}
+.cfd .acts{display:flex;gap:10px;justify-content:flex-end}
+.cbtn{padding:10px 18px;border-radius:var(--r);border:none;cursor:pointer;font-size:14px;font-weight:600;min-height:40px}
+.cb2{background:var(--sur);color:var(--txt);border:1px solid var(--brd)}
+.cb3{background:var(--err);color:#fff}
+.notez{position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:500;display:none;align-items:center;justify-content:center;padding:16px}
+.notez.sh{display:flex}
+.nmod{background:var(--sur);border-radius:var(--rl);width:100%;max-width:760px;max-height:85dvh;display:flex;flex-direction:column;box-shadow:0 20px 60px rgba(0,0,0,.3)}
+.nmh{padding:14px 18px;border-bottom:1px solid var(--brd);display:flex;align-items:center;justify-content:space-between}
+.nmh h3{font-size:15px;font-weight:700}
+.nmb{padding:14px 18px;overflow-y:auto}
+.nt{background:var(--sur2);border:1px solid var(--brd);border-radius:var(--r);padding:10px 12px;margin-bottom:10px}
+.nth{font-size:12px;font-weight:600}
+.nth .nts{font-weight:400;color:var(--muted);margin-top:2px}
+.ntc{margin-top:6px;font-size:12.5px;white-space:pre-wrap;word-break:break-word}
+.clickable{cursor:pointer}
+td[onclick^="drillTo"]{color:var(--pri);font-weight:700;text-decoration:underline;text-decoration-color:transparent}
+td[onclick^="drillTo"]:hover{background:var(--prl);text-decoration-color:var(--pri);text-decoration-thickness:2px;text-underline-offset:3px}
+td[onclick^="cellNotes"]:hover{outline:2px solid var(--pri);outline-offset:-2px}
+.chip .lbl:hover{text-decoration:underline}
+.bar-row.clickable:hover{background:var(--prl);border-radius:8px}
+.act .clickable:hover{background:var(--prl);border-radius:6px}
+.ntlist{max-height:430px;overflow-y:auto;padding-right:6px;border-top:1px solid var(--brd)}
+.nt2{padding:8px 10px;border-bottom:1px solid var(--brd);cursor:pointer}
+.nt2:hover{background:var(--sur2)}
+.nt2h{font-size:12px;font-weight:600}
+.nt2c{font-size:12px;white-space:pre-wrap;word-break:break-word;color:var(--muted);max-height:1.35em;overflow:hidden;margin-top:2px}
+.nt2.open .nt2c{max-height:none;color:var(--txt)}
+.nt2.open{background:var(--prl);border-radius:6px}
+</style></head><body>
+<div class="hdr"><div><h1>B5 Team Activity Dashboard</h1><div class="sub" id="genInfo">Drop a Salesforce Activities report to begin</div></div>
+<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+  <input type="file" id="fIn" accept=".xls,.html,.htm,.csv" style="display:none" onchange="onFile(this.files[0]);this.value=''">
+  <button class="btn" onclick="document.getElementById('fIn').click()">📂 Load Report</button>
+  <button class="btn" id="modeBtn" onclick="toggleMode()" title="Merge keeps previously loaded reports in the dataset; Replace clears and loads only the new one">⇆ Merge</button>
+  <button class="btn" onclick="exportCSV()">⬇ CSV</button>
+  <button class="btn" onclick="confirmClear()">🗑 Clear Data</button>
+  <button class="btn" onclick="resetAll()">↺ Reset Filters</button>
+  <button class="btn" onclick="toggleDark()" id="dkBtn">🌙</button>
+</div></div>
+<div class="wrap">
+<div class="datastrip" id="datastrip" style="display:none"></div>
+<div class="filters">
+  <div class="frow"><span class="flbl">Date</span>
+    <input type="date" id="fFrom" onchange="setRange()"> to <input type="date" id="fTo" onchange="setRange()">
+    <span class="preset" data-p="all" onclick="preset('all')">All</span>
+    <span class="preset" data-p="7d" onclick="preset('7d')">Last 7 days</span>
+    <span class="preset" data-p="30d" onclick="preset('30d')">Last 30 days</span>
+    <span class="preset" data-p="thism" onclick="preset('thism')">This month</span>
+    <span class="preset" data-p="lastm" onclick="preset('lastm')">Last month</span>
+    <span class="rngnow" id="rangeNow"></span>
+  </div>
+  <div class="frow"><span class="flbl">People · <span onclick="allP()" style="color:var(--pri);cursor:pointer;font-weight:700;text-decoration:underline">select all</span></span><div id="pChips" style="display:flex;gap:6px;flex-wrap:wrap"></div></div>
+  <div class="frow"><span class="flbl">Activity</span><div id="cChips" style="display:flex;gap:6px;flex-wrap:wrap"></div></div>
+  <div class="frow"><span class="flbl">Trend</span>
+    <button class="modebtn" data-mode="D" onclick="setMode('D')">Daily</button>
+    <button class="modebtn" data-mode="W" onclick="setMode('W')">Weekly</button>
+    <button class="modebtn" data-mode="M" onclick="setMode('M')">Monthly</button>
+    <span class="clearlink" onclick="resetAll()">Clear all filters</span>
+  </div>
+</div>
+<div class="kpis" id="kpis"></div>
+<div class="grid">
+  <div class="pnl"><div class="ph"><h3>Activity Trend</h3><div class="meta" id="trendMeta"></div></div>
+    <div class="pb"><div id="trendSvg"></div><div class="legend" id="trendLegend"></div>
+    <div class="hint">Click a person chip to include/exclude. Solo a rep via the leaderboard.</div></div></div>
+  <div class="pnl"><div class="ph"><h3>Activity Mix</h3><div class="meta" id="catMeta"></div></div>
+    <div class="pb" id="catChart"></div></div>
+</div>
+<div class="grid">
+  <div class="pnl"><div class="ph"><h3>Team Leaderboard</h3><div class="meta" id="boardMeta"></div></div>
+    <div class="pb" style="overflow-x:auto" id="board"></div></div>
+  <div class="pnl" id="drillPnl"><div class="ph"><h3 id="drillTitle">Individual Detail</h3><div class="meta">click a leaderboard name</div></div>
+    <div class="pb" id="drill"></div></div>
+</div>
+<div class="pnl"><div class="ph"><h3>Top Projects</h3><div class="meta" id="projMeta"></div></div>
+  <div class="pb" id="projChart"></div></div>
+</div>
+<div class="dropz" id="dropz">Drop the Activities .xls anywhere</div>
+<div class="notez" id="noteZ" onclick="if(event.target===this)closeNotes()"><div class="nmod"><div class="nmh"><h3 id="noteT">Notes</h3><button class="cbtn cb2" style="min-width:40px;padding:4px 10px" onclick="closeNotes()">✕</button></div><div class="nmb" id="noteB"></div></div></div>
+<div class="confirmz" id="cfz"><div class="cfd"><h3>Clear all loaded data?</h3><p>Every loaded report will be removed from this device. The dashboard will be empty.</p>
+  <div class="acts"><button class="cbtn cb2" onclick="hideConfirm()">Cancel</button><button class="cbtn cb3" onclick="doClear()">Clear</button></div></div></div>
+<div class="notif" id="notif"></div>
+<script>
+const CATS=['Event Request','Pre Event','Site Event/Activity','Post Event','MRP',
+  'MAL Proposal','MAL Follow-Up','MAL Signed','MAL Rejected','Prequal',
+  'KDM/Contacts Updated','Project/MBU Update','Telus','Issues/Escalation',
+  'Reach-Out','HSH','MDU Support','Other'];
+const PCOLORS=['#0176d3','#16a34a','#d97706','#dc2626','#7c3aed','#0891b2','#be185d','#65a30d','#475569','#c026d3'];
+const LS='b5dash_v1';
+const $=id=>document.getElementById(id);
+
+function catsFor(s){
+  const l=s.toLowerCase();const out=new Set();
+  if(/\bmal\b|\bmla\b/.test(l)){
+    if(/sign|approv/.test(l))out.add('MAL Signed');
+    else if(/reject|deni/.test(l))out.add('MAL Rejected');
+    else if(/follow/.test(l))out.add('MAL Follow-Up');
+    else out.add('MAL Proposal');
+  }
+  if(/event request|event proposal|event requested|site sol|booking soon|book an event|trying.*book|event confirmed|event approved|event declined|event rejected|event to capture|extended? event|event.*moves|event could/.test(l))out.add('Event Request');
+  if(/pre event/.test(l))out.add('Pre Event');
+  if(/post event/.test(l))out.add('Post Event');
+  if(/site event|site visit|knock|lobby|flyer|flyering|poster|door hanger|leave behind|sol update|fmc attended|dropping|knocked/.test(l))out.add('Site Event/Activity');
+  if(/mrp/.test(l))out.add('MRP');
+  if(/prequal/.test(l))out.add('Prequal');
+  if(/\bkdm\b|contact.*(updated|info)|project contact|project contatc/.test(l))out.add('KDM/Contacts Updated');
+  if(/\bmbu\b|project\s*\/|project.*update|edit project/.test(l))out.add('Project/MBU Update');
+  if(/telus/.test(l))out.add('Telus');
+  if(/\bissue\b|escalation/.test(l))out.add('Issues/Escalation');
+  if(/reached out/.test(l))out.add('Reach-Out');
+  if(/hsh/.test(l))out.add('HSH');
+  if(/mdu/.test(l))out.add('MDU Support');
+  if(!out.size)out.add('Other');
+  return [...out].map(c=>CATS.indexOf(c)).filter(i=>i>=0);
+}
+
+function decodeCell(h){
+  let t=h.replace(/<br\s*\/?>/gi,'\n').replace(/<\/(div|p|tr|td)>/gi,'\n').replace(/<[^>]+>/g,'');
+  t=t.replace(/&nbsp;/g,' ').replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&#39;/g,"'").replace(/&amp;/g,'&');
+  return t.trim();
+}
+
+function parseReport(text){
+  const trs=text.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi)||[];
+  const grid=[];
+  for(const tr of trs){
+    const cells=[...tr.matchAll(/<t[hd][^>]*>([\s\S]*?)<\/t[hd]>/gi)].map(m=>decodeCell(m[1]));
+    if(cells.length)grid.push(cells);
+  }
+  if(!grid.length)return null;
+  const header=grid[0];
+  const col=name=>header.indexOf(name);
+  const ci={by:col('Created By'),date:col('Created Date'),subj:col('Subject'),proj:col('Project: Project Name'),coid:col('COID'),comments:col('Comments')};
+  if(ci.by<0||ci.date<0||ci.subj<0)return null;
+  const recs=[];
+  for(const row of grid.slice(1)){
+    if(row.length<header.length)continue;
+    const d=(row[ci.date]||'').slice(0,10);
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(d))continue;
+    recs.push({d,by:row[ci.by]||'',subj:row[ci.subj]||'',proj:(row[ci.proj]||'').trim(),coid:(row[ci.coid]||'').trim().toUpperCase(),comments:row[ci.comments]||''});
+  }
+  return recs;
+}
+
+let DS=null,S=null,replaceMode=false;
+function load(){try{DS=JSON.parse(localStorage.getItem(LS));}catch(e){DS=null;}if(!DS)DS={people:[],projects:[],rows:[],keys:[],reports:[],clist:[]};if(!DS.clist)DS.clist=[];}
+function persist(){try{localStorage.setItem(LS,JSON.stringify(DS));}catch(e){showNotif('Storage full — data not saved',true);}}
+function dsRange(){let mn=null,mx=null;for(const r of DS.rows){if(mn===null||r[0]<mn)mn=r[0];if(mx===null||r[0]>mx)mx=r[0];}return[mn,mx];}
+function addRecs(recs,mode){
+  const keySet=new Set(DS.keys);
+  if(mode==='replace'){DS={people:[],projects:[],rows:[],keys:[],reports:[],clist:[]};keySet.clear();}
+  if(!DS.clist)DS.clist=[];
+  const pIdx={},prIdx={},cIdx={};
+  DS.people.forEach((p,i)=>pIdx[p]=i);DS.projects.forEach((p,i)=>prIdx[p]=i);DS.clist.forEach((c,i)=>cIdx[c]=i);
+  let added=0,skipped=0;
+  for(const r of recs){
+    const key=[r.d,r.by,r.subj,r.proj,r.coid,r.comments].join('\u001f');
+    if(keySet.has(key)){skipped++;continue;}
+    keySet.add(key);DS.keys.push(key);
+    if(!(r.by in pIdx)){pIdx[r.by]=DS.people.length;DS.people.push(r.by);}
+    if(!(r.proj in prIdx)){prIdx[r.proj]=DS.projects.length;DS.projects.push(r.proj);}
+    if(!(r.comments in cIdx)){cIdx[r.comments]=DS.clist.length;DS.clist.push(r.comments);}
+    DS.rows.push([r.d,pIdx[r.by],catsFor(r.subj).join(','),r.coid,prIdx[r.proj],r.subj,cIdx[r.comments]]);
+    added++;
+  }
+  return{added,skipped};
+}
+function onFile(f){
+  if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    const recs=parseReport(String(rd.result));
+    if(!recs){showNotif('Not an Activities export — check the file',true);return;}
+    const res=addRecs(recs,replaceMode?'replace':'merge');
+    DS.reports.push({name:f.name,rows:recs.length,added:res.added,when:new Date().toLocaleString()});
+    persist();
+    const[mn,mx]=dsRange();S.from=mn;S.to=mx;
+    S.people=new Set(DS.people.map((_,i)=>i));S.cats=new Set(CATS.map((_,i)=>i));
+    render();
+    showNotif(`${replaceMode?'Loaded (replace)':'Merged'} ${f.name}: +${res.added} new, ${res.skipped} duplicates skipped · total ${DS.rows.length}`);
+  };
+  rd.readAsText(f);
+}
+document.addEventListener('dragover',e=>{e.preventDefault();$('dropz').classList.add('sh');});
+document.addEventListener('dragleave',e=>{if(e.relatedTarget===null)$('dropz').classList.remove('sh');});
+document.addEventListener('drop',e=>{e.preventDefault();$('dropz').classList.remove('sh');const f=e.dataTransfer.files[0];if(f)onFile(f);});
+function toggleMode(){replaceMode=!replaceMode;const b=$('modeBtn');b.textContent=replaceMode?'⇆ Replace':'⇆ Merge';b.classList.toggle('on',replaceMode);}
+function confirmClear(){$('cfz').classList.add('sh');}
+function hideConfirm(){$('cfz').classList.remove('sh');}
+function doClear(){hideConfirm();DS={people:[],projects:[],rows:[],keys:[],reports:[],clist:[]};persist();showNotif('All data cleared');render();}
+function showNotif(msg,isErr){const el=$('notif');el.textContent=msg;el.className='notif'+(isErr?' er':'');el.classList.add('sh');setTimeout(()=>el.classList.remove('sh'),4000);}
+function toggleDark(){const e=document.documentElement;const on=e.getAttribute('data-dark')!=='true';e.setAttribute('data-dark',on?'true':'false');$('dkBtn').textContent=on?'☀️':'🌙';}
+
+function fRows(){return DS.rows.filter(r=>r[0]>=S.from&&r[0]<=S.to&&S.people.has(r[1])&&r[2].split(',').some(c=>S.cats.has(+c)));}
+function weekKey(d){const dt=new Date(d+'T00:00:00');const dow=(dt.getDay()+6)%7;dt.setDate(dt.getDate()-dow);return dt.toISOString().slice(0,10);}
+function bucketRows(rows){const m=new Map();for(const r of rows){let k=r[0];if(S.mode==='W')k=weekKey(r[0]);if(S.mode==='M')k=r[0].slice(0,7);if(!m.has(k))m.set(k,[]);m.get(k).push(r);}return [...m.entries()].sort();}
+function fmtBucket(k){if(S.mode==='M'){const m=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];return m[+k.slice(5,7)-1]+' '+k.slice(2,4);}const d=new Date(k+'T00:00:00');return(d.getMonth()+1)+'/'+d.getDate();}
+function esc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+function render(){
+  const[mn,mx]=dsRange();
+  $('genInfo').textContent=DS.rows.length?`${DS.rows.length} activities · ${DS.people.length} reps · ${DS.projects.length} projects · ${mn} → ${mx}`:'Drop a Salesforce Activities report to begin';
+  $('datastrip').style.display=DS.reports.length?'flex':'none';
+  if(DS.reports.length)$('datastrip').innerHTML=`<span>Reports loaded: <b>${DS.reports.length}</b></span>`+DS.reports.slice(-6).map(r=>`<span class="repchip">${r.name} (+${r.added})</span>`).join('');
+  const rows=fRows();
+  $('fFrom').value=S.from;$('fTo').value=S.to;
+  $('rangeNow').innerHTML='now showing <b>'+S.from+' \u2192 '+S.to+'</b>';
+  document.querySelectorAll('.preset').forEach(p2=>{const r=pRange(p2.dataset.p);p2.classList.toggle('sel',!!r&&r[0]===S.from&&r[1]===S.to);});
+  $('pChips').innerHTML=DS.people.map((p,i)=>`<span class="chip ${S.people.has(i)?'sel':''}" style="border-color:${PCOLORS[i%10]}" onclick="togP(${i})" ondblclick="solo(${i})" title="${p} — click to include/exclude, double-click to solo">${p.split(' ')[0]} ${p.split(' ')[1][0]}</span>`).join('');
+  $('cChips').innerHTML=CATS.map((c,i)=>`<span class="chip ${S.cats.has(i)?'sel':''}" onclick="togC(${i})">${c}</span>`).join('');
+  const peopleActive=new Set(rows.map(r=>r[1]));
+  const projSet=new Set(rows.map(r=>r[4]));
+  const catCount={};rows.forEach(r=>r[2].split(',').forEach(c=>{if(S.cats.has(+c))catCount[c]=(catCount[c]||0)+1;}));
+  const topCat=Object.entries(catCount).sort((a,b)=>b[1]-a[1])[0];
+  const bk=bucketRows(rows);
+  const peak=bk.length?bk.reduce((a,b)=>b[1].length>a[1].length?b:a):['-',[]];
+  const spanDays=Math.round((new Date(S.to)-new Date(S.from))/864e5)+1;
+  const en=(DS.rows.length&&S.people.size===0)?'<div class="emptynote">No people selected — no data is shown. Click a rep name chip to include them, or “select all” by the People label.</div>':(rows.length===0?'<div class="emptynote">No activities match the current filters'+(DS.rows.length?' — check the date range or activity types.':'')+'</div>':'');
+  $('kpis').innerHTML=en+[
+    {v:rows.length,l:'Activities',d:`of ${DS.rows.length} total`},
+    {v:peopleActive.size,l:'Reps Active',d:rows.length?`${(rows.length/Math.max(1,peopleActive.size)).toFixed(1)} per rep`:'—'},
+    {v:projSet.size,l:'Projects Touched',d:`${(rows.length/Math.max(1,spanDays)).toFixed(1)}/day`},
+    {v:spanDays,l:'Days in Range',d:`${S.from} → ${S.to}`},
+    {v:peak[1].length,l:'Peak '+(S.mode==='D'?'Day':S.mode==='W'?'Week':'Month'),d:peak[0]!=='-'?fmtBucket(peak[0]):'—'},
+    {v:topCat?topCat[1]:0,l:'Top Activity',d:topCat?CATS[+topCat[0]]:'—'}
+  ].map(k=>`<div class="kpi"><div class="v">${k.v}</div><div class="l">${k.l}</div><div class="d">${k.d}</div></div>`).join('');
+  $('trendMeta').textContent=S.mode==='D'?'Daily':S.mode==='W'?'Weekly (Mon start)':'Monthly';
+  $('trendSvg').innerHTML=stackChart(bk);
+  $('trendLegend').innerHTML=[...S.people].filter(i=>peopleActive.has(i)).map(i=>`<span><span class="sw" style="background:${PCOLORS[i%10]}"></span>${DS.people[i]}</span>`).join('');
+  const catSorted=Object.entries(catCount).sort((a,b)=>b[1]-a[1]);
+  $('catMeta').textContent=`${catSorted.length} categories in range`;
+  const catMax=catSorted.length?catSorted[0][1]:1;
+  $('catChart').innerHTML=catSorted.map(([ci,n])=>`<div class="bar-row clickable" onclick="catNotes(${ci})" title="Click to read notes"><div class="bar-lbl">${CATS[+ci]}</div><div class="bar-track"><div class="bar-fill" style="width:${(n/catMax*100).toFixed(1)}%;background:var(--pri)"></div></div><div class="bar-val">${n}</div></div>`).join('')||'<div style="color:var(--muted)">No data for current filters.</div>';
+  renderBoard(rows);
+  renderDrill(rows);
+  const pc={};rows.forEach(r=>pc[r[4]]=(pc[r[4]]||0)+1);
+  const top=Object.entries(pc).sort((a,b)=>b[1]-a[1]).slice(0,15);
+  $('projMeta').textContent=`top ${top.length} of ${projSet.size} projects`;
+  const pMax=top.length?top[0][1]:1;
+  $('projChart').innerHTML=top.map(([pi,n])=>`<div class="bar-row clickable" onclick="projNotes(${pi})" title="Click to read notes"><div class="bar-lbl" title="${esc(DS.projects[pi])}">${esc(DS.projects[pi])}</div><div class="bar-track"><div class="bar-fill" style="width:${(n/pMax*100).toFixed(1)}%;background:var(--ok)"></div></div><div class="bar-val">${n}</div></div>`).join('')||'<div style="color:var(--muted)">No data.</div>';
+}
+function togP(i){if(S.people.has(i)){S.people.delete(i);}else{S.people.add(i)}render()}
+function allP(){S.people=new Set(DS.people.map((_,i)=>i));render();}
+function solo(i){S.people=new Set([i]);render();}
+function togC(i){if(S.cats.has(i)){if(S.cats.size===1)return;S.cats.delete(i);}else S.cats.add(i);render();}
+function setRange(){const v1=$('fFrom').value,v2=$('fTo').value;if(v1)S.from=v1;if(v2)S.to=v2;render();}
+function pRange(k){const[mn,mx]=dsRange();if(!mn)return null;let start=mn,end=mx;
+  if(k==='7d'){const d=new Date(mx+'T00:00:00');d.setDate(d.getDate()-6);const ds=d.toISOString().slice(0,10);start=ds>mn?ds:mn;}
+  if(k==='30d'){const d=new Date(mx+'T00:00:00');d.setDate(d.getDate()-29);const ds=d.toISOString().slice(0,10);start=ds>mn?ds:mn;}
+  if(k==='thism')start=mx.slice(0,7)+'-01';
+  if(k==='lastm'){const d=new Date(mx+'T00:00:00');d.setDate(1);d.setMonth(d.getMonth()-1);start=d.toISOString().slice(0,7)+'-01';const e2=new Date(d);e2.setMonth(e2.getMonth()+1);e2.setDate(0);end=e2.toISOString().slice(0,10);}
+  return[start,end];}
+function preset(k){const r=pRange(k);if(!r)return;S.from=r[0];S.to=r[1];render();}
+function setMode(m){S.mode=m;document.querySelectorAll('.modebtn').forEach(b=>b.classList.toggle('sel',b.dataset.mode===m));render();}
+function resetAll(){const[mn,mx]=dsRange();S={from:mn,to:mx,mode:'W',people:new Set(DS.people.map((_,i)=>i)),cats:new Set(CATS.map((_,i)=>i)),drill:null,sort:'total'};document.querySelectorAll('.modebtn').forEach(b=>b.classList.toggle('sel',b.dataset.mode==='W'));render();}
+function stackChart(br){
+  const n=br.length;if(!n)return'<div style="color:var(--muted)">No data for current filters.</div>';
+  const W=600,H=220,padL=34,padB=22,padT=8,padR=4;
+  const max=Math.max(...br.map(([,rs])=>rs.length));
+  const step=Math.max(1,Math.ceil(max/4));const yMax=step*Math.ceil(max/step);
+  const bw=Math.max(4,(W-padL-padR)/n);
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}" style="display:block">`;
+  for(let v=0;v<=yMax;v+=step){const y=padT+(H-padT-padB)*(1-v/yMax);s+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--brd)" stroke-width="1"/><text x="${padL-4}" y="${y+3.5}" font-size="10" fill="var(--muted)" text-anchor="end">${v}</text>`;}
+  const labelStep=Math.ceil(n/14);
+  br.forEach(([k,rs],i)=>{
+    const by={};rs.forEach(r=>by[r[1]]=(by[r[1]]||0)+1);
+    const x=padL+i*bw;let yBase=H-padB;
+    for(const p of Object.keys(by).sort((a,b)=>by[b]-by[a])){
+      const v=by[p];const h=(v/yMax)*(H-padT-padB);yBase-=h;
+      s+=`<rect x="${x+1}" y="${yBase}" width="${Math.max(2,bw-2)}" height="${h}" fill="${PCOLORS[p%10]}" opacity="0.9"><title>${DS.people[p]}: ${v} (${fmtBucket(k)})</title></rect>`;
+    }
+    if(i%labelStep===0)s+=`<text x="${x+bw/2}" y="${H-8}" font-size="9.5" fill="var(--muted)" text-anchor="middle">${fmtBucket(k)}</text>`;
+  });
+  return s+'</svg>';
+}
+function renderBoard(rows){
+  const byP={};
+  rows.forEach(r=>{const p=r[1];byP[p]=byP[p]||{total:0};byP[p].total++;r[2].split(',').forEach(c=>{if(S.cats.has(+c))byP[p][c]=(byP[p][c]||0)+1;});});
+  const catCols=[...S.cats].sort();
+  const pList=Object.keys(byP).sort((a,b)=>{
+    if(S.sort==='total')return byP[b].total-byP[a].total;
+    if(S.sort.startsWith('c'))return(byP[b][S.sort.slice(1)]||0)-(byP[a][S.sort.slice(1)]||0);
+    return 0;});
+  const maxCell=Math.max(1,...pList.flatMap(p=>catCols.map(c=>byP[p][c]||0)));
+  let h=`<table><tr><th onclick="sortBoard('total')">Rep</th>${catCols.map(c=>`<th onclick="sortBoard('c${c}')">${CATS[c]}</th>`).join('')}</tr>`;
+  for(const p of pList){
+    h+=`<tr><td onclick="drillTo(${p})" title="Click to drill">${DS.people[p]}</td>${catCols.map(c=>{const v=byP[p][c]||0;const a=Math.round(v/maxCell*55);return`<td style="background:${PCOLORS[p%10]}${Math.round(a).toString(16).padStart(2,'0')};${v?'font-weight:700':''}" ${v?`onclick="cellNotes(${p},${c})" title="Click to read notes"`:''}>${v||''}</td>`;}).join('')}</tr>`;
+  }
+  $('board').innerHTML=h+'</table>';
+  $('boardMeta').textContent=`${rows.length} activities · click header to sort, name to drill`;
+}
+function sortBoard(k){S.sort=k;render();}
+function drillTo(p){S.drill=p;render();}
+function viewNote(i){viewNotes([DS.rows[i]],'Note');}
+function viewNotes(rows,title){
+  $('noteT').textContent=title+' — '+rows.length+' note'+(rows.length!==1?'s':'');
+  const sorted=rows.slice().sort((a,b)=>a[0]<b[0]?1:a[0]>b[0]?-1:0);
+  const shown=sorted.slice(0,200);
+  $('noteB').innerHTML=shown.map(r=>{
+    const c=r[6]!==undefined?(DS.clist[r[6]]||'(no comment)'):'(comment not recorded for this report — reload report in Merge/Replace mode to capture comments)';
+    return`<div class="nt"><div class="nth">${r[0]} · ${DS.people[r[1]]} · ${r[2].split(',').map(x=>CATS[+x]).join(' + ')}${r[3]?' · '+esc(r[3]):''} · <b>${esc(DS.projects[r[4]])}</b><div class="nts">${esc(r[5])}</div></div><div class="ntc">${esc(c)}</div></div>`;
+  }).join('')+(sorted.length>200?`<div class="hint">${sorted.length-200} more notes not shown — narrow the filters to see them.</div>`:'');
+  $('noteZ').classList.add('sh');
+}
+function closeNotes(){$('noteZ').classList.remove('sh');}
+function cellNotes(p,c){const rows=fRows().filter(r=>r[1]===p&&r[2].split(',').includes(String(c)));viewNotes(rows,DS.people[p]+' · '+CATS[c]);}
+function catNotes(ci){const rows=fRows().filter(r=>r[2].split(',').includes(String(ci)));viewNotes(rows,CATS[ci]);}
+function projNotes(pi){const rows=fRows().filter(r=>r[4]===pi);viewNotes(rows,DS.projects[pi]);}
+function renderDrill(rows){
+  if(S.drill===null){$('drillTitle').textContent='Individual Detail';$('drill').innerHTML='<div style="color:var(--muted)">Click a rep name in the leaderboard to see their trend, top projects, and most recent activities.</div>';return;}
+  const p=S.drill;const prs=rows.filter(r=>r[1]===p);
+  $('drillTitle').textContent='👤 '+DS.people[p];
+  const br=bucketRows(prs);
+  let h=`<div style="font-weight:700;margin-bottom:8px">${prs.length} activities in range</div>`+singleChart(br);
+  const pc={};prs.forEach(r=>pc[r[4]]=(pc[r[4]]||0)+1);
+  const top=Object.entries(pc).sort((a,b)=>b[1]-a[1]).slice(0,8);
+  h+=`<div style="font-weight:700;margin:10px 0 6px;font-size:12px;text-transform:uppercase;color:var(--muted)">Top projects</div>`;
+  const pMax=top.length?top[0][1]:1;
+  h+=top.map(([pi,n])=>`<div class="bar-row"><div class="bar-lbl" title="${esc(DS.projects[pi])}">${esc(DS.projects[pi])}</div><div class="bar-track"><div class="bar-fill" style="width:${(n/pMax*100).toFixed(1)}%;background:${PCOLORS[p%10]}"></div></div><div class="bar-val">${n}</div></div>`).join('');
+  h+=`<div style="font-weight:700;margin:10px 0 6px;font-size:12px;text-transform:uppercase;color:var(--muted)">All activities in range — ${prs.length} · scroll to browse, click to expand the note</div>`;
+  const all=prs.slice().sort((a,b)=>a[0]<b[0]?1:a[0]>b[0]?-1:0);
+  h+=`<div class="ntlist">${all.map(r=>{const c=r[6]!==undefined?(DS.clist[r[6]]||'(no comment)'):'(comment not recorded)';return `<div class="nt2" onclick="this.classList.toggle('open')"><div class="nt2h">${r[0]} · ${r[2].split(',').map(x=>CATS[+x]).join(' + ')}${r[3]?' \u00b7 '+esc(r[3]):''} · <b>${esc(DS.projects[r[4]])}</b></div><div class="nt2c">${esc(c)}</div></div>`;}).join('')}</div>`;
+  $('drill').innerHTML=h;
+}
+function singleChart(br){
+  const n=br.length;if(!n)return'';
+  const W=600,H=140,padL=30,padB=18,padT=6,padR=4;
+  const max=Math.max(...br.map(([,rs])=>rs.length));const step=Math.max(1,Math.ceil(max/3));const yMax=step*Math.ceil(max/step);
+  const bw=Math.max(4,(W-padL-padR)/n);const col=PCOLORS[S.drill%10];
+  let s=`<svg width="100%" viewBox="0 0 ${W} ${H}" style="display:block">`;
+  for(let v=0;v<=yMax;v+=step){const y=padT+(H-padT-padB)*(1-v/yMax);s+=`<line x1="${padL}" y1="${y}" x2="${W-padR}" y2="${y}" stroke="var(--brd)"/><text x="${padL-4}" y="${y+3}" font-size="9.5" fill="var(--muted)" text-anchor="end">${v}</text>`;}
+  const labelStep=Math.ceil(n/14);
+  br.forEach(([k,rs],i)=>{const x=padL+i*bw;const hgt=(rs.length/yMax)*(H-padT-padB);
+    s+=`<rect x="${x+1}" y="${H-padB-hgt}" width="${Math.max(2,bw-2)}" height="${hgt}" fill="${col}" opacity="0.9"><title>${rs.length} (${fmtBucket(k)})</title></rect>`;
+    if(i%labelStep===0)s+=`<text x="${x+bw/2}" y="${H-6}" font-size="9" fill="var(--muted)" text-anchor="middle">${fmtBucket(k)}</text>`;});
+  return s+'</svg>';
+}
+function exportCSV(){
+  const rows=fRows();
+  let csv='Date,Rep,Activity,COID,Project,Subject\n';
+  rows.forEach(r=>{csv+=`${r[0]},${DS.people[r[1]]},"${r[2].split(',').map(c=>CATS[+c]).join(' + ')}",${r[3]},${JSON.stringify(DS.projects[r[4]])},"${r[5].replace(/"/g,'""')}"\n`;});
+  const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download='b5-activity-export.csv';a.click();
+}
+load();S={from:dsRange()[0],to:dsRange()[1],mode:'W',people:new Set(DS.people.map((_,i)=>i)),cats:new Set(CATS.map((_,i)=>i)),drill:null,sort:'total'};
+document.querySelectorAll('.modebtn').forEach(b=>b.classList.toggle('sel',b.dataset.mode==='W'));
+render();
+</script>
+</body></html>
