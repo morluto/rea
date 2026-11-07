@@ -133,14 +133,18 @@ export const attributeChecks = (
       : [],
   );
   if (copiesSibling(context, pointer, element, own)) return [];
+  const eligible = own.filter(
+    ({ key, value }) =>
+      !isStamp(value) &&
+      !isVolatileValue(value) &&
+      !isViewStateName(key) &&
+      !isRenumberedKey(key),
+  );
+  for (const { key, value } of eligible)
+    if (value.length > context.chars)
+      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    own.filter(
-      ({ key, value }) =>
-        !isStamp(value) &&
-        !isVolatileValue(value) &&
-        !isViewStateName(key) &&
-        !isRenumberedKey(key),
-    ),
+    eligible.filter(({ value }) => value.length <= context.chars),
   )
     .slice(0, MAX_ATTRIBUTE_CHECKS)
     .map(({ key, value }) =>
