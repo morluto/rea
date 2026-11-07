@@ -117,7 +117,7 @@ it.skipIf(process.platform === "win32")(
   "publishes a verified state, reopens it, and separates target and analysis identities",
   async () => {
     const f = await fixture();
-    expect(f.selection.source).toBeNull();
+    expect(f.selection.state).toEqual({ kind: "initial-analysis" });
     expect(await f.owner.acquire("first")).toBeUndefined();
     await f.owner.publish(f.packed);
     await f.owner.close();
@@ -127,12 +127,13 @@ it.skipIf(process.platform === "win32")(
       profile,
       f.resources,
     );
-    expect(loaded.source?.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(loaded.state).toEqual(f.selection.state);
+    const saved = f.owner.observation.source!;
     const resumed = new GhidraCheckpoint(loaded, f.resources);
     owners.push(resumed);
     expect(await resumed.acquire("second")).toEqual({
-      path: join(loaded.directory, loaded.source!.file),
-      sha256: loaded.source!.sha256,
+      path: join(loaded.directory, saved.file),
+      sha256: saved.sha256,
     });
     expect(
       (
@@ -142,8 +143,8 @@ it.skipIf(process.platform === "win32")(
           profile,
           f.resources,
         )
-      ).source,
-    ).toBeNull();
+      ).key,
+    ).not.toBe(f.selection.key);
     expect(
       (
         await resolveGhidraCheckpoint(
@@ -152,8 +153,8 @@ it.skipIf(process.platform === "win32")(
           createAnalysisProfile(profile.provider, { import_mode: "other" }),
           f.resources,
         )
-      ).source,
-    ).toBeNull();
+      ).key,
+    ).not.toBe(f.selection.key);
   },
 );
 
@@ -178,6 +179,9 @@ it.skipIf(process.platform === "win32")(
     const f = await fixture();
     await f.owner.acquire("first");
     await f.owner.publish(f.packed);
+    const edited = join(f.root, "edited.gzf");
+    await writeFile(edited, "edited checkpoint");
+    await f.owner.publish(edited);
     await f.owner.close();
     const stale = new GhidraCheckpoint(f.selection, f.resources);
     owners.push(stale);
@@ -188,9 +192,56 @@ it.skipIf(process.platform === "win32")(
     await expect(stale.acquire("stale")).rejects.toThrow(
       /changed after profile selection/,
     );
+    await expect(stale.publish(f.packed)).rejects.toThrow(
+      /no admitted session lease/,
+    );
     expect(
       await readFile(join(f.selection.directory, "current.json"), "utf8"),
     ).toEqual(bytes);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "keeps initial identity stable and retains legacy data without guessing its origin",
+  async () => {
+    const f = await fixture();
+    await f.owner.acquire("initial");
+    await f.owner.publish(f.packed);
+    await f.owner.close();
+    const initial = await resolveGhidraCheckpoint(
+      f.root,
+      target,
+      profile,
+      f.resources,
+    );
+    expect(initial).toEqual(f.selection);
+    const path = join(initial.directory, "current.json");
+    const record = JSON.parse(await readFile(path, "utf8"));
+    expect(record.version).toBe(2);
+    expect(record.source.kind).toBe("initial-analysis");
+    const legacy = {
+      ...record,
+      version: 1,
+      source: { file: record.source.file, sha256: record.source.sha256 },
+    };
+    await writeFile(path, JSON.stringify(legacy));
+    const selected = await resolveGhidraCheckpoint(
+      f.root,
+      target,
+      profile,
+      f.resources,
+    );
+    expect(selected.state).toEqual({
+      kind: "retained",
+      sha256: record.source.sha256,
+    });
+    const resumed = new GhidraCheckpoint(selected, f.resources);
+    owners.push(resumed);
+    expect((await resumed.acquire("legacy"))?.sha256).toBe(
+      record.source.sha256,
+    );
+    await resumed.close();
+    expect(JSON.parse(await readFile(path, "utf8"))).toEqual(legacy);
   },
 );
 
@@ -317,8 +368,8 @@ it.skipIf(process.platform === "win32")(
     expect(f.owner.observation.source).not.toBeNull();
     expect(
       (await resolveGhidraCheckpoint(f.root, target, profile, f.resources))
-        .source,
-    ).toEqual(f.owner.observation.source);
+        .state,
+    ).toEqual({ kind: "initial-analysis" });
   },
 );
 
@@ -384,6 +435,8 @@ it.skipIf(process.platform === "win32")(
       /another REA session/,
     );
     await owner.close();
-    expect((await peer.acquire("physical"))?.sha256).toBe(alias.source?.sha256);
+    expect((await peer.acquire("physical"))?.sha256).toBe(
+      owner.observation.source?.sha256,
+    );
   },
 );

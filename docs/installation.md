@@ -1473,11 +1473,14 @@ language/analyzer overrides, analysis seeds and extra analysis extensions are
 not admitted with this setting; unset it to use their existing workflows.
 The checkpoint directory must be private to the current user.
 
-REA analysis snapshots remain separate immutable query results. Their binding
-includes the selected checkpoint content, so a newly created or edited checkpoint
+REA analysis snapshots remain separate immutable query results. Initial analysis
+has a stable generation bound to the target and analysis profile: publishing its
+first checkpoint neither replaces a live MCP session nor invalidates its initial
+snapshot. Later saved states bind their content digest, so an edited checkpoint
 can require reopening without an older `--snapshot`. Snapshot import and save
 after live metadata mutation remain unavailable as before. Complete Evidence
-retains the checkpoint path and digest in its analysis profile; returned caveats
+retains the checkpoint directory and generation in its analysis profile; restored
+reads also report the packed file's path and verified digest. Returned caveats
 distinguish restored database state from fresh analysis.
 
 Run `npm run verify:ghidra:checkpoints` with your existing Ghidra/JDK installation

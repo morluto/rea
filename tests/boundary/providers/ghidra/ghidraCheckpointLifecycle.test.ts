@@ -130,7 +130,7 @@ it.skipIf(process.platform === "win32")(
     clients.push(resumed);
     expect((await resumed.start()).ok).toBe(true);
     expect(f.launcher.packedPrograms.at(-1)?.sha256).toBe(
-      selection.source?.sha256,
+      JSON.parse(await readFile(path, "utf8")).source.sha256,
     );
   },
 );

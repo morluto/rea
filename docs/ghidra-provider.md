@@ -9,7 +9,9 @@ An opt-in [owned Program checkpoint](installation.md#automatically-checkpoint-an
 retains analysis across Linux/macOS processes. It saves initial completed analysis
 and normal-close metadata changes to `REA_GHIDRA_CHECKPOINT_DIR`; cancellation
 and process failure recover only the last successfully saved state. The restored
-packed Program's digest participates in profile identity and does not turn prior
+packed Program's digest is reported with restored observations. Initial analysis
+keeps one stable generation through its first save; later saved states bind their
+content digest in profile identity. Restoration does not turn prior
 database state into a fresh discovery. The default remains ephemeral.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,

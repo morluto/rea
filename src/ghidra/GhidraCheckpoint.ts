@@ -34,28 +34,54 @@ import {
 } from "./GhidraFileArtifacts.js";
 
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
-const sourceSchema = z
+const sourceIdentitySchema = z
   .object({
     file: z.string().regex(/^program-[a-f0-9-]{36}\.gzf$/),
     sha256: digest,
   })
   .strict();
-const manifestSchema = z
-  .object({
-    version: z.literal(1),
-    target_sha256: digest,
-    base_profile_digest: digest,
-    source: sourceSchema,
-  })
-  .strict();
-/** Exact saved state committed before opening a Program; null requests a fresh import. */
+const sourceSchema = sourceIdentitySchema.extend({
+  kind: z.enum(["initial-analysis", "retained"]),
+});
+type CheckpointSource = z.infer<typeof sourceSchema>;
+const manifestIdentitySchema = z.object({
+  target_sha256: digest,
+  base_profile_digest: digest,
+});
+const manifestSchema = z.union([
+  manifestIdentitySchema
+    .extend({ version: z.literal(2), source: sourceSchema })
+    .strict(),
+  // Earlier local checkpoints have no initial-generation proof. Retain their
+  // data, binding their identity to the verified content rather than guessing.
+  manifestIdentitySchema
+    .extend({ version: z.literal(1), source: sourceIdentitySchema })
+    .strict()
+    .transform((value) => ({
+      ...value,
+      version: 2 as const,
+      source: { ...value.source, kind: "retained" as const },
+    })),
+]);
+const stateSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("initial-analysis") }).strict(),
+  z.object({ kind: z.literal("retained"), sha256: digest }).strict(),
+]);
+const checkpointState = (
+  source: CheckpointSource | null,
+): z.infer<typeof stateSchema> =>
+  source === null || source.kind === "initial-analysis"
+    ? { kind: "initial-analysis" }
+    : { kind: "retained", sha256: source.sha256 };
+
+/** Semantic generation is stable through the first save; edited states bind their digest. */
 export const ghidraCheckpointSelectionSchema = z
   .object({
     directory: z.string().min(1),
     key: digest,
     target_sha256: digest,
     base_profile_digest: digest,
-    source: sourceSchema.nullable(),
+    state: stateSchema,
   })
   .strict();
 export type GhidraCheckpointSelection = z.infer<
@@ -113,7 +139,7 @@ export const hashGhidraPackedProgram = (
   );
 
 async function readSource(
-  selection: Omit<GhidraCheckpointSelection, "source">,
+  selection: Omit<GhidraCheckpointSelection, "state">,
   resources: ArtifactResourceScope,
   signal?: AbortSignal,
 ) {
@@ -180,14 +206,15 @@ export async function resolveGhidraCheckpoint(
   };
   return {
     ...selection,
-    source: await readSource(selection, resources, signal),
+    state: checkpointState(await readSource(selection, resources, signal)),
   };
 }
 
 /** One session owns publication, the socket lease, and any failed staging cleanup. */
 export class GhidraCheckpoint {
   #lease: OwnedLease | undefined;
-  #source: GhidraCheckpointSelection["source"];
+  #source: CheckpointSource | null | undefined;
+  #state: GhidraCheckpointSelection["state"];
   readonly #pendingRemoval = new Set<string>();
   readonly #cleanupFailures = new Set<ProviderCleanupError>();
   #publishedInput: string | undefined;
@@ -195,7 +222,7 @@ export class GhidraCheckpoint {
     readonly selection: GhidraCheckpointSelection,
     private readonly resources: ArtifactResourceScope,
   ) {
-    this.#source = selection.source;
+    this.#state = selection.state;
   }
   get hasResources(): boolean {
     return this.#lease !== undefined || this.#pendingRemoval.size > 0;
@@ -211,7 +238,9 @@ export class GhidraCheckpoint {
   get observation() {
     return {
       directory: this.selection.directory,
-      source: this.#source,
+      source: this.#source ?? null,
+      source_verified: this.#source !== undefined,
+      state: this.#state,
       pending_cleanup: [...this.#pendingRemoval],
     };
   }
@@ -254,13 +283,21 @@ export class GhidraCheckpoint {
         `another REA session owns this checkpoint (run ${acquired.owner.runId}, process ${acquired.owner.processId}); close that session before retrying`,
       );
     this.#lease = acquired.lease;
+    this.#source = undefined;
     const current = await readSource(this.selection, this.resources, signal);
-    if (JSON.stringify(current) !== JSON.stringify(this.#source))
+    const generation = checkpointState(current);
+    const aligned =
+      generation.kind === "initial-analysis"
+        ? this.#state.kind === "initial-analysis"
+        : this.#state.kind === "retained" &&
+          this.#state.sha256 === generation.sha256;
+    if (!aligned)
       throw failure(
         directory,
         "the checkpoint changed after profile selection; reopen the target",
       );
     assertArtifactReadActive(signal);
+    this.#source = current;
     return current === null
       ? undefined
       : { path: join(directory, current.file), sha256: current.sha256 };
@@ -268,11 +305,12 @@ export class GhidraCheckpoint {
 
   /** Publish a new immutable blob, then atomically replace its manifest. */
   async publish(path: string, signal?: AbortSignal): Promise<void> {
-    if (this.#lease === undefined)
+    if (this.#lease === undefined || this.#source === undefined)
       throw failure(
         this.selection.directory,
-        "publication has no owning session lease",
+        "publication has no admitted session lease",
       );
+    const previous = this.#source;
     await this.retryCleanup();
     if (this.#publishedInput === path) return;
     const file = `program-${randomUUID()}.gzf`;
@@ -293,13 +331,17 @@ export class GhidraCheckpoint {
         this.resources,
         signal,
       );
-      const source = { file, sha256 };
+      const source: CheckpointSource = {
+        file,
+        sha256,
+        kind: previous === null ? "initial-analysis" : "retained",
+      };
       for (const [output, bytes] of [
         [destination, undefined],
         [
           temporary,
           JSON.stringify({
-            version: 1,
+            version: 2,
             target_sha256: this.selection.target_sha256,
             base_profile_digest: this.selection.base_profile_digest,
             source,
@@ -327,8 +369,8 @@ export class GhidraCheckpoint {
         temporary,
         appendCallerPath(this.selection.directory, "current.json"),
       );
-      const previous = this.#source;
       this.#source = source;
+      this.#state = checkpointState(source);
       this.#publishedInput = path;
       this.#pendingRemoval.delete(destination);
       this.#pendingRemoval.delete(temporary);

@@ -118,7 +118,7 @@ async function refuseCli(procedure, flags, expected) {
   assert.equal(refusal.code, expected, JSON.stringify(refusal));
   return refusal;
 }
-async function connect() {
+async function connect(environment = {}) {
   const client = new Client({
     name: "rea-ghidra-checkpoint-verifier",
     version: "1",
@@ -126,7 +126,7 @@ async function connect() {
   const transport = new StdioClientTransport({
     command: process.execPath,
     args: [entrypoint, "mcp"],
-    env,
+    env: { ...env, ...environment },
     stderr: "pipe",
   });
   transport.stderr?.on("data", () => {});
@@ -178,17 +178,49 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
   };
   let original, initialManifest;
   const snapshotPath = join(root, "analysis-snapshot.json");
+  await phase(
+    "a cold MCP session keeps its live Program across initial save and repeated open",
+    async () => {
+      const cold = await connect({
+        REA_GHIDRA_CHECKPOINT_DIR: join(root, "cold-session-checkpoints"),
+      });
+      try {
+        await cold.call("open_binary", { path: target, provider_id: "ghidra" });
+        await cold.call("procedure_pseudo_code", {
+          procedure: "rea_checkpoint_leaf",
+        });
+        const id = (await cold.call("binary_session")).analysis_run.run_id;
+        await cold.call("annotate_native_function", {
+          procedure: "rea_checkpoint_leaf",
+          comment: "cold-session unsaved comment",
+        });
+        await cold.call("open_binary", { path: target, provider_id: "ghidra" });
+        assert.equal(
+          (await cold.call("binary_session")).analysis_run.run_id,
+          id,
+        );
+        const current = await cold.call("procedure_pseudo_code", {
+          procedure: "rea_checkpoint_leaf",
+        });
+        assert.match(JSON.stringify(current), /cold-session unsaved comment/);
+        await cold.call("close_binary");
+        return { same_live_run: true, unsaved_metadata_retained: true };
+      } finally {
+        await cold.close();
+      }
+    },
+  );
   await phase("first analysis creates a checkpoint", async () => {
-    original = await cli("rea_checkpoint_leaf");
+    original = await cli("rea_checkpoint_leaf", ["--snapshot", snapshotPath]);
     assert.match(JSON.stringify(original.normalized_result), /value/);
     const keys = await readdir(checkpointDirectory);
     assert.equal(keys.length, 1);
     manifestPath = join(checkpointDirectory, keys[0], "current.json");
     initialManifest = await manifest();
     assert.equal(initialManifest.target_sha256, targetDigest);
-    assert.equal(
-      original.analysis_profile.parameters.owned_checkpoint.source,
-      null,
+    assert.deepEqual(
+      original.analysis_profile.parameters.owned_checkpoint.state,
+      { kind: "initial-analysis" },
     );
     return {
       provider_version: original.provider.version,
@@ -196,16 +228,30 @@ int main(void) { CheckpointRecord record = { 3, 11 }; return rea_checkpoint_leaf
     };
   });
   await phase(
-    "fresh CLI restores the Program and does not rewrite it",
+    "the first checkpoint publication preserves initial immutable snapshot identity",
     async () => {
-      const restored = await cli("rea_checkpoint_leaf", [
+      const cached = await cli("rea_checkpoint_leaf", [
         "--snapshot",
         snapshotPath,
       ]);
+      assert.deepEqual(cached, original);
+      assert.deepEqual(await manifest(), initialManifest);
+      return {};
+    },
+  );
+  await phase(
+    "fresh CLI restores the Program and does not rewrite it",
+    async () => {
+      const restored = await cli("rea_checkpoint_leaf");
       assert.deepEqual(restored.normalized_result, original.normalized_result);
       assert.equal(
-        restored.analysis_profile.parameters.owned_checkpoint.source.sha256,
-        initialManifest.source.sha256,
+        restored.analysis_profile.digest,
+        original.analysis_profile.digest,
+      );
+      assert.ok(
+        restored.limitations.some((value) =>
+          value.includes(initialManifest.source.sha256),
+        ),
       );
       assert.deepEqual(await manifest(), initialManifest);
       return {
