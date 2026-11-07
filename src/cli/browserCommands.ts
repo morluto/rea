@@ -25,6 +25,7 @@ import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { observeWebSessionInputSchema } from "../domain/browserSession.js";
 import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import {
@@ -56,9 +57,9 @@ const registerTargetList = (
     description:
       "List page targets from a selected loopback CDP browser, optionally filtered by origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
     }),
     options: z.object({
       allowedOrigins: passiveBrowserScopeOptions.allowedOrigins,
@@ -106,10 +107,12 @@ const registerPageInspection = (
     description:
       "Passively inspect one page through CDP, defaulting to its current origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: browserPageInspectionOptions,
     run: ({ args, options }) =>
@@ -164,10 +167,12 @@ const registerBundleAnalysis = (
     description:
       "Capture and statically analyze a page bundle, defaulting to the selected target origin",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...passiveBrowserScopeOptions,
@@ -255,10 +260,12 @@ const registerObservationSession = (
   cli.command(CLI_COMMANDS.observeWebSession, {
     description: "Observe user-driven page navigation during a chosen window",
     args: z.object({
-      endpoint: z
-        .string()
-        .describe("Loopback CDP HTTP endpoint or browser WebSocket URL"),
-      targetId: z.string().describe("Target ID from list-browser-targets"),
+      endpoint: cliDomainInput(
+        listBrowserTargetsInputSchema.shape.cdp_endpoint,
+      ),
+      targetId: observeWebSessionInputSchema.shape.target_id.describe(
+        "Target ID from list-browser-targets",
+      ),
     }),
     options: z.object({
       ...passiveBrowserScopeOptions,

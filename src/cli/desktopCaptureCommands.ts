@@ -14,7 +14,10 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
+import {
+  DESKTOP_CAPTURE_DEFAULTS,
+  type DesktopCaptureProgress,
+} from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -327,10 +330,15 @@ export const registerDesktopCaptureCommands = (
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),
-                  report: async (message) => {
-                    process.stderr.write(
-                      `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
-                    );
+                  report: async (message, event) => {
+                    const progress: DesktopCaptureProgress = {
+                      rea_progress: {
+                        phase: "desktop_capture",
+                        message,
+                        ...(event === undefined ? {} : { event }),
+                      },
+                    };
+                    process.stderr.write(`${JSON.stringify(progress)}\n`);
                   },
                 },
                 signal,

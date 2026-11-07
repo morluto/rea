@@ -701,7 +701,6 @@ it("names the fixed cleanup grace when runtime restoration stalls", async () => 
     expect(activeTimers(commandTimeoutMs)).toHaveLength(0);
     expireEveryTimer(WEB_RUNTIME_LIMITS.cleanupTimeoutMs);
     const result = await pending;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cleanup grace failure");
     const text = JSON.stringify(result.error.diagnostics);
     expect(text).toContain("5000 ms");
