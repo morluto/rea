@@ -709,8 +709,19 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "export_evidence_bundle",
       arguments: { path: "relative-bundle.json" },
     });
-    expect(exported.isError, JSON.stringify(exported.content)).toBe(true);
-    expect(JSON.stringify(exported.content)).toContain("absolute");
+    expect(parseMcpToolError(exported).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "export_evidence_bundle",
+        issues: [
+          expect.objectContaining({
+            path: ["path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
 
     const opened = await mcp.callTool({
       name: "open_binary",
@@ -721,8 +732,19 @@ describe("session filesystem path boundaries over MCP", () => {
       name: "close_binary",
       arguments: { snapshot_path: "relative-analysis.json" },
     });
-    expect(closed.isError, JSON.stringify(closed.content)).toBe(true);
-    expect(JSON.stringify(closed.content)).toContain("absolute");
+    expect(parseMcpToolError(closed).error).toMatchObject({
+      code: "invalid_request",
+      details: {
+        operation: "close_binary",
+        issues: [
+          expect.objectContaining({
+            path: ["snapshot_path"],
+            reason: "invalid_format",
+            expected: "regex",
+          }),
+        ],
+      },
+    });
     await mcp.callTool({ name: "close_binary", arguments: {} });
   }, 10_000);
 });

@@ -113,6 +113,13 @@ mcpTest(
       expect(response.isError).toBe(true);
       expect(parseMcpToolError(response).error).toMatchObject({
         code: "resource_constraint",
+        category: "resource_constraint",
+        retryable: false,
+        remediation: {
+          action: expect.stringMatching(
+            /rustc commit.path inventory.*fixed count/iu,
+          ),
+        },
         details: {
           operation: "inspect_rust_binary",
           resource: "capacity",

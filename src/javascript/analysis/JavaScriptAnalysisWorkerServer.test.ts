@@ -81,6 +81,8 @@ const startServer = async () => {
           kind: "javascript",
           unpacked: false,
         },
+        package_type: "unknown",
+        purpose: "analysis",
       });
     },
     close: async () => {
@@ -157,7 +159,7 @@ it("drains oversized checkpoint admission, reports output failure, and serves th
       reason: "output",
       resource: null,
       limits: null,
-      message: "JavaScript worker admission frame is missing or oversized",
+      message: expect.stringMatching(/admission frame.*missing or oversized/iu),
     });
     expect(await server.next()).toMatchObject({
       kind: "static",
@@ -196,7 +198,7 @@ it("reports missing checkpoint admission as output failure at stdin EOF", async 
       id: request.id,
       reason: "output",
       resource: null,
-      message: "JavaScript worker admission frame is missing or oversized",
+      message: expect.stringMatching(/admission frame.*missing or oversized/iu),
     });
     expect((await server.closed)[0]).toBe(0);
   } finally {

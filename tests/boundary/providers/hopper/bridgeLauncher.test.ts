@@ -119,7 +119,6 @@ for (const deniedStops of [0, 2])
           token: "fixture-token",
           runId: randomUUID(),
         });
-        expect(launched.ok).toBe(false);
         if (launched.ok) throw new Error("Expected private-display timeout");
         const original = launched.error;
         expect(projectAnalysisError(original).details).toMatchObject({

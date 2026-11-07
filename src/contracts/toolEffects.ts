@@ -158,6 +158,8 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
   inspect_go_binary: evidence,
   inspect_il2cpp_metadata: evidence,
   inspect_model_artifact: evidence,
+  inspect_api_contract: evidence,
+  inspect_playwright_trace: evidence,
   inspect_gpu_code_objects: evidence,
   inspect_rust_binary: evidence,
   inspect_apk_signature: evidence,
@@ -750,6 +752,42 @@ const TOOL_EFFECT_AUDIT: Readonly<Record<string, EffectAudit>> = {
     accessesNetwork: true,
     changesUiState: true,
     executesForeignCode: true,
+    idempotent: false,
+  }),
+  // Downloads package lists and launches the app inside the computer.
+  start_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    executesForeignCode: true,
+    idempotent: false,
+  }),
+  mark_build_checkpoint: effects({
+    mutatesSession: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // Closes the app and drafts the task with REA inside the computer.
+  stop_build_capture: effects({
+    mutatesSession: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    changesUiState: true,
+    idempotent: false,
+  }),
+  export_build_environment: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    launchesProcess: true,
+    accessesNetwork: true,
+    idempotent: false,
+  }),
+  // A witness stage records the display and writes its record on this host.
+  check_build_task: effects({
+    mutatesSession: true,
+    writesFilesystem: true,
+    accessesNetwork: true,
     idempotent: false,
   }),
   close_build_computer: effects({

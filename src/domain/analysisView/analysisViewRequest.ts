@@ -1,3 +1,6 @@
+import { graphqlContractViewRequestSchema } from "../apiContract/graphqlContractQuery.js";
+import { playwrightTraceViewRequestSchema } from "../playwrightTrace/playwrightTraceQuery.js";
+import { apiContractViewRequestSchema } from "../apiContract/apiContractQuery.js";
 import {
   nativeObservationViewRequestSchema,
   nativeContextViewRequestSchema,
@@ -74,6 +77,9 @@ export const analysisViewRequestSchema = z.discriminatedUnion("kind", [
   nativeFunctionMatchingViewRequestSchema,
   sourceToBundleViewRequestSchema,
   endpointComparisonViewRequestSchema,
+  apiContractViewRequestSchema,
+  graphqlContractViewRequestSchema,
+  playwrightTraceViewRequestSchema,
   featureTraceViewRequestSchema,
   nativeFeatureTraceViewRequestSchema,
   batchDecompileViewRequestSchema,

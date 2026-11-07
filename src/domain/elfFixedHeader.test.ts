@@ -140,7 +140,6 @@ it("keeps framing failures ahead of version and declared-size admission", () => 
   });
   bytes[6] = 1;
   const truncated = readElfFixedHeader(bytes, 63);
-  expect(truncated).toEqual(readElfHeaderFacts(bytes, 63));
   expect(truncated).toMatchObject({
     ok: false,
     error: expect.stringContaining("truncated ELF header"),

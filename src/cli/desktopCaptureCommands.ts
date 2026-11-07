@@ -11,14 +11,19 @@ import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
+import {
+  DESKTOP_CAPTURE_DEFAULTS,
+  type DesktopCaptureProgress,
+} from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
 
-const positive = (fallback: number) => z.int().positive().default(fallback);
+const positive = (fallback: number) =>
+  cliDecimalField(z.int().positive().default(fallback));
 
 /** Options of `capture-desktop-application`. */
 const captureOptions = z.object({
@@ -325,10 +330,15 @@ export const registerDesktopCaptureCommands = (
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),
-                  report: async (message) => {
-                    process.stderr.write(
-                      `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
-                    );
+                  report: async (message, event) => {
+                    const progress: DesktopCaptureProgress = {
+                      rea_progress: {
+                        phase: "desktop_capture",
+                        message,
+                        ...(event === undefined ? {} : { event }),
+                      },
+                    };
+                    process.stderr.write(`${JSON.stringify(progress)}\n`);
                   },
                 },
                 signal,
