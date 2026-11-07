@@ -38,8 +38,8 @@ export const cargoDependencySchema = z.strictObject({
   declared_by: z.enum(["package", "workspace"]),
   optional: z.boolean(),
   /**
-   * `null` when the declaration leaves the setting to a workspace declaration
-   * this reader does not open, so "unstated" never reads as "enabled".
+   * `null` when the setting depends on an unopened workspace declaration or
+   * its spelling or value cannot be interpreted for the declared edition.
    */
   default_features: z.boolean().nullable(),
   features: z.array(z.string()),
