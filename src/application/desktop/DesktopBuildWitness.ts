@@ -28,6 +28,7 @@ import {
   stageExpectation,
   stageVerdict,
   unrestoredChecks,
+  unreadSeedDifferences,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
@@ -300,17 +301,27 @@ export class DesktopBuildWitness {
     const witness = this.#witness;
     if (witness === undefined) throw new TypeError("the stage was admitted");
     const verdict = stageVerdict(stage, results, witness.stages);
-    if (verdict === "undecided")
+    if (verdict === "undecided") {
+      const unreadSeed =
+        stage === "after_reset"
+          ? unreadSeedDifferences(witness.stages, results).map(
+              (result) => result.id,
+            )
+          : [];
       return err(
         refused(
-          `The checks cannot decide ${stage}: each failure that would settle it may come from a view that could not be read or is cut short (${results
-            .flatMap((result) =>
+          `The checks cannot decide ${stage}: each failure that would settle it may come from a view that could not be read or is cut short (${[
+            ...results.flatMap((result) =>
               result.undecided === true ? [result.description] : [],
-            )
-            .join("; ")}). Nothing was filed.`,
+            ),
+            ...unreadSeed.map(
+              (id) => `${id} was not readable when the seed was filed`,
+            ),
+          ].join("; ")}). Nothing was filed.`,
           `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
         ),
       );
+    }
     const held = verdict === "held";
     const unrestored =
       stage === "after_reset" && !held
