@@ -63,11 +63,26 @@ export const deliverApplicationEvidence = async (
             id === parent.evidence_id ? parent : options.evidenceById?.(id),
         );
   await setImmediate();
-  if (signal.aborted)
-    return delivery.toErrorToolResult(
-      new AnalysisCancelledError(contract.name, { cause: signal.reason }),
+  if (signal.aborted) {
+    // A standalone import reads no other record, so a parent committed alone is
+    // still self-contained and a cancellation after it must not discard it. A
+    // derived workflow references source Evidence it has not recorded yet; a
+    // parent saved without those sources would point at records the session
+    // cannot recover, so that path keeps the no-commit contract.
+    if (execution.sources.length > 0)
+      return delivery.toErrorToolResult(
+        new AnalysisCancelledError(contract.name, { cause: signal.reason }),
+        contract.returnsTargetContent,
+      );
+    return delivery.toPartialErrorToolResult(
+      new AnalysisCancelledError(contract.name, {
+        cause: signal.reason,
+        partialObservation: parent,
+      }),
       contract.returnsTargetContent,
+      options.recordEvidence,
     );
+  }
   if (!selected.ok) return delivery.toCallToolResult(selected, contract);
   const sources = recordEvidenceSources(
     options.recordEvidence,

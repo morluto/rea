@@ -1,4 +1,5 @@
 import { PLAYWRIGHT_TRACE_TOOL_CONTRACTS } from "./playwrightTraceToolContracts.js";
+import { OTLP_TRACE_TOOL_CONTRACTS } from "./otlpTraceToolContracts.js";
 import { API_CONTRACT_TOOL_CONTRACTS } from "./apiContractToolContracts.js";
 import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
 import { z } from "zod";
@@ -96,6 +97,7 @@ const retained = (evidence_id: string) => ({
 export const APPLICATION_TOOL_CONTRACTS = [
   ...API_CONTRACT_TOOL_CONTRACTS,
   ...PLAYWRIGHT_TRACE_TOOL_CONTRACTS,
+  ...OTLP_TRACE_TOOL_CONTRACTS,
   {
     name: "search_guidance",
     ...toolContractMetadata("search_guidance"),
