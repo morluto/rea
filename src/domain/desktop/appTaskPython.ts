@@ -155,9 +155,27 @@ def _lines(check, entry):
     return _compared(check, n, f"line(s) of {file} match {_shown(check['exact'])}")
 
 
-def _near(at: str, found, expected, tolerance):
-    """A value compared within a tolerance: numbers, and numeral strings, by their difference."""
-    number = _number(_element_text(found) if _is_element(found) else found)
+def _xml_text(entry, view, pointer: str, found) -> bool:
+    """Whether found is an XML element whose joined text is the number: an XML file, or an XML entry of a zip.
+    A JSON object with the same shape is the value itself."""
+    if not _is_element(found) or entry is None:
+        return False
+    form = entry.get("format")
+    if form == "xml":
+        return True
+    if form != "zip":
+        return False
+    parts = pointer[1:].split("/")
+    if len(parts) < 2 or parts[0] != "entries":
+        return False
+    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    return kind == "value" and isinstance(item, dict) and item.get("format") == "xml"
+
+
+def _near(at: str, found, expected, tolerance, join: bool):
+    """A value compared within a tolerance: numbers, and numeral strings, by their difference. An element's text is
+    joined only when join says the view is XML."""
+    number = _number(_element_text(found) if join else found)
     within = f"within {_shown(tolerance)} of {_shown(expected)}"
     if number is None:
         return False, f"{at} is {_shown(found)}, not a number"
@@ -189,7 +207,11 @@ def _value(check, entry):
             return False, f"{at} has no value" if found is None else f"{at}: {found}"
         expected = check["value"]
         if check.get("tolerance") is not None and isinstance(expected, (int, float)) and not isinstance(expected, bool):
-            return _near(at, found, expected, check["tolerance"])
+            # A cut element's kept runs can join into a number the file never held.
+            join = _xml_text(entry, view, check["pointer"], found)
+            if join and truncated:
+                return _undecided(check)
+            return _near(at, found, expected, check["tolerance"], join)
         if _same(found, check["value"]):
             return True, f"{at} is {_shown(check['value'])}"
         return False, f"{at} is {_shown(found)}, not {_shown(check['value'])}"
@@ -449,22 +471,45 @@ async def _settled_views(url):
 
 /** Where the verifier's evaluator begins. The task description is everything before it. */
 const VERIFIER_EVALUATOR = "\nMISSING = object()\n";
+/** The index helper this REA ships, and the one an older export wrote. The older one also accepts a leading zero. */
+const CURRENT_INDEX = 'INDEX = re.compile(r"0|[1-9][0-9]*")';
+const OLDER_INDEX = 'INDEX = re.compile(r"[0-9]+")';
+/** A path segment the older index helper reads as an array index and this one does not, such as `01`. */
+const LEADING_ZERO_INDEX = /(?:^|\/)0\d+/u;
 
 /**
  * The task a verifier states: the app, the checks and the settle timing,
- * without the evaluator that runs them. An older REA renders that evaluator
- * differently, including its array-index helper, for the same task.
+ * without the evaluator that runs them.
  */
 export const taskVerifierDescription = (source: string): string | undefined => {
   const at = source.indexOf(VERIFIER_EVALUATOR);
   return at < 0 ? undefined : source.slice(0, at + 1);
 };
 
-/** Whether two verifiers state the same task. Their evaluator source may differ. */
+/** The evaluator, from `MISSING` through `verify`, or undefined when that marker is absent. */
+const verifierEvaluator = (source: string): string | undefined => {
+  const at = source.indexOf(VERIFIER_EVALUATOR);
+  return at < 0 ? undefined : source.slice(at);
+};
+
+/**
+ * Whether two verifiers grade the same task the same way. The description must
+ * match. The evaluator must be this REA's, or the older index helper alone
+ * when no path segment is a leading-zero number, which that helper would
+ * index and this one would not.
+ */
 export const sameTaskVerifier = (hosted: string, bundled: string): boolean => {
   const expected = taskVerifierDescription(hosted);
   const found = taskVerifierDescription(bundled);
-  return expected !== undefined && expected === found;
+  if (expected === undefined || expected !== found) return false;
+  const hostedBody = verifierEvaluator(hosted);
+  const bundledBody = verifierEvaluator(bundled);
+  if (hostedBody === undefined || bundledBody === undefined) return false;
+  if (hostedBody === bundledBody) return true;
+  return (
+    bundledBody === hostedBody.replace(CURRENT_INDEX, OLDER_INDEX) &&
+    !LEADING_ZERO_INDEX.test(expected)
+  );
 };
 
 /** The verifier artifact: read the app's state through its data/get once its files settle, then evaluate the task's checks. */
