@@ -12,7 +12,10 @@ import {
   type JavaScriptSemanticAnalysisState,
 } from "./javascriptSemanticState.js";
 import * as t from "@babel/types";
-import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
+import {
+  isUnmodifiedGlobalReference,
+  semanticAmbientPathMayHaveChangedAt,
+} from "./javascriptSemanticAmbientWrites.js";
 
 export const isFetchCall = (
   node: t.Node,
@@ -51,20 +54,13 @@ const isXhrOpenRequest = (
     return false;
   if (
     ["XMLHttpRequest", "Object"].some((owner) =>
-      ["open", "__proto__"].some(
-        (member) =>
-          bindings.ambientWrites.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]) ||
-          bindings.ambientEscapes.covers([
-            "global",
-            owner,
-            "prototype",
-            member,
-          ]),
+      ["open", "__proto__"].some((member) =>
+        semanticAmbientPathMayHaveChangedAt(
+          callee,
+          bindings,
+          ["global", owner, "prototype", member],
+          node,
+        ),
       ),
     )
   )

@@ -1962,13 +1962,33 @@ const constructedReferenceValues = (
   const classes = t.isClass(node)
     ? [node]
     : semanticClassCandidates(node.callee, state);
-  return classes.flatMap((owner) =>
+  const references: ReferencedValue[] = classes.flatMap((owner) =>
     semanticClassPropertyReferences(
       { owner, kind: t.isClass(node) ? "static" : "instance" },
       [key, ...remaining],
       state,
     ),
   );
+  // A constructed receiver may expose its constructor or prototype even when
+  // the class is imported and has no local AST. Retain these as inherited
+  // may-references, not exact value provenance, with the original effect site.
+  // Replacing the instance slot itself was excluded above.
+  if (
+    t.isNewExpression(node) &&
+    // Copied-slot selections contain own enumerable values, never inherited
+    // constructor/prototype links. A null key is an ordinary unknown read.
+    (key === null || typeof key !== "object")
+  ) {
+    if (semanticPropertyPathKeyMatches(key, "constructor"))
+      references.push({ node: node.callee, path: remaining, inherited: true });
+    if (semanticPropertyPathKeyMatches(key, "__proto__"))
+      references.push({
+        node: node.callee,
+        path: ["prototype", ...remaining],
+        inherited: true,
+      });
+  }
+  return references;
 };
 
 const branchReferenceValues = (

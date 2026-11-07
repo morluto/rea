@@ -62,6 +62,66 @@ const canonicalAmbientPath = (
 
 type AmbientPath = readonly (string | null)[];
 
+interface AmbientPathEffectCache {
+  readonly writes: number;
+  readonly escapes: number;
+  readonly byPath: Map<
+    string,
+    JavaScriptSemanticAnalysisState["ambientWriteEffects"]
+  >;
+}
+
+const ambientPathEffectCaches = new WeakMap<
+  JavaScriptSemanticAnalysisState,
+  AmbientPathEffectCache
+>();
+
+/** Query retained ambient effects at a selected read, preserving unknown timing. */
+export const semanticAmbientPathMayHaveChangedAt = (
+  read: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  path: readonly string[],
+  invocation?: t.Node,
+): boolean => {
+  if (!state.ambientWrites.covers(path) && !state.ambientEscapes.covers(path))
+    return false;
+  let cache = ambientPathEffectCaches.get(state);
+  if (
+    cache?.writes !== state.ambientWriteEffects.length ||
+    cache?.escapes !== state.ambientEscapeEffects.length
+  ) {
+    cache = {
+      writes: state.ambientWriteEffects.length,
+      escapes: state.ambientEscapeEffects.length,
+      byPath: new Map(),
+    };
+    ambientPathEffectCaches.set(state, cache);
+  }
+  const key = JSON.stringify(path);
+  let effects = cache.byPath.get(key);
+  if (effects === undefined) {
+    const matches = (
+      effect: JavaScriptSemanticAnalysisState["ambientWriteEffects"][number],
+    ): boolean =>
+      effect.path.length <= path.length &&
+      effect.path.every((key, index) =>
+        semanticPropertyPathKeyMatches(key, path[index]!),
+      );
+    effects = [
+      ...state.ambientWriteEffects.filter(matches),
+      ...state.ambientEscapeEffects.filter(matches),
+    ];
+    cache.byPath.set(key, effects);
+  }
+  // Only matching records are shared. Their timing belongs to each read.
+  return effects.some(
+    (effect) =>
+      // A receiver is exposed by the invocation after its method was selected.
+      (invocation === undefined || effect.node !== invocation) &&
+      semanticEffectTiming(read, effect.node, state) !== "after",
+  );
+};
+
 const retainedAmbientEffects = new WeakMap<
   JavaScriptSemanticAnalysisState,
   Map<t.Node | undefined, Set<string>>
@@ -856,7 +916,7 @@ export function* indexJavaScriptAmbientWritesSteps(
       state.ambientWrites.covers(["global", method]),
     )
   )
-    state.ambientEscapes.retain(["global", null]);
+    retainSemanticAmbientEffect(state, "escape", ["global"], undefined);
 }
 
 export type GlobalReferenceRead =

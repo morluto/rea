@@ -2201,3 +2201,51 @@ it.each([
     );
   },
 );
+
+it.each([
+  [
+    "an unchanged function-local receiver",
+    "function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');}",
+    true,
+  ],
+  [
+    "an earlier constructor escape",
+    "const xhr=new XMLHttpRequest();mutate(xhr.constructor);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "an earlier cross-instance escape",
+    "const other=new XMLHttpRequest();const xhr=new XMLHttpRequest();mutate(other);xhr.open('GET','/xhr');",
+    false,
+  ],
+  [
+    "a later constructor escape",
+    "const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(xhr.constructor);",
+    true,
+  ],
+  [
+    "a later cross-instance escape",
+    "const other=new XMLHttpRequest();const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(other);",
+    true,
+  ],
+  [
+    "an escaped method value",
+    "const xhr=new XMLHttpRequest();mutate(XMLHttpRequest.prototype.open);xhr.open('GET','/xhr');",
+    true,
+  ],
+  [
+    "a shared escape in a possibly repeated activation",
+    "const other=new XMLHttpRequest();function run(){const xhr=new XMLHttpRequest();xhr.open('GET','/xhr');mutate(other);}",
+    false,
+  ],
+])("orders XHR method selection against %s", (_label, source, observed) => {
+  const result = analyzeWebBundleFixture(inspection(source));
+  expect(result.observations.endpoints.map(({ value }) => value)).toEqual(
+    observed ? ["/xhr"] : [],
+  );
+  expect(
+    result.inferences
+      .filter(({ kind }) => kind === "endpoint_candidate")
+      .map(({ value }) => value),
+  ).toEqual(observed ? [] : ["/xhr"]);
+});
