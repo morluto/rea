@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Reverse Engineering Case Studies — REA</title>
+    <title>Reverse Engineering Case Studies | REA</title>
     <meta
       name="description"
       content="Follow REA investigations through code, figures and demos: an Android authenticator, DX-Ball, Notion, TH04 and a DownUnderCTF flag checker."
@@ -66,7 +66,7 @@
     <!-- prettier-ignore -->
     <meta property="og:site_name" content="REA" />
     <!-- prettier-ignore -->
-    <meta property="og:title" content="Reverse Engineering Case Studies — REA" />
+    <meta property="og:title" content="Reverse Engineering Case Studies | REA" />
     <!-- prettier-ignore -->
     <meta property="og:description" content="Follow REA investigations through code, figures and demos: an Android authenticator, DX-Ball, Notion, TH04 and a DownUnderCTF flag checker." />
     <!-- prettier-ignore -->
@@ -87,7 +87,7 @@
     <!-- prettier-ignore -->
     <meta name="twitter:card" content="summary_large_image" />
     <!-- prettier-ignore -->
-    <meta name="twitter:title" content="Reverse Engineering Case Studies — REA" />
+    <meta name="twitter:title" content="Reverse Engineering Case Studies | REA" />
     <!-- prettier-ignore -->
     <meta name="twitter:description" content="Follow REA investigations through code, figures and demos: an Android authenticator, DX-Ball, Notion, TH04 and a DownUnderCTF flag checker." />
     <!-- prettier-ignore -->
@@ -99,7 +99,7 @@
     />
     <!-- website:sharing:end -->
     <!-- website:theme:start -->
-    <meta name="theme-color" content="#ffffff" />
+    <meta name="theme-color" content="#f1efeb" />
     <!-- Apply the saved theme before styles load, to avoid a flash on navigation. -->
     <script src="../assets/theme.js"></script>
     <!-- website:theme:end -->
@@ -112,86 +112,35 @@
     <!-- website:header:start -->
     <!-- prettier-ignore -->
     <header class="site-header">
-      <div class="container header-inner">
+      <div class="header-inner">
         <a class="brand" href="../" aria-label="REA home"
-          ><span class="brand-name">REA</span
-          ><span class="brand-caption" data-i18n-skip>Reverse Engineer Anything</span></a
+          ><svg class="brand-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg></a
         >
         <nav class="navigation" aria-label="Main navigation">
-          <a href="../get-started/" class="nav-start">Get started</a>
           <a href="../showcase/" aria-current="page">Showcases</a>
           <a href="../blog/">Blog</a>
           <a href="../guides/">Guides</a>
+          <a href="../faq/">FAQ</a>
         </nav>
-        <div class="header-social">
+        <div class="header-actions">
           <details class="language-picker" data-i18n-skip><summary><span aria-hidden="true">文 / A</span> <span>English</span></summary><nav aria-label="English"><a href="../showcase/" lang="en" dir="ltr" data-language="en" aria-current="true">English</a><a href="../zh-CN/showcase/" lang="zh-CN" dir="ltr" data-language="zh-CN">简体中文</a><a href="../zh-TW/showcase/" lang="zh-TW" dir="ltr" data-language="zh-TW">繁體中文</a><a href="../ja/showcase/" lang="ja" dir="ltr" data-language="ja">日本語</a><a href="../ko/showcase/" lang="ko" dir="ltr" data-language="ko">한국어</a><a href="../tr/showcase/" lang="tr" dir="ltr" data-language="tr">Türkçe</a><a href="../ru/showcase/" lang="ru" dir="ltr" data-language="ru">Русский</a><a href="../vi/showcase/" lang="vi" dir="ltr" data-language="vi">Tiếng Việt</a><a href="../th/showcase/" lang="th" dir="ltr" data-language="th">ไทย</a><a href="../de/showcase/" lang="de" dir="ltr" data-language="de">Deutsch</a><a href="../es/showcase/" lang="es" dir="ltr" data-language="es">Español</a><a href="../fr/showcase/" lang="fr" dir="ltr" data-language="fr">Français</a><a href="../uk/showcase/" lang="uk" dir="ltr" data-language="uk">Українська</a><a href="../pl/showcase/" lang="pl" dir="ltr" data-language="pl">Polski</a><a href="../pt-BR/showcase/" lang="pt-BR" dir="ltr" data-language="pt-BR">Português (Brasil)</a><a href="../ar/showcase/" lang="ar" dir="rtl" data-language="ar">العربية</a><a href="../fa/showcase/" lang="fa" dir="rtl" data-language="fa">فارسی</a><a href="../id/showcase/" lang="id" dir="ltr" data-language="id">Bahasa Indonesia</a><a href="../it/showcase/" lang="it" dir="ltr" data-language="it">Italiano</a><a href="../el/showcase/" lang="el" dir="ltr" data-language="el">Ελληνικά</a><a href="../ml/showcase/" lang="ml" dir="ltr" data-language="ml">മലയാളം</a><a href="../ur-Latn/showcase/" lang="ur-Latn" dir="ltr" data-language="ur-Latn">Roman Urdu</a><a href="../ro/showcase/" lang="ro" dir="ltr" data-language="ro">Română</a></nav></details>
           <button class="theme-toggle" type="button" data-theme-toggle hidden>
-            <svg class="theme-moon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
-              <path d="M20.9 13a9 9 0 0 1-9.9-9.9A9 9 0 1 0 20.9 13Z" />
+            <svg class="theme-moon" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">
+              <path d="M21.5 14.078C20.3 14.719 18.93 15.082 17.475 15.082C12.749 15.082 8.918 11.251 8.918 6.525C8.918 5.07 9.281 3.7 9.922 2.5C5.668 3.497 2.5 7.315 2.5 11.873C2.5 17.19 6.81 21.5 12.127 21.5C16.685 21.5 20.503 18.332 21.5 14.078Z" />
             </svg>
-            <svg class="theme-sun" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" aria-hidden="true" focusable="false">
-              <circle cx="12" cy="12" r="4" />
-              <path d="M12 2v2m0 16v2M2 12h2m16 0h2M4.93 4.93l1.42 1.42m11.3 11.3 1.42 1.42M4.93 19.07l1.42-1.42m11.3-11.3 1.42-1.42" />
+            <svg class="theme-sun" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" aria-hidden="true" focusable="false">
+              <path d="M17 12a5 5 0 1 1-10 0 5 5 0 0 1 10 0Z" />
+              <path d="M12 2V3.5M12 20.5V22M19.071 19.071L18.01 18.011M5.989 5.989L4.929 4.929M22 12H20.5M3.5 12H2M19.071 4.929L18.011 5.989M5.99 18.011L4.929 19.071" />
             </svg>
           </button>
-          <a
-            class="nav-github"
-            href="https://github.com/morluto/rea"
-            aria-label="REA on GitHub"
-            title="REA on GitHub"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 16 16"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82a7.65 7.65 0 0 1 2-.27c.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"
-              />
-            </svg>
-            <span class="nav-github-count" hidden aria-hidden="true"></span>
-          </a>
-          <a
-            class="nav-discord"
-            href="https://discord.gg/GkcryMnJDM"
-            aria-label="Join REA on Discord"
-            title="Join REA on Discord"
-          >
-            <svg
-              width="22"
-              height="22"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M20.317 4.3698a19.7913 19.7913 0 0 0-4.8851-1.5152.0741.0741 0 0 0-.0785.0371c-.211.3753-.4447.8648-.6083 1.2495-1.8447-.2762-3.68-.2762-5.4868 0-.1636-.3933-.4058-.8742-.6177-1.2495a.077.077 0 0 0-.0785-.037 19.7363 19.7363 0 0 0-4.8852 1.515.0699.0699 0 0 0-.0321.0277C.5334 9.0458-.319 13.5799.0992 18.0578a.0824.0824 0 0 0 .0312.0561c2.0528 1.5076 4.0413 2.4228 5.9929 3.0294a.0777.0777 0 0 0 .0842-.0276c.4616-.6304.8731-1.2952 1.226-1.9942a.076.076 0 0 0-.0416-.1057c-.6528-.2476-1.2743-.5495-1.8722-.8923a.077.077 0 0 1-.0076-.1277c.1258-.0943.2517-.1923.3718-.2914a.0743.0743 0 0 1 .0776-.0105c3.9278 1.7933 8.18 1.7933 12.0614 0a.0739.0739 0 0 1 .0785.0095c.1202.099.246.1981.3728.2924a.077.077 0 0 1-.0066.1276 12.2986 12.2986 0 0 1-1.873.8914.0766.0766 0 0 0-.0407.1067c.3604.698.7719 1.3628 1.225 1.9932a.076.076 0 0 0 .0842.0286c1.961-.6067 3.9495-1.5219 6.0023-3.0294a.077.077 0 0 0 .0313-.0552c.5004-5.177-.8382-9.6739-3.5485-13.6604a.061.061 0 0 0-.0312-.0286ZM8.02 15.3312c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9555-2.4189 2.157-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.9555 2.4189-2.1569 2.4189Zm7.9748 0c-1.1825 0-2.1569-1.0857-2.1569-2.419 0-1.3332.9554-2.4189 2.1569-2.4189 1.2108 0 2.1757 1.0952 2.1568 2.419 0 1.3332-.946 2.4189-2.1568 2.4189Z"
-              />
-            </svg>
-          </a>
-          <a
-            class="nav-x"
-            href="https://x.com/reatools"
-            aria-label="Follow REA on X"
-            title="Follow REA on X"
-          >
-            <svg
-              width="18"
-              height="18"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                fill="currentColor"
-                d="M18.901 1.153h3.68l-8.04 9.19L24 22.846h-7.406l-5.8-7.584-6.638 7.584H.474l8.6-9.83L0 1.154h7.594l5.243 6.932ZM17.61 20.644h2.039L6.486 3.24H4.298Z"
-              />
-            </svg>
-          </a>
+          <a class="nav-github" href="https://github.com/morluto/rea" target="_blank" rel="noopener" aria-label="REA on GitHub" title="REA on GitHub"
+            ><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg
+            ><span class="nav-github-label" translate="no">GitHub</span
+            ><span class="nav-github-stars" hidden aria-hidden="true"
+              ><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" focusable="false"><path d="M12.797 2.905C13.255 3.57 13.948 4.708 14.651 6.045C15.194 7.077 15.466 7.593 15.855 7.87C16.244 8.146 16.812 8.231 17.947 8.401C19.52 8.637 20.681 8.892 21.347 9.055C21.735 9.15 21.998 9.5 21.998 9.9C21.998 10.126 21.913 10.344 21.761 10.511C21.064 11.278 20.349 12.084 19.47 12.961C18.605 13.825 18.172 14.257 18.025 14.726C17.878 15.195 17.983 15.779 18.194 16.947C18.373 17.943 18.557 19.131 18.692 20.422C18.753 21.002 18.292 21.5 17.709 21.5C17.652 21.5 17.597 21.496 17.542 21.482C17.05 21.358 15.919 20.785 14.125 19.724C13.072 19.102 12.546 18.792 11.999 18.792C11.453 18.792 10.927 19.103 9.874 19.724C8.08 20.785 6.95 21.358 6.458 21.482C6.403 21.496 6.348 21.5 6.291 21.5C5.708 21.5 5.247 21.002 5.308 20.422C5.443 19.131 5.627 17.943 5.806 16.947C6.017 15.779 6.122 15.195 5.975 14.726C5.828 14.257 5.395 13.825 4.53 12.961C3.651 12.084 2.936 11.278 2.239 10.511C2.087 10.344 2.002 10.126 2.002 9.9C2.002 9.5 2.265 9.15 2.653 9.055C3.319 8.892 4.48 8.637 6.053 8.401C7.188 8.231 7.756 8.146 8.145 7.87C8.534 7.593 8.806 7.077 9.349 6.045C10.052 4.708 10.745 3.57 11.203 2.905C11.383 2.644 11.683 2.5 12 2.5C12.317 2.5 12.617 2.644 12.797 2.905Z" /></svg
+              ><span class="nav-github-count"></span></span
+          ></a>
+          <a class="button nav-start" href="../get-started/">Get started</a>
         </div>
       </div>
     </header>
@@ -205,147 +154,207 @@
           checked results.
         </p>
       </div>
-      <div class="guide-index">
-        <section class="guide-entry">
-          <p class="eyebrow">Android · APK analysis</p>
-          <div>
-            <h2>How an authenticator generates a login code</h2>
+      <ul class="index-grid">
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-authenticator.webp"
+            alt="A phone taken apart: its screen showing a six-digit code, frame, back, battery, board and screws."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M18.4395 5.5586c-.675 1.1664-1.352 2.3318-2.0274 3.498-.0366-.0155-.0742-.0286-.1113-.043-1.8249-.6957-3.484-.8-4.42-.787-1.8551.0185-3.3544.4643-4.2597.8203-.084-.1494-1.7526-3.021-2.0215-3.4864a1.1451 1.1451 0 0 0-.1406-.1914c-.3312-.364-.9054-.4859-1.379-.203-.475.282-.7136.9361-.3886 1.5019 1.9466 3.3696-.0966-.2158 1.9473 3.3593.0172.031-.4946.2642-1.3926 1.0177C2.8987 12.176.452 14.772 0 18.9902h24c-.119-1.1108-.3686-2.099-.7461-3.0683-.7438-1.9118-1.8435-3.2928-2.7402-4.1836a12.1048 12.1048 0 0 0-2.1309-1.6875c.6594-1.122 1.312-2.2559 1.9649-3.3848.2077-.3615.1886-.7956-.0079-1.1191a1.1001 1.1001 0 0 0-.8515-.5332c-.5225-.0536-.9392.3128-1.0488.5449zm-.0391 8.461c.3944.5926.324 1.3306-.1563 1.6503-.4799.3197-1.188.0985-1.582-.4941-.3944-.5927-.324-1.3307.1563-1.6504.4727-.315 1.1812-.1086 1.582.4941zM7.207 13.5273c.4803.3197.5506 1.0577.1563 1.6504-.394.5926-1.1038.8138-1.584.4941-.48-.3197-.5503-1.0577-.1563-1.6504.4008-.6021 1.1087-.8106 1.584-.4941z" /></svg>Android app</p>
+            <h2><a href="aegis/">How an authenticator generates a login code</a></h2>
             <p>
               Find Aegis's six-digit code calculation in its released APK. Trace
               the generating methods with REA, then move a demo clock to see why
               the code changes every 30 seconds.
             </p>
-            <div class="guide-route">
-              <span>APK</span> <b aria-hidden="true">→</b>
-              <span>Generating code</span> <b aria-hidden="true">→</b>
-              <span>Recovered rule</span> <b aria-hidden="true">→</b>
-              <span>Adjustable clock</span>
-            </div>
-            <a class="text-link" href="aegis/">Read the Android case study</a>
+              <div class="guide-route">
+                <span>APK</span> <b aria-hidden="true">→</b>
+                <span>Generating code</span> <b aria-hidden="true">→</b>
+                <span>Recovered rule</span> <b aria-hidden="true">→</b>
+                <span>Adjustable clock</span>
+              </div>
+            <span class="text-link" aria-hidden="true">Read the Android case study</span>
           </div>
-        </section>
-        <section class="guide-entry">
-          <p class="eyebrow">CTF · Native analysis</p>
-          <div>
-            <h2>Solve a CTF flag checker</h2>
+        </li>
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-ctf.webp"
+            alt="A combination padlock taken apart beside a small cloth flag."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7L4 21" /><path d="M11.758 3.909C8.452 2.225 5.851 3.211 4.554 4.219C4.32 4.401 4.204 4.492 4.102 4.7C4 4.908 4 5.101 4 5.489V14.732C4.97 13.634 7.879 11.933 11.758 13.909C15.224 15.674 18.174 14.942 19.57 14.18C19.763 14.074 19.86 14.021 19.93 13.903C20 13.785 20 13.657 20 13.401V5.874C20 5.045 20 4.631 19.803 4.481C19.605 4.331 19.144 4.459 18.22 4.715C16.64 5.153 14.342 5.225 11.758 3.909Z" /></svg>CTF challenge</p>
+            <h2><a href="ctf/">Solve a CTF flag checker</a></h2>
             <p>
               Inspect an easy DownUnderCTF challenge with REA. Find its checking
               functions, turn masks and sums into equations, then verify the
               solved flag with the original program.
             </p>
-            <div class="guide-route">
-              <span>Binary</span> <b aria-hidden="true">→</b>
-              <span>Checking code</span> <b aria-hidden="true">→</b>
-              <span>Equations</span> <b aria-hidden="true">→</b>
-              <span>Correct!</span>
-            </div>
-            <a class="text-link" href="ctf/">Read the CTF case study</a>
+              <div class="guide-route">
+                <span>Binary</span> <b aria-hidden="true">→</b>
+                <span>Checking code</span> <b aria-hidden="true">→</b>
+                <span>Equations</span> <b aria-hidden="true">→</b>
+                <span>Correct!</span>
+              </div>
+            <span class="text-link" aria-hidden="true">Read the CTF case study</span>
           </div>
-        </section>
-        <section class="guide-entry">
-          <p class="eyebrow">Native · Reconstruction</p>
-          <div>
-            <h2>DX-Ball's sound-pan calculation</h2>
+        </li>
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-sound-pan.webp"
+            alt="A sound card wired to a speaker on each side."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M0 0h11.377v11.372H0Zm12.623 0H24v11.372H12.623ZM0 12.623h11.377V24H0Zm12.623 0H24V24H12.623" /></svg>Windows game</p>
+            <h2><a href="dx-ball/">DX-Ball's sound-pan calculation</a></h2>
             <p>
               Recover a sound-pan calculation from a 1996 Windows game. REA's
               instructions, caller references and numeric constants lead to a
               small C function, checked against the original behavior and all 63
               compiled bytes.
             </p>
-            <div class="guide-route">
-              <span>Executable</span> <b aria-hidden="true">→</b>
-              <span>REA findings</span> <b aria-hidden="true">→</b>
-              <span>Recovered C</span> <b aria-hidden="true">→</b>
-              <span>Validation</span>
-            </div>
-            <a class="text-link" href="dx-ball/">Read the DX-Ball case study</a>
+              <div class="guide-route">
+                <span>Executable</span> <b aria-hidden="true">→</b>
+                <span>REA findings</span> <b aria-hidden="true">→</b>
+                <span>Recovered C</span> <b aria-hidden="true">→</b>
+                <span>Validation</span>
+              </div>
+            <span class="text-link" aria-hidden="true">Read the DX-Ball case study</span>
           </div>
-        </section>
-        <section class="guide-entry">
-          <p class="eyebrow">Electron · Feature tracing</p>
-          <div>
-            <h2>How Notion copies text and HTML</h2>
+        </li>
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-clipboard.webp"
+            alt="Ctrl, C and V keys in a row, followed by a lifted key and three blank keys."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path fill="currentColor" d="M12.0111 0c-.85 0-1.5392.6891-1.5392 1.5392 0 .8501.6891 1.5393 1.5392 1.5393.595 0 1.11-.338 1.3662-.832 2.2208 1.2675 3.847 5.4728 3.847 10.3623 0 2.0715-.2891 4.056-.825 5.7685a.3215.3215 0 0 0 .2107.403.322.322 0 0 0 .4033-.2111c.5558-1.7763.8542-3.8251.8542-5.9604 0-5.1927-1.7717-9.686-4.3206-11.0027.001-.0223.0035-.0443.0035-.0669 0-.85-.6891-1.5392-1.5393-1.5392zm0 .6432a.896.896 0 1 1 0 1.792.896.896 0 1 1 0-1.792zm-5.486 4.3052c-2.067.0074-3.6473.6646-4.3885 1.9485-.7375 1.2774-.5267 2.971.5113 4.7813a.3217.3217 0 0 0 .558-.32C2.271 9.7274 2.089 8.266 2.6938 7.2185c.821-1.422 3.033-1.9552 5.9321-1.4271a.3216.3216 0 0 0 .1153-.6329c-.784-.1428-1.5271-.2125-2.216-.21zm11.0522.0176a.3216.3216 0 0 0-.0084.6432c1.8337.0239 3.1556.5956 3.7502 1.6256.8192 1.419.1798 3.5947-1.7182 5.837a.322.322 0 0 0 .0377.4535.3215.3215 0 0 0 .4532-.0377c2.0535-2.426 2.7708-4.8661 1.7845-6.5744-.7257-1.257-2.26-1.9207-4.299-1.9472zm-2.6984.2924a.3225.3225 0 0 0-.0647.0072c-1.8568.3979-3.8333 1.1755-5.7314 2.2714-4.5699 2.6384-7.5924 6.4948-7.3601 9.3717-.4726.2628-.7928.7664-.7928 1.3455 0 .85.6892 1.5392 1.5393 1.5392.85 0 1.5392-.6891 1.5392-1.5392 0-.8501-.6891-1.5393-1.5392-1.5393-.038 0-.0754.003-.1128.0057-.1002-2.5597 2.7434-6.1412 7.048-8.6265 1.8413-1.063 3.7551-1.8163 5.5445-2.1997a.3217.3217 0 0 0-.07-.636zm-2.8787 6.2364a1.1192 1.1192 0 0 0-.2243.0255c-.6012.1301-.983.7225-.8533 1.3238.1302.6012.7226.9832 1.3238.8533.6012-.1302.9832-.7226.8533-1.3238-.1139-.526-.5816-.8844-1.0995-.8788zM4.532 13.341a.321.321 0 0 0-.2318.0835.3214.3214 0 0 0-.0214.4542c1.2682 1.3936 2.9157 2.701 4.7946 3.7857 4.4146 2.5489 9.1056 3.2849 11.5608 1.8392a1.53 1.53 0 0 0 .8966.2899c.8501 0 1.5392-.6891 1.5392-1.5392 0-.8501-.689-1.5393-1.5392-1.5393-.85 0-1.5392.6892-1.5392 1.5393 0 .276.0737.5344.201.7584-2.2448 1.214-6.631.5002-10.7976-1.9054-1.8228-1.0524-3.418-2.3181-4.6404-3.6614a.3206.3206 0 0 0-.2226-.1049zm-2.0628 4.0172a.896.896 0 1 1 0 1.792.896.896 0 1 1 0-1.792zm19.0616 0a.896.896 0 1 1 0 1.792.891.891 0 0 1-.5864-.2194c-.0025-.004-.0039-.0083-.0066-.0123a.3195.3195 0 0 0-.0957-.0914.896.896 0 0 1 .6887-1.4689zm-14.0045 1.368a.3215.3215 0 0 0-.3207.4296C8.2793 22.154 10.036 24 12.0111 24c1.4406 0 2.7735-.9822 3.8128-2.711a.3215.3215 0 0 0-.11-.4413.3219.3219 0 0 0-.4415.11c-.934 1.5537-2.0812 2.399-3.2613 2.399-1.6407 0-3.2075-1.6465-4.2-4.4179a.3216.3216 0 0 0-.2848-.2126z" /></svg>Electron app</p>
+            <h2><a href="notion/">How Notion copies text and HTML</a></h2>
             <p>
               Trace a page-facing API through Notion's packaged JavaScript.
               Follow its IPC wrappers to the system clipboard, then see how a
               small HTML marker keeps rich block data connected to a copy.
             </p>
-            <div class="guide-route">
-              <span>Packaged app</span> <b aria-hidden="true">→</b>
-              <span>Exposed API</span> <b aria-hidden="true">→</b>
-              <span>IPC wrappers</span> <b aria-hidden="true">→</b>
-              <span>Clipboard</span>
-            </div>
-            <a class="text-link" href="notion/">Read the Notion case study</a>
+              <div class="guide-route">
+                <span>Packaged app</span> <b aria-hidden="true">→</b>
+                <span>Exposed API</span> <b aria-hidden="true">→</b>
+                <span>IPC wrappers</span> <b aria-hidden="true">→</b>
+                <span>Clipboard</span>
+              </div>
+            <span class="text-link" aria-hidden="true">Read the Notion case study</span>
           </div>
-        </section>
-        <section class="guide-entry">
-          <p class="eyebrow">PC-98 DOS · Reconstruction</p>
-          <div>
-            <h2>How TH04 aims a ring of bullets</h2>
+        </li>
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-th04.webp"
+            alt="A ring of small white beads around a floppy disk, with a small arrow token pointing at one bead."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M8 22V19C8 17.114 8 16.172 8.586 15.586C9.172 15 10.114 15 12 15C13.886 15 14.828 15 15.414 15.586C16 16.172 16 17.114 16 19V22" /><path d="M10 7H14" /><path d="M3 11.858C3 7.282 3 4.994 4.387 3.544C4.438 3.49 4.49 3.438 4.544 3.387C5.994 2 8.282 2 12.858 2C13.943 2 14.466 2.004 14.963 2.189C15.442 2.368 15.843 2.702 16.645 3.371L18.841 5.201C19.903 6.086 20.434 6.528 20.717 7.133C21 7.737 21 8.428 21 9.81V13C21 16.75 21 18.625 20.045 19.939C19.737 20.363 19.363 20.737 18.939 21.045C17.625 22 15.75 22 12 22C8.25 22 6.375 22 5.061 21.045C4.637 20.737 4.263 20.363 3.955 19.939C3 18.625 3 16.75 3 13V11.858Z" /></svg>PC-98 game</p>
+            <h2><a href="th04/">How TH04 aims a ring of bullets</a></h2>
             <p>
               Inspect the original 16-bit angle helper with REA. Match its
               multiply, divide and coordinate operations to readable C++, then
               see how they produce a ring aimed at the player.
             </p>
-            <div class="guide-route">
-              <span>Original DOS code</span> <b aria-hidden="true">→</b>
-              <span>REA instructions</span> <b aria-hidden="true">→</b>
-              <span>Angle calculation</span> <b aria-hidden="true">→</b>
-              <span>Bullet ring</span>
-            </div>
-            <a class="text-link" href="th04/">Read the TH04 case study</a>
+              <div class="guide-route">
+                <span>Original DOS code</span> <b aria-hidden="true">→</b>
+                <span>REA instructions</span> <b aria-hidden="true">→</b>
+                <span>Angle calculation</span> <b aria-hidden="true">→</b>
+                <span>Bullet ring</span>
+              </div>
+            <span class="text-link" aria-hidden="true">Read the TH04 case study</span>
           </div>
-        </section>
-        <section class="guide-entry">
-          <p class="eyebrow">RL environments</p>
-          <div>
-            <h2>Build RL environments with REA</h2>
+        </li>
+        <li class="home-card home-case index-card">
+          <img
+            src="../assets/photos/case-rl.webp"
+            alt="Manila folders, index cards with check marks and a stopwatch laid out as a practice kit."
+            width="800"
+            height="600"
+            loading="lazy"
+          />
+          <div class="home-card-body">
+            <p class="home-case-platform"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15.254 5.994H16C18.828 5.994 20.243 5.994 21.121 6.873C22 7.752 22 9.167 22 11.997C22 14.828 22 16.243 21.121 17.121C20.243 18 18.828 18 16 18H11C8.172 18 6.757 18 5.879 17.121C5 16.243 5 14.828 5 12V7.975C5 6.129 5 5.207 5.392 4.517C5.659 4.048 6.048 3.659 6.517 3.392C7.207 3 8.129 3 9.975 3C10.376 3 10.576 3 10.764 3.049C10.893 3.083 11.017 3.135 11.133 3.201C11.301 3.299 11.443 3.44 11.727 3.722L13.141 5.124C13.574 5.554 13.79 5.768 14.065 5.881C14.339 5.994 14.644 5.994 15.254 5.994Z" /><path d="M2 7V15C2 17.828 2 19.243 2.879 20.121C3.757 21 5.172 21 8 21H19" /></svg>Web app</p>
+            <h2>
+              <a href="../guides/rl-environments/">Build RL environments with REA</a>
+            </h2>
             <p>
               Record a web app session, turn its API into tools, and export an
               environment an AI agent can use. Run it with AgentEnv, then add
               tasks and reward checks for RL training or evaluation.
             </p>
-            <p>
-              <a class="text-link" href="../guides/rl-environments/"
-                >Read the guide</a
-              >
-              ·
-              <a href="https://x.com/reatools/status/2112574822584918075?s=20"
-                >Watch the video</a
-              >
-            </p>
+            <span class="text-link" aria-hidden="true">Read the guide</span>
           </div>
-        </section>
-      </div>
-      <section class="article-section">
-        <h2>Step-by-step guides</h2>
-        <p>
-          The guides walk through a native calculation, an Electron export and a
-          browser request. Each starts with a prompt and a concrete target.
-        </p>
-        <a class="text-link" href="../guides/">Read the guides</a>
-      </section>
+        </li>
+      </ul>
+      <aside class="index-next">
+        <div>
+          <h2>Step-by-step guides</h2>
+          <p>
+            The guides walk through a native calculation, an Electron export and
+            a browser request. Each starts with a prompt and a concrete target.
+          </p>
+        </div>
+        <a class="button" href="../guides/">Read the guides</a>
+      </aside>
     </main>
     <!-- website:footer:start -->
     <!-- prettier-ignore -->
     <footer class="site-footer">
-      <div class="container footer-inner">
-        <p>REA · Reverse Engineer Anything</p>
-        <div class="footer-links">
-          <a href="../faq/">FAQ</a
-          ><a href="../contributors/">Contributors</a
-          ><a href="https://github.com/morluto/rea">Source</a
-          ><a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a
-          ><a href="https://discord.gg/GkcryMnJDM">Join the community</a
-          ><a href="https://x.com/reatools">Follow us on X</a>
+      <div class="footer-inner">
+        <div class="footer-top">
+          <nav class="footer-columns" aria-label="Footer">
+            <div>
+              <p>Product</p>
+              <a href="../get-started/">Get started</a>
+              <a href="../showcase/">Showcases</a>
+              <a href="../blog/">Blog</a>
+              <a href="../guides/">Guides</a>
+            </div>
+            <div>
+              <p>Help</p>
+              <a href="../faq/">FAQ</a>
+              <a href="https://discord.gg/GkcryMnJDM" translate="no">Discord</a>
+              <a href="https://github.com/morluto/rea/issues/new/choose">GitHub issues</a>
+              <a href="../contributors/">Contributors</a>
+            </div>
+            <div>
+              <p>Project</p>
+              <a href="https://github.com/morluto/rea">Source code</a>
+              <a href="https://github.com/morluto/rea/blob/main/LICENSE">MIT license</a>
+              <a href="https://x.com/reatools">Follow us on X</a>
+            </div>
+          </nav>
+          <div class="footer-social">
+            <a href="https://github.com/morluto/rea" aria-label="REA on GitHub" title="REA on GitHub"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M6.517 17.113C6.912 17.691 8.109 18.923 9.742 19.233M9.864 22C8.836 21.831 2 19.606 2 12.093C2 5.063 8.002 2 12.001 2C16 2 22 5.063 22 12.093C22 19.606 15.164 21.831 14.136 22C14.136 22 13.927 18.583 14.049 17.997C14.171 17.411 13.755 16.469 13.755 16.469C14.726 16.105 16.204 15.585 16.7 14.187C17.085 13.103 17.327 11.529 16.251 10.049C16.251 10.049 16.532 7.658 16 7.565C15.467 7.473 13.9 8.512 13.9 8.512C13.443 8.382 12.424 8.135 12.002 8.179C11.579 8.135 10.557 8.382 10.1 8.512C10.1 8.512 8.532 7.473 8 7.565C7.468 7.658 7.749 10.049 7.749 10.049C6.673 11.529 6.915 13.103 7.3 14.187C7.796 15.585 9.274 16.105 10.245 16.469C10.245 16.469 9.829 17.411 9.951 17.997C10.073 18.583 9.864 22 9.864 22Z" /></svg></a>
+            <a href="https://discord.gg/GkcryMnJDM" aria-label="Join REA on Discord" title="Join REA on Discord"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M15.5 17.5C16.5 19 17.333 19.667 18 20C19.333 19.667 22 18.2 22 15C22 11.8 20.667 7.333 20 5.5C18 4.3 15.833 4 15 4L14.198 5.604C13.414 5.287 12.406 5.254 12 5.278C11.594 5.254 10.586 5.287 9.802 5.604L9 4C8.167 4 6 4.3 4 5.5C3.333 7.333 2 11.8 2 15C2 18.2 4.667 19.667 6 20C6.667 19.667 7.5 19 8.5 17.5" /><path d="M17.365 11.5C17.365 12.605 16.582 13.5 15.615 13.5C14.649 13.5 13.865 12.605 13.865 11.5C13.865 10.395 14.649 9.5 15.615 9.5C16.582 9.5 17.365 10.395 17.365 11.5Z" /><path d="M10 11.5C10 12.605 9.217 13.5 8.25 13.5C7.284 13.5 6.5 12.605 6.5 11.5C6.5 10.395 7.284 9.5 8.25 9.5C9.217 9.5 10 10.395 10 11.5Z" /><path d="M17.5 16.5C16.402 17.397 14.35 18 12 18C9.65 18 7.598 17.397 6.5 16.5" /></svg></a>
+            <a href="https://x.com/reatools" aria-label="Follow REA on X" title="Follow REA on X"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 21L10.548 13.452M21 3L13.452 10.548M13.452 10.548L8 3H3L10.548 13.452M13.452 10.548L21 21H16L10.548 13.452" /></svg></a>
+          </div>
+        </div>
+        <svg class="footer-wordmark" viewBox="0 0 104 40" width="104" height="40" aria-hidden="true" focusable="false"><path fill="currentColor" fill-rule="evenodd" d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z" /><path fill="currentColor" d="M19.6 27.5H28.3L34 40H25.3Z" /><path fill="currentColor" d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z" /><path fill="currentColor" fill-rule="evenodd" d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z" /></svg>
+        <div class="footer-bottom">
+          <p>Reverse engineering with your coding agent.</p>
+          <a class="footer-credit" href="https://altair-studio.com"><span>Website by</span> <svg width="14" height="13" viewBox="13 14 38 36" aria-hidden="true" focusable="false"><path fill="currentColor" d="M28.6 14h6.8L51 50h-7.4L32 22.4 20.4 50H13z" /></svg><span translate="no">Altair Studio</span></a>
         </div>
       </div>
     </footer>
     <p class="sr-only" id="copy-status" role="status" aria-live="polite"></p>
-    <a class="back-to-top" href="#top" aria-label="Back to top">
-      <span aria-hidden="true">↑</span> Top
-    </a>
     <!-- website:footer:end -->
   </body>
 </html>

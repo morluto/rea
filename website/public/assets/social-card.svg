@@ -1,37 +1,38 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-labelledby="title desc">
-  <title id="title">REA — Find out how software works.</title>
+  <title id="title">REA: Find out how software works.</title>
   <desc id="desc">Reverse engineering with your coding agent. REA connects your agent to analysis tools and returns evidence.</desc>
   <style>
 @media (prefers-color-scheme: dark){
-[fill="#ffffff"]{fill:#181825}
-[fill="#f0f5fa"]{fill:#313244}
-[fill="#20252b"]{fill:#cdd6f4}
-[fill="#5b6570"]{fill:#a6adc8}
-[fill="#294f82"]{fill:#89b4fa}
-[stroke="#dce2e8"]{stroke:#45475a}
-[stroke="#5b6570"]{stroke:#a6adc8}
-[stroke="#294f82"]{stroke:#89b4fa}
+[fill="#f7f6f2"]{fill:#151513}
+[fill="#ffffff"]{fill:#1d1c19}
+[fill="#e9edf8"]{fill:#262c3d}
+[fill="#1b1a17"]{fill:#ecebe5}
+[fill="#67635a"]{fill:#a39f95}
+[fill="#2f54c8"]{fill:#8ea9ff}
+[stroke="#e2dfd6"]{stroke:#34322d}
+[stroke="#67635a"]{stroke:#a39f95}
+[stroke="#2f54c8"]{stroke:#8ea9ff}
 }
   </style>
-  <rect width="1200" height="630" fill="#ffffff"/>
-  <g font-family="DejaVu Sans, sans-serif" fill="#20252b">
-    <text x="72" y="110" font-size="44" font-weight="700">REA</text>
-    <text x="1128" y="106" font-size="24" text-anchor="end" fill="#5b6570">rea.tools</text>
-    <path d="M72 142 H1128" stroke="#dce2e8" stroke-width="2"/>
+  <rect width="1200" height="630" fill="#f7f6f2"/>
+  <g font-family="DejaVu Sans, sans-serif" fill="#1b1a17">
+    <g transform="translate(72 76) scale(0.9)" fill-rule="evenodd"><path d="M0 0H20A12 12 0 0 1 20 24H8V40H0Z M8 8V16H20A4 4 0 0 0 20 8Z"/><path d="M19.6 27.5H28.3L34 40H25.3Z"/><path d="M40 0H66V8H48V16H63V24H48V32H66V40H40Z"/><path d="M72 40V14A14 14 0 0 1 86 0H90A14 14 0 0 1 104 14V40H96V30H80V40Z M80 22H96V14A6 6 0 0 0 90 8H86A6 6 0 0 0 80 14Z"/></g>
+    <text x="1128" y="106" font-size="24" text-anchor="end" fill="#67635a">rea.tools</text>
+    <path d="M72 142 H1128" stroke="#e2dfd6" stroke-width="2"/>
     <text x="72" y="252" font-size="64" font-weight="700">Find out how</text>
     <text x="72" y="334" font-size="64" font-weight="700">software works.</text>
-    <text x="72" y="393" font-size="27" fill="#5b6570">Reverse engineering with your coding agent.</text>
-    <g stroke="#dce2e8" stroke-width="2">
+    <text x="72" y="393" font-size="27" fill="#67635a">Reverse engineering with your coding agent.</text>
+    <g stroke="#e2dfd6" stroke-width="2">
       <rect x="72" y="469" width="260" height="90" rx="10" fill="#ffffff"/>
-      <rect x="398" y="469" width="324" height="90" rx="10" fill="#f0f5fa" stroke="#294f82"/>
+      <rect x="398" y="469" width="324" height="90" rx="10" fill="#e9edf8" stroke="#2f54c8"/>
       <rect x="788" y="469" width="340" height="90" rx="10" fill="#ffffff"/>
     </g>
     <g text-anchor="middle" font-size="27">
       <text x="202" y="525">Your agent</text>
-      <text x="560" y="525" fill="#294f82" font-weight="700">REA + analysis tools</text>
+      <text x="560" y="525" fill="#2f54c8" font-weight="700">REA + analysis tools</text>
       <text x="958" y="525">Code &amp; evidence</text>
     </g>
-    <g stroke="#5b6570" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
+    <g stroke="#67635a" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round">
       <path d="M350 514 H380 M372 506 L380 514 L372 522"/>
       <path d="M740 514 H770 M762 506 L770 514 L762 522"/>
     </g>

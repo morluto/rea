@@ -19,10 +19,10 @@ from urllib.parse import quote, urlsplit
 SITE_ORIGIN = "https://rea.tools"
 NOTES_FIXTURES = {"examples/notes-electron/index.html", "examples/notes-web/index.html"}
 NAVIGATION = (
-    ("Get started", "get-started/"),
     ("Showcases", "showcase/"),
     ("Blog", "blog/"),
     ("Guides", "guides/"),
+    ("FAQ", "faq/"),
 )
 
 
@@ -181,13 +181,12 @@ def shared_blocks(root, path, source):
     route = page_route(site, path)
     links = []
     for label, destination in NAVIGATION:
-        attributes = ' class="nav-start"' if destination == "get-started/" else ""
-        if route.startswith(destination):
-            attributes += ' aria-current="page"'
+        attributes = ' aria-current="page"' if route.startswith(destination) else ""
         links.append(f'      <a href="{base}{destination}"{attributes}>{label}</a>')
     values = {
         "base": base,
         "navigation": "\n" + "\n".join(links) + "\n    ",
+        "start_current": ' aria-current="page"' if route.startswith("get-started/") else "",
         "canonical": escape(page_url(site, path), quote=True),
         "origin": SITE_ORIGIN,
         "title": escape(metadata.titles[0].strip(), quote=True),
