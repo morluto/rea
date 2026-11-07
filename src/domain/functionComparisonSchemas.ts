@@ -80,6 +80,12 @@ const functionMatchSchema = z.union([
     right_name: z.string(),
   }),
   z.object({
+    status: z.literal("matched"),
+    method: z.literal("same-evidence"),
+    left_name: z.string(),
+    right_name: z.string(),
+  }),
+  z.object({
     status: z.enum(["mismatched", "ambiguous"]),
     method: z.literal("explicit"),
     left_name: z.string(),
