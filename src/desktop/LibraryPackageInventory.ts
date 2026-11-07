@@ -89,6 +89,9 @@ const packageOwners = async (
     const outcome = await runQuery("dpkg-query", ["-S", ...batch], signal);
     if (outcome === "missing") return err("dpkg-query is not installed");
     if (outcome === "failed") return err("dpkg-query -S did not finish");
+    // dpkg-query exits 1 when some path has no owner and 2 when it could not tell, so only 0 and 1 answer for the batch.
+    if (outcome.exitCode > 1)
+      return err("dpkg-query could not say which packages own the libraries");
     for (const path of batch) {
       const names = parseDpkgOwners(outcome.stdout, path);
       if (names.length > 0) owners.set(path, names);
