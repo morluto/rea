@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777))
 * **native:** recognize identical function evidence ([#8442](https://github.com/morluto/rea/issues/8442))
 * **ghidra:** Ghidra snapshots made before the search projection profile revision no longer match. Run fresh analysis and save a new snapshot.
 * qualify call paths by provider discovery ([#8443](https://github.com/morluto/rea/issues/8443))
@@ -108,6 +109,7 @@
 * **ghidra:** admit DOS MZ targets on Windows P0 ([#7144](https://github.com/morluto/rea/issues/7144)) ([1cc979c](https://github.com/morluto/rea/commit/1cc979c1046947f41be817803e73846ff5c244ab))
 * **ghidra:** admit RISC-V ilp32 ELF with a derived calling convention ([#8229](https://github.com/morluto/rea/issues/8229)) ([e669365](https://github.com/morluto/rea/commit/e669365c3b57cf49b4158334fa0a42efb117c320))
 * **ghidra:** checkpoint owned Programs across sessions ([c07ab4b](https://github.com/morluto/rea/commit/c07ab4b994b017170b27b07b2c0361aeb44fc53f))
+* **ghidra:** identify containing code and data ([#8777](https://github.com/morluto/rea/issues/8777)) ([015a02d](https://github.com/morluto/rea/commit/015a02d57b567bc9a1ed792d1e4b3ec083fa0ae3))
 * **ghidra:** reuse existing projects through verified copies ([#7236](https://github.com/morluto/rea/issues/7236)) ([1944751](https://github.com/morluto/rea/commit/19447516a4bdbc9437d112ebd3f12a5fd062db83))
 * **guidance:** distinguish focused matches from broad parent sections ([#8305](https://github.com/morluto/rea/issues/8305)) ([41e7333](https://github.com/morluto/rea/commit/41e7333cb5e0a755b7fd07d6dd6e7148a38a5658))
 * **guidance:** search installed workflow sections ([#6996](https://github.com/morluto/rea/issues/6996)) ([c88e1b0](https://github.com/morluto/rea/commit/c88e1b0b4355a29ef6ab5c88d393a3bfbcfc1d22))
@@ -727,6 +729,7 @@
 * **mcp:** preserve repeated HTTP host allowlists ([#8164](https://github.com/morluto/rea/issues/8164)) ([d48e472](https://github.com/morluto/rea/commit/d48e472fa6a664cacbb400560e673533005795ce))
 * **mcp:** qualify retained Evidence view guidance ([#8377](https://github.com/morluto/rea/issues/8377)) ([d5b5808](https://github.com/morluto/rea/commit/d5b5808f91174abb9a8addc90b05da50ead9999f))
 * **mcp:** qualify string byte-read guidance ([#8704](https://github.com/morluto/rea/issues/8704)) ([e749160](https://github.com/morluto/rea/commit/e749160ab0e79b1d7555cd893e20ba574a307c8a))
+* **mcp:** report native value flow support in session status ([#8786](https://github.com/morluto/rea/issues/8786)) ([688dca3](https://github.com/morluto/rea/commit/688dca3e90c81348b798ba811f8b43b779085dcf))
 * **mcp:** report selection after failed target opens ([#8726](https://github.com/morluto/rea/issues/8726)) ([93295c3](https://github.com/morluto/rea/commit/93295c3df39b686d8416399fad313783c2f4f817))
 * **mcp:** report session tool target requirements accurately ([#7340](https://github.com/morluto/rea/issues/7340)) ([4d2aff2](https://github.com/morluto/rea/commit/4d2aff2ec6eadb0e8dd475748a410ca0f3a37687))
 * **mcp:** report target after failed open ([#8613](https://github.com/morluto/rea/issues/8613)) ([56be611](https://github.com/morluto/rea/commit/56be61191e70f33a091c31790da2a4a210c63ec2))
