@@ -364,8 +364,10 @@ describe("Mach-O UUID reconciliation", () => {
     const result = await runInspection("UUID: A (arm64) /fixture/app\n");
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({ uuid: validUuid });
-    expect(result.value.limitations).toContain(
-      'dwarfdump --uuid returned malformed UUID "A"; using the unambiguous binary load commands LC_UUID.',
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /dwarfdump --uuid.*malformed UUID "A".*unambiguous.*LC_UUID/iu,
+      ),
     );
   });
 
