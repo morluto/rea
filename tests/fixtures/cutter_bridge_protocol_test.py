@@ -143,6 +143,7 @@ class ServeDispatcher:
         elif request.get("kind") == "ack":
             if self.malformed_next_ack:
                 self.malformed_next_ack = False
+                self.hide_receipts_after_ack_failure = True
                 reply.update({"ok": True, "session_id": request["session_id"]})
                 request["_event"].set()
                 return
@@ -198,7 +199,11 @@ class ServeDispatcher:
         else:
             reply.update({
                 "ok": True,
-                "output": 'round-trip: 雪 ☃️ quote=" slash=\\\\ line=\\n tab=\\t',
+                "output": (
+                    str(len(self.completed_commands))
+                    if request.get("command") == "fixture-receipt-count"
+                    else 'round-trip: 雪 ☃️ quote=" slash=\\\\ line=\\n tab=\\t'
+                ),
                 "current_file": self.current_file,
                 "document_generation": self.generation,
                 "cutter_version": self.cutter_version,
@@ -601,14 +606,17 @@ class ProtocolProducerTest(unittest.TestCase):
         dispatcher.completed_commands = {}
         dispatcher._receipt_lock = threading.Lock()
         dispatcher._refresh_document_identity = lambda: None
-        bridge.cutter.cmd = lambda command: f"output:{command}"
+        commands = []
+        bridge.cutter.cmd = lambda command: commands.append(command) or f"output:{command}"
 
-        def handle(value):
+        def handle(value, cancelled=False):
             request = {
                 **value,
                 "_event": threading.Event(),
                 "_cancelled": threading.Event(),
             }
+            if cancelled:
+                request["_cancelled"].set()
             reply = {}
             bridge._RequestDispatcher._handle(dispatcher, request, reply)
             self.assertTrue(request["_event"].is_set())
@@ -616,6 +624,15 @@ class ProtocolProducerTest(unittest.TestCase):
 
         request_a = "4b18ce4d-bf31-456e-ae31-e8c547b2f9db"
         request_b = "8ca93d11-107d-41ed-8b40-31dd53cd26a6"
+        request_cancelled = "9c8074cf-4906-4cc1-ac92-3fca3d305f8f"
+        cancelled = handle({
+            "kind": "command",
+            "request_id": request_cancelled,
+            "expected_generation": 4,
+            "command": "cancelled",
+        }, cancelled=True)
+        self.assertEqual(cancelled["error"], "request-cancelled-before-execution")
+        self.assertEqual(cancelled["execution_state"], "not_started")
         for request_id, command in ((request_a, "A"), (request_b, "B")):
             result = handle({
                 "kind": "command",
@@ -624,7 +641,14 @@ class ProtocolProducerTest(unittest.TestCase):
                 "command": command,
             })
             self.assertTrue(result["ok"])
+        self.assertEqual(commands, ["A", "B"])
 
+        status = handle({"kind": "status"})
+        self.assertEqual(
+            {receipt["request_id"]: receipt["execution_state"] for receipt in status["completed_commands"]},
+            {request_cancelled: "not_started", request_a: "complete", request_b: "complete"},
+        )
+        self.assertTrue(handle({"kind": "ack", "request_id": request_cancelled})["acknowledged"])
         status = handle({"kind": "status"})
         self.assertEqual(
             {receipt["request_id"] for receipt in status["completed_commands"]},
@@ -757,23 +781,12 @@ class ProtocolProducerTest(unittest.TestCase):
 
 class RequestFrameLimitTest(unittest.TestCase):
     def test_payload_limit_excludes_the_line_terminator(self):
-        class BufferedSocket:
-            def __init__(self, data):
-                self.data = data
-
-            def settimeout(self, _timeout):
-                pass
-
-            def recv(self, count):
-                part, self.data = self.data[:count], self.data[count:]
-                return part
-
         payload = b"{}" + b" " * (bridge.MAX_FRAME_BYTES - 2)
         self.assertEqual(
-            bridge._BridgeServer._receive_frame(BufferedSocket(payload + b"\n")), {}
+            bridge._BridgeServer._receive_frame(_BufferedSocket(payload + b"\n")), {}
         )
         with self.assertRaisesRegex(ValueError, "frame-limit-exceeded"):
-            bridge._BridgeServer._receive_frame(BufferedSocket(payload + b" " + b"\n"))
+            bridge._BridgeServer._receive_frame(_BufferedSocket(payload + b" " + b"\n"))
 
     def test_delimiter_in_a_later_chunk_is_accepted(self):
         class ShortReads:

@@ -217,6 +217,8 @@ export const runDeferred = async (
                 }),
               config.mcpMaxInputElements,
             );
+            if (config.mcpToolCatalogProfile === "hot-cold")
+              server.enableProgressiveCatalog();
             return server;
           });
           const previous = server.server.onclose;

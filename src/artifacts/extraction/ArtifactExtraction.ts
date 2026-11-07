@@ -1,3 +1,4 @@
+import { selectArtifactExtractionOccurrences } from "./ArtifactExtractionSelection.js";
 import { assertAdmittedRootDigest } from "../inventory/classify.js";
 import { assertArtifactFileSelectedSource } from "../ArtifactFileSource.js";
 import {
@@ -72,12 +73,13 @@ export interface ArtifactExtractionInput {
   readonly selectedPath?: string | undefined;
   readonly inputFormat: BinaryTarget["format"];
   readonly outputRoot: string;
+  readonly occurrenceIds?: readonly string[];
   readonly environment: Readonly<NodeJS.ProcessEnv>;
   readonly integrityPolicy: ArtifactIntegrityPolicyName;
   readonly resourceScope: ArtifactResourceScope;
 }
 
-/** Extract every regular inventory occurrence into an exclusively owned absent root. */
+/** Extract selected regular inventory occurrences into an exclusively owned absent root. */
 export const extractArtifact = async (
   input: ArtifactExtractionInput,
   signal?: AbortSignal,
@@ -215,33 +217,20 @@ export const materializeArtifactInventoryInScope = async (
       input.selectedPath ?? input.inputPath,
       `UnityFS directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
     );
-  const selectedOccurrences = snapshot.occurrences.filter(
-    (occurrence) =>
-      (occurrence.entry_kind === "file" || occurrence.entry_kind === "slice") &&
-      occurrence.logical_path !== ".",
-  );
-  const regularPaths = new Set(
-    selectedOccurrences.map(({ logical_path: path }) => path),
-  );
-  const directoryPaths = new Set(
-    snapshot.occurrences
-      .filter(({ entry_kind }) => entry_kind === "directory")
-      .map(({ logical_path }) => logical_path),
-  );
-  const activeOccurrences = selectedOccurrences.filter(({ logical_path }) => {
-    // Nested members remain represented by their containing regular file;
-    // only entries exposed by the active reader are materialized.
-    let path = logical_path;
-    for (
-      let slash = path.lastIndexOf("/");
-      slash >= 0;
-      slash = path.lastIndexOf("/")
-    ) {
-      path = path.slice(0, slash);
-      if (regularPaths.has(path) && !directoryPaths.has(path)) return false;
-    }
-    return true;
-  });
+  if (
+    containerMetadata?.kind === "wxapkg" &&
+    containerMetadata.directory_status !== "available"
+  )
+    throw new AnalysisUnsupportedTargetError(
+      "extract_artifact",
+      input.selectedPath ?? input.inputPath,
+      `wxapkg directory is ${containerMetadata.directory_status}; its complete contents cannot be extracted`,
+    );
+  const { available, selected: activeOccurrences } =
+    selectArtifactExtractionOccurrences(
+      snapshot.occurrences,
+      input.occurrenceIds,
+    );
   const neededNodes = new Set(
     activeOccurrences.map(({ artifact_id: id }) => id),
   );
@@ -299,6 +288,7 @@ export const materializeArtifactInventoryInScope = async (
     sourcePath,
     inventory: snapshot,
     selected,
+    available,
     signal,
     transferredSource,
   });
@@ -322,6 +312,7 @@ const materializeSelection = async ({
   sourcePath,
   inventory,
   selected,
+  available,
   signal,
   transferredSource,
 }: {
@@ -329,6 +320,7 @@ const materializeSelection = async ({
   readonly sourcePath: string;
   readonly inventory: ArtifactInventorySnapshot;
   readonly selected: readonly SelectedOccurrence[];
+  readonly available: readonly ArtifactOccurrence[];
   readonly signal: AbortSignal | undefined;
   readonly transferredSource: ActiveArtifactInventorySource | undefined;
 }): Promise<ArtifactExtractionResult> => {
@@ -380,7 +372,10 @@ const materializeSelection = async ({
     await writeSelectedEntries({
       reader,
       output,
-      byPath,
+      selected: new Map(
+        selected.map((item) => [item.occurrence.occurrence_id, item]),
+      ),
+      available,
       extracted,
       traversal,
       signal,
@@ -414,6 +409,7 @@ const materializeSelection = async ({
       extracted,
       traversal.snapshot(),
       reader.provenance(),
+      output.outputRoot,
     );
     if (input.expectedRootSha256 !== undefined)
       await assertArtifactSelectedSource(sourcePath, input.selectedPath);
@@ -444,32 +440,60 @@ const materializeSelection = async ({
 const writeSelectedEntries = async ({
   reader,
   output,
-  byPath,
+  selected,
+  available,
   extracted,
   traversal,
   signal,
 }: {
   readonly reader: ArtifactReader;
   readonly output: SafeOutputTree;
-  readonly byPath: Map<string, SelectedOccurrence>;
+  readonly selected: Map<string, SelectedOccurrence>;
+  readonly available: readonly ArtifactOccurrence[];
   readonly extracted: ExtractedOccurrence[];
   readonly traversal: ArtifactTraversalObservation;
   readonly signal: AbortSignal | undefined;
 }): Promise<void> => {
+  // Inventory sorting is stable within each path. Preserve that reader order:
+  // a path can name several independently selectable ZIP/TOC occurrences.
+  const expected = new Map<
+    string,
+    { occurrences: ArtifactOccurrence[]; next: number }
+  >();
+  for (const occurrence of available) {
+    const queue = expected.get(occurrence.logical_path);
+    if (queue === undefined)
+      expected.set(occurrence.logical_path, {
+        occurrences: [occurrence],
+        next: 0,
+      });
+    else queue.occurrences.push(occurrence);
+  }
   const registry = new ArtifactPathRegistry();
   for await (const entry of reader.entries(signal, traversal)) {
     const path = normalizeArtifactPath(entry.path);
-    registry.add(path, entry.kind);
     // Logical declarations may share a query path with a real file. They do
     // not consume that file's selection or participate in materialization.
     if (entry.kind !== "file" && entry.kind !== "slice") continue;
-    const selectedItem = byPath.get(path);
-    if (selectedItem === undefined) {
+    const queue = expected.get(path);
+    const occurrence = queue?.occurrences[queue.next];
+    if (
+      queue === undefined ||
+      occurrence === undefined ||
+      occurrence.entry_kind !== entry.kind
+    ) {
       throw new ArtifactReaderFailure(
         "integrity",
         `Regular artifact entry is missing from inventory: ${path}`,
       );
     }
+    queue.next += 1;
+    if (queue.next === queue.occurrences.length) expected.delete(path);
+    const selectedItem = selected.get(occurrence.occurrence_id);
+    if (selectedItem === undefined) continue;
+    // Validate the full reader inventory above, but only selected regular
+    // entries claim destination paths. Excluded declarations may collide.
+    registry.add(path, entry.kind);
     preflight(entry);
     const stream = await reader.open(entry, signal);
     const written = await output.write(
@@ -488,12 +512,12 @@ const writeSelectedEntries = async ({
       bytes_written: written.bytesWritten,
       created: true,
     });
-    byPath.delete(path);
+    selected.delete(occurrence.occurrence_id);
   }
-  if (byPath.size > 0)
+  if (expected.size > 0)
     throw new ArtifactReaderFailure(
       "integrity",
-      `Inventoried regular artifact entries were not materialized: ${[...byPath.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
+      `Inventoried regular artifact entries were not materialized: ${[...expected.keys()].sort(compareUnicodeCodePoints).join(", ")}`,
     );
 };
 
@@ -530,6 +554,7 @@ const createExtractionResult = (
   extracted: readonly ExtractedOccurrence[],
   traversal: ArtifactReaderTraversal,
   materializationProvenance: readonly ArtifactCommand[],
+  outputRoot: string,
 ): ArtifactExtractionResult => {
   const selectedIds = new Set(
     selected.map(({ occurrence }) => occurrence.occurrence_id),
@@ -560,7 +585,7 @@ const createExtractionResult = (
       ...extractionSemantic,
       extraction_id: `aex_${digestCanonicalValue(extractionSemantic, "Artifact")}`,
     },
-    output_root: input.outputRoot,
+    output_root: outputRoot,
     artifacts: extracted,
     containment_verified: true,
     cleanup: { attempted: false, verified: true, residual_paths: [] },
@@ -577,9 +602,11 @@ const createExtractionResult = (
           (limitation) => `${occurrence.logical_path}: ${limitation}`,
         ),
       ),
-      traversal.status === "complete"
-        ? "All regular files exposed by the active artifact reader were materialized."
-        : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy.",
+      input.occurrenceIds !== undefined
+        ? "Only caller-selected regular occurrences exposed by the active artifact reader were materialized; unselected entries and nested archive members were not extracted. Inventory integrity checks still cover the full input."
+        : traversal.status === "complete"
+          ? "All regular files exposed by the active artifact reader were materialized."
+          : "All inventoried regular files exposed by the active reader were materialized; source traversal coverage is unknown, so the output is not established as a complete source copy.",
       "Publication verifies the selected inventoried regular files; it does not establish complete content decoding.",
       ...(extractedContradictions === 0
         ? []
