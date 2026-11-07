@@ -124,8 +124,9 @@ read-only string data contiguously without NUL terminators, slicing by `(ptr, le
 recovers exact literal boundaries instead of concatenated C-string runs. Each
 target slice (`1`–`4096` bytes) must stay within a single read-only mapped
 section or segment, decode as printable UTF-8 (`\t`, `\n`, `\r` and printable
-Unicode scalar values), and fit within a 64 MiB header-scan budget and 512 KiB
-aggregate string budget (`truncated: true` when capped). Compiler-inlined or
+Unicode scalar values, excluding control and format characters), and fit within
+a 64 MiB header-scan budget and 512 KiB aggregate string budget
+(`truncated: true` when capped). Compiler-inlined or
 stack-constructed strings without static headers, unapplied relocation addends
 and Mach-O `LC_DYLD_CHAINED_FIXUPS` pointer encodings are noted in `limitations`.
 

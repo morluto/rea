@@ -17,6 +17,7 @@ import {
 } from "../native/metadata/BinaryContainer.js";
 
 const MAX_TRACKED_CANDIDATES = 100_000;
+const MAX_REJECTED_SLICE_CACHE = 4096;
 const PE_MEM_READ = 0x40000000;
 const PE_MEM_EXECUTE = 0x20000000;
 const PE_MEM_DISCARDABLE = 0x02000000;
@@ -25,13 +26,18 @@ const PE_CNT_INITIALIZED_DATA = 0x00000040;
 const MACHO_ATTR_INSTRUCTIONS = 0x80000400;
 const MACHO_ATTR_DEBUG = 0x02000000;
 const DISALLOWED_GO_STRING_CODE_POINT =
-  /(?![\t\n\r])[\p{Cc}\p{Cs}\p{Co}\p{Cn}]/u;
+  /(?![\t\n\r])[\p{Cc}\p{Cf}\p{Cs}\p{Co}\p{Cn}]/u;
 
 interface CandidateLiteral {
   readonly offset: number;
   readonly bytes: number;
-  readonly firstHeaderOffset: number;
+  firstHeaderOffset: number;
   referenceCount: number;
+}
+
+interface HeaderScanSpan {
+  readonly startOffset: number;
+  readonly endOffset: number;
 }
 
 /**
@@ -63,27 +69,19 @@ export const recoverGoStringLiterals = (
   const { bits } = container;
   const little = container.byte_order === "little";
   const wordBytes = bits === 64 ? 8 : 4;
-  const wordWidth = BigInt(wordBytes);
   const firstTarget = targets[0] as FileMapping;
   const lastTarget = targets[targets.length - 1] as FileMapping;
   const minTargetAddr = firstTarget.address;
   const maxTargetEnd = lastTarget.address + BigInt(lastTarget.size);
 
-  const seen = new Map<number, CandidateLiteral | null>();
+  const accepted = new Map<number, CandidateLiteral>();
+  const rejected = new Set<number>();
   const candidates: CandidateLiteral[] = [];
   let remainingBudget = MAX_GO_STRING_HEADER_SCAN_BYTES;
   let budgetTruncated = false;
   let steps = 0;
 
-  outer: for (const span of headerSpans) {
-    const misalign = Number(
-      (wordWidth - (span.address % wordWidth)) % wordWidth,
-    );
-    const startOffset = span.offset + misalign;
-    const spanEnd = span.offset + span.size;
-    if (spanEnd - startOffset < wordBytes * 2) continue;
-    const alignedEnd =
-      startOffset + Math.floor((spanEnd - startOffset) / wordBytes) * wordBytes;
+  outer: for (const { startOffset, endOffset } of headerSpans) {
     if (remainingBudget < wordBytes * 2) {
       budgetTruncated = true;
       break;
@@ -93,7 +91,7 @@ export const recoverGoStringLiterals = (
 
     for (
       let headerOffset = startOffset;
-      headerOffset + wordBytes * 2 <= alignedEnd;
+      headerOffset + wordBytes * 2 <= endOffset;
       headerOffset += wordBytes
     ) {
       if ((++steps & 0xffff) === 0) checkActive?.();
@@ -123,12 +121,14 @@ export const recoverGoStringLiterals = (
         continue;
 
       const key = sliceOffset * 8192 + byteLen;
-      if (seen.has(key)) {
-        const existing = seen.get(key);
-        if (existing !== null && existing !== undefined)
-          existing.referenceCount += 1;
+      const existing = accepted.get(key);
+      if (existing !== undefined) {
+        existing.referenceCount += 1;
+        if (headerOffset < existing.firstHeaderOffset)
+          existing.firstHeaderOffset = headerOffset;
         continue;
       }
+      if (rejected.has(key)) continue;
 
       if (candidates.length >= MAX_TRACKED_CANDIDATES) {
         budgetTruncated = true;
@@ -142,7 +142,8 @@ export const recoverGoStringLiterals = (
 
       const slice = bytes.subarray(sliceOffset, sliceOffset + byteLen);
       if (!isPrintableGoUtf8(slice)) {
-        seen.set(key, null);
+        if (rejected.size >= MAX_REJECTED_SLICE_CACHE) rejected.clear();
+        rejected.add(key);
         continue;
       }
       const entry: CandidateLiteral = {
@@ -151,7 +152,7 @@ export const recoverGoStringLiterals = (
         firstHeaderOffset: headerOffset,
         referenceCount: 1,
       };
-      seen.set(key, entry);
+      accepted.set(key, entry);
       candidates.push(entry);
     }
   }
@@ -338,9 +339,7 @@ const selectHeaderScanSpans = (
   bytes: Buffer,
   container: BinaryContainer,
   index: FileMappingIndex,
-): readonly FileMapping[] => {
-  const wordWidth = BigInt(container.bits === 64 ? 8 : 4);
-  const seen = new Set<string>();
+): readonly HeaderScanSpan[] => {
   const spans: FileMapping[] = [];
   const push = (address: bigint, offset: number, size: number): void => {
     const admitted = admitMappedSpan(
@@ -351,11 +350,7 @@ const selectHeaderScanSpans = (
       offset,
       size,
     );
-    if (admitted === null) return;
-    const identity = `${admitted.offset}:${admitted.size}:${admitted.address % wordWidth}`;
-    if (seen.has(identity)) return;
-    seen.add(identity);
-    spans.push(admitted);
+    if (admitted !== null) spans.push(admitted);
   };
 
   for (const section of container.sections) {
@@ -412,7 +407,70 @@ const selectHeaderScanSpans = (
     }
   }
 
-  return spans;
+  return normalizeHeaderScanSpans(spans, container.bits === 64 ? 8 : 4);
+};
+
+/**
+ * Align candidate header spans to pointer-word boundaries, merge overlapping
+ * same-phase intervals so physical headers are never counted twice, and sort
+ * in ascending file-offset order so `first_header_offset` is minimal.
+ */
+const normalizeHeaderScanSpans = (
+  spans: readonly FileMapping[],
+  wordBytes: 4 | 8,
+): readonly HeaderScanSpan[] => {
+  const wordWidth = BigInt(wordBytes);
+  const aligned: {
+    startOffset: number;
+    endOffset: number;
+    readonly phase: number;
+  }[] = [];
+  for (const span of spans) {
+    const misalign = Number(
+      (wordWidth - (span.address % wordWidth)) % wordWidth,
+    );
+    const startOffset = span.offset + misalign;
+    const spanEnd = span.offset + span.size;
+    if (spanEnd - startOffset < wordBytes * 2) continue;
+    const endOffset =
+      startOffset + Math.floor((spanEnd - startOffset) / wordBytes) * wordBytes;
+    aligned.push({
+      startOffset,
+      endOffset,
+      phase: startOffset % wordBytes,
+    });
+  }
+  if (aligned.length === 0) return [];
+  aligned.sort(
+    (left, right) =>
+      left.phase - right.phase ||
+      left.startOffset - right.startOffset ||
+      right.endOffset - left.endOffset,
+  );
+  const merged: HeaderScanSpan[] = [];
+  let current = aligned[0] as (typeof aligned)[number];
+  for (let index = 1; index < aligned.length; index += 1) {
+    const next = aligned[index] as (typeof aligned)[number];
+    if (next.phase === current.phase && next.startOffset < current.endOffset) {
+      if (next.endOffset > current.endOffset)
+        current = { ...current, endOffset: next.endOffset };
+      continue;
+    }
+    merged.push({
+      startOffset: current.startOffset,
+      endOffset: current.endOffset,
+    });
+    current = next;
+  }
+  merged.push({
+    startOffset: current.startOffset,
+    endOffset: current.endOffset,
+  });
+  merged.sort(
+    (left, right) =>
+      left.startOffset - right.startOffset || left.endOffset - right.endOffset,
+  );
+  return merged;
 };
 
 const lastSpanAtOrBelow = (

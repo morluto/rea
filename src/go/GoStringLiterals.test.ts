@@ -315,3 +315,153 @@ it("enforces maxStringLiterals and the 512 KiB aggregate byte cap deterministica
     MAX_GO_STRING_AGGREGATE_BYTES / MAX_GO_STRING_LITERAL_BYTES,
   );
 });
+
+it.each([false, true])(
+  "counts physical headers once in file order across reversed sections and overlapping PT_LOAD (corruptShstrtab=%s)",
+  (corruptElfShstrtab) => {
+    const baseRo = 0x102000n;
+    const firstLen = Buffer.byteLength(LITERALS[0]);
+    const secondLen = Buffer.byteLength(LITERALS[1]);
+    const fixture = createGoRodataStringFixture({
+      format: "elf",
+      rodata: PACKED_RODATA,
+      corruptElfShstrtab,
+      elfSplitReversedDataSections: true,
+      headers: [
+        {
+          section: "data",
+          offsetInSection: 0x200,
+          ptr: baseRo,
+          len: BigInt(firstLen),
+        },
+        {
+          section: "data",
+          offsetInSection: 0x40,
+          ptr: baseRo,
+          len: BigInt(firstLen),
+        },
+        {
+          section: "data",
+          offsetInSection: 0x60,
+          ptr: baseRo + BigInt(firstLen),
+          len: BigInt(secondLen),
+        },
+      ],
+    });
+
+    const recovered = readGoBinaryImage(fixture.bytes, {
+      includeStringLiterals: true,
+    }).string_literals;
+    expect(recovered?.items).toEqual([
+      {
+        value: "ListResourceProviders",
+        location: { offset: fixture.rodataOffset, bytes: firstLen },
+        first_header_offset: fixture.dataOffset + 0x40,
+        reference_count: 2,
+      },
+      {
+        value: "genai",
+        location: {
+          offset: fixture.rodataOffset + firstLen,
+          bytes: secondLen,
+        },
+        first_header_offset: fixture.dataOffset + 0x60,
+        reference_count: 1,
+      },
+    ]);
+  },
+);
+
+it("rejects Unicode Cf format controls while keeping visible Unicode text", () => {
+  const zeroWidthSpace = Buffer.from("zero\u200Bwidth", "utf8");
+  const rtlOverride = Buffer.from("rtl\u202Eoverride", "utf8");
+  const byteOrderMark = Buffer.from("\uFEFFbom", "utf8");
+  const softHyphen = Buffer.from("soft\u00ADhyphen", "utf8");
+  const visibleUnicode = Buffer.from("visible-café", "utf8");
+  const slices = [
+    zeroWidthSpace,
+    rtlOverride,
+    byteOrderMark,
+    softHyphen,
+    visibleUnicode,
+  ];
+  let cursor = 0;
+  const headers = slices.map((slice, index) => {
+    const header = {
+      section: "data" as const,
+      offsetInSection: index * 16,
+      ptr: 0x102000n + BigInt(cursor),
+      len: BigInt(slice.length),
+    };
+    cursor += slice.length;
+    return header;
+  });
+  const fixture = createGoRodataStringFixture({
+    format: "elf",
+    rodata: Buffer.concat(slices),
+    headers,
+  });
+
+  const recovered = readGoBinaryImage(fixture.bytes, {
+    includeStringLiterals: true,
+  }).string_literals;
+  expect(recovered?.items.map((item) => item.value)).toEqual(["visible-café"]);
+  expect(recovered?.truncated).toBe(false);
+});
+
+it("bounds rejected-slice caching across thousands of distinct NUL slices without dropping later literals", () => {
+  const rejectedCount = 6000;
+  const nulBlob = Buffer.alloc(rejectedCount, 0);
+  const survivor = Buffer.from("recovered-after-nul-flood", "utf8");
+  const rodata = Buffer.concat([nulBlob, survivor]);
+  const baseRo = 0x102000n;
+  const headers = Array.from({ length: rejectedCount }, (_, index) => ({
+    section: "data" as const,
+    offsetInSection: index * 8,
+    ptr: baseRo + BigInt(index),
+    len: 1n,
+  }));
+  headers.push(
+    {
+      section: "data",
+      offsetInSection: rejectedCount * 8,
+      ptr: baseRo,
+      len: 1n,
+    },
+    {
+      section: "data",
+      offsetInSection: (rejectedCount + 1) * 8,
+      ptr: baseRo + BigInt(rejectedCount),
+      len: BigInt(survivor.length),
+    },
+  );
+  const fixture = createGoRodataStringFixture({
+    format: "elf",
+    bits: 32,
+    rodata,
+    dataSize: (rejectedCount + 8) * 8,
+    headers,
+  });
+
+  const recovered = readGoBinaryImage(fixture.bytes, {
+    includeStringLiterals: true,
+  }).string_literals;
+  expect(recovered).toEqual({
+    evidence_kind: "inferred",
+    discovered_count: 1,
+    aggregate_bytes: survivor.length,
+    max_items: 2000,
+    truncated: false,
+    items: [
+      {
+        value: "recovered-after-nul-flood",
+        location: {
+          offset: fixture.rodataOffset + rejectedCount,
+          bytes: survivor.length,
+        },
+        first_header_offset: fixture.dataOffset + (rejectedCount + 1) * 8,
+        reference_count: 1,
+      },
+    ],
+  });
+});

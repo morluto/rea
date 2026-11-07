@@ -12,8 +12,10 @@ export interface GoRodataStringFixtureOptions {
   readonly rodata: Buffer;
   readonly secondRodata?: Buffer;
   readonly headers: readonly GoStringHeaderFixtureSpec[];
+  readonly dataSize?: number;
   readonly sectionless?: boolean;
   readonly corruptElfShstrtab?: boolean;
+  readonly elfSplitReversedDataSections?: boolean;
   readonly machoChainedFixups?: boolean;
 }
 
@@ -59,7 +61,7 @@ export const createGoRodataStringFixture = (
   const secondSize = options.secondRodata?.length ?? 0;
   const dataOffset =
     Math.ceil((secondOffset + secondSize + 0x100) / 0x1000) * 0x1000;
-  const dataSize = 0x1000;
+  const dataSize = options.dataSize ?? 0x1000;
   const bssSize = 0x200;
   const bytes = Buffer.alloc(dataOffset + dataSize);
   const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -188,7 +190,19 @@ const writeElfStringContainer = (
           [25, 1, 2n, ctx.secondRodataAddr, ctx.secondOffset, ctx.secondSize],
         ] as const)
       : []),
-    [35, 1, 3n, ctx.dataAddr, ctx.dataOffset, ctx.dataSize],
+    ...(options.elfSplitReversedDataSections === true
+      ? ([
+          [
+            35,
+            1,
+            3n,
+            ctx.dataAddr + 0x200n,
+            ctx.dataOffset + 0x200,
+            ctx.dataSize - 0x200,
+          ],
+          [35, 1, 3n, ctx.dataAddr + 0x40n, ctx.dataOffset + 0x40, 0x180],
+        ] as const)
+      : ([[35, 1, 3n, ctx.dataAddr, ctx.dataOffset, ctx.dataSize]] as const)),
     [41, 8, 3n, ctx.dataAddr + BigInt(ctx.dataSize), bytes.length, ctx.bssSize],
   ];
   if (options.sectionless !== true) {
