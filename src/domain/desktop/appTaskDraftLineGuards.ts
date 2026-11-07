@@ -3,6 +3,8 @@ import type { DesktopTaskCheckInput } from "./appTask.js";
 /** Lines a text file's guard names, and how far from the added line it looks for them. */
 const MAX_GUARD_LINES = 2;
 const NEIGHBOURHOOD = 6;
+/** A guard line longer than this is not copied into the task. */
+const MAX_GUARD_TEXT = 2000;
 
 /** A list item's marker, as Zim's `[ ]` checkbox, a `*` bullet or `1.`; undefined for a line that is no list item. */
 const markerOf = (line: string): string | undefined =>
@@ -32,6 +34,7 @@ export const lineGuards = (
         index !== at &&
         Math.abs(index - at) <= NEIGHBOURHOOD &&
         seed.has(line) &&
+        line.length <= MAX_GUARD_TEXT &&
         /[\p{L}\d]/u.test(line),
     )
     .toSorted(
