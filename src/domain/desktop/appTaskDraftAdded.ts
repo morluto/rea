@@ -10,7 +10,11 @@ import {
   isVolatileValue,
 } from "./appTaskDraftNoise.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { holdsFields, wholeTextCheck } from "./appTaskDraftText.js";
+import {
+  holdsFields,
+  holdsNoisyText,
+  wholeTextCheck,
+} from "./appTaskDraftText.js";
 import {
   isIdentifyingAttribute,
   isViewStateName,
@@ -166,9 +170,13 @@ export const attributeChecks = (
  * between them. `Delphine` and `Moreau` around a save time stay two checks;
  * joining them would look for text the file never contains.
  */
-const keptFieldPieces = (node: JsonValue): string[] => {
-  if (typeof node === "string") return isStamp(node) ? [] : [node];
+const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
+  if (typeof node === "string")
+    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
+      ? []
+      : [node];
   if (!isXmlElement(node)) return [];
+  const inBookkeeping = bookkeeping || isBookkeeping(node);
   const pieces: string[] = [];
   let run = "";
   const flush = () => {
@@ -177,7 +185,8 @@ const keptFieldPieces = (node: JsonValue): string[] => {
   };
   for (const child of node.children) {
     if (typeof child === "string") {
-      if (isStamp(child)) flush();
+      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+        flush();
       else run += child;
       continue;
     }
@@ -186,7 +195,7 @@ const keptFieldPieces = (node: JsonValue): string[] => {
       flush();
       continue;
     }
-    const nested = keptFieldPieces(child);
+    const nested = keptFieldPieces(child, inBookkeeping);
     if (nested.length !== 1) {
       flush();
       pieces.push(...nested);
@@ -349,6 +358,7 @@ export const recordChecks = (
       const value = elementText(field);
       return value.trim() === "" ||
         value.length > context.chars ||
+        holdsNoisyText(field) ||
         isStamp(value) ||
         isVolatileValue(value, isBookkeeping(field))
         ? []
