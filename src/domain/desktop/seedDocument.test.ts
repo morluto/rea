@@ -110,7 +110,21 @@ describe("openSeedDocument", () => {
     });
 
     expect(opened).toEqual({
-      argv: ["editor", "Documents/report.md"],
+      argv: ["editor", `${HOME}/Documents/report.md`],
+      opens: { kind: "captured" },
+    });
+    expect(
+      openSeedDocument(["editor", "report.md"], {
+        ...AT_HOME,
+        workingDirectory: `${HOME}/storage`,
+        exec: "editor %f",
+        documents: ["Documents/report.md"],
+        isDocument: (path) => path === "Documents/report.md",
+        spell: (path) =>
+          path === "storage/report.md" ? "Documents/report.md" : path,
+      }),
+    ).toEqual({
+      argv: ["editor", `${HOME}/Documents/report.md`],
       opens: { kind: "captured" },
     });
   });
