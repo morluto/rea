@@ -1,5 +1,6 @@
 import { createRequire } from "node:module";
 import { BrowserObservationError } from "../domain/browserObservationError.js";
+import type { JsonValue } from "../domain/jsonValue.js";
 import {
   browserDeadlineRetry,
   cdpCommandDeadlineRecovery,
@@ -114,7 +115,12 @@ export const withScenarioCommandDeadline = async <T>(
   phase: ScenarioCommandDeadlinePhase,
   method?: string,
   launchExecutablePath?: string,
+  additionalDiagnostics: Readonly<Record<string, JsonValue>> = {},
 ): Promise<T> => {
+  const startedAt = performance.now();
+  const elapsedMs = (): number =>
+    Math.max(0, Math.round(performance.now() - startedAt));
+  let timedOutError: BrowserObservationError | undefined;
   let operation: Promise<T>;
   try {
     operation = work();
@@ -130,8 +136,10 @@ export const withScenarioCommandDeadline = async <T>(
       remediationAction: deadline.remediationAction,
       cause,
       diagnostics: {
+        ...additionalDiagnostics,
         phase,
         command_timeout_ms: timeoutMs,
+        elapsed_ms: elapsedMs(),
         ...(launchExecutablePath === undefined
           ? {}
           : { executable_path: launchExecutablePath }),
@@ -153,16 +161,30 @@ export const withScenarioCommandDeadline = async <T>(
       };
       timer = setTimeout(() => {
         const timeout = deadlineFailure();
+        timedOutError = timeout;
         pendingScenarioCommands.set(timeout, operation);
         fail(timeout);
       }, timeoutMs);
       operation.then(
         (value) => {
-          if (settled) return;
+          if (settled) {
+            timedOutError?.retainDiagnostics({
+              operation_settled_elapsed_ms: elapsedMs(),
+              operation_settled: "resolved",
+            });
+            return;
+          }
           settled = true;
           resolve(value);
         },
         (cause: unknown) => {
+          if (settled) {
+            timedOutError?.retainDiagnostics({
+              operation_settled_elapsed_ms: elapsedMs(),
+              operation_settled: "rejected",
+            });
+            return;
+          }
           if (playwrightTimedOut(cause)) {
             fail(deadlineFailure(cause));
             return;
