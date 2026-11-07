@@ -875,3 +875,14 @@ it("retains candidates when pre-indexed required module effect overrides prototy
   `);
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
 });
+
+it("prunes non-nullish binary and update results before exploring ?? fallback", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", (1 + 1) ?? (() => {}));
+    child.on("error", (a === b) ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});

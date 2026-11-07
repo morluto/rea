@@ -274,7 +274,9 @@ const staticExpressionNullishness = (
     t.isClassExpression(unwrapped) ||
     t.isRegExpLiteral(unwrapped) ||
     t.isTemplateLiteral(unwrapped) ||
-    t.isImportExpression(unwrapped)
+    t.isImportExpression(unwrapped) ||
+    (t.isBinaryExpression(unwrapped) && unwrapped.operator !== "|>") ||
+    t.isUpdateExpression(unwrapped)
   )
     return false;
   return undefined;
