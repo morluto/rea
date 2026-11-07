@@ -2376,7 +2376,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!match.matched()) {
                     continue;
                 }
-                JsonObject item = resultItem(entry.item, null);
+                JsonObject item = resultItem(entry.item, "procedure");
                 if (!match.aliases().isEmpty()) {
                     JsonArray aliases = new JsonArray();
                     for (String alias : match.aliases()) aliases.add(alias);
@@ -2391,7 +2391,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!matcher.matches(item.value)) {
                 continue;
             }
-            items.add(resultItem(item, null));
+            items.add(resultItem(item, procedureSearch ? "procedure" : "string"));
         }
         return items;
     }
