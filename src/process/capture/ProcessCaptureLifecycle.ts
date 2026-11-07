@@ -918,7 +918,7 @@ export const awaitTerminalExit = async ({
             PROCESS_FINALIZATION_DELIVERY_GRACE_MS,
             {
               delivery: "unverified" as const,
-              reason: `delivery did not settle within ${String(PROCESS_FINALIZATION_DELIVERY_GRACE_MS)} ms`,
+              reason: `delivery did not settle within REA's fixed ${String(PROCESS_FINALIZATION_DELIVERY_GRACE_MS)} ms signal-delivery grace; this release has no runtime override and a larger finalization_ms does not extend it`,
             },
             {
               ref: false,
