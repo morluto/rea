@@ -624,6 +624,13 @@ function* parseElfExports(
     width,
     "ELF dynamic symbols",
   );
+  // Entry zero is the reserved STN_UNDEF record. Skipping it is valid only
+  // after every field is observed as zero; neither ELF layout has padding.
+  if (bytes.subarray(table, table + width).some((byte) => byte !== 0))
+    throw new BinaryFormatFailure(
+      "malformed",
+      "ELF dynamic symbol table null entry has nonzero fields",
+    );
   const nameRange = reader.fileRange(
     strings.offset,
     strings.size,
@@ -687,7 +694,6 @@ function* parseElfExports(
     else if (versions !== null) {
       const raw = reader.u16(versions + index * 2);
       const versionIndex = raw & 0x7fff;
-      if (versionIndex === 0) continue;
       if (versionIndex >= 2) {
         const decodedName = versionNames.get(versionIndex) ?? null;
         if (decodedName === null && !unresolvedVersions.has(versionIndex)) {

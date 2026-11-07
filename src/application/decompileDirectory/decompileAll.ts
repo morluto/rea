@@ -119,6 +119,7 @@ export const decompileAll = async (
     input,
     bounds.value,
   );
+  const inventoryLimitations = loaded.value.limitations;
   const opened = await DecompileExport.open({
     placement: placement.value,
     identity: loaded.value.identity,
@@ -165,6 +166,19 @@ export const decompileAll = async (
     indexed = await session.writeIndex({
       layoutStatus: layoutStatus(input.layout),
       limitations,
+      latestRun: {
+        resume: input.resume,
+        selected: selection.procedures.length,
+        excluded: selection.excluded,
+        selection: {
+          name: input.name ?? null,
+          namespace: input.namespace ?? null,
+          address_start: input.address_start ?? null,
+          address_end: input.address_end ?? null,
+          limit: input.limit ?? null,
+        },
+        inventoryLimitations,
+      },
     });
   } finally {
     closed = await session.close();
@@ -221,6 +235,7 @@ export const decompileAll = async (
       excluded: selection.excluded,
       state,
       limitations,
+      inventoryLimitations,
     }),
   );
   return manifest.success
@@ -259,6 +274,7 @@ const loadProcedures = async (
       readonly procedures: readonly SelectedProcedure[];
       readonly identity: ExportIdentity;
       readonly unaddressed: number;
+      readonly limitations: readonly string[];
     },
     AnalysisError
   >
@@ -288,6 +304,7 @@ const loadProcedures = async (
     })),
     identity: identity.value,
     unaddressed: parsed.data.length - addressed.length,
+    limitations: observed.value.limitations,
   });
 };
 
@@ -395,13 +412,16 @@ const publishSelected = async (
       continue;
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
+    const externalBefore = input.state.external;
     const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
-    input.state.outputIoStreak =
-      input.state.lastFailureCode === "output_io"
-        ? input.state.outputIoStreak + 1
-        : 0;
+    // An external function writes no file, so it says nothing about the directory.
+    if (input.state.external === externalBefore)
+      input.state.outputIoStreak =
+        input.state.lastFailureCode === "output_io"
+          ? input.state.outputIoStreak + 1
+          : 0;
     // Repeated write failures mean the directory has stopped accepting files,
     // for example a full disk. Stop instead of decompiling every remaining
     // function only to fail its write. Committed files and records are kept.
@@ -1070,6 +1090,7 @@ const manifestOf = (input: {
   readonly excluded: number;
   readonly state: PublishState;
   readonly limitations: readonly string[];
+  readonly inventoryLimitations: readonly string[];
 }) => {
   const requested =
     input.state.written + input.state.failed + input.state.external;
@@ -1097,6 +1118,7 @@ const manifestOf = (input: {
     provider: input.identity.provider,
     analysis_profile_digest: input.identity.analysisProfileDigest,
     target_sha256: input.identity.targetSha256,
+    inventory_limitations: [...input.inventoryLimitations],
     limitations: [...input.limitations],
     resume: input.input.resume,
   };

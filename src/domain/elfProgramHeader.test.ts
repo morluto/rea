@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { readElfProgramHeader } from "./elfProgramHeader.js";
+import {
+  admitElfLoadSegment,
+  readElfProgramHeader,
+} from "./elfProgramHeader.js";
 
 const formats = [
   { bits: 32, littleEndian: false },
@@ -85,3 +88,12 @@ it.each(formats)(
       });
   },
 );
+
+it("admits load sizes only within the file-backed and address limits", () => {
+  const segment = { virtualAddress: 0x1000n, memorySize: 16n, fileSize: 16n };
+  expect(admitElfLoadSegment(segment, 64).ok).toBe(true);
+  expect(admitElfLoadSegment({ ...segment, fileSize: 17n }, 64).ok).toBe(false);
+  expect(
+    admitElfLoadSegment({ ...segment, virtualAddress: 0xfffffff8n }, 32).ok,
+  ).toBe(false);
+});
