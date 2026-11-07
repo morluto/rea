@@ -794,6 +794,24 @@ const TEXT_CASES: readonly (readonly [DesktopTaskCheckInput, boolean])[] = [
     },
     false,
   ],
+  [
+    {
+      kind: "text_contains",
+      file: "Documents/cut.xml",
+      pointer: "/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/listing.zip",
+      pointer: "/entries/1/view/root/children/2",
+      value: "later",
+    },
+    false,
+  ],
 ];
 
 /** Every kind of check against those views, each with the outcome both evaluators must give. */
