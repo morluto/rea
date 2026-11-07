@@ -234,7 +234,6 @@ describe("reference source ignore policy read failures", () => {
           new ArtifactResourceScope(),
         );
         expect(intercepted).toBe(true);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected ignore policy read failure");
         expect(result.error.code).toBe(expected);
         expect(result.error.cause).toBe(
@@ -309,7 +308,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         resources,
       );
       expect(interceptedRead).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(physical);
@@ -373,7 +371,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         new ArtifactResourceScope(),
       );
       expect(intercepted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(reason);

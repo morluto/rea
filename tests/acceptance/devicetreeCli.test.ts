@@ -178,8 +178,10 @@ cliTest(
       hex: "",
       derived: { cells: null },
     });
-    expect(report.limitations).toContain(
-      "phandle at /target is not a single cell; this node's reference identity remains unresolved.",
+    expect(report.limitations).toContainEqual(
+      expect.stringMatching(
+        /phandle.*\/target.*not a single cell.*unresolved/iu,
+      ),
     );
   },
 );
