@@ -270,3 +270,57 @@ it("does not invoke ordinary or private method returns while widening a getter p
   `),
   ).toMatchObject({ status: "literal", value: 1 });
 });
+
+it("widens values returned by directly called private methods", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class R {
+      #read() { return shared; }
+      get s() { return this.#read(); }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new R().a.x = 2;
+    return shared.x;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("resolves a private method in its declaring class when widening an inherited getter", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class A {
+      #read() { return shared; }
+      get s() { return this.#read(); }
+    }
+    class B extends A {
+      #read() { return {}; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.x = 2;
+    return shared.x;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("does not confuse a subclass private method with an inherited getter's method", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class A {
+      #read() { return {}; }
+      get s() { return this.#read(); }
+    }
+    class B extends A {
+      #read() { return shared; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.x = 2;
+    return shared.x;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});

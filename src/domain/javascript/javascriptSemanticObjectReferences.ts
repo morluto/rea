@@ -358,6 +358,31 @@ const escapedClassValues = (
           callee.property,
           callee.computed,
         );
+        if (t.isThisExpression(receiver) && t.isPrivateName(callee.property)) {
+          let owner = state.parentsByNode.get(callee);
+          while (owner !== undefined && !t.isClass(owner))
+            owner = state.parentsByNode.get(owner);
+          if (t.isClass(owner))
+            for (const member of owner.body.body)
+              if (
+                t.isClassPrivateMethod(member) &&
+                member.kind === "method" &&
+                member.static === (lookup.kind === "static") &&
+                member.key.id.name === callee.property.id.name
+              )
+                for (const reference of getterResultReferences(
+                  {
+                    getter: member,
+                    owner,
+                    receiver: lookup.receiver ?? lookup.owner,
+                  },
+                  [],
+                  state,
+                  activeGetters,
+                  true,
+                ))
+                  expressions.push(reference.node);
+        }
         if (
           (t.isThisExpression(receiver) || t.isSuper(receiver)) &&
           methodName !== null
@@ -513,7 +538,7 @@ const objectReceiverReference = (
 // identity when translating `this`, private fields, and superclass reads into
 // the same reference paths used by ordinary member mutations.
 interface GetterInvocation {
-  readonly getter: t.ObjectMethod | t.ClassMethod;
+  readonly getter: t.ObjectMethod | t.ClassMethod | t.ClassPrivateMethod;
   readonly owner: t.ObjectExpression | t.ClassDeclaration | t.ClassExpression;
   readonly receiver?:
     | t.ObjectExpression
@@ -630,7 +655,9 @@ const getterResultReferences = (
   // Repeated receiver reads may revisit a getter while consuming a finite
   // path; recursive getters that preserve or grow that path cannot progress.
   const active = new Map(activeGetters).set(getter, path.length);
-  const isStatic = t.isClassMethod(getter) && getter.static;
+  const isStatic =
+    (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
+    getter.static;
   interface AliasVisit {
     readonly identity: string;
     readonly pathLength: number;
