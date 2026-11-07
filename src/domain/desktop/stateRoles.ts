@@ -125,17 +125,24 @@ export interface DesktopRoleFacts {
   readonly sqliteSidecars?: ReadonlySet<string>;
 }
 
-/** Content roots that are the `-wal` or `-journal` of another root, not selections of their own. */
+/**
+ * Content roots that are the `-wal` or `-journal` of another root, not
+ * selections of their own. A folder the caller selected is not one of those
+ * logs, even when its name ends in `-wal` or `-journal`.
+ */
 export const sqliteSidecarRoots = (
   roots: readonly string[],
+  directories: ReadonlySet<string> = new Set(),
 ): ReadonlySet<string> => {
   const present = new Set(roots);
   return new Set(
-    roots.filter((root) =>
-      SQLITE_SIDECARS.some(
-        ({ suffix }) =>
-          root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
-      ),
+    roots.filter(
+      (root) =>
+        !directories.has(root) &&
+        SQLITE_SIDECARS.some(
+          ({ suffix }) =>
+            root.endsWith(suffix) && present.has(root.slice(0, -suffix.length)),
+        ),
     ),
   );
 };
@@ -153,7 +160,12 @@ export const roleFacts = (
   const stateTails = named
     .map(hiddenTail)
     .filter((tail): tail is string => tail !== null);
-  const sqliteSidecars = sqliteSidecarRoots(state.content_roots);
+  const directories = new Set(
+    (state.selected_paths ?? []).flatMap((entry) =>
+      entry.kind === "directory" ? [entry.path, entry.physical] : [],
+    ),
+  );
+  const sqliteSidecars = sqliteSidecarRoots(state.content_roots, directories);
   return {
     home: host.home,
     stateDirectories,
