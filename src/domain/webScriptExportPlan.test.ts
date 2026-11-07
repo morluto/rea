@@ -38,7 +38,7 @@ describe("captured script path projection", () => {
     const paths = planned.map(({ record }) =>
       record.content.state === "exported" ? record.content.relative_path : "",
     );
-    expect(paths[0]).toMatch(/^origins\/[a-f0-9]{64}\/app\/main.js$/u);
+    expect(paths[0]).toMatch(/^origins\/[a-f0-9]{64}\/app\/main\.js$/u);
     expect(paths[1]?.replace("lib/value.mjs", "main.js")).toBe(paths[0]);
     expect(paths[2]).not.toBe(paths[0]);
   });

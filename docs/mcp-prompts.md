@@ -24,13 +24,25 @@ CLI equivalent is `rea guidance --query "exact JavaScript module"`, followed
 by `rea guidance --action read --locator LOCATOR`. Search is limited to the
 packaged managed skill files, works without providers or a target, and returns
 deterministically paged matches. Every non-generic query word must occur in the
-section; generic-only queries return no matches. Results are documentation; locators
+section or its subsections; generic-only queries return no matches. Results are documentation; locators
 are bound to the installed bundle and report stale or unavailable guidance without
 returning cached section content. A no-match result says nothing about analysis
 capability availability.
 
+Each match reports its `match_scope`. A `section` match has every term in its
+own text, meaning its heading and body before its first subsection. A
+`subsections` match has the terms only spread across subsections, with no
+single subsection holding them all. Its `own_text_terms` lists the terms in its
+own text, and `subsections` lists up to 8 subsection locators, chosen greedily,
+whose own text holds the rest; `omitted_subsections` counts any more that were
+needed. Section matches rank first. A parent is not listed when one subsection
+holds every term, because that subsection is already a match, unless the
+parent's own text also holds them all. `content_length`
+is the size of the section that read returns, so callers can decide before
+reading a broad parent.
+
 Search returns at most 20 matches per page with 500-code-unit context excerpts.
-Read retrieves the complete selected section. Admission permits 1 MiB per file,
+Read retrieves the complete selected section, including its subsections. Admission permits 1 MiB per file,
 4 MiB per bundle, 4,096 sections, and 25,165,824 expanded UTF-16 code units before
 section text is materialized. Unreadable or oversized bundles return
 `bundle_unavailable`, with no partial index or inferred absence. Cleanup failures
@@ -49,12 +61,18 @@ locator unreadable.
 | `audit_residual_unknowns`         | Audit current residual-unknown heads and evidence-qualified resolution.              |
 | `prepare_bounded_process_capture` | Design a bounded controlled process experiment before execution.                     |
 
-A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow only when every tool in
-its suggested steps belongs to a selected family. Partially available
-workflows are omitted from `prompts/list` — `prompts/get` reports them as not
-found — so a rendered prompt never directs the agent to a disabled call. The
-server identity digest and `rea mcp doctor` prompt inventory follow the same
-scope.
+A `REA_MCP_TOOL_FAMILIES` scope advertises a workflow when its required tools
+belong to selected families. Optional APK, managed, Apple-resource, and archive
+routes in `investigate_feature` are omitted when their tools are disabled;
+they do not make the existing native and JavaScript workflow unavailable.
+Apple plist guidance requires both the session opener and the native plist
+reader. Interface Builder, asset catalog, and keyed archive guidance requires
+the opener and the artifact readers. An opener alone never advertises an Apple
+resource route; opening resources switches away from the active binary session.
+Workflows missing a required tool are omitted from `prompts/list`, and
+`prompts/get` reports them as not found. Rendering, the server identity digest,
+and `rea mcp doctor` use the same scoped contracts, so guidance never directs
+the agent to a disabled call.
 
 Every rendered prompt provides optional starting points using current REA tool
 names. Agents can call tools directly, skip irrelevant suggestions, and inspect

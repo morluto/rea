@@ -2,8 +2,17 @@
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and persistent database mutation are unavailable.
+read-only. GUI controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
+
+An opt-in [owned Program checkpoint](installation.md#automatically-checkpoint-an-owned-ghidra-program)
+retains analysis across Linux/macOS processes. It saves initial completed analysis
+and normal-close metadata changes to `REA_GHIDRA_CHECKPOINT_DIR`; cancellation
+and process failure recover only the last successfully saved state. The restored
+packed Program's digest is reported with restored observations. Initial analysis
+keeps one stable generation through its first save; later saved states bind their
+content digest in profile identity. Restoration does not turn prior
+database state into a fresh discovery. The default remains ephemeral.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.
@@ -31,7 +40,8 @@ operation-scoped JVM `OutOfMemoryError` observations retain their separate resou
 classification. Automatic kernel or cgroup OOM attribution is not implemented.
 
 After the authenticated startup handshake, rejected inputs (`invalid_request`,
-`not_found`, `ambiguous`, or an invalid function name) use
+`not_found`, `ambiguous`, an invalid function name, or an address without one
+exact file offset) use
 `diagnostics.diagnostic_scope: "request"` when their active output checkpoint is
 available. They preserve the active request's
 `failure_output`, target/profile identity and runtime/log coordinates, while
@@ -183,6 +193,11 @@ and select the procedure from the observed inventory. Uninitialized regions may
 have no file backing. ELF mappings are observed
 without independent format-specific load-image verification, as the result's
 status and limitations state.
+
+Relocation rows retain Ghidra's `symbol` value, including an empty string or
+null when returned by Ghidra. It is a provider observation, not proof of the
+runtime-resolved address. Older Evidence may not have recorded this field;
+a relocation page requesting it reports that uncertainty.
 
 For large relocation inventories, select MCP `inspect_native_load_image` with
 `detail: "summary"`. It returns verification state, observed identity and counts,
@@ -337,9 +352,11 @@ Without bounds, loaded memory blocks are eligible, in Ghidra address order.
 Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
 listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
 `end` in their address space to search them.
-Overlapping matches are included; matches never cross block boundaries.
-Each match reports its address, segment, unique source file offset (or null),
-and containing procedure (or null).
+Overlapping matches are included, including across adjacent eligible initialized
+blocks in the same address space. Gaps and excluded or uninitialized blocks break
+a search run. Each match reports its address, starting segment, unique source file
+offset for that starting address (or null), and containing procedure (or null).
+A starting offset does not imply the full match is contiguous in the file.
 
 Pages default to 100 matches and accept 1 to 1000. Pass `next_cursor` as `cursor`
 with the same target, profile, pattern, mask and bounds to continue. `complete`

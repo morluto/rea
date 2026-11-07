@@ -69,6 +69,9 @@ export type PeImage = BinaryContainer & {
   readonly pe_data_directories: NonNullable<
     BinaryContainer["pe_data_directories"]
   >;
+  readonly pe_optional_header_file_offset: number;
+  readonly dll_characteristics: number;
+  readonly dll_characteristics_file_offset: number;
   readonly sections: readonly PeImageSection[];
 };
 
@@ -85,12 +88,15 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     sectionCount: count,
     optionalHeaderSize: optionalSize,
   } = coff.value;
-  const facts = readPeOptionalHeader(
-    reader.range(optional, optionalSize, "PE optional header"),
-    machine,
+  const optionalBytes = reader.range(
+    optional,
+    optionalSize,
+    "PE optional header",
   );
+  const facts = readPeOptionalHeader(optionalBytes, machine);
   if (!facts.ok)
     throw new BinaryFormatFailure(facts.error.kind, facts.error.message);
+  const dllCharacteristics = facts.value.dllCharacteristics;
   const {
     bits,
     dataDirectories,
@@ -174,6 +180,9 @@ export const readPeImage = (bytes: Buffer): PeImage => {
     pe_section_alignment: sectionAlignment,
     pe_file_alignment: fileAlignment,
     pe_data_directories: dataDirectories,
+    pe_optional_header_file_offset: optional,
+    dll_characteristics: dllCharacteristics,
+    dll_characteristics_file_offset: optional + 70,
     pe_header_mapping: headerMapping,
     architecture:
       architecture === "x86"

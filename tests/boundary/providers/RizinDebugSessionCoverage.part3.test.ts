@@ -1,4 +1,6 @@
 import { afterEach, expect, it, vi } from "vitest";
+import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
@@ -147,23 +149,36 @@ it.skipIf(process.platform === "win32")(
 it.skipIf(process.platform === "win32")(
   "cancels a command after capturing its completion frame",
   async () => {
-    let signal: AbortSignal;
+    const reason = { stage: "completion frame captured" };
     const injected = createInjectedProcess({
       onWrite: (text, control) => {
         const marker = /!echo (.+)\n/u.exec(text)?.[1];
-        if (marker !== undefined) control.output(Buffer.from(`${marker}\0`));
+        if (marker !== undefined)
+          control.output(Buffer.from(`registers${marker}\0`));
       },
     });
-    const { manager, started } = await startInjected(injected.spawnProcess);
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
-    signal = abortOnCheck(5);
+    const { manager, started } = await startInjected(injected.spawnProcess, {
+      stopProcess: async () => ({ status: "stopped" }),
+    });
+    if (!started.ok) throw started.error;
+    const signal = abortOnCheck(5, reason);
+    const registration = vi.spyOn(signal, "addEventListener");
     const result = await manager.execute(
       started.value.session_id,
       "dr",
       signal,
     );
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(registration).toHaveBeenCalledTimes(1);
+    expect(result.error.capturedOutput?.stdout).toBe("registers");
+    expect(result.error.partialObservation).toMatchObject({
+      parameters: { session_id: started.value.session_id, command: "dr" },
+      raw_result: { output: "registers", completion_status: "unknown" },
+    });
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 
@@ -174,14 +189,29 @@ it.skipIf(process.platform === "win32")(
     const { manager, started } = await startInjected(injected.spawnProcess, {
       stopProcess: async () => ({ status: "stopped" }),
     });
-    expect(started.ok).toBe(true);
-    if (!started.ok) return;
+    if (!started.ok) throw started.error;
+    const reason = { stage: "frame waiter installation" };
+    const signal = abortOnCheck(5, reason);
+    const registration = vi.spyOn(signal, "addEventListener");
     const result = await manager.execute(
       started.value.session_id,
       "wait",
-      abortOnCheck(5),
+      signal,
     );
     expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(registration).toHaveBeenCalledTimes(2);
+    expect(registration).toHaveBeenCalledWith("abort", expect.any(Function), {
+      once: true,
+    });
+    expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
+    expect(result.error.capturedOutput?.stdout).toBe("");
+    expect(result.error.partialObservation).toMatchObject({
+      parameters: { session_id: started.value.session_id, command: "wait" },
+      raw_result: { output: "", completion_status: "unknown" },
+    });
+    expect(manager.status(started.value.session_id)?.state).toBe("closed");
   },
 );
 
@@ -489,26 +519,36 @@ it.skipIf(process.platform === "win32").each([
       "noisy",
       controller.signal,
     );
-    await entered;
-    controller.abort(reason);
-    releaseStop();
-    const result = await pending;
-    expect(result.ok).toBe(false);
-    if (result.ok) return;
-    expect(result.error).toMatchObject({
-      _tag: "AnalysisCancelledError",
-      cleanupIncomplete: incomplete,
-    });
-    expect(result.error.cause).toBe(reason);
-    expect(result.error.capturedOutput?.stdout).toBe(
-      stage === "output" ? "beyond s" : stage === "exited" ? "partial" : "",
-    );
-    expect(result.error.partialObservation).toBeDefined();
-    if (incomplete) {
-      stopping = false;
-      expect((await manager.close(started.value.session_id)).ok).toBe(true);
-      expect(result.error.cleanupIncomplete).toBe(false);
-    }
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, pending, "debugger final cleanup");
+      controller.abort(reason);
+      releaseStop();
+      const result = await pending;
+      expect(result.ok).toBe(false);
+      if (result.ok) return;
+      expect(result.error).toMatchObject({
+        _tag: "AnalysisCancelledError",
+        cleanupIncomplete: incomplete,
+      });
+      expect(result.error.cause).toBe(reason);
+      expect(result.error.capturedOutput?.stdout).toBe(
+        stage === "output" ? "beyond s" : stage === "exited" ? "partial" : "",
+      );
+      expect(result.error.partialObservation).toBeDefined();
+      if (incomplete) {
+        stopping = false;
+        expect((await manager.close(started.value.session_id)).ok).toBe(true);
+        expect(result.error.cleanupIncomplete).toBe(false);
+      }
+    }, [
+      releaseStop,
+      async () => {
+        await pending;
+      },
+      () => {
+        stopping = false;
+      },
+    ]);
   },
 );
 
