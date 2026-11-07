@@ -1,6 +1,7 @@
 import * as t from "@babel/types";
 
 import type {
+  JavaScriptModuleOrigin,
   JavaScriptSemanticCallable,
   JavaScriptSemanticProjectedResultBinding,
   JavaScriptSemanticEventOperation,
@@ -21,7 +22,10 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticBindingAtRead } from "./javascriptSemanticMutationInitializers.js";
+import {
+  semanticBindingAtRead,
+  semanticTopLevelEffectFollowsCapture,
+} from "./javascriptSemanticMutationInitializers.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { evaluateSemanticProvenance } from "./javascriptSemanticValues.js";
 import { isUnmodifiedGlobalReference } from "./javascriptSemanticAmbientWrites.js";
@@ -30,6 +34,7 @@ import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
+  semanticRequireOrigin,
 } from "./javascriptSemanticRequireOrigin.js";
 import {
   builtinDataEffectMethod,
@@ -194,12 +199,24 @@ const staticExpressionNullishness = (
   const unwrapped = unwrapJavaScriptExpression(node).node;
   if (t.isNullLiteral(unwrapped) || isNullishJavaScriptSyntax(unwrapped))
     return true;
+  if (t.isUnaryExpression(unwrapped)) {
+    if (unwrapped.operator === "void") return true;
+    if (["+", "-", "~", "!", "typeof"].includes(unwrapped.operator))
+      return false;
+  }
   if (
     t.isIdentifier(unwrapped, { name: "undefined" }) &&
     isUnmodifiedGlobalReference(unwrapped, state, "undefined") &&
     !semanticOpaqueNameMayHaveChanged(unwrapped, state)
   )
     return true;
+  if (
+    t.isIdentifier(unwrapped) &&
+    ["NaN", "Infinity"].includes(unwrapped.name) &&
+    isUnmodifiedGlobalReference(unwrapped, state, unwrapped.name) &&
+    !semanticOpaqueNameMayHaveChanged(unwrapped, state)
+  )
+    return false;
   if (
     t.isBooleanLiteral(unwrapped) ||
     t.isNumericLiteral(unwrapped) ||
@@ -392,6 +409,16 @@ export const rejectsEventListener = (
   return true;
 };
 
+const isProcessModuleOrigin = (origin: JavaScriptModuleOrigin): boolean => {
+  const specifier = origin.specifier.replace(/^node:/u, "");
+  return (
+    specifier === "process" &&
+    (origin.importedPath.length === 0 ||
+      (origin.importedPath.length === 1 &&
+        origin.importedPath[0] === "default"))
+  );
+};
+
 /** Check whether prototype, module, or escape effects may have changed Node's listener methods. */
 const hasInheritedListenerMethodOverride = (
   state: JavaScriptSemanticAnalysisState,
@@ -407,8 +434,13 @@ const hasInheritedListenerMethodOverride = (
       const specifier = origin.specifier.replace(/^node:/u, "");
       if (target === "child_process" && specifier === "child_process") {
         const isClass = origin.importedPath[0] === "ChildProcess";
+        const isNamespace = origin.importedPath.length === 0;
         if (
           isClass ||
+          (isNamespace &&
+            binding.escapedPaths.some(
+              (effect) => call === undefined || effect.node !== call,
+            )) ||
           binding.memberWrites.some(({ path }) =>
             path.some(
               (segment) =>
@@ -425,8 +457,13 @@ const hasInheritedListenerMethodOverride = (
         specifier === "events"
       ) {
         const isClass = origin.importedPath[0] === "EventEmitter";
+        const isNamespace = origin.importedPath.length === 0;
         if (
           isClass ||
+          (isNamespace &&
+            binding.escapedPaths.some(
+              (effect) => call === undefined || effect.node !== call,
+            )) ||
           binding.memberWrites.some(({ path }) =>
             path.some(
               (segment) =>
@@ -437,6 +474,10 @@ const hasInheritedListenerMethodOverride = (
           return true;
       }
       if (target === "process" && specifier === "process") {
+        const isNamespace =
+          origin.importedPath.length === 0 ||
+          (origin.importedPath.length === 1 &&
+            origin.importedPath[0] === "default");
         if (
           binding.memberWrites.some(({ path }) =>
             path.some(
@@ -447,9 +488,10 @@ const hasInheritedListenerMethodOverride = (
                 ),
             ),
           ) ||
-          binding.escapedPaths.some(
-            (effect) => call !== undefined && effect.node !== call,
-          )
+          (isNamespace &&
+            binding.escapedPaths.some(
+              (effect) => call === undefined || effect.node !== call,
+            ))
         )
           return true;
       }
@@ -460,12 +502,19 @@ const hasInheritedListenerMethodOverride = (
     if (target === "child_process" && raw === "child_process") {
       if (
         effects.some(
-          ({ kind, path }) =>
-            kind === "write" &&
-            path.some(
-              (segment) =>
-                segment === "prototype" || segment === "ChildProcess",
-            ),
+          ({ kind, path, node }) =>
+            (kind === "write" &&
+              path.some(
+                (segment) =>
+                  segment === "prototype" || segment === "ChildProcess",
+              )) ||
+            (kind === "escape" &&
+              (call === undefined || node !== call) &&
+              (path.length === 0 ||
+                path.some(
+                  (segment) =>
+                    segment === "prototype" || segment === "ChildProcess",
+                ))),
         )
       )
         return true;
@@ -478,12 +527,19 @@ const hasInheritedListenerMethodOverride = (
     ) {
       if (
         effects.some(
-          ({ kind, path }) =>
-            kind === "write" &&
-            path.some(
-              (segment) =>
-                segment === "prototype" || segment === "EventEmitter",
-            ),
+          ({ kind, path, node }) =>
+            (kind === "write" &&
+              path.some(
+                (segment) =>
+                  segment === "prototype" || segment === "EventEmitter",
+              )) ||
+            (kind === "escape" &&
+              (call === undefined || node !== call) &&
+              (path.length === 0 ||
+                path.some(
+                  (segment) =>
+                    segment === "prototype" || segment === "EventEmitter",
+                ))),
         )
       )
         return true;
@@ -515,6 +571,28 @@ const hasInheritedListenerMethodOverride = (
       )
         return true;
     }
+  }
+  if (target === "child_process") {
+    if (
+      state.ambientEscapes.covers(["child_process"]) ||
+      state.ambientEscapes.covers(["node:child_process"]) ||
+      state.ambientWrites.covers(["child_process"]) ||
+      state.ambientWrites.covers(["node:child_process"])
+    )
+      return true;
+  }
+  if (
+    target === "events" ||
+    target === "child_process" ||
+    target === "process"
+  ) {
+    if (
+      state.ambientEscapes.covers(["events"]) ||
+      state.ambientEscapes.covers(["node:events"]) ||
+      state.ambientWrites.covers(["events"]) ||
+      state.ambientWrites.covers(["node:events"])
+    )
+      return true;
   }
   if (target === "process") {
     if (
@@ -616,8 +694,16 @@ export const isProvenNodeEmitter = (
     t.isCallExpression(unwrapped) ||
     t.isOptionalCallExpression(unwrapped) ||
     t.isNewExpression(unwrapped)
-  )
+  ) {
+    const requireOrigin = semanticRequireOrigin(unwrapped, state);
+    if (
+      requireOrigin !== undefined &&
+      isProcessModuleOrigin(requireOrigin.origin)
+    ) {
+      return !hasInheritedListenerMethodOverride(state, "process", call);
+    }
     return isProvenCreationNode(unwrapped, state, unwrapped);
+  }
   if (
     (t.isIdentifier(unwrapped) &&
       semanticGlobalProcessOrigin(unwrapped, state) !== undefined) ||
@@ -629,16 +715,54 @@ export const isProvenNodeEmitter = (
   }
   if (!t.isIdentifier(unwrapped)) return false;
   const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
+  if (binding === undefined) return false;
+  const activeBinding = binding.mutable
+    ? (() => {
+        const read = semanticBindingAtRead(binding, unwrapped, state);
+        return read.status === "ordered" && read.hasDefiniteInitializer
+          ? read.binding
+          : undefined;
+      })()
+    : binding;
+  if (activeBinding === undefined) return false;
   if (
-    binding === undefined ||
-    binding.mutable ||
-    binding.memberWrites.length > 0 ||
-    binding.escapedPaths.some((effect) => effect.node !== call)
+    activeBinding.memberWrites.some(
+      ({ node }) =>
+        !semanticTopLevelEffectFollowsCapture(call, node, state.parentsByNode),
+    ) ||
+    activeBinding.escapedPaths.some(
+      (effect) =>
+        effect.node !== call &&
+        !semanticTopLevelEffectFollowsCapture(
+          call,
+          effect.node,
+          state.parentsByNode,
+        ),
+    )
   )
     return false;
+
+  const isImportedProcess = activeBinding.directOrigins.some(
+    isProcessModuleOrigin,
+  );
+  const isReachableProcessModule =
+    isImportedProcess ||
+    (() => {
+      const provenance = evaluateSemanticProvenance(activeBinding, state);
+      return (
+        provenance.status === "module" &&
+        provenance.origins.length === 1 &&
+        isProcessModuleOrigin(provenance.origins[0])
+      );
+    })();
+
+  if (isReachableProcessModule) {
+    return !hasInheritedListenerMethodOverride(state, "process", call);
+  }
+
   const initializers = [
-    ...binding.initializers,
-    ...binding.referenceInitializers,
+    ...activeBinding.initializers,
+    ...activeBinding.referenceInitializers,
   ];
   if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
     return false;

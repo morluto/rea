@@ -239,6 +239,8 @@ it.each([
   ["a constant conditional non-function consequent", `true ? 1 : handler`],
   ["a constant conditional non-function alternate", `false ? handler : 1`],
   ["a constant nullish coalescing non-nullish primitive", `1 ?? handler`],
+  ["a constant nullish coalescing NaN", `NaN ?? handler`],
+  ["a constant nullish coalescing Infinity", `Infinity ?? handler`],
 ])(
   "prunes statically unreachable listener branches on child process: %s",
   (_name, expr) => {
@@ -323,6 +325,109 @@ it("retains an uncertain candidate if global process escapes to unknown code", (
     customize(process);
     process.on("exit", 1);
   `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("does not emit event operations for an imported process emitter with a rejected listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import proc from "node:process";
+    proc.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("keeps valid listener operations on an imported process emitter", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import proc from "node:process";
+    proc.on("exit", () => {});
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+      }),
+    ]),
+  );
+});
+
+it("retains an uncertain candidate if an imported process emitter escapes to unknown code", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import proc from "node:process";
+    function customize(p) { p.on = () => {}; }
+    customize(proc);
+    proc.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("does not emit child listener interactions for a mutable child binding without reassignment", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    let child = spawn("worker");
+    child.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains partial candidate after reassignment of a child binding", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    let child = spawn("worker");
+    child = custom;
+    child.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "register",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("retains partial candidates when child_process namespace escapes to an opaque helper", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import * as cp from "node:child_process";
+    import { spawn } from "node:child_process";
+    function wrap(pkg) { pkg.ChildProcess.prototype.on = () => {}; }
+    wrap(cp);
+    const child = spawn("worker");
+    child.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "listener",
+        method: "on",
+        eventName: "exit",
+        resolution: "partial",
+      }),
+    ]),
+  );
   expect(ir.eventOperations).toEqual(
     expect.arrayContaining([
       expect.objectContaining({
