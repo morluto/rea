@@ -1,7 +1,7 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join, parse, relative } from "node:path";
 import { onTestFinished } from "vitest";
+import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { ok as javaProbeOk } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
 import { err } from "../domain/result.js";
@@ -29,21 +29,20 @@ export const ghidraProfileInstallationHost: GhidraInstallationHost = {
 /**
  * A temporary installation directory the simulated Linux host accepts as
  * absolute. On Windows it is made under the working directory and spelled as a
- * POSIX path on that drive. The test removes it when it finishes.
+ * POSIX path on that drive; other hosts get an ordinary test directory. The
+ * test removes it when it finishes.
  */
 export const simulatedInstallDirectory = async (
   prefix: string,
 ): Promise<string> => {
-  const root =
-    process.platform === "win32" ? join(process.cwd(), "build") : tmpdir();
+  if (process.platform !== "win32") return createTestTempDirectory(prefix);
+  const root = join(process.cwd(), "build");
   await mkdir(root, { recursive: true });
   const owned = await mkdtemp(join(root, prefix));
   onTestFinished(async () => {
     await rm(owned, { recursive: true, force: true });
   });
-  return process.platform === "win32"
-    ? `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`
-    : owned;
+  return `/${relative(parse(owned).root, owned).replaceAll("\\", "/")}`;
 };
 
 /** A confirmed absent Java command for installation admission fixtures. */
