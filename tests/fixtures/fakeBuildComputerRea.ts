@@ -70,6 +70,9 @@ elif command == "describe-desktop-application-task":
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
     if "--schema" in args:
+        if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
+            print("runtime cannot load its export command", file=sys.stderr)
+            sys.exit(23)
         with open(os.environ["FAKE_REA_SCHEMA"]) as handle:
             schema = json.load(handle)
         if os.environ.get("FAKE_REA_OLD_EXPORT"):

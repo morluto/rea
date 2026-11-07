@@ -77,7 +77,7 @@ export const runRea = (
     readonly timeoutS?: number;
     readonly signal: AbortSignal;
   },
-): Promise<number> =>
+): ReturnType<typeof runControllerRea> =>
   runControllerRea(computer, argv, { ...options, work: WORK });
 
 /** The Evidence result, or the reported failure, a REA command wrote to a file of `bytes` in the computer. */
