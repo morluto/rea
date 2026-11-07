@@ -1,3 +1,7 @@
+import {
+  hasCfbSignature,
+  CFB_INVENTORY_LIMITATION,
+} from "../../domain/cfbFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
@@ -308,7 +312,7 @@ export const rootOccurrenceFor = (
   ...(metadata.formatMetadata === undefined
     ? {}
     : { format_metadata: metadata.formatMetadata }),
-  limitations: [],
+  limitations: metadata.format === "cfb" ? [CFB_INVENTORY_LIMITATION] : [],
 });
 
 export const rekeyOccurrences = (
@@ -602,6 +606,7 @@ export const classifyArtifactBytes = (
   fileSize = evidence.prefix.length,
 ): ArtifactNode["format"] => {
   const { prefix, suffix, mzWindowsHeaderSignature } = evidence;
+  if (hasCfbSignature(prefix)) return "cfb";
   // A header-only region has the signature but not the declared cartridge
   // extent. Keep it as a file instead of inventing another container.
   if (

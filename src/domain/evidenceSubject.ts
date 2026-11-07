@@ -31,6 +31,7 @@ export const evidenceSubjectFormatSchema = z.enum([
   "uimage",
   "dmg",
   "pkg",
+  "cfb",
   "plist",
   "javascript",
   "source-map",

@@ -77,6 +77,7 @@ export const liveBinaryTargetSummaryVariants = [
       "uimage",
       "dmg",
       "pkg",
+      "cfb",
       "intel-hex",
       "srec",
       "esp-image",

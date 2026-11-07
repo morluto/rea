@@ -79,6 +79,7 @@ const formatSchema = z.enum([
   "wxapkg",
   "dmg",
   "pkg",
+  "cfb",
   "intel-hex",
   "srec",
   "esp-image",

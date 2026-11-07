@@ -1,4 +1,5 @@
 import type { AsarHeaderAdmission } from "../config/asarHeaderAdmission.js";
+import { CFB_INVENTORY_LIMITATION } from "../domain/cfbFormat.js";
 import {
   ARTIFACT_FORMAT_IDS,
   type ArtifactFormatId,
@@ -238,6 +239,11 @@ const NON_ZIP_FORMATS = {
       new NativeDmgArtifactReader(path, options.environment),
   }),
   pkg: container("pkg", { absentInventory: "platform" }),
+  cfb: container("cfb", {
+    roleContainer: true,
+    absentInventory: "unavailable",
+    readerLimitation: CFB_INVENTORY_LIMITATION,
+  }),
   asar: container("asar", {
     extractable: true,
     absentInventory: "unavailable",

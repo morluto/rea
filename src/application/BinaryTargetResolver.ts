@@ -1,3 +1,4 @@
+import { hasCfbSignature } from "../domain/cfbFormat.js";
 import {
   artifactNameForClassification,
   namedArtifactFormat,
@@ -769,6 +770,7 @@ const detectArtifactFormat = async (
       "WebAssembly v1 artifacts are not supported by the native opening route",
       { constraint: "wasm_requires_static_inspection" },
     );
+  if (hasCfbSignature(magic)) return "cfb";
   if (nesContainerFormat(magic) !== undefined) {
     const parsed = parseInesLayout(magic, initial.size);
     throwIfTargetResolutionCancelled(signal);
@@ -892,6 +894,7 @@ const isArchiveFormat = (
     "uimage",
     "dmg",
     "pkg",
+    "cfb",
     "intel-hex",
     "srec",
     "esp-image",

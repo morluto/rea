@@ -614,6 +614,16 @@ A view is never more certain than its parent: a summary or other view of
 `inferred` Evidence is `inferred`. Other views are `derived`, unless the
 view kind itself infers, as described below.
 
+`open_binary` and `inspect_artifact` identify Compound File Binary (CFB)
+containers by their eight-byte signature, including CFB members inside an
+inspected archive. The reported format is `cfb`, independent of the filename;
+an `.msi` suffix alone does not establish CFB or Windows Installer semantics.
+Recognition does not validate the CFB header. Child stream inventory, MSI
+tables and cabinet expansion remain unavailable: root inventory reports
+`container-entries` coverage as `unknown`, nested occurrences carry the same
+limitation, and inspection records an unexplored branch without a next probe.
+`extract_artifact` refuses CFB because no extraction reader is available.
+
 `inspect_analysis_view` also accepts `api-surface` for retained HAR capture Evidence,
 grouping request lines by method, origin and format-rule path template. Templated
 segments are inferences. Because paging follows the full grouping, every page is

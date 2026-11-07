@@ -1,3 +1,4 @@
+import { CFB_INVENTORY_LIMITATION } from "./cfbFormat.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { ok, type Result } from "./result.js";
@@ -559,6 +560,19 @@ const allUnexploredBranches = (
       ),
     ),
   );
+  if (
+    inventory.occurrences.some(
+      ({ artifact_format }) => artifact_format === "cfb",
+    )
+  )
+    branches.push(
+      branch(
+        "format-specific-analysis-required",
+        CFB_INVENTORY_LIMITATION,
+        null,
+        evidenceId,
+      ),
+    );
   if (inventory.manifest.root_format === "unknown")
     branches.push(
       branch(

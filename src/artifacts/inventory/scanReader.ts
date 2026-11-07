@@ -1,3 +1,4 @@
+import { CFB_INVENTORY_LIMITATION } from "../../domain/cfbFormat.js";
 import type { AsarHeaderAdmission } from "../../config/asarHeaderAdmission.js";
 import {
   artifactContainerIntegrityDetails,
@@ -295,6 +296,8 @@ const visitArtifactEntries = async (
         occurrence.artifact_format = seaMainScript
           ? "javascript-bundle"
           : digested.classification.format;
+        if (occurrence.artifact_format === "cfb")
+          occurrence.limitations.push(CFB_INVENTORY_LIMITATION);
         occurrence.hash_status = digested.mismatched
           ? "mismatched"
           : "verified";

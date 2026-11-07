@@ -126,6 +126,7 @@ const TARGETS: TargetFixtures = {
   dfuse: { ...archive, format: "dfuse" },
   dmg: { ...archive, format: "dmg" },
   pkg: { ...archive, format: "pkg" },
+  cfb: { ...archive, format: "cfb" },
   "intel-hex": { ...archive, format: "intel-hex" },
   srec: { ...archive, format: "srec" },
   "esp-image": { ...archive, format: "esp-image" },

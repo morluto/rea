@@ -63,6 +63,7 @@ export const ARTIFACT_FORMAT_IDS = [
   "dmg",
   "zip",
   "pkg",
+  "cfb",
   "asar",
   "ines",
   "godot-pck",
@@ -112,6 +113,7 @@ const artifactFormatSchema = z.enum(ARTIFACT_FORMAT_IDS);
 const artifactContentFormatSchema = artifactFormatSchema.extract([
   "ines",
   "zip",
+  "cfb",
   "godot-pck",
   "unityfs",
   "wxapkg",
