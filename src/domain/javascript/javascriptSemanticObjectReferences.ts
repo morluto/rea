@@ -388,7 +388,9 @@ const escapedClassValues = (
   }
   const seen = new Set<t.Node>();
   const selectedExpressions = (root: t.Node, path: PropertyPath): void => {
-    const pending: JavaScriptSemanticObjectReference[] = [{ node: root, path }];
+    const pending: (JavaScriptSemanticObjectReference & {
+      readonly ancestors: readonly t.Node[];
+    })[] = [{ node: root, path, ancestors: [] }];
     const visited = new Map<t.Node, Set<string>>();
     for (let index = 0; index < pending.length; index++) {
       const current = pending[index];
@@ -397,17 +399,26 @@ const escapedClassValues = (
       const key = JSON.stringify(current.path);
       const paths = visited.get(node) ?? new Set<string>();
       if (paths.has(key)) continue;
+      if (current.ancestors.includes(node)) {
+        values.push({ node, path: current.path, escapes: true });
+        continue;
+      }
       paths.add(key);
       visited.set(node, paths);
+      const ancestors = [...current.ancestors, node];
+      const enqueue = (
+        ...references: readonly JavaScriptSemanticObjectReference[]
+      ) =>
+        pending.push(
+          ...references.map((reference) => ({ ...reference, ancestors })),
+        );
       if (current.path.length === 0) {
         expressions.push(node);
       } else if (t.isObjectExpression(node)) {
-        pending.push(
-          ...semanticObjectPropertyReferences(node, current.path, state),
-        );
+        enqueue(...semanticObjectPropertyReferences(node, current.path, state));
       } else if (t.isArrayExpression(node)) {
         for (const reference of arrayReferencedValues(node, current.path)) {
-          pending.push(reference);
+          enqueue(reference);
           if (reference.iterableFallbackPath !== undefined)
             values.push({
               node: reference.node,
@@ -416,19 +427,18 @@ const escapedClassValues = (
             });
         }
       } else if (t.isConditionalExpression(node)) {
-        pending.push(
+        enqueue(
           { node: node.consequent, path: current.path },
           { node: node.alternate, path: current.path },
         );
       } else if (t.isLogicalExpression(node)) {
-        pending.push(
+        enqueue(
           { node: node.left, path: current.path },
           { node: node.right, path: current.path },
         );
       } else if (t.isSequenceExpression(node)) {
         const last = node.expressions.at(-1);
-        if (last !== undefined)
-          pending.push({ node: last, path: current.path });
+        if (last !== undefined) enqueue({ node: last, path: current.path });
       } else if (t.isIdentifier(node)) {
         const binding = resolveSemanticBindingState(state, node, node.name);
         if (binding === undefined)
@@ -440,7 +450,7 @@ const escapedClassValues = (
             state.parentsByNode,
           );
           for (const initializer of origins.initializers)
-            pending.push({
+            enqueue({
               node: initializer.node,
               path: [...initializer.projection, ...current.path],
             });
@@ -451,9 +461,23 @@ const escapedClassValues = (
                 current.path,
                 "escape",
               );
-              if (path !== null) pending.push({ node: initializer.node, path });
+              if (path !== null) enqueue({ node: initializer.node, path });
             }
         }
+      } else if (t.isNewExpression(node)) {
+        const owners = semanticClassCandidates(node.callee, state);
+        if (owners.length === 0)
+          values.push({ node, path: current.path, escapes: true });
+        else
+          for (const owner of owners)
+            enqueue(
+              ...semanticClassPropertyReferences(
+                { owner, kind: "instance" },
+                current.path,
+                state,
+                activeGetters,
+              ),
+            );
       } else {
         values.push({ node, path: current.path, escapes: true });
       }

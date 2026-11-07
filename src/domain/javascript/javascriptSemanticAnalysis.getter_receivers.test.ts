@@ -239,6 +239,46 @@ describe("getters reached through unknown receiver keys", () => {
   });
 });
 
+it("terminates growing loop-carried destructuring paths without widening unrelated objects", () => {
+  expect(
+    resultValue(`
+    const untouched = { value: 1 };
+    const input = { x: {} };
+    var a = input, b = input;
+    for (let i = 0; i < 2; i++) { var { x: a } = b; var { x: b } = a; }
+    class R { child = a; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    new R().a.value = 2;
+    return untouched.value;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+it("follows a selected instance through an instance getter", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class Child { get container() { return { alias: shared }; } }
+    class Holder { get selected() { return new Child(); } }
+    const { selected } = new Holder();
+    class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("considers a replacement before delayed instance-field evaluation", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class Child { get container() { return { alias: shared }; } }
+    let child = {};
+    class R { child = child; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    child = new Child();
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
 describe("nested instances reached during getter widening", () => {
   it.each(["new Child()", "child"])(
     "retains aliases reached through %s during widening",

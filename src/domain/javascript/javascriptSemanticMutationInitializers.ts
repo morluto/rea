@@ -237,6 +237,14 @@ export const semanticReadInitializers = (
   ) {
     if (t.isLoop(parent)) return binding;
     if (t.isFunction(parent)) break;
+    // Instance field values run at construction, not at the class declaration.
+    // A later assignment may therefore be the field's actual initializer.
+    if (
+      (t.isClassProperty(parent) || t.isClassPrivateProperty(parent)) &&
+      !parent.static &&
+      parent.value === current
+    )
+      return binding;
     if (position === null) {
       if (t.isVariableDeclarator(parent)) {
         const declaration = parents.get(parent);
