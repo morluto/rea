@@ -299,26 +299,12 @@ export const fieldChecks = (
     return [{ kind: "text_equals", file, pointer: at, value: now }];
   const addedPlain = plainText(element);
   const seed = elementText(before ?? null);
-  const checks: Suggestion[] = [];
-  if (seedPlain.length >= MIN_FIELD_CHARS && now.includes(seedPlain))
-    checks.push({
-      kind: "text_contains",
-      file,
-      pointer: at,
-      value: seedPlain,
-    });
-  if (
-    addedPlain.length >= MIN_FIELD_CHARS &&
+  // The seed's own text already passes, so it is not a check. Only text the new record adds, which the seed does not hold, shows that the record is there.
+  return addedPlain.length >= MIN_FIELD_CHARS &&
     now.includes(addedPlain) &&
     !seed.includes(addedPlain)
-  )
-    checks.push({
-      kind: "text_contains",
-      file,
-      pointer: at,
-      value: addedPlain,
-    });
-  return checks.slice(0, MAX_FIELD_CHECKS);
+    ? [{ kind: "text_contains", file, pointer: at, value: addedPlain }]
+    : [];
 };
 
 /**
