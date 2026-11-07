@@ -158,10 +158,16 @@ const isCommonJsSourcePath = (path?: string): boolean => {
   return suffix === ".cjs" || suffix === ".cts";
 };
 
+/**
+ * Babel `sourceType` for one path. Only the CommonJS script wrapper is
+ * asserted: `.cts` keeps the module grammar because TypeScript
+ * `import x = require()` is valid only there, and its loader mode comes from
+ * the runtime context instead.
+ */
 const runtimeSourceTypeForPath = (
   path?: string,
 ): "commonjs" | "module" | "unambiguous" =>
-  isCommonJsSourcePath(path)
+  exactSuffix(path) === ".cjs"
     ? "commonjs"
     : isExplicitModuleSourcePath(path)
       ? "module"
