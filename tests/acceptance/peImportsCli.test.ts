@@ -366,3 +366,89 @@ cliTest(
     }
   },
 );
+
+cliTest(
+  "decodes legacy PE32 delay imports consistently through CLI and MCP",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-pe-imports-legacy-");
+    const call = await cli.sharedMcpCall!();
+    for (const kind of ["valid", "thunk", "optional"]) {
+      const malformed = kind === "thunk";
+      const badOptional = kind === "optional";
+      const bytes = peImportImage({
+        bits: 32,
+        delayVirtualAddresses: true,
+        delayDlls: [
+          {
+            name: "ADVAPI32.dll",
+            functions: [{ name: "RegOpenKeyExW", hint: 7 }, { ordinal: 12 }],
+          },
+        ],
+      });
+      const at = peImportFixtureOffset(bytes.readUInt32LE(152 + 96 + 13 * 8));
+      const intRva = bytes.readUInt32LE(at + 16) - 0x10000000;
+      if (malformed) bytes.writeUInt32LE(0x1000, peImportFixtureOffset(intRva));
+      if (badOptional)
+        for (const offset of [8, 20, 24])
+          bytes.writeUInt32LE(0x1000, at + offset);
+      const path = join(root, kind + ".exe");
+      await writeFile(path, bytes);
+      const result = await cli.run({
+        arguments: ["inspect-pe-imports", path, "--json"],
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      const response = await call("inspect_pe_imports", { path });
+      expect(response.isError).not.toBe(true);
+      const reports = [result.json, response.structuredContent].map(
+        (value) =>
+          toolContract("inspect_pe_imports").outputSchema.parse(value)
+            .normalized_result,
+      );
+      expect(reports[0]).toEqual(reports[1]);
+      for (const report of reports) {
+        expect(report.artifact.sha256).toBe(
+          createHash("sha256").update(bytes).digest("hex"),
+        );
+        expect(report.delay_imports[0]).toMatchObject({
+          name: "ADVAPI32.dll",
+          attributes: 0,
+          import_name_table_rva: intRva,
+          module_handle_rva: badOptional ? null : 0,
+          bound_import_rva: badOptional ? null : 0,
+          unload_information_table_rva: badOptional ? null : 0,
+          functions: malformed
+            ? [{ ordinal: 12, thunk_hex: "8000000c" }]
+            : [
+                {
+                  name: "RegOpenKeyExW",
+                  hint: 7,
+                  ilt_rva: intRva,
+                  thunk_hex: bytes
+                    .readUInt32LE(peImportFixtureOffset(intRva))
+                    .toString(16),
+                },
+                { ordinal: 12, thunk_hex: "8000000c" },
+              ],
+        });
+        expect(report.coverage).toMatchObject({
+          status: malformed || badOptional ? "partial" : "complete",
+          imports: 2,
+          delay_imports: malformed ? 1 : 2,
+        });
+        expect(report.imphash.md5).toBe("92cef6cc91a85825f3c8a0516517c66f");
+        if (malformed)
+          expect(report.issues[0]).toMatchObject({
+            code: "malformed_entry",
+            location: "0x1000",
+          });
+        else if (badOptional) {
+          expect(report.issues).toHaveLength(3);
+          expect(
+            report.issues.every((issue) => issue.code === "malformed_entry"),
+          ).toBe(true);
+        } else expect(report.issues).toEqual([]);
+      }
+      expect((await readFile(path)).equals(bytes)).toBe(true);
+    }
+  },
+);

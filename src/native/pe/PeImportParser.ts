@@ -265,6 +265,7 @@ export const parsePeImports = async (
   const readFunctions = async (
     nameTableRva: number,
     addressTableRva: number,
+    virtualAddresses = false,
   ): Promise<PeImportFunction[]> => {
     const thunkWidth = bits === 64 ? 8 : 4;
     const ordinalFlag = bits === 64 ? ORDINAL_FLAG64 : ORDINAL_FLAG32;
@@ -301,16 +302,18 @@ export const parsePeImports = async (
         });
         continue;
       }
-      if (thunk > 0x7fffffffn) {
+      const nameAddress = virtualAddresses ? thunk - base : thunk;
+      if (nameAddress < 0n || nameAddress > 0x7fffffffn) {
         issues.push({
           code: "malformed_entry",
           location: `0x${thunkHex}`,
-          message:
-            "A named import thunk uses bits outside its 31-bit hint/name RVA",
+          message: virtualAddresses
+            ? "A legacy named import VA is below the image base or outside the 31-bit hint/name RVA space"
+            : "A named import thunk uses bits outside its 31-bit hint/name RVA",
         });
         continue;
       }
-      const hintNameRva = Number(thunk);
+      const hintNameRva = Number(nameAddress);
       try {
         const hintAt = map(hintNameRva, 3);
         const hint = reader.u16(hintAt);
@@ -477,12 +480,14 @@ export const parsePeImports = async (
       if (descriptor === null) break;
       consume(spans, descriptor, DELAY_DESCRIPTOR_BYTES);
       const attributes = reader.u32(descriptor);
-      const nameRva = reader.u32(descriptor + 4);
-      const moduleHandleRva = reader.u32(descriptor + 8);
-      const importAddressTableRva = reader.u32(descriptor + 12);
-      const importNameTableRva = reader.u32(descriptor + 16);
-      const boundImportRva = reader.u32(descriptor + 20);
-      const unloadInformationTableRva = reader.u32(descriptor + 24);
+      let nameRva: number | null = reader.u32(descriptor + 4);
+      let moduleHandleRva: number | null = reader.u32(descriptor + 8);
+      let importAddressTableRva: number | null = reader.u32(descriptor + 12);
+      let importNameTableRva: number | null = reader.u32(descriptor + 16);
+      let boundImportRva: number | null = reader.u32(descriptor + 20);
+      let unloadInformationTableRva: number | null = reader.u32(
+        descriptor + 24,
+      );
       const timeDateStamp = reader.u32(descriptor + 28);
       if (
         attributes === 0 &&
@@ -497,16 +502,56 @@ export const parsePeImports = async (
         break;
       examinedDlls += 1;
       dllBudget(examinedDlls, input.max_dlls);
-      if ((attributes & 1) === 0) {
+      const virtualAddresses = (attributes & 1) === 0;
+      if (virtualAddresses && bits !== 32) {
         issues.push({
           code: "unsupported_form",
           location: hex(descriptorRva),
           message:
-            "Delay-load descriptor uses virtual addresses rather than RVAs; those entries are not decoded",
+            "PE32+ delay-load descriptor uses legacy virtual addresses; those entries are not decoded",
         });
         continue;
       }
-      const name = readName(nameRva, "Delay-load DLL name");
+      if (virtualAddresses) {
+        const toRva = (
+          address: number,
+          fieldOffset: number,
+          label: string,
+        ): number | null => {
+          if (address === 0) return 0;
+          if (BigInt(address) < base) {
+            issues.push({
+              code: "malformed_entry",
+              location: hex(descriptorRva + fieldOffset),
+              message:
+                "Legacy delay-load " +
+                label +
+                " VA " +
+                hex(address) +
+                " is below the image base " +
+                hex(base),
+            });
+            return null;
+          }
+          return Number(BigInt(address) - base);
+        };
+        nameRva = toRva(nameRva, 4, "DLL name");
+        moduleHandleRva = toRva(moduleHandleRva, 8, "module handle");
+        importAddressTableRva = toRva(
+          importAddressTableRva,
+          12,
+          "import address table",
+        );
+        importNameTableRva = toRva(importNameTableRva, 16, "import name table");
+        boundImportRva = toRva(boundImportRva, 20, "bound import table");
+        unloadInformationTableRva = toRva(
+          unloadInformationTableRva,
+          24,
+          "unload information table",
+        );
+      }
+      const name =
+        nameRva === null ? null : readName(nameRva, "Delay-load DLL name");
       delayImports.push({
         index,
         name,
@@ -520,17 +565,23 @@ export const parsePeImports = async (
         time_date_stamp: timeDateStamp,
         location: { offset: descriptor, bytes: DELAY_DESCRIPTOR_BYTES },
         functions:
-          importAddressTableRva === 0
-            ? missingTable(
-                descriptorRva,
-                "Delay-load descriptor has a zero import address table RVA; its functions are not decoded",
-              )
-            : importNameTableRva === 0
+          importAddressTableRva === null || importNameTableRva === null
+            ? []
+            : importAddressTableRva === 0
               ? missingTable(
                   descriptorRva,
-                  "Delay-load descriptor has a zero import name table RVA; its address table holds loader thunks rather than names, so its functions are not decoded",
+                  "Delay-load descriptor has a zero import address table RVA; its functions are not decoded",
                 )
-              : await readFunctions(importNameTableRva, importAddressTableRva),
+              : importNameTableRva === 0
+                ? missingTable(
+                    descriptorRva,
+                    "Delay-load descriptor has a zero import name table RVA; its address table holds loader thunks rather than names, so its functions are not decoded",
+                  )
+                : await readFunctions(
+                    importNameTableRva,
+                    importAddressTableRva,
+                    virtualAddresses,
+                  ),
       });
     }
     delayDirectoryResult = {
