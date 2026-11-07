@@ -30,11 +30,14 @@ skill for doing all of it from a request is
 - [Docker Engine](https://docs.docker.com/engine/install/) and its
   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/):
   add yourself to the `docker` group, then log in again.
-- agentenv-framework 0.9.1431, the version bundles target:
-  `uv tool install agentenv-framework==0.9.1431`. Its `agent-env` program is
-  named by the absolute `REA_AGENT_ENV_COMMAND`, which is then
-  `$HOME/.local/bin/agent-env`. Installing it with pip into a virtual
-  environment instead needs `python3.12-venv` on stock Ubuntu. REA runs its
+- agentenv-framework 0.9.1431, the version bundles target. Install
+  [uv](https://docs.astral.sh/uv/getting-started/installation/) first, then
+  run `uv tool install agentenv-framework==0.9.1431`. Set
+  `REA_AGENT_ENV_COMMAND` to the absolute path of the resulting `agent-env`
+  program, normally `$HOME/.local/bin/agent-env`; `command -v agent-env`
+  shows the path when its install directory is on your `PATH`. Installing it
+  with pip into a virtual environment instead needs `python3.12-venv` on
+  stock Ubuntu. REA runs its
   helper, `bridge/agentenv/computer.py`, with that runner's Python: the
   interpreter on the program's `#!` line, or the `python3` beside it in its
   virtual environment.

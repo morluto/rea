@@ -613,10 +613,18 @@ wherever these docs say `rea …`, run
 `node /absolute/path/to/rea/scripts/rea.mjs …`. Setup run this way registers
 the checkout's `scripts/rea.mjs` with your agents.
 
-After `git pull`, run `npm ci` and `npm run build:cached` again and restart
-your agents. For desktop builds, also pack the
-[build computer's runtime archive](desktop-build-computer.md#requirements)
-again.
+After `git pull`, run `npm ci` and `npm run build:cached` again. If the
+checkout's skill changed, refresh each installed copy before restarting its
+agent. For example, preview and review the Claude Code skill changes:
+
+```bash
+rea setup --skill-client claude_code --dry-run --json
+```
+
+Then apply the reviewed changes with `rea setup --skill-client claude_code --yes --json`.
+Substitute the relevant skill client; use the checkout's
+`node /absolute/path/to/rea/scripts/rea.mjs` form if `rea` is not linked. For desktop builds, also pack the [build computer's runtime
+archive](desktop-build-computer.md#requirements) again.
 
 ## Skill-only installation
 
