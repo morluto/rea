@@ -636,6 +636,7 @@ const inventoryResultFor = (method, params) => {
             },
           ],
           skipped_not_loaded: [],
+          skipped_overlay: [],
         },
         complete: !paged,
         next_cursor: paged ? "fixture-second-page" : null,

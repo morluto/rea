@@ -323,6 +323,11 @@ describe("Ghidra snapshot profile admission", () => {
       legacy: undefined,
     },
     {
+      parameter: "byte_search_coverage",
+      current: "separated-skipped-overlay-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "function_boundary_observations",
       current: "ghidra-function-boundary-limitations-v4",
       legacy: "ghidra-function-boundary-limitations-v3",

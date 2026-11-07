@@ -22,6 +22,7 @@ it.each(["0x20", "overlay:0x10", "invalid"])(
         bytes: 16,
         skipped_uninitialized: [],
         skipped_not_loaded: [],
+        skipped_overlay: [],
       },
       complete: true,
       next_cursor: null,
@@ -33,6 +34,39 @@ it.each(["0x20", "overlay:0x10", "invalid"])(
     expect(byteSearchResultSchema.safeParse(page).success).toBe(false);
   },
 );
+
+it("reports omitted overlays apart from blocks that are not loaded", () => {
+  const page = {
+    matches: [],
+    searched: {
+      blocks: [],
+      bytes: 0,
+      skipped_uninitialized: [],
+      skipped_not_loaded: [
+        { segment: ".symtab", start: "0x0", end: "0x17f", bytes: 384 },
+      ],
+      skipped_overlay: [
+        {
+          segment: "AUDIT_OVERLAY",
+          start: "AUDIT_OVERLAY:0x1000002d8",
+          end: "AUDIT_OVERLAY:0x1000002e7",
+          bytes: 16,
+        },
+      ],
+    },
+    complete: true,
+    next_cursor: null,
+  };
+  expect(byteSearchResultSchema.parse(page).searched).toMatchObject({
+    skipped_not_loaded: [{ segment: ".symtab" }],
+    skipped_overlay: [{ segment: "AUDIT_OVERLAY", bytes: 16 }],
+  });
+  // A page that folds overlays into another omission reason is rejected.
+  const { skipped_overlay: _omitted, ...folded } = page.searched;
+  expect(
+    byteSearchResultSchema.safeParse({ ...page, searched: folded }).success,
+  ).toBe(false);
+});
 
 it.each(["", "overlay:"])(
   "accepts matches at both inclusive coverage boundaries in address space %s",
@@ -52,6 +86,7 @@ it.each(["", "overlay:"])(
           bytes: 16,
           skipped_uninitialized: [],
           skipped_not_loaded: [],
+          skipped_overlay: [],
         },
         complete: true,
         next_cursor: null,

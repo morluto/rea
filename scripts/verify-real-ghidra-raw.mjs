@@ -760,8 +760,28 @@ async function verifyCrossBlockProject(target, targetSha256) {
       !all.matches.some((match) => match.address.startsWith("overlay_test:")),
     );
     assert.ok(
-      all.searched.skipped_not_loaded.some(
+      !all.matches.some((match) =>
+        match.address.startsWith("not_loaded_control:"),
+      ),
+    );
+    assert.ok(
+      all.searched.skipped_overlay.some(
         (block) => block.segment === "overlay_test",
+      ),
+    );
+    assert.ok(
+      !all.searched.skipped_not_loaded.some(
+        (block) => block.segment === "overlay_test",
+      ),
+    );
+    assert.ok(
+      all.searched.skipped_not_loaded.some(
+        (block) => block.segment === "not_loaded_control",
+      ),
+    );
+    assert.ok(
+      !all.searched.skipped_overlay.some(
+        (block) => block.segment === "not_loaded_control",
       ),
     );
     const overlay = await projectCall("search_bytes", {
@@ -772,6 +792,15 @@ async function verifyCrossBlockProject(target, targetSha256) {
     assert.deepEqual(
       overlay.matches.map((match) => match.address),
       ["overlay_test:0x60000000"],
+    );
+    const notLoaded = await projectCall("search_bytes", {
+      pattern,
+      start: "not_loaded_control:0x0",
+      end: "not_loaded_control:0x5",
+    });
+    assert.deepEqual(
+      notLoaded.matches.map((match) => match.address),
+      ["not_loaded_control:0x0"],
     );
     await projectCall("close_binary", {});
   } finally {

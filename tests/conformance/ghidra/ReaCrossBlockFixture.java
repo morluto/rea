@@ -9,6 +9,7 @@ public class ReaCrossBlockFixture extends GhidraScript {
     public void run() throws Exception {
         Memory memory = currentProgram.getMemory();
         Address base = toAddr("60000000");
+        Address other = toAddr("OTHER:0");
         int transaction = currentProgram.startTransaction("REA search-boundary fixture");
         try {
             memory.createInitializedBlock("cross_first", base,
@@ -24,6 +25,8 @@ public class ReaCrossBlockFixture extends GhidraScript {
             memory.createInitializedBlock("gap_second", gap.add(4),
                 new ByteArrayInputStream(new byte[] {(byte) 0xbe, (byte) 0xef}), 2, monitor, false);
             memory.createInitializedBlock("overlay_test", base,
+                new ByteArrayInputStream(new byte[] {(byte) 0xde, (byte) 0xad, 0x11, 0x22, (byte) 0xbe, (byte) 0xef}), 6, monitor, true);
+            memory.createInitializedBlock("not_loaded_control", other,
                 new ByteArrayInputStream(new byte[] {(byte) 0xde, (byte) 0xad, 0x11, 0x22, (byte) 0xbe, (byte) 0xef}), 6, monitor, true);
             currentProgram.endTransaction(transaction, true);
         } catch (Exception failure) {

@@ -166,6 +166,7 @@ export const byteSearchResultSchema = z
       bytes: z.int().nonnegative().max(Number.MAX_SAFE_INTEGER),
       skipped_uninitialized: z.array(coverageBlock),
       skipped_not_loaded: z.array(coverageBlock),
+      skipped_overlay: z.array(coverageBlock),
     }),
     complete: z.boolean(),
     next_cursor: z.string().min(1).nullable(),

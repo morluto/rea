@@ -336,9 +336,10 @@ must be constrained.
 Optional `start` and `end` addresses are inclusive and select one address space.
 A match must end at or before `end`, so `end` set inside a match excludes it.
 Without bounds, loaded memory blocks are eligible, in Ghidra address order.
-Blocks that are not loaded (file parts such as `.symtab`) and overlay blocks are
-listed in `searched.skipped_not_loaded` and are not searched; pass `start` or
-`end` in their address space to search them.
+Blocks that are not loaded (file parts such as `.symtab`) are listed in
+`searched.skipped_not_loaded`, and loaded overlay blocks are listed in
+`searched.skipped_overlay`. Neither is searched; pass `start` or `end` in their
+address space to search them.
 Overlapping matches are included, including across adjacent eligible initialized
 blocks in the same address space. Gaps and excluded or uninitialized blocks break
 a search run. Each match reports its address, starting segment, unique source file

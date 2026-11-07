@@ -75,6 +75,9 @@ it("retains byte-search coverage and rejects malformed pages before creating Evi
       skipped_not_loaded: [
         { segment: ".symtab", start: "0x0", end: "0x17f", bytes: 384 },
       ],
+      skipped_overlay: [
+        { segment: "OVERLAY", start: "0x500000", end: "0x50000f", bytes: 16 },
+      ],
     },
     complete: false,
     next_cursor: "continuation",
