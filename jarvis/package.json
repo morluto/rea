@@ -1,0 +1,12 @@
+{
+  "name": "jarvis",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Local Jarvis-style agent layer that orchestrates REA website teardowns",
+  "engines": { "node": ">=24" },
+  "scripts": {
+    "start": "node src/server.ts",
+    "test": "node --test test/*.test.ts"
+  }
+}
