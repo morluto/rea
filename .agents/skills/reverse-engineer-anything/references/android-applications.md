@@ -42,6 +42,13 @@ headless JADX MCP JAR remain caller-supplied; REA setup does not install or
 configure them. Configuration readiness does not establish successful analysis
 of a particular APK.
 
+For the audited JAR, use the pinned
+[1013503897/jadx-headless-mcp v0.7.1 release](https://github.com/1013503897/jadx-headless-mcp/releases/tag/v0.7.1)
+and follow REA's [download and SHA-256 verification steps](https://github.com/morluto/rea/blob/main/docs/android-analysis.md#supply-tools)
+before setting `REA_JADX_MCP_JAR`. A same-named npm package or GitHub repository
+is not proof of the pinned source; check the JAR's digest against REA's release
+metadata before using it as the audited engine.
+
 Linux and macOS use the POSIX owned-process boundary. Windows x64 requires the
 matching bundled native controls and uses an owned Job Object with bidirectional
 stdio. A full JDK, including `jdk.compiler`, is required on every host; Windows
