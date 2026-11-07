@@ -1,5 +1,5 @@
 import { copyFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { delimiter, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { expect, onTestFinished } from "vitest";
@@ -213,6 +213,17 @@ processTest(
       workspace.write(
         "probe.mjs",
         `
+import module from "node:module";
+const stripTypeScriptTypes = module.stripTypeScriptTypes;
+module.stripTypeScriptTypes = (source, options) => {
+  if (options?.mode === "transform") {
+    const cause = new TypeError("The property 'options.mode' must be one of: 'strip'.");
+    cause.code = "ERR_INVALID_ARG_VALUE";
+    throw cause;
+  }
+  return stripTypeScriptTypes(source, { ...options, mode: options?.mode ?? "strip" });
+};
+module.syncBuiltinESMExports();
 import { importVerifierSource } from "./scripts/lib/verifier-source-loader.mjs";
 const url = new URL("./scripts/lib/owner.mts", import.meta.url);
 const first = await importVerifierSource(url);
@@ -233,7 +244,16 @@ console.log(JSON.stringify({
     const result = await processes.run(
       process.execPath,
       [workspace.path("probe.mjs")],
-      { cwd: workspace.root, timeoutMs: 20_000 },
+      {
+        cwd: workspace.root,
+        timeoutMs: 20_000,
+        env: {
+          ...process.env,
+          NODE_PATH: [resolve("node_modules"), process.env.NODE_PATH]
+            .filter(Boolean)
+            .join(delimiter),
+        },
+      },
     );
     expect(result.exitCode, result.stderr).toBe(0);
     expect(JSON.parse(result.stdout)).toEqual({
