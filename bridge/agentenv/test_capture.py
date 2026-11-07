@@ -14,9 +14,12 @@ class CaptureListingTest(unittest.TestCase):
             root_path = Path(root)
             (root_path / "plain.txt").write_bytes(b"x")
             output = root_path / "listing.json"
+            folders = ["linked-dir", "ordinary-dir"]
+            observed_folders = []
 
             def fake_walk(_root):
-                yield str(root_path), ["linked-dir"], ["plain.txt"]
+                yield str(root_path), folders, ["plain.txt"]
+                observed_folders.append(folders.copy())
 
             def fake_islink(path):
                 return str(path).endswith("linked-dir")
@@ -43,6 +46,7 @@ class CaptureListingTest(unittest.TestCase):
                     )
                 ],
             )
+            self.assertEqual(observed_folders, [["ordinary-dir"]])
 
 
 if __name__ == "__main__":
