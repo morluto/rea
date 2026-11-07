@@ -649,6 +649,59 @@ describe("Pi project-scoped inherited environment validation", () => {
     expect(piStatus?.remediation).toContain(client.configPath);
     expect(piStatus?.remediation).not.toContain(projectConfigPath);
   });
+
+  it("reports user-scoped invalid status when trusted project partial override inherits invalid user registration schema", async () => {
+    const home = await createTestTempDirectory("rea-pi-project-schema-home-");
+    const projectDir = await createTestTempDirectory(
+      "rea-pi-project-schema-cwd-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    await trustPiProject(home, projectDir);
+
+    const client = supportedClients(home).find(({ name }) => name === "pi");
+    if (client === undefined) throw new Error("missing pi client");
+
+    await mkdir(dirname(client.configPath), { recursive: true });
+    await writeFile(
+      client.configPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: 123,
+          },
+        },
+      }),
+    );
+
+    const projectConfigDir = join(projectDir, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            enabled: false,
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const piStatus = statuses.find(({ client: c }) => c === "pi");
+    expect(piStatus).toMatchObject({
+      client: "pi",
+      state: "invalid",
+      config_path: client.configPath,
+    });
+    expect(piStatus?.scope).toBeUndefined();
+    expect(piStatus?.remediation).not.toContain(projectConfigPath);
+    expect(piStatus?.remediation).not.toContain(
+      "REA setup writes only user-level configuration",
+    );
+  });
 });
 
 describe("Pi standalone partial override validation", () => {
@@ -788,7 +841,55 @@ describe("Pi project-scoped launcher provenance and fallback", () => {
     expect(piStatus?.remediation).toContain("rea setup --client pi");
     expect(piStatus?.remediation).toContain(projectConfigPath);
   });
+});
 
+describe("Pi project-scoped disabled launcher package update", () => {
+  it("includes activation repair alongside package update when project-scoped registration has outdated package and is disabled", async () => {
+    const { home } = await piClient();
+    const projectDir = await createTestTempDirectory(
+      "rea-pi-disabled-project-launcher-cwd-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+    await trustPiProject(home, projectDir);
+
+    const staleCommand = ["npx", "-y", "rea-agents@1.0.0", "mcp"];
+
+    const projectConfigDir = join(projectDir, ".pi");
+    await mkdir(projectConfigDir, { recursive: true });
+    const projectConfigPath = resolve(projectConfigDir, "mcp.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: staleCommand[0],
+            args: staleCommand.slice(1),
+            enabled: false,
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const piStatus = statuses.find(({ client }) => client === "pi");
+    expect(piStatus).toMatchObject({
+      client: "pi",
+      state: "stale",
+      scope: "project",
+      config_path: projectConfigPath,
+    });
+    expect(piStatus?.remediation).toContain(
+      `update the package version in ${projectConfigPath}`,
+    );
+    expect(piStatus?.remediation).toContain(
+      `Update or remove the rea registration in ${projectConfigPath}`,
+    );
+  });
+});
+
+describe("Pi project-scoped fallback on sibling servers", () => {
   it("falls back to user missing when project file only has sibling servers", async () => {
     const home = await createTestTempDirectory("rea-pi-sibling-only-home-");
     const projectDir = await createTestTempDirectory(

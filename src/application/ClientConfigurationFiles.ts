@@ -21,6 +21,7 @@ export type ClientRegistrationScope = "user" | "project";
 /** A parsed layer retains its path so rereading the write target replaces only that layer. */
 export interface ClientConfigurationSource extends ClientConfigurationDocument {
   readonly sourcePath: string;
+  readonly scope?: ClientRegistrationScope;
 }
 
 const invalidEnvironment = (
@@ -165,7 +166,7 @@ export const readClientConfigurationFiles = async (
             platform,
           ),
         );
-      documents.push({ ...document.value, sourcePath: path });
+      documents.push({ ...document.value, sourcePath: path, scope: "user" });
     }
   }
   if (effectiveValidation) {
@@ -327,6 +328,37 @@ const contributingEnvironmentSource = (
   });
 };
 
+export const contributingRegistrationSource = (
+  sources: readonly ClientConfigurationSource[],
+  error: ConfigurationError,
+): ClientConfigurationSource | undefined => {
+  const rejectedSettings = new Set(
+    error.settings.map(({ setting }) => setting),
+  );
+  const explicit = [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    return Object.keys(server).some((key) => rejectedSettings.has(key));
+  });
+  if (explicit !== undefined) return explicit;
+  const launcherDoc = [...sources].reverse().find((doc) => {
+    const server = effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey);
+    if (!isObject(server)) return false;
+    return (
+      Object.hasOwn(server, "command") ||
+      Object.hasOwn(server, "args") ||
+      Object.hasOwn(server, "type") ||
+      Object.hasOwn(server, "transport")
+    );
+  });
+  if (launcherDoc !== undefined) return launcherDoc;
+  return [...sources].reverse().find((doc) => {
+    return (
+      effectiveClientServer(doc, PRODUCT_IDENTITY.mcpServerKey) !== undefined
+    );
+  });
+};
+
 const isPiPartialServerOverride = (
   entry: unknown,
 ): entry is Record<string, unknown> =>
@@ -432,6 +464,7 @@ export interface EffectiveClientRegistrationConfiguration {
   readonly launcherConfigPath?: string;
   readonly activationScope?: ClientRegistrationScope;
   readonly activationConfigPath?: string;
+  readonly sources?: readonly ClientConfigurationSource[];
 }
 
 /** Read the configuration the client will load across project and user scopes. */
@@ -622,6 +655,11 @@ export const readEffectiveClientRegistrationConfiguration = async (
               invalidEnvironment(errorPath, effectiveEnv.error, errorScope),
             );
           }
+          const projectSource: ClientConfigurationSource = {
+            ...projectDoc,
+            sourcePath: projectPath,
+            scope: "project",
+          };
           return ok({
             document: effectiveDoc,
             configPath: projectPath,
@@ -630,6 +668,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
             launcherConfigPath,
             activationScope: isProjectActivation ? "project" : "user",
             activationConfigPath,
+            sources: [...nativeSources.value, projectSource],
           });
         }
       }
@@ -748,6 +787,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
             launcherDoc?.sourcePath ?? winningProjectDoc.sourcePath,
           activationScope,
           activationConfigPath,
+          sources: allSources,
         });
       }
     }
@@ -804,6 +844,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
           ...(evaluatedProjectScope === undefined
             ? {}
             : { scope: evaluatedProjectScope }),
+          sources: nativeSources.value,
         }
       : {
           document: fallbackDocument,
@@ -811,6 +852,7 @@ export const readEffectiveClientRegistrationConfiguration = async (
           ...(evaluatedProjectScope === undefined
             ? {}
             : { scope: evaluatedProjectScope }),
+          sources: fallbackSources.value,
         },
   );
 };

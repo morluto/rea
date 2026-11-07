@@ -1,6 +1,7 @@
 import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import { readClientPolicyBlock } from "./GeminiClientSettings.js";
 import {
+  contributingRegistrationSource,
   readEffectiveClientRegistrationConfiguration,
   type ClientRegistrationScope,
 } from "./ClientConfigurationFiles.js";
@@ -239,6 +240,7 @@ export const readClientRegistrationInspections = async (
         launcherConfigPath,
         activationScope,
         activationConfigPath,
+        sources,
       } = configuration.value;
       selectedConfigPath = configPath;
       if (scope !== undefined) selectedScope = scope;
@@ -300,15 +302,26 @@ export const readClientRegistrationInspections = async (
           : client;
       const parsedRegistration = parseClientRegistration(raw, effectiveClient);
       if (!parsedRegistration.ok) {
+        const contributingDoc =
+          sources === undefined
+            ? undefined
+            : contributingRegistrationSource(sources, parsedRegistration.error);
+        const errorPath = contributingDoc?.sourcePath ?? configPath;
+        const errorScope: ClientRegistrationScope | undefined =
+          contributingDoc?.scope ??
+          (contributingDoc !== undefined &&
+          contributingDoc.sourcePath === client.configPath
+            ? "user"
+            : selectedScope);
         record({
           client: client.name,
-          config_path: configPath,
-          ...(selectedScope === undefined ? {} : { scope: selectedScope }),
+          config_path: errorPath,
+          ...(errorScope === "project" ? { scope: "project" } : {}),
           command: [],
           state: "invalid",
           remediation:
-            selectedScope === "project"
-              ? `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. REA setup writes only user-level configuration and does not modify project-scoped configuration at ${configPath}. Update or remove the rea registration in ${configPath}, then restart the client.`
+            errorScope === "project"
+              ? `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}. REA setup writes only user-level configuration and does not modify project-scoped configuration at ${errorPath}. Update or remove the rea registration in ${errorPath}, then restart the client.`
               : `${parsedRegistration.error.message}: ${parsedRegistration.error.settings.map(({ setting, constraint }) => `${setting}: ${constraint}`).join("; ")}`,
         });
         continue;
@@ -686,10 +699,15 @@ const packageVersionRemediation = (
   activation?: "enabled" | "disabled" | "unknown",
   activationConfigPath?: string,
 ): string => {
-  if (launcherScope === "project")
-    return `This project-scoped registration in ${launcherConfigPath ?? configPath ?? client.configPath} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherConfigPath ?? configPath ?? client.configPath}, then restart the client.`;
-  const base = `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
-  if (scope === "project" && activation === "disabled") {
+  const launcherTarget = launcherConfigPath ?? configPath ?? client.configPath;
+  const base =
+    launcherScope === "project"
+      ? `This project-scoped registration in ${launcherTarget} requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA setup writes only user-level configuration; update the package version in ${launcherTarget}, then restart the client.`
+      : `This registration requests ${packageReference}, while the current REA CLI package is ${PRODUCT_IDENTITY.packageVersion}. REA does not resolve package-runner requests during doctor; update the registration with rea setup --client ${client.name}, then restart the client.`;
+  if (
+    (scope === "project" || launcherScope === "project") &&
+    activation === "disabled"
+  ) {
     const target = activationConfigPath ?? configPath ?? client.configPath;
     return `${base} REA setup writes only user-level client configuration and does not modify project-scoped configuration at ${target}. Update or remove the rea registration in ${target}, then restart the client.`;
   }

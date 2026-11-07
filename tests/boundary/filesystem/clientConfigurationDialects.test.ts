@@ -1174,6 +1174,119 @@ describe("OpenCode inherited environment error provenance", () => {
   });
 });
 
+describe("OpenCode inherited registration schema error provenance", () => {
+  it("reports user-scoped invalid status when OpenCode project inherits invalid user registration schema", async () => {
+    const home = await createTestTempDirectory(
+      "rea-opencode-invalid-user-schema-home-",
+    );
+    const projectDir = await createTestTempDirectory(
+      "rea-opencode-invalid-user-schema-proj-",
+    );
+    vi.spyOn(process, "cwd").mockReturnValue(projectDir);
+
+    const userConfigPath = join(home, ".config", "opencode", "opencode.json");
+    await mkdir(join(home, ".config", "opencode"), { recursive: true });
+    await writeFile(
+      userConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              type: "remote",
+              command: ["rea", "mcp"],
+            },
+          },
+        },
+      }),
+    );
+
+    const projectConfigPath = resolve(projectDir, "opencode.json");
+    await writeFile(
+      projectConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              disabled: true,
+            },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const status = statuses.find(({ client }) => client === "opencode");
+    expect(status).toMatchObject({
+      client: "opencode",
+      state: "invalid",
+      config_path: userConfigPath,
+    });
+    expect(status?.scope).toBeUndefined();
+    expect(status?.remediation).toContain(userConfigPath);
+    expect(status?.remediation).not.toContain(projectConfigPath);
+    expect(status?.remediation).not.toContain(
+      "REA setup writes only user-level configuration",
+    );
+  });
+
+  it("reports ancestor project-scoped invalid status when descendant project inherits invalid ancestor registration schema", async () => {
+    const home = await createTestTempDirectory(
+      "rea-opencode-ancestor-schema-home-",
+    );
+    const parentDir = await createTestTempDirectory(
+      "rea-opencode-ancestor-schema-parent-",
+    );
+    await mkdir(join(parentDir, ".git"), { recursive: true });
+    const subDir = join(parentDir, "sub");
+    await mkdir(subDir, { recursive: true });
+    vi.spyOn(process, "cwd").mockReturnValue(subDir);
+
+    const ancestorConfigPath = resolve(parentDir, "opencode.json");
+    await writeFile(
+      ancestorConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              type: "remote",
+              command: ["rea", "mcp"],
+            },
+          },
+        },
+      }),
+    );
+
+    const descendantConfigPath = resolve(subDir, "opencode.json");
+    await writeFile(
+      descendantConfigPath,
+      JSON.stringify({
+        mcp: {
+          servers: {
+            rea: {
+              disabled: true,
+            },
+          },
+        },
+      }),
+    );
+
+    const statuses = await readClientRegistrationStatuses(home, undefined, {
+      environment: {},
+    });
+    const status = statuses.find(({ client }) => client === "opencode");
+    expect(status).toMatchObject({
+      client: "opencode",
+      state: "invalid",
+      scope: "project",
+      config_path: ancestorConfigPath,
+    });
+    expect(status?.remediation).toContain(ancestorConfigPath);
+    expect(status?.remediation).not.toContain(descendantConfigPath);
+  });
+});
+
 describe("OpenCode project-scoped inheritance and fallback", () => {
   it("preserves inherited type and command when project layer only specifies disabled: true", async () => {
     const { home, client } = await openCodeClient("rea-opencode-inherit-");
