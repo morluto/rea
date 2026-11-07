@@ -50,7 +50,7 @@ const official = <
 export const OFFICIAL_TOOL_CONTRACTS = [
   official(
     "annotate_native_function",
-    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
+    "Atomically update one function name and/or entry comments, read them back, and return a refreshed complete function dossier. Ghidra resolves an interior address to its containing function and applies edits at the function entry, not at the selected instruction; use procedure_address first to find that entry. Ghidra edits owned Program metadata; original executable bytes remain unchanged. Empty comment text clears that comment. With REA_GHIDRA_CHECKPOINT_DIR configured at startup, normal close saves edits for the next process; ephemeral mode discards them. CLI follows the same setting after returning its updated dossier. Check binary_session capabilities for the current mode. Invalid edits roll back the entire operation. Windows P0 and providers without this capability are unsupported.",
     nativeFunctionAnnotationsInputSchema,
   ),
   official(
