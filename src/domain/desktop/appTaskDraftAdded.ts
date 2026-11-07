@@ -152,6 +152,17 @@ export const attributeChecks = (
     );
 };
 
+/**
+ * A field's text with save-time leaves removed. Joining those leaves into the
+ * field would hide the stamp from `isStamp` and make a later save of only
+ * that time fail the check.
+ */
+const keptFieldText = (node: JsonValue): string => {
+  if (typeof node === "string") return isStamp(node) ? "" : node;
+  if (!isXmlElement(node)) return "";
+  return node.children.map((child) => keptFieldText(child)).join("");
+};
+
 /** The nearest ancestor both ends hold that a check names without a step by position. */
 const keptNamedAncestor = (context: AddedContext, pointer: string) => {
   const { ends } = context;
@@ -198,7 +209,7 @@ export const fieldChecks = (
     const key = keys[index] ?? String(index);
     const fieldAt = `${pointer}/children/${key.startsWith("[") ? escapeToken(key) : key}`;
     if (ID_FIELD.test(field.name) || inSplitDate(ends.final, fieldAt)) return;
-    const value = elementText(field);
+    const value = keptFieldText(field);
     const text = value.trim();
     if (
       text.length < MIN_FIELD_CHARS ||
