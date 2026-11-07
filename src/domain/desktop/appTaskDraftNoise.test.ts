@@ -699,30 +699,56 @@ describe("draftTaskFiles when a sibling lock changed", () => {
       ...statePath(role, format, before, after),
       reasons: ["selected_path" as const],
     });
-    const files = draftOf({
-      ".config/app/settings.json": marked(
-        "application_state",
-        "json",
-        { size: 1 },
-        { size: 2 },
-      ),
-      "Documents/plan.vym": marked(
-        "document",
-        "text",
-        text("map"),
-        text("map"),
-      ),
-      "Documents/plan.vym.lock": marked(
-        "document",
-        "text",
-        text("lock"),
-        text("held"),
-      ),
-    });
+    const files = draftOf(
+      {
+        ".config/app/settings.json": marked(
+          "application_state",
+          "json",
+          { size: 1 },
+          { size: 2 },
+        ),
+        "Documents/plan.vym": marked(
+          "document",
+          "text",
+          text("map"),
+          text("map"),
+        ),
+        "Documents/plan.vym.lock": marked(
+          "document",
+          "text",
+          text("lock"),
+          text("held"),
+        ),
+      },
+      ["Documents"],
+    );
     const settings = files.find(
       (file) => file.file === ".config/app/settings.json",
     );
 
     expect(settings?.suggested).not.toEqual([]);
+  });
+
+  it("drafts a lock that was selected itself, beside the file it names", () => {
+    const files = draftOf(
+      {
+        "Documents/plan.vym": statePath(
+          "document",
+          "text",
+          text("map"),
+          text("map"),
+        ),
+        "Documents/plan.vym.lock": statePath(
+          "document",
+          "text",
+          text("lock"),
+          text("held"),
+        ),
+      },
+      ["Documents/plan.vym.lock"],
+    );
+    const lock = files.find((file) => file.file === "Documents/plan.vym.lock");
+
+    expect(lock?.suggested).not.toEqual([]);
   });
 });
