@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { jsonValueSchema } from "../../../src/domain/jsonValue.js";
 import { nativeLoadImageSchema } from "../../../src/domain/native/nativeLoadImage.js";
 import { nativeApiInspectionResultSchema } from "../../../src/domain/native/nativeApiBoundary.js";
+import type { NativePrototypeConflict } from "../../../src/domain/native/nativeApiBoundary.js";
 import { functionDossierSchema } from "../../../src/domain/native/functionDossier.js";
 import { ok } from "../../../src/domain/result.js";
 import { ghidraFunctionDossier } from "../../../src/domain/ghidraValues.fixture.js";
@@ -183,6 +184,151 @@ it.each([
     }
   },
 );
+
+const prototypeConflicts = (): NativePrototypeConflict[] => [
+  {
+    kind: "stack-argument-read",
+    inferred_signature: "undefined f(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x406400",
+    instruction: "FLD qword ptr [EBP + 0x8]",
+    frame_offset_bytes: 8,
+    unresolved_assumptions: [
+      "The frame-relative read is not proof of a source-level parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined f(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401b10",
+    instruction: "RET 0x14",
+    cleanup_bytes: 20,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "The cleanup difference does not prove a fifth source parameter.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined g(int, int, int, int)",
+    signature_source: "analysis",
+    inferred_parameter_count: 4,
+    instruction_address: "0x401c00",
+    instruction: "RET 0x0",
+    cleanup_bytes: 0,
+    inferred_stack_bytes: 16,
+    unresolved_assumptions: [
+      "A zero-byte cleanup does not establish the compiler's calling convention.",
+    ],
+  },
+  {
+    kind: "return-stack-cleanup",
+    inferred_signature: "undefined h(void)",
+    signature_source: "analysis",
+    inferred_parameter_count: 0,
+    instruction_address: "0x401d00",
+    instruction: "RET 0x8",
+    cleanup_bytes: 8,
+    inferred_stack_bytes: 0,
+    unresolved_assumptions: [
+      "A nonzero cleanup does not establish a source-level parameter.",
+    ],
+  },
+];
+
+const connectPrototypeConflictHarness = async (name: string) => {
+  const dossier = functionDossierSchema.parse(ghidraFunctionDossier());
+  if (!dossier.native_api?.available) throw new Error("Expected native API");
+  const conflicts = prototypeConflicts();
+  dossier.native_api.prototype_conflicts = conflicts;
+  const harness = await connectGhidraMcp(name, async (operation) => {
+    if (operation !== "analyze_function")
+      throw new Error(`Unexpected operation: ${operation}`);
+    return ok(jsonValueSchema.parse({ value: dossier, limitations: [] }));
+  });
+  return { harness, conflicts };
+};
+
+describe("Ghidra prototype conflict diagnostics", () => {
+  it("reports prototype conflicts in the summary and complete dossier", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-analysis",
+    );
+    try {
+      const summary = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(summary.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, summary.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        summary: { counts: { prototype_conflicts: conflicts.length } },
+      });
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, analyze.structuredContent)
+          .normalized_result,
+      ).toMatchObject({
+        native_api: { prototype_conflicts: conflicts },
+      });
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+
+  it("retains prototype conflicts through inspection and selected views", async () => {
+    const { harness, conflicts } = await connectPrototypeConflictHarness(
+      "ghidra-prototype-conflicts-views",
+    );
+    try {
+      const analyze = await harness.mcp.callTool({
+        name: "analyze_function",
+        arguments: { procedure: "fixture_main", detail: "complete" },
+      });
+      expect(analyze.isError).not.toBe(true);
+      const evidence = sessionEvidence(
+        harness.session,
+        analyze.structuredContent,
+      );
+      const inspection = await harness.mcp.callTool({
+        name: "inspect_native_api",
+        arguments: { procedure: "fixture_main" },
+      });
+      expect(inspection.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, inspection.structuredContent)
+          .normalized_result,
+      ).toMatchObject({ boundary: { prototype_conflicts: conflicts } });
+      const view = await harness.mcp.callTool({
+        name: "inspect_analysis_view",
+        arguments: {
+          source: {
+            kind: "retained-evidence",
+            evidence_id: evidence.evidence_id,
+          },
+          view: { kind: "native", facet: "native_api", offset: 0, limit: 64 },
+        },
+      });
+      expect(view.isError).not.toBe(true);
+      expect(
+        sessionEvidence(harness.session, view.structuredContent),
+      ).toMatchObject({
+        normalized_result: { item: { prototype_conflicts: conflicts } },
+      });
+    } finally {
+      await harness.close();
+    }
+  }, 30_000);
+});
 
 describe("Ghidra MCP native API evidence", () => {
   it("retains transient failure Evidence without freezing the composed API inspection", async () => {
