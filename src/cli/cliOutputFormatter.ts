@@ -344,20 +344,26 @@ const escapeTableCell = (value: string): string =>
     .replace(/\r\n|\r|\n/g, "<br>");
 
 const encodeMarkdownWhitespace = (whitespace: string): string =>
-  whitespace.replace(/\s/g, (character) => `&#${character.charCodeAt(0)};`);
+  whitespace.replace(/[\s\p{White_Space}]/gu, (character) => {
+    const codePoint = character.codePointAt(0);
+    if (codePoint === undefined || (codePoint >= 0x80 && codePoint <= 0x9f)) {
+      return character;
+    }
+    return `&#${codePoint};`;
+  });
 
 /** Heading and paragraph facts are literal data, including block syntax. */
 const escapeMarkdownText = (value: string): string =>
   escapeTableCell(value)
     .replace(/^(\s*)([-+=])/, "$1\\$2")
     .replace(/^(\s*\d{1,9})([.)])(?=\s|$)/, "$1\\$2")
-    .replace(/^[ \t]+/, encodeMarkdownWhitespace)
-    .replace(/[ \t]+$/u, encodeMarkdownWhitespace);
+    .replace(/^[\s\p{White_Space}]+/u, encodeMarkdownWhitespace)
+    .replace(/[\s\p{White_Space}]+$/u, encodeMarkdownWhitespace);
 
 const markdownHeading = (path: readonly string[]): string =>
   `## ${escapeMarkdownText(path.join("."))}\n\n`;
 
-const markdownEdgeWhitespace = /[\t \p{Z}\ufeff]/u;
+const markdownEdgeWhitespace = /[\t \p{Z}\ufeff\u0085]/u;
 
 /** Encode edge spacing that Markdown can represent as character references. */
 export const encodeMarkdownTableCell = (value: string): string => {

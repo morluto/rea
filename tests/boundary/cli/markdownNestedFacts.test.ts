@@ -110,6 +110,71 @@ it("retains nested facts in standalone Markdown table cells and mixed arrays", a
   expect(JSON.parse(renderCliDocument(value, "json", false))).toEqual(value);
 });
 
+it("preserves leading and trailing Unicode whitespace in Markdown table keys and values", async () => {
+  const value = [
+    {
+      "\u00a0name": "\u00a0value\u00a0",
+      name: "value",
+      "\u202fname\u202f": "\u202fvalue\u202f",
+      "\u2003name\u2003": "\u2003value\u2003",
+      "\u0085name": "\u0085value\u0085",
+    },
+  ];
+  const markdown = renderCliDocument(value, "md", false);
+  expect(markdown).toContain("&#160;name");
+  expect(markdown).toContain("&#8239;name&#8239;");
+  expect(markdown).toContain("&#8195;name&#8195;");
+  expect(markdown).not.toContain("&#133;");
+  expect(markdown).toContain("\u0085name");
+  const renderer = await createMarkdownRenderer(process.cwd(), {
+    linkify: false,
+  });
+  const text = (node: DefaultTreeAdapterTypes.Node): string =>
+    node.nodeName === "#text" && "value" in node
+      ? node.value
+      : "childNodes" in node
+        ? node.childNodes.map(text).join("")
+        : "";
+  const rendered = text(parseFragment(renderer.render(markdown)));
+  expect(rendered).toContain("\u00a0name");
+  expect(rendered).toContain("\u00a0value\u00a0");
+  expect(rendered).toContain("\u202fname\u202f");
+  expect(rendered).toContain("\u202fvalue\u202f");
+  expect(rendered).toContain("\u2003name\u2003");
+  expect(rendered).toContain("\u2003value\u2003");
+  expect(rendered).toContain("\u0085name");
+  expect(rendered).toContain("\u0085value\u0085");
+  expect(rendered).not.toContain("…");
+});
+
+it("preserves leading and trailing Unicode whitespace in Markdown text facts", async () => {
+  const value = {
+    plain: "\u00a0leading and trailing\u00a0",
+    narrow: "\u202fnarrow space\u202f",
+    control: "\u0085c1 newline\u0085",
+  };
+  const markdown = renderCliDocument(value, "md", false);
+  expect(markdown).toContain("&#160;leading and trailing&#160;");
+  expect(markdown).toContain("&#8239;narrow space&#8239;");
+  expect(markdown).not.toContain("&#133;");
+  expect(markdown).toContain("\u0085c1 newline\u0085");
+
+  const renderer = await createMarkdownRenderer(process.cwd(), {
+    linkify: false,
+  });
+  const text = (node: DefaultTreeAdapterTypes.Node): string =>
+    node.nodeName === "#text" && "value" in node
+      ? node.value
+      : "childNodes" in node
+        ? node.childNodes.map(text).join("")
+        : "";
+  const rendered = text(parseFragment(renderer.render(markdown)));
+  expect(rendered).toContain("\u00a0leading and trailing\u00a0");
+  expect(rendered).toContain("\u202fnarrow space\u202f");
+  expect(rendered).toContain("\u0085c1 newline\u0085");
+  expect(rendered).not.toContain("…");
+});
+
 workspaceCliTest(
   "preserves archive inventory facts through public Markdown and JSON output",
   async ({ cli }) => {
