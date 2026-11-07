@@ -1,8 +1,11 @@
+import { projectPlaywrightTraceView } from "./playwrightTraceView.js";
+import { projectApiContractView } from "./apiContractView.js";
 import {
   isNativeObservationOperation,
   NATIVE_OBSERVATION_OPERATIONS,
 } from "../native/nativeObservation.js";
 import { projectNativeObservationView } from "./nativeObservationView.js";
+import { projectNativeInstructionReferencesView } from "./nativeInstructionReferencesView.js";
 import { projectNativeValueTraceView } from "./nativeValueTraceView.js";
 import { projectDevicetreeView } from "./devicetreeView.js";
 import { projectApkSignatureView } from "./apkSignatureView.js";
@@ -18,6 +21,7 @@ import {
 import { projectJavaScriptRoutesView } from "./javascriptRoutesView.js";
 import { projectWebBundleView } from "./webBundleView.js";
 import { projectSourceToBundleView } from "./sourceToBundleView.js";
+import { projectEndpointComparisonView } from "./endpointComparisonView.js";
 import { projectFeatureTraceView } from "./featureTraceView.js";
 import { projectNativeFeatureTraceView } from "./nativeFeatureTraceView.js";
 import { projectBatchDecompileView } from "./batchDecompileView.js";
@@ -61,6 +65,7 @@ import {
   createApiSurfaceAccumulator,
   projectWebNetworkApiSurfaceView,
 } from "./webNetworkApiSurfaceView.js";
+import { projectProcedurePseudocodeView } from "./procedurePseudocodeView.js";
 import { projectNativeFunctionView } from "./nativeFunctionView.js";
 import { projectEvmInterfaceView } from "./evmInterfaceView.js";
 import { projectArtifactInventoryView } from "./artifactInventoryView.js";
@@ -99,6 +104,7 @@ import {
   type InspectAnalysisViewInput,
 } from "./analysisViewRequest.js";
 import {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   byteEntropySummaryViewResultSchema,
   nativeExportsSummaryViewResultSchema,
@@ -152,6 +158,13 @@ import {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
+  apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -167,6 +180,7 @@ export {
   type AnalysisViewParent,
 };
 export {
+  procedurePseudocodeSummaryViewResultSchema,
   nativeObservationSummaryViewResultSchemas,
   nativeFeatureTraceSummaryViewResultSchema,
   byteEntropySummaryViewResultSchema,
@@ -220,6 +234,13 @@ export {
   nativeFunctionSummaryViewResultSchema,
   sourceToBundleSummaryViewResultSchema,
   sourceToBundlePageViewResultSchema,
+  endpointComparisonSummaryViewResultSchema,
+  apiContractSummaryViewResultSchema,
+  playwrightTraceSummaryViewResultSchema,
+  playwrightTracePageViewResultSchema,
+  apiContractPageViewResultSchema,
+  graphqlContractPageViewResultSchema,
+  endpointComparisonPageViewResultSchema,
   featureTraceSummaryViewResultSchema,
   batchDecompileSummaryViewResultSchema,
   featureTraceViewResultSchema,
@@ -261,7 +282,11 @@ const unsupportedParent = (
   new AnalysisUnsupportedTargetError(
     INSPECT_ANALYSIS_VIEW_OPERATION,
     parentArtifactPath(parent),
-    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views. Use completed Evidence from a supported parent operation with a compatible view. For a summary receipt, use its normalized_result.parent_evidence_id rather than the receipt's own evidence_id.`,
+    `Parent Evidence operation ${JSON.stringify(parent.operation)} does not support analysis views.`,
+    {
+      remediationAction:
+        "For an analysis view, select completed Evidence from a supported parent operation and a compatible view. For a summary receipt, use normalized_result.parent_evidence_id. To read this record, use the original complete Evidence directly; for session-retained records, request get_evidence_bundle with detail complete or use export_evidence_bundle. Complete bundle delivery may exceed the MCP response budget.",
+    },
   );
 
 const parentArtifactPath = (parent: AnalysisViewParent): string => {
@@ -304,6 +329,8 @@ const retain = (
 ): readonly [string, RetainedViewProjector] => [operation, project];
 
 const retainedViewProjectors = new Map<string, RetainedViewProjector>([
+  retain("procedure_pseudo_code", projectProcedurePseudocodeView),
+  retain("inspect_native_instruction", projectNativeInstructionReferencesView),
   retain("trace_feature", projectNativeFeatureTraceView),
   ...NATIVE_OBSERVATION_OPERATIONS.map((operation) =>
     retain(operation, projectNativeObservationView),
@@ -341,6 +368,12 @@ const retainedViewProjectors = new Map<string, RetainedViewProjector>([
   retain("inspect_gpu_code_objects", projectGpuCodeObjectsView),
   retain("match_native_functions", projectNativeFunctionMatchingView),
   retain("compare_source_to_bundle", projectSourceToBundleView),
+  retain("inspect_api_contract", projectApiContractView),
+  retain("inspect_playwright_trace", projectPlaywrightTraceView),
+  retain(
+    "compare_static_and_observed_endpoints",
+    projectEndpointComparisonView,
+  ),
   retain("trace_application_feature", projectFeatureTraceView),
   retain("batch_decompile", projectBatchDecompileView),
   retain("inspect_artifact", projectArtifactInventoryView),
@@ -442,6 +475,8 @@ export const projectAnalysisView = (
     parent.operation === "match_native_functions"
       ? NATIVE_FUNCTION_MATCHING_PREDICATE
       : parent.operation === "analyze_function" ||
+          parent.operation === "procedure_pseudo_code" ||
+          parent.operation === "inspect_native_instruction" ||
           parent.operation === "trace_feature" ||
           parent.operation === "batch_decompile" ||
           isNativeObservationOperation(parent.operation) ||

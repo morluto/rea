@@ -68,6 +68,24 @@ const TIMER_CANCEL_METHODS = [
   "clearImmediate",
 ] as const;
 
+/**
+ * Node keeps two timer handle families. `clearTimeout` and `clearInterval` are
+ * aliases that act only on a `Timeout` from `setTimeout` or `setInterval`, and
+ * `clearImmediate` acts only on an `Immediate` from `setImmediate`. Clearing
+ * within a family always cancels. Clearing across the families is
+ * runtime-dependent: `setImmediate` then `clearTimeout`/`clearInterval` never
+ * cancels, but `setTimeout` then `clearImmediate` reports as cancelled on some
+ * supported Node versions and fires on others. The analysis therefore treats a
+ * cross-family clear as unresolved rather than as proof that the timer kept
+ * running.
+ */
+const timerHandleFamily = (
+  method: JavaScriptSemanticTimerOperation["method"],
+): "timeout" | "immediate" =>
+  method === "setImmediate" || method === "clearImmediate"
+    ? "immediate"
+    : "timeout";
+
 interface AsyncEffectAnalysis {
   readonly eventOperations: readonly JavaScriptSemanticEventOperation[];
   readonly timerOperations: readonly JavaScriptSemanticTimerOperation[];
@@ -235,7 +253,7 @@ const emitterIdentity = (
   if (t.isIdentifier(node)) {
     const binding = resolveSemanticBindingState(state, node, node.name);
     if (binding !== undefined) {
-      const read = semanticBindingAtRead(binding, node, state.parentsByNode);
+      const read = semanticBindingAtRead(binding, node, state);
       const origins = [
         ...read.binding.initializers,
         ...read.binding.referenceInitializers,
@@ -383,7 +401,7 @@ const collectTimer = (input: TimerCollectionInput): void => {
           const snapshot = semanticBindingAtRead(
             handle,
             node.arguments[0],
-            state.parentsByNode,
+            state,
           );
           // A const handle has the same value inside a later closure even
           // when the source positions belong to different function bodies.
@@ -435,7 +453,15 @@ const resolveTimers = (
     const linked =
       candidate.handleRead?.origins.flatMap((origin) => {
         const schedule = schedules.get(origin);
-        return schedule === undefined ? [] : [schedule];
+        // A handle always clears its own family. Clearing across families is
+        // runtime-dependent, so it establishes no link in either direction.
+        if (
+          schedule === undefined ||
+          timerHandleFamily(schedule.method) !==
+            timerHandleFamily(candidate.method)
+        )
+          return [];
+        return [schedule];
       }) ?? [];
     const incompleteOrigins =
       candidate.handleRead !== null &&
