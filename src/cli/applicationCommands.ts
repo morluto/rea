@@ -1,3 +1,13 @@
+import { jsonInputArgument } from "./jsonInputArgument.js";
+import {
+  traceApplicationFeatureRequestSchema,
+  traceJavaScriptSemanticsRequestSchema,
+  compareApplicationVersionsRequestSchema,
+  compareJavaScriptExportShapesRequestSchema,
+} from "../contracts/javascript/applicationWorkflowInputContracts.js";
+import { applicationInventoryProjectionInputSchema } from "../domain/mobileApplicationGraphProjection.js";
+import { reconstructionObligationLedgerInputSchema } from "../domain/reconstructionObligationLedgerSchemas.js";
+import { reconstructionCoverageEvaluationInputSchema } from "../domain/reconstructionCoverageInput.js";
 import { registerPlaywrightTraceCommand } from "./playwrightTraceCommand.js";
 import { registerApiContractCommand } from "./apiContractCommand.js";
 import { Cli, z } from "incur";
@@ -11,7 +21,6 @@ import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
 import { registerSourceToBundleCommand } from "./sourceToBundleCommand.js";
 import { registerStaticObservedEndpointsCommand } from "./staticObservedEndpointsCommand.js";
-import { analysisInputErrorFromIssues } from "../domain/inputIssueProjection.js";
 import type { EvidenceLookup } from "../application/EvidenceInputResolver.js";
 import type { Evidence } from "../domain/evidence.js";
 import type { Result } from "../domain/result.js";
@@ -33,6 +42,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.traceApplicationFeature,
     operation: "trace_application_feature",
+    documentationSchema: traceApplicationFeatureRequestSchema,
     description:
       "Trace a typed seed through authenticated application Evidence JSON",
     workflow: async (input, lookup, signal) => {
@@ -47,6 +57,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.traceJavaScriptSemantics,
     operation: "trace_javascript_semantics",
+    documentationSchema: traceJavaScriptSemanticsRequestSchema,
     description:
       "Trace bounded static semantic relations through authenticated application Evidence",
     workflow: async (input, lookup, signal) => {
@@ -63,6 +74,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.compareApplicationVersions,
     operation: "compare_application_versions",
+    documentationSchema: compareApplicationVersionsRequestSchema,
     description:
       "Compare two authenticated JavaScript Application Graph versions",
     workflow: async (input, lookup, signal) => {
@@ -83,6 +95,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.compareJavaScriptExportShapes,
     operation: "compare_javascript_export_shapes",
+    documentationSchema: compareJavaScriptExportShapesRequestSchema,
     description:
       "Compare exact static JavaScript export return shapes without execution",
     workflow: async (input, lookup, signal) => {
@@ -101,6 +114,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectAndroidApplicationGraph,
     operation: "project_android_application_graph",
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated APK inventory Evidence into an Android application graph",
     workflow: async (input, lookup, signal) => {
@@ -117,6 +131,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectAppleApplicationGraph,
     operation: "project_apple_application_graph",
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated IPA or macOS app inventory Evidence into an Apple application graph",
     workflow: async (input, lookup, signal) => {
@@ -131,6 +146,7 @@ export const registerApplicationCommands = (
     logger,
     name: CLI_COMMANDS.projectHarmonyApplicationGraph,
     operation: "project_harmony_application_graph",
+    documentationSchema: applicationInventoryProjectionInputSchema,
     description:
       "Project authenticated HarmonyOS HAP, HSP, or App Pack inventory Evidence into an application graph",
     workflow: async (input, lookup, signal) => {
@@ -154,7 +170,7 @@ const registerObligationLedgerCommand = (
     name: CLI_COMMANDS.buildReconstructionObligationLedger,
     description:
       "Generate a deterministic Evidence-backed reconstruction obligation ledger page",
-    inputSchema: z.unknown(),
+    documentationSchema: reconstructionObligationLedgerInputSchema,
     workflow: async (input) => {
       const { buildReconstructionObligationLedgerEvidence } =
         await import("../application/ReconstructionObligationLedgerService.js");
@@ -168,7 +184,7 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     logger,
     name: CLI_COMMANDS.evaluateReconstructionCoverage,
     description: "Evaluate inline fail-closed reconstruction coverage",
-    inputSchema: z.unknown(),
+    documentationSchema: reconstructionCoverageEvaluationInputSchema,
     workflow: async (input) => {
       const { evaluateReconstructionCoverage } =
         await import("../application/ReconstructionCoverageService.js");
@@ -176,50 +192,41 @@ const registerCoverageCommand = (cli: CliInstance, logger: Logger): void =>
     },
   });
 
-interface JsonCommandOptions<Schema extends z.ZodType> {
+interface JsonCommandOptions {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly name: string;
   readonly description: string;
-  readonly inputSchema: Schema;
+  /** Describes decoded input for --schema; the workflow owns validation. */
+  readonly documentationSchema: z.ZodType;
   readonly workflow: (
-    input: z.output<Schema>,
+    input: unknown,
   ) => Promise<
     | { readonly ok: true; readonly value: JsonValue }
     | { readonly ok: false; readonly error: AnalysisError }
   >;
 }
 
-const registerJsonCommand = <Schema extends z.ZodType>({
+const registerJsonCommand = ({
   cli,
   logger,
   name,
   description,
-  inputSchema,
+  documentationSchema,
   workflow,
-}: JsonCommandOptions<Schema>): void => {
+}: JsonCommandOptions): void => {
   cli.command(name, {
     description,
     args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+      inputJson: jsonInputArgument(name, documentationSchema).describe(
+        "Inline workflow JSON or JSON file path",
+      ),
     }),
     run: ({ args }) =>
       logCliCommand(logger, name, async () => {
         const input = await parseCliJsonInput(args.inputJson, name);
         if (!input.ok) return input.error;
-        const parsed = inputSchema.safeParse(input.value);
-        if (!parsed.success)
-          return {
-            error: "Application workflow failed",
-            ...projectAnalysisError(
-              analysisInputErrorFromIssues(
-                name,
-                parsed.error.issues,
-                input.value,
-              ),
-            ),
-          };
-        const result = await workflow(parsed.data);
+        const result = await workflow(input.value);
         return result.ok
           ? result.value
           : {
@@ -237,12 +244,15 @@ const registerEvidenceJsonCommand = ({
   name,
   operation,
   description,
+  documentationSchema,
   workflow,
 }: {
   readonly cli: CliInstance;
   readonly logger: Logger;
   readonly name: string;
   readonly operation: string;
+  /** Describes decoded input for --schema; the workflow owns validation. */
+  readonly documentationSchema: z.ZodType;
   readonly description: string;
   readonly workflow: (
     input: unknown,
@@ -253,7 +263,9 @@ const registerEvidenceJsonCommand = ({
   cli.command(name, {
     description,
     args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+      inputJson: jsonInputArgument(name, documentationSchema).describe(
+        "Inline workflow JSON or JSON file path",
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

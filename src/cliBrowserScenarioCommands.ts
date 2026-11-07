@@ -1,3 +1,5 @@
+import { localPathStringSchema } from "./domain/localPath.js";
+import { jsonInputArgument } from "./cli/jsonInputArgument.js";
 import { Cli } from "incur";
 import { z } from "zod";
 
@@ -24,6 +26,20 @@ import type { JsonValue } from "./domain/jsonValue.js";
 import type { Logger } from "pino";
 
 const OPERATION = "capture_browser_scenario";
+// CLI paths are resolved before the shared scenario validator runs.
+const browserScenarioCliInputSchema = browserScenarioSchema.safeExtend({
+  browser: z.union(
+    browserScenarioSchema.shape.browser.options.map((browser) =>
+      browser.shape.mode.value === "launch"
+        ? browser.extend({
+            executable_path: localPathStringSchema.describe(
+              "Browser executable path, relative to the working directory or absolute",
+            ),
+          })
+        : browser,
+    ),
+  ),
+});
 
 /** Register controlled browser execution and offline validation commands. */
 export const registerBrowserScenarioCommands = (
@@ -40,11 +56,12 @@ export const registerBrowserScenarioCommands = (
     description:
       "Run one bounded Playwright browser scenario and return Evidence",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline browser scenario JSON, JSON file path, or '-' for stdin",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.captureBrowserScenario,
+        browserScenarioCliInputSchema,
+      ).describe(
+        "Inline browser scenario JSON, JSON file path, or '-' for stdin",
+      ),
     }),
     options: z.object(analysisEvidenceDeliveryOptions),
     run: ({ args, options: delivery }) =>
@@ -110,11 +127,12 @@ const registerBrowserScenarioValidationCommand = (
     description:
       "Validate one browser scenario without launching or attaching to a browser",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "Inline browser scenario JSON, JSON file path, or '-' for stdin",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.validateBrowserScenario,
+        browserScenarioCliInputSchema,
+      ).describe(
+        "Inline browser scenario JSON, JSON file path, or '-' for stdin",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>

@@ -1,3 +1,5 @@
+import { jsonInputArgument } from "./jsonInputArgument.js";
+import { compareWasmInterfacesInputSchema } from "../contracts/wasm/wasmComparisonContracts.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
@@ -31,11 +33,12 @@ export const registerWasmCommands = (
     description:
       "Compare core WASM interfaces from two exact inspection Evidence records",
     args: z.object({
-      input: z
-        .string()
-        .describe(
-          "Inline JSON or input file containing left/right Evidence or retained references and required scope",
-        ),
+      input: jsonInputArgument(
+        CLI_COMMANDS.compareWasmInterfaces,
+        compareWasmInterfacesInputSchema,
+      ).describe(
+        "Inline JSON or input file containing left/right Evidence or retained references and required scope",
+      ),
     }),
     options: z.object({ evidenceBundle: evidenceBundleOption }),
     run: ({ args, options }) =>

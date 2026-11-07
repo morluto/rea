@@ -1,3 +1,6 @@
+import { evidenceFileReferenceSchema } from "../domain/evidenceReference.js";
+import { inspectAnalysisViewInputSchema } from "../domain/analysisView/analysisView.js";
+import { jsonInputArgument } from "./jsonInputArgument.js";
 import { z } from "incur";
 
 import { inspectAnalysisView } from "../application/analysisView/AnalysisViewService.js";
@@ -19,6 +22,21 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 
+const inspectEvidenceBundleCliInputSchema =
+  getEvidenceBundleInputSchema.safeExtend({
+    path: importEvidenceBundleInputSchema.shape.path,
+  });
+
+const analysisViewCliInputSchema = inspectAnalysisViewInputSchema.extend({
+  source: z.union(
+    inspectAnalysisViewInputSchema.shape.source.options.map((source) =>
+      source.shape.kind.value === "evidence-file"
+        ? evidenceFileReferenceSchema.extend({ path: localPathStringSchema })
+        : source,
+    ),
+  ),
+});
+
 /** Project selected views of completed analysis Evidence through the CLI. */
 export const registerAnalysisViewCommands = (
   cli: CliInstance,
@@ -28,11 +46,12 @@ export const registerAnalysisViewCommands = (
     description:
       "Inspect a local Evidence bundle completely, as discovery metadata, as a page of selected complete records, or as direct-link and retained-closure membership.",
     args: z.object({
-      inputJson: z
-        .string()
-        .describe(
-          "JSON or JSON file with absolute path, detail, optional record filters, records or links offset/limit, and links traversal/link_status",
-        ),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.inspectEvidenceBundle,
+        inspectEvidenceBundleCliInputSchema,
+      ).describe(
+        "JSON or JSON file with absolute path, detail, optional record filters, records or links offset/limit, and links traversal/link_status",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -43,10 +62,9 @@ export const registerAnalysisViewCommands = (
             signal,
           );
           if (!input.ok) return input.error;
-          const schema = getEvidenceBundleInputSchema.safeExtend({
-            path: importEvidenceBundleInputSchema.shape.path,
-          });
-          const parsed = schema.safeParse(input.value);
+          const parsed = inspectEvidenceBundleCliInputSchema.safeParse(
+            input.value,
+          );
           if (!parsed.success)
             return {
               error: "Evidence bundle inspection failed",
@@ -75,7 +93,10 @@ export const registerAnalysisViewCommands = (
     description:
       "Project a selected view of completed Evidence JSON for a supported analysis operation. For inventory rows, use --format csv or --format tsv with --filter-output normalized_result.items and --columns logical_path,artifact_id (if those fields are included in the view).",
     args: z.object({
-      inputJson: z.string().describe("Inline workflow JSON or JSON file path"),
+      inputJson: jsonInputArgument(
+        CLI_COMMANDS.inspectAnalysisView,
+        analysisViewCliInputSchema,
+      ).describe("Inline workflow JSON or JSON file path"),
     }),
     options: z.object({
       evidenceBundle: localPathStringSchema

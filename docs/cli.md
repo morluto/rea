@@ -50,6 +50,17 @@ jq -nc '{source: {kind: "evidence-file", path: "app-evidence.json"}, view: {kind
 Standard input is read once as a single UTF-8 JSON document without a
 byte-order mark, and it is limited to 8 MiB. Put a larger request in a file.
 
+For workflow commands with a JSON request operand, discover the decoded payload
+with `rea trace-application-feature --schema --json`. The operand remains a
+string accepting inline JSON, a file path, or `-`; its `contentSchema` annotation
+describes the JSON content, including required fields, enums, and bounds. For
+example, read `args.properties.inputJson.contentSchema` for feature traces.
+Commands with an `input` operand, such as `compare-wasm-interfaces`, use
+`args.properties.input.contentSchema`. Application checks such as Evidence
+authentication and cross-field refinements still run when the command executes.
+Use `--json` for machine-readable schema output; without it, the SDK's default
+format is TOON.
+
 Local file inspection commands reject empty paths and NUL bytes before resolving
 relative inputs, auxiliary files or output destinations. An empty string never
 selects the working directory; use an explicit `.` when selecting that directory
