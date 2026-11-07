@@ -63,19 +63,53 @@ export const stageExpectation = (stage: WitnessStage): WitnessExpectation =>
 /** What a stage's results show of it: that it held, that it did not, or, when only undecided checks could tell, nothing. */
 export type StageVerdict = "held" | "not_held" | "undecided";
 
-/** The checks whose result after a reset differs from the filed seed's; a reset that restores the seed leaves none. */
-export const unrestoredChecks = <
-  Outcome extends Pick<TaskCheckOutcome, "id" | "passed">,
->(
+type ComparedOutcome = Pick<TaskCheckOutcome, "id" | "passed" | "undecided">;
+
+const seedResults = (
+  stages: readonly WitnessStageRecord[],
+): Map<string, Pick<TaskCheckOutcome, "passed" | "undecided">> =>
+  new Map(
+    stages
+      .find((filed) => filed.stage === "seed")
+      ?.results.map((result) => [result.id, result]),
+  );
+
+/**
+ * The checks whose decided result after a reset differs from a decided seed
+ * result. A seed result that was unreadable is not a failure to compare
+ * against; a reset that restores the seed leaves none.
+ */
+export const unrestoredChecks = <Outcome extends ComparedOutcome>(
   stages: readonly WitnessStageRecord[],
   results: readonly Outcome[],
 ): Outcome[] => {
-  const seed = new Map(
-    stages
-      .find((filed) => filed.stage === "seed")
-      ?.results.map((result): [string, boolean] => [result.id, result.passed]),
-  );
-  return results.filter((result) => seed.get(result.id) !== result.passed);
+  const seed = seedResults(stages);
+  return results.filter((result) => {
+    const filed = seed.get(result.id);
+    if (filed === undefined) return true;
+    if (filed.undecided === true) return false;
+    return filed.passed !== result.passed;
+  });
+};
+
+/**
+ * Checks whose seed result was unreadable and whose result after the reset is
+ * now decided differently. That difference is unknown, not evidence the reset
+ * failed.
+ */
+export const unreadSeedDifferences = <Outcome extends ComparedOutcome>(
+  stages: readonly WitnessStageRecord[],
+  results: readonly Outcome[],
+): Outcome[] => {
+  const seed = seedResults(stages);
+  return results.filter((result) => {
+    const filed = seed.get(result.id);
+    return (
+      filed?.undecided === true &&
+      result.undecided !== true &&
+      filed.passed !== result.passed
+    );
+  });
 };
 
 /**
@@ -94,7 +128,11 @@ export const stageVerdict = (
     const unrestored = unrestoredChecks(stages, results);
     if (unrestored.some((result) => result.undecided !== true))
       return "not_held";
-    if (unrestored.length > 0) return "undecided";
+    if (
+      unrestored.length > 0 ||
+      unreadSeedDifferences(stages, results).length > 0
+    )
+      return "undecided";
   }
   const failed = results.filter((result) => !result.passed);
   const shown = failed.some((result) => result.undecided !== true);
