@@ -424,6 +424,7 @@ export const providerCapabilitySets = (
       const key = JSON.stringify([
         effects,
         limitations,
+        descriptor.independentDecompile ?? null,
         status.available,
         status.reason,
         status.availability_code,
@@ -436,6 +437,9 @@ export const providerCapabilitySets = (
           operations: [descriptor.operation],
           effects,
           limitations,
+          ...(descriptor.independentDecompile === undefined
+            ? {}
+            : { independent_decompile: descriptor.independentDecompile }),
           ...status,
         });
       else group.operations.push(descriptor.operation);

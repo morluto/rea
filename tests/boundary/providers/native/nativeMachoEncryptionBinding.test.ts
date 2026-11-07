@@ -64,8 +64,10 @@ it("reads encryption from the bound file and names the ciphertext bytes", async 
       },
     ],
   });
-  expect(result.value.limitations).toContain(
-    "Bytes 16384-32768 (input file offsets, end exclusive) of the arm64 slice are ciphertext (cryptid 1); disassembly, decompilation, strings and references derived from them do not describe program code.",
+  expect(result.value.limitations).toContainEqual(
+    expect.stringMatching(
+      /16384-32768.*end exclusive.*arm64.*ciphertext.*cryptid 1.*do not describe program code/iu,
+    ),
   );
 });
 

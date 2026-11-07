@@ -66,6 +66,7 @@ const providerCapabilityFacts = {
     requires_root: z.boolean(),
   }),
   limitations: z.array(z.string()),
+  independent_decompile: z.literal(true).exactOptional(),
 };
 
 export const providerCapability = z.discriminatedUnion("available", [
@@ -101,6 +102,7 @@ const providerCapabilityGroupFacts = {
   operations: z.array(z.string().min(1)).min(1),
   effects: z.array(providerCapabilityFacts.effects.keyof()),
   limitations: z.array(z.string()),
+  independent_decompile: providerCapabilityFacts.independent_decompile,
 };
 
 const providerCapabilityGroup = z.discriminatedUnion("available", [
@@ -139,6 +141,9 @@ export const expandProviderCapabilities = (
       group.operations.map((operation) => ({
         ...providerCapability.parse({
           operation,
+          ...(group.independent_decompile === undefined
+            ? {}
+            : { independent_decompile: group.independent_decompile }),
           available: group.available,
           reason: group.reason,
           availability_code: group.availability_code,

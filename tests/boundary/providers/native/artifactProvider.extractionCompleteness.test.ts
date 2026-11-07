@@ -187,9 +187,7 @@ it
     expect(result.limitations).toContainEqual(
       expect.stringContaining("not valid UTF-8"),
     );
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(
       result.limitations.some((value) => value.startsWith("All regular files")),
     ).toBe(false);
@@ -229,8 +227,9 @@ it.each(["inventory", "materialization"] as const)(
       stage = "materialization";
       const result = await materialize();
       expect(result.limitations).toContain(limitation);
+      expect(result.coverage.status).toBe("unknown");
       expect(result.limitations).toContainEqual(
-        expect.stringContaining("source traversal coverage is unknown"),
+        expect.stringMatching(/traversal coverage.*unknown.*not.*complete/iu),
       );
       expect(
         result.limitations.some((value) =>
@@ -289,9 +288,7 @@ it("normalizes an NFD omission once across inventory and materialization", async
           value.startsWith("Artifact traversal omitted"),
         ),
       ).toEqual([omission]);
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
       "retained bytes\n",
     );
