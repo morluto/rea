@@ -21,10 +21,10 @@ resolved.
 
 ## Sources and coverage
 
-`source_coverage` states what the inventory examined. `event_xml`,
-`typed_payload_values` and `templates` are always `not-decoded`,
-`record_checksums` is always `not-verified` and `network` is always
-`not-contacted`. `status` is `complete-within-scope` only when every chunk was
+`source_coverage` states what the inventory examined. `event_xml` and
+`typed_payload_values` are always `not-decoded`; `templates` is always
+`not-resolved`. `record_checksums` is always `not-verified` and `network` is
+always `not-contacted`. `status` is `complete-within-scope` only when every chunk was
 read without any diagnostic; a limit, a truncated record, an undecodable chunk
 or a chunk whose first record number disagrees with the id that record states
 makes it `partial` and each cause appears in `diagnostics`.
