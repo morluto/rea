@@ -21,9 +21,20 @@ const isRecord = (value: Json): value is Record<string, Json> =>
   typeof value === "object" && value !== null && !Array.isArray(value);
 
 /** OTLP JSON encodes 64-bit integers as decimal strings. */
+const UINT64_MAX = (1n << 64n) - 1n;
+const INT64_MAX = (1n << 63n) - 1n;
+const INT64_MIN = -(1n << 63n);
+// The longest 64-bit value is 20 digits (19 with a sign). Bounding the digit
+// count first keeps BigInt off arbitrary-length input, whose conversion cost
+// grows with the digits.
+const INT64_MAX_DIGITS = 20;
+
 const readUInt64 = (value: Json): string | null => {
-  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value))
-    return BigInt(value).toString();
+  if (typeof value === "string" && /^(0|[1-9][0-9]*)$/u.test(value)) {
+    if (value.length > INT64_MAX_DIGITS) return null;
+    const parsed = BigInt(value);
+    return parsed <= UINT64_MAX ? parsed.toString() : null;
+  }
   if (typeof value === "number" && Number.isSafeInteger(value) && value >= 0)
     return BigInt(value).toString();
   return null;
@@ -31,8 +42,14 @@ const readUInt64 = (value: Json): string | null => {
 
 /** OTLP intValue is a signed 64-bit integer. */
 const readInt64 = (value: Json): string | null => {
-  if (typeof value === "string" && /^-?(0|[1-9][0-9]*)$/u.test(value))
-    return BigInt(value).toString();
+  if (typeof value === "string" && /^-?(0|[1-9][0-9]*)$/u.test(value)) {
+    const digits = value.startsWith("-") ? value.slice(1) : value;
+    if (digits.length > INT64_MAX_DIGITS) return null;
+    const parsed = BigInt(value);
+    return parsed <= INT64_MAX && parsed >= INT64_MIN
+      ? parsed.toString()
+      : null;
+  }
   if (typeof value === "number" && Number.isSafeInteger(value))
     return BigInt(value).toString();
   return null;

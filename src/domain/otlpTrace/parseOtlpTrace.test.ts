@@ -315,6 +315,59 @@ describe("parseOtlpTrace defaults and signed integers", () => {
   });
 });
 
+describe("parseOtlpTrace 64-bit bounds", () => {
+  it("keeps the extremes of the uint64 and int64 ranges", () => {
+    const report = parse(
+      envelope([
+        span({
+          startTimeUnixNano: "18446744073709551615",
+          endTimeUnixNano: "18446744073709551615",
+          attributes: [
+            { key: "max", value: { intValue: "9223372036854775807" } },
+            { key: "min", value: { intValue: "-9223372036854775808" } },
+          ],
+        }),
+      ]),
+    );
+    const parsed = report.spans[0]!;
+    expect(parsed.start_time_unix_nano).toBe("18446744073709551615");
+    expect(parsed.duration_nano).toBe("0");
+    const attributes = new Map(parsed.attributes.map((a) => [a.key, a]));
+    expect(attributes.get("max")).toMatchObject({
+      int_value: "9223372036854775807",
+    });
+    expect(attributes.get("min")).toMatchObject({
+      int_value: "-9223372036854775808",
+    });
+  });
+
+  it("rejects values outside the 64-bit range without converting them", () => {
+    // A file that fits the size allowance can still carry an arbitrarily long
+    // decimal. It must be refused on its length, not parsed into a BigInt.
+    const tooLong = "9".repeat(5_000_000);
+    const report = parse(
+      envelope([
+        span({
+          startTimeUnixNano: "18446744073709551616",
+          endTimeUnixNano: "1" + tooLong,
+          attributes: [
+            { key: "overflow", value: { intValue: "9223372036854775808" } },
+            { key: "underflow", value: { intValue: "-9223372036854775809" } },
+            { key: "huge", value: { intValue: "-" + tooLong } },
+          ],
+        }),
+      ]),
+    );
+    const parsed = report.spans[0]!;
+    expect(parsed.start_time_unix_nano).toBeNull();
+    expect(parsed.end_time_unix_nano).toBeNull();
+    expect(parsed.duration_nano).toBeNull();
+    const attributes = new Map(parsed.attributes.map((a) => [a.key, a]));
+    for (const key of ["overflow", "underflow", "huge"])
+      expect(attributes.get(key)).toMatchObject({ int_value: null });
+  });
+});
+
 describe("parseOtlpTrace credential headers", () => {
   it("preserves recorded cookie and proxy-authorization attribute values", () => {
     const report = parse(
