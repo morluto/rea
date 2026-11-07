@@ -40,6 +40,8 @@ export interface JavaScriptEvidenceAdmission {
 /** Sequential source-analysis authority with independently verified cleanup. */
 export interface JavaScriptSourceAnalysisPort {
   readonly evidenceBudget?: JavaScriptEvidenceAdmission;
+  /** Release estimates superseded by actual application-graph admission. */
+  releaseApplicationGraphForecast?(): void;
   /** `nodeBudget` is the caller-selected node capacity offered to this source, or null. */
   analyze(
     file: JavaScriptArtifactFile,

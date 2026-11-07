@@ -453,6 +453,13 @@ more nodes are staged; later passes offer the remaining relationships, unknown
 frontiers, and unreferenced nodes. The first
 refusal closes that source, which keeps a connected source-ordered prefix.
 
+The application graph also admits its actual retained nodes and edges after
+package resolution, replacing the earlier forecasts. If the graph cannot fit,
+REA returns a resource constraint with the completed artifact inventory instead
+of delivering an oversized or silently incomplete graph. The selected files
+remain available for a narrower analysis. A final bounded serialization check
+also verifies the complete Evidence size before delivery.
+
 `semantic_graph.coverage.files` reports each source's status (`complete`,
 `truncated`, or `unavailable`), the byte budget a truncated source was offered,
 retained bytes and omitted counts for examined facts. When admission stops

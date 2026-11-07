@@ -1,10 +1,10 @@
-import { constants } from "node:buffer";
 import { createHash, randomUUID } from "node:crypto";
 import { readFile, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
+import { javaScriptEvidenceBudgetBytes } from "../../process/JavaScriptEvidenceBudget.js";
 import { z } from "zod";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
@@ -72,20 +72,6 @@ const STATIC_CHECKPOINT_RETENTION_EXPANSION = 2;
  * Evidence, and compare-application-versions at 2.97 GB for two records
  * totalling 490 MB.
  */
-const EVIDENCE_CONSUMER_EXPANSION = 6;
-
-/**
- * Serialized bytes one application Evidence may occupy so that a consumer with
- * this process's heap can authenticate two of them at once, as
- * compare_application_versions does, and so that it fits one V8 string.
- */
-const javaScriptEvidenceBudgetBytes = (): number =>
-  Math.min(
-    constants.MAX_STRING_LENGTH,
-    Math.floor(
-      getHeapStatistics().heap_size_limit / (2 * EVIDENCE_CONSUMER_EXPANSION),
-    ),
-  );
 const pendingCleanup = new Set<JavaScriptAnalysisWorker>();
 /** The worker runs on this executable; Bun accepts but ignores V8 heap flags. */
 const WORKER_HEAP_FLAGS_ENFORCED =
@@ -113,6 +99,11 @@ export class JavaScriptAnalysisWorker {
   readonly #resultBudgetBytes: number;
   readonly #evidenceBudgetBytes = javaScriptEvidenceBudgetBytes();
   #evidenceChargedBytes = 0;
+  #applicationGraphForecastBytes = 0;
+  releaseApplicationGraphForecast(): void {
+    this.evidenceBudget.releaseBytes(this.#applicationGraphForecastBytes);
+    this.#applicationGraphForecastBytes = 0;
+  }
   readonly evidenceBudget: JavaScriptEvidenceAdmission = {
     remainingBytes: (): number =>
       Math.max(0, this.#evidenceBudgetBytes - this.#evidenceChargedBytes),
@@ -438,6 +429,7 @@ export class JavaScriptAnalysisWorker {
             },
           );
         }
+        this.#applicationGraphForecastBytes += application.bytes;
         this.#estimatedRetainedBytes +=
           moduleEstimate +
           (retainGraph ? graphEstimate : 0) +
@@ -702,6 +694,7 @@ export class JavaScriptAnalysisWorker {
       expandedBytes <= availableResultBudget &&
       this.evidenceBudget.reserveBytes(expandedBytes)
     ) {
+      this.#applicationGraphForecastBytes += expandedBytes;
       this.#estimatedRetainedBytes += expandedBytes;
     } else {
       // The fallback is an observation containing the complete static record,
@@ -725,6 +718,7 @@ export class JavaScriptAnalysisWorker {
           },
         );
       }
+      this.#applicationGraphForecastBytes += fallbackBytes;
       this.#estimatedRetainedBytes += fallbackBytes;
       this.#applicationProjectionFailure = new AnalysisResourceConstraintError(
         OPERATION,

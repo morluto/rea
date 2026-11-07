@@ -1,10 +1,12 @@
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect } from "vitest";
 
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
@@ -127,6 +129,87 @@ cliTest.skipIf(process.versions.bun !== undefined)(
           examined: 1,
           total: result.semantic_graph.unknowns.length,
           next_offset: 1,
+        },
+      },
+    });
+  },
+);
+
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "refuses expanded package-resolution facts before exceeding the Evidence budget",
+  { timeout: 120_000 },
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-js-package-resolution-budget-",
+    );
+    const packageRoot = join(root, "node_modules", "proof-pkg");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "proof-pkg",
+        exports: { "./item": "x".repeat(150_000) },
+      }),
+    );
+    await writeFile(join(root, "app.mjs"), 'import "proof-pkg/item";');
+    const withinBudget = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(withinBudget.exitCode).toBe(0);
+    const small = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(withinBudget.json).normalized_result,
+    );
+    expect(
+      small.graph.edges.some(({ evidence }) =>
+        evidence.limitations.some((limitation) =>
+          limitation.includes("x".repeat(150_000)),
+        ),
+      ),
+    ).toBe(true);
+    await writeFile(
+      join(root, "app.mjs"),
+      Array.from(
+        { length: 150 },
+        (_, index) => `import "proof-pkg/item"; // ${String(index)}`,
+      ).join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reason: expect.stringContaining(
+          "Application graph facts exceed the remaining Evidence budget",
+        ),
+        partial_observation: { kind: "artifact-inventory" },
+      },
+    });
+    const { call } = await connectLocalToolsMcp({
+      NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+    });
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "directory",
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          reason: expect.stringContaining(
+            "Application graph facts exceed the remaining Evidence budget",
+          ),
+          partial_observation: { kind: "artifact-inventory" },
         },
       },
     });

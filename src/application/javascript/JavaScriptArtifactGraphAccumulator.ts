@@ -7,6 +7,15 @@ import type {
   ApplicationNode,
 } from "../../domain/javascript/javascriptApplicationGraphSchemas.js";
 import { compareUnicodeCodePoints } from "../../domain/unicodeCodePointOrder.js";
+import { jsonParts } from "../../domain/jsonSerialization.js";
+import { AnalysisResourceConstraintError } from "../../domain/analysisErrorCore.js";
+import type { JavaScriptEvidenceAdmission } from "../../domain/javascript/javascriptSourceAnalysis.js";
+
+const jsonBytes = (value: unknown): number => {
+  let bytes = 0;
+  for (const part of jsonParts(value)) bytes += Buffer.byteLength(part);
+  return bytes;
+};
 
 /**
  * Own live construction nodes and deduplicate their evidence observations.
@@ -17,11 +26,42 @@ export class JavaScriptArtifactGraphAccumulator {
   readonly #nodes = new Map<string, AccumulatedNode>();
   readonly #edges = new Map<string, ApplicationEdge>();
 
+  constructor(private readonly budget?: JavaScriptEvidenceAdmission) {}
+
+  /** Charge a retained delta before mutating the graph. */
+  #charge(bytes: number): void {
+    if (this.budget === undefined || bytes === 0) return;
+    if (bytes < 0) {
+      this.budget.releaseBytes(-bytes);
+      return;
+    }
+    if (!this.budget.reserveBytes(bytes))
+      throw new AnalysisResourceConstraintError(
+        "analyze_javascript_application",
+        "memory",
+        "Application graph facts exceed the remaining Evidence budget",
+        {
+          application_graph_required_bytes: bytes,
+          remaining_evidence_bytes: this.budget.remainingBytes(),
+        },
+        {
+          remediationAction:
+            "Analyze fewer sources or a smaller artifact; the complete graph was not retained.",
+        },
+      );
+  }
+
+  /** Account graph-level metadata not owned by an individual node or edge. */
+  chargeMetadata(value: unknown): void {
+    this.#charge(jsonBytes(value));
+  }
+
   /** Merge observations into a stable live node; order is finalized by nodes(). */
   addNode<Input extends DisplayableNodeInput>(input: Input): ApplicationNode {
     const created = createJavaScriptApplicationNode(displayableNode(input));
     const existing = this.#nodes.get(created.node_id);
     if (existing === undefined) {
+      this.#charge(jsonBytes(created) + 1);
       this.#nodes.set(created.node_id, {
         node: created,
         observationIndices: new Map(
@@ -42,8 +82,10 @@ export class JavaScriptArtifactGraphAccumulator {
       for (const [index, observation] of observations.entries()) {
         if (
           existing.observationIndices.get(observation.observation_id) !== index
-        )
+        ) {
+          this.#charge(-(jsonBytes(observation) + 1));
           continue;
+        }
         observations[retained] = observation;
         existing.observationIndices.set(observation.observation_id, retained);
         retained += 1;
@@ -53,13 +95,23 @@ export class JavaScriptArtifactGraphAccumulator {
     for (const observation of created.observations) {
       const index = existing.observationIndices.get(observation.observation_id);
       if (index === undefined) {
+        this.#charge(
+          jsonBytes(observation) + (observations.length === 0 ? 0 : 1),
+        );
         existing.observationIndices.set(
           observation.observation_id,
           observations.length,
         );
         observations.push(observation);
         existing.dirty = true;
-      } else observations[index] = observation;
+      } else {
+        const previous = observations[index];
+        this.#charge(
+          jsonBytes(observation) -
+            (previous === undefined ? 0 : jsonBytes(previous)),
+        );
+        observations[index] = observation;
+      }
     }
     return existing.node;
   }
@@ -67,6 +119,10 @@ export class JavaScriptArtifactGraphAccumulator {
   /** Create or replace one canonical edge by semantic identifier. */
   addEdge(input: unknown): ApplicationEdge {
     const edge = createJavaScriptApplicationEdge(input);
+    const existing = this.#edges.get(edge.edge_id);
+    this.#charge(
+      jsonBytes(edge) - (existing === undefined ? -1 : jsonBytes(existing)),
+    );
     this.#edges.set(edge.edge_id, edge);
     return edge;
   }

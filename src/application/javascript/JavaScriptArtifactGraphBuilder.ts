@@ -7,6 +7,7 @@ import {
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptModuleArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptEvidenceAdmission } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   selfReferenceOmissions,
@@ -66,11 +67,13 @@ export function* buildImmutableJavaScriptArtifactGraphSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
+  budget?: JavaScriptEvidenceAdmission,
 ): Generator<void, JavaScriptApplicationGraph> {
   const input = yield* buildJavaScriptArtifactGraphInputSteps(
     snapshot,
     fileSet,
     analysis,
+    budget,
   );
   // The input was built here and is not retained, so it can be transferred.
   return yield* sealTransferredJavaScriptApplicationGraphSteps(input);
@@ -87,8 +90,9 @@ function* buildJavaScriptArtifactGraphInputSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptModuleArtifactAnalysis,
+  budget?: JavaScriptEvidenceAdmission,
 ): Generator<void, unknown> {
-  const accumulator = new JavaScriptArtifactGraphAccumulator();
+  const accumulator = new JavaScriptArtifactGraphAccumulator(budget);
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const context: JavaScriptArtifactGraphContext = {
     accumulator,
@@ -137,20 +141,27 @@ function* buildJavaScriptArtifactGraphInputSteps(
   addJavaScriptSourceMapOriginals(projectionContext);
   yield;
   const coverage = graphCoverage(context);
-  return {
+  const metadata = {
     schema: "JavaScriptApplicationGraph",
     root_node_ids:
       packageRoots.length === 0
         ? [root.node_id]
         : packageRoots.map(({ node_id: id }) => id),
-    nodes: accumulator.nodes(),
-    edges: accumulator.edges(),
     coverage,
     limitations: [
       ...bundlerLimitations,
       ...findingLimitations,
       ...graphLimitations(context, coverage.status, relationshipOmissions),
     ],
+  };
+  accumulator.chargeMetadata(metadata);
+  return {
+    schema: metadata.schema,
+    root_node_ids: metadata.root_node_ids,
+    nodes: accumulator.nodes(),
+    edges: accumulator.edges(),
+    coverage: metadata.coverage,
+    limitations: metadata.limitations,
   };
 }
 

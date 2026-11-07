@@ -6,6 +6,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
@@ -217,10 +218,35 @@ export const reconstructJavaScriptArtifact = async (
         "build_javascript_application_graph",
         "Constructing application and Electron boundary relationships",
       );
+      // The worker reserved projections before package resolution existed. The
+      // graph owner now charges the retained records instead of both estimates
+      // and actual records. Keep space for the surrounding result and Evidence.
+      worker.releaseApplicationGraphForecast?.();
+      const outerBytes =
+        16 * 1024 +
+        Buffer.byteLength(
+          JSON.stringify({
+            input_path: path,
+            integrity_contradictions: snapshot.integrity_contradictions,
+            source_selection: files.source_selection ?? null,
+            limitations: analysis.limitations,
+          }),
+        );
+      if (
+        worker.evidenceBudget !== undefined &&
+        !worker.evidenceBudget.reserveBytes(outerBytes)
+      )
+        throw new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          "Application result metadata exceeds the remaining Evidence budget",
+          { required_bytes: outerBytes },
+        );
       const applicationGraphSteps = buildImmutableJavaScriptArtifactGraphSteps(
         snapshot,
         files,
         analysis,
+        worker.evidenceBudget,
       );
       await reportCompletedPhase(
         "seal_javascript_application_graph",
@@ -291,6 +317,14 @@ export const reconstructJavaScriptArtifact = async (
       }
       reconstructionOutcome = { kind: "completed", result: completed };
     } catch (cause: unknown) {
+      if (
+        cause instanceof AnalysisResourceConstraintError &&
+        cause.partialObservation === undefined
+      )
+        cause.retainPartialObservation({
+          kind: "artifact-inventory",
+          inventory: snapshot,
+        });
       reconstructionOutcome = { kind: "failed", cause };
     }
     if (readerOpen) {
