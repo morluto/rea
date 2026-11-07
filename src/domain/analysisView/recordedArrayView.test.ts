@@ -100,3 +100,24 @@ it("returns a typed depth refusal instead of throwing when a row cannot be neste
     "JSON depth",
   );
 });
+
+it("stops before a later row exceeds the output Evidence depth", () => {
+  const source = parent({});
+  const first = nested(MAX_JSON_DEPTH - 3);
+  const tooDeep = nested(MAX_JSON_DEPTH - 2);
+  const projected = projectAnalysisView(
+    { ...source, rawResult: { values: [first, tooDeep, "later"] } },
+    analysisViewRequestSchema.parse({
+      kind: "recorded-array",
+      path: ["values"],
+      offset: 0,
+      limit: 3,
+    }),
+  );
+  if (!projected.ok) throw projected.error;
+  expect(projected.value).toMatchObject({
+    kind: "recorded-array",
+    rows: [first],
+    coverage: { examined: 1, total: 3, next_offset: 1 },
+  });
+});

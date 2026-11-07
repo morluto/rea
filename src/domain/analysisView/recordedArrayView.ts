@@ -22,6 +22,11 @@ const PAGE_BYTES = 1024 * 1024;
 const exceedsEvidenceResultDepth = (result: JsonValue): boolean =>
   jsonValueValidationIssue({ normalized_result: result }) !== undefined;
 
+/** A row is nested under normalized_result.rows in the output Evidence. */
+const exceedsRecordedRowDepth = (row: JsonValue): boolean =>
+  jsonValueValidationIssue({ normalized_result: { rows: [row] } }) !==
+  undefined;
+
 const recordedArrayDepthRefusal = () =>
   err(
     new AnalysisResourceConstraintError(
@@ -164,13 +169,15 @@ export const projectRecordedArrayView = (
       if (rows.length === 0) return tooLarge();
       break;
     }
-    bytes += comma + size;
-    rows.push(row);
-    if (exceedsEvidenceResultDepth({ ...result, rows })) {
-      rows.pop();
+    // The fixed fields are checked separately. Validate only this row at its
+    // final nesting depth; previously accepted rows cannot change, so walking
+    // the growing page for every row repeats the same work quadratically.
+    if (exceedsRecordedRowDepth(row)) {
       if (rows.length === 0) return recordedArrayDepthRefusal();
       break;
     }
+    bytes += comma + size;
+    rows.push(row);
   }
   if (exceedsEvidenceResultDepth(result)) return recordedArrayDepthRefusal();
   return ok({
