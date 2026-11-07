@@ -23,7 +23,8 @@ export const registerEvidenceCommands = (
   logger: Logger,
 ): void => {
   cli.command(CLI_COMMANDS.evidenceImport, {
-    description: "Validate and import a bounded local Evidence bundle",
+    description:
+      "Validate a standalone Evidence bundle and count records and Unknown revisions; does not retain them in an MCP session",
     args: z.object({
       path: localPathStringSchema.describe("Evidence bundle JSON path"),
     }),

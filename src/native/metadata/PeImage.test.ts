@@ -83,7 +83,7 @@ it.each([32, 64] as const)(
     for (const encoding of ["inline", "pointer"] as const) {
       const fixture = createGoBinaryFixture({ format: "pe", bits, encoding });
       const expected = readGoBinaryImage(fixture.bytes).build_info;
-      expect(expected).not.toBeNull();
+      expect(expected).toMatchObject({ go_version: "go1.26.0" });
       setGoPeVirtualSize(fixture.bytes, 0);
 
       const container = readPeImage(fixture.bytes);
@@ -136,6 +136,7 @@ it.each([32, 64] as const)(
 it("keeps Go fallback candidates when a PE section has no printable name", () => {
   const fixture = createGoBinaryFixture({ format: "pe", bits: 64 });
   const expected = readGoBinaryImage(fixture.bytes).build_info;
+  expect(expected).toMatchObject({ go_version: "go1.26.0" });
   const pe = fixture.bytes.readUInt32LE(0x3c);
   const section = pe + 24 + fixture.bytes.readUInt16LE(pe + 20);
   fixture.bytes.fill(0, section, section + 8);

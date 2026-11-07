@@ -37,7 +37,7 @@ import org.xml.sax.InputSource;
 /**
  * Apply the committed RISC-V calling-convention policy after analysis. Ghidra's generic RV32
  * compiler specification models ilp32d. Each policy derives a program-specific prototype from the
- * program's own default prototype, as its {@link Policy} row and docs/ghidra-riscv.md state. The
+ * program's own default prototype, as its {@link Policy} row and docs/providers/ghidra-riscv.md state. The
  * script installs the prototype as a specification extension and assigns it, with dynamic
  * storage, to every non-thunk function, external function and function definition.
  */

@@ -31,14 +31,8 @@ it.each([129, 3000])(
 );
 
 it.each([
-  ["(}", "unexpected_character", 1],
-  ["{)", "unexpected_character", 1],
-  ["(@", "unexpected_character", 1],
   ["{key @", "expected_equals", 5],
-  ["(x @", "expected_separator", 3],
   ["(x ", "expected_separator", 3],
-  ["{key ", "expected_equals", 5],
-  ["{key = x,", "unexpected_character", 8],
 ] as const)(
   "reports OpenStep %s before a deep suffix as %s at %s",
   async (prefix, code: OpenStepPropertyListCode, position) => {

@@ -112,13 +112,24 @@ describe("fixed allowance recovery", () => {
       expect(projected.remediation.action).toContain(allowance);
       for (const pattern of forbidden[kind])
         expect(projected.remediation.action).not.toMatch(pattern);
+      if (kind === "parser") {
+        expect(projected.remediation.action).toMatch(
+          /worker memory limits.*host memory do not raise/iu,
+        );
+        expect(projected.remediation.action).toMatch(
+          /complete input.*allowance/iu,
+        );
+        expect(projected.remediation.action).toMatch(
+          /unchanged request.*fails/iu,
+        );
+      }
       if (kind === "live")
         expect(projected.remediation.action).toContain(
           "live output may change between requests",
         );
-      if (kind === "capture")
-        expect(projected.remediation.action).toContain(
-          "Repeating the unchanged request fails the same way.",
+      if (kind === "capture" || kind === "count")
+        expect(projected.remediation.action).toMatch(
+          /unchanged request.*fails/iu,
         );
     },
   );
