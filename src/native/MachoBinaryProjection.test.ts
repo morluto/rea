@@ -392,6 +392,89 @@ it("distinguishes exact fixed command extents from unmodeled trailing bytes", as
   ]);
 });
 
+it("distinguishes exact variable command extents from trailing bytes", async () => {
+  const command = (code: number, size: number) => {
+    const bytes = Buffer.alloc(size);
+    bytes.writeUInt32LE(code, 0);
+    bytes.writeUInt32LE(size, 4);
+    return bytes;
+  };
+  const linkerOption = (size: number, options = ["-lz"]) => {
+    const bytes = command(0x2d, size);
+    bytes.writeUInt32LE(options.length, 8);
+    let offset = 12;
+    for (const option of options) {
+      bytes.write(option, offset, "ascii");
+      offset += Buffer.byteLength(option) + 1;
+    }
+    return bytes;
+  };
+  const note = (size: number) => {
+    const bytes = command(0x31, size);
+    bytes.write("fixture", 8, "ascii");
+    // Keep a nonzero byte after the NUL-terminated display name.
+    bytes[23] = 0xa5;
+    bytes.writeBigUInt64LE(128n, 24);
+    bytes.writeBigUInt64LE(16n, 32);
+    return bytes;
+  };
+  const fileset = (size: number, entryIdOffset = 32) => {
+    const bytes = command(0x80000035, size);
+    bytes.writeUInt32LE(entryIdOffset, 24);
+    bytes.write("entry01", entryIdOffset, "ascii");
+    return bytes;
+  };
+  const image = machoImage({
+    commands: [
+      linkerOption(16),
+      linkerOption(24),
+      linkerOption(24, ["-lz", "-lmxxxx"]),
+      note(40),
+      note(48),
+      fileset(40),
+      fileset(48),
+      fileset(48, 40),
+    ],
+  });
+  const binary = await readMachoCommandNames(
+    readerOf(image),
+    image.length,
+    1024,
+    16,
+  );
+  expect(binary.commands.map((row) => row.fullyDecoded)).toEqual([
+    true,
+    false,
+    true,
+    true,
+    false,
+    true,
+    false,
+    false,
+  ]);
+  const projection = projectMachoBinary(binary);
+  expect(projection.commands[3]?.fields).toMatchObject({
+    data_owner: "fixture",
+    data_owner_storage_hex: "66697874757265" + "00".repeat(8) + "a5",
+  });
+  for (const [index, row] of binary.commands.entries()) {
+    if ([0, 2, 3, 5].includes(index)) {
+      expect(row.rawSha256).toBeNull();
+      expect(projection.commands[index]?.fields).not.toHaveProperty(
+        "command_sha256",
+      );
+    } else {
+      expect(row.rawSha256).toMatch(/^[a-f0-9]{64}$/u);
+      expect(projection.commands[index]?.fields.command_sha256).toBe(
+        row.rawSha256,
+      );
+    }
+  }
+  expect(projection.commandLimitations).toEqual([
+    expect.stringContaining("payload fields are not decoded"),
+  ]);
+});
+
 it("preserves leading UTF-8 BOM characters in names and dependency paths", () => {
   const marker = "\uFEFF";
   const commands = multilineBinary.commands.map((row) => ({

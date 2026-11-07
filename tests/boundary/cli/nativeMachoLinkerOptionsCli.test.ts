@@ -43,6 +43,13 @@ describe.skipIf(process.platform !== "darwin")(
           result.json,
         ).normalized_result;
         expect(loadCommands.exhaustive).toBe(true);
+        const exactOption = loadCommands.items.find(
+          (command) =>
+            command.kind === "LC_LINKER_OPTION" &&
+            command.fields["string #1"] === "-lz",
+        );
+        expect(exactOption).toBeDefined();
+        expect(exactOption?.fields).not.toHaveProperty("command_sha256");
         expect(
           loadCommands.items
             .filter((command) => command.kind === "LC_LINKER_OPTION")
