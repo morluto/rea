@@ -152,7 +152,12 @@ const registerCompareManagedMembers = (
     description:
       "Compare managed PE/CLI member inventories by exact declared type, name, and signature; names alone never form a match",
     args: compareManagedMemberArgs,
-    run: ({ args }) =>
+    options: z.object({
+      type: managedMembersInputSchema.shape.type_names.describe(
+        "Compare only members declared by this exact type full name on both sides, as selected by inspect-managed-members --type; use it when a whole-assembly comparison exceeds capacity (repeatable)",
+      ),
+    }),
+    run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, "compare-managed-members", async () => {
           const resources = new ArtifactResourceScope();
@@ -162,6 +167,9 @@ const registerCompareManagedMembers = (
                 {
                   leftPath: args.leftPath,
                   rightPath: args.rightPath,
+                  ...(options.type === undefined
+                    ? {}
+                    : { typeNames: options.type }),
                 },
                 {},
                 resources,

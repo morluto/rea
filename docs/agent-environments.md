@@ -1049,8 +1049,9 @@ unknown recorded status stays unknown; it is not borrowed from another
 record). A bundle with no such tool yields a verifier that checks the count
 only and says so. `tasks/smoke.json` deploys the env on the local
 sandbox and runs that verifier against the env's MCP endpoint; the first run
-also builds the framework's own infrastructure, and the run tears everything
-down when it ends.
+also pulls the framework's published infrastructure images from `ghcr.io`,
+building one only if its pull fails, and the run tears everything down when it
+ends.
 
 The README written into the bundle records the capture artifact's SHA-256, the
 capture and manifest Evidence ids, the manifest view digest, the served tool

@@ -9,6 +9,7 @@ import { withCommandCancellation } from "./commandCancellation.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import { cliDecimalField } from "./options.js";
 import { inspectSqliteDatabaseInputSchema } from "../domain/sqlite/sqliteDatabase.js";
 
 /** Resolve an operator-selected SQLite snapshot through the shared inspection workflow. */
@@ -25,7 +26,9 @@ export const registerSqliteCommands = (
       path: localPathStringSchema.describe("Local SQLite database snapshot"),
     }),
     options: z.object({
-      workerTimeoutMs: inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
+      workerTimeoutMs: cliDecimalField(
+        inspectSqliteDatabaseInputSchema.shape.worker_timeout_ms,
+      ),
       table: z
         .string()
         .optional()
@@ -42,14 +45,9 @@ export const registerSqliteCommands = (
         .describe(
           "Compact inventory by default, or selected-table details when table is supplied; database requests full schema",
         ),
-      rowLimit: z
-        .number()
-        .int()
-        .min(1)
-        .optional()
-        .describe(
-          "Positive safe integer row count; default 20; requires table",
-        ),
+      rowLimit: cliDecimalField(
+        inspectSqliteDatabaseInputSchema.shape.row_limit,
+      ).describe("Positive safe integer row count; default 20; requires table"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
