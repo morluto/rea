@@ -4,7 +4,6 @@
 // is intentionally synthetic; it is not a claim about Ghidra's analysis history.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { execFile } from "node:child_process";
 import {
   mkdtemp,
   mkdir,
@@ -15,43 +14,45 @@ import {
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { promisify } from "node:util";
-
-const exec = promisify(execFile);
+import { createVerifierCommands } from "./lib/verify-commands.mjs";
+import { withVerifierCleanup } from "./lib/verifier-cleanup.mjs";
 const installation = process.env.GHIDRA_INSTALL_DIR;
 if (!installation || !process.env.JAVA_HOME)
   throw new Error(
     "Set GHIDRA_INSTALL_DIR and JAVA_HOME to caller-installed Ghidra and JDK 21.",
   );
-const root = await mkdtemp(join(tmpdir(), "rea-function-bundle-"));
-const target = join(root, "fixture");
-const projectDir = join(root, "project");
-const scriptDir = join(root, "scripts");
-const source = join(root, "fixture.c");
-const project = join(projectDir, "SourceControl.gpr");
-const repo = resolve(process.cwd());
-const hash = (data) => createHash("sha256").update(data).digest("hex");
-const tree = async (directory, prefix = "") => {
-  const result = [];
-  for (const entry of (await readdir(directory, { withFileTypes: true })).sort(
-    (a, b) => a.name.localeCompare(b.name),
-  )) {
-    const path = join(directory, entry.name);
-    const relative = join(prefix, entry.name);
-    if (entry.isDirectory()) result.push(...(await tree(path, relative)));
-    else if (entry.isFile())
-      result.push([relative, hash(await readFile(path))]);
-    else throw new Error(`Unexpected project entry: ${relative}`);
-  }
-  return result;
-};
-const run = async (command, args, options = {}) =>
-  exec(command, args, {
-    timeout: 120_000,
-    maxBuffer: 16 * 1024 * 1024,
-    ...options,
-  });
-try {
+const commands = await createVerifierCommands();
+let root;
+let commandsClosed = false;
+await withVerifierCleanup(async () => {
+  root = await mkdtemp(join(tmpdir(), "rea-function-bundle-"));
+  const target = join(root, "fixture");
+  const projectDir = join(root, "project");
+  const scriptDir = join(root, "scripts");
+  const source = join(root, "fixture.c");
+  const project = join(projectDir, "SourceControl.gpr");
+  const repo = resolve(process.cwd());
+  const hash = (data) => createHash("sha256").update(data).digest("hex");
+  const tree = async (directory, prefix = "") => {
+    const result = [];
+    for (const entry of (
+      await readdir(directory, { withFileTypes: true })
+    ).sort((a, b) => a.name.localeCompare(b.name))) {
+      const path = join(directory, entry.name);
+      const relative = join(prefix, entry.name);
+      if (entry.isDirectory()) result.push(...(await tree(path, relative)));
+      else if (entry.isFile())
+        result.push([relative, hash(await readFile(path))]);
+      else throw new Error(`Unexpected project entry: ${relative}`);
+    }
+    return result;
+  };
+  const run = async (command, args, options = {}) =>
+    commands.exec(command, args, {
+      timeout: 120_000,
+      maxBuffer: 16 * 1024 * 1024,
+      ...options,
+    });
   await mkdir(projectDir);
   await mkdir(scriptDir);
   await writeFile(
@@ -158,7 +159,7 @@ public class SetHistory extends GhidraScript {
     assert.fail("existing output unexpectedly overwritten");
   } catch (error) {
     if (error.code !== 1) throw error;
-    failure = JSON.parse(error.stdout);
+    failure = JSON.parse(error.snapshot.stdout.text);
   }
   assert.equal(await readFile(existing, "utf8"), "caller-owned\n");
   assert.equal(failure.ok, false);
@@ -173,6 +174,13 @@ public class SetHistory extends GhidraScript {
   process.stdout.write(
     `PASS Ghidra function bundles: complete, summary, no-overwrite; target and project unchanged (${targetHash})\n`,
   );
-} finally {
-  await rm(root, { recursive: true, force: true });
-}
+}, [
+  async () => {
+    await commands.close();
+    commandsClosed = true;
+  },
+  async () => {
+    if (commandsClosed && root !== undefined)
+      await rm(root, { recursive: true, force: true });
+  },
+]);
