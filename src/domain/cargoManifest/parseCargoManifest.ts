@@ -282,13 +282,14 @@ class CargoInventory {
     pointer: string,
   ): Result<void, AnalysisError> {
     const declaredBy = table.declaredBy;
-    // A string declaration is charged as its version; an inline table is charged
-    // for everything it records, including arrays such as `features`.
-    const admitted = this.retainSource(key, value);
-    if (!admitted.ok) return admitted;
+    // Only the facts the report emits are charged. The declaration itself is
+    // discarded after classification, so charging it as well would count the
+    // same text twice and reject manifests whose report fits the allowance.
     const declaration =
       typeof value === "string" ? { version: value } : record(value);
     if (declaration === undefined) {
+      const admitted = this.retain(key, pointer);
+      if (!admitted.ok) return admitted;
       this.dependencies.push({
         dependency_id: identity("cargo_dependency", [
           this.artifact.sha256,
@@ -316,12 +317,17 @@ class CargoInventory {
       );
     }
     const classified = classify(declaration);
-    if (classified === undefined)
+    if (classified === undefined) {
+      // The declaration is not inventoried, so only the text the diagnostic
+      // repeats is charged.
+      const admitted = this.retain(key, pointer);
+      if (!admitted.ok) return admitted;
       return this.diagnostic(
         "invalid-dependency-declaration",
         pointer,
         `Dependency "${key}" declares no version, path, git or workspace source.`,
       );
+    }
     const packageName = declaration.package;
     const alias = typeof packageName === "string" ? key : null;
     const name = typeof packageName === "string" ? packageName : key;

@@ -373,8 +373,8 @@ members = [${members.map((m) => `"${m}"`).join(", ")}]
   });
 
   it("charges a dependency's inline features, not just its key", () => {
-    // The declaration is retained verbatim; an 18 MiB feature list has to
-    // count against the allowance even though the key is three characters.
+    // The features are retained verbatim; an 18 MiB feature list has to count
+    // against the allowance even though the key is three characters.
     const features = Array.from({ length: 180 }, () => "x".repeat(100_000));
     const result = parse(`
 [package]
@@ -386,6 +386,23 @@ helper = { version = "1", features = [${features
       .join(", ")}] }
 `);
     expect(result.ok).toBe(false);
+  });
+
+  it("charges an emitted feature list once, not the discarded declaration too", () => {
+    // 9 MiB of feature text expands to ~18 MiB of retained strings, which fits
+    // the 32 MiB allowance. Charging the declaration as well would count the
+    // same text twice and reject a report that fits.
+    const features = Array.from({ length: 90 }, () => "x".repeat(100_000));
+    const result = parse(`
+[package]
+name = "demo"
+
+[dependencies]
+helper = { version = "1", features = [${features
+      .map((f) => `"${f}"`)
+      .join(", ")}] }
+`);
+    expect(result.ok).toBe(true);
   });
 
   it("charges workspace exclusions as well as members", () => {
