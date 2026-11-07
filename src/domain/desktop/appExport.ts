@@ -297,7 +297,7 @@ export const exportedStateFiles = (
     withRole("document"),
     stateDirectories,
   );
-  return { homePath, files, dconf, collisions, paths, ...leftOut };
+  return { homePath, files, dconf, collisions, paths, selected, ...leftOut };
 };
 
 /** Text safe inside a Python triple-quoted docstring. */

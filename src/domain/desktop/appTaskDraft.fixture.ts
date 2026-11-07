@@ -35,11 +35,17 @@ export const statePath = (
 /** The draft of files by home path, every one served, from the seed to the end. */
 export const draftOf = (
   files: Record<string, DesktopStatePath>,
+  selected: readonly string[] = [],
 ): readonly TaskDraftFile[] =>
-  draftTaskFiles(new Map(Object.entries(files)), () => true, {
-    seed: 0,
-    end: 1,
-  });
+  draftTaskFiles(
+    new Map(Object.entries(files)),
+    () => true,
+    {
+      seed: 0,
+      end: 1,
+    },
+    selected,
+  );
 
 /** An XML text's view, which a test's own text always has. */
 export const xml = (text: string): JsonValue => {
