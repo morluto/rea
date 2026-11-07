@@ -821,6 +821,27 @@ describe("folded URL headers", () => {
     );
   });
 
+  it("preserves URL-like text inside a folded path", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [
+          [
+            "WARC-Target-URI",
+            "https://example.test/path/\r\n //alice@notes/file",
+          ],
+        ],
+        "HTTP/1.1 302 Found\r\nLocation: https://example.test/path/\r\n //alice@notes/file\r\n\r\n",
+      ),
+    );
+    expect(archive.records[0]?.malformed_header_lines).toContain(
+      " //alice@notes/file",
+    );
+    expect(archive.records[0]?.http?.malformed_header_lines).toContain(
+      " //alice@notes/file",
+    );
+  });
+
   it("omits an unterminated header block instead of reading the body as headers", () => {
     const archive = parsed(
       record(
