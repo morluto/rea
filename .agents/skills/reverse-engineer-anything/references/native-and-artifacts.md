@@ -325,7 +325,8 @@ on the first MCP call. It retains the complete observation and returns the
 original selection, text availability and length without the body. Use
 `normalized_result.parent_evidence_id` with `inspect_analysis_view` and
 `view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`;
-follow `coverage.next_offset` for later pages. Offsets and limits count UTF-16
+follow `coverage.next_offset` for later pages. Choose a smaller limit if one
+page exceeds the client or transport budget. Offsets and limits count UTF-16
 code units, not lines or tokens. Pages reuse the same observation without
 repeating decompilation. Null and empty text remain distinct. Omitted or
 `complete` detail preserves full inline delivery. Summary delivery requires a
