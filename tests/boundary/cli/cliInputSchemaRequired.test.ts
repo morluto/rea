@@ -325,6 +325,38 @@ describe("web module CLI advertised input schema", () => {
   });
 });
 
+describe("web source location CLI advertised input schema", () => {
+  it("advertises the shared path and URL constraints", async () => {
+    const cli = createCli({});
+    const advertised = await advertisedSchema(cli, "trace-web-source-location");
+    const ajv = new Ajv2020({ strict: false });
+    const args = ajv.compile(advertised.args ?? {});
+    const validArgs = {
+      manifestPath: resolve("manifest.json"),
+      scriptIndex: 0,
+      sourceMapPath: resolve("app.js.map"),
+      sourceMapUrl: "https://example.test/app.js.map",
+      line: 1,
+      column: 0,
+    };
+
+    expect(args(validArgs)).toBe(true);
+    expect(args({ ...validArgs, manifestPath: "" })).toBe(false);
+    expect(args({ ...validArgs, manifestPath: "manifest\u0000.json" })).toBe(
+      false,
+    );
+    expect(args({ ...validArgs, manifestPath: "./manifest.json" })).toBe(
+      false,
+    );
+    expect(args({ ...validArgs, sourceMapPath: "" })).toBe(false);
+    expect(args({ ...validArgs, sourceMapPath: "map\u0000.json" })).toBe(
+      false,
+    );
+    expect(args({ ...validArgs, sourceMapPath: "./app.js.map" })).toBe(false);
+    expect(args({ ...validArgs, sourceMapUrl: "" })).toBe(false);
+  });
+});
+
 describe("ADB selector input schemas", () => {
   it("matches canonical serial constraints for every command that accepts a serial", async () => {
     const cli = createCli({});
