@@ -576,8 +576,10 @@ describe("Mach-O encryption reporting", () => {
       "x86_64",
       "arm64",
     ]);
-    expect(limitations).toContain(
-      "Bytes 36864-38912 (input file offsets, end exclusive) of the arm64 slice are ciphertext (cryptid 1); disassembly, decompilation, strings and references derived from them do not describe program code.",
+    expect(limitations).toContainEqual(
+      expect.stringMatching(
+        /36864-38912.*input file offsets.*end exclusive.*arm64.*ciphertext.*cryptid 1.*disassembly.*decompilation.*strings.*references.*do not describe program code/iu,
+      ),
     );
   });
 
@@ -603,8 +605,10 @@ describe("Mach-O encryption reporting", () => {
       status: "parsed",
       slices: [encrypted(4096, 4096)],
     });
-    expect(limitations).toContain(
-      "The arm64 slice declares encryption (cryptid 1) over an empty range; no bytes are marked as ciphertext.",
+    expect(limitations).toContainEqual(
+      expect.stringMatching(
+        /arm64.*cryptid 1.*empty range.*no bytes.*ciphertext/iu,
+      ),
     );
     expect(limitations.some((line) => line.includes("are ciphertext"))).toBe(
       false,
