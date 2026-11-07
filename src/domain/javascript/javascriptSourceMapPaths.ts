@@ -122,6 +122,12 @@ const resolveJavaScriptSourceMapPath = (
       reason:
         "Source reference has malformed URL encoding or an invalid file URL.",
     };
+  if (path.includes("\0"))
+    return {
+      kind: "unresolved",
+      reason:
+        "Source reference contains a NUL byte and cannot name a filesystem path.",
+    };
   const value = relative
     ? posix.relative(anchor, path)
     : path.replace(/^\/+/, "");
