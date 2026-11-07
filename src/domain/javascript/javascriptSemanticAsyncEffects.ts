@@ -307,12 +307,12 @@ const emitterIdentity = (
 };
 
 /**
- * A timer proven to come from the Node `timers` module rather than a bare
- * global. Browser and Electron renderer sources reach this analysis without a
- * Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
+ * A timer associated with the Node `timers` module, either proven or
+ * conditional, rather than a bare global. Browser and Electron renderer sources
+ * reach this analysis without a Node/browser distinction, and there `setTimeout("refresh()", 0)` is a real
  * timer: the string is evaluated by the host. Node's callback rule therefore
- * applies only when the timer is imported from `node:timers`, where that form
- * cannot exist.
+ * applies when interpreting the call as `node:timers`, where that form
+ * cannot create a Node timer even if the module identity is conditional.
  */
 const nodeBuiltinTimerMethod = (
   callee: t.Node,
