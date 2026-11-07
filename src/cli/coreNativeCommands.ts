@@ -14,6 +14,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 
 import {
   addressOrProcedureGuidance,
+  dataTypeSelectorGuidance,
   equalSelectorGuidance,
   resolveCliAnalysisSelector,
 } from "./analysisSelector.js";
@@ -43,9 +44,6 @@ import type { EvidenceBundle } from "../domain/evidenceBundle.js";
 const bytePatternInputSchema = z
   .object(bytePatternFields)
   .superRefine(validateBytePattern);
-
-/** Data type selectors stay optional in the options schema; exactly one is required. */
-const dataTypeSelectorGuidance = "Supply exactly one of --type or --address.";
 
 /** Register native load-image, memory, and annotation CLI commands. */
 export const registerCoreNativeCommands = (
@@ -320,6 +318,7 @@ export const registerCoreNativeCommands = (
               "inspect_native_data_type",
               selected.error.issues,
               input,
+              { cause: selected.error },
             ),
           );
         return runDirectAnalysis(
