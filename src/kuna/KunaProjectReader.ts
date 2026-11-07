@@ -48,6 +48,7 @@ export interface KunaProjectFileSpan {
 
 export interface KunaProjectText {
   readonly result: string | null;
+  readonly unavailableReason?: string;
   readonly files?: readonly KunaProjectFileSpan[];
   readonly limitations: readonly string[];
 }
@@ -314,13 +315,15 @@ export class KunaProjectReader {
       this.project.functions.map((block) => [block.address, block]),
     );
     const block = this.#blocks.get(address);
-    if (block === undefined)
+    if (block === undefined) {
+      const reason =
+        "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.";
       return ok({
         result: null,
-        limitations: [
-          "Kuna's export decompiles code entries only; this inventory entry, such as an import slot, has no body.",
-        ],
+        unavailableReason: reason,
+        limitations: [reason],
       });
+    }
     const files = [
       {
         facet: "pseudocode" as const,
@@ -329,12 +332,18 @@ export class KunaProjectReader {
         byteLength: block.cLength,
       },
     ];
-    if (block.error !== null)
+    if (block.error !== null) {
+      const reason = `Kuna could not decompile this function: ${block.error}`;
       return ok({
         result: null,
+        unavailableReason: reason,
         files,
-        limitations: [`Kuna could not decompile this function: ${block.error}`],
+        limitations: [
+          reason,
+          "To try an independent decompile, call procedure_pseudo_code with analysis: independent_fresh, or use rea decompile --analysis independent_fresh. It may use different analysis context and does not replace this observation.",
+        ],
       });
+    }
     const text = await readSpan(
       operation,
       join(this.project.directory, this.project.manifest.files.c.path),
