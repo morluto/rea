@@ -119,7 +119,7 @@ installation's language catalog, the same catalog REA uses to admit
 and still succeeds on the stock checks.
 
 The ELF lane (`npm run verify:ghidra:ppc`) is separate. See
-[PowerPC ELF analysis through Ghidra](/ghidra-ppc).
+[PowerPC ELF analysis through Ghidra](ghidra-ppc.md).
 
 ## Not supported yet
 

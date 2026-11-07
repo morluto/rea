@@ -78,13 +78,13 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "node_modules/mapped/x%2Ey.js": 'throw new Error("must never load");',
       "oracle.mjs": `
 import { fileURLToPath } from "node:url";
-import { relative } from "node:path";
+import { relative, sep } from "node:path";
 import { existsSync } from "node:fs";
 const valid = ${JSON.stringify(Object.keys(valid))};
 const rejected = ${JSON.stringify(Object.keys(rejected))};
 const resolveFile = request => {
   const path = fileURLToPath(import.meta.resolve(request));
-  return { path: relative(process.cwd(), path), exists: existsSync(path) };
+  return { path: relative(process.cwd(), path).split(sep).join("/"), exists: existsSync(path) };
 };
 console.log(JSON.stringify({
   valid: valid.map(resolveFile),

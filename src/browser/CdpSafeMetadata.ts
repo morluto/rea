@@ -26,7 +26,7 @@ export const safeResponseMetadata = (
   // RFC 9110 section 5.3: repeated field lines combine as one comma-separated value.
   const field = (name: string): string | undefined =>
     headers.get(name)?.join(", ");
-  const responseUrl = response.url ?? url;
+  const responseUrl = response.url?.source ?? url;
   const parsedLinks = parseLinks(
     headers.get("link"),
     responseUrl,
@@ -103,7 +103,8 @@ const normalizedHeaders = (
 /**
  * Each field line is a CSP3 serialized policy list, with policies separated by
  * commas. Directives of every policy are returned in order; the schema does not
- * record which policy a directive came from.
+ * record which policy a directive came from. Within one policy, CSP3 keeps the
+ * first directive of each name and ignores its repeats.
  */
 const parseCsp = (
   lines: readonly string[] | undefined,
@@ -114,33 +115,37 @@ const parseCsp = (
   let nonceCount = 0;
   let hashCount = 0;
   const policies = (lines ?? []).flatMap((line) => line.split(","));
-  for (const rawDirective of policies.flatMap((policy) => policy.split(";"))) {
-    // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
-    if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
-    const [rawName, ...tokens] = rawDirective
-      .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, "")
-      .split(/[\t\n\f\r ]+/u);
-    const name = (rawName ?? "").toLowerCase();
-    if (!/^[a-z][a-z0-9\x2d]*$/u.test(name)) continue;
-    const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
-      [];
-    for (const token of tokens) {
-      const lower = token.toLowerCase();
-      if (lower.startsWith("'nonce-")) {
-        nonceCount += 1;
-        continue;
+  for (const policy of policies) {
+    const names = new Set<string>();
+    for (const rawDirective of policy.split(";")) {
+      // CSP3 rejects non-ASCII directives and uses Infra ASCII whitespace.
+      if (/[^\x00-\x7f]/u.test(rawDirective)) continue;
+      const [rawName, ...tokens] = rawDirective
+        .replace(/^[\t\n\f\r ]+|[\t\n\f\r ]+$/gu, "")
+        .split(/[\t\n\f\r ]+/u);
+      const name = (rawName ?? "").toLowerCase();
+      if (!/^[a-z][a-z0-9\x2d]*$/u.test(name) || names.has(name)) continue;
+      names.add(name);
+      const sources: ResponseMetadata["csp"]["directives"][number]["sources"] =
+        [];
+      for (const token of tokens) {
+        const lower = token.toLowerCase();
+        if (lower.startsWith("'nonce-")) {
+          nonceCount += 1;
+          continue;
+        }
+        if (
+          lower.startsWith("'sha256-") ||
+          lower.startsWith("'sha384-") ||
+          lower.startsWith("'sha512-")
+        ) {
+          hashCount += 1;
+          continue;
+        }
+        sources.push(cspSource(token, baseUrl, allowedOrigins));
       }
-      if (
-        lower.startsWith("'sha256-") ||
-        lower.startsWith("'sha384-") ||
-        lower.startsWith("'sha512-")
-      ) {
-        hashCount += 1;
-        continue;
-      }
-      sources.push(cspSource(token, baseUrl, allowedOrigins));
+      directives.push({ name, sources });
     }
-    directives.push({ name, sources });
   }
   return { directives, nonce_count: nonceCount, hash_count: hashCount };
 };

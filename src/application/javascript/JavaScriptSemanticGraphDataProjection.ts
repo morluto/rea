@@ -237,6 +237,16 @@ export const projectSemanticBoundaries = (
       resolution:
         operation.resolution === "complete" ? "resolved" : "candidate",
     });
+    // The producer only supplies a scalar result binding when this call is
+    // the assigned value itself, rather than an operand of another expression.
+    if (operation.resultBindingId !== null)
+      addSemanticGraphRelation(context.state, {
+        source: boundary,
+        target: context.bindingNodes.get(operation.resultBindingId),
+        relation: "defines",
+        resolution:
+          operation.resolution === "complete" ? "resolved" : "candidate",
+      });
     if (operation.resolution !== "complete")
       addDataUnknown({
         context,

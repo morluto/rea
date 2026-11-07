@@ -5,6 +5,14 @@ import type { JavaScriptStaticCoverage } from "./javascriptStaticCoverage.js";
 /** Token semantics shared by bundle producers and worker admission. */
 export const JAVASCRIPT_AST_FINGERPRINT_ALGORITHM = "babel-ast-v3";
 
+/**
+ * Marks a Vite preload dependency written relative to the build output
+ * directory (Vite's absolute-base form, such as `assets/chunk.js`). The
+ * runtime helper prefixes the configured base, so the path is not a module
+ * specifier and not relative to the importing chunk.
+ */
+export const VITE_OUTPUT_DEPENDENCY_PREFIX = "vite-output:";
+
 /** Static syntax context retained for later artifact path resolution. */
 export type JavaScriptStaticPathContext =
   | "module-specifier"
@@ -36,6 +44,12 @@ interface JavaScriptStaticReferenceState {
   readonly module_runtime?: string;
   /** Source-relative filename selected by a proven createRequire factory. */
   readonly resolution_base_path?: string;
+  /**
+   * Which loader produced this reference. A `factory-loader` specifier is a
+   * recovered bundle module key, so it names a module inside the artifact even
+   * when it reads like a package name.
+   */
+  readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
   readonly location: JavaScriptSourceRange;
 }
 

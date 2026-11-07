@@ -7,7 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
 import { applicationVersionComparisonResultSchema } from "../../../src/domain/javascript/javascriptApplicationVersionComparisonSchemas.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
-import { cliTest } from "../../support/cli/cliFixture.js";
+import { cliTest, runFileCli } from "../../support/cli/cliFixture.js";
 
 cliTest(
   "keeps unavailable source-selection scopes unknown in version comparisons",
@@ -69,7 +69,7 @@ cliTest(
     ) => {
       const inputPath = join(root, `${name}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });
@@ -493,7 +493,7 @@ cliTest(
     const compare = async (left: unknown, right: unknown) => {
       const inputPath = join(root, `comparison-${Math.random()}.json`);
       await writeFile(inputPath, JSON.stringify({ left, right }));
-      const response = await cli.run({
+      const response = await runFileCli(cli, {
         arguments: ["compare-application-versions", inputPath, "--json"],
         environment: { REA_LOG_LEVEL: "silent" },
       });

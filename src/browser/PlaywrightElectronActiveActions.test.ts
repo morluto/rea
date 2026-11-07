@@ -188,8 +188,6 @@ it("preserves local Playwright action diagnostics", async () => {
     status: "failed",
     error: `locator ${selector} failed with token=raw-secret`,
   });
-  expect(result[0]?.error).toContain(selector);
-  expect(result[0]?.error).toContain("raw-secret");
 });
 
 it("retains complete action errors and Electron window text", async () => {

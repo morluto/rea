@@ -119,6 +119,7 @@ export const decompileAll = async (
     input,
     bounds.value,
   );
+  const inventoryLimitations = loaded.value.limitations;
   const opened = await DecompileExport.open({
     placement: placement.value,
     identity: loaded.value.identity,
@@ -164,6 +165,19 @@ export const decompileAll = async (
     indexed = await session.writeIndex({
       layoutStatus: layoutStatus(input.layout),
       limitations,
+      latestRun: {
+        resume: input.resume,
+        selected: selection.procedures.length,
+        excluded: selection.excluded,
+        selection: {
+          name: input.name ?? null,
+          namespace: input.namespace ?? null,
+          address_start: input.address_start ?? null,
+          address_end: input.address_end ?? null,
+          limit: input.limit ?? null,
+        },
+        inventoryLimitations,
+      },
     });
   } finally {
     closed = await session.close();
@@ -220,6 +234,7 @@ export const decompileAll = async (
       excluded: selection.excluded,
       state,
       limitations,
+      inventoryLimitations,
     }),
   );
   return manifest.success
@@ -258,6 +273,7 @@ const loadProcedures = async (
       readonly procedures: readonly SelectedProcedure[];
       readonly identity: ExportIdentity;
       readonly unaddressed: number;
+      readonly limitations: readonly string[];
     },
     AnalysisError
   >
@@ -287,6 +303,7 @@ const loadProcedures = async (
     })),
     identity: identity.value,
     unaddressed: parsed.data.length - addressed.length,
+    limitations: observed.value.limitations,
   });
 };
 
@@ -393,13 +410,16 @@ const publishSelected = async (
       continue;
     input.state.attempted += 1;
     input.state.lastFailureCode = undefined;
+    const externalBefore = input.state.external;
     const outcome = await attemptOne(input, procedure, existing, bodySupport);
     bodySupport = outcome.bodySupport;
     if (!outcome.result.ok) return outcome.result;
-    input.state.outputIoStreak =
-      input.state.lastFailureCode === "output_io"
-        ? input.state.outputIoStreak + 1
-        : 0;
+    // An external function writes no file, so it says nothing about the directory.
+    if (input.state.external === externalBefore)
+      input.state.outputIoStreak =
+        input.state.lastFailureCode === "output_io"
+          ? input.state.outputIoStreak + 1
+          : 0;
     // Repeated write failures mean the directory has stopped accepting files,
     // for example a full disk. Stop instead of decompiling every remaining
     // function only to fail its write. Committed files and records are kept.
@@ -426,13 +446,12 @@ const attemptOne = async (
         "The function file already exists and does not match this export.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -442,13 +461,12 @@ const attemptOne = async (
       message: "The existing function file could not be read.",
     };
     recordFailure(input.state, procedure, reason);
+    const retained = retainedObservation(input.session, procedure.address);
     const appended = await input.session.append(
-      failureRecord(
-        procedure,
-        retainedBody(input.session, procedure.address),
-        reason,
-        { relativePath: input.session.pathFor(procedure.address) },
-      ),
+      failureRecord(procedure, retained.body, reason, {
+        relativePath: input.session.pathFor(procedure.address),
+        ...retained.options,
+      }),
     );
     return { result: appended, bodySupport };
   }
@@ -537,6 +555,12 @@ const publishOne = async (input: {
   const caveats = [
     ...new Set([...infoCaveats, ...decompiled.value.limitations]),
   ];
+  const observationSource: NonNullable<
+    DecompileDirectoryFunctionRecord["provider_source"]
+  > =
+    decompiled.value.sourceDescriptor === undefined
+      ? { status: "unknown", reason: "source_not_available" }
+      : { status: "reported", source: decompiled.value.sourceDescriptor };
   const pseudocode = decompiled.value.result;
   if (typeof pseudocode !== "string" || pseudocode.length === 0) {
     const reason = pseudocodeFailure(pseudocode);
@@ -545,6 +569,7 @@ const publishOne = async (input: {
       result: await input.session.append(
         failureRecord(input.procedure, body.fact, reason, {
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -582,6 +607,7 @@ const publishOne = async (input: {
         failureRecord(input.procedure, body.fact, reason, {
           relativePath,
           limitations: caveats,
+          providerSource: observationSource,
         }),
       ),
       bodySupport: body.support,
@@ -593,6 +619,11 @@ const publishOne = async (input: {
     status: "written",
     relative_path: relativePath,
     sha256: committed.sha256,
+    // Matching existing bytes prove equality, not who originally wrote them.
+    provider_source:
+      committed.status === "matched"
+        ? { status: "unknown", reason: "existing_file_origin_unknown" }
+        : observationSource,
     body: bodyRecord(body.fact),
     // The header may truncate; the journal keeps the complete list.
     ...(caveats.length === 0 ? {} : { limitations: caveats }),
@@ -891,6 +922,7 @@ const failureRecord = (
     readonly relativePath?: string;
     /** Caveats of the observations this attempt used. */
     readonly limitations?: readonly string[];
+    readonly providerSource?: DecompileDirectoryFunctionRecord["provider_source"];
   } = {},
 ): DecompileDirectoryFunctionRecord => ({
   address: procedure.address,
@@ -898,6 +930,9 @@ const failureRecord = (
   status: "failed",
   body: bodyRecord(body),
   failure: reason,
+  ...(options.providerSource === undefined
+    ? {}
+    : { provider_source: options.providerSource }),
   ...(options.relativePath === undefined
     ? {}
     : { relative_path: options.relativePath }),
@@ -941,12 +976,19 @@ const unavailableBody = (reason: string): FunctionBody => ({
   reason: reason.length === 0 ? "unavailable" : reason,
 });
 
-/** Keep the journal's body fact when a conflicting file is left unchanged. */
-const retainedBody = (
+/** Preserve the observations and their caveats when a file cannot be reused. */
+const retainedObservation = (
   session: DecompileExport,
   address: string,
-): FunctionBody => {
-  return session.record(address)?.body ?? unavailableBody("not rewritten");
+): { body: FunctionBody; options: { limitations?: readonly string[] } } => {
+  const record = session.record(address);
+  return {
+    body: record?.body ?? unavailableBody("not rewritten"),
+    options:
+      record?.limitations === undefined
+        ? {}
+        : { limitations: record.limitations },
+  };
 };
 
 const exportLimitations = (
@@ -977,6 +1019,7 @@ const manifestOf = (input: {
   readonly excluded: number;
   readonly state: PublishState;
   readonly limitations: readonly string[];
+  readonly inventoryLimitations: readonly string[];
 }) => {
   const requested =
     input.state.written + input.state.failed + input.state.external;
@@ -1004,6 +1047,7 @@ const manifestOf = (input: {
     provider: input.identity.provider,
     analysis_profile_digest: input.identity.analysisProfileDigest,
     target_sha256: input.identity.targetSha256,
+    inventory_limitations: [...input.inventoryLimitations],
     limitations: [...input.limitations],
     resume: input.input.resume,
   };

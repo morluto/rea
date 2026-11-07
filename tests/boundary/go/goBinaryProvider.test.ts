@@ -131,7 +131,12 @@ it.skipIf(process.platform === "win32")(
     await symlink(original, selected);
     const result = await new GoBinaryProvider().inspect({ path: selected });
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.error).toBeInstanceOf(AnalysisInputError);
+    if (!result.ok) {
+      expect(result.error).toBeInstanceOf(AnalysisInputError);
+      const projected = projectAnalysisError(result.error);
+      expect(projected.remediation.action).toContain(original);
+      expect(projected).not.toHaveProperty("recovery");
+    }
   },
 );
 

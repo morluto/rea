@@ -4,6 +4,7 @@ import { isAbsolute, join, relative, sep } from "node:path";
 
 import { AnalysisInputError } from "../../domain/analysisErrorCore.js";
 import { resolveTreePath } from "../../domain/apple/dyldPaths.js";
+import { observedSymlinkTarget } from "../../domain/symlinkTarget.js";
 import {
   dylibResolutionInputSchema,
   dylibResolutionResultSchema,
@@ -113,7 +114,12 @@ class FilesystemTreeView implements DylibTreeView {
     try {
       const metadata = await lstat(absolute);
       if (metadata.isSymbolicLink()) {
-        const target = await readlink(absolute);
+        const observed = observedSymlinkTarget(
+          await readlink(absolute, { encoding: "buffer" }),
+        );
+        if (observed.text === null)
+          return { kind: "symlink", target: null, targetHex: observed.hex };
+        const target = observed.text;
         // Windows link text separates components with `\`.
         return {
           kind: "symlink",
@@ -333,6 +339,11 @@ const requireMachoRoots = async (
     const lookup = await resolveTreePath(view, path);
     if (lookup.kind === "escapes")
       throw reject("path", `Root ${path} resolves outside the analyzed root`);
+    if (lookup.kind === "undetermined")
+      throw reject(
+        "path",
+        `Root ${path} crosses symlink ${lookup.path} with non-UTF-8 target bytes ${lookup.targetHex}`,
+      );
     if (lookup.kind !== "file")
       throw reject(
         "path",

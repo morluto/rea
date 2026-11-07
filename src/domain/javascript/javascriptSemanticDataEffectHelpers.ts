@@ -57,7 +57,7 @@ export const assignedSemanticResultBindings = (
     if (t.isVariableDeclarator(owner)) {
       pattern = owner.id;
       source = owner.init ?? null;
-    } else if (t.isAssignmentExpression(owner)) {
+    } else if (t.isAssignmentExpression(owner, { operator: "=" })) {
       pattern = owner.left;
       source = owner.right;
     }

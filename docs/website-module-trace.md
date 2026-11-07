@@ -86,8 +86,10 @@ and import map have 32 MiB, 16 MiB and 4 MiB input limits. Native resolution has
 one 20-second deadline; cleanup may extend that deadline. One renderer is
 requested, and there is no aggregate host memory-limit claim. Cancellation
 closes only the owned browser; cleanup failure cannot return a successful trace.
-`REA_BROWSER_NO_SANDBOX=true` passes Chromium's corresponding launch option when
-the host requires it; it does not enable an REA security boundary.
+Chromium keeps its sandbox, except under Termux on Android, which always
+launches it without one. On hosts that cannot provide one, such as root in a
+container, `REA_BROWSER_NO_SANDBOX=true` launches it without the sandbox; the
+variable does not enable an REA security boundary.
 
 See [testing](testing.md) for the native loading oracle and CLI/MCP real lane.
 

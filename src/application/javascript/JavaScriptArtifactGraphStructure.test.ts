@@ -480,3 +480,45 @@ it("attaches sender validation to the innermost handler after a long minified li
     ),
   ).toBe(true);
 });
+
+it("projects package parse status from the package observation", () => {
+  const file = {
+    ...skippedFile(),
+    path: "package.json",
+    kind: "package-json" as const,
+  };
+  const entry: AnalyzedJavaScriptArtifactFile = {
+    file,
+    javascript: null,
+    semantic: null,
+  };
+  const analysis = {
+    ...analysisFor([entry]),
+    packages: [
+      {
+        path: file.path,
+        sha256: file.sha256,
+        status: "included" as const,
+        name: "fixture",
+        version: null,
+        main: null,
+        main_status: "default" as const,
+        main_entrypoint: "index.js",
+        renderer_declarations: {},
+        renderer_entrypoint: null,
+        limitation: null,
+      },
+    ],
+  };
+  const context = contextFor(file, analysis);
+  addJavaScriptArtifactFiles(context);
+  const observation = context.accumulator
+    .nodes()
+    .flatMap(({ observations }) => observations)
+    .find(({ properties }) => properties.file_kind === "package-json");
+  expect(observation?.properties).toMatchObject({
+    file_kind: "package-json",
+    package_parse_status: "included",
+    json_parse_status: null,
+  });
+});

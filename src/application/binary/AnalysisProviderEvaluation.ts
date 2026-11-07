@@ -17,12 +17,14 @@ import type {
 } from "../AnalysisProvider.js";
 import type { AnalysisProviderCandidateStatus } from "./AnalysisProviderRegistry.js";
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
+import { analysisErrorRemediationAction } from "../../domain/analysisErrorPresentation.js";
 
 /** Profile-resolution truth for one discovered provider candidate. */
 export interface AnalysisProviderCandidateEvaluation {
   readonly candidate: AnalysisProviderCandidate;
   readonly status: AnalysisProviderCandidateStatus;
   readonly profile?: AnalysisProfileCommitment;
+  readonly refreshAfterRetirement?: true;
   readonly createClient?: AnalysisProviderBoundClientFactory;
   readonly profileError?: AnalysisError;
 }
@@ -76,9 +78,15 @@ export const evaluateAnalysisProviderCandidate = async (
               },
             },
           }
-        : rejectedProfile(candidate, status, error.message, {
-            error_tag: error._tag,
-          });
+        : rejectedProfile(
+            candidate,
+            status,
+            {
+              reason: error.message,
+              remediation: analysisErrorRemediationAction(error),
+            },
+            { error_tag: error._tag },
+          );
     return ok({ ...rejection, profileError: error });
   }
   if (signalIsAborted(signal))
@@ -88,11 +96,10 @@ export const evaluateAnalysisProviderCandidate = async (
   try {
     if (resolved.value.profile === null)
       return ok(
-        rejectedProfile(
-          candidate,
-          status,
-          "Provider version or analysis profile could not be resolved",
-        ),
+        rejectedProfile(candidate, status, {
+          reason: "Provider version or analysis profile could not be resolved",
+          remediation: PROFILE_REMEDIATION,
+        }),
       );
     const profile = analysisProfileSchema.parse(resolved.value.profile);
     const identity = candidate.identity();
@@ -103,16 +110,18 @@ export const evaluateAnalysisProviderCandidate = async (
         profile.provider.version !== identity.version)
     )
       return ok(
-        rejectedProfile(
-          candidate,
-          status,
-          "Resolved analysis profile has mismatched provider identity",
-        ),
+        rejectedProfile(candidate, status, {
+          reason: "Resolved analysis profile has mismatched provider identity",
+          remediation: PROFILE_REMEDIATION,
+        }),
       );
     return ok({
       candidate,
       status,
       profile,
+      ...(resolved.value.refreshAfterRetirement === undefined
+        ? {}
+        : { refreshAfterRetirement: resolved.value.refreshAfterRetirement }),
       ...(resolved.value.createClient === undefined
         ? {}
         : { createClient: resolved.value.createClient }),
@@ -120,11 +129,10 @@ export const evaluateAnalysisProviderCandidate = async (
   } catch (cause: unknown) {
     void cause;
     return ok(
-      rejectedProfile(
-        candidate,
-        status,
-        "Provider returned an invalid analysis profile",
-      ),
+      rejectedProfile(candidate, status, {
+        reason: "Provider returned an invalid analysis profile",
+        remediation: PROFILE_REMEDIATION,
+      }),
     );
   }
 };
@@ -132,10 +140,13 @@ export const evaluateAnalysisProviderCandidate = async (
 const signalIsAborted = (signal: AbortSignal | undefined): boolean =>
   signal?.aborted === true;
 
+const PROFILE_REMEDIATION =
+  "Run rea doctor to check this provider's installation and version, then reopen the target, or select another analysis provider.";
+
 const rejectedProfile = (
   candidate: AnalysisProviderCandidate,
   status: AnalysisProviderCandidateStatus,
-  reason: string,
+  rejection: { readonly reason: string; readonly remediation: string },
   diagnostics: Readonly<Record<string, JsonValue>> = {},
 ): AnalysisProviderCandidateEvaluation => ({
   candidate,
@@ -144,7 +155,7 @@ const rejectedProfile = (
     availability: {
       status: "unavailable",
       code: "version_unresolved",
-      reason,
+      ...rejection,
       diagnostics: jsonObjectSchema.parse({
         ...status.availability.diagnostics,
         ...diagnostics,

@@ -171,6 +171,13 @@ resource truncation. JavaScript summary `limitation_count` counts the full,
 deduplicated union of parent, application and semantic caveats, including messages
 whose delivery is omitted by the view's byte budget.
 
+Symbolic property reads and member enumeration share the expression resolver's
+existing resource budget, including recursive return spreads with fresh arguments.
+A bounded source retains independent window, preload and endpoint facts while
+reporting `parse_status: partial` and limited examination in `analysis_coverage`.
+Unresolved recursive values remain unknown; selected views retain source coverage
+separately from the completeness of the returned page.
+
 Unavailable values are represented explicitly rather than as missing fields,
 so absence of evidence cannot silently become evidence of absence.
 

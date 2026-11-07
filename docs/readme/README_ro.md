@@ -20,6 +20,8 @@
 
 **[Site web](https://rea.tools/) · [Ghiduri](https://rea.tools/guides/) · [Studii de caz](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Alătură-te comunității REA pe Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Pornire rapidă](#pornire-rapidă) · [Cum funcționează REA](#cum-funcționează-rea) · [Ce poți analiza](#ce-poți-analiza) · [Studii de caz](#studii-de-caz) · [Construiește medii RL](#build-rl-environments) · [Întrebări frecvente](#întrebări-frecvente) · [Documentație](#documentație)
 
 <code>npx rea-agents setup</code>
@@ -62,7 +64,7 @@ Ai văzut într-o aplicație o funcționalitate pe care ai vrea să o incluzi î
 
 REA conectează agentul tău la unelte pentru inspectarea fișierelor binare native, a aplicațiilor JavaScript și Electron, a ansamblurilor .NET și a site-urilor web. Poți folosi aceleași unelte și din terminal. Analiza rulează local, iar rezultatele includ dovezile și limitările care stau la baza fiecărei concluzii.
 
-Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra sau IDA; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
+Programul de configurare înregistrează REA în agentul tău și instalează instrucțiunile corespunzătoare pentru fluxul de lucru. Analiza nativă poate folosi o instalare existentă de Hopper, Ghidra, IDA sau Kuna; programul de configurare poate instala opțional Hopper, cu aprobarea ta. Analiza statică JavaScript nu necesită un motor de analiză nativă.
 
 > **[Vizitează site-ul REA](https://rea.tools/)** pentru instrucțiuni de configurare, ghiduri ilustrate și studii de caz reale.
 
@@ -187,7 +189,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Țintă                               | Ce returnează REA                                                                                                             | Cerințe și ghid                                                                                                                        |
 | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
 | Aplicații desktop instalate         | Componente de execuție candidate, fișiere auxiliare, indicii despre componente și următoarele verificări                      | Inspectare integrată a directoarelor și antetelor, cu limite de resurse; [aplicații desktop](../desktop-applications.md)               |
-| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra sau IDA; [analiză nativă](../native-investigation.md)                                                                   |
+| Fișiere binare native               | Pseudocod, cod de asamblare, șiruri de caractere, simboluri, apeluri și referințe                                             | Hopper, Ghidra, IDA sau Kuna; [analiză nativă](../native-investigation.md)                                                             |
 | Structura ELF, offline              | Secțiuni, segmente, simboluri și relocări originale, precum și indicii statice despre mecanismele de protecție                | pwntools furnizat de utilizator, pe Linux x64; [diagnosticarea binarelor](../binary-diagnostics.md)                                    |
 | Fișiere binare Go                   | Versiunea compilatorului încorporată în fișier, modulele, înlocuirile și setările de compilare                                | Inspectare statică integrată a fișierelor ELF/PE/Mach-O cu o singură arhitectură; nu necesită instalarea Go                            |
 | Obiecte de cod GPU                  | Ținte CUDA/HIP, parametri și resurse selectate ale kernelurilor GPU, textul PTX păstrat                                       | Inspectare statică integrată a fișierelor ELF/PE/fatbin/CUBIN/PTX; [obiecte de cod GPU](../gpu-code-objects.md)                        |
@@ -198,6 +200,7 @@ Uneltele suplimentare și platformele acceptate depind de ținta analizată:
 | Certificate PE                      | Intrări Authenticode WIN_CERTIFICATE și câmpuri de identitate ale semnatarilor PKCS#7 și certificatelor X.509                 | Inspectare statică integrată a fișierelor PE; [certificate PE](../pe-certificates.md)                                                  |
 | Importuri PE                        | Numele DLL-urilor importate și încărcate întârziat, ordinale, RVA-uri ale IAT și hash-ul importurilor calculat de pefile      | Inspectare statică integrată a fișierelor PE; [importuri PE](../pe-imports.md)                                                         |
 | Note ELF                            | Proprietari și tipuri PT_NOTE/SHT_NOTE, câmpuri GNU build-id și ABI-tag                                                       | Inspectare statică integrată a fișierelor ELF; [note ELF](../elf-notes.md)                                                             |
+| Întărire binară                     | PIE, NX, RELRO, CFG și indicatori de antet pentru ELF, PE și Mach-O                                                           | Inspecție statică integrată a antetelor; [întărire binară](../binary-hardening.md)                                                     |
 | Rapoarte Apple IPS de eroare fatală | Metadate .ips, fire de execuție, imagini binare, registre și clase documentate de erori fatale                                | Inspectare statică integrată a datelor JSON; [Apple IPS](../apple-ips.md)                                                              |
 | Module de kernel Linux              | Chei .modinfo, CRC-uri din __versions, prezența this_module și structura semnăturii de la sfârșitul fișierului                | Inspectare statică integrată a fișierelor ELF; [module de kernel](../kernel-modules.md)                                                |
 | Erlang BEAM                         | Blocuri IFF, atomi, exporturi, importuri, funcții lambda și antetul Code                                                      | Inspectare statică integrată a fișierelor BEAM; [Erlang BEAM](../erlang-beam.md)                                                       |
@@ -342,11 +345,11 @@ poți folosi [înregistrarea manuală MCP](../installation.md#mcp-registry).
 </details>
 
 <details>
-<summary><strong>Am nevoie de Hopper, Ghidra sau IDA?</strong></summary>
+<summary><strong>Am nevoie de Hopper, Ghidra, IDA sau Kuna?</strong></summary>
 
 Analiza nativă aprofundată folosește unul dintre aceste instrumente. Inspectarea
 statică JavaScript și .NET funcționează fără un motor de analiză nativă.
-Programul de configurare poate instala Hopper după aprobare; pentru Ghidra și IDA
+Programul de configurare poate instala Hopper după aprobare; pentru Ghidra, IDA și Kuna
 folosește instalările existente. Consultă [configurarea motoarelor de analiză](../installation.md#hopper).
 
 </details>
@@ -429,7 +432,7 @@ Raportează vulnerabilitățile conform [SECURITY.md](../../SECURITY.md).
 
 ## Istoricul stelelor
 
-🎉 **300.000 de stele pe GitHub — vă mulțumim!**
+🎉 **400.000 de stele pe GitHub — vă mulțumim!**
 
 Mulțumim tuturor celor care folosesc REA, raportează erori, propun funcționalități,
 testează versiuni și contribuie cu remedieri.

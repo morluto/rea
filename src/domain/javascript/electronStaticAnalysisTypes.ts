@@ -138,7 +138,22 @@ export type ElectronIpcFinding = ElectronIpcDescriptor &
   ElectronIpcFindingContext &
   (
     | { readonly channel: string; readonly channel_expression: null }
-    | { readonly channel: null; readonly channel_expression: string }
+    | {
+        readonly channel: null;
+        readonly channel_expression: string;
+        /**
+         * Every invocation of this site is a traced direct call that supplied a
+         * literal channel, recorded as its own wrapper-substitution finding or
+         * guarded call path. Absent when any invocation may supply another value.
+         */
+        readonly invocation_channels?: "literal";
+        /**
+         * Channels from guarded invocations, which keep their predicate on a
+         * call path instead of becoming findings. Each still competes for its
+         * channel in pairing.
+         */
+        readonly guarded_invocation_channels?: readonly string[];
+      }
   );
 
 /** Static check involving an IPC sender, frame, process, URL, or origin. */
@@ -198,6 +213,36 @@ export interface ElectronNativeAddonBindingFinding {
   readonly location: JavaScriptSourceRange;
 }
 
+/**
+ * One custom URL scheme registration call observed at an Electron `app` or
+ * `protocol` call site. Successful registration, control-flow reachability
+ * and operating-system or session routing remain unproven.
+ */
+export interface ElectronProtocolFinding {
+  /** The exact Electron member called. */
+  readonly api: string;
+  /**
+   * `os-default-client`: `app.setAsDefaultProtocolClient`, which asks the OS to
+   * open the scheme's links in this app; `privileged-scheme`: an entry passed to
+   * `protocol.registerSchemesAsPrivileged`; `handler` and `interceptor`:
+   * `protocol.handle`/`register*Protocol` and `intercept*Protocol`.
+   */
+  readonly role:
+    | "os-default-client"
+    | "privileged-scheme"
+    | "handler"
+    | "interceptor";
+  readonly scheme: ElectronStaticValue;
+  /** `session.defaultSession.protocol` rather than the default `protocol` module. */
+  readonly session: "default-protocol" | "default-session";
+  /** Privilege keys with a literal `true`; null unless `role` is `privileged-scheme` with a literal object. */
+  readonly enabled_privileges: readonly string[] | null;
+  readonly module_key: string | null;
+  /** Recovered factory runtime; absent in older or unbundled findings. */
+  readonly module_runtime?: string;
+  readonly location: JavaScriptSourceRange;
+}
+
 /** All Electron-specific facts collected during one shared AST traversal. */
 export interface ElectronStaticFindings {
   /** Calls that may replace the application path used by Electron loadFile. */
@@ -208,6 +253,7 @@ export interface ElectronStaticFindings {
   readonly sender_validations: readonly ElectronSenderValidationFinding[];
   readonly utility_processes: readonly ElectronUtilityProcessFinding[];
   readonly native_addon_bindings: readonly ElectronNativeAddonBindingFinding[];
+  readonly protocols: readonly ElectronProtocolFinding[];
   /** Source-bound candidate paths through bundled exports and IPC closures. */
   readonly call_paths?: readonly ElectronCallPath[];
 }

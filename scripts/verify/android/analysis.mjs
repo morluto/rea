@@ -230,6 +230,24 @@ assert.equal(packageResult.min_sdk, "26");
 assert.equal(packageResult.target_sdk, "33");
 assert.equal(packageResult.manifest.status, "complete");
 assert.ok(packageResult.manifest.text.includes(fixture.package));
+// Binary manifest contains nested class names with '$'; JADX's ordinary
+// class-aware XML renderer substitutes Java display aliases with dots.
+const nestedActivity =
+  "io.appium.android.apis.app.FragmentLayout$DetailsActivity";
+assert.ok(packageResult.manifest.text.includes(nestedActivity));
+assert.ok(packageResult.manifest.text.includes("@bool/atLeastHoneycomb"));
+assert.ok(
+  packageResult.manifest.text.includes(
+    'android:name=".app.LocalSampleInstrumentation"',
+  ),
+);
+assert.ok(
+  packageResult.components.items.some(
+    (component) =>
+      component.declared_name === nestedActivity &&
+      component.name === nestedActivity,
+  ),
+);
 assert.ok(packageResult.permissions.includes("android.permission.INTERNET"));
 assert.equal(packageResult.signature_verification, "not_performed");
 assert.ok(

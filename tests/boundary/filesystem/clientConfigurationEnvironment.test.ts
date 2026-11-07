@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -22,7 +23,7 @@ import {
   clientRegistrationEnvironmentDetailsWithBudget,
 } from "../../../src/application/ClientRegistrationEnvironment.js";
 import { snapshotEnvironment } from "../../../src/process/snapshotEnvironment.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { ok } from "../../../src/domain/result.js";
 import { MCP_STARTUP_POLICY } from "../../../src/mcpStartupPolicy.js";
 
@@ -129,16 +130,20 @@ it.each(["win32", "linux"] as const)(
         mcpServers: {
           rea: clientRegistrationEntry(
             "json",
-            npxRegistrationCommand(platform),
+            currentClientRegistrationCommand({ platform }),
             { rea_analysis_provider: "invalid provider" },
           ),
         },
       }),
     );
-    const statuses = await readClientRegistrationStatuses(home, "rea", {
-      platform,
-      environment: {},
-    });
+    const statuses = await readClientRegistrationStatuses(
+      home,
+      currentClientRegistrationCommand({ platform })[1],
+      {
+        platform,
+        environment: {},
+      },
+    );
     expect(statuses.find(({ client }) => client === "cursor")).toMatchObject({
       state: platform === "win32" ? "invalid" : "aligned",
     });
@@ -221,12 +226,9 @@ it.skipIf(process.platform !== "win32")(
       }),
     );
     const client = { name: "kimi", format: "kimi", configPath } as const;
+    const command = currentClientRegistrationCommand();
     expect(
-      await configureClientConfiguration(
-        client,
-        {},
-        npxRegistrationCommand(process.platform),
-      ),
+      await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const parsed = parseClientConfiguration(
       await readFile(configPath, "utf8"),
@@ -235,7 +237,7 @@ it.skipIf(process.platform !== "win32")(
     expect(effectiveClientServer(parsed, "rea")).toHaveProperty("env", {
       rea_mcp_input_schema_profile: "full",
     });
-    const statuses = await readClientRegistrationStatuses(home, "rea", {
+    const statuses = await readClientRegistrationStatuses(home, command[1], {
       environment: {},
     });
     expect(statuses.find(({ client }) => client === "kimi")).toMatchObject({
@@ -861,6 +863,21 @@ it.each([
     { REA_GHIDRA_COMPILER_SPEC_ID: "borlandcpp" },
     "REA_GHIDRA_COMPILER_SPEC_ID",
   ],
+  [
+    "Windows ChangeTime drift window of zero",
+    { REA_WINDOWS_CHANGE_TIME_DRIFT_MS: "0" },
+    "REA_WINDOWS_CHANGE_TIME_DRIFT_MS",
+  ],
+  [
+    "Windows ChangeTime poll that is not decimal",
+    { REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS: "1e2" },
+    "REA_WINDOWS_CHANGE_TIME_SETTLE_POLL_MS",
+  ],
+  [
+    "Windows ChangeTime poll budget above its maximum",
+    { REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS: "1001" },
+    "REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS",
+  ],
 ] as const)(
   "refuses %s before changing the configuration",
   async (_name, env, setting) => {
@@ -898,3 +915,20 @@ it.each([
     });
   },
 );
+
+it("refuses an unidentified launch command before creating a client configuration", async () => {
+  const home = await createTestTempDirectory("rea-registration-unidentified-");
+  const configPath = join(home, "missing", "mcp.json");
+  const result = await configureClientConfiguration(
+    { name: "claude_code", configPath, format: "json" },
+    {},
+    [],
+  );
+  expect(result).toMatchObject({
+    status: "failed",
+    reason: "registration_ownership",
+  });
+  await expect(access(join(home, "missing"))).rejects.toMatchObject({
+    code: "ENOENT",
+  });
+});

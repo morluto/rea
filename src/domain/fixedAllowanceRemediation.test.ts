@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { AnalysisResourceConstraintError } from "./analysisErrorCore.js";
+import {
+  AnalysisResourceConstraintError,
+  resourceConstraintRecovery,
+} from "./analysisErrorCore.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   fixedAllowanceOptions,
@@ -24,6 +27,61 @@ const forbidden = {
   live: [/available host memory\. Retry/u, /unchanged request/u],
   work: [/worker CPU limits and observed signal/u],
 } as const;
+
+describe("resource constraint recovery shape", () => {
+  it("keeps a fixed allowance and a remediation action from co-occurring", () => {
+    const allowance = new AnalysisResourceConstraintError(
+      "inspect_fixture",
+      "memory",
+      "allowance_exceeded",
+      null,
+      fixedAllowanceOptions("parser_allowance", "parser"),
+    );
+    expect(allowance.recovery).toEqual({
+      retryable: false,
+      fixedAllowance: { name: "parser_allowance", kind: "parser" },
+    });
+    expect("remediationAction" in allowance.recovery).toBe(false);
+
+    const guided = new AnalysisResourceConstraintError(
+      "inspect_fixture",
+      "capacity",
+      "slots_occupied",
+      null,
+      { remediationAction: "wait_for_slot", retryable: true },
+    );
+    expect(guided.recovery).toEqual({
+      remediationAction: "wait_for_slot",
+      retryable: true,
+    });
+    expect("fixedAllowance" in guided.recovery).toBe(false);
+    expect(resourceConstraintRecovery(guided)).toEqual(guided.recovery);
+  });
+
+  it("keeps only the fixed allowance when both recovery fields are supplied", () => {
+    const conflict = {
+      fixedAllowance: { name: "parser_allowance", kind: "parser" as const },
+      remediationAction: "wait_for_slot",
+      retryable: false as const,
+    };
+    const error = new AnalysisResourceConstraintError(
+      "inspect_fixture",
+      "memory",
+      "allowance_exceeded",
+      null,
+      // The public options type cannot express both fields. This is the
+      // runtime object the constructor still has to normalize.
+      conflict as never,
+    );
+    expect(error.recovery).toEqual({
+      fixedAllowance: { name: "parser_allowance", kind: "parser" },
+      retryable: false,
+    });
+    expect(error.fixedAllowance).toEqual(conflict.fixedAllowance);
+    expect(error.remediationAction).toBeUndefined();
+    expect(resourceConstraintRecovery(error)).toEqual(error.recovery);
+  });
+});
 
 describe("fixed allowance recovery", () => {
   it.each([

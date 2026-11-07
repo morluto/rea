@@ -1,5 +1,7 @@
 import { PeLoadConfigService } from "../application/binaryDiagnostics/PeLoadConfigService.js";
 import { PeLoadConfigProvider } from "../native/pe/PeLoadConfigProvider.js";
+import { BinaryHardeningService } from "../application/binaryDiagnostics/BinaryHardeningService.js";
+import { BinaryHardeningProvider } from "../native/hardening/BinaryHardeningProvider.js";
 import { ByteEntropyService } from "../application/binaryDiagnostics/ByteEntropyService.js";
 import { RecordedCrashService } from "../application/binaryDiagnostics/RecordedCrashService.js";
 import { PwntoolsRecordedCrashProvider } from "../native/pwntools/PwntoolsRecordedCrashProvider.js";
@@ -74,3 +76,7 @@ export const createByteEntropyService = (
 
 export const createPeLoadConfigService = (): PeLoadConfigService =>
   new PeLoadConfigService(new PeLoadConfigProvider());
+
+/** Portable ELF, PE, and Mach-O hardening inspection with no engine or toolchain. */
+export const createBinaryHardeningService = (): BinaryHardeningService =>
+  new BinaryHardeningService(new BinaryHardeningProvider());

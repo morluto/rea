@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { readMachoSegmentHeader } from "./machoSegmentHeader.js";
+import {
+  admitMachoSegmentCommand,
+  readMachoSegmentHeader,
+} from "./machoSegmentHeader.js";
 
 const formats = [
   { wide: false, littleEndian: false, headerSize: 56 },
@@ -79,3 +82,25 @@ it.each(formats)(
       });
   },
 );
+
+it("admits a segment's VM sizes, section table and file range", () => {
+  const segment = {
+    address: 0x1000n,
+    memorySize: 32n,
+    fileOffset: 8n,
+    fileSize: 16n,
+    protection: 1,
+    headerSize: 72,
+    sectionCount: 1,
+  };
+  const admit = (facts: typeof segment, commandBytes = 152, image = 24) =>
+    admitMachoSegmentCommand(facts, commandBytes, 64, image);
+  expect(admit(segment)).toEqual({ ok: true, value: { unmapped: false } });
+  expect(admit({ ...segment, memorySize: 15n }).ok).toBe(false);
+  expect(admit(segment, 151).ok).toBe(false);
+  expect(admit(segment, 152, 23).ok).toBe(false);
+  // A segment with no file bytes owns no file range, wherever fileoff points.
+  expect(admit({ ...segment, fileOffset: 1n << 40n, fileSize: 0n }).ok).toBe(
+    true,
+  );
+});

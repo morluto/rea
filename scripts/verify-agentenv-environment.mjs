@@ -8,10 +8,10 @@ import { PrivateRuntimeRoot } from "../dist/process/PrivateRuntimeRoot.js";
 import { createVerifierRun, completeVerifierRun } from "./lib/verifier-run.mjs";
 import { createPackageVerifierCommands } from "./lib/verify-package-commands.mjs";
 
-const AGENTENV_VERSION = "0.9.1334";
+const AGENTENV_VERSION = "0.9.1431";
 const AGENTENV_PIN = `agentenv-framework ${AGENTENV_VERSION}`;
-// The framework builds its infra images from public ECR, whose anonymous pull quota hosted
-// runners share; a rate refusal earns one retry, anything else fails at once.
+// Only an infra image whose pull fails is built, from public ECR, whose anonymous pull quota
+// hosted runners share; a rate refusal earns one retry, anything else fails at once.
 const PUBLIC_ECR_QUOTA =
   /public\.ecr\.aws[\s\S]{0,400}?(?:429 Too Many Requests|toomanyrequests)/u;
 // The anonymous data-transfer cap is counted per source IP, so a pause on the same runner
@@ -31,8 +31,8 @@ for (const key of ["REA_AGENT_ENV_COMMAND", "REA_DOCKER_COMMAND"])
     );
 const agentEnv = process.env.REA_AGENT_ENV_COMMAND;
 const docker = process.env.REA_DOCKER_COMMAND;
-// The framework's local image store keeps its registry:2 helper running across runs; a first
-// run on a fresh host creates it, so it is reported separately rather than counted as a leak.
+// The framework's local image store keeps its registry:2 helper running across runs; a run that
+// first stores a build there creates it, so it is reported separately rather than counted as a leak.
 const IMAGE_STORE_HELPER = /^agentenv-registry(?:-\d+)?$/u;
 await Promise.all([access(agentEnv), access(docker)]);
 const entrypoint =

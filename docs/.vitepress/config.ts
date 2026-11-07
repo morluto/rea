@@ -36,6 +36,7 @@ export default defineConfig({
           { text: "PE imports", link: "/pe-imports" },
           { text: "PE TLS/load config", link: "/pe-load-config" },
           { text: "ELF notes", link: "/elf-notes" },
+          { text: "Binary hardening", link: "/binary-hardening" },
           { text: "Apple IPS crash reports", link: "/apple-ips" },
           { text: "Linux kernel modules", link: "/kernel-modules" },
           { text: "CPython pyc files", link: "/python-pyc" },
@@ -61,6 +62,30 @@ export default defineConfig({
           { text: "Electron observation", link: "/electron-observation" },
           { text: "Electron fuses", link: "/electron-fuses" },
           { text: "Process capture", link: "/process-capture" },
+          {
+            text: "Desktop application capture",
+            link: "/desktop-application-capture",
+          },
+          {
+            text: "Desktop application state",
+            link: "/desktop-application-state",
+          },
+          {
+            text: "Desktop application export",
+            link: "/desktop-application-export",
+          },
+          {
+            text: "Desktop application tasks",
+            link: "/desktop-application-tasks",
+          },
+          {
+            text: "Desktop build computer",
+            link: "/desktop-build-computer",
+          },
+          {
+            text: "Building and witnessing",
+            link: "/desktop-build-witness",
+          },
           { text: ".NET assemblies", link: "/managed-code-analysis" },
           {
             text: "Python packaged applications",
@@ -70,6 +95,7 @@ export default defineConfig({
           { text: "Apple applications", link: "/apple-application-analysis" },
           { text: "Desktop installations", link: "/desktop-applications" },
           { text: "Firmware", link: "/firmware-analysis" },
+          { text: "iNES containers", link: "/ines-containers" },
           { text: "SQLite databases", link: "/sqlite-databases" },
           { text: "Packet captures", link: "/packet-captures" },
           { text: "Signal recordings", link: "/signal-recordings" },

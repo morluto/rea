@@ -20,6 +20,8 @@
 
 **[Web sitesi](https://rea.tools/tr/) · [Rehberler](https://rea.tools/tr/guides/) · [Örnek çalışmalar](https://rea.tools/tr/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord'da REA topluluğuna katılın" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Hızlı başlangıç](#hızlı-başlangıç) · [REA nasıl çalışır](#rea-nasıl-çalışır) · [Neleri analiz edebilirsiniz](#neleri-analiz-edebilirsiniz) · [Örnek çalışmalar](#örnek-çalışmalar) · [RL ortamları oluşturun](#build-rl-environments) · [Sık sorulan sorular](#sık-sorulan-sorular) · [GNU objdump ve Rizin araçları](../reverse-engineering-tools.md) · [Belgeler](#belgeler)
 
 <code>npx rea-agents setup</code>
@@ -60,7 +62,7 @@ Bir uygulamada kendi ürününüze eklemek istediğiniz bir özellik mi gördün
 
 REA, ajanınızı yerel makine kodu içeren ikili dosyaları, JavaScript ve Electron uygulamalarını, .NET derlemelerini ve web sitelerini inceleyen araçlara bağlar. Aynı araçları terminalden de kullanabilirsiniz. Analiz yerel olarak çalışır; sonuçlar her çıkarımın dayandığı kanıtları ve sınırlamaları içerir.
 
-Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yükler. Yerel makine kodu analizi mevcut bir Hopper, Ghidra veya IDA kurulumunu kullanabilir; kurulum işlemi, onayınızla isteğe bağlı olarak Hopper da yükleyebilir. Statik JavaScript analizi bu yerel analiz motorlarından hiçbirine ihtiyaç duymaz.
+Kurulum, REA'yı ajanınıza kaydeder ve uyumlu iş akışı talimatlarını yükler. Yerel makine kodu analizi mevcut bir Hopper, Ghidra, IDA veya Kuna kurulumunu kullanabilir; kurulum işlemi, onayınızla isteğe bağlı olarak Hopper da yükleyebilir. Statik JavaScript analizi bu yerel analiz motorlarından hiçbirine ihtiyaç duymaz.
 
 > Kurulum talimatları, görselli rehberler ve gerçek örnek çalışmalar için **[REA web sitesini ziyaret edin](https://rea.tools/tr/)**.
 
@@ -149,13 +151,14 @@ REA; Node.js 22.x (>=22.23.4), 24.x (>=24.22.1) veya 26+ (>=26.12.1) ve npm gere
 
 | Hedef                                   | REA'nın döndürdükleri                                                                                       | Gereksinimler ve rehber                                                                                                            |
 | --------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| Yerel makine kodu içeren ikili dosyalar | Sözde kod, assembly kodu, dizeler, semboller, çağrılar ve referanslar                                       | Hopper, Ghidra veya IDA; [yerel kod analizi](../native-investigation.md)                                                           |
+| Yerel makine kodu içeren ikili dosyalar | Sözde kod, assembly kodu, dizeler, semboller, çağrılar ve referanslar                                       | Hopper, Ghidra, IDA veya Kuna; [yerel kod analizi](../native-investigation.md)                                                     |
 | Çevrimdışı ELF yapısı                   | Bölümler, segmentler, özgün semboller/yeniden konumlandırmalar ve statik analizden olası güvenlik önlemleri | Linux x64 üzerinde çağıranın sağladığı pwntools; [ikili dosya tanılama](../binary-diagnostics.md)                                  |
 | Go ikili dosyaları                      | Gömülü compiler sürümü, modüller, replacement'lar ve build ayarları                                         | Yerleşik statik ELF/PE/thin Mach-O incelemesi; Go kurulumu gerekmez                                                                |
 | Rust ikili dosyaları                    | Gömülü cargo-auditable crate adları, sürümleri, kaynakları ve bağımlılık ilişkileri                         | Yerleşik statik ELF/PE/thin Mach-O incelemesi; [Rust ikili dosyaları](../rust-binaries.md)                                         |
 | PE certificates                         | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                            |
 | PE imports                              | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                      |
 | ELF notes                               | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                       |
+| Binary hardening                        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                      |
 | Apple IPS crashes                       | .ips metadata, threads, images, registers and crash classes                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                      |
 | Linux kernel modules                    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                             |
 | Erlang BEAM                             | IFF chunks, atoms, exports, and tables                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                  |
@@ -274,9 +277,9 @@ Yerel MCP sunucularını destekleyen her ajan REA'yı kullanabilir. Kurulum, [de
 </details>
 
 <details>
-<summary><strong>Hopper, Ghidra veya IDA gerekiyor mu?</strong></summary>
+<summary><strong>Hopper, Ghidra, IDA veya Kuna gerekiyor mu?</strong></summary>
 
-Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET incelemesi yerel analiz motoru olmadan çalışır. Kurulum onaydan sonra Hopper yükleyebilir; Ghidra ve IDA mevcut kurulumlarınızı kullanır. [Sağlayıcı kurulumuna](../installation.md#hopper) bakın.
+Derin yerel kod analizi bunlardan birini kullanır. Statik JavaScript ve .NET incelemesi yerel analiz motoru olmadan çalışır. Kurulum onaydan sonra Hopper yükleyebilir; Ghidra, IDA ve Kuna mevcut kurulumlarınızı kullanır. [Sağlayıcı kurulumuna](../installation.md#hopper) bakın.
 
 </details>
 
@@ -344,7 +347,7 @@ Güvenlik açıklarını [SECURITY.md](../../SECURITY.md) üzerinden bildirin.
 
 ## Yıldız geçmişi
 
-🎉 **GitHub'da 300.000 yıldız — teşekkürler!**
+🎉 **GitHub'da 400.000 yıldız — teşekkürler!**
 
 REA'yı kullanan, hata bildiren, özellik talep eden, derlemeleri test eden ve düzeltmelere katkıda bulunan herkese teşekkürler.
 

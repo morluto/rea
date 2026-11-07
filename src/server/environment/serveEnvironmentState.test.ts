@@ -431,9 +431,28 @@ describe("state data plane intake", () => {
     ]);
     expect(batch.json).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
-    expect(JSON.stringify(batch.json)).toContain('"login":"renamed"');
     const notified = await plane.post({ jsonrpc: "2.0", method: "data/reset" });
     expect(notified.status).toBe(202);
     expect(loginOf(plane.store)).toBe("probe");
@@ -542,10 +561,29 @@ describe("state data plane timing and order", () => {
     const replies = (await batch).json;
     expect(replies).toMatchObject([
       { id: 1, result: {} },
-      { id: 2, result: { parts: [{ kind: "data" }] } },
+      {
+        id: 2,
+        result: {
+          parts: [
+            {
+              kind: "data",
+              data: {
+                rea_state: {
+                  entities: expect.arrayContaining([
+                    expect.objectContaining({
+                      type: "/api/users",
+                      id: "2",
+                      fields: expect.objectContaining({ login: "renamed" }),
+                    }),
+                  ]),
+                },
+              },
+            },
+          ],
+        },
+      },
     ]);
     // The get arrived with the add, before the reset, so it reports the loaded state.
-    expect(JSON.stringify(replies)).toContain('"login":"renamed"');
     await expect(reset).resolves.toMatchObject({ result: {} });
     expect(loginOf(plane.store)).toBe("probe");
   });
@@ -920,6 +958,30 @@ it("loads a padded inline state file and keeps the RPC result compact", async ()
 });
 
 describe("serveEnvironment with a state", () => {
+  it("replays safe non-GET methods with the recorded-view reason", async () => {
+    const environment = await serveState(
+      environmentStateServeInputs(
+        environmentStateServeFixture(
+          timedCaptureEvidence([
+            ["GET", "/api/items", [{ id: 1 }]],
+            ["HEAD", "/api/items"],
+            ["OPTIONS", "/api/items", { allow: "GET, HEAD, OPTIONS" }],
+            ["TRACE", "/api/items", { trace: true }],
+          ]),
+        ),
+      ),
+    );
+    await withClient(environment, async (client) => {
+      for (const name of ["head_items", "options_items", "trace_items"]) {
+        const response = await client.callTool({ name, arguments: {} });
+        expect(response.isError).not.toBe(true);
+        expect(response.structuredContent).toMatchObject({
+          state: { source: "recording", reason: "method-replay" },
+        });
+      }
+    });
+  });
+
   it("declares the data plane, serves read tools from the state and reflects data/add in the next answer", async () => {
     const environment = await serveState({ source, state });
     const url = new URL(environment.url);

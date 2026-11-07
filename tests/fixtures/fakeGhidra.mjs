@@ -13,6 +13,7 @@ const {
   targetSha256,
   transport,
   mode = "success",
+  handshakeReports = {},
 } = configuration ?? {};
 
 if (
@@ -177,8 +178,55 @@ const handleOutputFailure = (socket, state) => {
 };
 
 const handleRequest = (socket, server, request, state) => {
+  if (state.mode.startsWith("checkpoint")) {
+    if (request.method === "set_address_name") {
+      state.checkpointDirty = true;
+      socket.write(
+        JSON.stringify({ id: request.id, ok: true, result: "renamed" }) + "\n",
+      );
+      return;
+    }
+    if (request.method === "checkpoint_program") {
+      void handleCheckpoint(socket, request, state);
+      return;
+    }
+  }
   if (request.method === "ping") {
     handlePing(socket, request, state);
+    return;
+  }
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    ) &&
+    request.method !== "shutdown"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra imported identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (
+    state.mode === "late_identity_failure" &&
+    request.method === "list_strings"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "import_identity_mismatch",
+          message: "Unexpected later failure",
+        },
+      })}\n`,
+    );
     return;
   }
   if (
@@ -264,6 +312,30 @@ const handleRequest = (socket, server, request, state) => {
       return;
     }
   }
+  // The bridge's per-procedure deadline: only this request fails.
+  if (
+    state.mode === "decompile_timed_out" &&
+    request.method === "procedure_pseudo_code"
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "decompile_timed_out",
+          message:
+            "Ghidra decompilation of 0x1000 exceeded the 1-second configured decompilation limit (ghidra.decompile_timeout_seconds; launch seed REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS)",
+        },
+      })}\n`,
+    );
+    return;
+  }
+  if (request.method === "address_to_file_offset") {
+    socket.write(
+      `${JSON.stringify({ id: request.id, ...fileOffsetReply(request.params.address) })}\n`,
+    );
+    return;
+  }
   const inventory =
     request.method === "list_strings" && state.mode === "fragmented"
       ? [stringItem("0x2000", "fixture 雪🦊")]
@@ -315,7 +387,81 @@ const handleRequest = (socket, server, request, state) => {
   }
 };
 
+async function handleCheckpoint(socket, request, state) {
+  const { path, force } = request.params;
+  if (!force && !state.checkpointDirty) {
+    socket.write(
+      JSON.stringify({ id: request.id, ok: true, result: { saved: false } }) +
+        "\n",
+    );
+    return;
+  }
+  if (
+    !force &&
+    state.mode === "checkpoint_fail_close" &&
+    !state.failedCheckpoint
+  ) {
+    state.failedCheckpoint = true;
+    await writeFile(path, "controlled incomplete packed Program");
+    socket.write(
+      JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: "checkpoint_failed",
+          message: "Controlled checkpoint failure",
+        },
+      }) + "\n",
+    );
+    return;
+  }
+  await writeFile(
+    path,
+    `fixture checkpoint ${state.checkpointDirty ? "edited" : "initial"}`,
+  );
+  if (
+    (force && state.mode === "checkpoint_hold_startup") ||
+    (!force && state.mode === "checkpoint_hold_close")
+  ) {
+    await new Promise((resolve) => {
+      const release = (message) => {
+        if (message === "release_checkpoint") {
+          process.off("message", release);
+          resolve();
+        }
+      };
+      process.on("message", release);
+      process.send?.({ event: "checkpoint-held" });
+    });
+  }
+  state.checkpointDirty = false;
+  socket.write(
+    JSON.stringify({
+      id: request.id,
+      ok: true,
+      result: { saved: true, path },
+    }) + "\n",
+  );
+}
+
 const handlePing = (socket, request, state) => {
+  if (
+    ["import_identity_unavailable", "import_identity_mismatch"].includes(
+      state.mode,
+    )
+  ) {
+    socket.write(
+      `${JSON.stringify({
+        id: request.id,
+        ok: false,
+        error: {
+          code: state.mode,
+          message: "Ghidra project identity admission failed",
+        },
+      })}\n`,
+    );
+    return;
+  }
   if (state.mode === "remote_startup_error") {
     socket.write(
       `${JSON.stringify({
@@ -362,14 +508,17 @@ const handlePing = (socket, request, state) => {
     return;
   }
   if (state.mode === "hang_after_start" && state.pings.value > 1) return;
-  const result = sessionInfo({
-    runId: state.runId,
-    providerVersion:
-      state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
-    profileDigest: state.profileDigest,
-    targetSha256: state.targetSha256,
-    timedOut: state.mode === "analysis_timeout",
-  });
+  const result = {
+    ...sessionInfo({
+      runId: state.runId,
+      providerVersion:
+        state.mode === "wrong_identity" ? "0.0.0" : state.providerVersion,
+      profileDigest: state.profileDigest,
+      targetSha256: state.targetSha256,
+      timedOut: state.mode === "analysis_timeout",
+    }),
+    ...handshakeReports,
+  };
   const response = `${JSON.stringify({ id: request.id, ok: true, result })}\n`;
   if (state.mode === "fragmented") {
     const split = Math.floor(response.length / 2);
@@ -479,7 +628,12 @@ const inventoryResultFor = (method, params) => {
           ],
           bytes: continued ? 5 : 10,
           skipped_uninitialized: [
-            { segment: ".bss", start: "0x2000", end: "0x200f", bytes: 16 },
+            {
+              segment: BSS_BLOCK.name,
+              start: hex(BSS_BLOCK.start),
+              end: hex(BSS_BLOCK.start + BSS_BLOCK.size - 1n),
+              bytes: Number(BSS_BLOCK.size),
+            },
           ],
           skipped_not_loaded: [],
         },
@@ -512,6 +666,53 @@ const inventoryResultFor = (method, params) => {
   }
 };
 
+// One owner for the fixture's memory blocks. Each reply uses the production
+// bridge's end convention: list_segments reports an exclusive end, byte-search
+// coverage an inclusive one, and address_to_file_offset tests containment.
+const TEXT_BLOCK = {
+  name: ".text",
+  start: 0x1000n,
+  size: 0x100n,
+  fileOffset: 0n,
+};
+const BSS_BLOCK = {
+  name: ".bss",
+  start: 0x2000n,
+  size: 0x10n,
+  fileOffset: null,
+};
+const FIXTURE_BLOCKS = [TEXT_BLOCK, BSS_BLOCK];
+const hex = (value) => `0x${value.toString(16)}`;
+
+const fileOffsetReply = (address) => {
+  const digits = /^(?:0[xX])?([0-9a-fA-F]+)$/u.exec(address)?.[1];
+  const failure = (code, message) => ({ ok: false, error: { code, message } });
+  if (digits === undefined)
+    return failure("invalid_request", `Invalid address: ${address}`);
+  const value = BigInt(`0x${digits}`);
+  const at = hex(value);
+  const block = FIXTURE_BLOCKS.find(
+    ({ start, size }) => value >= start && value < start + size,
+  );
+  if (block === undefined)
+    return failure(
+      "address_unmapped",
+      `Address ${at} is outside every Ghidra memory block`,
+    );
+  if (block.fileOffset === null)
+    return failure(
+      "address_uninitialized",
+      `Address ${at} is in uninitialized Ghidra memory block ${block.name}`,
+    );
+  return {
+    ok: true,
+    result: {
+      address: at,
+      file_offset: Number(block.fileOffset + value - block.start),
+    },
+  };
+};
+
 const nameItem = () => ({
   address: "0x1000",
   value: "fixture_main",
@@ -531,9 +732,9 @@ const procedureItem = () => ({
 });
 
 const segmentItem = () => ({
-  name: ".text",
-  start: "0x1000",
-  end: "0x1100",
+  name: TEXT_BLOCK.name,
+  start: hex(TEXT_BLOCK.start),
+  end: hex(TEXT_BLOCK.start + TEXT_BLOCK.size),
   readable: true,
   writable: false,
   executable: true,

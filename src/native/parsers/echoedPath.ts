@@ -1,5 +1,5 @@
 /**
- * Remove the header line otool and dyld_info print before a slice's output:
+ * Remove the header line dyld_info prints before a slice's output:
  * `<path>:`, `<path> (architecture <arch>):`, or `<path> [<arch>]:`. File
  * names may contain line breaks and tool keywords, so only the exact operand
  * path is stripped; output without that header is returned unchanged.

@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const recordedIntegerSchema = z.strictObject({
@@ -52,7 +52,7 @@ export const APPLE_IPS_IMAGE_SOURCE_MEANING: Readonly<
 
 /** Complete bounded inspection of one Apple .ips crash report. */
 export const inspectAppleIpsInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an Apple .ips crash report",
   ),
   max_file_bytes: z

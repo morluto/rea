@@ -137,19 +137,24 @@ const coverageBlock = z
       });
   });
 
-/** Inclusive page coverage; matches never span memory blocks. */
+/** Inclusive page coverage; match segment and file offset identify its start. */
 export const byteSearchResultSchema = z
   .strictObject({
     matches: z
       .array(
         z.strictObject({
           address: z.string(),
-          segment: z.string(),
+          segment: z
+            .string()
+            .describe("Memory block containing the match start."),
           file_offset: z
             .int()
             .nonnegative()
             .max(Number.MAX_SAFE_INTEGER)
-            .nullable(),
+            .nullable()
+            .describe(
+              "Source file offset of the match start, not a guarantee of a contiguous file span.",
+            ),
           procedure: z
             .strictObject({ address: z.string(), name: z.string() })
             .nullable(),

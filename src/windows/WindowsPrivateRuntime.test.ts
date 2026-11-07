@@ -162,6 +162,49 @@ const admittedFile = {
   handle: { kind: "admitted-file" },
 };
 
+describe("Windows private runtime transient write", () => {
+  it("writes through runtime_write_transient and never retains via runtime_write", async () => {
+    const operations: string[] = [];
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+
+    runtime.writeTransientFile("job.source", "source-bytes");
+
+    expect(operations).toEqual(["runtime_create", "runtime_write_transient"]);
+    expect(nativeCall).toHaveBeenCalledWith("runtime_write_transient", [
+      observation.handle,
+      "job.source",
+      Buffer.from("source-bytes"),
+    ]);
+    expect(operations).not.toContain("runtime_write");
+    await runtime.close();
+  });
+
+  it("keeps immutable runtime_write distinct from transient staging", async () => {
+    const operations: string[] = [];
+    nativeCall.mockImplementation((operation: string) => {
+      operations.push(operation);
+      if (operation === "runtime_create") return observation;
+      return null;
+    });
+    const runtime = WindowsPrivateRuntime.create("C:\\", "rea-");
+
+    runtime.writeFile("descriptor.json", "fixture");
+    runtime.writeTransientFile("job.source", "source-bytes");
+
+    expect(operations).toEqual([
+      "runtime_create",
+      "runtime_write",
+      "runtime_write_transient",
+    ]);
+    await runtime.close();
+  });
+});
+
 describe("Windows private runtime admitted file close", () => {
   it("retries the same file wrapper before the runtime tree walk", async () => {
     const failure = nativeFailure(5);

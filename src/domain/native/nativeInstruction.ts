@@ -44,13 +44,18 @@ const reference = z.strictObject({
 /** Provider-decoded facts for one instruction; operand tokens preserve their native ordering. */
 export const nativeInstructionSchema = z.strictObject({
   address: z.string(),
-  status: z.enum([
-    "decoded",
-    "not-instruction-boundary",
-    "data",
-    "undecodable",
-    "outside-memory",
-  ]),
+  status: z
+    .enum([
+      "decoded",
+      "not-instruction-boundary",
+      "data",
+      "not-in-listing",
+      "undecodable",
+      "outside-memory",
+    ])
+    .describe(
+      "decoded is an instruction at the address; not-instruction-boundary is inside a listed instruction; data is defined data; outside-memory is outside the program's memory. Ghidra's not-in-listing means the address is in memory with no listed instruction or defined data; no decode was attempted, and memory may be uninitialized. The legacy undecodable value in older Evidence has the same ambiguous meaning and does not prove decoding failed.",
+    ),
   procedure: z.string().nullable(),
   architecture: z.string(),
   mode: z

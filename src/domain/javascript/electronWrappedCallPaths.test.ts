@@ -1,6 +1,145 @@
 import { describe, expect, it } from "vitest";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
+it("retains switch selection on a direct bridge exposure", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (process.platform) {
+      case "win32":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it("retains a conservative selection for stacked and fallthrough cases", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case "first": work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("first")) || ((platform) === ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("includes the default selection when an earlier default can fall through", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      default: work();
+      case "second":
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((platform) === ("second")) || ((platform) !== ("second"))',
+    }),
+  ]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains switch conditions in a traced bridge wrapper", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    contextBridge.exposeInMainWorld("api", {
+      ping() { switch (process.platform) { case "win32": return ipcRenderer.invoke("ping"); } }
+    });
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([
+    expect.objectContaining({
+      expression: '((process.platform) === ("win32"))',
+    }),
+  ]);
+});
+
+it.each(["direct", "wrapped"] as const)(
+  "retains the selected case near the end of a switch on a %s path",
+  (kind) => {
+    const exposure = `contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });`;
+    const cases = Array.from(
+      { length: 8 },
+      (_, index) => `case ${index}:`,
+    ).join("\n");
+    const selected = `${cases}\ncase 8: ${kind === "direct" ? exposure : 'return ipcRenderer.invoke("ping");'}`;
+    const body =
+      kind === "direct"
+        ? `switch (platform) { ${selected} }`
+        : `contextBridge.exposeInMainWorld("api", { ping() { switch (platform) { ${selected} } } });`;
+    const result = analyzeJavaScriptStaticSource(`
+      const { contextBridge, ipcRenderer } = require("electron");
+      ${body}
+    `);
+    expect(
+      result.electron.call_paths?.[0]?.conditions[0]?.expression,
+    ).toContain("((platform) === (8))");
+  },
+);
+
+it("does not invent a selection predicate for dynamic case expressions", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    switch (platform) {
+      case mutatePlatform():
+        contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+  expect(result.parse_status).toBe("partial");
+});
+
+it("retains the continuing predicate after a break to an enclosing label", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    guard: {
+      if (!ready) break guard;
+      e.ipcMain.on("guarded", event => event.sender.copy());
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"], ["!(!ready)"]]);
+});
+
+it("retains a labelled-break guard on preload bridge paths", () => {
+  const result = analyzeJavaScriptStaticSource(`
+    const { contextBridge, ipcRenderer } = require("electron");
+    const ready = process.env.APP_READY;
+    guard: {
+      if (!ready) break guard;
+      contextBridge.exposeInMainWorld("api", { ping: () => ipcRenderer.invoke("ping") });
+    }
+  `);
+  expect(
+    result.electron.call_paths?.map(({ conditions }) =>
+      conditions.map(({ expression }) => expression),
+    ),
+  ).toEqual([["!(!ready)"]]);
+});
+
+it("does not treat a break to an inner label as an exit from its outer block", () => {
+  const result = analyzeJavaScriptStaticSource(`const e=require("electron");
+    outer: {
+      inner: { if (stop) break inner; }
+      e.ipcMain.on("after", event => event.sender.copy());
+    }
+  `);
+  expect(result.electron.call_paths).toHaveLength(1);
+  expect(result.electron.call_paths?.[0]?.conditions).toEqual([]);
+});
+
 it("preserves every direct observation in a long flat sibling block", () => {
   const channels = Array.from({ length: 256 }, (_, index) => `flat:${index}`);
   const result = analyzeJavaScriptStaticSource(`const e=require("electron"); {

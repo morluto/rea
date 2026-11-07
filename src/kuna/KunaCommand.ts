@@ -275,25 +275,92 @@ export const runKunaCommand = async (
   }
 };
 
+/**
+ * How many leading bytes of a copy to keep, decided from its first
+ * `probeBytes` bytes (or the whole file when it is shorter).
+ */
+export interface KunaInputPrefix {
+  readonly probeBytes: number;
+  readonly length: (head: Buffer) => number;
+}
+
+/** A copy's SHA-256 and size, and the leading bytes kept from the same stream. */
+export interface KunaCopiedInput {
+  readonly sha256: string;
+  readonly bytes: number;
+  /** Empty unless a prefix was requested; the digest covers these exact bytes. */
+  readonly prefix: Buffer;
+}
+
 /** Copy a file and return the SHA-256 of exactly the bytes copied. */
 export const copyAndHash = async (
   source: string,
   destination: string,
   signal: AbortSignal,
-): Promise<string> => {
+  keep?: KunaInputPrefix,
+): Promise<KunaCopiedInput> => {
   const hash = createHash("sha256");
+  let bytes = 0;
+  const kept: Buffer[] = [];
+  let keptBytes = 0;
+  // Undefined until the probe has been seen; the prefix then stops growing.
+  let wanted: number | undefined = keep === undefined ? 0 : undefined;
+  const decide = (prefix: KunaInputPrefix) => {
+    wanted = Math.max(0, prefix.length(Buffer.concat(kept, keptBytes)));
+  };
   await pipeline(
     createReadStream(source),
     new Transform({
       transform(chunk: Buffer, _encoding, callback) {
         hash.update(chunk);
+        bytes += chunk.length;
+        if (
+          keep !== undefined &&
+          (wanted === undefined || keptBytes < wanted)
+        ) {
+          const take =
+            wanted === undefined
+              ? chunk.length
+              : Math.min(chunk.length, wanted - keptBytes);
+          kept.push(chunk.subarray(0, take));
+          keptBytes += take;
+          if (wanted === undefined && keptBytes >= keep.probeBytes)
+            decide(keep);
+        }
         callback(null, chunk);
       },
     }),
     createWriteStream(destination, { flags: "wx", mode: 0o600 }),
     { signal },
   );
-  return hash.digest("hex");
+  if (keep !== undefined && wanted === undefined) decide(keep);
+  return {
+    sha256: hash.digest("hex"),
+    bytes,
+    prefix: Buffer.concat(kept, Math.min(wanted ?? 0, keptBytes)),
+  };
+};
+
+/**
+ * The same run takes as long again, so only a longer deadline helps. Only a
+ * session that outlives this request can also read the later project export.
+ */
+export const kunaTimeoutRecovery = (
+  setting: string,
+  subcommand: string,
+): {
+  readonly remediationAction: string;
+  readonly continuingCallerGuidance?: { readonly remediationAction: string };
+} => {
+  const remediationAction = `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.`;
+  return subcommand === "decompile"
+    ? {
+        remediationAction,
+        continuingCallerGuidance: {
+          remediationAction: `${remediationAction} Within a session, pseudocode is also read from the project export once it finishes.`,
+        },
+      }
+    : { remediationAction };
 };
 
 /** Map an owned-command failure to its typed error, keeping unproven cleanup owned. */
@@ -346,12 +413,7 @@ const commandFailure = (
     primary = new AnalysisTimeoutError(operation, ms, {
       ...details,
       userMessage: `kuna ${subcommand} did not finish within ${setting} (${String(ms)} ms).`,
-      // The same run takes as long again, so only a longer deadline helps.
-      remediationAction: `Raise ${setting} in the environment that starts REA, then restart REA; it reads Kuna settings when it starts.${
-        subcommand === "decompile"
-          ? " Within a session, pseudocode is also read from the project export once it finishes."
-          : ""
-      }`,
+      ...kunaTimeoutRecovery(setting, subcommand),
     });
   }
   // The same input overflows the same fixed buffer; waiting cannot help.

@@ -14,9 +14,12 @@ import type {
 import { analyzeWebBundleInputSchema } from "../domain/webBundleAnalysis.js";
 import { analyzeCapturedWebScript } from "../domain/webBundleAnalyzer.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
+import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
+import { OwnedWorkerRuntime } from "../process/OwnedWorkerRuntime.js";
 import { err, ok } from "../domain/result.js";
 import {
   IsolatedWebBundleAnalyzer,
+  WebBundleAnalysisAdmission,
   type WebBundleAnalysisWorkerPort,
 } from "./IsolatedWebBundleAnalyzer.js";
 
@@ -297,15 +300,19 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
     { operation: "analyze_web_bundle" },
   );
   let closeAttempts = 0;
-  const analyzer = new IsolatedWebBundleAnalyzer(() => ({
-    analyze: async () => err({ error: primary, completed: null }),
-    close: async () => {
-      closeAttempts += 1;
-      if (closeAttempts <= 2) throw closeFailure;
-      closeFailure.resolveCleanup();
-      primary.resolveCleanup();
-    },
-  }));
+  const admission = new WebBundleAnalysisAdmission();
+  const analyzer = new IsolatedWebBundleAnalyzer(
+    () => ({
+      analyze: async () => err({ error: primary, completed: null }),
+      close: async () => {
+        closeAttempts += 1;
+        if (closeAttempts <= 2) throw closeFailure;
+        closeFailure.resolveCleanup();
+        primary.resolveCleanup();
+      },
+    }),
+    admission,
+  );
   expect((await analyzer.reserve()).ok).toBe(true);
 
   const result = await analyzer.analyze(captured, noSourceMaps, input);
@@ -318,7 +325,10 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
     completeness: { status: "partial", parsed_scripts: 0 },
   });
 
-  const replacement = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  const replacement = new IsolatedWebBundleAnalyzer(
+    () => inertWorker(),
+    admission,
+  );
   analyzer.releaseReservation();
   const blocked = await replacement.reserve();
   expect(blocked.ok).toBe(false);
@@ -331,16 +341,54 @@ it("retains cleanup ownership after mixed worker/close failure and resolves it o
   replacement.releaseReservation();
 });
 
-it("enforces one process-wide capture reservation across controller instances", async () => {
-  const first = new IsolatedWebBundleAnalyzer(() => inertWorker());
-  const second = new IsolatedWebBundleAnalyzer(() => inertWorker());
+it("shares one capture reservation when analyzers use one admission", async () => {
+  const admission = new WebBundleAnalysisAdmission();
+  const first = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
+  const second = new IsolatedWebBundleAnalyzer(() => inertWorker(), admission);
   expect((await first.reserve()).ok).toBe(true);
   const blocked = await second.reserve();
   expect(blocked.ok).toBe(false);
-  if (blocked.ok) throw new Error("Expected process-wide admission refusal");
-  expect(blocked.error._tag).toBe("AnalysisResourceConstraintError");
+  if (blocked.ok) throw new Error("Expected shared admission refusal");
+  expect(projectAnalysisError(blocked.error)).toMatchObject({
+    code: "resource_constraint",
+    details: {
+      resource: "capacity",
+      reported_limits: { concurrent_web_bundle_analyses: 1 },
+    },
+  });
   first.releaseReservation();
   expect((await second.reserve()).ok).toBe(true);
+  second.releaseReservation();
+});
+
+it("does not fail one admission when another host's worker runtime is retained", async () => {
+  let fail = true;
+  const stuck = new OwnedWorkerRuntime({
+    rootPrefix: "rea-web-host-isolation-",
+    retryCleanup: async () => {
+      if (fail) throw new Error("other host still owns its worker");
+    },
+  });
+  stuck.retainForCleanup();
+  try {
+    const analyzer = new IsolatedWebBundleAnalyzer(() => inertWorker());
+    expect((await analyzer.reserve()).ok).toBe(true);
+    analyzer.releaseReservation();
+    await expect(OwnedWorkerRuntime.retryPending()).rejects.toThrow(
+      "other host still owns its worker",
+    );
+  } finally {
+    fail = false;
+    await stuck.close();
+  }
+});
+
+it("does not share a capture reservation across independent admissions", async () => {
+  const first = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  const second = new IsolatedWebBundleAnalyzer(() => inertWorker());
+  expect((await first.reserve()).ok).toBe(true);
+  expect((await second.reserve()).ok).toBe(true);
+  first.releaseReservation();
   second.releaseReservation();
 });
 

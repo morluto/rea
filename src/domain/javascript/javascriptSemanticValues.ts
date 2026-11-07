@@ -42,7 +42,7 @@ import {
   type JavaScriptSemanticAnalysisState,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import { semanticRequireOrigin } from "./javascriptSemanticRequireOrigin.js";
+import { readSemanticRequireOrigin } from "./javascriptSemanticRequireOriginSlot.js";
 import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   readExactJavaScriptLiteral,
@@ -682,11 +682,7 @@ const evaluateExpressionValue = (
     const binding = resolveSemanticBindingState(context.state, node, node.name);
     if (binding === undefined)
       return { status: "unknown", reason: `Unbound identifier ${node.name}.` };
-    const read = semanticBindingAtRead(
-      binding,
-      node,
-      context.state.parentsByNode,
-    );
+    const read = semanticBindingAtRead(binding, node, context.state);
     if (
       read.status === "unresolved" &&
       binding.mutable &&
@@ -1277,7 +1273,7 @@ const provenanceForExpression = (
       expressionDepth: context.expressionDepth + unwrapped.depth,
     });
   }
-  const required = semanticRequireOrigin(node, context.state);
+  const required = readSemanticRequireOrigin(node, context.state);
   if (required !== undefined)
     return semanticOriginsProvenance([required.origin]);
   if (t.isSequenceExpression(node)) {
@@ -1377,7 +1373,7 @@ const provenanceForBindingAtRead = (
   const { binding: snapshot } = semanticBindingAtRead(
     binding,
     read,
-    context.state.parentsByNode,
+    context.state,
   );
   if (snapshot === binding) return provenanceForBinding(binding, context);
   if (context.bindings.has(binding.bindingId))

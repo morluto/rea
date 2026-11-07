@@ -78,8 +78,8 @@ it.each([
       expect(diagnostic).toMatchObject({
         code: "target_unavailable",
         message: expect.stringContaining(message),
+        remediation: { action: expect.stringContaining(action) },
       });
-      expect(JSON.stringify(diagnostic)).toContain(action);
       expect(inspector.commands).toEqual([]);
     } finally {
       await inspector.close();

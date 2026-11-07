@@ -1,3 +1,4 @@
+import type { CapabilityAvailabilityProbes } from "../application/CapabilityAvailability.js";
 import {
   BINARY_SESSION_SUMMARY_OMITTED_FIELDS,
   type BinarySessionDetail,
@@ -27,27 +28,8 @@ import { toolRegistrationOptions } from "./toolRegistrationOptions.js";
 import { err } from "../domain/result.js";
 import { CURRENT_ENTRYPOINT_PATH } from "../process/CurrentEntrypointPath.js";
 
-/** Provider-owned live probes used by session discovery. */
-export interface SessionAvailabilityProbes {
-  readonly androidAnalysisAvailability: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly adbAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly apktoolAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability>;
-  readonly jebAnalysisAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<JebAnalysisAvailability>;
-  readonly evmLimiterAvailability?: (
-    signal: AbortSignal,
-  ) => Promise<ProviderAvailability | undefined>;
-}
-
 /** Inputs required to register the binary session status tool. */
-export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
+export interface SessionStatusToolOptions extends CapabilityAvailabilityProbes {
   readonly server: EvidenceMcpServer;
   readonly session: BinarySessionPort;
   readonly contract: ReturnType<typeof toolContract<"binary_session">>;
@@ -61,7 +43,7 @@ export interface SessionStatusToolOptions extends SessionAvailabilityProbes {
  * cannot appear in the response.
  */
 const probeSessionAvailability = (
-  probes: SessionAvailabilityProbes,
+  probes: CapabilityAvailabilityProbes,
   signal: AbortSignal,
   advertisesFamily: (family: ToolFamilyId) => boolean,
 ): Promise<{

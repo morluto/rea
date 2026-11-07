@@ -33,6 +33,7 @@ import {
   NODE_SEA_BLOB_TOO_LARGE,
   NODE_SEA_DUPLICATE_BLOB,
   NODE_SEA_ELF_DESCRIPTOR_TRUNCATED,
+  NODE_SEA_ELF_NOTES_REPEATED,
   NODE_SEA_ELF_TABLE_TRUNCATED,
   NODE_SEA_MACHO_COMMANDS_TRUNCATED,
   NODE_SEA_MACHO_SEGMENT_TRUNCATED,
@@ -358,6 +359,10 @@ const locateElfNotes = async (
   const minimumSection = elf64 ? 64 : 40;
   const found: BlobRange[] = [];
   let opaque = false;
+  // Every note header occupies at least 12 bytes, so disjoint tables hold at
+  // most one note per 12 file bytes. Headers that point at the same bytes
+  // would otherwise rescan them once per declaration.
+  const scan: NoteScan = { little, notes: Math.floor(carrier.fileSize / 12) };
   const programs = await readElfTables(carrier, {
     offset: phoff,
     count: phnum,
@@ -392,7 +397,7 @@ const locateElfNotes = async (
       const scanned = await scanElfNoteTable(
         carrier,
         note,
-        little,
+        scan,
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
@@ -440,7 +445,7 @@ const locateElfNotes = async (
       const scanned = await scanElfNoteTable(
         carrier,
         note,
-        little,
+        scan,
         found.length > 0,
       );
       if (scanned === undefined) opaque = true;
@@ -485,6 +490,12 @@ const readElfTables = async (
   return entries;
 };
 
+/** One carrier's note byte order and the note headers it may still read. */
+interface NoteScan {
+  readonly little: boolean;
+  notes: number;
+}
+
 const scanElfNoteTable = async (
   carrier: Carrier,
   note: {
@@ -492,7 +503,7 @@ const scanElfNoteTable = async (
     readonly length: number | undefined;
     readonly align: number | undefined;
   },
-  little: boolean,
+  scan: NoteScan,
   alreadyFound: boolean,
 ): Promise<BlobRange[] | undefined> => {
   if (
@@ -507,10 +518,18 @@ const scanElfNoteTable = async (
   let cursor = 0;
   while (cursor + 12 <= note.length) {
     abortIfNeeded(carrier.signal);
+    // Past the file's note capacity the tables overlap: an unconfirmed
+    // carrier stays unrecognized and a confirmed one fails closed.
+    if (scan.notes === 0) {
+      if (alreadyFound || found.length > 0)
+        throw formatFailure(NODE_SEA_ELF_NOTES_REPEATED);
+      return undefined;
+    }
+    scan.notes -= 1;
     const header = await readExact(carrier, note.offset + cursor, 12);
     if (header === undefined)
       return failNoteTable(alreadyFound || found.length > 0);
-    const parsedHeader = readElfNoteHeader(header, little);
+    const parsedHeader = readElfNoteHeader(header, scan.little);
     if (!parsedHeader.ok)
       return failNoteTable(alreadyFound || found.length > 0);
     const { namesz, descsz } = parsedHeader.value;

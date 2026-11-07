@@ -410,6 +410,32 @@ export class HopperApplicationLauncher implements BridgeLauncher {
     let launched = false;
     try {
       if (signal?.aborted === true) return err(hopperCancelledBySignal(signal));
+      if ((this.dependencies.platform ?? process.platform) === "darwin") {
+        // The vendor helper embeds argv in AppleScript quoted literals. Check
+        // the actual prepared paths before even starting the application. Do
+        // not rewrite caller names or double-escape values passed to the helper.
+        const rejected = [
+          this.options.launcherPath,
+          ...argumentsForTarget,
+        ].findIndex((value) => /["\\\r\n]/u.test(value));
+        if (rejected !== -1)
+          return err(
+            new HopperStartError({
+              userMessage:
+                "The macOS Hopper launcher cannot pass double quotes, backslashes or line breaks literally through its AppleScript handoff. Select launcher, target and runtime paths and loader arguments without these characters; the selected values were not rewritten.",
+              launchRejection: {
+                boundary: "argument_encoding",
+                reason: "applescript_literal",
+                ...(rejected === 0
+                  ? { source: "launcher_path" as const }
+                  : {
+                      source: "argument" as const,
+                      argument_index: rejected - 1,
+                    }),
+              },
+            }),
+          );
+      }
       let expectedLinuxSha256: string | undefined;
       if (usesLinuxDemo(this.options)) {
         const inspected = await (
@@ -495,13 +521,8 @@ export class HopperApplicationLauncher implements BridgeLauncher {
             ...(nativeHelperVerified
               ? { nativeHelperVerified: true as const }
               : {}),
-            // The vendor helper interpolates these values into AppleScript
-            // literals without escaping. Preserve them, but withhold the
-            // pre-handoff conclusion when they can alter that script.
-            ...((this.dependencies.platform ?? process.platform) === "darwin" &&
-            ![this.options.launcherPath, ...argumentsForTarget].some((value) =>
-              /["\\\r\n]/u.test(value),
-            )
+            // Argument admission above established literal handoff semantics.
+            ...((this.dependencies.platform ?? process.platform) === "darwin"
               ? { authorizationDenialBeforeHandoff: true as const }
               : {}),
           });

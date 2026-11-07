@@ -1,3 +1,4 @@
+import { WabtAdmissionError } from "./WabtAdmissionError.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
 import { wasmInterfaceEntryRepresentationBytes } from "../domain/wasm/wasmInterface.js";
 import { WasmInterfaceBudget } from "./WasmInterfaceBudget.js";
@@ -47,7 +48,7 @@ const parts = (form: string): string[] => {
       if (items[0] === "func" && items.length > 1 && !atom.startsWith("$"))
         break;
     }
-    if (i <= start) throw new Error("Malformed WABT form");
+    if (i <= start) throw new WabtAdmissionError("malformed_form");
     budget.reserve(64 + (i - start) * 2);
     items.push(form.slice(start, i));
   }
@@ -91,7 +92,7 @@ const functionType = (
 };
 const name = (text: string | undefined): string => {
   if (text?.startsWith('"') !== true)
-    throw new Error("WABT interface name is missing");
+    throw new WabtAdmissionError("name_missing");
   return new TextDecoder("utf8", { fatal: true, ignoreBOM: true }).decode(
     watString(text, 1).bytes,
   );
@@ -252,7 +253,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "import") continue;
     const body = p[3];
-    if (body === undefined) throw new Error("Incomplete WABT import");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_import");
     const observed = addDefinition(body);
     const entry: WasmInterfaceEntry = {
       direction: "import",
@@ -280,7 +281,7 @@ const decodeWabtInterface = (
     const p = parts(form);
     if (p[0] !== "export") continue;
     const body = p[2];
-    if (body === undefined) throw new Error("Incomplete WABT export");
+    if (body === undefined) throw new WabtAdmissionError("incomplete_export");
     const descriptor = parts(body);
     const rawKind = descriptor[0] ?? "unknown";
     const kind = ["func", "table", "memory", "global", "tag"].includes(rawKind)

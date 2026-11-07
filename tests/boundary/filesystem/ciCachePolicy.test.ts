@@ -361,7 +361,7 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
     );
   });
 
-  it("replaces every inline setup-node npm cache immediately and preserves conditions", async () => {
+  it("pairs npm caches with preceding Node setup and preserves conditions", async () => {
     const workflows = await readWorkflows();
     let npmCacheSteps = 0;
 
@@ -377,12 +377,17 @@ printf '%s\n' 'C:\Users\runner with spaces\AppData\Local\npm-cache'
           const step = steps[index];
           if (step?.uses !== "./.github/actions/npm-cache") continue;
           npmCacheSteps++;
-          const setup = steps[index - 1];
+          const setup = steps
+            .slice(0, index)
+            .findLast(
+              (candidate) =>
+                typeof candidate.uses === "string" &&
+                candidate.uses.startsWith("actions/setup-node@"),
+            );
           expect(
-            typeof setup?.uses === "string" &&
-              setup.uses.startsWith("actions/setup-node@"),
-            `${file}:${jobName} npm cache action must immediately follow setup-node`,
-          ).toBe(true);
+            setup,
+            `${file}:${jobName} npm cache action requires preceding setup-node`,
+          ).toBeDefined();
           expect(step.if).toBe(setup?.if);
           expect(setup?.with).not.toHaveProperty("cache", "npm");
           const npmCiIndex = steps.findIndex(

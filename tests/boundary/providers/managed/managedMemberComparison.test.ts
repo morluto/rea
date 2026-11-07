@@ -17,6 +17,7 @@ import {
   compareManagedMembersInputSchema,
 } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { readManagedMemberEvidence } from "../../../../src/domain/managed/managedMemberComparisonMatch.js";
+import { comparisonLimitations } from "../../../../src/domain/managed/managedMemberComparisonCoverage.js";
 import { createEvidence } from "../../../../src/domain/evidence.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
 
@@ -94,11 +95,27 @@ it("keeps missing members unknown when the opposite inspection retains only type
   );
   const completePath = join(directory, "complete.dll");
   const limitedPath = join(directory, "limited.dll");
-  await writeFile(
-    completePath,
-    buildManagedPeFixture({ additionalEmptyTypes: 2 }),
+  const completeBytes = buildManagedPeFixture({ additionalEmptyTypes: 2 });
+  const limitedBytes = buildManagedMemberCapacityFixture();
+  await writeFile(completePath, completeBytes);
+  await writeFile(limitedPath, limitedBytes);
+  const complete = inspectManagedMembersBytes(
+    completeBytes,
+    managedPeFixtureTarget(completeBytes, completePath),
+    { userStrings: false },
   );
-  await writeFile(limitedPath, buildManagedMemberCapacityFixture());
+  const limited = inspectManagedMembersBytes(
+    limitedBytes,
+    managedPeFixtureTarget(limitedBytes, limitedPath),
+    { userStrings: false },
+  );
+  expect(limited.coverage.issues).toContainEqual(
+    expect.objectContaining({
+      code: "resource-limit",
+      scope: "metadata.representation",
+      offset: expect.any(Number),
+    }),
+  );
   for (const [leftPath, rightPath] of [
     [completePath, limitedPath],
     [limitedPath, completePath],
@@ -116,6 +133,18 @@ it("keeps missing members unknown when the opposite inspection retains only type
     expect(report.fields).toHaveLength(1);
     expect(report.methods[0]?.status).toBe("unknown");
     expect(report.fields[0]?.status).toBe("unknown");
+    const sources =
+      leftPath === completePath
+        ? ([complete, limited] as const)
+        : ([limited, complete] as const);
+    for (const [side, source] of [
+      [report.left, sources[0]],
+      [report.right, sources[1]],
+    ] as const)
+      expect(side.resource_limits).toEqual(
+        source.coverage.issues.filter(({ code }) => code === "resource-limit"),
+      );
+    expect(report.limitations).toEqual(comparisonLimitations(...sources));
   }
 });
 
@@ -277,6 +306,19 @@ const pairs = (comparison: ReturnType<typeof compare>) => {
 };
 const original = nestedInspection();
 const swapped = nestedInspection({ swapEnclosing: true });
+
+it("preserves unrecorded resource-limit facts in historical comparison manifests", () => {
+  const current = compare(original, swapped);
+  expect(current.left.resource_limits).toEqual([]);
+  expect(current.right.resource_limits).toEqual([]);
+  const historical = structuredClone(current);
+  delete historical.left.resource_limits;
+  delete historical.right.resource_limits;
+  const parsed = managedMemberComparisonResultSchema.parse(historical);
+  expect(parsed.left).not.toHaveProperty("resource_limits");
+  expect(parsed.right).not.toHaveProperty("resource_limits");
+  expect(parsed.summary).toEqual(current.summary);
+});
 
 it("does not equate missing nested parents with genuinely top-level types", () => {
   const missing = nestedInspection({ nestedClassRows: [] });

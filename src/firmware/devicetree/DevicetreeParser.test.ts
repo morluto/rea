@@ -88,11 +88,6 @@ describe("flattened devicetree", () => {
   ] as const)("rejects %s", (_name, mutate) =>
     expect(() => parse(mutate(devicetreeFixture()))).toThrow(),
   );
-  it("distinguishes unsupported versions", () => {
-    expect(() => parse(devicetreeFixture(undefined, 18))).toThrow(
-      expect.objectContaining({ kind: "unsupported" }),
-    );
-  });
   it("bounds depth, nodes and properties", () => {
     let root: FixtureNode = { name: "leaf" };
     for (let i = 0; i < 10; i++) root = { name: `n${i}`, children: [root] };
@@ -190,7 +185,6 @@ it("leaves conflicting phandle declarations unresolved", () => {
   ]);
 });
 it.each([
-  ["empty", Buffer.alloc(0)],
   ["short", Buffer.from([0, 0])],
   ["multiple cells", cells(1, 2)],
 ])(

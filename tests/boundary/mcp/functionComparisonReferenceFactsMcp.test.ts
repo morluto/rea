@@ -1,6 +1,11 @@
 import type { NativeSymbolMetadata } from "../../../src/domain/native/nativeSymbol.js";
-import type { Client } from "@modelcontextprotocol/client";
+import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
+import { McpServer } from "@modelcontextprotocol/server";
 import { expect, it, onTestFinished } from "vitest";
+import { Ajv2020 } from "ajv/dist/2020.js";
+import { z } from "zod";
+import { SESSION_TOOL_CONTRACTS } from "../../../src/contracts/sessionToolContracts.js";
+import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOptions.js";
 
 import { createFunctionCoordinateContext } from "../../../src/domain/native/functionCoordinateContext.js";
 import { FUNCTION_COMPARISON_EXAMPLE } from "../../../src/contracts/functionComparisonExample.js";
@@ -973,6 +978,205 @@ it.each([null, "default", "imported"] as const)(
       compared.evidence.evidence_id,
       source === "imported" ? "pass" : "unknown",
       "calls",
+    );
+  },
+);
+
+it("distinguishes same-entry renames from different entries through retained MCP Evidence", async () => {
+  const harness = await createHarness();
+  const left = evidence("before-rename", "a", [], {
+    procedureAddress: "0x1000",
+    procedureName: "evaluate",
+  });
+  const right = evidence("after-rename", "a", [], {
+    procedureAddress: "0x01000",
+    procedureName: "renamed_evaluate",
+    procedureSymbol: {
+      ...procedure("0x1000", "evaluate").symbol!,
+      source: "user_defined",
+    },
+  });
+  const first = await compare(harness.client, left, right);
+  expect(first.result.function_match).toMatchObject({
+    status: "matched",
+    method: "same-entry",
+    entry_address: "0x1000",
+    left_name: "evaluate",
+    right_name: "renamed_evaluate",
+  });
+  expect(
+    first.result.dimensions.find(({ dimension }) => dimension === "identity"),
+  ).toMatchObject({ status: "changed" });
+  const repeated = await harness.client.callTool({
+    name: "compare_functions",
+    arguments: {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+  });
+  expect(repeated.isError).not.toBe(true);
+  expect(parseEvidence(repeated.structuredContent).normalized_result).toEqual(
+    first.result,
+  );
+  const contract = SESSION_TOOL_CONTRACTS.find(
+    ({ name }) => name === "compare_functions",
+  );
+  if (contract === undefined)
+    throw new Error("compare_functions contract is missing");
+  const schemaServer = new McpServer({
+    name: "comparison-schema",
+    version: "1",
+  });
+  const schemaClient = new Client({ name: "comparison-schema", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  onTestFinished(async () => {
+    await schemaClient.close();
+    await schemaServer.close();
+  });
+  schemaServer.registerTool(
+    contract.name,
+    toolRegistrationOptions(contract),
+    async () => ({
+      content: [],
+      structuredContent: repeated.structuredContent,
+    }),
+  );
+  await schemaServer.connect(serverTransport);
+  await schemaClient.connect(clientTransport);
+  const advertised = (await schemaClient.listTools()).tools.find(
+    ({ name }) => name === "compare_functions",
+  );
+  if (advertised?.outputSchema === undefined)
+    throw new Error("compare_functions output schema is missing");
+  const outputSchema = z
+    .record(z.string(), z.unknown())
+    .parse(advertised.outputSchema);
+  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  expect(ajv.validateSchema(outputSchema)).toBe(true);
+  const validate = ajv.compile(outputSchema);
+  expect(
+    validate(repeated.structuredContent),
+    JSON.stringify(validate.errors),
+  ).toBe(true);
+  const sdkResult = await schemaClient.callTool({
+    name: contract.name,
+    arguments: {
+      left: { kind: "retained-evidence", evidence_id: left.evidence_id },
+      right: { kind: "retained-evidence", evidence_id: right.evidence_id },
+    },
+  });
+  expect(sdkResult.structuredContent).toEqual(repeated.structuredContent);
+  expect(
+    validate({
+      ...first.evidence,
+      normalized_result: {
+        ...first.result,
+        function_match: {
+          status: "matched",
+          method: "same-entry",
+          left_name: "evaluate",
+          right_name: "renamed_evaluate",
+        },
+      },
+    }),
+  ).toBe(false);
+  const different = evidence("distinct-entry", "a", [], {
+    procedureAddress: "0x2000",
+    procedureName: "evaluate",
+  });
+  expect(
+    (await compare(harness.client, left, different)).result.function_match,
+  ).toMatchObject({ status: "mismatched", method: "explicit" });
+});
+
+it.each([
+  { name: "missing profile", profile: null },
+  {
+    name: "missing coordinate commitment",
+    profile: createAnalysisProfile(provider, {}),
+  },
+  {
+    name: "malformed coordinate commitment",
+    profile: createAnalysisProfile(provider, {
+      function_coordinate_context: {
+        kind: "native-function-coordinate-context-v1",
+        mapping_sha256: "invalid",
+        selected_image: null,
+      },
+    }),
+  },
+  {
+    name: "different loader mapping",
+    profile: createAnalysisProfile(provider, {
+      function_coordinate_context: createFunctionCoordinateContext({
+        ...mapping,
+        entry_point: "0x2000",
+      }),
+    }),
+  },
+  { name: "unknown architecture", architecture: null },
+  { name: "different architecture", architecture: "x86_64" as const },
+  { name: "different format", format: "mach-o-universal" as const },
+  {
+    name: "unestablished entry coordinate",
+    procedureAddress: "unresolved-entry",
+  },
+])(
+  "keeps rename correspondence unknown with $name",
+  async ({ name, ...options }) => {
+    const harness = await createHarness();
+    const left = evidence("known-entry", "a", [], {
+      procedureAddress: "0x1000",
+      procedureName: "evaluate",
+    });
+    const right = evidence(name, "a", [], {
+      procedureAddress: "0x1000",
+      procedureName: "renamed_evaluate",
+      ...options,
+    });
+    expect(
+      (await compare(harness.client, left, right)).result.function_match,
+    ).toMatchObject({ status: "ambiguous", method: "explicit" });
+  },
+);
+
+it.each([4096, 8192])(
+  "binds same-entry correspondence to selected image offset %i",
+  async (rightOffset) => {
+    const harness = await createHarness();
+    const source = (offset: number, name: string) =>
+      evidence(name, "a", [], {
+        procedureAddress: "0x1000",
+        procedureName: name,
+        format: "mach-o-universal",
+        profile: createAnalysisProfile(provider, {
+          function_coordinate_context: createFunctionCoordinateContext(
+            mapping,
+            {
+              kind: "macho-selected-image-v1",
+              container: "fat",
+              offset,
+              byte_length: 1024,
+              cpu_type: 0x0100000c,
+              cpu_subtype: 0,
+              container_table_sha256: "a".repeat(64),
+            },
+          ),
+        }),
+      });
+    expect(
+      (
+        await compare(
+          harness.client,
+          source(4096, "before"),
+          source(rightOffset, "renamed"),
+        )
+      ).result.function_match,
+    ).toMatchObject(
+      rightOffset === 4096
+        ? { status: "matched", method: "same-entry", entry_address: "0x1000" }
+        : { status: "ambiguous", method: "explicit" },
     );
   },
 );

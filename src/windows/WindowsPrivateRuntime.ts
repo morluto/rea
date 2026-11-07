@@ -112,6 +112,19 @@ export class WindowsPrivateRuntime {
     ]);
   }
 
+  /**
+   * Write a new private file once, flush, and close the writer without retaining
+   * it in `immutableFiles`. Use for staged job inputs that a child must read and
+   * the parent must later `rm` while the runtime lease stays open.
+   */
+  writeTransientFile(relativePath: string, content: string): void {
+    this.authority.call("runtime_write_transient", [
+      this.observation.handle,
+      relativePath,
+      Buffer.from(content),
+    ]);
+  }
+
   /** Copy admitted source bytes and digest the bytes actually written. */
   async snapshot(
     sourcePath: string,

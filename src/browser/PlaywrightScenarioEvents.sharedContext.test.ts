@@ -6,6 +6,34 @@ import { browserScenarioSchema } from "../domain/browserScenario.js";
 import { resolveScenarioSecrets } from "../../tests/fixtures/browserScenarioSecrets.js";
 import { PlaywrightScenarioEvents } from "./PlaywrightScenarioEvents.js";
 
+it("reports opaque request redirects as a network coverage gap only when network was selected", () => {
+  const page = new EventEmitter() as unknown as Page;
+  const context = new EventEmitter();
+  const scenario = browserScenarioSchema.parse({
+    browser: { mode: "launch", executable_path: "/opt/chromium" },
+    start_url: { url: "https://app.example.test/" },
+    actions: [{ step_id: "wait", action: "wait_for_timeout", duration_ms: 1 }],
+  });
+  const secrets = resolveScenarioSecrets(scenario, {});
+  const create = (enabled: Set<"network">) =>
+    new PlaywrightScenarioEvents({
+      page,
+      context: context as never,
+      ownsContext: true,
+      enabled,
+      secrets,
+    });
+  const network = create(new Set(["network"]));
+  const none = create(new Set());
+  expect(network.limitations()).toEqual([]);
+  network.opaqueRequestRedirect();
+  none.opaqueRequestRedirect();
+  expect(network.limitations()).toEqual([
+    expect.stringContaining("response status and Location may be unavailable"),
+  ]);
+  expect(none.limitations()).toEqual([]);
+});
+
 it("omits a request without a frame in a shared context", () => {
   const context = new EventEmitter();
   const page = new EventEmitter() as unknown as Page;

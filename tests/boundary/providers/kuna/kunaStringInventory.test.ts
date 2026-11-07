@@ -281,7 +281,11 @@ it("bounds keys and numbers: overlong keys match no field, overlong kept numbers
   const kept = wire({ ...document(), count: "@1" + "0".repeat(64) });
   expect((await read(kept)).result).toMatchObject({
     ok: false,
-    error: { reason: "count is not a number Kuna writes" },
+    error: {
+      _tag: "AnalysisOutputError",
+      reason: "not_kuna_number",
+      diagnostics: { code: "not_kuna_number", field: "count" },
+    },
   });
 });
 

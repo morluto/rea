@@ -5,6 +5,15 @@ import { ArtifactReaderFailure } from "./ArtifactReader.js";
 import { bindArtifactFileCleanup } from "./ArtifactFileOperation.js";
 import { completedStableArtifactObservation } from "./StableArtifactObservation.js";
 
+/** Offer the verified regular-file target after a selected symlink is rejected. */
+export const stableArtifactInputRecovery = (cause: ArtifactReaderFailure) =>
+  cause.reason === "path" && cause.resolvedPath !== undefined
+    ? {
+        remediationAction: `Retry with the resolved regular file path ${cause.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
+        conformsToInputContract: true,
+      }
+    : {};
+
 const artifactCleanupFailure = (
   cause: unknown,
   providerId: string,

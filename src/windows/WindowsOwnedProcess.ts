@@ -73,6 +73,9 @@ export const quoteWindowsProcessArgument = (value: string): string => {
   return `"${value.replace(/(\\*)"/gu, '$1$1\\"').replace(/(\\+)$/u, "$1$1")}"`;
 };
 
+// Back off after a failed native poll instead of retrying at the idle cadence.
+const POLL_RETRY_MS = 250;
+
 /** Process events and streams backed by a retained native Job Object. */
 export class WindowsOwnedProcess extends EventEmitter {
   readonly stdout = new PassThrough();
@@ -399,12 +402,18 @@ export class WindowsOwnedProcess extends EventEmitter {
       } else this.#schedule(idle ? 25 : 0);
     } catch (cause: unknown) {
       const failure = cause instanceof Error ? cause : new Error(String(cause));
+      const repeated = this.#failure !== undefined;
       this.#failure = failure.message;
       // Native lifecycle failures belong to the error/cleanup channels, never
-      // the captured stderr observation produced by the child itself.
-      if (this.listenerCount("error") > 0) this.emit("error", failure);
-      // Poll failures keep the job for another observation. A process_close
-      // failure leaves #releasePending so cleanup retries that close alone.
+      // the captured stderr observation produced by the child itself. A run of
+      // consecutive failures is reported once.
+      if (!repeated && this.listenerCount("error") > 0)
+        this.emit("error", failure);
+      // Poll failures keep the job for another observation. Without one, a
+      // single failed poll would stop output and exit delivery for the rest of
+      // the process lifetime. A process_close failure leaves #releasePending so
+      // cleanup retries that close alone.
+      this.#schedule(POLL_RETRY_MS);
     }
   }
 

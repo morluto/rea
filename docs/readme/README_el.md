@@ -19,6 +19,8 @@
 
 **[Ιστότοπος](https://rea.tools/) · [Οδηγοί](https://rea.tools/guides/) · [Μελέτες περίπτωσης](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Έλα στην κοινότητα REA στο Discord" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Γρήγορη εκκίνηση](#γρήγορη-εκκίνηση) · [Πώς λειτουργεί το REA](#πώς-λειτουργεί-το-rea) · [Τι μπορείς να αναλύσεις](#τι-μπορείς-να-αναλύσεις) · [Μελέτες περίπτωσης](#μελέτες-περίπτωσης) · [Δημιουργία περιβαλλόντων RL](#build-rl-environments) · [Συχνές ερωτήσεις](#συχνές-ερωτήσεις) · [Τεκμηρίωση](#τεκμηρίωση)
 
 <code>npx rea-agents setup</code>
@@ -62,7 +64,7 @@
 
 Το REA συνδέει τον πράκτορά σου με εργαλεία εξέτασης δυαδικών αρχείων με κώδικα μηχανής, εφαρμογών JavaScript και Electron, assemblies .NET και ιστοτόπων. Μπορείς να χρησιμοποιήσεις τα ίδια εργαλεία και από το τερματικό. Η ανάλυση εκτελείται τοπικά και τα αποτελέσματα περιλαμβάνουν τα τεκμήρια και τους περιορισμούς στους οποίους βασίζεται κάθε συμπέρασμα.
 
-Η διαδικασία εγκατάστασης καταχωρίζει το REA στον agent σου και εγκαθιστά τις αντίστοιχες οδηγίες εργασίας. Για ανάλυση κώδικα μηχανής μπορείς να χρησιμοποιήσεις μια υπάρχουσα εγκατάσταση του Hopper, του Ghidra ή του IDA. Η διαδικασία εγκατάστασης μπορεί επίσης να εγκαταστήσει το Hopper, εφόσον το εγκρίνεις. Η στατική ανάλυση JavaScript δεν χρειάζεται μηχανή ανάλυσης κώδικα μηχανής.
+Η διαδικασία εγκατάστασης καταχωρίζει το REA στον agent σου και εγκαθιστά τις αντίστοιχες οδηγίες εργασίας. Για ανάλυση κώδικα μηχανής μπορείς να χρησιμοποιήσεις μια υπάρχουσα εγκατάσταση του Hopper, του Ghidra, του IDA ή του Kuna. Η διαδικασία εγκατάστασης μπορεί επίσης να εγκαταστήσει το Hopper, εφόσον το εγκρίνεις. Η στατική ανάλυση JavaScript δεν χρειάζεται μηχανή ανάλυσης κώδικα μηχανής.
 
 > **[Επισκέψου τον ιστότοπο του REA](https://rea.tools/)** για οδηγίες εγκατάστασης, εικονογραφημένους οδηγούς και πραγματικές μελέτες περίπτωσης.
 
@@ -151,13 +153,14 @@ npx rea-agents@latest setup
 
 | Στόχος                                 | Τι επιστρέφει το REA                                                                                                        | Απαιτήσεις και οδηγός                                                                                                               |
 | -------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra ή IDA· [ανάλυση κώδικα μηχανής](../native-investigation.md)                                                          |
+| Δυαδικά αρχεία με κώδικα μηχανής       | Ψευδοκώδικα, κώδικα assembly, συμβολοσειρές, σύμβολα, κλήσεις και αναφορές                                                  | Hopper, Ghidra, IDA ή Kuna· [ανάλυση κώδικα μηχανής](../native-investigation.md)                                                    |
 | Δομή ELF χωρίς εκτέλεση                | Ενότητες, τμήματα, αρχικά σύμβολα/εγγραφές μετεγκατάστασης και ενδείξεις πιθανών μέτρων προστασίας από στατική ανάλυση      | pwntools που παρέχει ο χρήστης σε Linux x64· [διαγνωστικά δυαδικών αρχείων](../binary-diagnostics.md)                               |
 | Δυαδικά αρχεία Go                      | Ενσωματωμένη έκδοση μεταγλωττιστή, modules, αντικαταστάσεις και ρυθμίσεις μεταγλώττισης                                     | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· δεν απαιτείται εγκατάσταση του Go                                                  |
 | Δυαδικά αρχεία Rust                    | Ενσωματωμένα ονόματα, εκδόσεις, πηγές και σχέσεις εξάρτησης των crates από το cargo-auditable                               | Ενσωματωμένη στατική εξέταση ELF/PE/thin Mach-O· [δυαδικά αρχεία Rust](../rust-binaries.md)                                         |
 | PE certificates                        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                                                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                             |
 | PE imports                             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                                                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                       |
 | ELF notes                              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                                                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                        |
+| Binary hardening                       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                                                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                       |
 | Apple IPS crashes                      | .ips metadata, threads, images, registers and crash classes                                                                 | Built-in static JSON inspection; [Apple IPS](../apple-ips.md)                                                                       |
 | Linux kernel modules                   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                                                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                              |
 | Erlang BEAM                            | IFF chunks, atoms, exports, and tables                                                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                   |
@@ -282,9 +285,9 @@ agent-env run ./my-env
 </details>
 
 <details>
-<summary><strong>Χρειάζομαι Hopper, Ghidra ή IDA;</strong></summary>
+<summary><strong>Χρειάζομαι Hopper, Ghidra, IDA ή Kuna;</strong></summary>
 
-Η εις βάθος ανάλυση κώδικα μηχανής χρησιμοποιεί ένα από αυτά. Η στατική εξέταση JavaScript και .NET λειτουργεί χωρίς μηχανή ανάλυσης κώδικα μηχανής. Η διαδικασία εγκατάστασης μπορεί να εγκαταστήσει το Hopper μετά την έγκρισή σου· το Ghidra και το IDA χρησιμοποιούν τις υπάρχουσες εγκαταστάσεις σου. Δες τη [ρύθμιση παρόχων ανάλυσης](../installation.md#hopper).
+Η εις βάθος ανάλυση κώδικα μηχανής χρησιμοποιεί ένα από αυτά. Η στατική εξέταση JavaScript και .NET λειτουργεί χωρίς μηχανή ανάλυσης κώδικα μηχανής. Η διαδικασία εγκατάστασης μπορεί να εγκαταστήσει το Hopper μετά την έγκρισή σου· το Ghidra, το IDA και το Kuna χρησιμοποιούν τις υπάρχουσες εγκαταστάσεις σου. Δες τη [ρύθμιση παρόχων ανάλυσης](../installation.md#hopper).
 
 </details>
 
@@ -352,7 +355,7 @@ npx rea-agents@latest setup
 
 ## Ιστορικό αστεριών
 
-🎉 **300.000 αστέρια στο GitHub — σας ευχαριστούμε!**
+🎉 **400.000 αστέρια στο GitHub — σας ευχαριστούμε!**
 
 Ευχαριστούμε όλους όσοι χρησιμοποιούν το REA, αναφέρουν σφάλματα, ζητούν νέες λειτουργίες, δοκιμάζουν builds και συνεισφέρουν διορθώσεις.
 

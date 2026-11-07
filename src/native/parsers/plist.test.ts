@@ -970,3 +970,26 @@ it("retains JSON source spelling when XML integers collide after rounding", () =
     expect.stringContaining("2 number(s)"),
   ]);
 });
+
+it.each(["\n", "\r\n", "\r", "\u2028", "\u2029"])(
+  "retains native OpenStep fields after line comments ending in %j",
+  (newline) => {
+    const source =
+      "// exported metadata" +
+      newline +
+      "{ CFBundleIdentifier = org.example.original; // note" +
+      newline +
+      "CFBundleName = Retained;\n }";
+    const result = parsePlistXmlSource(Buffer.from(source));
+    expect(result).toMatchObject({
+      ok: true,
+      value: {
+        value: {
+          CFBundleIdentifier: "org.example.original",
+          CFBundleName: "Retained",
+        },
+        bundle: { identifier: "org.example.original", name: "Retained" },
+      },
+    });
+  },
+);

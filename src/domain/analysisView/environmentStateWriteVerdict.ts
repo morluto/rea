@@ -56,13 +56,17 @@ const renders = (
   );
 };
 
-/** Whether an item action sets something, and a call showed each field it sets already at that value, so the action sets rather than toggles it. */
+/** Whether an item action sets or toggles something, and a call showed each field it sets already at that value, so it sets rather than toggles those. */
 const steady = (plan: StateWritePlan, draft: WriteDraft): boolean => {
   if (plan.address?.by !== "action") return true;
   const set = plan.rules.flatMap((rule) =>
     rule.rule === "set" ? [rule.field] : [],
   );
-  return set.length > 0 && set.every((field) => draft.steady.has(field));
+  // A toggle is learned only from calls that flipped its field both ways.
+  return (
+    (set.length > 0 || plan.rules.some((rule) => rule.rule === "toggle")) &&
+    set.every((field) => draft.steady.has(field))
+  );
 };
 
 /** Whether a clock a call left as it was in its own second has no rule another call showed, so no call showed whether the write stamps it. */

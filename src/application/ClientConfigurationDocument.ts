@@ -152,9 +152,10 @@ const parseDocument = (
   // Pi loads `mcp.json` with a strict `JSON.parse` and no BOM tolerance, so
   // comments, trailing commas, a BOM, or an empty existing file must be
   // rejected instead of registering into a document the client cannot load.
-  // Kimi also reads mcp.json with JSON.parse and an empty-file fallback.
-  if (format === "pi" || format === "kimi") {
-    if (format === "kimi" && text.trim().length === 0) return {};
+  // Kimi and LM Studio also read mcp.json with JSON.parse; an empty file holds
+  // nothing to preserve.
+  if (format === "pi" || format === "kimi" || format === "lm_studio") {
+    if (format !== "pi" && text.trim().length === 0) return {};
     return requireObject(JSON.parse(text), "The configuration root");
   }
   // An empty file, which some clients create before any server is added,
@@ -1748,7 +1749,8 @@ export const clientRegistrationEntry = (
           : { environment: { ...environment } }),
       };
     case "kimi":
-      // Kimi infers stdio from command; it uses `transport`, not `type`.
+    case "lm_studio":
+      // Both infer stdio from command; Kimi uses `transport`, not `type`.
       return {
         command: executable,
         args,

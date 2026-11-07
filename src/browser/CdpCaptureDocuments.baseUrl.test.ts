@@ -231,6 +231,15 @@ describe("DOM metadata document base URLs", () => {
 });
 
 describe("prefixed XHTML form destinations", () => {
+  it("resolves a prefixed base href against the document, not itself", () => {
+    const value = prefixedXhtmlSnapshot();
+    value.strings[1] = `${origin}/root/assets/`;
+    value.strings[13] = "assets/";
+    const step = captureDom(value, new Set([origin]), input).next();
+    if (!step.done) throw new Error("Unexpected SVG identity query");
+    expect(step.value.urls[0]?.url).toBe(`${origin}/root/assets/`);
+  });
+
   it("resolves empty actions to the document URL", () => {
     const result = captureDom(
       prefixedXhtmlSnapshot(),
@@ -938,6 +947,65 @@ const approvedHref = (
   attribute: "href",
   url,
   destination_scope: "approved",
+});
+
+describe("XHTML link agent hints", () => {
+  it.each([
+    ["html", "link", "xmlns"],
+    ["h:html", "h:link", "xmlns:h"],
+  ])("recognizes equivalent %s namespaces", (root, link, namespace) => {
+    const result = captureSvg(
+      svgDocument([
+        { name: root, parent: 0, attributes: [[namespace, XHTML_NAMESPACE]] },
+        {
+          name: link,
+          parent: 1,
+          attributes: [
+            ["href", "/agent"],
+            ["rel", "mcp model-context ai-plugin service-desc"],
+          ],
+        },
+      ]),
+    );
+    expect(result.agentHints).toEqual(
+      ["mcp", "model-context", "ai-plugin", "service-desc"].map(
+        (declaration) => ({
+          mechanism: "dom_link_rel",
+          declaration,
+          url: `${origin}/agent`,
+          trust: "page-declared-untrusted",
+        }),
+      ),
+    );
+  });
+
+  it("does not treat foreign or differently cased XML elements as XHTML links", () => {
+    const result = captureSvg(
+      svgDocument([
+        xhtmlRoot([
+          ["xmlns", XHTML_NAMESPACE],
+          ["xmlns:f", "urn:foreign"],
+        ]),
+        {
+          name: "f:link",
+          parent: 1,
+          attributes: [
+            ["rel", "mcp"],
+            ["href", "/agent"],
+          ],
+        },
+        {
+          name: "LINK",
+          parent: 1,
+          attributes: [
+            ["rel", "mcp"],
+            ["href", "/agent"],
+          ],
+        },
+      ]),
+    );
+    expect(result.agentHints).toEqual([]);
+  });
 });
 
 describe("XML SVG roots and namespace scope restoration", () => {

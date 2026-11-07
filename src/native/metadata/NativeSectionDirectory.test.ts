@@ -1,6 +1,13 @@
 import { expect, it } from "vitest";
 import { pe } from "../../domain/binaryTarget.fixture.js";
-import { readPeSectionDirectory } from "./NativeSectionDirectory.js";
+import { elfHardeningFixture } from "../hardening/BinaryHardening.fixture.js";
+import {
+  ELF_PT_GNU_RELRO,
+  ELF_PT_GNU_STACK,
+  ELF_PT_INTERP,
+  readElfDirectoryFromBuffer,
+  readPeSectionDirectory,
+} from "./NativeSectionDirectory.js";
 
 const readDirectory = (bytes: Buffer) => {
   const reader = readPeSectionDirectory(bytes.length);
@@ -38,6 +45,22 @@ it("does not classify an unconfirmed pointer overlapping DOS data as a PE layout
   bytes.writeUInt32LE(4, 60);
   expect(() => readDirectory(bytes)).toThrow(
     expect.objectContaining({ kind: "malformed" }),
+  );
+});
+
+it("admits PT_INTERP, PT_GNU_STACK and PT_GNU_RELRO program headers", () => {
+  const directory = readElfDirectoryFromBuffer(
+    elfHardeningFixture({ interp: true, gnuRelro: true }),
+  );
+  expect(directory.elf_type).toBe(3);
+  expect(directory.programs.map((program) => program.type)).toEqual(
+    expect.arrayContaining([
+      1,
+      2,
+      ELF_PT_INTERP,
+      ELF_PT_GNU_STACK,
+      ELF_PT_GNU_RELRO,
+    ]),
   );
 });
 

@@ -1,6 +1,8 @@
+import { GO_BINARY_PROVIDER_IDENTITY } from "./GoBinaryProviderIdentity.js";
 import {
   projectStableArtifactFailure,
   projectArtifactCloseFailure,
+  stableArtifactInputRecovery,
 } from "../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../filesystem/RegularFile.js";
 import { readStableArtifact } from "../artifacts/readStableArtifact.js";
@@ -39,12 +41,6 @@ import {
   BinaryResourceFailure,
 } from "../native/metadata/BinaryContainer.js";
 
-/** Bundled format reader identity; embedded compiler versions are separate observed facts. */
-export const GO_BINARY_PROVIDER_IDENTITY = {
-  id: "go-build-info",
-  name: "REA Go build-information reader",
-  version: "1",
-} as const;
 const OPERATION = "inspect_go_binary";
 const INPUT_BYTES = 256 * 1024 * 1024;
 const OUTPUT_BYTES = 8 * 1024 * 1024;
@@ -118,9 +114,11 @@ const failureForPrimary = (
         },
       );
     if (cause.reason === "path")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        { path: ["path"], reason: "invalid_format", message: cause.message },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [{ path: ["path"], reason: "invalid_format", message: cause.message }],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

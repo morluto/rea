@@ -65,7 +65,20 @@ export const devicetreeSchema = z.strictObject({
   reservations: z.array(
     z.strictObject({ offset: uint, address: z.string(), size: z.string() }),
   ),
-  nodes: z.array(devicetreeNodeSchema),
+  nodes: z.array(devicetreeNodeSchema).superRefine((nodes, ctx) => {
+    const paths = new Set<string>();
+    for (const [index, node] of nodes.entries()) {
+      if (paths.has(node.path)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [index, "path"],
+          message: "Duplicate Devicetree node path.",
+        });
+        return;
+      }
+      paths.add(node.path);
+    }
+  }),
   references: z.array(
     z.strictObject({
       source: z.string(),

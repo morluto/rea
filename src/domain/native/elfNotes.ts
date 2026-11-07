@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { digestSchema } from "../digests.js";
-import { localPathStringSchema } from "../localPath.js";
+import { absoluteLocalPathStringSchema } from "../localPath.js";
 
 const uint = z.number().int().min(0).max(0xffffffff);
 const range = z.strictObject({ offset: uint, bytes: uint });
@@ -17,6 +17,10 @@ export const ELF_NOTE_TYPE_NAMES = [
   "gnu_build_id",
   "gnu_gold_version",
   "gnu_property",
+  "core_prpsinfo",
+  "core_file",
+  "core_siginfo",
+  "core_auxv",
   "unknown",
 ] as const;
 export type ElfNoteTypeName = (typeof ELF_NOTE_TYPE_NAMES)[number];
@@ -64,9 +68,25 @@ export const gnuNoteTypeName = (type: number): ElfNoteTypeName => {
   }
 };
 
+/** Map CORE n_type when the owner is CORE; other types stay unknown. */
+export const coreNoteTypeName = (type: number): ElfNoteTypeName => {
+  switch (type) {
+    case 3:
+      return "core_prpsinfo";
+    case 6:
+      return "core_auxv";
+    case 0x46494c45:
+      return "core_file";
+    case 0x53494749:
+      return "core_siginfo";
+    default:
+      return "unknown";
+  }
+};
+
 /** Complete bounded inspection of ELF PT_NOTE and SHT_NOTE tables. */
 export const inspectElfNotesInputSchema = z.strictObject({
-  path: localPathStringSchema.describe(
+  path: absoluteLocalPathStringSchema.describe(
     "Absolute filesystem path to an ELF image",
   ),
   max_file_bytes: z
@@ -93,6 +113,51 @@ const gnuAbiTagSchema = z.strictObject({
   major: uint,
   minor: uint,
   subminor: uint,
+});
+
+const coreFileMappingSchema = z.strictObject({
+  start_address: z.string().regex(/^0x[0-9a-f]+$/),
+  end_address: z.string().regex(/^0x[0-9a-f]+$/),
+  file_offset_pages: z.string().regex(/^0x[0-9a-f]+$/),
+  path: z.string(),
+  path_hex: z.string().regex(/^[0-9a-f]*$/),
+});
+
+const coreFileSchema = z.strictObject({
+  count: uint,
+  page_size: uint,
+  mappings: z.array(coreFileMappingSchema),
+});
+
+const corePrpsinfoSchema = z.strictObject({
+  state: uint,
+  pid: z.number().int(),
+  ppid: z.number().int(),
+  pgrp: z.number().int(),
+  sid: z.number().int(),
+  uid: uint,
+  gid: uint,
+  filename: z.string(),
+  psargs: z.string(),
+});
+
+const coreSiginfoSchema = z.strictObject({
+  signo: z.number().int(),
+  code: z.number().int(),
+  errno: z.number().int(),
+});
+
+const coreAuxvEntrySchema = z.strictObject({
+  type: uint,
+  type_name: z.string().nullable(),
+  value: z.string().regex(/^0x[0-9a-f]+$/),
+});
+
+export const coreNoteSchema = z.strictObject({
+  prpsinfo: corePrpsinfoSchema.nullable(),
+  file: coreFileSchema.nullable(),
+  siginfo: coreSiginfoSchema.nullable(),
+  auxv: z.array(coreAuxvEntrySchema).nullable(),
 });
 
 const noteEntrySchema = z.strictObject({
@@ -125,6 +190,7 @@ const noteEntrySchema = z.strictObject({
       gold_version: z.string().nullable(),
     })
     .nullable(),
+  core: coreNoteSchema.nullable(),
 });
 
 /** Observed ELF note tables; absence is an empty list, not proof notes never existed. */

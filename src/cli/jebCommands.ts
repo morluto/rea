@@ -7,9 +7,11 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { JebOperation } from "../domain/jeb/jebAnalysis.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { bindCliEvidenceCallerPath } from "./cliEvidenceCallerPath.js";
 import { jebInputSchemas } from "../domain/jeb/jebAnalysis.js";
 
 /** Expose the same explicit JEB requests through one-shot CLI commands. */
@@ -20,11 +22,20 @@ export const registerJebCommands = (
   provider: JebAnalysisPort = createJebAnalysisProvider(environment),
 ): void => {
   const service = new JebAnalysisService(provider);
-  const execute = (name: string, operation: JebOperation, input: unknown) =>
+  const execute = (
+    name: string,
+    operation: JebOperation,
+    input: unknown,
+    callerPath?: string,
+  ) =>
     withCommandCancellation((signal) =>
       logCliCommand(logger, name, () =>
         finishAnalysisCommand(
-          () => service.execute(operation, input, { signal }),
+          callerPath === undefined
+            ? () => service.execute(operation, input, { signal })
+            : bindCliEvidenceCallerPath(callerPath, () =>
+                service.execute(operation, input, { signal }),
+              ),
           { close: () => provider.close() },
           "jeb",
           operation,
@@ -45,7 +56,7 @@ export const registerJebCommands = (
       path: jebInputSchemas.open_jeb_project.shape.path,
     }),
     run: ({ args }) =>
-      execute(CLI_COMMANDS.openJebProject, "open_jeb_project", args),
+      execute(CLI_COMMANDS.openJebProject, "open_jeb_project", args, args.path),
   });
   cli.command(CLI_COMMANDS.listJebUnits, {
     description: "List JEB project units by path and type with optional filter",
@@ -53,8 +64,8 @@ export const registerJebCommands = (
     options: z.object({
       filter: jebInputSchemas.list_jeb_units.shape.filter,
       "parent-unit-path": jebInputSchemas.list_jeb_units.shape.parent_unit_path,
-      index: jebInputSchemas.list_jeb_units.shape.index,
-      count: jebInputSchemas.list_jeb_units.shape.count,
+      index: cliDecimalField(jebInputSchemas.list_jeb_units.shape.index),
+      count: cliDecimalField(jebInputSchemas.list_jeb_units.shape.count),
     }),
     run: ({ options }) =>
       execute(CLI_COMMANDS.listJebUnits, "list_jeb_units", {

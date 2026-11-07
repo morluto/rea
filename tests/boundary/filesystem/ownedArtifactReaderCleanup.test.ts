@@ -4,7 +4,10 @@ import { join } from "node:path";
 
 import { expect, it, onTestFinished, vi } from "vitest";
 
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { BunStandaloneArtifactReader } from "../../../src/artifacts/BunStandaloneArtifactReader.js";
+import { DotnetBundleArtifactReader } from "../../../src/artifacts/DotnetBundleArtifactReader.js";
 import { MachOSliceArtifactReader } from "../../../src/artifacts/MachOSliceArtifactReader.js";
 import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { ok } from "../../../src/domain/result.js";
@@ -47,12 +50,58 @@ const runner: NativeCommandRunner = {
     }),
 };
 
+it("reports cancellation during .NET reader admission and releases the descriptor", async () => {
+  const root = await createTestTempDirectory("rea-bundle-admission-cancel-");
+  const path = join(root, "source");
+  await writeFile(path, "unread source");
+  const controller = new AbortController();
+  let descriptor: FileHandle | undefined;
+  injected.opened = (openedPath, handle) => {
+    if (openedPath !== path) return;
+    descriptor = handle;
+    controller.abort();
+  };
+  const reader = new DotnetBundleArtifactReader(path);
+  onTestFinished(async () => {
+    injected.opened = undefined;
+    await reader.close();
+  });
+  await expect(
+    reader.entries(controller.signal)[Symbol.asyncIterator]().next(),
+  ).rejects.toMatchObject({ reason: "cancelled" });
+  expect(descriptor?.fd).toBe(-1);
+});
+
 const scenarios = [
+  {
+    reader: "Bun standalone",
+    createReader: (path: string) => new BunStandaloneArtifactReader(path),
+    stage: "admission",
+    failOnStat: 1,
+  },
+  {
+    reader: "Bun standalone",
+    createReader: (path: string) => new BunStandaloneArtifactReader(path),
+    stage: "post-admission-verification",
+    failOnStat: 2,
+  },
   {
     reader: "ZIP",
     createReader: (path: string) => new ZipArtifactReader(path, "zip"),
     stage: "admission",
     failOnStat: 1,
+  },
+  {
+    reader: ".NET bundle",
+    createReader: (path: string) => new DotnetBundleArtifactReader(path),
+    stage: "admission",
+    failOnStat: 1,
+  },
+  {
+    reader: ".NET bundle",
+    createReader: (path: string) => new DotnetBundleArtifactReader(path),
+    stage: "post-admission-verification",
+    failOnStat: 2,
   },
   {
     reader: "Mach-O slice",
@@ -160,3 +209,63 @@ const causeChainContains = (cause: unknown, expected: unknown): boolean => {
   }
   return false;
 };
+
+it("joins late .NET descriptor admission before reporting reader shutdown", async () => {
+  const root = await createTestTempDirectory("rea-dotnet-late-admission-");
+  const path = join(root, "source");
+  await writeFile(path, "unread source");
+  let reach = () => {};
+  let resume = () => {};
+  const reached = new Promise<void>((resolve) => {
+    reach = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    resume = resolve;
+  });
+  let descriptor: FileHandle | undefined;
+  injected.opened = (openedPath, handle) => {
+    if (openedPath !== path || descriptor !== undefined) return;
+    descriptor = handle;
+    const stat = handle.stat.bind(handle);
+    let held = false;
+    vi.spyOn(handle, "stat").mockImplementation(async (...args) => {
+      if (!held) {
+        held = true;
+        reach();
+        await gate;
+      }
+      return stat(...args);
+    });
+  };
+  const reader = new DotnetBundleArtifactReader(path);
+  const launched: Promise<unknown>[] = [];
+  try {
+    const inspection = reader.entries()[Symbol.asyncIterator]().next();
+    launched.push(inspection);
+    await awaitAcknowledgement(
+      reached,
+      inspection,
+      ".NET descriptor admission",
+    );
+    let closed = false;
+    const closing = reader.close().then(() => {
+      closed = true;
+    });
+    launched.push(closing);
+    await Promise.resolve();
+    expect(closed).toBe(false);
+    resume();
+    await Promise.allSettled(launched);
+    expect(closed).toBe(true);
+    expect(descriptor?.fd).toBe(-1);
+  } finally {
+    resume();
+    await Promise.allSettled(launched);
+    try {
+      await reader.close();
+    } finally {
+      injected.opened = undefined;
+      vi.restoreAllMocks();
+    }
+  }
+});

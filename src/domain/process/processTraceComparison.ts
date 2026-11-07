@@ -3,6 +3,7 @@ import {
   evaluateProcessTraceSide,
   processTraceComparisonResultSchema,
   type ProcessTraceComparisonResult,
+  type EvaluatedSide,
 } from "./processTraceEvaluation.js";
 import {
   processTraceSpecificationSchema,
@@ -10,11 +11,14 @@ import {
 } from "./processTraceSpecification.js";
 
 /** Compare two captures against an explicit finite trace language. */
-export const compareProcessTraces = (
+export const evaluateProcessTraceComparison = (
   left: ProcessCapture,
   right: ProcessCapture,
   specificationInput: ProcessTraceSpecification,
-): ProcessTraceComparisonResult => {
+): {
+  readonly result: ProcessTraceComparisonResult;
+  readonly diagnostics: readonly NonNullable<EvaluatedSide["diagnostic"]>[];
+} => {
   const specification =
     processTraceSpecificationSchema.parse(specificationInput);
   const leftEvaluation = evaluateProcessTraceSide(left, specification);
@@ -29,7 +33,7 @@ export const compareProcessTraces = (
     left: leftEvaluation.result,
     right: rightEvaluation.result,
   });
-  return processTraceComparisonResultSchema.parse({
+  const result = processTraceComparisonResultSchema.parse({
     verdict:
       leftEvaluation.result.status === "unknown" ||
       rightEvaluation.result.status === "unknown"
@@ -44,7 +48,22 @@ export const compareProcessTraces = (
     right: rightEvaluation.result,
     diagnostic,
   });
+  return {
+    result,
+    diagnostics: [leftEvaluation.diagnostic, rightEvaluation.diagnostic].filter(
+      (value): value is NonNullable<EvaluatedSide["diagnostic"]> =>
+        value !== null,
+    ),
+  };
 };
+
+/** Compare two captures against an explicit finite trace language. */
+export const compareProcessTraces = (
+  left: ProcessCapture,
+  right: ProcessCapture,
+  specification: ProcessTraceSpecification,
+): ProcessTraceComparisonResult =>
+  evaluateProcessTraceComparison(left, right, specification).result;
 
 /** Whether trace conformance or raw declared order differs across captures. */
 export const processTraceOutcomesDiffer = (

@@ -55,7 +55,9 @@ it.each(["stdout", "stderr"])(
     );
     expect(result).toMatchObject({
       ok: false,
-      error: expect.stringContaining("complete-output retention budget"),
+      error: {
+        detail: expect.stringContaining("complete-output retention budget"),
+      },
     });
     expect(child?.exitCode).toBe(0);
   },
@@ -83,7 +85,7 @@ it("refuses malformed UTF-8 instead of interpreting replacement text", async () 
     ),
   ).toMatchObject({
     ok: false,
-    error: expect.stringContaining("invalid UTF-8"),
+    error: { detail: expect.stringContaining("invalid UTF-8") },
   });
 });
 
@@ -104,7 +106,10 @@ it("waits for physical close after an early process error", async () => {
   expect(settled).toBe(false);
   expect(await pending).toEqual({
     ok: false,
-    error: expect.stringContaining("controlled process error"),
+    error: {
+      kind: "execution",
+      detail: expect.stringContaining("controlled process error"),
+    },
   });
   expect(child?.exitCode).toBe(0);
 });
@@ -145,7 +150,7 @@ it("joins the final human progress write before reporting success", async () => 
   acknowledge(new Error("final progress refused"));
   expect(await pending).toMatchObject({
     ok: false,
-    error: expect.stringContaining("final progress refused"),
+    error: { detail: expect.stringContaining("final progress refused") },
   });
   expect(destination.writableEnded).toBe(false);
   await nextTurn();
@@ -205,9 +210,9 @@ it("bounds a stalled metadata probe and keeps the runner usable", async () => {
   const result = await pending;
   expect(result).toMatchObject({
     ok: false,
-    error: expect.stringContaining("timed out"),
+    error: { detail: expect.stringContaining("timed out") },
   });
-  if (!result.ok) expect(result.error).toContain("probe-ready");
+  if (!result.ok) expect(result.error.detail).toContain("probe-ready");
   expect(child?.signalCode).not.toBeNull();
   expect(
     await updateCommands.runProbe(
@@ -243,7 +248,7 @@ it("retains incomplete probe cleanup until a later close succeeds", async () => 
     );
     expect(await pending).toMatchObject({
       ok: false,
-      error: expect.stringContaining("Cleanup incomplete"),
+      error: { detail: expect.stringContaining("Cleanup incomplete") },
     });
     expect(child?.signalCode).toBeNull();
   } finally {
@@ -295,7 +300,7 @@ it("preserves cancellation during final progress acknowledgement", async () => {
   acknowledge();
   expect(await pending).toMatchObject({
     ok: false,
-    error: expect.stringContaining("cancelled"),
+    error: { detail: expect.stringContaining("cancelled") },
   });
   await closing;
 });

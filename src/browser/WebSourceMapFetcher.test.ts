@@ -131,7 +131,7 @@ it.each([
   },
   { sourceRoot: "webpack://", expected: "webpack://a.js" },
   { sourceRoot: "webpack:///", expected: "webpack:///a.js" },
-  { sourceRoot: "", expected: "https://app.example.test/a.js" },
+  { sourceRoot: "", expected: "https://app.example.test/maps/a.js" },
   { sourceRoot: null, expected: "https://app.example.test/maps/a.js" },
 ])(
   "retains the admitted ECMA-426 source identity for root $sourceRoot",

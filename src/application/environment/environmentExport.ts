@@ -243,7 +243,7 @@ export const environmentExportEvidenceFile = async (
       const refused = headroomRefusal(operation, path, size);
       if (refused !== undefined) throw refused;
     });
-    return await environmentExportFile(role, path, bytes, operation);
+    return await environmentExportFile(role, path, bytes, { operation });
   } catch (cause: unknown) {
     if (cause instanceof AnalysisResourceConstraintError) return err(cause);
     throw cause;
@@ -255,8 +255,12 @@ export const environmentExportFile = async (
   role: "manifest" | "evidence",
   path: string,
   bytes: Buffer,
-  operation: string = ENVIRONMENT_EXPORT_OPERATION,
+  context: {
+    operation?: string;
+    fieldPath?: AnalysisInputIssue["path"] | undefined;
+  } = {},
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
+  const operation = context.operation ?? ENVIRONMENT_EXPORT_OPERATION;
   const refusal = headroomRefusal(operation, path, bytes.length);
   if (refusal !== undefined) return err(refusal);
   let parsed: ReturnType<typeof parseUtf8Json>;
@@ -271,7 +275,7 @@ export const environmentExportFile = async (
       inputError(
         operation,
         {
-          path: [role],
+          path: context.fieldPath ?? [role],
           reason: "invalid_format",
           expected: "JSON",
           message: parsed.error,
@@ -289,6 +293,7 @@ export const readEnvironmentExportFile = async (
   role: "manifest" | "evidence",
   path: string,
   operation: string = ENVIRONMENT_EXPORT_OPERATION,
+  fieldPath?: AnalysisInputIssue["path"],
 ): Promise<Result<EnvironmentExportFile, AnalysisError>> => {
   const resources = new ArtifactResourceScope();
   let bytes: Buffer;
@@ -336,7 +341,7 @@ export const readEnvironmentExportFile = async (
         inputError(
           operation,
           {
-            path: [role],
+            path: fieldPath ?? [role],
             reason: "invalid_value",
             expected: "one stable regular file snapshot",
             message: `The ${role} file changed while it was read.`,
@@ -349,9 +354,12 @@ export const readEnvironmentExportFile = async (
         inputError(
           operation,
           {
-            path: [role],
+            path: fieldPath ?? [role],
             reason: "invalid_value",
-            message: `The ${role} argument must be a readable file path; inline JSON cannot be exported.`,
+            message:
+              fieldPath === undefined
+                ? `The ${role} argument must be a readable file path; inline JSON cannot be exported.`
+                : "The selected source path must be a readable regular file.",
           },
           `${path} could not be read as the ${role} file.`,
         ),
@@ -360,7 +368,7 @@ export const readEnvironmentExportFile = async (
     if (denied !== undefined) return err(denied);
     throw cause;
   }
-  return environmentExportFile(role, path, bytes, operation);
+  return environmentExportFile(role, path, bytes, { operation, fieldPath });
 };
 
 /** Read both files once; the caller authenticates the parsed values and the export copies the same bytes. */

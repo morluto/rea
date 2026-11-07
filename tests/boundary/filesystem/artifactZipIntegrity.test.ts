@@ -6,6 +6,7 @@ import { TextReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
 import { expect, it, onTestFinished } from "vitest";
 
 import { writeOrderedZip } from "../../fixtures/artifactEntryOrder.js";
+import { zstandardZipFixture } from "../../fixtures/zipZstandard.js";
 import { inventoryArtifact } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -23,6 +24,65 @@ import {
 } from "../../../src/domain/artifactGraph.js";
 import { artifactInspectionResultSchema } from "../../../src/domain/artifactInspection.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+
+cliTest(
+  "inventories and extracts method-93 Zstandard ZIP bytes through the public CLI",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-zip-zstd-cli-");
+    const path = join(root, "method93.zip");
+    const content = Buffer.from("Zstandard source evidence: café\n".repeat(7));
+    const archive = zstandardZipFixture(content);
+    await writeFile(path, archive);
+    const inspected = await cli.run({
+      arguments: ["inspect-artifact", path, "--json"],
+    });
+    expect(inspected.exitCode, inspected.stdout + inspected.stderr).toBe(0);
+    const inspection = artifactInspectionResultSchema.parse(
+      parseEvidence(inspected.json).normalized_result,
+    );
+    const inventory = artifactInventoryResultSchema.parse(
+      inspection.substeps[0]?.evidence?.normalized_result,
+    );
+    expect(inventory.manifest.root_sha256).toBe(
+      createHash("sha256").update(archive).digest("hex"),
+    );
+    expect(inventory.occurrences).toContainEqual(
+      expect.objectContaining({
+        logical_path: "member.txt",
+        hash_status: "verified",
+      }),
+    );
+    expect(inventory.nodes).toContainEqual(
+      expect.objectContaining({
+        sha256: createHash("sha256").update(content).digest("hex"),
+      }),
+    );
+    const extracted = await cli.run({
+      arguments: ["extract-artifact", path, "--json"],
+    });
+    expect(extracted.exitCode, extracted.stdout + extracted.stderr).toBe(0);
+    const extraction = artifactExtractionResultSchema.parse(
+      parseEvidence(extracted.json).normalized_result,
+    );
+    try {
+      expect(extraction.artifacts).toContainEqual(
+        expect.objectContaining({
+          relative_path: "member.txt",
+          sha256: createHash("sha256").update(content).digest("hex"),
+        }),
+      );
+      expect(
+        (await readFile(join(extraction.output_root, "member.txt"))).equals(
+          content,
+        ),
+      ).toBe(true);
+      expect((await readFile(path)).equals(archive)).toBe(true);
+      expect(extraction.containment_verified).toBe(true);
+    } finally {
+      await rm(extraction.output_root, { recursive: true, force: true });
+    }
+  },
+);
 
 for (const zip64 of [false, true]) {
   cliTest(

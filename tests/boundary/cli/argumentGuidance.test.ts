@@ -1,6 +1,8 @@
 import { expect, it } from "vitest";
 
 import { createCli } from "../../../src/cli.js";
+import { MAX_SELECTED_LOCALES } from "../../../src/domain/apktool/apktoolResourceAnalysis.js";
+import { serveCli } from "./cliServeHarness.js";
 
 it.each([
   ["analyze"],
@@ -31,6 +33,9 @@ it.each([
       fieldErrors: expect.any(Array),
     });
     expect(text).not.toContain("Details:");
+    for (const field of result.fieldErrors) {
+      expect(field).not.toHaveProperty("maximum");
+    }
     if (argv[0] === "search")
       expect(result.fieldErrors).toEqual(
         expect.arrayContaining([
@@ -64,3 +69,24 @@ it.each([
       );
   },
 );
+
+it("leaves non-ADB over-limit argument errors unchanged", async () => {
+  const result = await serveCli([
+    "decode-android-resources",
+    "/nonexistent/app.apk",
+    ...Array.from({ length: MAX_SELECTED_LOCALES + 1 }, () => [
+      "--locales",
+      "de",
+    ]).flat(),
+    "--json",
+  ]);
+  expect(result.exitCode).toBe(1);
+  const output = JSON.parse(result.stdout);
+  expect(output).toMatchObject({
+    code: "VALIDATION_ERROR",
+    fieldErrors: [
+      expect.objectContaining({ path: "locales", code: "too_big" }),
+    ],
+  });
+  expect(output.fieldErrors[0]).not.toHaveProperty("maximum");
+});

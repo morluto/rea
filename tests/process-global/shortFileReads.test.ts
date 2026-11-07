@@ -388,10 +388,11 @@ it("preserves cancellation during continued short reads and releases the descrip
   const path = join(root, "Electron");
   await writeFile(path, thinFuseImage(OBSIDIAN_FUSE_BYTES).bytes);
   const controller = new AbortController();
+  const reason = new Error("cancel continued read");
   fault.path = path;
   fault.maximum = 2;
   fault.onRead = () => {
-    if (fault.reads === 2) controller.abort(new Error("cancel continued read"));
+    if (fault.reads === 2) controller.abort(reason);
   };
   const provider = new ElectronFuseProvider();
   try {
@@ -402,6 +403,7 @@ it("preserves cancellation during continued short reads and releases the descrip
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected cancellation");
     expect(result.error).toBeInstanceOf(AnalysisCancelledError);
+    expect(result.error.cause).toBe(reason);
     expect(fault.reads).toBe(2);
     expect(fault.handles.every((handle) => handle.fd === -1)).toBe(true);
   } finally {

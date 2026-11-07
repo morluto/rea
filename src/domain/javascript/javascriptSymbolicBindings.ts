@@ -65,6 +65,8 @@ interface SymbolicReadBoundary {
 }
 type SymbolicNamespace = Extract<SymbolicValue, { kind: "namespace" }>;
 
+const SYMBOLIC_DEPTH_LIMIT = 128;
+
 const emptyEnvironment: SymbolicEnvironment = { values: new Map() };
 
 const containsOwnedReturn = (root: t.Node): boolean => {
@@ -210,15 +212,25 @@ export class JavaScriptSymbolicBindings {
     return emptyEnvironment;
   }
 
+  /** Shared admission; cache hits keep their existing depth-free fast path. */
+  #admitEvaluation(): boolean {
+    if (
+      --this.#remainingEvaluations < 0 ||
+      this.#depth >= SYMBOLIC_DEPTH_LIMIT
+    ) {
+      this.truncated = true;
+      return false;
+    }
+    return true;
+  }
+
   evaluate(
     input: t.Node | null | undefined,
     environment?: SymbolicEnvironment,
   ): SymbolicValue {
     if (!input) return { kind: "literal", value: undefined };
-    if (--this.#remainingEvaluations < 0 || this.#depth >= 128) {
-      this.truncated = true;
+    if (!this.#admitEvaluation())
       return symbolicUnknown("symbolic resource limit");
-    }
     const node = unwrapJavaScriptExpression(input).node;
     const env = environment ?? this.environmentAt(node);
     const cache = this.#cache.get(env) ?? new WeakMap<t.Node, SymbolicValue>();
@@ -278,14 +290,21 @@ export class JavaScriptSymbolicBindings {
     key: string,
     read?: SymbolicPropertyRead,
   ): SymbolicValue {
-    let result: SymbolicValue;
-    if (value.kind === "union")
-      result = symbolicUnion([
-        ...this.#commonProperty(value.values, key, read),
-        ...value.values.map((variant) => this.property(variant, key, read)),
-      ]);
-    else result = this.#property(value, key, read);
-    return this.#withConditions(result, value);
+    if (!this.#admitEvaluation())
+      return symbolicUnknown("symbolic resource limit");
+    this.#depth += 1;
+    try {
+      let result: SymbolicValue;
+      if (value.kind === "union")
+        result = symbolicUnion([
+          ...this.#commonProperty(value.values, key, read),
+          ...value.values.map((variant) => this.property(variant, key, read)),
+        ]);
+      else result = this.#property(value, key, read);
+      return this.#withConditions(result, value);
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   #commonProperty(
@@ -465,40 +484,51 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): readonly string[] {
     if (active.has(value)) return [];
+    if (!this.#admitEvaluation()) return [];
     active.add(value);
-    if (value.kind === "union")
-      return [...new Set(value.values.flatMap((v) => this.members(v, active)))];
-    if (value.kind === "record") return [...value.values.keys()];
-    if (value.kind === "namespace") {
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return [];
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.members(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : [
-            ...new Set(
-              available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
-            ),
-          ];
-    }
-    if (value.kind !== "object") return [];
-    return [
-      ...new Set(
-        value.node.properties.flatMap((p) =>
-          t.isSpreadElement(p)
-            ? this.members(this.evaluate(p.argument, value.environment), active)
-            : [semanticStaticPropertyKey(p.key, p.computed)].filter(
-                (k): k is string =>
-                  k !== null && !isObjectPrototypeSetter(p, k),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return [
+          ...new Set(value.values.flatMap((v) => this.members(v, active))),
+        ];
+      if (value.kind === "record") return [...value.values.keys()];
+      if (value.kind === "namespace") {
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return [];
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.members(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : [
+              ...new Set(
+                available.flatMap((w) => (w.path.length === 1 ? w.path : [])),
               ),
+            ];
+      }
+      if (value.kind !== "object") return [];
+      return [
+        ...new Set(
+          value.node.properties.flatMap((p) =>
+            t.isSpreadElement(p)
+              ? this.members(
+                  this.evaluate(p.argument, value.environment),
+                  active,
+                )
+              : [semanticStaticPropertyKey(p.key, p.computed)].filter(
+                  (k): k is string =>
+                    k !== null && !isObjectPrototypeSetter(p, k),
+                ),
+          ),
         ),
-      ),
-    ];
+      ];
+    } finally {
+      this.#depth -= 1;
+    }
   }
 
   unknownMembers(
@@ -506,39 +536,45 @@ export class JavaScriptSymbolicBindings {
     active = new Set<SymbolicValue>(),
   ): number {
     if (active.has(value)) return 1;
+    if (!this.#admitEvaluation()) return 1;
     active.add(value);
-    if (value.kind === "union")
-      return value.values.reduce(
-        (sum, v) => sum + this.unknownMembers(v, active),
+    this.#depth += 1;
+    try {
+      if (value.kind === "union")
+        return value.values.reduce(
+          (sum, v) => sum + this.unknownMembers(v, active),
+          0,
+        );
+      if (value.kind === "record") return 0;
+      if (value.kind === "namespace") {
+        if (this.#mutated.has(value.bindingId)) return 1;
+        const available = this.#namespaceWrites(value);
+        if (available === undefined) return 1;
+        const replacement = available.findLast(
+          (write) => write.path.length === 0,
+        );
+        return replacement
+          ? this.unknownMembers(
+              this.evaluate(replacement.value, value.environment),
+              active,
+            )
+          : 0;
+      }
+      if (value.kind !== "object") return 1;
+      return value.node.properties.reduce(
+        (sum, p) =>
+          sum +
+          (t.isSpreadElement(p)
+            ? this.unknownMembers(
+                this.evaluate(p.argument, value.environment),
+                new Set(active),
+              )
+            : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
         0,
       );
-    if (value.kind === "record") return 0;
-    if (value.kind === "namespace") {
-      if (this.#mutated.has(value.bindingId)) return 1;
-      const available = this.#namespaceWrites(value);
-      if (available === undefined) return 1;
-      const replacement = available.findLast(
-        (write) => write.path.length === 0,
-      );
-      return replacement
-        ? this.unknownMembers(
-            this.evaluate(replacement.value, value.environment),
-            active,
-          )
-        : 0;
+    } finally {
+      this.#depth -= 1;
     }
-    if (value.kind !== "object") return 1;
-    return value.node.properties.reduce(
-      (sum, p) =>
-        sum +
-        (t.isSpreadElement(p)
-          ? this.unknownMembers(
-              this.evaluate(p.argument, value.environment),
-              new Set(active),
-            )
-          : Number(semanticStaticPropertyKey(p.key, p.computed) === null)),
-      0,
-    );
   }
 
   /** Calling a generator creates an iterator; advancing it is not modeled. */

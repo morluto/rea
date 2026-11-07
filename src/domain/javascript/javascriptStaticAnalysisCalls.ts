@@ -7,7 +7,11 @@ import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
 
-import { htmlUrlText, stripQueryAndFragment } from "../artifactPathSyntax.js";
+import {
+  hasScheme,
+  htmlUrlText,
+  stripQueryAndFragment,
+} from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
 import {
   addFindingOnce,
@@ -36,6 +40,7 @@ import type {
   JavaScriptFindingContext as FindingContext,
   JavaScriptReferenceInput as ReferenceInput,
 } from "./javascriptStaticAnalysisState.js";
+import { VITE_OUTPUT_DEPENDENCY_PREFIX } from "./javascriptStaticAnalysisTypes.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -98,6 +103,9 @@ export const inspectCall = (
       ...(requireCall.resolutionBasePath === undefined
         ? {}
         : { resolutionBasePath: requireCall.resolutionBasePath }),
+      ...(requireCall.loader === undefined
+        ? {}
+        : { loader: requireCall.loader }),
     });
   const chunkLoad = chunkLoadSpecifier(node, bindings, context);
   if (chunkLoad !== null)
@@ -276,6 +284,7 @@ const requireCallSpecifier = (
   readonly specifier: string | undefined;
   readonly operation: "load" | "resolve";
   readonly resolutionBasePath?: string;
+  readonly loader?: "commonjs-loader" | "factory-loader" | "create-require";
 } | null => {
   const call = semanticRequireCallAt(
     node,
@@ -300,6 +309,13 @@ const requireCallSpecifier = (
     ...(call.sourceRelativePath === undefined
       ? {}
       : { resolutionBasePath: call.sourceRelativePath }),
+    // `factory-loader` names a bundle factory require, so its specifier is a
+    // recovered module key rather than a package specifier.
+    ...(call.loader === "commonjs-loader" ||
+    call.loader === "factory-loader" ||
+    call.loader === "create-require"
+      ? { loader: call.loader }
+      : {}),
   };
 };
 
@@ -335,6 +351,10 @@ export const finishModuleRequireCalls = (
         ...(call.resolutionBasePath === undefined
           ? {}
           : { resolutionBasePath: call.resolutionBasePath }),
+        // A factory or `createRequire` loader saved under a member named `require`
+        // still names a bundle module key, not a package. Dropping the loader here
+        // would read that key as an external specifier.
+        ...(call.loader === undefined ? {} : { loader: call.loader }),
       });
   }
   context.accumulator.pendingModuleRequireCalls.length = 0;
@@ -392,9 +412,25 @@ const vitePreloadDependencySpecifiers = (
   return indexes.map((element) => {
     if (element === null || !t.isNumericLiteral(element)) return undefined;
     const index = element.value;
-    return Number.isSafeInteger(index) && index >= 0 ? table[index] : undefined;
+    return Number.isSafeInteger(index) && index >= 0
+      ? viteDependencySpecifier(table[index])
+      : undefined;
   });
 };
+
+// A relative base writes importer-relative `./` paths, which remain module
+// URLs. Without a scheme or leading dot or slash, the entry names a file under
+// the build output directory.
+const viteDependencySpecifier = (
+  dependency: string | undefined,
+): string | undefined =>
+  dependency === undefined ||
+  dependency === "" ||
+  dependency.startsWith(".") ||
+  dependency.startsWith("/") ||
+  hasScheme(dependency)
+    ? dependency
+    : `${VITE_OUTPUT_DEPENDENCY_PREFIX}${dependency}`;
 
 const isExplicitDefaultArgument = (
   argument: t.CallExpression["arguments"][number],
@@ -960,6 +996,7 @@ export const addReference = (
       ...(input.resolutionBasePath === undefined
         ? {}
         : { resolution_base_path: input.resolutionBasePath }),
+      ...(input.loader === undefined ? {} : { loader: input.loader }),
       module_key: null,
       location: range(input.node),
     },

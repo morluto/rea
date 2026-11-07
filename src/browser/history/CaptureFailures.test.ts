@@ -13,6 +13,38 @@ import { redactExplicitFailure } from "../../domain/explicitSensitiveFailure.js"
 import { OwnedCommandFailure } from "../../process/OwnedCommand.js";
 
 it.each([
+  { phase: "capture-read", field: ["capture_path"] },
+  {
+    phase: "descriptor-read",
+    field: ["protobuf", "schema", "descriptor_set_path"],
+  },
+] as const)("offers the resolved-file retry for $phase", ({ phase, field }) => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/capture.har",
+    format: "har",
+    protobuf: {
+      schema: {
+        descriptor_set_path: "/selected/schema.pb",
+        message_type: "capture.Message",
+      },
+    },
+  });
+  const resolvedPath = "/resolved/regular-file";
+  const cause = new ArtifactReaderFailure("path", "Selected a symlink", {
+    resolvedPath,
+  });
+  const projected = projectAnalysisError(
+    historicalCaptureFailure(input, cause, phase),
+  );
+  expect(projected).toMatchObject({
+    code: "invalid_request",
+    details: { issues: [{ path: field }] },
+    remediation: { action: expect.stringContaining(resolvedPath) },
+  });
+  expect(projected).not.toHaveProperty("recovery");
+});
+
+it.each([
   { label: "POSIX SIGABRT", exitCode: null, signal: "SIGABRT" },
   { label: "Windows exit 134", exitCode: 134, signal: null },
 ] as const)(
@@ -324,4 +356,52 @@ it("preserves the exact cancellation reason and an earlier reader failure", () =
     { signal: controller.signal },
   );
   expect(changed._tag).toBe("AnalysisArtifactChangedError");
+});
+
+it.each(["ENOENT", "ENOTDIR", "ELOOP", "ENAMETOOLONG"])(
+  "reports an unresolvable selected capture path (%s) as capture_path input",
+  (code) => {
+    const input = inspectWebNetworkCaptureInputSchema.parse({
+      capture_path: "/selected/input.har",
+      format: "har",
+    });
+    const cause = Object.assign(
+      new Error(`${code}: lstat '/selected/input.har'`),
+      { code },
+    );
+    expect(
+      projectAnalysisError(
+        historicalCaptureFailure(input, cause, "capture-read"),
+      ),
+    ).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        issues: [
+          {
+            path: ["capture_path"],
+            message: expect.stringContaining(code),
+          },
+        ],
+      },
+    });
+  },
+);
+
+it("keeps physical capture read errors as provider failures", () => {
+  const input = inspectWebNetworkCaptureInputSchema.parse({
+    capture_path: "/selected/input.har",
+    format: "har",
+  });
+  const cause = Object.assign(new Error("EIO: read '/selected/input.har'"), {
+    code: "EIO",
+  });
+  expect(
+    projectAnalysisError(
+      historicalCaptureFailure(input, cause, "capture-read"),
+    ),
+  ).toMatchObject({
+    code: "execution_failure",
+    details: { diagnostics: { phase: "capture-read" } },
+  });
 });

@@ -31,10 +31,11 @@ zero-based UTF-16 column. The MCP arguments are:
 
 The URL supplies the context for resolving `sources` and `sourceRoot` using the
 ECMA-426 URL parsing rule; it is not an instruction to fetch. Repeated path
-separators remain part of the resolved URL identity. A non-null `sourceRoot`
+separators remain part of the resolved URL identity. A non-empty `sourceRoot`
 prefixes each source, adding `/` only when the root does not already end with
-one. An empty root therefore prefixes `/`; a null or omitted root adds no
-prefix. Absolute virtual or file contexts can be selected as well. The map/script association is caller-selected: a declaration or local map
+one. An empty, null or omitted root adds no prefix. webpack 5 and tsc maps
+(`"sourceRoot": ""`) therefore resolve against the map URL, as Chrome, Firefox
+and the pinned codec do. Absolute virtual or file contexts can be selected as well. The map/script association is caller-selected: a declaration or local map
 does not prove deployment authenticity or execution. Use
 [import tracing](website-module-trace.md) to inspect outgoing native module edges.
 
@@ -101,8 +102,11 @@ run token while process release is unconfirmed, and the directory until removal
 succeeds. A later successful retry settles every error bound to that command;
 historical failure diagnostics remain available.
 
-Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply, 262144 decoded
-rows/segments and 64 nested section levels. Those structural budgets and the
+Complete evidence is bounded by a 4 MiB map, 32 MiB codec reply and a shared
+262144-record decoder budget. Generated rows, mapping segments, leaf maps,
+source and name declarations, `sourcesContent` entries and indexed sections all
+consume this budget. Generated rows and mapping segments also each have a
+262144 limit; indexed maps allow at most 64 nested section levels. Those budgets and the
 192 MiB codec heap have no runtime override. Exceeding a budget returns an explicit
 failure, without partial results. The existing 32 MiB manifest and 16 MiB selected
 script boundaries also apply. No global toolchain or browser configuration changes

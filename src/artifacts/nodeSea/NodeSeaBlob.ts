@@ -43,6 +43,8 @@ export const NODE_SEA_ELF_DESCRIPTOR_TRUNCATED =
   "Node SEA ELF note descriptor is truncated";
 export const NODE_SEA_ELF_TABLE_TRUNCATED =
   "Node SEA ELF note table is truncated";
+export const NODE_SEA_ELF_NOTES_REPEATED =
+  "Node SEA ELF note tables declare more notes than the file holds";
 export const NODE_SEA_MACHO_COMMANDS_TRUNCATED =
   "Node SEA Mach-O load commands are truncated";
 export const NODE_SEA_MACHO_SEGMENT_TRUNCATED =

@@ -139,6 +139,13 @@ it("retains completed execution Evidence on late abort and keeps invalid output 
   expect(completed.error.cause).toBe(cancellationReason);
   expect(parseEvidence(completed.error.partialObservation)).toMatchObject({
     operation: "observe_web_execution",
+    provider: { id: "web-runtime", name: "Runtime fixture", version: "1" },
+    parameters: input,
+    confidence: "observed",
+    authority: "external-service",
+    limitations: expect.arrayContaining(
+      webExecutionFixture(input.target_id, input.observation_ms).limitations,
+    ),
     normalized_result: webExecutionFixture(
       input.target_id,
       input.observation_ms,

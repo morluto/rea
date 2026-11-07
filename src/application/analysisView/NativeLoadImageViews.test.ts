@@ -67,6 +67,38 @@ const view = async (report: NativeLoadImage, request: unknown) => {
   return analysisViewResultSchema.parse(result.value.normalized_result);
 };
 
+it("distinguishes recorded, absent, and historical unrecorded relocation symbols", async () => {
+  const report = source();
+  report.observations.relocations[0]!.symbol = "external_symbol";
+  report.observations.relocations[1]!.symbol = null;
+  const request = { kind: "native-load-image", collection: "relocations" };
+  const current = await view(report, request);
+  if (current.kind !== "native-load-image") throw new Error("Expected page");
+  if (current.items.collection !== "relocations")
+    throw new Error("Expected relocations");
+  expect(current.items.rows).toMatchObject([
+    { record: { symbol: "external_symbol" } },
+    { record: { symbol: null } },
+  ]);
+  expect(current.unknowns.join(" ")).not.toContain("symbol was not recorded");
+
+  report.observations.relocations[1]!.symbol = "";
+  const emptyName = await view(report, request);
+  if (emptyName.kind !== "native-load-image") throw new Error("Expected page");
+  if (emptyName.items.collection !== "relocations")
+    throw new Error("Expected relocations");
+  expect(emptyName.items.rows?.[1]?.record).toMatchObject({ symbol: "" });
+  expect(emptyName.unknowns.join(" ")).not.toContain("symbol was not recorded");
+
+  delete report.observations.relocations[0]!.symbol;
+  const historical = await view(report, request);
+  if (historical.kind !== "native-load-image") throw new Error("Expected page");
+  expect(historical.items.rows?.[0]?.record).not.toHaveProperty("symbol");
+  expect(historical.unknowns.join(" ")).toContain("symbol was not recorded");
+  const omitted = await view(report, { ...request, fields: ["address"] });
+  expect(omitted.unknowns.join(" ")).not.toContain("symbol was not recorded");
+});
+
 it("summarizes measured ELF facts without upgrading unsupported verification", async () => {
   const report = source();
   const parent = evidence(report);
@@ -176,6 +208,13 @@ it.each(["checks", "sections"])(
       await view(source(), { kind: "native-load-image", collection }),
     ).toMatchObject({
       items: { collection, rows: null },
+      coverage: {
+        status: "unavailable",
+        examined: 0,
+        total: null,
+        next_offset: null,
+        exhausted: false,
+      },
       unknowns: expect.arrayContaining([
         "Null collection counts or rows mean not recorded or not applicable, not observed absence.",
       ]),
@@ -302,6 +341,7 @@ it("rejects collection-inapplicable fields and malformed sibling facts even for 
   ).toBe(false);
   const report = source();
   const parent = {
+    predicateType: "rea.analysis",
     evidenceId: "ev_" + "b".repeat(64),
     operation: "inspect_native_load_image",
     normalizedResult: report,

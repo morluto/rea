@@ -20,6 +20,51 @@ const observedIdentity = (entry: ProcessTableEntry, identity: string) => ({
   },
 });
 
+it("keeps an unresolved earlier generation unknown when a later unrelated process has a foreign marker", async () => {
+  const row: ProcessTableEntry = {
+    pid: 920,
+    parentPid: 1,
+    processGroupId: 920,
+    state: "S",
+    command: "unrelated",
+  };
+  let readable = false;
+  const evidenceOwner = new ProcessOwnershipEvidenceOwner();
+  const signalGroup = vi.fn();
+  const host: ProcessOwnershipHost = {
+    listProcesses: async () => [row],
+    environment: async () => ({ REA_PROCESS_RUN_ID: "foreign" }),
+    processIdentities: async (entries) =>
+      new Map(
+        entries.map((entry) => [
+          entry.pid,
+          readable
+            ? observedIdentity(entry, "later-generation")
+            : { state: "unavailable" as const, reason: "identity unavailable" },
+        ]),
+      ),
+    signalGroup,
+  };
+  const relation = { leaderPid: 100, processGroupId: 100, evidenceOwner };
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, [], relation),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: row.pid, reason: "process-identity-unavailable" }],
+  });
+  readable = true;
+  await expect(
+    verifyNoTokenOwnedProcesses("run-token", host, [], relation),
+  ).resolves.toMatchObject({
+    cleaned: false,
+    failures: [{ pid: row.pid, reason: "process-identity-unavailable" }],
+  });
+  expect(evidenceOwner.candidates).toMatchObject([
+    { pid: row.pid, identity: undefined, applicability: "identity-unresolved" },
+  ]);
+  expect(signalGroup).not.toHaveBeenCalled();
+});
+
 it.each([undefined, "run-token"])(
   "validates a current generation with token %s when its baseline identity was unknown",
   async (runId) => {

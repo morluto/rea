@@ -18,12 +18,36 @@ describe("Hopper search verifier rejection", () => {
           symbolPrefix: "_rea_fixture_",
           stringPrefix: "REA_FIXTURE_",
         }),
-      ).rejects.toThrow();
+      ).rejects.toThrow(
+        fault === "duplicate"
+          ? "search_procedures returned duplicate matches"
+          : "search_procedures did not return every expected match",
+      );
     },
   );
 });
 
-const fixtureClient = (count: number, fault: "duplicate" | "missing") => {
+it("accepts the complete fixture before testing rejection", async () => {
+  await expect(
+    openAndVerifyLargeFixture({
+      client: fixtureClient(3, "none"),
+      options: {},
+      normalizedResult: normalize,
+      path: "/fixture",
+      expectedCount: 3,
+      symbolPrefix: "_rea_fixture_",
+      stringPrefix: "REA_FIXTURE_",
+    }),
+  ).resolves.toEqual({
+    procedures: { count: 3, calls: 1 },
+    strings: { count: 3, calls: 1 },
+  });
+});
+
+const fixtureClient = (
+  count: number,
+  fault: "duplicate" | "missing" | "none",
+) => {
   return {
     callTool: async (request: unknown) => {
       if (

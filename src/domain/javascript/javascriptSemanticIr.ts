@@ -80,6 +80,8 @@ export interface JavaScriptSemanticBinding {
   readonly mutable: boolean;
   readonly definitions: readonly JavaScriptSemanticDefinition[];
   readonly value: JavaScriptSemanticValue;
+  /** Value at the single initializer, before later member effects. */
+  readonly initializerValue?: JavaScriptSemanticValue;
   readonly provenance: JavaScriptBindingProvenance;
 }
 
@@ -126,6 +128,8 @@ export interface JavaScriptSemanticCallSite {
   readonly callerCallableId: string | null;
   readonly location: JavaScriptSourceRange;
   readonly calleeLocation: JavaScriptSourceRange;
+  /** The call's value appears in an enclosing expression or return. */
+  readonly resultUsed: boolean;
   readonly resolution: "exact" | "ambiguous" | "unresolved";
   readonly calleeCallableIds: readonly string[];
   readonly arguments: readonly JavaScriptSemanticCallArgument[];
@@ -138,6 +142,10 @@ export interface JavaScriptSemanticCallArgument {
   /** Unwrapped value expression; null for a spread or non-expression slot. */
   readonly valueExpressionLocation: JavaScriptSourceRange | null;
   readonly spread: boolean;
+  /** Direct scalar syntax, before runtime evaluation; omitted for other expressions. */
+  readonly literal?: string | number | boolean | null;
+  /** A direct literal was omitted under a semantic resource bound. */
+  readonly literalResourceLimit?: "primitive-bytes";
 }
 
 /** One positional argument that may initialize one local parameter binding. */
@@ -435,6 +443,25 @@ export interface JavaScriptSemanticAssignmentFlow {
   readonly ownerCallableId: string | null;
 }
 
+/** Syntactic inputs to one operator result; this is influence, not identity. */
+export interface JavaScriptSemanticExpressionFlow {
+  readonly location: JavaScriptSourceRange;
+  readonly operator: string;
+  readonly operands: readonly {
+    readonly location: JavaScriptSourceRange;
+    readonly kind: "reference" | "expression" | "literal" | "unsupported";
+    readonly conditional: boolean;
+    readonly literal?: string | number | boolean | null;
+  }[];
+  readonly ownerCallableId: string | null;
+}
+
+/** A direct identifier declaration initialized by an operator expression. */
+export interface JavaScriptSemanticInitializerFlow {
+  readonly target: JavaScriptSourceRange;
+  readonly source: JavaScriptSourceRange;
+}
+
 /** Provider-neutral JavaScript semantic IR. */
 export interface JavaScriptSemanticIr {
   readonly schema: "JavaScriptSemanticIR";
@@ -458,6 +485,13 @@ export interface JavaScriptSemanticIr {
   readonly boundaryOperations: readonly JavaScriptSemanticBoundaryOperation[];
   readonly resourceOperations: readonly JavaScriptSemanticResourceOperation[];
   readonly assignmentFlows: readonly JavaScriptSemanticAssignmentFlow[];
+  readonly expressionFlows: readonly JavaScriptSemanticExpressionFlow[];
+  readonly initializerFlows: readonly JavaScriptSemanticInitializerFlow[];
+  readonly literalReturns: readonly {
+    readonly location: JavaScriptSourceRange;
+    readonly value: string | number | boolean | null;
+  }[];
+  readonly expressionFlowsTruncated: boolean;
   readonly objectOperations: readonly JavaScriptSemanticObjectOperation[];
   readonly functionFingerprints: readonly JavaScriptSemanticFunctionFingerprint[];
   readonly frontiers: readonly JavaScriptSemanticFrontier[];
@@ -488,6 +522,10 @@ export const failedJavaScriptSemanticIr = (): JavaScriptSemanticIr => ({
   boundaryOperations: [],
   resourceOperations: [],
   assignmentFlows: [],
+  expressionFlows: [],
+  initializerFlows: [],
+  literalReturns: [],
+  expressionFlowsTruncated: false,
   objectOperations: [],
   functionFingerprints: [],
   frontiers: [],

@@ -43,9 +43,14 @@ it("removes only POSIX spellings that cannot change the named file", () => {
 });
 
 it("makes a relative POSIX cwd absolute before appending the path", () => {
-  expect(
-    absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
-  ).toBe(`${process.cwd()}/fixtures/../x/sample`);
+  const cwd = vi.spyOn(process, "cwd").mockReturnValue("/work");
+  try {
+    expect(
+      absoluteCallerPath("sample", { cwd: "fixtures/../x", platform: "linux" }),
+    ).toBe("/work/fixtures/../x/sample");
+  } finally {
+    cwd.mockRestore();
+  }
 });
 
 it("uses lexical resolution on Windows, where it is exact", () => {

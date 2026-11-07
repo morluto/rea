@@ -16,7 +16,7 @@ export const DESKTOP_APPLICATION_TOOL_CONTRACTS = [
     kind: "artifact-provider",
     requiresActiveTarget: true,
     description:
-      "Inspect a local desktop application directory using bounded listings, file headers and selected metadata. Returns .NET, Unity Mono/IL2CPP, Unreal, Godot, GameMaker and Electron candidates, supporting paths/range hashes, component path markers and concrete next probes. No target execution, extraction, network or target changes. Default summary retains complete Evidence for inspect_analysis_view kind desktop-application; collections files/candidates/components/next_probes support paging and field selection, with exact file paths or candidate families. detail complete returns every retained fact inline. Snapshot identity covers examined metadata/read ranges, not all file contents; coverage and unavailable probes remain explicit.",
+      "Inspect a local desktop application directory using bounded listings, file headers and selected metadata. Returns .NET, Unity Mono/IL2CPP, Unreal, Godot, GameMaker and Electron candidates, supporting paths/range hashes, component path markers and concrete next probes. No target execution, extraction, network or target changes. Default summary retains complete Evidence for inspect_analysis_view kind desktop-application; the view supports paging and field selection. detail complete returns every retained fact inline. Snapshot identity covers examined metadata/read ranges, not all file contents; coverage and unavailable probes remain explicit.",
     inputSchema: inspectDesktopApplicationInputSchema.extend({
       detail: z.enum(["summary", "complete"]).default("summary"),
     }),

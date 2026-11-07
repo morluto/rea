@@ -119,6 +119,33 @@ it("delivers native primitive and graph summaries with exact retained parents an
       );
       expect(rejected.isError).toBe(true);
     }
+    const references = await call("xrefs", { address: "0x401000" });
+    const source = {
+      kind: "retained-evidence",
+      evidence_id: references.evidence_id,
+    };
+    const before = harness.calls.length;
+    const page = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-observation", offset: 0, limit: 1 },
+    });
+    expect(page.normalized_result).toMatchObject({
+      parent_evidence_id: references.evidence_id,
+      parent_operation: "xrefs",
+      items: {
+        type: "addresses",
+        rows: [{ source_index: 0, address: "0x401001" }],
+      },
+      coverage: { total: 1, exhausted: true },
+    });
+    const caveats = await call("inspect_analysis_view", {
+      source,
+      view: { kind: "native-context", facet: "limitations" },
+    });
+    expect(caveats.normalized_result).toMatchObject({
+      parent_operation: "xrefs",
+    });
+    expect(harness.calls).toHaveLength(before);
   } finally {
     await harness.close();
   }
@@ -177,9 +204,12 @@ it("follows native overflow continuations through MCP without repeating provider
     for (const name of [
       ...NATIVE_PRIMITIVE_OBSERVATION_OPERATIONS,
       "get_call_graph",
+      "xrefs",
     ] as const) {
       const input =
-        name === "get_call_graph" || name === "resolve_containing_procedure"
+        name === "get_call_graph" ||
+        name === "resolve_containing_procedure" ||
+        name === "xrefs"
           ? { address: "0x1000" }
           : { procedure: "fixture_main" };
       const complete = await client.callTool({ name, arguments: input });

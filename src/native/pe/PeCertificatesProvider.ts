@@ -1,5 +1,7 @@
+import { BinaryFormatFailure } from "../metadata/BinaryContainer.js";
 import {
   projectStableArtifactFailure,
+  stableArtifactInputRecovery,
   projectArtifactCloseFailure,
 } from "../../artifacts/StableArtifactFailure.js";
 import { isSelectedRegularFileError } from "../../filesystem/RegularFile.js";
@@ -20,6 +22,7 @@ import {
   AnalysisCancelledError,
   AnalysisInputError,
   AnalysisResourceConstraintError,
+  AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import {
   MAX_INSPECT_PE_CERTIFICATE_ENTRIES,
@@ -27,7 +30,12 @@ import {
   type InspectPeCertificatesInput,
 } from "../../domain/native/peCertificates.js";
 import { err, ok } from "../../domain/result.js";
+import { fixedAllowanceOptions } from "../../domain/fixedAllowanceRemediation.js";
 import { PE_CERTIFICATES_PROVIDER } from "../../domain/investigationProviders.js";
+import {
+  PeCertificateAsn1Failure,
+  type PeCertificateDecodeAllowance,
+} from "./PeCertificateAsn1.js";
 import { parsePeCertificates } from "./PeCertificateParser.js";
 
 const OPERATION = "inspect_pe_certificates";
@@ -89,11 +97,42 @@ const inputBudgetRemediation = (
       ? `The image exceeds the ${String(MAX_INSPECT_PE_CERTIFICATE_ENTRIES)}-entry certificate-table ceiling this operation accepts; select a smaller artifact.`
       : `Raise max_entries above ${String(input.max_entries)} or select a smaller artifact; the limit is the caller-selected certificate entry budget.`;
 
+/** A fixed PKCS#7 decoder allowance; neither request fields nor retries raise it. */
+const decoderAllowanceFailure = (
+  cause: PeCertificateAsn1Failure,
+  { allowance, limit }: PeCertificateDecodeAllowance,
+) =>
+  new AnalysisResourceConstraintError(
+    OPERATION,
+    "memory",
+    `PKCS#7 signedData exceeds a fixed decoder allowance: ${cause.message}`,
+    allowance === "asn1-nodes"
+      ? { max_asn1_values: limit }
+      : { max_decoded_text_bytes: limit },
+    {
+      cause,
+      ...fixedAllowanceOptions(
+        allowance === "asn1-nodes"
+          ? `The PE certificate ASN.1 allowance of ${String(limit)} values per PKCS#7 payload (this release has no runtime override)`
+          : `The PE certificate decoded-text allowance of ${String(limit)} bytes per PKCS#7 payload (this release has no runtime override)`,
+        "parser",
+      ),
+    },
+  );
+
 const peCertificatesFailurePrimary = (
   facts: ArtifactFilePrimaryFacts,
   input: InspectPeCertificatesInput,
 ) => {
   const { cause, origin } = facts;
+  if (cause instanceof BinaryFormatFailure && cause.kind === "unsupported")
+    return new AnalysisUnsupportedTargetError(
+      OPERATION,
+      input.path,
+      cause.message,
+      { cause },
+    );
+
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure &&
@@ -115,6 +154,12 @@ const peCertificatesFailurePrimary = (
     return new AnalysisCancelledError(OPERATION, {
       cause: artifactFileCancellationCause(cause),
     });
+  if (
+    origin === "owned-or-classified" &&
+    cause instanceof PeCertificateAsn1Failure &&
+    cause.exhausted !== null
+  )
+    return decoderAllowanceFailure(cause, cause.exhausted);
   if (
     origin === "owned-or-classified" &&
     cause instanceof ArtifactReaderFailure
@@ -142,13 +187,17 @@ const peCertificatesFailurePrimary = (
         },
       );
     if (cause.reason === "path" || cause.reason === "format")
-      return new AnalysisInputError(OPERATION, { cause }, [
-        {
-          path: ["path"],
-          reason: "invalid_format",
-          message: cause.message,
-        },
-      ]);
+      return new AnalysisInputError(
+        OPERATION,
+        { cause, ...stableArtifactInputRecovery(cause) },
+        [
+          {
+            path: ["path"],
+            reason: "invalid_format",
+            message: cause.message,
+          },
+        ],
+      );
   }
   if (cause instanceof Error && "code" in cause) {
     if (cause.code === "EACCES" || cause.code === "EPERM")

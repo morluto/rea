@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { open, stat } from "node:fs/promises";
-import { isAbsolute } from "node:path";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import { BYTE_ENTROPY_PROVIDER } from "../../domain/investigationProviders.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
@@ -105,10 +104,6 @@ export class ByteEntropyService {
     );
     if (!parsed.ok) return parsed;
     const input = parsed.value;
-    if (!isAbsolute(input.path))
-      return err(
-        invalid("path", "Expected an absolute filesystem path on this host."),
-      );
     const evidenceFromReport = (report: ByteEntropy): Evidence =>
       createEvidence(
         { path: input.path, format: "file", sha256: report.artifact.sha256 },

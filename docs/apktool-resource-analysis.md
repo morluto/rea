@@ -100,12 +100,13 @@ still suppresses all string projection, including in this mode.
 - **Metadata comes from apktool.yml as apktool printed it.** Version codes
   keep their own spelling (`'7'` versus `7`); `package_name` is read from
   the decoded manifest, not inferred.
-  Apktool 3's emitted `version: 3.x.y` header selects its single-line string
-  dialect: literal hashes, single quotes, empty strings, and the text `null`
-  stay part of the value; producer backslashes and Unicode escapes decode
-  once. Older/tagged documents retain YAML scalar semantics; double-quoted
-  values also retain YAML string semantics.
+  The `version: 2.9.0`-or-later header that Apktool 2.9+ and 3 emit selects
+  their single-line string dialect: literal hashes, single quotes, empty
+  strings, and the text `null` stay part of the value; producer backslashes
+  and Unicode escapes decode once. Older/tagged documents retain YAML scalar
+  semantics; double-quoted values also retain YAML string semantics.
   This distinction follows the released
+  [2.9.0 metadata writer](https://github.com/iBotPeaches/Apktool/blob/b64e257c9b689eb9630ad0241f2fe4f4a749955b/brut.apktool/apktool-lib/src/main/java/brut/androlib/apk/VersionInfo.java#L38-L42),
   [3.0.3 metadata writer](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.apktool/apktool-lib/src/main/java/brut/androlib/meta/VersionInfo.java#L49-L55)
   and [string escape owner](https://github.com/iBotPeaches/Apktool/blob/18b5e99cb56ff9451e8aa55b065dcf5bbd616975/brut.j.yaml/src/main/java/brut/yaml/YamlStringEscapeUtils.java#L55-L116).
 - **The manifest is the decoded text**, bounded at 512 KiB and reported as

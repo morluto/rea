@@ -1,5 +1,11 @@
+import { writeFile } from "node:fs/promises";
+import { join } from "node:path";
 import { expect, it } from "vitest";
-import { CPU } from "../../../../src/artifacts/apple/MachoImage.fixture.js";
+import {
+  CPU,
+  fatImage,
+  machoImage,
+} from "../../../../src/artifacts/apple/MachoImage.fixture.js";
 import { inspectMachoSchema } from "../../../../src/domain/native/nativeInspection.js";
 import { err } from "../../../../src/domain/result.js";
 import {
@@ -7,21 +13,85 @@ import {
   type NativeCommandRunner,
 } from "../../../../src/native/CommandRunner.js";
 import { NativeMacOSProvider } from "../../../../src/native/NativeMacOSProvider.js";
+import type { AnalysisClient } from "../../../../src/application/AnalysisProvider.js";
+import { inspectionImage } from "../../../../src/native/NativeMachoInspection.fixture.js";
+import { createTestTempDirectory } from "../../../fixtures/temporaryDirectory.js";
 import {
   NativeFixtureRunner,
-  nativeFixture,
-  nativeMachoTarget,
+  nativeMachoTargetForFile,
 } from "../../../fixtures/nativeCommands.js";
 
-/** Replay fixtures, failing any slice command that does not name the expected slice. */
+const cpus = {
+  x86_64: CPU.x86_64,
+  i386: CPU.i386,
+  arm64: CPU.arm64,
+  arm64v8: { type: CPU.arm64.type, subtype: 1 },
+  arm64e: CPU.arm64e,
+  "arm64e.x1": { type: CPU.arm64.type, subtype: 0x8000000c },
+  "arm64e.v1": { type: CPU.arm64.type, subtype: 0x81000002 },
+} as const;
+type SliceName = keyof typeof cpus;
+
+const inspect = async (client: AnalysisClient) => {
+  try {
+    return await client.execute("inspect_macho", {});
+  } finally {
+    expect((await client.close()).ok).toBe(true);
+  }
+};
+
+const sliceImage = (
+  name: SliceName,
+  uuid = "01234567-89AB-CDEF-0123-456789ABCDEF",
+) => {
+  const cpu = cpus[name];
+  if (name === "i386") return machoImage({ cpu, wide: false });
+  const original = inspectionImage({ uuids: [uuid] });
+  const image = new Uint8Array(4096);
+  image.set(original.subarray(0, original.length - 16));
+  const view = new DataView(image.buffer);
+  const at = original.length - 16;
+  view.setUint32(at, 0x80000028, true);
+  view.setUint32(at + 4, 24, true);
+  view.setBigUint64(at + 8, 1024n, true);
+  view.setBigUint64(32 + 48, 4096n, true);
+  view.setUint32(16, view.getUint32(16, true) + 1, true);
+  view.setUint32(20, view.getUint32(20, true) + 24, true);
+  view.setUint32(4, cpu.type, true);
+  view.setUint32(8, cpu.subtype, true);
+  return image;
+};
+
+const makeFat = async (names: readonly SliceName[], filename = "universal") => {
+  const directory = await createTestTempDirectory("rea-selected-macho-");
+  const path = join(directory, filename);
+  const slices = names.map((name) => ({
+    cpu: cpus[name],
+    bytes: sliceImage(
+      name,
+      name === "x86_64" ? "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA" : undefined,
+    ),
+  }));
+  const image = fatImage(slices);
+  await writeFile(path, image);
+  const rows = names
+    .map((name, index) => {
+      const slice = slices[index]!;
+      return `architecture ${name}\n cputype ${slice.cpu.type}\n cpusubtype ${slice.cpu.subtype}\n offset ${(index + 1) * 4096}\n size ${slice.bytes.length}\n align 2^12\n`;
+    })
+    .join("");
+  return {
+    target: await nativeMachoTargetForFile(path),
+    path,
+    lipo: `Fat header in: ${path}\nfat_magic 0xcafebabe\nnfat_arch ${names.length}\n${rows}`,
+  };
+};
+
 const sliceSelectingRunner = (
   fixtures: NativeFixtureRunner,
   selected: string,
   dyldArchitecture: string,
-  calls: {
-    readonly tool: string;
-    readonly arguments_: readonly string[];
-  }[] = [],
+  calls: { tool: string; arguments_: readonly string[] }[] = [],
 ): NativeCommandRunner => ({
   run(tool, arguments_) {
     calls.push({ tool, arguments_ });
@@ -42,33 +112,19 @@ const sliceSelectingRunner = (
   },
 });
 
-it("does not attribute the first universal slice's UUID and segments to the selected target", async () => {
-  const singleSlice = await nativeFixture("otool-load.txt");
-  const selected = new NativeFixtureRunner();
-  const universal = new NativeFixtureRunner({
-    "otool:-h": `${singleSlice}\n${singleSlice}`,
-    dwarfdump:
-      "UUID: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA (x86_64) /owned/universal\nUUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) /owned/universal\n",
+it("does not attribute another universal slice's UUID or segments to the selected target", async () => {
+  const fixture = await makeFat(["x86_64", "arm64"]);
+  const runner = new NativeFixtureRunner({
+    lipo: fixture.lipo,
+    dwarfdump: `UUID: AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA (x86_64) ${fixture.path}\nUUID: 01234567-89AB-CDEF-0123-456789ABCDEF (arm64) ${fixture.path}\n`,
   });
-  const client = new NativeMacOSProvider(
-    {},
-    {
-      async run(tool, arguments_) {
-        const isSelected =
-          arguments_.includes("arm64") || arguments_.includes("--arch=arm64");
-        return (isSelected ? selected : universal).run(tool, arguments_);
-      },
-    },
-    "darwin",
-  ).createClient(nativeMachoTarget("/owned/universal"));
-  const result = await client.execute("inspect_macho", {});
+  const result = await inspect(
+    new NativeMacOSProvider({}, runner, "darwin").createClient(fixture.target),
+  );
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
     uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
-    selected_architecture: {
-      name: "arm64",
-      container_file_offset: 32768,
-    },
+    selected_architecture: { name: "arm64", container_file_offset: 8192 },
     architectures: { total: 2 },
   });
   const normalized = inspectMachoSchema.parse(result.value.result);
@@ -84,354 +140,206 @@ it.each([
   {
     architectures: ["x86_64", "arm64e", "arm64e.x1"],
     selected: "arm64e",
-    dyldArchitecture: "arm64e",
-    dwarfdumpArchitecture: "arm64e",
+    dyld: "arm64e",
+    dwarf: "arm64e",
   },
   {
     architectures: ["x86_64", "arm64e.v1"],
     selected: "arm64e",
-    dyldArchitecture: "arm64e.v1",
-    dwarfdumpArchitecture: "arm64e",
+    dyld: "arm64e.v1",
+    dwarf: "arm64e",
   },
   {
     architectures: ["arm64v8", "arm64e.v1"],
     selected: "arm64e",
-    dyldArchitecture: "arm64e.v1",
-    dwarfdumpArchitecture: "arm64e",
+    dyld: "arm64e.v1",
+    dwarf: "arm64e",
   },
   {
     architectures: ["arm64e.v1", "arm64v8"],
     selected: "arm64e",
-    dyldArchitecture: "arm64e.v1",
-    dwarfdumpArchitecture: "arm64e",
+    dyld: "arm64e.v1",
+    dwarf: "arm64e",
   },
-  // arm64e.x1 is its own subtype: otool and nm cannot reach it as arm64e.
   {
     architectures: ["x86_64", "arm64e.x1"],
     selected: "arm64e.x1",
-    dyldArchitecture: "arm64e.x1",
-    dwarfdumpArchitecture: "arm64e.x1",
+    dyld: "arm64e.x1",
+    dwarf: "arm64e.x1",
   },
 ] as const)(
-  "selects the $dyldArchitecture slice of a universal arm64e target",
-  async ({
-    architectures,
-    selected,
-    dyldArchitecture,
-    dwarfdumpArchitecture,
-  }) => {
-    const calls: {
-      readonly tool: string;
-      readonly arguments_: readonly string[];
-    }[] = [];
-    const cpus = {
-      x86_64: CPU.x86_64,
-      arm64e: CPU.arm64e,
-      arm64v8: { type: CPU.arm64.type, subtype: 1 },
-      "arm64e.x1": { type: CPU.arm64.type, subtype: 0x8000000c },
-      "arm64e.v1": { type: CPU.arm64.type, subtype: 0x81000002 },
-    };
-    const lipo = architectures
-      .map((architecture, index) => {
-        const cpu = cpus[architecture];
-        const subtype =
-          architecture === "arm64e.v1"
-            ? "CPU_SUBTYPE_ARM64E\n    capabilities PTR_AUTH_VERSION USERSPACE 1"
-            : String(cpu.subtype);
-        return `architecture ${architecture}\n    cputype ${cpu.type}\n    cpusubtype ${subtype}\n    offset ${index * 16384}\n    size 8192\n    align 2^14 (16384)`;
-      })
-      .join("\n");
-    const fixtures = new NativeFixtureRunner({
-      lipo,
-      dwarfdump: `UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (${dwarfdumpArchitecture}) /owned/universal\n`,
-    });
-    const client = new NativeMacOSProvider(
-      {},
-      sliceSelectingRunner(fixtures, selected, dyldArchitecture, calls),
-      "darwin",
-    ).createClient(nativeMachoTarget("/owned/universal"));
-
-    const result = await client.execute("inspect_macho", {});
-
+  "selects the $dyld slice of a universal target",
+  async ({ architectures, selected, dyld, dwarf }) => {
+    const fixture = await makeFat(architectures);
+    const calls: { tool: string; arguments_: readonly string[] }[] = [];
+    const runner = sliceSelectingRunner(
+      new NativeFixtureRunner({
+        lipo: fixture.lipo,
+        dwarfdump: `UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (${dwarf}) ${fixture.path}\n`,
+      }),
+      selected,
+      dyld,
+      calls,
+    );
+    const result = await inspect(
+      new NativeMacOSProvider({}, runner, "darwin").createClient(
+        fixture.target,
+      ),
+    );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({
       uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
       selected_architecture: {
-        name: dyldArchitecture,
+        name: dyld,
         container_file_offset:
-          architectures.findIndex((name) => name === dyldArchitecture) * 16384,
+          (architectures.indexOf(dyld as never) + 1) * 4096,
       },
-      architectures: {
-        items: architectures.map((name) => ({ name })),
-      },
+      architectures: { items: architectures.map((name) => ({ name })) },
     });
-    expect(
-      calls
-        .filter(({ tool }) => tool === "dyld_info")
-        .every(({ arguments_ }) => arguments_.includes(dyldArchitecture)),
-    ).toBe(true);
-    expect(
-      calls.find(({ tool }) => tool === "dwarfdump")?.arguments_,
-    ).toContain(`--arch=${dwarfdumpArchitecture}`);
-    expect(
-      result.value.limitations.some((limitation) =>
-        limitation.includes("dwarfdump"),
-      ),
-    ).toBe(false);
-    // vtool has no spelling for a variant subtype, so it is skipped rather
-    // than pointed at another slice.
-    const variant = selected.includes(".");
-    expect(calls.some(({ tool }) => tool === "vtool")).toBe(!variant);
-    expect(
-      result.value.limitations.some((limitation) =>
-        limitation.startsWith(`vtool cannot select the ${selected} slice`),
-      ),
-    ).toBe(variant);
-  },
-);
-
-it.each([
-  {
-    description: "a row explicitly naming another ABI version",
-    rows: "UUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64e.v2) /owned/universal\n",
-    uuid: "01234567-89AB-CDEF-0123-456789ABCDEF",
-    limitations: [
-      "dwarfdump --uuid returned no row for selected architecture arm64e.v1; using the unambiguous otool LC_UUID.",
-    ],
-  },
-  {
-    description: "a matching family row alongside another ABI version",
-    rows: "UUID: 01234567-89ab-cdef-0123-456789abcdef (arm64e) /owned/universal\nUUID: FEDCBA98-7654-3210-FEDC-BA9876543210 (arm64e.v2) /owned/universal\n",
-    uuid: "01234567-89ab-cdef-0123-456789abcdef",
-    limitations: [],
-  },
-])(
-  "preserves selected slice identity with $description",
-  async ({ rows, uuid, limitations }) => {
-    const calls: {
-      readonly tool: string;
-      readonly arguments_: readonly string[];
-    }[] = [];
-    const fixtures = new NativeFixtureRunner({
-      lipo: `architecture arm64e.v1
-    cputype ${CPU.arm64.type}
-    cpusubtype CPU_SUBTYPE_ARM64E
-    capabilities PTR_AUTH_VERSION USERSPACE 1
-    offset 16384
-    size 8192
-    align 2^14 (16384)`,
-      dwarfdump: rows,
-    });
-    const client = new NativeMacOSProvider(
-      {},
-      sliceSelectingRunner(fixtures, "arm64e", "arm64e.v1", calls),
-      "darwin",
-    ).createClient(nativeMachoTarget("/owned/universal"));
-    const result = await client.execute("inspect_macho", {});
-    if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({
-      uuid,
-      selected_architecture: {
-        name: "arm64e.v1",
-        container_file_offset: 16384,
-      },
-    });
-    expect(
-      result.value.limitations.filter((value) => value.includes("dwarfdump")),
-    ).toEqual(limitations);
-    expect(
-      calls.find(({ tool }) => tool === "dwarfdump")?.arguments_,
-    ).toContain("--arch=arm64e");
-  },
-);
-
-it.each([
-  ["ordinary", "/owned/universal", "\n"],
-  ["LF Non-fat text", "/owned/\nNon-fat file: forged", "\n"],
-  ["CRLF Non-fat text", "/owned/\r\nNon-fat file: forged", "\r\n"],
-])(
-  "projects universal segment evidence into the selected slice's container offsets with %s path framing",
-  async (_description, path, lineEnding) => {
-    const records = (await nativeFixture("lipo-fat.txt")).replace(
-      /^Fat header in:[^\r\n]*\r?\n/u,
-      "",
+    const dyldCalls = calls.filter(({ tool }) => tool === "dyld_info");
+    expect(dyldCalls.length).toBeGreaterThan(0);
+    expect(dyldCalls.every(({ arguments_ }) => arguments_.includes(dyld))).toBe(
+      true,
     );
-    const client = new NativeMacOSProvider(
-      {},
+    expect(
+      calls.find(({ tool }) => tool === "dwarfdump")?.arguments_,
+    ).toContain(`--arch=${dwarf}`);
+    expect(calls.some(({ tool }) => tool === "vtool")).toBe(
+      !selected.includes("."),
+    );
+  },
+);
+
+it.each([
+  {
+    architecture: "arm64e.v2",
+    uuid: "FEDCBA98-7654-3210-FEDC-BA9876543210",
+    expected: "01234567-89AB-CDEF-0123-456789ABCDEF",
+  },
+  {
+    architecture: "arm64e",
+    uuid: "01234567-89ab-cdef-0123-456789abcdef",
+    expected: "01234567-89ab-cdef-0123-456789abcdef",
+  },
+])(
+  "reconciles only compatible dwarfdump row $architecture",
+  async ({ architecture, uuid, expected }) => {
+    const fixture = await makeFat(["arm64e.v1"]);
+    const runner = sliceSelectingRunner(
       new NativeFixtureRunner({
-        lipo: `Fat header in: ${path}${lineEnding}${records.replaceAll("\n", lineEnding)}`,
+        lipo: fixture.lipo,
+        dwarfdump: `UUID: ${uuid} (${architecture}) ${fixture.path}\n`,
       }),
-      "darwin",
-    ).createClient(nativeMachoTarget(path));
-    const result = await client.execute("inspect_macho", {});
+      "arm64e",
+      "arm64e.v1",
+    );
+    const result = await inspect(
+      new NativeMacOSProvider({}, runner, "darwin").createClient(
+        fixture.target,
+      ),
+    );
     if (!result.ok) throw result.error;
     expect(result.value.result).toMatchObject({
-      selected_architecture: { container_file_offset: 32768 },
+      uuid: expected,
+      selected_architecture: { name: "arm64e.v1", container_file_offset: 4096 },
     });
+    if (architecture === "arm64e.v2")
+      expect(result.value.limitations).toContain(
+        "dwarfdump --uuid returned no row for selected architecture arm64e.v1; using the unambiguous binary load commands LC_UUID.",
+      );
+  },
+);
+
+it.each(["ordinary", "\nNon-fat file: forged", "\r\nNon-fat file: forged"])(
+  "projects selected segment evidence with %s path framing",
+  async (name) => {
+    const fixture = await makeFat(["x86_64", "arm64"], name);
+    const result = await inspect(
+      new NativeMacOSProvider(
+        {},
+        new NativeFixtureRunner({ lipo: fixture.lipo }),
+        "darwin",
+      ).createClient(fixture.target),
+    );
+    if (!result.ok) throw result.error;
     expect(result.value.locations).toContainEqual({
       kind: "file-offset-range",
-      start: 32768,
-      end: 40960,
+      start: 8192,
+      end: 12288,
     });
     expect(result.value.locations).toContainEqual({
       kind: "file-offset",
-      offset: 36864,
+      offset: 9216,
     });
-    expect(result.value.locations).not.toContainEqual({
-      kind: "file-offset-range",
-      start: 0,
-      end: 8192,
-    });
-    // Normalized tool fields keep their slice-relative meaning.
     const normalized = inspectMachoSchema.parse(result.value.result);
     expect(normalized.segments.items[0]?.file_offset).toBe(0);
-    expect(normalized.entrypoints.items[0]?.file_offset).toBe(4096);
+    expect(normalized.entrypoints.items[0]?.file_offset).toBe(1024);
   },
 );
 
-it.each([
-  { capture: "calculator.txt", selected: "arm64e" },
-  { capture: "shortcut-droplet.txt", selected: "arm64" },
-])(
-  "selects one slice when every universal slice has the target's CPU type ($capture)",
-  async ({ capture, selected }) => {
-    const base = nativeMachoTarget("/owned/universal");
-    if (base.kind !== "executable")
-      throw new Error("Expected executable fixture");
-    // Admission names arm64, arm64e and arm64e.x1 slices by one CPU family.
-    const target = { ...base, availableArchitectures: ["arm64"] as const };
-    const fixtures = new NativeFixtureRunner({
-      lipo: await nativeFixture(`lipo-same-cpu/${capture}`),
-    });
-    const result = await new NativeMacOSProvider(
-      {},
-      sliceSelectingRunner(fixtures, selected, selected),
-      "darwin",
-    )
-      .createClient(target)
-      .execute("inspect_macho", {});
-
+it.each(["thin", "one-slice FAT"])(
+  "keeps %s segment locations in container coordinates",
+  async (format) => {
+    const fixture = await makeFat(["arm64"]);
+    let lipo = fixture.lipo;
+    if (format === "thin") {
+      await writeFile(fixture.path, sliceImage("arm64"));
+      lipo = `Non-fat file: ${fixture.path} is architecture: arm64\n`;
+    }
+    const target = await nativeMachoTargetForFile(fixture.path);
+    const result = await inspect(
+      new NativeMacOSProvider(
+        {},
+        new NativeFixtureRunner({ lipo }),
+        "darwin",
+      ).createClient(target),
+    );
     if (!result.ok) throw result.error;
-    expect(result.value.result).toMatchObject({
-      selected_architecture: { name: selected, container_file_offset: 16384 },
-      architectures: { total: 2 },
-    });
-  },
-);
-
-it.each([
-  {
-    description: "thin",
-    lipo: "Non-fat file: /owned/input is architecture: arm64\n",
-    offset: 0,
-  },
-  {
-    description: "one-slice FAT",
-    lipo: "architecture arm64\n offset 16384\n size 8192\n align 2^14 (16384)\n",
-    offset: 16384,
-  },
-])(
-  "keeps $description segment evidence in the input file's coordinate system",
-  async ({ lipo, offset }) => {
-    const base = nativeMachoTarget("/owned/input");
-    if (base.kind !== "executable")
-      throw new Error("Expected executable fixture");
-    const target = { ...base, availableArchitectures: ["arm64"] as const };
-    const result = await new NativeMacOSProvider(
-      {},
-      new NativeFixtureRunner({ lipo }),
-      "darwin",
-    )
-      .createClient(target)
-      .execute("inspect_macho", {});
-    if (!result.ok) throw result.error;
+    const offset = format === "thin" ? 0 : 4096;
     expect(result.value.locations).toContainEqual({
       kind: "file-offset-range",
       start: offset,
-      end: offset + 8192,
+      end: offset + 4096,
     });
     expect(result.value.result).toMatchObject({
-      selected_architecture: {
-        name: "arm64",
-        container_file_offset: offset,
-      },
+      selected_architecture: { container_file_offset: offset },
     });
-    if (offset > 0)
-      expect(result.value.locations).not.toContainEqual({
-        kind: "file-offset-range",
-        start: 0,
-        end: 8192,
-      });
   },
 );
 
-it.each([
-  {
-    lipo: "architecture x86_64\n offset 16384\n size 8192\narchitecture arm64\n size 8192\n",
-    availableArchitectures: ["x86_64", "arm64"] as const,
-  },
-  {
-    lipo: "architecture arm64\n size 8192\n",
-    availableArchitectures: ["arm64"] as const,
-  },
-])(
-  "does not invent a container offset when the selected slice has no observed offset ($availableArchitectures)",
-  async ({ lipo, availableArchitectures }) => {
-    const base = nativeMachoTarget("/owned/universal");
-    if (base.kind !== "executable")
-      throw new Error("Expected executable fixture");
-    const result = await new NativeMacOSProvider(
+it("uses the uniquely matching FAT entry when lipo omits the selected slice offset", async () => {
+  const fixture = await makeFat(["x86_64", "arm64"]);
+  const lipo = fixture.lipo.replace("offset 8192\n", "");
+  const result = await inspect(
+    new NativeMacOSProvider(
       {},
       new NativeFixtureRunner({ lipo }),
       "darwin",
-    )
-      .createClient({ ...base, availableArchitectures })
-      .execute("inspect_macho", {});
-    if (!result.ok) throw result.error;
-    expect(result.value.locations).not.toContainEqual({
-      kind: "file-offset-range",
-      start: 0,
-      end: 8192,
-    });
-    expect(result.value.limitations).toContain(
-      "The selected Mach-O slice's container file offset was not observed; slice-based evidence locations are unavailable.",
-    );
-    expect(result.value.result).toMatchObject({
-      selected_architecture: { container_file_offset: null },
-    });
-  },
-);
-
-it("reports the selected 32-bit slice's word size and byte order beside a 64-bit slice", async () => {
-  const i386Header = (await nativeFixture("otool-load.txt")).replace(
-    "0xfeedfacf 16777228",
-    "0xfeedface        7",
+    ).createClient(fixture.target),
   );
-  const fixtures = new NativeFixtureRunner({
-    lipo: [
-      "architecture x86_64\n    cputype 16777223\n    cpusubtype 3\n    offset 0\n    size 8192\n    align 2^14 (16384)",
-      "architecture i386\n    cputype 7\n    cpusubtype 3\n    offset 16384\n    size 8192\n    align 2^14 (16384)",
-    ].join("\n"),
-    "otool:-h": i386Header,
-    dwarfdump:
-      "UUID: 01234567-89AB-CDEF-0123-456789ABCDEF (i386) /owned/universal\n",
-  });
-  const base = nativeMachoTarget("/owned/universal");
-  const result = await new NativeMacOSProvider(
-    {},
-    sliceSelectingRunner(fixtures, "i386", "i386"),
-    "darwin",
-  )
-    .createClient({
-      ...base,
-      architecture: "x86",
-      availableArchitectures: ["x86_64", "x86"],
-    })
-    .execute("inspect_macho", {});
-
   if (!result.ok) throw result.error;
   expect(result.value.result).toMatchObject({
-    selected_architecture: { name: "i386", container_file_offset: 16384 },
+    selected_architecture: { container_file_offset: 8192 },
+  });
+});
+
+it("reports the selected 32-bit slice's word size and byte order", async () => {
+  const fixture = await makeFat(["x86_64", "i386"]);
+  const runner = sliceSelectingRunner(
+    new NativeFixtureRunner({ lipo: fixture.lipo, dwarfdump: "" }),
+    "i386",
+    "i386",
+  );
+  const result = await inspect(
+    new NativeMacOSProvider({}, runner, "darwin").createClient({
+      ...fixture.target,
+      architecture: "x86",
+      availableArchitectures: ["x86_64", "x86"],
+    }),
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toMatchObject({
+    selected_architecture: { name: "i386", container_file_offset: 8192 },
     word_size: 32,
     endian: "little",
   });

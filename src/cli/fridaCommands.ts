@@ -6,15 +6,16 @@ import type {
   FridaInstrumentationPort,
   FridaRemoteConnection,
 } from "../application/frida/FridaInstrumentationPort.js";
-import { FridaInstrumentationManager } from "../frida/FridaInstrumentationManager.js";
+import { createFridaInstrumentationProvider } from "../composition/frida.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { AnalysisInputError } from "../domain/analysisErrorCore.js";
 import { ok } from "../domain/result.js";
 import { FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION } from "../contracts/fridaToolContracts.js";
-import { isValidFridaRemoteAddress } from "../contracts/fridaRemoteAddress.js";
+import { isValidFridaRemoteAddress } from "../domain/fridaRemoteAddress.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
@@ -27,7 +28,7 @@ const exactlyOneScriptSource =
 export const registerFridaCommands = (
   cli: CliInstance,
   logger: Logger,
-  provider: FridaInstrumentationPort = new FridaInstrumentationManager(),
+  provider: FridaInstrumentationPort = createFridaInstrumentationProvider(),
 ): void => {
   const service = new FridaInstrumentationService(provider);
   // CLI calls own a disposable provider; MCP retains its shared provider until
@@ -48,12 +49,14 @@ export const registerFridaCommands = (
       .optional()
       .describe("Remote TLS certificate"),
     origin: z.string().min(1).optional().describe("Remote connection origin"),
-    keepaliveInterval: z
-      .number()
-      .int()
-      .positive()
-      .optional()
-      .describe(FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION),
+    keepaliveInterval: cliDecimalField(
+      z
+        .number()
+        .int()
+        .positive()
+        .optional()
+        .describe(FRIDA_KEEPALIVE_INTERVAL_DESCRIPTION),
+    ),
   });
   const remoteFrom = (
     options: z.infer<typeof remoteOptions>,
@@ -173,13 +176,15 @@ export const registerFridaCommands = (
           .array(z.string())
           .optional()
           .describe("Arguments passed to a spawned target"),
-        durationMs: z
-          .number()
-          .int()
-          .min(0)
-          .max(60_000)
-          .default(1_000)
-          .describe("Instrumentation duration in milliseconds"),
+        durationMs: cliDecimalField(
+          z
+            .number()
+            .int()
+            .min(0)
+            .max(60_000)
+            .default(1_000)
+            .describe("Instrumentation duration in milliseconds"),
+        ),
       })
       .refine(
         (options) =>
@@ -233,7 +238,7 @@ export const registerFridaCommands = (
               : { remote };
           const targetInput =
             args.mode === "attach"
-              ? /^[1-9][0-9]*$/u.test(args.target) &&
+              ? /^[0-9]+$/u.test(args.target) &&
                 Number.isSafeInteger(Number(args.target)) &&
                 Number(args.target) > 0
                 ? {

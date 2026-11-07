@@ -1,12 +1,19 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  chmod,
+  mkdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { join } from "node:path";
 
 import { createPackage, createPackageWithOptions } from "@electron/asar";
-import { expect, it, vi } from "vitest";
+import { expect, it, onTestFinished, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
@@ -106,6 +113,31 @@ it.each(["file", "directory"] as const)(
         .update(await readFile(join(source, "a.txt")))
         .digest("hex"),
     ).toBe(createHash("sha256").update(bytes).digest("hex"));
+  },
+);
+
+it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+  "rolls back when a previously inventoried directory becomes unreadable",
+  async () => {
+    const root = await createTestTempDirectory("rea-extract-denied-late-");
+    const source = join(root, "source");
+    const child = join(source, "child");
+    await mkdir(child, { recursive: true });
+    await writeFile(join(child, "selected.txt"), "selected bytes\n");
+    const output = join(root, "output");
+    const materialize = await inventoriedExtraction(source, output);
+    await chmod(child, 0);
+    onTestFinished(() => chmod(child, 0o755));
+    await expect(materialize()).rejects.toMatchObject({
+      reason: "integrity",
+      message:
+        "Inventoried regular artifact entries were not materialized: child/selected.txt",
+    });
+    await expect(access(output)).rejects.toThrow();
+    await chmod(child, 0o755);
+    expect(await readFile(join(child, "selected.txt"), "utf8")).toBe(
+      "selected bytes\n",
+    );
   },
 );
 
@@ -397,7 +429,7 @@ const extractDirectory = async (source: string, output: string) => {
 const extractArchive = async (source: string, output: string) => {
   const target = await parseBinaryTarget(source);
   if (!target.ok) throw target.error;
-  return new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("extract_artifact", { output_root: output });
+  return createOwnedArtifactClient(target.value).execute("extract_artifact", {
+    output_root: output,
+  });
 };

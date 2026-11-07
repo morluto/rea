@@ -16,10 +16,9 @@ import inventory. For current provider wiring, start with
 [`src/composition/binary.ts`](src/composition/binary.ts) for deep candidates and
 the other `src/composition/` factories for tool services, including
 [`gpu.ts`](src/composition/gpu.ts) and [`model.ts`](src/composition/model.ts).
-Live Frida and Cutter adapters are constructed directly in
-[`src/cli/fridaCommands.ts`](src/cli/fridaCommands.ts),
-[`src/cli/cutterCommands.ts`](src/cli/cutterCommands.ts), and
-[`src/server/createServer.ts`](src/server/createServer.ts).
+Live Frida, Cutter, GDB and Rizin construction also uses shared composition
+factories. For service ownership, availability and catalog declarations, follow
+the [capability composition guide](docs/capability-composition.md).
 Production factories construct fresh providers without starting engines or
 acquiring targets; optional adapter failures must preserve successful peers. Run
 `npm run verify:test-discovery` after adding or moving tests. Resolved import
@@ -94,7 +93,8 @@ Before requesting maintainer review, the human owner must:
   passing. Follow the [verification requirements](#development-feedback-and-pr-verification)
   for required checks and real-provider coverage.
 - Complete the **Author readiness** declaration in the PR template, explicitly
-  stating that the PR is ready for initial review.
+  stating that the PR is ready for initial review, unless the PR author is
+  exempt from the declaration as listed below.
 
 Keep the PR description concise and current. Explain the problem, observable
 outcome, approach, and useful evidence; link long logs or put them in optional
@@ -115,9 +115,12 @@ validation current as work changes. AI agents must leave human declarations to
 the human owner and must not attest to a human review on their behalf.
 
 The `PR readiness` check reports pending for drafts and requires a named human
-owner and all three template declarations for non-drafts. It checks that the
-declaration is filled, not whether the code or evidence is correct. Existing PRs
-can copy the **Author readiness** section from the current template.
+owner and all three template declarations for non-drafts. PRs authored by
+@morluto, @kaoru0822-kitauji, @N0zoM1z0, or @gensokyo-dev are exempt from
+the declaration; their human ownership, review, and evidence responsibilities
+above still apply. The check identifies authors by GitHub account ID. It checks
+that the declaration is filled, not whether the code or evidence is correct.
+Existing PRs can copy the **Author readiness** section from the current template.
 Open PRs must have distinct head commits because GitHub shares commit statuses.
 
 Maintainers enable merge enforcement after the workflow is merged: run
@@ -232,6 +235,8 @@ Use the development toolchain pinned in `.nvmrc` and
 `package.json#packageManager`. Run `nvm use` before installing dependencies;
 installed-package runtime support is documented in
 [installation](docs/installation.md#start-setup).
+Use Node.js and npm for source builds and verifier scripts; the installed
+package's Bun runtime support does not extend to those development scripts.
 
 ```bash
 npm ci
@@ -245,6 +250,15 @@ CLI or MCP server; it compiles the runtime and bundles the authored skill.
 catalogs, documentation projections, or managed verification evidence. Turbo
 caches deterministic builds and static checks across Git worktrees. After a package, lockfile, or managed-skill version change, run
 `npm run metadata:generate` before building.
+
+Dependabot proposes updates for the npm lockfiles, website Python requirements,
+and GitHub Actions. Review dependency changes and run the checks relevant to
+their consumers. For dependencies maintained outside Dependabot, including
+`third_party/` and the HTTP/3 lab's pinned requirements, the maintainer should
+review upstream security advisories when updating or using them. Preserve source
+and version provenance, update license notices when needed, and report which
+verification was actually repeated. The lab requirements describe a recorded
+environment; a dependency update does not verify the revised environment.
 
 Repository invariants live in [AGENTS.md](AGENTS.md). Keep provider-specific
 protocols in adapters and shared CLI/MCP workflows in the application layer.
@@ -283,7 +297,10 @@ The general source suite (`npm run test:fast`, `npm run test:changed`, and
 On a Windows checkout, some source tests fail because fixtures use POSIX paths,
 `#!/bin/sh` tool stubs, or POSIX rename semantics. Compare failures against the
 base revision, or run the suite on Linux or WSL, before attributing them to a
-change. See [testing](docs/testing.md#developer-commands) for command scopes
+change. The embedded-artifact parent-swap tests exercise the selected-path
+replacement when the rename succeeds; if Windows refuses it while the admitted
+file is open, they instead verify the refusal and cleanup. See
+[testing](docs/testing.md#developer-commands) for command scopes
 and lane selection.
 
 `git submodule update --init --recursive` fails at the pinned Unblob submodule

@@ -68,8 +68,9 @@ describe("curated Windows test lane", () => {
     ["ci.yml", "windows-curated"],
     ["real-ghidra-windows.yml", "verify"],
     ["real-cutter.yml", "cutter-upstream"],
+    ["nativeaot-fixtures.yml", "windows-fixture"],
   ])(
-    "preserves committed bytes before %s/%s installs dependencies",
+    "preserves committed bytes before %s/%s runs build steps",
     async (file, job) => {
       const workflow = workflowSchema.parse(
         parse(await readFile(join(".github", "workflows", file), "utf8")),

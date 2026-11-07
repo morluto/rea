@@ -33,6 +33,7 @@ import {
   readImmutableEvidenceBundle,
   readComparisonEvidenceBundles,
   writeEvidenceBundle,
+  evidenceBundleExportReceipt,
 } from "./EvidenceBundleFiles.js";
 import { inspectEvidenceBundle } from "./investigation/InspectEvidenceBundle.js";
 import type { EvidenceRecordFilters } from "../domain/evidenceRecordSummary.js";
@@ -138,7 +139,11 @@ export const deliverAnalysisEvidence = async (
   // inherit the parent's selected input path.
   const selected =
     detail === "summary" && evidence.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, evidence.caller_input_path)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          evidence.caller_input_path,
+          evidence.caller_input_paths,
+        )
       : delivered.value;
   const published = await publishEvidenceDelivery({
     bundle,
@@ -210,6 +215,11 @@ export const publishEvidenceDelivery = async (input: {
     );
   return ok({ delivered: input.delivered, evidenceBundle: written.value });
 };
+
+/** A delivery failure can follow commit; its receipt then owns the source closure. */
+export const evidenceDeliveryCommitted = (error: AnalysisError): boolean =>
+  error.diagnostics?.evidence_bundle !== undefined ||
+  (error instanceof EvidenceFileError && error.published !== undefined);
 
 /** Publish a completed bundle and retry its exact staged-output cleanup owner. */
 const persistEvidenceBundleCommand = async (
@@ -284,19 +294,19 @@ const projectWrite = (
   written: Result<PublishedEvidenceFile, AnalysisError>,
 ): Result<JsonValue, AnalysisError> =>
   written.ok
-    ? ok({
-        path: written.value.path,
-        bytes: written.value.bytes,
-        records: bundle.records.length,
-      })
+    ? ok(evidenceBundleExportReceipt(bundle, written.value))
     : err(written.error);
 
 /** Standalone bundle discovery shares the same read owner as import and comparison. */
 export const inspectEvidenceBundleCommand = async (
   input: {
     readonly path: string;
-    readonly detail: "complete" | "summary";
+    readonly detail: "complete" | "summary" | "records" | "links";
     readonly filters?: EvidenceRecordFilters | undefined;
+    readonly offset?: number | undefined;
+    readonly limit?: number | undefined;
+    readonly traversal?: "direct" | "retained-closure" | undefined;
+    readonly link_status?: "missing" | "retained" | "all" | undefined;
   },
   signal?: AbortSignal,
 ) => {

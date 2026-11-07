@@ -381,6 +381,8 @@ describe("ELF symbol-table ownership", () => {
     ).toEqual(names);
     image.writeUInt32LE(0xffffffff, hash + 24);
     expect((await readElfSymbols(image, names)).symbols).toEqual([]);
+    image.writeUInt32LE(0, hash + 24);
+    expect((await readElfSymbols(image, names)).failures).toHaveLength(1);
   });
 });
 

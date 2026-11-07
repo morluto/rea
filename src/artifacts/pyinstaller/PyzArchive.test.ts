@@ -18,8 +18,9 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
       modules: [{ name: "json.decoder", typeCode: 0, body }],
     }),
   );
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok || parsed.value.kind !== "entries") return;
+  expect(parsed).toMatchObject({ ok: true, value: { kind: "entries" } });
+  if (!parsed.ok || parsed.value.kind !== "entries")
+    throw new Error("Expected PYZ entries");
   expect(parsed.value.pythonVersion).toBe("3.9");
   expect(parsed.value.entries).toMatchObject([
     { name: "json.decoder", typeCode: 0, role: "module" },
@@ -31,8 +32,9 @@ it("lists modules from a supported PYZ and leaves an unknown magic opaque", asyn
       modules: [{ name: "json.decoder", typeCode: 0, body }],
     }),
   );
-  expect(opaque.ok).toBe(true);
-  if (!opaque.ok || opaque.value.kind !== "opaque") return;
+  expect(opaque).toMatchObject({ ok: true, value: { kind: "opaque" } });
+  if (!opaque.ok || opaque.value.kind !== "opaque")
+    throw new Error("Expected an opaque PYZ");
   expect(Buffer.compare(opaque.value.pythonMagic, Buffer.alloc(4))).toBe(0);
   expect(opaque.value.limitation).toContain("left opaque");
   expect(opaque.value.pythonVersion).toBeUndefined();
@@ -45,8 +47,9 @@ it("leaves a PYZ opaque when the table uses an unsupported marshal type", async 
     toc: Buffer.from([0x4e]),
   });
   const parsed = await readImage(image);
-  expect(parsed.ok).toBe(true);
-  if (!parsed.ok || parsed.value.kind !== "opaque") return;
+  expect(parsed).toMatchObject({ ok: true, value: { kind: "opaque" } });
+  if (!parsed.ok || parsed.value.kind !== "opaque")
+    throw new Error("Expected an opaque PYZ");
   expect(parsed.value.limitation).toContain("left opaque");
   expect(parsed.value.pythonMagic).toEqual(PYTHON_39_MAGIC);
   expect(parsed.value.pythonVersion).toBe("3.9");

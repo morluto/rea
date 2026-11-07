@@ -5,6 +5,7 @@ import {
 import type { ObjcSwiftMetadata } from "../domain/native/objcSwiftMetadata.js";
 import type { PointerResolution } from "./AppleMachoFixups.js";
 import type { Segment, Section } from "./AppleMachoSelection.js";
+import { BinaryFormatFailure } from "./metadata/BinaryContainer.js";
 import { issue, type FacetDecodeFacts } from "./AppleDispatchDecodeFacts.js";
 import {
   decodeSwiftConformanceTypeReference,
@@ -325,7 +326,10 @@ export const decodeSwiftDispatchFacets = (input: {
     ({ name }) => name === "__swift5_proto",
   )) {
     if (section.size % 4 !== 0)
-      throw new RangeError("Misaligned Swift conformance section");
+      throw new BinaryFormatFailure(
+        "malformed",
+        "Misaligned Swift conformance section",
+      );
     for (let index = 0; index < section.size / 4; index++) {
       if (!budget.admit()) break;
       swiftExamined++;

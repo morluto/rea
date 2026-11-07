@@ -107,6 +107,15 @@ const validReport = (
       )
   )
     return false;
+  if (
+    report.coverage.status === "complete" &&
+    report.entries.some((entry) =>
+      entry.pkcs7?.signers.some((signer) =>
+        Array.isArray(signer.unsigned_attribute_oids),
+      ),
+    )
+  )
+    return false;
   if (report.table === null) return report.entries.length === 0;
   if (
     !inside(report.table.location) ||

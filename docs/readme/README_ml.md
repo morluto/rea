@@ -20,6 +20,8 @@
 
 **[വെബ്സൈറ്റ്](https://rea.tools/) · [ഗൈഡുകൾ](https://rea.tools/guides/) · [ഉദാഹരണങ്ങൾ](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord-ൽ REA കമ്മ്യൂണിറ്റിയിൽ ചേരുക" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [ദ്രുതാരംഭം](#ദ്രുതാരംഭം) · [REA എങ്ങനെ പ്രവർത്തിക്കുന്നു](#rea-എങ്ങനെ-പ്രവർത്തിക്കുന്നു) · [എന്തൊക്കെ വിശകലനം ചെയ്യാം](#എന്തൊക്കെ-വിശകലനം-ചെയ്യാം) · [ഉദാഹരണങ്ങൾ](#ഉദാഹരണങ്ങൾ) · [RL പരിതസ്ഥിതികൾ നിർമ്മിക്കുക](#build-rl-environments) · [പതിവുചോദ്യങ്ങൾ](#പതിവുചോദ്യങ്ങൾ) · [ഡോക്യുമെന്റേഷൻ](#ഡോക്യുമെന്റേഷൻ)
 
 <code>npx rea-agents setup</code>
@@ -62,7 +64,7 @@
 
 Native binaries, JavaScript, Electron apps, .NET assemblies, websites എന്നിവ പരിശോധിക്കുന്നതിനുള്ള tools-ലേക്ക് REA നിങ്ങളുടെ agent-നെ ബന്ധിപ്പിക്കുന്നു. ഇതേ tools നിങ്ങളുടെ terminal-ൽ നിന്നും ഉപയോഗിക്കാം. വിശകലനം local ആയി നടക്കുന്നു; ഓരോ നിഗമനത്തിനും പിന്നിലെ തെളിവുകളും പരിമിതികളും ഫലങ്ങളിൽ ഉൾപ്പെടുന്നു.
 
-Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ ചെയ്യുകയും അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യുകയും ചെയ്യുന്നു. Native analysis-നായി നിലവിലുള്ള Hopper, Ghidra, അല്ലെങ്കിൽ IDA installation ഉപയോഗിക്കാം; അനുമതി നൽകിയാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാനും കഴിയും. Static JavaScript analysis-ന് native analysis engine ആവശ്യമില്ല.
+Setup നിങ്ങളുടെ agent-ിൽ REA രജിസ്റ്റർ ചെയ്യുകയും അനുയോജ്യമായ workflow നിർദ്ദേശങ്ങൾ ഇൻസ്റ്റാൾ ചെയ്യുകയും ചെയ്യുന്നു. Native analysis-നായി നിലവിലുള്ള Hopper, Ghidra, IDA, അല്ലെങ്കിൽ Kuna installation ഉപയോഗിക്കാം; അനുമതി നൽകിയാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാനും കഴിയും. Static JavaScript analysis-ന് native analysis engine ആവശ്യമില്ല.
 
 > **[REA വെബ്സൈറ്റ് സന്ദർശിക്കുക](https://rea.tools/)** — setup നിർദ്ദേശങ്ങൾക്കും ചിത്രങ്ങളോടുകൂടിയ ഗൈഡുകൾക്കും യഥാർത്ഥ case study-കൾക്കും.
 
@@ -151,13 +153,14 @@ REA-യ്ക്ക് Node.js 22.x (>=22.23.4), 24.x (>=24.22.1), അല്ല�
 
 | Target                 | REA നൽകുന്ന ഫലങ്ങൾ                                                                             | ആവശ്യകതകളും ഗൈഡും                                                                                                                    |
 | ---------------------- | ------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra അല്ലെങ്കിൽ IDA; [native analysis](../native-investigation.md)                                                        |
+| Native binaries        | Pseudocode, assembly, strings, symbols, calls, references                                   | Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna; [native analysis](../native-investigation.md)                                                  |
 | Offline ELF layout     | Sections, segments, യഥാർത്ഥ symbols/relocations, static mitigation candidates                 | Linux x64-ൽ caller നൽകുന്ന pwntools; [binary diagnostics](../binary-diagnostics.md)                                                 |
 | Go binaries            | ഉൾച്ചേർത്ത compiler version, modules, replacements, build settings                            | Built-in static ELF/PE/thin Mach-O പരിശോധന; Go installation ആവശ്യമില്ല                                                              |
 | Rust binaries          | ഉൾച്ചേർത്ത cargo-auditable crate പേരുകൾ, versions, sources, dependency edges                   | Built-in static ELF/PE/thin Mach-O പരിശോധന; [Rust binaries](../rust-binaries.md)                                                  |
 | PE certificates        | Authenticode WIN_CERTIFICATE entries and PKCS#7 signer/X.509 identity fields                | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
 | PE imports             | Import and delay-load DLL names, ordinals, IAT RVAs and pefile import hash                  | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
 | ELF notes              | PT_NOTE/SHT_NOTE owners, types, GNU build-id and ABI-tag fields                             | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
+| Binary hardening       | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                         | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                     |
 | Linux kernel modules   | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                 | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
 | Erlang BEAM            | IFF chunks, atoms, exports, and tables                                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | WASM artifact          | Validation, sections, കൃത്യമായ import/export WAT രൂപങ്ങൾ, decoded WAT                            | Caller നൽകുന്ന WABT 1.0.42; `inspect_wasm_artifact`                                                                                 |
@@ -284,9 +287,9 @@ Local MCP servers പിന്തുണയ്ക്കുന്ന ഏത് age
 </details>
 
 <details>
-<summary><strong>Hopper, Ghidra അല്ലെങ്കിൽ IDA ആവശ്യമാണോ?</strong></summary>
+<summary><strong>Hopper, Ghidra, IDA അല്ലെങ്കിൽ Kuna ആവശ്യമാണോ?</strong></summary>
 
-ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../installation.md#hopper) കാണുക.
+ആഴത്തിലുള്ള native analysis-ന് ഇവയിൽ ഒന്ന് ആവശ്യമാണ്. Static JavaScript, .NET പരിശോധനകൾ native analysis engine ഇല്ലാതെയും പ്രവർത്തിക്കും. അനുമതി ലഭിച്ചാൽ setup-ന് Hopper ഇൻസ്റ്റാൾ ചെയ്യാം; Ghidra, IDA, Kuna എന്നിവയ്ക്കായി നിങ്ങളുടെ നിലവിലുള്ള installations ഉപയോഗിക്കുന്നു. [Provider setup](../installation.md#hopper) കാണുക.
 
 </details>
 
@@ -355,7 +358,7 @@ npx rea-agents@latest setup
 
 ## Star ചരിത്രം
 
-🎉 **250,000 GitHub stars — നന്ദി!**
+🎉 **400,000 GitHub stars — നന്ദി!**
 
 REA ഉപയോഗിക്കുന്നവർക്കും, bugs റിപ്പോർട്ട് ചെയ്യുന്നവർക്കും, features ആവശ്യപ്പെടുന്നവർക്കും, builds പരിശോധിക്കുന്നവർക്കും, fixes സംഭാവന ചെയ്യുന്നവർക്കും നന്ദി.
 

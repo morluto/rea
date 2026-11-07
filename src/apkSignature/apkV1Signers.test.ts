@@ -60,7 +60,7 @@ describe("v1 signer output projection", () => {
     expect(new X509Certificate(certificate).subject).toContain('\\"');
     const signer = signerOf(certificate);
     const facts = v1SignerFacts(signer);
-    expect(facts.certificate?.subject).not.toBeNull();
+    expect(facts.certificate?.subject).toEqual(expect.any(String));
     expect(projectedV1SignerBytes(signer)).toBeGreaterThanOrEqual(
       Buffer.byteLength(JSON.stringify(facts)),
     );

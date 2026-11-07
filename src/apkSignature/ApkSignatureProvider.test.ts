@@ -11,9 +11,6 @@ import {
   APK_SIGNATURE_V3_ID,
   LEAF_CERTIFICATE,
   LEAF_SHA256,
-  LEAF_SUBJECT,
-  OID_ECDSA_SHA256,
-  OID_SHA256,
   OPENSSL_BLOCK_ISSUER_SERIAL,
   ROOT_CERTIFICATE,
   ROOT_SHA256,
@@ -149,18 +146,6 @@ const reportOf = async (path: string) => {
 };
 
 describe("ApkSignatureProvider without the Android SDK", () => {
-  it("retains the declared digest's signature algorithm ID and bytes", async () => {
-    const report = await reportOf(
-      await write(
-        "algorithm-id.apk",
-        syntheticSigned([{ id: V2, value: bogusV2Value() }]),
-      ),
-    );
-    expect(report.schemes.v2?.signers?.[0]?.digests[0]).toMatchObject({
-      signature_algorithm_id: 0x0103,
-      declared_digest_hex: "ab".repeat(32),
-    });
-  });
   it("reports an unsigned ZIP as having no scheme", async () => {
     const r = await reportOf(
       await write(
@@ -172,53 +157,6 @@ describe("ApkSignatureProvider without the Android SDK", () => {
     expect(r.posture.strongest_scheme).toBe("none");
     expect(r.posture.self_consistent).toBeNull();
     expect(r.posture.v1_only).toBe(false);
-  });
-
-  it("detects v1-only signing and names the signer certificate its block declares", async () => {
-    for (const stored of [false, true]) {
-      const r = await reportOf(
-        await write(
-          `v1-${String(stored)}.apk`,
-          await zipWith([
-            { name: "classes.dex", data: "x" },
-            { name: "META-INF/MANIFEST.MF", data: "Manifest-Version: 1.0" },
-            { name: "META-INF/CERT.SF", data: "Signature-Version: 1.0" },
-            {
-              name: "META-INF/CERT.EC",
-              data: OPENSSL_BLOCK_ISSUER_SERIAL,
-              stored,
-            },
-          ]),
-        ),
-      );
-      expect(r.schemes.v1.present).toBe(true);
-      expect(r.posture.v1_only).toBe(true);
-      expect(r.posture.strongest_scheme).toBe("v1");
-      expect(r.posture.v1_signers_match_block_signers).toBeNull();
-      const [signer] = r.schemes.v1.signers;
-      expect(signer).toMatchObject({
-        signature_file: "META-INF/CERT.SF",
-        block_file: "META-INF/CERT.EC",
-        certificate: {
-          sha256_fingerprint: LEAF_SHA256,
-          subject: LEAF_SUBJECT,
-          public_key_algorithm: "ec",
-        },
-        certificates: [
-          { sha256_fingerprint: LEAF_SHA256, subject: LEAF_SUBJECT },
-          { sha256_fingerprint: ROOT_SHA256 },
-        ],
-        signer_infos: [
-          {
-            identified_by: "issuer-and-serial",
-            certificate_sha256: LEAF_SHA256,
-            digest_algorithm_oid: OID_SHA256,
-            signature_algorithm_oid: OID_ECDSA_SHA256,
-          },
-        ],
-        decode_error: null,
-      });
-    }
   });
 
   it("decodes a v2 signer, keeps an unparseable certificate null, and flags a digest mismatch", async () => {

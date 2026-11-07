@@ -1,14 +1,13 @@
-import { Ajv2020 } from "ajv/dist/2020.js";
 import {
   advertisedMcpToolSchemas,
   assertRecordedMcpEvidence,
 } from "../../fixtures/advertisedMcpTool.js";
 import { Client, InMemoryTransport } from "@modelcontextprotocol/client";
-import { expect, it, onTestFinished, vi } from "vitest";
+import { afterAll, expect, it, onTestFinished, vi } from "vitest";
+import { createMcpSchemaValidation } from "../../fixtures/mcpSchemaValidation.js";
 import { readFile, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { WasmArtifactService } from "../../../src/application/wasm/WasmArtifactService.js";
-import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { createEvidence, parseEvidence } from "../../../src/domain/evidence.js";
 import { wasmArtifactSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { createHash } from "node:crypto";
@@ -25,6 +24,9 @@ import {
   wasmArtifactExecution,
 } from "../../fixtures/wasm/artifact.js";
 
+const schemaValidation = createMcpSchemaValidation();
+afterAll(() => schemaValidation.clear());
+
 const assertFirstSummaryDelivery = async (
   harness: Awaited<ReturnType<typeof createApplicationMcpHarness>>,
   value: ReturnType<typeof wasmArtifactFixture>,
@@ -34,7 +36,11 @@ const assertFirstSummaryDelivery = async (
     ajv: wasmAjv,
     inputSchema,
     outputSchema,
-  } = await advertisedMcpToolSchemas(harness.client, "inspect_wasm_artifact");
+  } = await advertisedMcpToolSchemas(
+    harness.client,
+    "inspect_wasm_artifact",
+    schemaValidation.assertions,
+  );
   const summaryInput = { path: value.artifact.path, detail: "summary" };
   expect(wasmAjv.validate(inputSchema, summaryInput)).toBe(true);
   const directSummary = await harness.client.callTool({
@@ -99,6 +105,7 @@ it.each(["bin", "hop"])(
     });
     const session = createTestBinarySession(createClient);
     const harness = await createApplicationMcpHarness({
+      schemaValidator: schemaValidation,
       session,
       serverOptions: { environment: {} },
     });
@@ -107,6 +114,7 @@ it.each(["bin", "hop"])(
     const { name, ajv, inputSchema } = await advertisedMcpToolSchemas(
       client,
       "inspect_wasm_artifact",
+      schemaValidation.assertions,
     );
     const input = { path };
     const opening = await client.callTool({
@@ -141,7 +149,11 @@ it.each(["bin", "hop"])(
         code: "capability_unavailable",
         details: {
           operation: "inspect_wasm_artifact",
-          reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY"),
+          reason: "directory_not_absolute",
+          diagnostics: {
+            code: "directory_not_absolute",
+            setting: "REA_WABT_BIN_DIRECTORY",
+          },
         },
       },
     });
@@ -152,7 +164,13 @@ it.each(["bin", "hop"])(
     expect(parseMcpToolError(summary)).toMatchObject({
       error: {
         code: "capability_unavailable",
-        details: { reason: expect.stringContaining("REA_WABT_BIN_DIRECTORY") },
+        details: {
+          reason: "directory_not_absolute",
+          diagnostics: {
+            code: "directory_not_absolute",
+            setting: "REA_WABT_BIN_DIRECTORY",
+          },
+        },
       },
     });
     await client.ping();
@@ -182,6 +200,7 @@ it("records inline WASM evidence with compact inputs and canonical option checks
     throw new Error("deep provider must not start");
   });
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     session,
     serverOptions: { wasmArtifact: service },
   });
@@ -190,6 +209,7 @@ it("records inline WASM evidence with compact inputs and canonical option checks
   const schemas = await advertisedMcpToolSchemas(
     client,
     "inspect_wasm_artifact",
+    schemaValidation.assertions,
   );
   const { ajv, inputSchema } = schemas;
   expect(ajv.validate(inputSchema, { path: value.artifact.path })).toBe(true);
@@ -272,6 +292,7 @@ it.each([undefined, "summary"] as const)(
       throw new Error("deep provider must not start");
     });
     const harness = await createApplicationMcpHarness({
+      schemaValidator: schemaValidation,
       session,
       serverOptions: { wasmArtifact: service },
     });
@@ -353,6 +374,7 @@ it("attributes rejected WASM paths to their selected fields before provider work
     Promise.resolve(ok(wasmArtifactExecution(value))),
   );
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     serverOptions: {
       wasmArtifact: new WasmArtifactService({
         close: () => Promise.resolve(),
@@ -430,6 +452,7 @@ it("rejects a WASM provider response with a non-file subject before recording Ev
     subject: { ...execution.subject, format: "elf" },
   } as unknown as typeof execution;
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     serverOptions: {
       wasmArtifact: new WasmArtifactService({
         close: () => Promise.resolve(),
@@ -474,6 +497,7 @@ it("reads an oversized completed WASM result through its reported retained refer
     inspect,
   });
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     serverOptions: { wasmArtifact: service },
   });
   onTestFinished(harness.close);
@@ -516,7 +540,7 @@ it("reads an oversized completed WASM result through its reported retained refer
   );
   if (advertised?.outputSchema === undefined)
     throw new Error("Missing WASM view schemas");
-  const ajv = new Ajv2020({ strict: false, validateFormats: false });
+  const ajv = schemaValidation.assertions;
   const input: Record<string, unknown> = advertised.inputSchema;
   const output: Record<string, unknown> = advertised.outputSchema;
   for (const [view, expected] of [
@@ -580,6 +604,7 @@ it("reads an oversized completed WASM result through its reported retained refer
 it("rejects inconsistent decoded-WAT digests in portable Evidence without a provider run", async () => {
   const value = wasmArtifactFixture();
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     serverOptions: { environment: {} },
   });
   onTestFinished(harness.close);
@@ -622,6 +647,7 @@ it("rejects inconsistent decoded-WAT digests in portable Evidence without a prov
 it("checks WASM semantic identity while preserving rebound display paths", async () => {
   const value = wasmArtifactFixture();
   const harness = await createApplicationMcpHarness({
+    schemaValidator: schemaValidation,
     serverOptions: { environment: {} },
   });
   onTestFinished(harness.close);
@@ -771,6 +797,92 @@ it("rejects malformed paths, refuses WASM summary delivery before provider work 
     });
     expect(inspect).toHaveBeenCalledTimes(2);
     await client.ping();
+  } finally {
+    await client.close();
+    await server.close();
+    await session.close();
+  }
+});
+
+it("compares caller-owned complete inline WASM sources on a fixed server without a recorder", async () => {
+  const leftReport = wasmArtifactFixture("/artifacts/left.wasm");
+  leftReport.interface = { state: "complete", issues: [], entries: [] };
+  const rightReport = wasmArtifactFixture("/artifacts/right.wasm");
+  rightReport.interface = {
+    state: "complete",
+    issues: [],
+    entries: [
+      {
+        direction: "export",
+        module: null,
+        name: "new_export",
+        kind: "func",
+        index: 0,
+        signature: { kind: "func", params: [], results: [] },
+        wat_form: '(export "new_export" (func 0))',
+        issue: null,
+      },
+    ],
+  };
+  const source = (report: ReturnType<typeof wasmArtifactFixture>) =>
+    createEvidence(
+      {
+        path: report.artifact.path,
+        sha256: report.artifact.sha256,
+        format: "file",
+      },
+      { id: "fixture-wabt", name: "Source-owned WABT seam", version: "1" },
+      {
+        operation: "inspect_wasm_artifact",
+        parameters: { path: report.artifact.path },
+        result: report,
+        confidence: "observed",
+      },
+    );
+  const left = source(leftReport);
+  const right = source(rightReport);
+  const inspect = vi.fn<WasmArtifactService["provider"]["inspect"]>(() => {
+    throw new Error(
+      "Comparison must reuse caller Evidence without provider work",
+    );
+  });
+  const service = new WasmArtifactService({
+    close: () => Promise.resolve(),
+    inspect,
+  });
+  const session = createTestBinarySession(() => {
+    throw new Error("Comparison must not start a deep provider");
+  });
+  const server = createServer(
+    { kind: "fixed", analysis: session },
+    { wasmArtifact: service },
+  );
+  const client = new Client({ name: "wasm-fixed-comparison", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  try {
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    const reply = await client.callTool({
+      name: "compare_wasm_interfaces",
+      arguments: { left, right, scope: "both" },
+    });
+    expect(reply.isError, JSON.stringify(reply.structuredContent)).not.toBe(
+      true,
+    );
+    const comparison = parseEvidence(reply.structuredContent);
+    expect(comparison.operation).toBe("compare_wasm_interfaces");
+    expect(comparison.evidence_links).toEqual([
+      left.evidence_id,
+      right.evidence_id,
+    ]);
+    expect(comparison.normalized_result).toMatchObject({
+      coverage: "complete-within-inputs",
+      summary: { added: 1, changed: 0, removed: 0, unchanged: 0, unknown: 0 },
+      changes: [{ name: "new_export", state: "added" }],
+    });
+    expect(inspect).not.toHaveBeenCalled();
+    expect(session.exportEvidenceBundle().records).toEqual([]);
   } finally {
     await client.close();
     await server.close();

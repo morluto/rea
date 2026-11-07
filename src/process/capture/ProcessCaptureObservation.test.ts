@@ -192,7 +192,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
         scheduled_at_ms: 0,
         dispatched_at_ms: 0,
         type: "input",
-        data: "<redacted-input:6-bytes>",
+        data: "",
+        sensitive: true,
+        input_bytes: 6,
         outcome: "dispatched",
       },
     ],
@@ -208,7 +210,7 @@ it("marks redacted scripted input as an interaction unknown", () => {
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
     reason:
-      "Sensitive scripted input values are redacted from process capture Evidence.",
+      "Sensitive scripted input literals and retained terminal echoes are redacted. Terminal states are reconstructed from the redacted stream; private display effects and transformed values remain unknown.",
   });
 });
 

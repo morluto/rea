@@ -43,12 +43,19 @@ rea decompile /absolute/path/to/program main --json
 
 If the registration cannot be read or validated, provider diagnostics retain its
 selected `registration_path` and the configuration owner's setting/constraint
-facts in `configuration_details.settings`, plus `configuration_remediation`.
+facts in `configuration_details.settings`. The availability's `remediation`, and
+each operation it makes unavailable, carry the configuration owner's repair.
 `configured` means a path was selected, not that it is valid or an IDA connection
 was established; failed registrations remain unavailable. Correct
 `REA_IDA_MCP_CONFIG` in the next CLI invocation's environment or the MCP server's
 launch environment. Restart/reconnect that server after changing its environment;
 an export in another shell does not update a running server.
+
+An HTTP registration's `url` must use `http` or `https` without URL credentials,
+and its host must be `localhost`, `127.0.0.1`, `[::1]`, or the Docker/Podman
+host-gateway name `host.docker.internal` or `host.containers.internal`. Use a
+gateway name when REA runs in a container and IDA MCP listens on the container
+host. REA refuses every other host.
 
 Open the **original input binary** in REA, not an `.idb` or `.i64` database. Its SHA-256 must match IDA's recorded input hash. REA checks the attached identity and image base around each analysis request. A mismatch or target switch fails with recovery guidance. The original input must remain readable by REA; WSL can use its mounted alias while the GUI runs on Windows. Attached profiles, including native mode, refuse universal Mach-O inputs at admission: every slice shares the recorded whole-file hash, so REA cannot verify which slice the GUI loaded. Open a thin file extracted with `lipo -thin` in both IDA and REA, or use headless mode, which analyzes the selected slice.
 
@@ -56,7 +63,7 @@ REA's close operation releases its MCP connection or proxy. It never saves or cl
 
 ## Optional native IDA MCP bridge
 
-IDA Pro and IDA Free can use the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) through an explicit attached registration. Install and start that plugin using its upstream instructions, open the original binary in the IDA GUI, and wait for analysis. The native MCP 1.1.2 release binds `0.0.0.0` without a listen-address setting. Restrict inbound access with the host firewall or use an upstream build that binds only to loopback before starting it. REA's loopback URL restriction does not change the plugin's listener. REA does not install IDA, build the plugin, activate a license, or launch the GUI.
+IDA Pro and IDA Free can use the separate [ida-free-mcp native plugin](https://github.com/0xshlomil/ida-free-mcp) through an explicit attached registration. Install and start that plugin using its upstream instructions, open the original binary in the IDA GUI, and wait for analysis. The native MCP 1.1.2 release binds `0.0.0.0` without a listen-address setting. Restrict inbound access with the host firewall or use an upstream build that binds only to loopback before starting it. REA's local URL restriction does not change the plugin's listener. REA does not install IDA, build the plugin, activate a license, or launch the GUI.
 
 ```json
 {
@@ -219,6 +226,12 @@ Opening an MCP target starts its selected provider session; headless opening wai
 For guided registration, set `REA_IDA_MCP_CONFIG` before `rea setup --client <client>`. Setup includes that file reference in its reviewed plan and preserves it after approval; it does not copy upstream credentials into the agent configuration. For `ida` or `auto` selection, Codex/Kimi setup and doctor use the effective client registration's parsed `timeoutMs` (default 300000 ms) when recommending the agent's per-tool deadline. Existing positive client deadlines remain caller choices. `rea doctor --provider ida --json` validates the registration without starting IDA and explicitly leaves runtime compatibility and target binding for analysis.
 
 ## Coverage and evidence
+
+REA admits x86, x86_64, arm and arm64 executables through IDA. Every other CPU
+family, including families that REA recognizes later, is refused until REA
+admits it explicitly. Raw-binary and GameCube DOL targets are refused; open
+them with Ghidra. Admission is not verification: the real workflows under
+[Verification](#verification) cover x86_64 and arm64 only.
 
 All profiles support procedure/string inventory and literal or regex search, procedure resolution, pseudocode, assembly, raw function instructions, resolved callees, incoming address references, and a function dossier. Inventories and modern pseudocode/assembly follow upstream pagination. Upstream limits on modern xrefs and callees are retained as explicit truncation limitations. In the modern headless profile, targets that are not proven x86-only use processor-neutral `callgraph` edges instead of the x86 instruction checks in upstream `callees` (mrexodia/ida-pro-mcp#549). REA requests depth zero: the pinned upstream emits the root's outgoing edges without scanning child functions, then REA batches function-name lookup for those addresses. The graph covers recognized function destinations only; imports and other non-function targets remain unknown. A server without `callgraph` returns an empty relationship list with an explicit coverage limitation. Graph and path workflows retain those limitations alongside observed edges. A failed or inconsistent graph reply remains an error. A transport-level truncated preview is rejected rather than reported as complete evidence; the error preserves upstream retrieval guidance.
 

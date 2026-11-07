@@ -8,7 +8,9 @@ import { urlDeclaresQueryOrFragment } from "./urlComponents.js";
 
 const hash = (text: string): string =>
   createHash("sha256").update(text).digest("hex");
-const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.-]+$/u;
+// Literal URL path characters that are also portable filename characters.
+// Percent escapes remain isolated: decoding them could change path identity.
+const PORTABLE_SEGMENT = /^[A-Za-z0-9_~.!$&'()+,;=@-]+$/u;
 const RESERVED_SEGMENT = /^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/iu;
 
 /** One planned file, or an explicit missing source with no filesystem effect. */

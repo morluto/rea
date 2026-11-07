@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createEvidenceBundle } from "../domain/evidenceBundle.js";
 
 import {
   build,
@@ -8,6 +9,7 @@ import {
   processEvidence,
   proofEvidence,
   readyProcessLedgerRequest,
+  readyReviewedLedgerRequest,
   request,
   reviewedObligation,
 } from "./ReconstructionObligationLedger.fixture.js";
@@ -256,6 +258,114 @@ describe("reconstruction obligation ledger case closure", () => {
 });
 
 describe("reconstruction obligation manifest references", () => {
+  it("does not claim readiness with unresolved references on an optional obligation", () => {
+    const input = readyReviewedLedgerRequest();
+    const reviewed = input.reviewed_obligations[0]!;
+    const binding = input.manifest.bindings[0]!;
+    const absent = `ev_${"c".repeat(64)}`;
+    const original = binding.original_cases[0]!.evidence_id;
+    const proof = binding.verifier!.result_evidence_id;
+    const optional = { ...reviewed, required: false };
+    const candidates = [
+      {
+        ...binding,
+        original_cases: [
+          ...binding.original_cases,
+          {
+            kind: "malformed" as const,
+            evidence_id: absent,
+            location: "/extra",
+          },
+        ],
+      },
+      {
+        ...binding,
+        fixtures: [
+          ...binding.fixtures,
+          {
+            fixture_id: "fixture.extra",
+            case_kind: "malformed" as const,
+            authority: "unit" as const,
+            evidence_ids: [absent],
+          },
+        ],
+      },
+      {
+        ...binding,
+        verifier: { ...binding.verifier!, result_evidence_id: absent },
+      },
+    ];
+    for (const candidate of candidates) {
+      const result = build({
+        ...input,
+        reviewed_obligations: [optional],
+        manifest: { bindings: [candidate], contradictions: [] },
+      });
+      expect(result.status).toBe("unknown");
+      expect(result.coverage.status).toBe("partial");
+      expect(result.evidence_links).toContain(absent);
+      expect(result.limitations).toContain(
+        "The ledger retains 1 Evidence reference(s) absent from the input bundle; closure cannot be claimed.",
+      );
+    }
+    const contradiction = build({
+      ...input,
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [binding],
+        contradictions: [
+          {
+            obligation_id: optional.obligation_id,
+            evidence_ids: [original, absent],
+          },
+        ],
+      },
+    });
+    expect(contradiction.status).not.toBe("ready");
+    expect(contradiction.evidence_links).toContain(absent);
+    const resolved = build({
+      ...input,
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [
+          {
+            ...candidates[1]!,
+            fixtures: [
+              ...binding.fixtures,
+              {
+                fixture_id: "fixture.extra",
+                case_kind: "malformed",
+                authority: "unit",
+                evidence_ids: [proof],
+              },
+            ],
+          },
+        ],
+        contradictions: [],
+      },
+    });
+    expect(resolved.status).toBe("ready");
+    expect(resolved.obligations[0]?.status).toBe("verified");
+
+    const required = readyProcessLedgerRequest();
+    const mixed = build({
+      evidence_bundle: createEvidenceBundle([
+        ...input.evidence_bundle.records,
+        ...required.evidence_bundle.records,
+      ]),
+      reviewed_obligations: [optional],
+      manifest: {
+        bindings: [candidates[1]!, ...required.manifest.bindings],
+        contradictions: [],
+      },
+    });
+    expect(mixed.summary.required_open).toBe(0);
+    expect(mixed.status).toBe("unknown");
+    expect(mixed.evidence_links).toContain(absent);
+  });
+});
+
+describe("reconstruction obligation manifest reference controls", () => {
   it("withholds readiness when a manifest entry names absent Evidence", () => {
     const ledgerRequest = readyProcessLedgerRequest();
     // A valid entry for the same case kind must not hide an absent reference.

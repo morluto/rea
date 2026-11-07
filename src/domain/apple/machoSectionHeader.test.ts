@@ -1,5 +1,8 @@
 import { expect, it } from "vitest";
-import { readMachoSectionHeader } from "./machoSectionHeader.js";
+import {
+  admitMachoSectionPayload,
+  readMachoSectionHeader,
+} from "./machoSectionHeader.js";
 
 const formats = [
   { wide: false, littleEndian: false, headerSize: 68 },
@@ -71,5 +74,21 @@ it.each(formats)(
           message: "Mach-O section header is truncated",
         },
       });
+  },
+);
+
+it.each([
+  ["inside", { size: 16n, offset: 8, flags: 0 }, true],
+  ["ending at EOF", { size: 16n, offset: 24, flags: 0 }, true],
+  ["past EOF", { size: 1n, offset: 41, flags: 0 }, false],
+  ["straddling EOF", { size: 17n, offset: 24, flags: 0 }, false],
+  ["huge", { size: 0xffffffffffffffffn, offset: 0, flags: 0 }, false],
+  ["empty", { size: 0n, offset: 0xffffffff, flags: 0 }, true],
+  ["zero-fill", { size: 99n, offset: 0xffffffff, flags: 1 }, true],
+  ["thread-local zero-fill", { size: 99n, offset: 0, flags: 0x12 }, true],
+] as const)(
+  "admits a %s section payload against a 40-byte image",
+  (_l, section, ok) => {
+    expect(admitMachoSectionPayload(section, 40).ok).toBe(ok);
   },
 );

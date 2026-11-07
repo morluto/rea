@@ -38,6 +38,66 @@ import { javaClassFile } from "../../../tests/fixtures/javaClassFile.js";
 const read = (bytes: Uint8Array) =>
   readMachoImage(readerOf(bytes), bytes.length);
 
+it.skipIf(process.platform === "win32")(
+  "keeps non-UTF-8 symlink targets distinct from a real replacement character",
+  async () => {
+    const root = await createTestTempDirectory("rea-dylib-raw-symlink-");
+    const executable = machoImage({
+      commands: [
+        buildVersionCommand(1),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/raw-link"),
+        dylibCommand(LC.LOAD_DYLIB, "@loader_path/unicode-link"),
+      ],
+    });
+    await writeFile(join(root, "App"), executable);
+    await writeFile(
+      join(root, "lib\ufffd"),
+      machoImage({
+        fileType: FILE_TYPE.dylib,
+        commands: [buildVersionCommand(1)],
+      }),
+    );
+    await symlink(
+      Buffer.from([0x6c, 0x69, 0x62, 0xff]),
+      join(root, "raw-link"),
+    );
+    await symlink("lib\ufffd", join(root, "unicode-link"));
+    const trace = await traceDylibResolution({
+      rootPath: root,
+      targetPath: join(root, "App"),
+      targetSha256: createHash("sha256").update(executable).digest("hex"),
+      enumerateRoots: false,
+      parameters: { roots: ["App"] },
+    });
+    expect(trace.edges.map((edge) => edge.resolution)).toEqual([
+      { status: "undetermined", image: null },
+      { status: "resolved", image: "lib\ufffd" },
+    ]);
+    expect(trace.coverage.status).toBe("partial");
+    expect(trace.limitations).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('"raw-link":"6c6962ff"'),
+      ]),
+    );
+    await expect(
+      traceDylibResolution({
+        rootPath: root,
+        targetPath: join(root, "App"),
+        targetSha256: createHash("sha256").update(executable).digest("hex"),
+        enumerateRoots: false,
+        parameters: { roots: ["raw-link"] },
+      }),
+    ).rejects.toMatchObject({
+      issues: [
+        {
+          path: ["roots", 0],
+          message: expect.stringContaining("non-UTF-8 target bytes 6c6962ff"),
+        },
+      ],
+    });
+  },
+);
+
 it("retains unknown executable-root traversal after a complete callback and keeps known image facts", async () => {
   const root = await createTestTempDirectory("rea-dylib-traversal-callback-");
   const bytes = machoImage({ commands: [buildVersionCommand(1)] });
@@ -1097,6 +1157,22 @@ describe("LC_LAZY_LOAD_DYLIB_INFO image offsets", () => {
     expect(linkedit.status).toBe("malformed");
   });
 
+  it("does not alias a BOM-prefixed segment name to __LINKEDIT", async () => {
+    const result = await read(
+      machoImageWithLazyLoadDylibInfo({
+        path: "@rpath/libl.dylib",
+        flagImageOffset: 0x4001,
+        commandsBefore: [
+          segmentCommand({
+            name: "\uFEFF__LINKEDIT",
+            vmaddr: 0n,
+            vmsize: 0x100000n,
+          }),
+        ],
+      }),
+    );
+    expect(result.status).toBe("parsed");
+  });
   it("keeps a short segment parseable until a lazy-info command needs its VM range", async () => {
     const short = new Uint8Array(16);
     const view = new DataView(short.buffer);
@@ -1878,6 +1954,72 @@ describe("Mach-O load command reader failures", () => {
     expect(await read(fat)).toMatchObject({
       status: "unsupported",
       reason: expect.stringContaining("alignment exponent 53 is unsupported"),
+    });
+  });
+});
+
+describe("Mach-O load command reader defect precedence", () => {
+  it("keeps defect precedence when one image has several defects", async () => {
+    const shortRpath = new Uint8Array(8);
+    const shortView = new DataView(shortRpath.buffer);
+    shortView.setUint32(0, LC.RPATH, true);
+    shortView.setUint32(4, 8, true);
+    const unsized = new Uint8Array(16);
+    new DataView(unsized.buffer).setUint32(0, LC.RPATH, true);
+    const decodeFirst = {
+      status: "malformed",
+      reason: "load command 0 is too short to hold a string offset",
+    };
+    // An earlier command's decode defect wins over a later framing defect,
+    expect(await read(machoImage({ commands: [shortRpath, unsized] }))).toEqual(
+      decodeFirst,
+    );
+    // over a missing later command,
+    const missing = machoImage({ commands: [shortRpath] });
+    new DataView(missing.buffer).setUint32(16, 2, true);
+    expect(await read(missing)).toEqual(decodeFirst);
+    // and over unconsumed command bytes.
+    const unconsumed = machoImage({
+      commands: [shortRpath, rpathCommand("x")],
+    });
+    new DataView(unconsumed.buffer).setUint32(16, 1, true);
+    expect(await read(unconsumed)).toEqual(decodeFirst);
+
+    // The command-size limit is checked before the slice bounds.
+    const oversized = machoImage({});
+    new DataView(oversized.buffer).setUint32(
+      20,
+      MAX_LOAD_COMMAND_BYTES + 8,
+      true,
+    );
+    expect(await read(oversized)).toMatchObject({ status: "unsupported" });
+
+    // A malformed FAT slice wins over an earlier or later unsupported one.
+    const bigEndian = new Uint8Array(32);
+    new DataView(bigEndian.buffer).setUint32(0, 0xfeedfacf, false);
+    const overlong = machoImage({});
+    new DataView(overlong.buffer).setUint32(20, overlong.byteLength, true);
+    for (const slices of [
+      [bigEndian, overlong],
+      [overlong, bigEndian],
+    ]) {
+      const fat = fatImage(slices.map((bytes) => ({ cpu: CPU.arm64, bytes })));
+      expect(await read(fat)).toEqual({
+        status: "malformed",
+        reason: "load commands extend beyond the Mach-O slice",
+      });
+    }
+
+    // The first FAT range issue is reported, whatever its category.
+    const ranged = fatImage([
+      { cpu: CPU.arm64, bytes: machoImage({}) },
+      { cpu: CPU.x86_64, bytes: machoImage({ cpu: CPU.x86_64 }) },
+    ]);
+    new DataView(ranged.buffer).setUint32(8 + 16, 53, false);
+    new DataView(ranged.buffer).setUint32(8 + 20 + 12, ranged.length, false);
+    expect(await read(ranged)).toEqual({
+      status: "unsupported",
+      reason: "FAT architecture 0 alignment exponent 53 is unsupported",
     });
   });
 });

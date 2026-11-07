@@ -723,6 +723,61 @@ describe("binary keyed archive dates", () => {
   });
 });
 
+describe("binary keyed archive post-table objects", () => {
+  it("preserves exact integer decimals when an archive string follows the offset table", () => {
+    const original = Buffer.from(
+      buildBinary({
+        $archiver: "NSKeyedArchiver",
+        $version: 100000,
+        $top: { root: { UID: 2 } },
+        $objects: [
+          "$null",
+          "hello",
+          9007199254740993n as unknown as PlistValue,
+        ],
+      }),
+    );
+    const intMarkerOffset = original.indexOf(0x13);
+    expect(intMarkerOffset).toBeGreaterThan(0);
+    // Overwrite the 8-byte integer payload with exact 9007199254740993n
+    original.writeBigInt64BE(9007199254740993n, intMarkerOffset + 1);
+
+    const stringBytes = Buffer.from("\x55hello", "latin1");
+    const stringOffset = original.indexOf(stringBytes);
+    expect(stringOffset).toBeGreaterThan(0);
+    const trailerOffset = original.length - 32;
+    const tableOffset = Number(original.readBigUInt64BE(trailerOffset + 24));
+    const count = Number(original.readBigUInt64BE(trailerOffset + 8));
+    const width = original[trailerOffset + 6] ?? 1;
+
+    const post = Buffer.concat([
+      original.subarray(0, trailerOffset),
+      stringBytes,
+      original.subarray(trailerOffset),
+    ]);
+    const newTrailerOffset = post.length - 32;
+    for (let i = 0; i < count; i += 1) {
+      const offset = post.readUIntBE(tableOffset + i * width, width);
+      if (offset === stringOffset) {
+        post.writeUIntBE(trailerOffset, tableOffset + i * width, width);
+      }
+    }
+    post.writeBigUInt64BE(BigInt(tableOffset), newTrailerOffset + 24);
+
+    const graph = decodeKeyedArchiveBytes(post, { offset: 0, limit: 10 });
+    expect(graph.objects[2]).toMatchObject({
+      id: 2,
+      status: "observed",
+      value: { $plist_type: "integer", decimal: "9007199254740993" },
+    });
+    expect(
+      graph.limitations.some((lim) =>
+        lim.includes("could not be completely observed"),
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("binary plist date object region", () => {
   it("refuses a binary date that extends past the object region", () => {
     // Strict bounds end objects at the offset table. Four payload bytes

@@ -20,6 +20,8 @@
 
 **[Website](https://rea.tools/) · [Guides](https://rea.tools/guides/) · [Showcases](https://rea.tools/showcase/)**
 
+<a href="https://discord.com/invite/GkcryMnJDM"><img alt="Discord par REA community mein shamil hon" src="https://img.shields.io/badge/Join%20us%20on%20Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white" height="40"></a>
+
 [Jaldi shuru karein](#jaldi-shuru-karein) · [REA kaise kaam karta hai](#rea-kaise-kaam-karta-hai) · [Kya kuch analyze kar sakte hain](#kya-kuch-analyze-kar-sakte-hain) · [Amli misaalein](#amli-misaalein) · [RL environments banayein](#build-rl-environments) · [FAQ](#faq) · [Documentation](#documentation)
 
 <code>npx rea-agents setup</code>
@@ -62,7 +64,7 @@ Kisi app mein aisa feature dekha jo aap apne product mein chahte hain? Apne agen
 
 REA aapke agent ko native binaries, JavaScript aur Electron apps, .NET assemblies aur websites inspect karne wale tools se jorta hai. Yehi tools terminal se bhi use kar sakte hain. Analysis local machine par hota hai, aur har natije ke saath uske saboot aur limitations bhi milti hain.
 
-Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra ya IDA use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
+Setup REA ko aapke agent ke saath register karta hai aur uske mutabiq workflow instructions install karta hai. Native analysis ke liye pehle se installed Hopper, Ghidra, IDA ya Kuna use ho sakta hai; aapki approval par setup Hopper bhi install kar sakta hai. Static JavaScript analysis ke liye native analysis engine ki zaroorat nahi.
 
 > Setup instructions, tasveeron ke saath guides aur asli case studies ke liye **[REA ki website dekhein](https://rea.tools/)**.
 
@@ -187,7 +189,7 @@ Mazeed tools aur host support target par depend karte hain:
 | Target                  | REA kya wapas deta hai                                                                            | Zarooriyat aur guide                                                                                                              |
 | ----------------------- | ------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
 | Desktop installations   | Runtime candidates, supporting files, component markers aur agle probes                           | Built-in bounded directory/header inspection; [desktop applications](../desktop-applications.md)                                  |
-| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra ya IDA; [native analysis](../native-investigation.md)                                                              |
+| Native binaries         | Pseudocode, assembly, strings, symbols, calls aur references                                      | Hopper, Ghidra, IDA ya Kuna; [native analysis](../native-investigation.md)                                                        |
 | Offline ELF layout      | Sections, segments, original symbols/relocations aur static mitigation candidates                 | Linux x64 par aapka diya hua pwntools; [binary diagnostics](../binary-diagnostics.md)                                             |
 | Go binaries             | Embedded compiler version, modules, replacements aur build settings                               | Built-in static ELF/PE/thin Mach-O inspection; Go install karna zaroori nahi                                                      |
 | GPU code objects        | CUDA/HIP targets, selected kernel parameters aur resources, retained PTX text                     | Built-in static ELF/PE/fatbin/CUBIN/PTX inspection; [GPU code objects](../gpu-code-objects.md)                                    |
@@ -198,6 +200,7 @@ Mazeed tools aur host support target par depend karte hain:
 | PE certificates         | Authenticode WIN_CERTIFICATE entries aur PKCS#7 signer/X.509 identity fields                      | Built-in static PE inspection; [PE certificates](../pe-certificates.md)                                                           |
 | PE imports              | Import aur delay-load DLL names, ordinals, IAT RVAs aur pefile import hash                        | Built-in static PE inspection; [PE imports](../pe-imports.md)                                                                     |
 | ELF notes               | PT_NOTE/SHT_NOTE owners, types, GNU build-id aur ABI-tag fields                                   | Built-in static ELF inspection; [ELF notes](../elf-notes.md)                                                                      |
+| Binary hardening        | PIE, NX, RELRO, CFG and related header flags for ELF, PE and Mach-O                               | Built-in static header inspection; [binary hardening](../binary-hardening.md)                                                     |
 | Linux kernel modules    | .modinfo keys, __versions CRCs, this_module presence, and signature trailer                       | Built-in static ELF inspection; [kernel modules](../kernel-modules.md)                                                            |
 | Erlang BEAM             | IFF chunks, atoms, exports, imports, lambdas aur Code header                                      | Built-in static BEAM inspection; [Erlang BEAM](../erlang-beam.md)                                                                 |
 | WASM artifact           | Validation, sections, exact import/export WAT forms aur decoded WAT                               | Aapka diya hua WABT 1.0.42; `inspect_wasm_artifact`                                                                               |
@@ -342,11 +345,11 @@ use kar sakte hain.
 </details>
 
 <details>
-<summary><strong>Kya mujhe Hopper, Ghidra ya IDA chahiye?</strong></summary>
+<summary><strong>Kya mujhe Hopper, Ghidra, IDA ya Kuna chahiye?</strong></summary>
 
 Deep native analysis in mein se ek use karta hai. Static JavaScript aur .NET
 inspection native analysis engine ke baghair kaam karti hai. Approval ke baad
-setup Hopper install kar sakta hai; Ghidra aur IDA ke liye aapki existing
+setup Hopper install kar sakta hai; Ghidra, IDA aur Kuna ke liye aapki existing
 installations use hoti hain. [Provider setup](../installation.md#hopper) dekhein.
 
 </details>
@@ -432,7 +435,7 @@ Security vulnerabilities [SECURITY.md](../../SECURITY.md) ke zariye report karei
 
 ## Stars ki history
 
-🎉 **300,000 GitHub stars — shukriya!**
+🎉 **400,000 GitHub stars — shukriya!**
 
 REA use karne, bugs report karne, features suggest karne, builds test karne aur
 fixes contribute karne wale sab logon ka shukriya.

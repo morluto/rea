@@ -84,3 +84,100 @@ it.each(["{broken", "\uFEFF{}"])(
     });
   },
 );
+
+// Python's wire spelling differs from the JavaScript number retained in Evidence.
+const nativeNumericReply = (literal: string) => {
+  const payload = decodeHarCapture(JSON.stringify(historicalHar()), []);
+  payload.records[0]!.reported = {
+    metadata: {
+      ["__proto__"]: { ["ratio/~"]: [Number(literal)] },
+      ordinary: 42,
+    },
+  };
+  payload.records[0]!.numeric_literals = [
+    {
+      pointer: "/metadata/__proto__/ratio~1~0/0",
+      producer_type: "float",
+      literal,
+    },
+  ];
+  return JSON.stringify({ ok: true, value: payload });
+};
+
+it.each([
+  ["1e-07", "1e-7"],
+  ["1e+20", "000000"],
+] as const)(
+  "excludes the public spelling of native number %s and its numeric sidecar",
+  async (literal, sensitive) => {
+    const bytes = Buffer.from(nativeNumericReply(literal));
+    const file = await replyFile(bytes);
+    const result = await readHistoricalCaptureReply(
+      file.path,
+      "/capture.mitm",
+      file.resources,
+      undefined,
+      [sensitive],
+    );
+    if (!result.value.ok) throw new Error("Expected a capture reply");
+    const record = result.value.value.records[0]!;
+    expect(record.reported).toEqual({
+      metadata: { ["__proto__"]: { ["ratio/~"]: [null] }, ordinary: 42 },
+    });
+    expect(record.numeric_literals).toEqual([]);
+    expect(record.redactions).toContainEqual({
+      pointer: "/metadata/__proto__/ratio~1~0/0",
+      reason: "explicit-sensitive-value",
+    });
+    expect(JSON.stringify(record)).not.toContain(sensitive);
+    expect(result.bytes).toBe(bytes.length);
+    expect(Reflect.get(Object.prototype, "ratio/~")).toBeUndefined();
+  },
+);
+
+it("preserves unmarked native numbers and exact producer literals", async () => {
+  const text = nativeNumericReply("1e-07");
+  const file = await replyFile(Buffer.from(text));
+  const result = await readHistoricalCaptureReply(
+    file.path,
+    "/capture.mitm",
+    file.resources,
+    undefined,
+    ["unrelated"],
+  );
+  expect(result.value).toEqual(JSON.parse(text));
+});
+
+it.each(["container", "record"] as const)(
+  "excludes a normalized number at the %s root",
+  async (kind) => {
+    const payload = decodeHarCapture(JSON.stringify(historicalHar()), []);
+    const projection =
+      kind === "container" ? payload.container : payload.records[0]!;
+    projection.reported = 1e-7;
+    projection.numeric_literals = [
+      { pointer: "", producer_type: "float", literal: "1e-07" },
+    ];
+    projection.redactions = [];
+    const file = await replyFile(
+      Buffer.from(JSON.stringify({ ok: true, value: payload })),
+    );
+    const result = await readHistoricalCaptureReply(
+      file.path,
+      "/capture.mitm",
+      file.resources,
+      undefined,
+      ["1e-7"],
+    );
+    if (!result.value.ok) throw new Error("Expected a capture reply");
+    const retained =
+      kind === "container"
+        ? result.value.value.container
+        : result.value.value.records[0]!;
+    expect(retained.reported).toBeNull();
+    expect(retained.numeric_literals).toEqual([]);
+    expect(retained.redactions).toEqual([
+      { pointer: "", reason: "explicit-sensitive-value" },
+    ]);
+  },
+);

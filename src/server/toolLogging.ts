@@ -2,11 +2,13 @@ import type { Result } from "../domain/result.js";
 import type { Logger } from "pino";
 
 /** Log one MCP tool's duration and status without recording caller input. */
-export const logToolExecution = async <Value, Failure>(
+export const logToolExecution = async <
+  Outcome extends Result<unknown, unknown>,
+>(
   logger: Logger,
   tool: string,
-  execute: () => Promise<Result<Value, Failure>>,
-): Promise<Result<Value, Failure>> => {
+  execute: () => Promise<Outcome>,
+): Promise<Outcome> => {
   const startedAt = performance.now();
   const result = await execute();
   logger[result.ok ? "info" : "warn"](

@@ -8,20 +8,20 @@ import { fileURLToPath } from "node:url";
 import { parseConfig } from "../dist/config/parseConfig.js";
 import { resolveGhidraAnalysisProfile } from "../dist/ghidra/GhidraAnalysisProfile.js";
 import { GhidraClient } from "../dist/ghidra/GhidraClient.js";
+import { GHIDRA_FUNCTION_OPERATIONS } from "../dist/ghidra/GhidraFunctionOperations.js";
 import {
-  GHIDRA_FUNCTION_OPERATIONS,
   parseGhidraFunctionInput,
   parseGhidraFunctionResult,
 } from "../dist/ghidra/GhidraFunctionValues.js";
+import { GHIDRA_INVENTORY_OPERATIONS } from "../dist/ghidra/GhidraInventoryOperations.js";
 import {
-  GHIDRA_INVENTORY_OPERATIONS,
   parseGhidraInventoryInput,
   parseGhidraInventoryResult,
 } from "../dist/ghidra/GhidraInventoryValues.js";
 import { inspectVerifierGhidraInstallation } from "./lib/ghidra-installation-inspection.mjs";
 import { SUPPORTED_GHIDRA_VERSION } from "../dist/ghidra/GhidraReleasePolicy.js";
 import { GhidraHeadlessLauncher } from "../dist/ghidra/GhidraLauncher.js";
-import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "../dist/ghidra/GhidraProviderMetadata.js";
 import {
   WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
   windowsP0Capabilities,

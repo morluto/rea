@@ -19,13 +19,18 @@ import {
   observeMzWindowsHeader,
   type MzWindowsHeaderSignatureEvidence,
 } from "../domain/dosMz.js";
+import { DFUSE_SUFFIX_BYTES } from "../domain/firmware/dfuse.js";
 
 /** Initial bytes required by the other bounded format classifiers. */
 export const ARTIFACT_CLASSIFICATION_PREFIX_BYTES = 8_192;
+/** Final bytes kept for formats identified by a trailer: the DFU suffix. */
+const ARTIFACT_CLASSIFICATION_SUFFIX_BYTES = DFUSE_SUFFIX_BYTES;
 
 /** Retained prefix plus bounded format-specific observations from the stream. */
 export interface ArtifactClassificationEvidence {
   readonly prefix: Buffer;
+  /** The last bytes of the stream, when the producer observed its end. */
+  readonly suffix?: Buffer;
   readonly asarHeader: FinalAsarHeaderProbeObservation;
   readonly fatSliceHeaders?: FatSliceHeaderEvidence;
   readonly mzWindowsHeaderSignature?: MzWindowsHeaderSignatureEvidence;
@@ -76,6 +81,7 @@ const observeFatSliceHeaders = (input: {
 
 const finishClassificationEvidence = (
   prefix: Buffer,
+  suffix: Buffer | undefined,
   archiveBytes: number,
   finishAsar: (archiveBytes: number) => FinalAsarHeaderProbeObservation,
   sliceHeadersByOffset: Map<number, MachoHeaderPrefixFacts>,
@@ -106,6 +112,7 @@ const finishClassificationEvidence = (
       : undefined;
   return {
     prefix,
+    ...(suffix === undefined ? {} : { suffix }),
     asarHeader: finishAsar(archiveBytes),
     ...(fatSliceHeaders === undefined ? {} : { fatSliceHeaders }),
     ...(mzWindowsHeaderSignature === undefined
@@ -132,6 +139,18 @@ export const createArtifactClassificationProbe = (
   let mzWindowsHeaderSignature: MzWindowsHeaderSignatureEvidence | undefined;
   let mzWindowsHeaderOffset: number | undefined;
   let mzHeaderChecked = false;
+  let suffix = Buffer.alloc(0);
+  const observeSuffix = (bytes: Uint8Array): void => {
+    const joined =
+      bytes.length >= ARTIFACT_CLASSIFICATION_SUFFIX_BYTES
+        ? bytes
+        : Buffer.concat([suffix, bytes]);
+    suffix = Buffer.from(
+      joined.subarray(
+        Math.max(0, joined.length - ARTIFACT_CLASSIFICATION_SUFFIX_BYTES),
+      ),
+    );
+  };
   const observeSignatureWindow = (
     offset: number,
     sourceOffset: number,
@@ -258,11 +277,14 @@ export const createArtifactClassificationProbe = (
       }
       if (mzWindowsHeaderOffset !== undefined)
         observeSignatureWindow(mzWindowsHeaderOffset, streamOffset, bytes);
+      observeSuffix(bytes);
       observedBytes += bytes.length;
     },
     finish(archiveBytes: number): ArtifactClassificationEvidence {
       return finishClassificationEvidence(
         retainedPrefix(),
+        // Bytes the probe did not observe could still follow its last write.
+        observedBytes === archiveBytes ? suffix : undefined,
         archiveBytes,
         (bytes) => asar.finish(bytes),
         fatSliceHeadersByOffset,

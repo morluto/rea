@@ -23,10 +23,8 @@ import {
   type JavaScriptBindingIndex,
   type JavaScriptSemanticBindingState,
 } from "./javascriptSemanticState.js";
-import {
-  semanticCopiedReferencePath,
-  semanticReferenceSourcesInactive,
-} from "./javascriptSemanticReferenceSources.js";
+import { semanticReferenceSourcesInactive } from "./javascriptSemanticReferenceSources.js";
+import { semanticCopiedReferencePath } from "./javascriptSemanticCopiedReferencePaths.js";
 import {
   semanticAliasSelectionChoices,
   type SemanticAliasSelectionPath,
@@ -452,7 +450,7 @@ export class JavaScriptRouteScan {
             const binding = semanticBindingAtRead(
               declared,
               node,
-              this.index.bindings.parentsByNode,
+              this.index.bindings,
             ).binding;
             for (const initializers of [
               binding.initializers,
@@ -831,11 +829,7 @@ export class JavaScriptRouteScan {
       // Decide generic-constant admission only after all specific owners finish.
       if (this.#propertyValues.has(literal.node)) continue;
       const path = routePath(literal.value, { navigation: true });
-      if (
-        path === undefined ||
-        /^\/(?:_next|api|assets|static)(?:\/|$)/u.test(path)
-      )
-        continue;
+      if (path === undefined) continue;
       // These remain inferred candidates. The inventory owner additionally binds them to app roots across sources.
       if (this.#nextRuntime || roots.has(path.split("/")[1]!))
         this.#emit(
@@ -1024,11 +1018,7 @@ export class JavaScriptRouteScan {
       seen.add(node);
       const binding = index.bindingForReferenceAt(node);
       if (binding === undefined) return;
-      const read = semanticBindingAtRead(
-        binding,
-        node,
-        index.bindings.parentsByNode,
-      );
+      const read = semanticBindingAtRead(binding, node, index.bindings);
       if (!read.hasDefiniteInitializer) return;
       const initializer = semanticStableInitializer(
         read.binding,
