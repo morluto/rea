@@ -175,7 +175,7 @@ const byOwnAttribute = (element: string, ends: Ends): Candidate | undefined => {
 const MAX_TAG_CLIMB = 3;
 
 /** Whether an element's text, or a descendant's, is a time or a value the app makes anew. */
-const holdsNoisyText = (value: JsonValue | undefined): boolean => {
+export const holdsNoisyText = (value: JsonValue | undefined): boolean => {
   if (typeof value === "string") {
     const text = value.trim();
     return text.length > 0 && (isStamp(text) || isVolatileValue(text));
@@ -441,6 +441,7 @@ const textCheck = (
   return value !== old &&
     value.length <= context.place.limit.chars &&
     !isStamp(value) &&
+    !holdsNoisyText(now) &&
     !holdsSplitDate(context.ends.final, pointer)
     ? {
         element: candidate.element,
