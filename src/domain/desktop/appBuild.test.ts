@@ -1,5 +1,13 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, readlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  lstat,
+  mkdir,
+  readFile,
+  readlink,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,7 +18,9 @@ import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirect
 import { PACKAGE_METADATA } from "../../generatedPackageMetadata.js";
 import {
   BUILD_NODE_VERSION,
+  BUILD_PACKAGE_FILE,
   buildSourceSchema,
+  extraPackagesOf,
   renderBuildBundle,
   type BuildBundleFile,
   type BuildRequest,
@@ -33,7 +43,7 @@ const text = (files: readonly BuildBundleFile[], path: string): string => {
 describe("build bundle renderer", () => {
   it("installs an archive package, opens it on demand and adds REA in a build-only layer", () => {
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     expect(bundle.name).toBe("mousepad");
@@ -50,10 +60,10 @@ describe("build bundle renderer", () => {
     ).toEqual({ copyFrom: "/builds/rea-prod.tar.xz" });
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["mousepad", "libgtk-3-bin"])',
+      'packages=Packages(apt=["mousepad", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "org.xfce.mousepad"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'org.xfce.mousepad'"]),`,
     );
     expect(module).toContain('"arch": ["amd64", "arm64"]');
     expect(module).toContain(
@@ -118,6 +128,20 @@ describe("build bundle install sources", () => {
     expect(copied instanceof Uint8Array && key.equals(copied)).toBe(true);
   });
 
+  it("installs an archive package's extra packages beside it", () => {
+    const bundle = renderBuildBundle(
+      request({
+        kind: "archive",
+        package: "freeplane",
+        extra_packages: ["openjdk-17-jre"],
+      }),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/mousepad/mousepad_app.py")).toContain(
+      'packages=Packages(apt=["freeplane", "openjdk-17-jre", "libgtk-3-bin", "dconf-cli"])',
+    );
+  });
+
   it("downloads a .deb for its architecture and installs it after its dependencies", () => {
     const sha256 = "a".repeat(64);
     const bundle = renderBuildBundle(
@@ -136,7 +160,7 @@ describe("build bundle install sources", () => {
     );
     const module = text(bundle.files, "envs/mousepad/mousepad_app.py");
     expect(module).toContain(
-      'packages=Packages(apt=["libgl1", "libgtk-3-bin"])',
+      'packages=Packages(apt=["libgl1", "libgtk-3-bin", "dconf-cli"])',
     );
     expect(module).toContain(
       `Download(url="https://downloads.example.com/varicad.deb", sha256="${sha256}", to="vendor/package.deb", arch="amd64")`,
@@ -146,9 +170,14 @@ describe("build bundle install sources", () => {
     );
     expect(module).toContain('"arch": ["amd64"]');
     expect(module).not.toContain('to="node-arm64.tar.xz"');
+    // REA's layer keeps the .deb for the capture before the install removes it.
     expect(module).toContain(
-      'run=[RunScript(script="install-package.sh"), RunScript(script="install-rea.sh")]',
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-package.sh")]',
     );
+    expect(text(bundle.files, "envs/mousepad/install-rea.sh")).toContain(
+      `cp vendor/package.deb ${BUILD_PACKAGE_FILE}`,
+    );
+    expect(BUILD_PACKAGE_FILE).toBe("/opt/rea/package.deb");
     expect(text(bundle.files, "envs/mousepad/install-package.sh")).toContain(
       "dpkg -i 'vendor/package.deb'",
     );
@@ -198,6 +227,341 @@ describe("build bundle install sources", () => {
   });
 });
 
+const DRAWIO_URL =
+  "https://github.com/jgraph/drawio-desktop/releases/download/v32.6.10/drawio-arm64-32.6.10.AppImage";
+const DRAWIO_SHA256 =
+  "2b3a66339d56a87a346df52b65fc39a342da1b12b5eed80a633c3bb6c031700e";
+const NOTES_URL = "https://downloads.example.com/notes-2.0-linux-arm64.tar.xz";
+
+const appImageRequest = (desktopEntry: string): BuildRequest => ({
+  kind: "request",
+  desktop_entry: desktopEntry,
+  electron: true,
+  install: {
+    kind: "appimage",
+    url: DRAWIO_URL,
+    sha256: DRAWIO_SHA256,
+    architecture: "arm64",
+    extra_packages: ["libasound2t64"],
+  },
+});
+
+const tarballRequest = (program: string): BuildRequest => ({
+  kind: "request",
+  desktop_entry: "org.example.Notes",
+  install: {
+    kind: "tarball",
+    url: NOTES_URL,
+    sha256: "c".repeat(64),
+    architecture: "arm64",
+    program,
+    name: "Example Notes",
+    extra_packages: [],
+  },
+});
+
+describe("build bundle download installs", () => {
+  it("downloads an AppImage for its architecture and extracts it after REA's layer and before the Electron rewrite", () => {
+    const source = appImageRequest("drawio");
+    const bundle = renderBuildBundle(source, localPayload);
+    const module = text(bundle.files, "envs/drawio/drawio_app.py");
+    expect(module).toContain(
+      'packages=Packages(apt=["libasound2t64", "libgtk-3-bin", "dconf-cli"])',
+    );
+    expect(module).toContain(
+      `Download(url="${DRAWIO_URL}", sha256="${DRAWIO_SHA256}", to="vendor/app.AppImage", arch="arm64")`,
+    );
+    expect(module).toContain('"arch": ["arm64"]');
+    expect(module).not.toContain('to="node-amd64.tar.xz"');
+    // The Electron rewrite edits the desktop entry the extract step installs.
+    expect(module).toContain(
+      'run=[RunScript(script="install-rea.sh"), RunScript(script="install-download.sh"), RunScript(script="prepare-electron-launch.sh")]',
+    );
+    expect(module).toContain("exec gtk-launch 'drawio'");
+    expect(text(bundle.files, "envs/drawio/install-download.sh")).toContain(
+      "--appimage-extract",
+    );
+    expect(extraPackagesOf(source)).toEqual(["libasound2t64"]);
+  });
+
+  it("downloads a tarball and ships the desktop entry REA writes for its program", () => {
+    const bundle = renderBuildBundle(
+      tarballRequest("notes-2.0/bin/notes"),
+      localPayload,
+    );
+    expect(text(bundle.files, "envs/notes/notes_app.py")).toContain(
+      `Download(url="${NOTES_URL}", sha256="${"c".repeat(64)}", to="vendor/app.tar", arch="arm64")`,
+    );
+    expect(
+      text(bundle.files, "envs/notes/applications/org.example.Notes.desktop"),
+    ).toBe(
+      "[Desktop Entry]\nType=Application\nName=Example Notes\nExec=/opt/rea-apps/org.example.Notes/notes-2.0/bin/notes %F\nTerminal=false\n",
+    );
+  });
+
+  it("admits a download only by an http or https URL, its SHA-256 and a program inside the archive", () => {
+    const install = (fields: Record<string, unknown>) =>
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "org.example.Notes",
+        install: {
+          kind: "tarball",
+          url: NOTES_URL,
+          sha256: "c".repeat(64),
+          architecture: "arm64",
+          program: "notes-2.0/bin/notes",
+          ...fields,
+        },
+      }).success;
+    expect(install({})).toBe(true);
+    expect(install({ program: "../bin/sh" })).toBe(false);
+    expect(install({ program: "/usr/bin/notes" })).toBe(false);
+    expect(install({ program: "notes//notes" })).toBe(false);
+    expect(install({ sha256: "C".repeat(64) })).toBe(false);
+    expect(install({ url: "ftp://downloads.example.com/notes.tar.xz" })).toBe(
+      false,
+    );
+    expect(install({ name: "Notes\nExec=/bin/sh" })).toBe(false);
+    expect(install({ architecture: "armhf" })).toBe(false);
+    expect(
+      buildSourceSchema.safeParse({
+        kind: "request",
+        desktop_entry: "drawio",
+        install: {
+          kind: "appimage",
+          url: "https://user:secret@example.com/drawio.AppImage",
+          sha256: DRAWIO_SHA256,
+          architecture: "arm64",
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
+/** Run a rendered download install as the computer would, with its absolute folders moved under `root`. */
+const runDownloadInstall = async (
+  bundle: ReturnType<typeof renderBuildBundle>,
+  root: string,
+) => {
+  const environment = join(root, "env");
+  const moved = (content: string) =>
+    content
+      .replaceAll("/opt/rea-apps", join(root, "opt/rea-apps"))
+      .replaceAll("/usr/local/share", join(root, "local-share"));
+  for (const file of bundle.files) {
+    const path = file.path.replace(`envs/${bundle.name}/`, "");
+    if (typeof file.content !== "string" || path === file.path) continue;
+    await mkdir(dirname(join(environment, path)), { recursive: true });
+    await writeFile(join(environment, path), moved(file.content));
+  }
+  return execute("sh", ["install-download.sh"], { cwd: environment });
+};
+
+const STUB_APPIMAGE = `#!/bin/sh
+[ "$1" = "--appimage-extract" ] || exit 9
+mkdir -p squashfs-root
+printf '#!/bin/sh\\necho draw.io\\n' > squashfs-root/AppRun
+chmod 700 squashfs-root/AppRun
+printf '%s\\n' '[Desktop Entry]' 'Name=draw.io' 'Exec=drawio %U' 'TryExec=drawio' 'Icon=drawio' '' '[Desktop Action New]' 'Exec="drawio" --new-window' > squashfs-root/drawio.desktop
+printf '<svg/>\\n' > squashfs-root/drawio.svg
+`;
+
+/** A tarball holding the program and a link out of the folder: a hardlink to `<outside>/passwd` then a file written through it, or a symlink to `<outside>`. */
+const CRAFTED_TARBALL = `
+import io, sys, tarfile
+path, outside, link = sys.argv[1:4]
+
+def add(archive, name, data=None, **fields):
+    member = tarfile.TarInfo(name)
+    for key, value in fields.items():
+        setattr(member, key, value)
+    member.size = 0 if data is None else len(data)
+    archive.addfile(member, None if data is None else io.BytesIO(data))
+
+with tarfile.open(path, "w:gz") as archive:
+    add(archive, "notes-2.0/bin/notes", b"#!/bin/sh\\n", mode=0o755)
+    if link == "hardlink":
+        add(archive, "notes-2.0/etc", type=tarfile.LNKTYPE, linkname=outside + "/passwd")
+        add(archive, "notes-2.0/etc", b"overwritten\\n")
+    else:
+        add(archive, "notes-2.0/etc", type=tarfile.SYMTYPE, linkname=outside)
+`;
+
+const exists = (path: string) =>
+  stat(path).then(
+    () => true,
+    () => false,
+  );
+
+/** A temporary root with the environment folder's `vendor` folder, where agentenv puts a download. */
+const stage = async (prefix: string) => {
+  const root = await createTestTempDirectory(prefix);
+  await mkdir(join(root, "env/vendor"), { recursive: true });
+  return root;
+};
+
+describe("download install scripts", () => {
+  it("extracts an AppImage under its folder and installs its own entry with an absolute Exec, its icon and no TryExec", async () => {
+    const root = await stage("rea-appimage-install-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(image, STUB_APPIMAGE);
+    await chmod(image, 0o755);
+    await runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    );
+
+    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+    expect(
+      await readFile(join(root, "local-share/applications/drawio.desktop"), {
+        encoding: "utf8",
+      }),
+    ).toBe(
+      `[Desktop Entry]\nName=draw.io\nExec=${appRun} %U\nIcon=drawio\n\n[Desktop Action New]\nExec=${appRun} --new-window\n`,
+    );
+    expect(
+      await exists(
+        join(root, "local-share/icons/hicolor/scalable/apps/drawio.svg"),
+      ),
+    ).toBe(true);
+    // The session user runs what root extracted.
+    expect((await stat(appRun)).mode & 0o055).toBe(0o055);
+    expect(await exists(image)).toBe(false);
+  });
+
+  it("fails the build when the AppImage ships no entry by the requested name, naming those it ships", async () => {
+    const root = await stage("rea-appimage-entry-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(image, STUB_APPIMAGE);
+    await chmod(image, 0o755);
+    const failed = await runDownloadInstall(
+      renderBuildBundle(appImageRequest("com.example.Other"), localPayload),
+      root,
+    ).then(
+      () => undefined,
+      (error: unknown) => error as { stderr: string },
+    );
+    expect(failed?.stderr).toContain("com.example.Other.desktop");
+    expect(failed?.stderr).toContain("drawio.desktop");
+  });
+
+  it("keeps an env prefix and its assignments when it points the AppImage's entry at AppRun", async () => {
+    const root = await stage("rea-appimage-env-");
+    const image = join(root, "env/vendor/app.AppImage");
+    await writeFile(
+      image,
+      STUB_APPIMAGE.replace(
+        "'Exec=drawio %U'",
+        "'Exec=env QT_QPA_PLATFORM=xcb \"GTK_THEME=Adwaita dark\" drawio %U'",
+      ),
+    );
+    await chmod(image, 0o755);
+    await runDownloadInstall(
+      renderBuildBundle(appImageRequest("drawio"), localPayload),
+      root,
+    );
+
+    const appRun = join(root, "opt/rea-apps/drawio/squashfs-root/AppRun");
+    expect(
+      await readFile(
+        join(root, "local-share/applications/drawio.desktop"),
+        "utf8",
+      ),
+    ).toContain(
+      `\nExec=env QT_QPA_PLATFORM=xcb "GTK_THEME=Adwaita dark" ${appRun} %U\n`,
+    );
+  });
+
+  it("unpacks a tarball without xz under its folder and installs the entry REA wrote for its program", async () => {
+    const root = await stage("rea-tarball-install-");
+    const program = join(root, "src/notes-2.0/bin/notes");
+    await mkdir(dirname(program), { recursive: true });
+    await writeFile(program, "#!/bin/sh\necho notes\n");
+    await chmod(program, 0o755);
+    await execute("tar", [
+      "-cJf",
+      join(root, "env/vendor/app.tar"),
+      "-C",
+      join(root, "src"),
+      "notes-2.0",
+    ]);
+    await runDownloadInstall(
+      renderBuildBundle(tarballRequest("notes-2.0/bin/notes"), localPayload),
+      root,
+    );
+
+    const installed = join(
+      root,
+      "opt/rea-apps/org.example.Notes/notes-2.0/bin/notes",
+    );
+    expect(await readFile(installed, "utf8")).toBe("#!/bin/sh\necho notes\n");
+    expect(
+      await readFile(
+        join(root, "local-share/applications/org.example.Notes.desktop"),
+        "utf8",
+      ),
+    ).toContain(`Exec=${installed} %F\n`);
+    expect(await exists(join(root, "env/vendor/app.tar"))).toBe(false);
+
+    const missing = await stage("rea-tarball-program-");
+    await execute("tar", [
+      "-cJf",
+      join(missing, "env/vendor/app.tar"),
+      "-C",
+      join(root, "src"),
+      "notes-2.0",
+    ]);
+    const failed = await runDownloadInstall(
+      renderBuildBundle(tarballRequest("notes-2.0/notes"), localPayload),
+      missing,
+    ).then(
+      () => undefined,
+      (error: unknown) => error as { stderr: string },
+    );
+    expect(failed?.stderr).toContain("notes-2.0/notes");
+    expect(failed?.stderr).toContain("notes-2.0");
+  });
+});
+
+describe("download install scripts and archive links", () => {
+  it("refuses a tarball whose links point outside its folder, leaving the files they name untouched", async () => {
+    for (const link of ["hardlink", "symlink"]) {
+      const root = await stage(`rea-tarball-${link}-`);
+      const outside = join(root, "outside");
+      await mkdir(outside);
+      await writeFile(join(outside, "passwd"), "kept\n");
+      await execute("python3", [
+        "-I",
+        "-c",
+        CRAFTED_TARBALL,
+        join(root, "env/vendor/app.tar"),
+        outside,
+        link,
+      ]);
+      const failed = await runDownloadInstall(
+        renderBuildBundle(tarballRequest("notes-2.0/bin/notes"), localPayload),
+        root,
+      ).then(
+        () => undefined,
+        (error: unknown) => error as { stderr: string },
+      );
+
+      expect(await readFile(join(outside, "passwd"), "utf8"), link).toBe(
+        "kept\n",
+      );
+      const placed = join(root, "opt/rea-apps/org.example.Notes/notes-2.0/etc");
+      expect(
+        await lstat(placed).then(
+          (entry) => entry.isSymbolicLink() || entry.nlink > 1,
+          () => false,
+        ),
+        link,
+      ).toBe(false);
+      expect(failed?.stderr ?? "", link).toContain("notes-2.0/etc");
+    }
+  });
+});
+
 const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
@@ -236,7 +600,7 @@ describe("installed launch paths", () => {
       "REA Build",
     ]);
     const bundle = renderBuildBundle(
-      request({ kind: "archive", package: "mousepad" }),
+      request({ kind: "archive", package: "mousepad", extra_packages: [] }),
       localPayload,
     );
     const script = text(bundle.files, "envs/mousepad/install-rea.sh")
@@ -260,7 +624,7 @@ describe("installed launch paths", () => {
   it("rewrites an Electron desktop command with the shared launch policy", async () => {
     const bundle = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora.desktop",
         electron: true,
       },
@@ -271,14 +635,14 @@ describe("installed launch paths", () => {
     );
     const module = text(bundle.files, "envs/typora/typora_app.py");
     expect(module).toContain(
-      'launch=Launch(at="demand", command=["gtk-launch", "typora"]),',
+      `launch=Launch(at="demand", command=["sh", "-c", "cd \\"$HOME\\" 2>/dev/null; exec gtk-launch 'typora'"]),`,
     );
     expect(module).toContain(
       'run=[RunScript(script="install-rea.sh"), RunScript(script="prepare-electron-launch.sh")]',
     );
     const plain = renderBuildBundle(
       {
-        ...request({ kind: "archive", package: "typora" }),
+        ...request({ kind: "archive", package: "typora", extra_packages: [] }),
         desktop_entry: "typora",
         electron: false,
       },

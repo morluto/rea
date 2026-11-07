@@ -13,7 +13,10 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
-import { DESKTOP_CAPTURE_DEFAULTS } from "../domain/desktop/desktopCapture.js";
+import {
+  DESKTOP_CAPTURE_DEFAULTS,
+  type DesktopCaptureProgress,
+} from "../domain/desktop/desktopCapture.js";
 import { SessionRequestQueue } from "../desktop/DesktopSessionRequests.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import type { CliInstance } from "./types.js";
@@ -163,6 +166,24 @@ const registerDesktopExportCommand = (
         .describe(
           "http or https URL the computer downloads the captured --package-file from when the bundle is put, for an application installed from a .deb file",
         ),
+      downloadInstall: z
+        .string()
+        .optional()
+        .describe(
+          "JSON file naming the AppImage or tarball a build computer unpacked the application from: kind, desktop_entry, url, sha256, architecture, and a tarball's program and name",
+        ),
+      extraPackage: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Ubuntu 24.04 archive package installed beside the application, such as a runtime piece its package does not install; repeat for more",
+        ),
+      syntheticSeed: z
+        .boolean()
+        .default(false)
+        .describe(
+          "The seed was made for the task, as in a build computer, not taken from the user's own data; the README says so instead of keeping the bundle local",
+        ),
       ...checkpointOptions,
     }),
     run: ({ args, options }) =>
@@ -187,8 +208,14 @@ const registerDesktopExportCommand = (
                       absoluteCallerPath(path),
                     ),
                     packageUrl: options.packageUrl,
+                    downloadInstall:
+                      options.downloadInstall === undefined
+                        ? undefined
+                        : absoluteCallerPath(options.downloadInstall),
+                    extraPackages: options.extraPackage,
                     seedCheckpoint: options.seedCheckpoint,
                     endCheckpoint: options.endCheckpoint,
+                    syntheticSeed: options.syntheticSeed,
                   },
                   readers,
                   signal,
@@ -325,10 +352,15 @@ export const registerDesktopCaptureCommands = (
                   environment,
                   callerDirectory: process.cwd(),
                   nextRequest: () => requests.next(),
-                  report: async (message) => {
-                    process.stderr.write(
-                      `${JSON.stringify({ rea_progress: { phase: "desktop_capture", message } })}\n`,
-                    );
+                  report: async (message, event) => {
+                    const progress: DesktopCaptureProgress = {
+                      rea_progress: {
+                        phase: "desktop_capture",
+                        message,
+                        ...(event === undefined ? {} : { event }),
+                      },
+                    };
+                    process.stderr.write(`${JSON.stringify(progress)}\n`);
                   },
                 },
                 signal,

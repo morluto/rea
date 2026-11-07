@@ -4,7 +4,11 @@ import { fixedTupleSchema } from "../fixedTupleSchema.js";
 import type { JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 
-/** Actions REA forwards to an agentenv computer's driver, each as its `computer_<action>` tool. */
+/**
+ * Actions on a build computer: each but `reset` is forwarded to the driver
+ * as its `computer_<action>` tool; `reset` restores the app's data to its
+ * seed with `data/reset`.
+ */
 export const COMPUTER_ACTIONS = [
   "screenshot",
   "click",
@@ -13,6 +17,7 @@ export const COMPUTER_ACTIONS = [
   "type",
   "key",
   "wait",
+  "reset",
 ] as const;
 export type ComputerAction = (typeof COMPUTER_ACTIONS)[number];
 
@@ -42,6 +47,7 @@ const ACTION_FIELDS: Readonly<Record<ComputerAction, readonly string[]>> = {
   type: ["text", "screenshot"],
   key: ["keys", "repeat", "screenshot"],
   wait: ["ms", "screenshot"],
+  reset: ["screenshot"],
 };
 
 const coordinate = z
@@ -52,7 +58,9 @@ const coordinate = z
 const SCREENSHOT_FIELDS = {
   region: fixedTupleSchema([z.number(), z.number(), z.number(), z.number()])
     .optional()
-    .describe("screenshot: [x0, y0, x1, y1] to crop to."),
+    .describe(
+      "screenshot: [x0, y0, x1, y1] to crop to. It does not capture the screen again; it crops the latest frame, so take a full screenshot, or a wait with screenshot true, first.",
+    ),
   format: z.enum(["png", "jpeg"]).optional(),
   quality: z.int().min(1).max(100).optional().describe("jpeg quality."),
 };
@@ -66,7 +74,9 @@ export const computerActionInputSchema = z.strictObject({
   computer_id: z.uuid().describe("The id start_build_computer returned."),
   action: z
     .enum(COMPUTER_ACTIONS)
-    .describe("The driver's computer_<action> tool to call."),
+    .describe(
+      "The driver's computer_<action> tool to call, or reset to restore the app's data to its seed.",
+    ),
   x: coordinate.optional(),
   y: coordinate.optional(),
   frame_id: z
@@ -95,7 +105,9 @@ export const computerActionInputSchema = z.strictObject({
     .array(fixedTupleSchema([z.number(), z.number()]))
     .min(2)
     .optional()
-    .describe("drag: [x, y] points from press to release."),
+    .describe(
+      "drag: 2 to 50 [x, y] points from press to release; the driver refuses more.",
+    ),
   duration_ms: z.int().nonnegative().optional(),
   direction: z.enum(["up", "down", "left", "right"]).optional(),
   amount: z.int().positive().optional().describe("scroll: notches."),
@@ -171,7 +183,7 @@ export const w3cKeys = (keys: readonly string[]): string[] =>
     ONE_CHARACTER.test(key) ? [key] : key.split(/\+(?!$)/u).map(w3cKey),
   );
 
-/** The driver tool and arguments for an action, or the first field the action does not take. */
+/** The tool and arguments for an action, `data/reset` for a reset, or the first field the action does not take. */
 export const driverCall = (
   action: ComputerAction,
   fields: Readonly<Record<string, JsonValue | undefined>>,
@@ -193,5 +205,8 @@ export const driverCall = (
         : value,
     ]),
   );
-  return ok({ tool: `computer_${action}`, arguments: translated });
+  return ok({
+    tool: action === "reset" ? "data/reset" : `computer_${action}`,
+    arguments: translated,
+  });
 };

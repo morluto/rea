@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { getHeapStatistics } from "node:v8";
 
@@ -12,14 +12,24 @@ import type {
   ComputerHelper,
   ComputerRelease,
 } from "./AgentEnvComputerHelper.js";
+import { drawnScreenshot } from "./DrawnScreenshot.js";
+import { awaitHttpReply, type HttpReply } from "./HttpReply.js";
 
 const READY_TIMEOUT_MS = 180_000;
 const REQUEST_TIMEOUT_MS = 120_000;
+const PROGRESS_MS = 5_000;
 const RECORDINGS = ".agentenv-recordings";
 /** A control route's answer: readiness, or a recording's manifest, near 1.5 MB for a day of 15 s segments. */
 const CONTROL_RESPONSE_BYTES = 4 * 1024 * 1024;
 /** What a data/get answer holds around one file's base64 bytes. */
 const ENVELOPE_BYTES = 64 * 1024;
+/** An exec answer: two streams of at most 1 MiB each, which JSON escaping can grow sixfold. */
+const EXEC_RESPONSE_BYTES = 16 * 1024 * 1024;
+/** The base64 answer for `bytes` of files, with each file's envelope. */
+const dataAnswerBytes = (bytes: number, files: number) =>
+  Math.ceil(bytes / 3) * 4 + ENVELOPE_BYTES * Math.max(files, 1);
+/** The most REA reads into memory for one answer of unknown size: a quarter of the V8 heap, as for recordings. */
+const heapQuarter = () => Math.floor(getHeapStatistics().heap_size_limit / 4);
 
 const readinessSchema = z.object({
   ready: z.boolean(),
@@ -67,6 +77,31 @@ const dataGetSchema = z.union([
   }),
   z.object({ error: z.looseObject({ message: z.string() }) }),
 ]);
+const rpcSchema = z.union([
+  z.object({ result: z.looseObject({}) }),
+  z.object({ error: z.looseObject({ message: z.string() }) }),
+]);
+const execSchema = z.object({
+  exit_code: z.int().nullable(),
+  stdout: z.string(),
+  stderr: z.string(),
+  truncated: z.boolean(),
+  timed_out: z.boolean(),
+});
+/** A command's outcome through `computer-exec/v1`, its output without the control token. */
+export type ComputerCommandResult = z.infer<typeof execSchema>;
+const cardSchema = z.looseObject({
+  children_environments: z
+    .array(z.looseObject({ name: z.string(), url: z.string().optional() }))
+    .optional(),
+});
+
+/** How long a route may take and how much of its answer REA reads. */
+interface RequestBounds {
+  readonly limit?: { readonly bytes: number; readonly what: string };
+  /** The deadline of a route that answers only once its work ends, which REA waits out past fetch's 300 s for headers. */
+  readonly timeoutMs?: number;
+}
 
 /** A driver tool's answer as REA forwards it: its content blocks unchanged and its structured result. */
 export interface DriverResult {
@@ -77,7 +112,7 @@ export interface DriverResult {
 
 /** A response body read only while it stays within `maxBytes`. */
 const readBounded = async (
-  response: Response,
+  response: HttpReply,
   maxBytes: number,
   what: string,
 ): Promise<string> => {
@@ -104,6 +139,27 @@ export class ComputerStartFailure extends Error {
     this.name = "ComputerStartFailure";
   }
 }
+
+/** Every few seconds while a computer comes up, report the phase and agentenv's latest line. */
+const progressHeartbeat = (
+  helper: ComputerHelper,
+  phase: { readonly name: string },
+  progress: ((message: string) => void) | undefined,
+) => {
+  if (progress === undefined) return undefined;
+  const startedAt = Date.now();
+  return setInterval(() => {
+    const line = helper
+      .output()
+      .stderr.trimEnd()
+      .split("\n")
+      .at(-1)
+      ?.slice(-200);
+    progress(
+      `${phase.name} (${String(Math.round((Date.now() - startedAt) / 1000))} s)${line === undefined || line === "" ? "" : `: ${line}`}`,
+    );
+  }, PROGRESS_MS);
+};
 
 const connectDriver = async (
   mcpUrl: string,
@@ -153,20 +209,40 @@ export class AgentEnvComputer {
 
   /**
    * Connect to the computer a helper keeps up: wait for its handshake and
-   * readiness and open an MCP session to its driver. A failure throws a
-   * `ComputerStartFailure`, or the signal's reason when cancelled; the
-   * helper's owner releases it either way.
+   * readiness, open an MCP session to its driver and take its first frame
+   * once the desktop has drawn, reporting progress throughout. A failure
+   * throws a `ComputerStartFailure`, or the signal's reason when cancelled;
+   * the helper's owner releases it either way.
    */
   static async connect(
     helper: ComputerHelper,
     signal: AbortSignal,
-  ): Promise<AgentEnvComputer> {
+    progress?: (message: string) => void,
+  ): Promise<{
+    readonly computer: AgentEnvComputer;
+    readonly frame: DriverResult;
+  }> {
+    const phase = { name: "agentenv is deploying the computer" };
+    const heartbeat = progressHeartbeat(helper, phase, progress);
+    try {
+      return await AgentEnvComputer.#connect(helper, signal, phase);
+    } finally {
+      clearInterval(heartbeat);
+    }
+  }
+
+  static async #connect(
+    helper: ComputerHelper,
+    signal: AbortSignal,
+    phase: { name: string },
+  ): ReturnType<typeof AgentEnvComputer.connect> {
     const handshake = await helper.handshake(signal);
     if (handshake === undefined || "error" in handshake)
       throw new ComputerStartFailure(
         `agentenv did not bring the computer up: ${handshake?.error ?? "its helper ended without a handshake"}.`,
         "Read the helper's output; `agent-env run <bundle> --task smoke --no-emulate` reproduces the deploy.",
       );
+    phase.name = "waiting for the computer's readiness checks";
     let client: StructuredContentMcpClient | undefined;
     try {
       client = await connectDriver(handshake.mcp_url, signal);
@@ -178,7 +254,12 @@ export class AgentEnvComputer {
         client,
       });
       await computer.#waitReady(signal);
-      return computer;
+      phase.name = "waiting for the desktop to draw";
+      const frame = await drawnScreenshot(
+        (retry) => computer.callTool("computer_screenshot", {}, retry),
+        signal,
+      );
+      return { computer, frame };
     } catch (cause: unknown) {
       await client?.close().catch(() => undefined);
       if (signal.aborted) throw signal.reason;
@@ -277,9 +358,11 @@ export class AgentEnvComputer {
         },
         signal,
         {
-          // Base64 plus the JSON-RPC envelope and the part's metadata.
-          bytes: Math.ceil(segment.bytes / 3) * 4 + ENVELOPE_BYTES,
-          what: `The computer's answer for recording segment ${segment.path}`,
+          limit: {
+            // Base64 plus the JSON-RPC envelope and the part's metadata.
+            bytes: Math.ceil(segment.bytes / 3) * 4 + ENVELOPE_BYTES,
+            what: `The computer's answer for recording segment ${segment.path}`,
+          },
         },
       ),
     );
@@ -300,6 +383,116 @@ export class AgentEnvComputer {
         `Recording segment ${segment.path} is missing or differs from its manifest.`,
       );
     return bytes;
+  }
+
+  /**
+   * The files under paths of the computer user's home, by home path, through
+   * the driver's `data/get`; its answer is read within `bytes` of files.
+   */
+  async homeFiles(
+    paths: readonly string[],
+    bytes: number,
+    signal?: AbortSignal,
+  ): Promise<ReadonlyMap<string, Buffer>> {
+    const answer = dataGetSchema.parse(
+      await this.#request(
+        "/agentenv",
+        { jsonrpc: "2.0", id: 1, method: "data/get", params: { paths } },
+        signal,
+        {
+          limit: {
+            bytes: dataAnswerBytes(bytes, paths.length),
+            what: `The computer's answer for ${paths.join(", ")}`,
+          },
+        },
+      ),
+    );
+    if ("error" in answer)
+      throw new Error(
+        `data/get failed: ${this.redacted(answer.error.message)}`,
+      );
+    return new Map(
+      answer.result.parts.flatMap((part) => {
+        const path = Object.values(part.metadata ?? {})[0]?.path;
+        const encoded = part.file?.bytes;
+        return path === undefined || encoded === undefined
+          ? []
+          : [[path, Buffer.from(encoded, "base64")] as const];
+      }),
+    );
+  }
+
+  /** Run a command in the computer's desktop session as its user; output is cut at the computer's cap. */
+  async exec(
+    argv: readonly string[],
+    timeoutS: number,
+    signal?: AbortSignal,
+  ): Promise<ComputerCommandResult> {
+    const result = execSchema.parse(
+      await this.#request(
+        "/agentenv/ext/computer-exec/run",
+        { argv, request_id: randomUUID(), timeout_s: timeoutS },
+        signal,
+        {
+          limit: {
+            bytes: EXEC_RESPONSE_BYTES,
+            what: `The computer's answer to ${argv[0] ?? "a command"}`,
+          },
+          timeoutMs: (timeoutS + 30) * 1000,
+        },
+      ),
+    );
+    return {
+      ...result,
+      stdout: this.redacted(result.stdout),
+      stderr: this.redacted(result.stderr),
+    };
+  }
+
+  /**
+   * The parts the computer's one app answers a data method with: `data/get`,
+   * read within a quarter of the V8 heap since it carries the app's files, or
+   * `data/reset`.
+   */
+  async appData(
+    method: "data/get" | "data/reset",
+    signal?: AbortSignal,
+  ): Promise<readonly unknown[]> {
+    const card = cardSchema.parse(
+      await this.#request("/.well-known/agent-env.json", undefined, signal),
+    );
+    const [app, ...others] = card.children_environments ?? [];
+    if (app === undefined || others.length > 0)
+      throw new Error(
+        `The computer lists ${String(card.children_environments?.length ?? 0)} apps; REA reads a computer with one app.`,
+      );
+    const path = new URL(app.url ?? `/svc/${app.name}/agentenv`, this.#baseUrl)
+      .pathname;
+    const answer = rpcSchema.parse(
+      await this.#request(
+        path,
+        { jsonrpc: "2.0", id: 1, method, params: {} },
+        signal,
+        {
+          limit: {
+            bytes: heapQuarter(),
+            what: `The ${app.name} app's ${method} answer`,
+          },
+        },
+      ),
+    );
+    if ("error" in answer)
+      throw new Error(
+        `${method} failed: ${this.redacted(answer.error.message)}`,
+      );
+    return method === "data/get"
+      ? z.object({ parts: z.array(z.unknown()) }).parse(answer.result).parts
+      : [];
+  }
+
+  /** Wait until the computer's readiness checks pass, as after a reset relaunches its app. */
+  async waitUntilReady(signal: AbortSignal): Promise<void> {
+    await this.#waitReady(signal);
   }
 
   /** End REA's MCP session and bring the computer down; a failed release can be retried. */
@@ -331,18 +524,27 @@ export class AgentEnvComputer {
     }
   }
 
-  /** A framework-only route of the computer, with its control token; its answer is read within `limit`. */
+  /** `text` with the control token replaced, as every answer REA reads from the computer's routes and commands. */
+  redacted(text: string): string {
+    return this.#token === null
+      ? text
+      : text.replaceAll(this.#token, "[control token]");
+  }
+
+  /** A framework-only route of the computer, with its control token; its answer is read within `bounds.limit`. */
   async #request(
     path: string,
     body: unknown,
     signal: AbortSignal | undefined,
-    limit = {
+    bounds: RequestBounds = {},
+  ): Promise<unknown> {
+    const limit = bounds.limit ?? {
       bytes: CONTROL_RESPONSE_BYTES,
       what: `The computer's answer to ${path}`,
-    },
-  ): Promise<unknown> {
-    const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-    const response = await fetch(`${this.#baseUrl}${path}`, {
+    };
+    const timeout = AbortSignal.timeout(bounds.timeoutMs ?? REQUEST_TIMEOUT_MS);
+    const url = `${this.#baseUrl}${path}`;
+    const init = {
       method: body === undefined ? "GET" : "POST",
       headers: {
         ...(this.#token === null
@@ -351,14 +553,17 @@ export class AgentEnvComputer {
         ...(body === undefined ? {} : { "content-type": "application/json" }),
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-      redirect: "error",
-      signal:
-        signal === undefined ? timeout : AbortSignal.any([signal, timeout]),
-    });
+    };
+    const deadline =
+      signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+    const response: HttpReply =
+      bounds.timeoutMs === undefined
+        ? await fetch(url, { ...init, redirect: "error", signal: deadline })
+        : await awaitHttpReply(new URL(url), init, deadline);
     const text = await readBounded(response, limit.bytes, limit.what);
-    if (!response.ok)
+    if (response.status < 200 || response.status > 299)
       throw new Error(
-        `The computer answered ${path} with HTTP ${String(response.status)}: ${text.slice(0, 512)}`,
+        `The computer answered ${path} with HTTP ${String(response.status)}: ${this.redacted(text.slice(0, 512))}`,
       );
     return JSON.parse(text) as unknown;
   }

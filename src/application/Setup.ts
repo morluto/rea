@@ -34,6 +34,8 @@ import {
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
+import { planDesktopBuild } from "./SetupDesktopBuild.js";
+import { DESKTOP_BUILD_PROVIDER_ID } from "./DoctorProviderIds.js";
 import type { SetupHopperInstallFailure } from "./SetupInstallFailure.js";
 
 /** Discover, approve, and apply setup actions idempotently. */
@@ -234,6 +236,12 @@ const runSetupWorkflow = async (
     installSkill = skillSelected && skillNeedsInstall;
     selectedSkillClientIds = selectedClientIds;
   }
+  const desktop = await planDesktopBuild(
+    host.desktopBuild,
+    options,
+    selectedClientIds,
+  );
+  if (desktop.blocker !== undefined) return fail(desktop.blocker);
   const planned = await planSetupActions({
     discovery: planDiscovery,
     host,
@@ -242,8 +250,9 @@ const runSetupWorkflow = async (
     clientIds: selectedClientIds,
     skillClientIds: selectedSkillClientIds,
     installSkill,
+    clientEnvironments: desktop.clientEnvironments,
   });
-  plannedActions = planned.plannedActions;
+  plannedActions = [...desktop.actions, ...planned.plannedActions];
   if (planned.blocker !== undefined) return fail(planned.blocker);
   const hopperRefusal = hopperInstallRefusal(planDiscovery);
   if (hopperRefusal !== undefined) return fail(hopperRefusal);
@@ -258,9 +267,13 @@ const runSetupWorkflow = async (
   readinessScope = resolvedReadinessScope(
     options.readinessScope,
     planSelection,
+    desktop.selected,
   );
 
-  const manualRemediation = manualClientsRemediation(planned.selectedClients);
+  const manualRemediation = combineRemediation(
+    manualClientsRemediation(planned.selectedClients),
+    desktop.remediation,
+  );
   if (skillSelected) {
     const admission = await host.validateSkillDirectories(
       selectedSkillClientIds,
@@ -324,6 +337,10 @@ const runSetupWorkflow = async (
     );
     if (!admission.ok) return failSkill(admission.error);
   }
+  const desktopFailure = await desktop.apply(
+    appliedActions,
+    options.onProgress,
+  );
   let selectedClients: readonly SetupClient[] =
     planSelection.clientsToConfigure;
   let hopperWarning: string | undefined;
@@ -338,6 +355,7 @@ const runSetupWorkflow = async (
       appliedActions,
       selectedClients,
       providerEnvironment,
+      clientEnvironments: desktop.clientEnvironments,
     });
     // Hopper is optional: a failed install still applies the client
     // registrations and skill approved with it (#5113).
@@ -354,6 +372,7 @@ const runSetupWorkflow = async (
     host,
     detectedClients: selectedClients,
     providerEnvironment,
+    clientEnvironments: desktop.clientEnvironments,
     command: host.registrationCommand,
     clients,
     appliedActions,
@@ -389,7 +408,9 @@ const runSetupWorkflow = async (
   }
   const doctor = summarizeDoctor(await host.doctor(readinessScope));
   const remediation = combineRemediation(
+    desktopFailure,
     hopperFailure?.remediation ??
+      desktop.readinessRemediation(doctor.healthy) ??
       finalSetupRemediation(
         host.platform,
         appliedActions.includes("installed_hopper"),
@@ -426,6 +447,9 @@ const installHopperAction = async (input: {
   readonly appliedActions: string[];
   readonly selectedClients: readonly SetupClient[];
   readonly providerEnvironment: SetupProviderEnvironment;
+  readonly clientEnvironments: Readonly<
+    Record<string, SetupProviderEnvironment>
+  >;
 }) => {
   const label = "Hopper deep-analysis provider";
   emitProgress(input.options, {
@@ -467,7 +491,7 @@ const installHopperAction = async (input: {
     selectedClients: await filterClientsNeedingConfigure(
       input.host,
       input.selectedClients,
-      providerEnvironment,
+      { providerEnvironment, clientEnvironments: input.clientEnvironments },
       input.host.registrationCommand,
     ),
   };
@@ -587,11 +611,15 @@ const resolvedReadinessScope = (
     readonly skillSelected?: boolean;
     readonly selectedSkillClientIds: readonly string[];
   },
+  desktopBuild: boolean,
 ): DoctorScope => ({
   clients: selection.selectedClients.map(({ name }) => name),
-  providers: selection.installHopper
-    ? ["hopper"]
-    : (requested?.providers ?? []),
+  providers: [
+    ...new Set([
+      ...(selection.installHopper ? ["hopper"] : (requested?.providers ?? [])),
+      ...(desktopBuild ? [DESKTOP_BUILD_PROVIDER_ID] : []),
+    ]),
+  ],
   skill: selection.skillSelected === true || requested?.skill === true,
   ...(selection.skillSelected === true || requested?.skill === true
     ? { skillClients: selection.selectedSkillClientIds }
@@ -628,6 +656,3 @@ const summarizeDoctor = (report: DoctorReport): SetupDoctorSummary => ({
         },
       }),
 });
-
-const failureMessage = (cause: unknown): string =>
-  cause instanceof Error ? cause.message : String(cause);

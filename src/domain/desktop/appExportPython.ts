@@ -39,11 +39,13 @@ from agentenv_protocol.types import DataPart
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
+OPENS_ELEMENT = re.compile(r"(?:<!DOCTYPE[ \t\r\n][^\[>]*>[ \t\r\n]*)?<[A-Za-z_:]")
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
 SQLITE_HEADER = b"SQLite format 3\x00"
 GVDB_HEADER = b"GVariant"
 ZIP_HEADER = b"PK\x03\x04"
+GZIP_HEADER = b"\x1f\x8b\x08"
 XML_SPACE = "xml:space"
 MAX_VIEW_BYTES = 64 * 1024 * 1024
 MAX_SAFE_INTEGER = 2**53 - 1
@@ -116,6 +118,9 @@ def _seed_home(home: Path) -> None:
         else:
             data = _respelled_utf16(data, home)
         target.write_bytes(data)
+        mode = SEED_MODES.get(relative)
+        if mode is not None:
+            target.chmod(mode)
 
 
 def _dconf(arguments: list, environment: dict) -> str:
@@ -401,7 +406,9 @@ def _text_view(name: str, text: str, size: int) -> dict:
         if view is not None:
             return view
     lowered = name.lower()
-    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml"):
+    # Text that opens with an element, after a DOCTYPE with no internal subset or none, is XML if it parses, whatever
+    # the file is called, as a Freeplane map or KmPlot's <!DOCTYPE kmpdoc> plot.
+    if lowered.endswith(XML_SUFFIXES) or trimmed.startswith("<?xml") or re.match(OPENS_ELEMENT, trimmed):
         view = _xml_view(text)
         return _text(text) if view is None else {"format": "xml", "view": view, "truncated": view["truncated"]}
     if _is_keyfile(text):
@@ -411,6 +418,17 @@ def _text_view(name: str, text: str, size: int) -> dict:
     return _text(text)
 
 
+def _bytes_view(name: str, data: bytes) -> dict:
+    """The view of a document that is no database or archive: its text's, or none when it is binary."""
+    try:
+        text = data.decode("utf-8-sig") if b"\x00" not in data[:8192] else None
+    except UnicodeDecodeError:
+        text = None
+    if text is None:
+        return {"format": "binary", "view": None, "truncated": False}
+    return _text_view(name, text, len(data))
+
+
 def _view(path: Path) -> dict:
     """A typed JSON view of one file in the shapes of REA's state view; truncated says the view is partial."""
     too_large = {"format": None, "view": None, "error": "larger than 64 MiB, the most the view reads"}
@@ -418,21 +436,18 @@ def _view(path: Path) -> dict:
         return too_large
     with path.open("rb") as file:
         data = file.read(8192)
-        whole = not data.startswith(SQLITE_HEADER) and b"\x00" not in data
+        whole = data.startswith(GZIP_HEADER) or (not data.startswith(SQLITE_HEADER) and b"\x00" not in data)
         data += file.read(MAX_VIEW_BYTES + 1 - len(data)) if whole else b""
     if data.startswith(SQLITE_HEADER):
         return _sqlite(path)
     if data.startswith(ZIP_HEADER):
-        return _zip(path)
+        with path.open("rb") as file:
+            return _zip(file, os.fstat(file.fileno()).st_size)
     if len(data) > MAX_VIEW_BYTES:
         return too_large
-    try:
-        text = data.decode("utf-8-sig") if whole else None
-    except UnicodeDecodeError:
-        text = None
-    if text is None:
-        return {"format": "binary", "view": None, "truncated": False}
-    return _text_view(path.name, text, len(data))
+    if data.startswith(GZIP_HEADER):
+        return _gzip(path.name, data)
+    return _bytes_view(path.name, data)
 
 
 def _views(home: Path, paths: list) -> dict:
@@ -458,6 +473,7 @@ const PYTHON_CONSTANTS = [
   "PATHS",
   "DCONF",
   "TEXT_SEEDS",
+  "SEED_MODES",
   "WINDOW_CLASS",
 ] as const;
 

@@ -14,6 +14,7 @@ import type {
   AnalysisError,
 } from "../domain/analysisErrorBase.js";
 import type { SetupClient } from "./SupportedClients.js";
+import type { DesktopBuildSetupHost } from "./SetupDesktopBuild.js";
 import type {
   SetupFailureCode,
   SetupHopperInstallResult,
@@ -143,6 +144,8 @@ export interface SetupHost {
   ): Promise<Result<void, SetupSkillInstallError>>;
   installSkill(clientIds: readonly string[]): Promise<SkillInstallResult>;
   doctor(scope?: DoctorScope): Promise<Awaited<ReturnType<typeof runDoctor>>>;
+  /** Present where setup can prepare this host for desktop builds. */
+  readonly desktopBuild?: DesktopBuildSetupHost;
 }
 /** Structured setup outcome carrying remediation instead of prompting. */
 export interface SetupResult {
@@ -216,7 +219,12 @@ export interface SetupClientState {
 /** One concrete setup mutation disclosed before approval. */
 export interface SetupAction {
   readonly id: string;
-  readonly kind: "install_hopper" | "configure_client" | "install_skill";
+  readonly kind:
+    | "install_hopper"
+    | "configure_client"
+    | "install_skill"
+    | "install_agentenv"
+    | "pack_build_runtime";
   readonly label: string;
   readonly target: string;
   readonly detail: string;
@@ -243,6 +251,10 @@ export interface SetupOptions {
   readonly readinessScope?: DoctorScope;
   readonly dryRun?: boolean;
   readonly allDetectedClients?: boolean;
+  /** Pack the build-computer runtime and record the build settings in the selected registrations. */
+  readonly desktopBuild?: boolean;
+  /** With desktopBuild, install the pinned agentenv-framework with uv. */
+  readonly installAgentenv?: boolean;
   readonly onProgress?: (event: SetupProgressEvent) => void;
 }
 

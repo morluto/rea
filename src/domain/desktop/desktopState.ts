@@ -24,8 +24,10 @@ const versionSchema = z.strictObject({
   present: z.boolean(),
   /** Null when the file is absent or its bytes were not retained. */
   sha256: sha256.nullable(),
-  /** Detected for each version, since a file can change format. */
+  /** Detected for each version, since a file can change format; a gzip file's is its document's. */
   format: format.nullable(),
+  /** Present when the view is of the document inside a gzip file. */
+  compression: z.literal("gzip").optional(),
   /** The read value; JSON `null` is a valid view, so check `view_error`. */
   view: jsonValueSchema.nullable(),
   /** Why no view was read, or null when the view (possibly `null`) was read. */
@@ -78,6 +80,7 @@ export const desktopStatePathSchema = z.strictObject({
       "selected_path",
       "dconf_application_keys",
       "desktop_service",
+      "desktop_trash",
     ]),
   ),
   /** The latest readable version's format. */
