@@ -59,6 +59,7 @@ interface ResourceCandidate {
   readonly method: JavaScriptSemanticResourceOperation["method"];
   readonly ownerCallableId: string | null;
   readonly resultBindingId: string | null;
+  readonly constructorUncertain?: true;
 }
 
 /** Recover built-in filesystem/network acquisition and local release handles. */
@@ -74,6 +75,21 @@ export const collectJavaScriptSemanticResources = (
     ancestors: [],
   };
   const acquisitions = collectAcquisitions(program, context)
+    .map((candidate): ResourceCandidate =>
+      streamOptionsInSecondArgument(candidate) &&
+      !builtinModuleSlotUnmodified(
+        "fs",
+        [
+          candidate.method === "createReadStream"
+            ? "ReadStream"
+            : "WriteStream",
+        ],
+        candidate.node,
+        state,
+      )
+        ? { ...candidate, constructorUncertain: true }
+        : candidate,
+    )
     .filter(
       (candidate) =>
         !socketPortInFirstArgument(candidate) ||
@@ -82,16 +98,7 @@ export const collectJavaScriptSemanticResources = (
     .filter(
       (candidate) =>
         !streamOptionsInSecondArgument(candidate) ||
-        !builtinModuleSlotUnmodified(
-          "fs",
-          [
-            candidate.method === "createReadStream"
-              ? "ReadStream"
-              : "WriteStream",
-          ],
-          candidate.node,
-          state,
-        ) ||
+        candidate.constructorUncertain === true ||
         !rejectsStreamOptionsLiteral(
           candidate.node,
           candidate.method === "createReadStream",
@@ -730,6 +737,7 @@ const collectReleases = (
       linkedResourceIds: linked.map(resourceCandidateId).sort(),
       resolution:
         linked.length === 1 &&
+        linked[0]?.constructorUncertain !== true &&
         holdsOnlyAcquisitions(binding, linked, context.state)
           ? "complete"
           : "partial",
@@ -797,7 +805,7 @@ const immutableAcquisition = (
   ownerCallableId: candidate.ownerCallableId,
   resultBindingId: candidate.resultBindingId,
   linkedResourceIds: [],
-  resolution: "complete",
+  resolution: candidate.constructorUncertain === true ? "partial" : "complete",
 });
 
 interface AcquisitionReference {

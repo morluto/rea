@@ -2,6 +2,7 @@ import * as t from "@babel/types";
 import { semanticKnownSymbolKey } from "./javascriptSemanticPropertyKeys.js";
 import {
   createAmbientPathResolver,
+  isUnmodifiedGlobalReference,
   retainSemanticAmbientEffect,
 } from "./javascriptSemanticAmbientWrites.js";
 import { isIntrinsicMapLookup } from "./javascriptSemanticMapOperations.js";
@@ -33,6 +34,7 @@ import {
   clearSemanticValueCaches,
   evaluateSemanticBinding,
   evaluateSemanticExpression,
+  evaluateSemanticProvenance,
 } from "./javascriptSemanticValues.js";
 import { semanticContainer } from "./javascriptSemanticSlots.js";
 import {
@@ -710,6 +712,7 @@ export function* collectSemanticMemberMutationsSteps(
     iterableReferences.push(reference);
   };
   const ambientPaths = createAmbientPathResolver(state, true);
+  const propertyDefinitions = new WeakSet<t.Node>();
   const markValue = (
     node: t.Node,
     path: PropertyPath,
@@ -1101,6 +1104,7 @@ export function* collectSemanticMemberMutationsSteps(
         // Preserve the explicit target write separately; deleting never invokes it.
         if (
           effect === "write" &&
+          (mutation === undefined || !propertyDefinitions.has(mutation)) &&
           !t.isUnaryExpression(mutation, { operator: "delete" })
         ) {
           const selectedPath = path;
@@ -1671,6 +1675,61 @@ export function* collectSemanticMemberMutationsSteps(
         t.isOptionalCallExpression(node) ||
         t.isNewExpression(node)
       ) {
+        let definedTarget: t.Node | undefined;
+        const callTarget = unwrapJavaScriptExpression(node.callee).node;
+        if (
+          !t.isNewExpression(node) &&
+          (t.isMemberExpression(callTarget) ||
+            t.isOptionalMemberExpression(callTarget)) &&
+          semanticStaticPropertyKey(
+            callTarget.property,
+            callTarget.computed,
+          ) === "defineProperty" &&
+          isUnmodifiedGlobalReference(node.callee, state, [
+            "Object",
+            "defineProperty",
+          ])
+        ) {
+          const [target, key, descriptor] = node.arguments;
+          if (
+            target !== undefined &&
+            !t.isSpreadElement(target) &&
+            !t.isArgumentPlaceholder(target) &&
+            (t.isStringLiteral(key) || t.isNumericLiteral(key)) &&
+            t.isObjectExpression(descriptor) &&
+            descriptor.properties.every(
+              (property) => t.isObjectProperty(property) && !property.computed,
+            )
+          ) {
+            const value = unwrapJavaScriptExpression(target).node;
+            const required = semanticRequireOrigin(value, state);
+            const binding = t.isIdentifier(value)
+              ? resolveSemanticBindingState(state, value, value.name)
+              : undefined;
+            const provenance =
+              binding === undefined
+                ? undefined
+                : evaluateSemanticProvenance(binding, state);
+            const origin =
+              required?.origin ??
+              (provenance?.status === "module"
+                ? provenance.origins[0]
+                : undefined);
+            const module =
+              origin === undefined
+                ? undefined
+                : semanticMutableBuiltinOrigin(origin, []);
+            if (
+              module !== undefined &&
+              module.specifier.replace(/^node:/u, "") === "fs" &&
+              module.path.length === 0
+            ) {
+              definedTarget = target;
+              propertyDefinitions.add(node);
+              markValue(target, [String(key.value)], new Set(), "write", node);
+            }
+          }
+        }
         for (const source of returnedReferences(node.callee).references)
           markEscaped(source.node, node, source.projection);
         for (const argument of node.arguments)
@@ -1685,7 +1744,7 @@ export function* collectSemanticMemberMutationsSteps(
               mutation: node,
               originAt: node,
             });
-          else markEscaped(argument, node);
+          else if (argument !== definedTarget) markEscaped(argument, node);
         // Constructing a member does not pass its container as `this`.
         if (!t.isNewExpression(node)) {
           const mapLookup = isIntrinsicMapLookup(node, state);

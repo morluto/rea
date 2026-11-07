@@ -475,8 +475,16 @@ it.each([
   `).resourceOperations;
     expect(operations).toEqual(
       expect.arrayContaining([
-        expect.objectContaining({ kind: "acquire", method }),
-        expect.objectContaining({ kind: "release", method: "close" }),
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
       ]),
     );
   },
@@ -528,6 +536,58 @@ it("retains a stream when its constructor is replaced through a module alias", (
       expect.objectContaining({ kind: "acquire", method: "createReadStream" }),
     ]),
   );
+});
+
+it("retains a stream when Object.defineProperty replaces its constructor through a module alias", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("fs");
+    const alias = require("node:fs");
+    Object.defineProperty(alias, "ReadStream", { value: Custom });
+    const stream = fs.createReadStream("input", { start: -1 });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createReadStream",
+        resolution: "partial",
+      }),
+      expect.objectContaining({
+        kind: "release",
+        method: "close",
+        resolution: "partial",
+      }),
+    ]),
+  );
+});
+
+it("keeps native rejection when Object.defineProperty changes an unrelated fs slot", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "WriteStream", { value: Custom });
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("does not trust a replaced Object.defineProperty as a confined mutation", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty = patched;
+    Object.defineProperty(fs, "WriteStream", { value: Custom });
+    fs.createReadStream("input", { start: -1 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
+
+it("does not attribute a redefined factory to the native built-in", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    Object.defineProperty(fs, "createReadStream", { value: Custom });
+    fs.createReadStream("input", { start: 0 });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
 });
 
 it("still rejects a bad option when a prototype change is definitely later", () => {
