@@ -2,8 +2,17 @@
 
 REA imports one target into an ephemeral Ghidra database. Linux/macOS support
 read-only analysis and atomic function-name/entry-comment edits; Windows P0 is
-read-only. GUI controls and persistent database mutation are unavailable.
+read-only. GUI controls and writes to caller-selected source databases are unavailable.
 Executable bytes remain unchanged.
+
+An opt-in [owned Program checkpoint](installation.md#automatically-checkpoint-an-owned-ghidra-program)
+retains analysis across Linux/macOS processes. It saves initial completed analysis
+and normal-close metadata changes to `REA_GHIDRA_CHECKPOINT_DIR`; cancellation
+and process failure recover only the last successfully saved state. The restored
+packed Program's digest is reported with restored observations. Initial analysis
+keeps one stable generation through its first save; later saved states bind their
+content digest in profile identity. Restoration does not turn prior
+database state into a fresh discovery. The default remains ephemeral.
 
 Use [installation](installation.md#ghidra) for supported hosts, prerequisites,
 configuration, startup deadlines, resource controls, and cleanup recovery.

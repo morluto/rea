@@ -313,6 +313,11 @@ describe("Ghidra snapshot profile admission", () => {
       legacy: undefined,
     },
     {
+      parameter: "data_type_observations",
+      current: "bit-field-base-and-lookup-v1",
+      legacy: undefined,
+    },
+    {
       parameter: "byte_search_boundary",
       current: "contiguous-eligible-initialized-blocks-v1",
       legacy: undefined,

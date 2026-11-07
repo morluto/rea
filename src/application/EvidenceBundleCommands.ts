@@ -139,7 +139,11 @@ export const deliverAnalysisEvidence = async (
   // inherit the parent's selected input path.
   const selected =
     detail === "summary" && evidence.caller_input_path !== undefined
-      ? withEvidenceCallerInputPath(delivered.value, evidence.caller_input_path)
+      ? withEvidenceCallerInputPath(
+          delivered.value,
+          evidence.caller_input_path,
+          evidence.caller_input_paths,
+        )
       : delivered.value;
   const published = await publishEvidenceDelivery({
     bundle,

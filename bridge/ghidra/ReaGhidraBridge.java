@@ -187,6 +187,8 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private static final int MAX_DECOMPILE_TIMEOUT_SECONDS = Integer.MAX_VALUE / 1000;
     private final ReaGhidraExtensions analysisExtensions = new ReaGhidraExtensions();
     private static AddressSpace sessionDefaultAddressSpace;
+    private Path checkpointDirectory;
+    private long checkpointModification;
 
     @Override
     public void run() throws Exception {
@@ -195,6 +197,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             throw new IllegalArgumentException("REA bridge requires one session descriptor");
         }
         Path descriptorPath = Path.of(arguments[0]);
+        checkpointDirectory = descriptorPath.toAbsolutePath().normalize().getParent();
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         // Windows retains a native immutable bearer descriptor lease until
@@ -247,6 +250,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 throw new IOException("Windows Ghidra P0 does not admit metadata recovery or database mutation.");
             analysisExtensions.analyze(descriptor.analysisExtensions, currentProgram, monitor);
             initializeDecompiler();
+            checkpointModification = currentProgram.getModificationNumber();
             serve(descriptor);
         }
         finally {
@@ -451,6 +455,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         if (descriptor.existingProject && isMutatingOperation(request.method))
             throw new RequestFailure("method_unavailable", "Existing Ghidra project sessions are read-only");
         return switch (request.method) {
+            case "checkpoint_program" -> checkpointProgram(request.params, descriptor);
             case "read_binary_inventory_summary" -> binaryInventorySummary(request.params);
             case "inspect_native_load_image" -> inspectNativeLoadImage(request.params);
             case "read_bytes" -> readMemoryBytes(request.params);
@@ -504,6 +509,31 @@ public final class ReaGhidraBridge extends HeadlessScript {
 
     private static boolean isMutatingOperation(String method) {
         return method.equals("annotate_native_function") || method.equals("set_address_name") || method.equals("set_addresses_names");
+    }
+
+    /** Internal lifecycle request: the destination is inside this owned runtime. */
+    private JsonObject checkpointProgram(JsonObject params, SessionDescriptor descriptor) throws Exception {
+        requireKeys(params, Set.of("path", "force"));
+        if (descriptor.existingProject || !descriptor.transport.equals("unix-socket"))
+            throw new RequestFailure("method_unavailable", "This Program has no checkpoint authority");
+        Path output = Path.of(requireString(params, "path")).toAbsolutePath().normalize();
+        if (!output.getParent().equals(checkpointDirectory) ||
+            !output.getFileName().toString().matches("checkpoint-[a-f0-9-]{36}\\.gzf"))
+            throw new RequestFailure("invalid_request", "Checkpoint destination must belong to this runtime");
+        JsonElement forced = params.get("force");
+        if (!forced.isJsonPrimitive() || !forced.getAsJsonPrimitive().isBoolean())
+            throw new RequestFailure("invalid_request", "Checkpoint force must be a boolean");
+        boolean force = forced.getAsBoolean();
+        JsonObject result = new JsonObject();
+        boolean changed = currentProgram.getModificationNumber() != checkpointModification;
+        result.addProperty("saved", force || changed);
+        if (force || changed) {
+            if (Files.exists(output)) throw new RequestFailure("invalid_request", "Checkpoint destination already exists");
+            currentProgram.saveToPackedFile(output.toFile(), monitor);
+            checkpointModification = currentProgram.getModificationNumber();
+            result.addProperty("path", output.toString());
+        }
+        return result;
     }
 
     private JsonObject sessionInfo(SessionDescriptor descriptor) throws Exception {
@@ -1296,6 +1326,12 @@ public final class ReaGhidraBridge extends HeadlessScript {
                     if (component.getDataType() instanceof ghidra.program.model.data.BitFieldDataType bitfield) {
                         field.addProperty("bit_size", bitfield.getBitSize());
                         field.addProperty("bit_offset", bitfield.getBitOffset());
+                        JsonObject bitField = new JsonObject();
+                        bitField.addProperty("base_type_id", bitfield.getBaseDataType().getPathName());
+                        bitField.addProperty("declared_bit_size", bitfield.getDeclaredBitSize());
+                        bitField.addProperty("component_type_lookup", typeLookupResult(bitfield));
+                        bitField.addProperty("base_type_lookup", typeLookupResult(bitfield.getBaseDataType()));
+                        field.add("bit_field", bitField);
                     }
                     field.addProperty("status", "observed");
                     field.addProperty("flexible_tail", "unknown");
@@ -1326,12 +1362,17 @@ public final class ReaGhidraBridge extends HeadlessScript {
         result.add("members", members);
         result.addProperty("total_fields", totalFields);
         result.addProperty("truncated", totalFields > 20_000);
-        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Nested and recursive types retain category-path identities for separate inspection.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
+        result.add("limitations", GSON.toJsonTree(List.of("Layouts are Ghidra data-type database observations; original debug/source authority and flexible-tail semantics are not inferred. Component type paths do not necessarily identify separately registered types; bit-field lookups report whether the manager resolves equivalent types.", "At most 20000 fields or enum members are serialized per type to bound provider output. total_fields and truncated report omissions. Enum values preserve Ghidra's signed long representation.")));
         if (type != null) {
             JsonObject metadata = analysisExtensions.inspectDataType(currentProgram, type, address, monitor);
             if (metadata != null) result.add("metadata_recovery", metadata);
         }
         return result;
+    }
+
+    private String typeLookupResult(DataType type) {
+        DataType resolved = currentProgram.getDataTypeManager().getDataType(type.getPathName());
+        return resolved == null ? "not-found" : resolved.isEquivalent(type) ? "equivalent" : "different";
     }
 
     private JsonObject instructionReference(Reference reference) {
