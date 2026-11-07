@@ -43,6 +43,13 @@ def _computer(result):
     return None, "the task deployed no computer"
 
 
+def _stop_at_eof(stop: threading.Event) -> None:
+    """Watch the pipe without holding stdin's buffered lock during signal-driven interpreter shutdown."""
+    while os.read(sys.stdin.fileno(), 64 * 1024):
+        pass
+    stop.set()
+
+
 def main(argv: list[str]) -> int:
     protocol = _protocol()
     bundle, task = argv[1], argv[2] if len(argv) > 2 else "smoke"
@@ -67,7 +74,7 @@ def main(argv: list[str]) -> int:
         else:
             _say(protocol, {"base_url": env.environment_url, "mcp_url": env.mcp_url,
                             "control_token": env.control_token, "sandbox_id": env.sandbox_id})
-            threading.Thread(target=lambda: (sys.stdin.buffer.read(), stop.set()), daemon=True).start()
+            threading.Thread(target=_stop_at_eof, args=(stop,), daemon=True).start()
             while not stop.wait(0.5):
                 pass
     finally:
