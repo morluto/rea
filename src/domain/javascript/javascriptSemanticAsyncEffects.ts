@@ -237,6 +237,9 @@ const staticExpressionTruthiness = (
       depth++;
       continue;
     }
+    if (isStaticallyNullishOptionalChain(unwrapped, state, depth)) {
+      return inverted;
+    }
     return undefined;
   }
 
@@ -335,15 +338,80 @@ const isProvablyNonThenablePrimitive = (
     );
   }
 
+  if (isStaticallyNullishOptionalChain(value, state, currentDepth)) {
+    return true;
+  }
+
   return false;
 };
 
-/** Determine whether syntax definitely evaluates to null or undefined. */
-const staticExpressionNullishness = (
+/**
+ * Identify optional member or call chains (e.g. `null?.handler`, `undefined?.()`,
+ * `null?.a.b`) whose base is provably nullish, meaning the optional chain
+ * short-circuits to `undefined` at runtime.
+ */
+function isStaticallyNullishOptionalChain(
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
   depth = 0,
-): boolean | undefined => {
+): boolean {
+  if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+  const unwrapped = unwrapJavaScriptExpression(node);
+  const currentDepth = depth + unwrapped.depth;
+  if (currentDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+  const value = unwrapped.node;
+
+  if (
+    !t.isOptionalMemberExpression(value) &&
+    !t.isOptionalCallExpression(value)
+  ) {
+    return false;
+  }
+
+  let curr: t.Node = value;
+  let chainDepth = currentDepth;
+  while (chainDepth <= SEMANTIC_EXPRESSION_DEPTH_LIMIT) {
+    const unwrapCurr = unwrapJavaScriptExpression(curr);
+    chainDepth += unwrapCurr.depth;
+    if (chainDepth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return false;
+    const inner = unwrapCurr.node;
+
+    if (t.isOptionalMemberExpression(inner)) {
+      if (inner.optional) {
+        if (
+          staticExpressionNullishness(inner.object, state, chainDepth + 1) ===
+          true
+        ) {
+          return true;
+        }
+      }
+      curr = inner.object;
+      chainDepth++;
+    } else if (t.isOptionalCallExpression(inner)) {
+      if (inner.optional) {
+        if (
+          staticExpressionNullishness(inner.callee, state, chainDepth + 1) ===
+          true
+        ) {
+          return true;
+        }
+      }
+      curr = inner.callee;
+      chainDepth++;
+    } else {
+      break;
+    }
+  }
+
+  return false;
+}
+
+/** Determine whether syntax definitely evaluates to null or undefined. */
+function staticExpressionNullishness(
+  node: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+  depth = 0,
+): boolean | undefined {
   if (depth > SEMANTIC_EXPRESSION_DEPTH_LIMIT) return undefined;
   const unwrappedWrapper = unwrapJavaScriptExpression(node);
   const currentDepth = depth + unwrappedWrapper.depth;
@@ -352,6 +420,9 @@ const staticExpressionNullishness = (
 
   if (t.isNullLiteral(unwrapped) || isNullishJavaScriptSyntax(unwrapped))
     return true;
+  if (isStaticallyNullishOptionalChain(unwrapped, state, currentDepth)) {
+    return true;
+  }
   if (
     t.isAwaitExpression(unwrapped) &&
     isProvablyNonThenablePrimitive(unwrapped.argument, state, currentDepth)
@@ -536,7 +607,7 @@ const staticExpressionNullishness = (
   )
     return false;
   return undefined;
-};
+}
 
 /**
  * Flatten statically known array spreads to locate the argument occupying
@@ -831,6 +902,12 @@ export const rejectsEventListener = (
     if (
       t.isAwaitExpression(value) &&
       isProvablyNonThenablePrimitive(value.argument, state, depth)
+    ) {
+      continue;
+    }
+    if (
+      isStaticallyNullishOptionalChain(value, state, depth) ||
+      staticExpressionNullishness(value, state, depth) === true
     ) {
       continue;
     }

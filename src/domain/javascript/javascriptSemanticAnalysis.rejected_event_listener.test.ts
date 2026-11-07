@@ -930,3 +930,38 @@ it("retains candidates when conditional branch in ?? left operand may be nullish
   expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
   expect(ir.eventOperations.length).toBeGreaterThan(0);
 });
+
+it("rejects optional chains whose base is statically nullish", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", null?.handler);
+    child.on("error", undefined?.handler);
+    child.on("close", null?.a.b);
+    child.on("disconnect", undefined?.());
+    child.on("message", (flag ? null : undefined)?.handler);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
+
+it("retains candidates when optional chain base is unknown or potentially callable", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", opts?.handler);
+    child.on("error", getHandlers()?.onError);
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
+
+it("resolves nullish optional chains in ?? fallback operands", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", (null?.handler) ?? (() => {}));
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
