@@ -83,7 +83,7 @@ const checkExportRuntime = async (
         refused(
           START,
           "The REA runtime in this build computer does not support synthetic seeds required by build export.",
-          "Pack a current REA with npm run pack:build-computer-runtime, set REA_BUILD_COMPUTER_REA_ARCHIVE to the new archive, and start a new build computer.",
+          "Run npm run pack:build-computer-runtime -- /absolute/path/rea-prod.tar.xz in a current REA checkout, set REA_BUILD_COMPUTER_REA_ARCHIVE to that archive, and start a new build computer.",
         ),
       );
     return ok(undefined);
