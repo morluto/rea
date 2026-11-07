@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **ghidra:** Ghidra snapshots made before the search projection profile revision no longer match. Run fresh analysis and save a new snapshot.
 * qualify call paths by provider discovery ([#8443](https://github.com/morluto/rea/issues/8443))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **mcp:** The opt-in hot-cold catalog no longer preloads inspect_analysis_view. Discover it before calling it, batch with its producer when needed, or use the unchanged default full profile.
@@ -317,6 +318,7 @@
 * **cli:** describe one-shot timeouts for an invocation whose session has ended ([#8535](https://github.com/morluto/rea/issues/8535)) ([85013da](https://github.com/morluto/rea/commit/85013da0cec7b854f51e47de77fd24391c8fd8ed))
 * **cli:** emit compact JSON validation errors for demangle-swift ([#7622](https://github.com/morluto/rea/issues/7622)) ([5414662](https://github.com/morluto/rea/commit/54146627f04964ba26b9becbfd88b40fa5831ea7))
 * **cli:** export source Evidence for native value traces ([#8297](https://github.com/morluto/rea/issues/8297)) ([bd7002b](https://github.com/morluto/rea/commit/bd7002b4410486fe88d8c2da8104e0b91bd3f21f))
+* **cli:** guide analysts to typed incoming references ([#8514](https://github.com/morluto/rea/issues/8514)) ([6ca4e13](https://github.com/morluto/rea/commit/6ca4e1368c26e4ee6733515fc1262b81b7e1304d))
 * **cli:** guide delimited analysis view exports ([#8730](https://github.com/morluto/rea/issues/8730)) ([f8ec480](https://github.com/morluto/rea/commit/f8ec48095a2c4c1d2eb3836491c9ffcd625d7911))
 * **cli:** honor the selected format for unknown mcp subcommands ([#7802](https://github.com/morluto/rea/issues/7802)) ([f1bfa1c](https://github.com/morluto/rea/commit/f1bfa1cba206e42d9381436fe7bc2e52241faa54))
 * **cli:** honor token controls for builtin documents ([#7897](https://github.com/morluto/rea/issues/7897)) ([c7722c8](https://github.com/morluto/rea/commit/c7722c8eebea60ce3399961bc63b226f59876edd))
@@ -538,6 +540,7 @@
 * **ghidra:** match startup-timeout guidance to the project mode ([#8114](https://github.com/morluto/rea/issues/8114)) ([ca7d1c3](https://github.com/morluto/rea/commit/ca7d1c3750b244364b60cf2253c2c8c481b6dea7)), closes [#3751](https://github.com/morluto/rea/issues/3751)
 * **ghidra:** omit duplicate load-image result ([#7777](https://github.com/morluto/rea/issues/7777)) ([a965cba](https://github.com/morluto/rea/commit/a965cbab06fcdecc6918e77e4d299ea91e8ef41c))
 * **ghidra:** preserve configured seed path traversal ([01d6a95](https://github.com/morluto/rea/commit/01d6a95fd7df6065562b8f087082f5d2062cb468))
+* **ghidra:** preserve facts in inventory searches ([#8376](https://github.com/morluto/rea/issues/8376)) ([c06b536](https://github.com/morluto/rea/commit/c06b53644bbd85b19f91b98a8d218f641976b0b0))
 * **ghidra:** preserve project access failures ([6979c58](https://github.com/morluto/rea/commit/6979c589b06dcef6525e125c2c61ea2735715285))
 * **ghidra:** reject uncommitted handshake reports before the first query ([#8630](https://github.com/morluto/rea/issues/8630)) ([aba56df](https://github.com/morluto/rea/commit/aba56df689380f5bcd66e4858b778ba1e3115e90)), closes [#8612](https://github.com/morluto/rea/issues/8612)
 * **ghidra:** report a missing existing-project program as a configuration error ([#8222](https://github.com/morluto/rea/issues/8222)) ([1dc97d8](https://github.com/morluto/rea/commit/1dc97d8cece2eb68c0e72feb56c7a2821f23237c))
@@ -546,6 +549,7 @@
 * **ghidra:** report unbacked file-offset addresses without schema repair ([#8308](https://github.com/morluto/rea/issues/8308)) ([c287a73](https://github.com/morluto/rea/commit/c287a73276a7f751ca65a8cc2219a29d5914bc2c))
 * **ghidra:** report unusable existing-project selections as REA_GHIDRA_PROJECT_PATH configuration errors ([#7922](https://github.com/morluto/rea/issues/7922)) ([32b3722](https://github.com/morluto/rea/commit/32b3722d2ffab1200122d441ec4af9117ea9c77b)), closes [#7417](https://github.com/morluto/rea/issues/7417) [#7416](https://github.com/morluto/rea/issues/7416)
 * **ghidra:** require Windows cleanup ownership ([a6a69ec](https://github.com/morluto/rea/commit/a6a69ec63e0b9f2742d9b39534e2dfc02b6a0814))
+* **ghidra:** respect Java Unix socket path limits ([#8382](https://github.com/morluto/rea/issues/8382)) ([f912a68](https://github.com/morluto/rea/commit/f912a6841798027898fee04d6c72bdd513183d34))
 * **ghidra:** retain relocation symbol observations ([#8531](https://github.com/morluto/rea/issues/8531)) ([df25bc8](https://github.com/morluto/rea/commit/df25bc8068b4d62c0e8db2b38648648ed831ae0e))
 * **ghidra:** scope rejected-input diagnostics to their request ([#7140](https://github.com/morluto/rea/issues/7140)) ([6381aa0](https://github.com/morluto/rea/commit/6381aa0b1dcb7092673db5ac739af57ce220ed37))
 * **ghidra:** search adjacent initialized memory blocks ([#8840](https://github.com/morluto/rea/issues/8840)) ([dd4b83c](https://github.com/morluto/rea/commit/dd4b83c220d1d68bbcfc6c0bf72730c91993889c))
@@ -954,6 +958,7 @@
 * **test:** contain browser fixture HTTP request targets ([#8566](https://github.com/morluto/rea/issues/8566)) ([ce9095d](https://github.com/morluto/rea/commit/ce9095d727c5ca32513f0e1c915e7cbf540e28f0))
 * **test:** load real Frida verifier address dependency ([#8596](https://github.com/morluto/rea/issues/8596)) ([f1819f5](https://github.com/morluto/rea/commit/f1819f5cb2f0319c20bef90b1c656efbc396f36c))
 * **test:** remove duplicate unknown session imports ([#7917](https://github.com/morluto/rea/issues/7917)) ([286629b](https://github.com/morluto/rea/commit/286629b570f10b3c655446234333e6f7dcbac7c3))
+* **test:** report caller target selection coverage ([#8406](https://github.com/morluto/rea/issues/8406)) ([1071ad8](https://github.com/morluto/rea/commit/1071ad867cc6b4b8ff12a994bcbdd3e1e219a352))
 * **test:** restrict storage fixture to loopback ([#8582](https://github.com/morluto/rea/issues/8582)) ([6d60db1](https://github.com/morluto/rea/commit/6d60db19510896559214094cecfcc262b76e8a33))
 * **tests:** remove duplicate MCP test imports ([50d731d](https://github.com/morluto/rea/commit/50d731d45615f30f50752de64513af0cea6d8312))
 * **test:** wait for valid debugger fixture PIDs ([#9208](https://github.com/morluto/rea/issues/9208)) ([57fc2d4](https://github.com/morluto/rea/commit/57fc2d4617c303dc527cd1bc69ba428972d9baa6))
@@ -1305,6 +1310,7 @@
 * **providers:** verify malformed HTTP acquisition recovery ([ce5373e](https://github.com/morluto/rea/commit/ce5373e42f119f47b5c91759fe00d7a79e96cde7))
 * prune duplicate managed comparison limitation ([ff542ad](https://github.com/morluto/rea/commit/ff542ada4750275c69a7fef44e5e35863be44ff6))
 * prune redundant native parser assertions ([33b4762](https://github.com/morluto/rea/commit/33b4762d5c161abf93d53d656d3e74eff5a3a9bb))
+* reduce brittle assertions and test-only runtime paths ([#9289](https://github.com/morluto/rea/issues/9289)) ([352a846](https://github.com/morluto/rea/commit/352a8461272b4214651066f8ffae87f64947ee8b))
 * reduce wording coupling and prune redundant coverage ([1596d6a](https://github.com/morluto/rea/commit/1596d6a275e5569426f1932b5eb1327f0f877f72))
 * **reference:** pin excluded package main resolution ([#7941](https://github.com/morluto/rea/issues/7941)) ([7c57005](https://github.com/morluto/rea/commit/7c5700542ec37756f0974b54b0246c01e397dfa0))
 * repair snapshot and setup isolation checks ([80427af](https://github.com/morluto/rea/commit/80427af8cc6e398c19311d200339fe5179b411b8))
