@@ -8,7 +8,11 @@ const expectSharedRemoval = (result: CliResult, config: string): void => {
   expect(result.json).toMatchObject({
     items: expect.arrayContaining(
       ["antigravity", "antigravity_cli"].map((name) =>
-        expect.objectContaining({ name, status: "removed", configuration_path: config }),
+        expect.objectContaining({
+          name,
+          status: "removed",
+          configuration_path: config,
+        }),
       ),
     ),
   });
