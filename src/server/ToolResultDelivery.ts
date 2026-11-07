@@ -3,6 +3,7 @@ import { STDIO_DEFAULT_MAX_BUFFER_SIZE } from "@modelcontextprotocol/server";
 
 import type { ToolContract } from "../contracts/toolContractTypes.js";
 import type { EvidenceWriter } from "../application/investigation/InvestigationRecordPort.js";
+import type { BinaryOpenResult } from "../application/binary/BinarySessionPort.js";
 import type { Evidence } from "../domain/evidence.js";
 import { safeParseEvidence } from "../domain/evidenceValidation.js";
 import {
@@ -29,6 +30,7 @@ import {
 } from "../config/mcpResponseBudget.js";
 import {
   encodeToolResult,
+  measureMcpResultWithinBudget,
   MCP_RESULT_STRING_LIMIT,
   NODE_MAX_STRING_LENGTH,
   TARGET_CONTENT_RESULT_META,
@@ -145,6 +147,55 @@ export class ToolResultDelivery {
       : this.toErrorToolResult(result.error, contract.returnsTargetContent);
   }
 
+  /**
+   * A plain result followed by the content blocks a forwarded tool returned,
+   * such as a computer's screenshot, unchanged. When the whole response does
+   * not fit the budget, the error keeps the tool's own result, whose ids name
+   * what it started, and says how to ask for a smaller image.
+   */
+  toForwardedToolResult(
+    result: Result<JsonValue, AnalysisError>,
+    contract: ToolContract,
+    forwarded: readonly Readonly<Record<string, JsonValue>>[],
+  ): CallToolResult {
+    const delivered = this.toCallToolResult(result, contract);
+    if (delivered.isError === true || forwarded.length === 0) return delivered;
+    // The blocks are the upstream MCP result's own, validated by its client.
+    const content = [
+      ...delivered.content,
+      ...(forwarded as CallToolResult["content"]),
+    ];
+    const combined = { ...delivered, content };
+    const measured = measureMcpResultWithinBudget(
+      combined,
+      this.resultBudgetBytes,
+    );
+    if (measured.ok) return combined;
+    const projected = mcpResponseOverflowProjection({
+      completed: true,
+      constraint: "receive-buffer",
+      effectiveResponseBytes: this.maximumResponseBytes,
+      nextStep:
+        "The tool's own result, without the forwarded content, is details.result; use its ids, and ask for a smaller image: a screenshot region, or format jpeg with a lower quality.",
+    });
+    return this.toErrorToolResult(
+      new AnalysisResourceConstraintError(
+        contract.name,
+        "transport",
+        projected.reason,
+        {
+          boundary: "mcp-response",
+          result_budget_bytes: this.resultBudgetBytes,
+          response_bytes_at_least: measured.bytesAtLeast,
+          constraint: measured.constraint,
+        },
+        { remediationAction: projected.remediationAction },
+      ),
+      contract.returnsTargetContent,
+      { result: result.ok ? result.value : null },
+    );
+  }
+
   /** Deliver Evidence using the producer's explicit recording acknowledgment. */
   toEvidenceToolResult(
     evidence: Evidence,
@@ -203,8 +254,13 @@ export class ToolResultDelivery {
   toErrorToolResult(
     error: AnalysisError,
     targetContent: boolean,
+    details?: Readonly<Record<string, JsonValue>>,
   ): CallToolResult {
-    const projected = projectAnalysisError(error);
+    const base = projectAnalysisError(error);
+    const projected =
+      details === undefined
+        ? base
+        : { ...base, details: { ...base.details, ...details } };
     if (
       error instanceof NoBinaryOpenError &&
       this.noTargetRecovery !== undefined
@@ -218,6 +274,26 @@ export class ToolResultDelivery {
         targetContent,
       );
     return this.projectedErrorResult(projected, targetContent);
+  }
+
+  /** Include the session owner's selection at the end of this open attempt. */
+  toOpenFailureToolResult(
+    failure: Extract<BinaryOpenResult, { ok: false }>,
+    targetContent: boolean,
+  ): CallToolResult {
+    const projected = projectAnalysisError(failure.error);
+    return this.projectedErrorResult(
+      {
+        ...projected,
+        details: {
+          ...projected.details,
+          selection_at_failure: failure.selection,
+          target_at_open_completion: failure.targetAtCompletion,
+          provider_id_at_open_completion: failure.providerIdAtCompletion,
+        },
+      },
+      targetContent,
+    );
   }
 
   /** Retain valid partial Evidence and reference it only after recording succeeds. */

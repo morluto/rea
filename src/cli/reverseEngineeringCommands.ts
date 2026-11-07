@@ -1,5 +1,6 @@
 import { z } from "incur";
 import type { Logger } from "pino";
+import { OBJDUMP_PROVIDER_IDENTITY } from "../objdump/ObjdumpProviderIdentity.js";
 
 import { createReverseEngineeringService } from "../composition/reverseEngineering.js";
 import { AnalysisError } from "../domain/analysisErrorBase.js";
@@ -16,8 +17,10 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import {
   OBJDUMP_ARTIFACT_OPERATIONS,
   reverseCommandTimeoutSchema,
+  rizinInputSchema,
 } from "../domain/reverseEngineering.js";
 import { logCliCommand } from "../cliLogging.js";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -192,7 +195,7 @@ export const registerReverseEngineeringCommands = (
   const service = createService(environment);
   cli.command(CLI_COMMANDS.inspectWithObjdump, {
     description:
-      "Inspect a local artifact with GNU objdump and retain its raw output as Evidence",
+      "Inspect a local artifact using GNU-style objdump arguments and retain the selected command output as Evidence",
     args: z.object({
       path: z
         .string()
@@ -200,7 +203,7 @@ export const registerReverseEngineeringCommands = (
         .describe("Path to the local artifact to inspect."),
       operation: z
         .enum(OBJDUMP_ARTIFACT_OPERATIONS)
-        .describe("GNU objdump inspection operation to run."),
+        .describe("GNU-style objdump operation to run."),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -208,7 +211,7 @@ export const registerReverseEngineeringCommands = (
         .string()
         .optional()
         .describe(
-          "Native symbol to select with the disassemble operation; GNU objdump controls matching and boundaries.",
+          "Native symbol to select with the disassemble operation; the selected executable controls matching and boundaries.",
         ),
       followDebugLinks: z
         .boolean()
@@ -216,13 +219,13 @@ export const registerReverseEngineeringCommands = (
         .describe(
           "Follow local DWARF debug links. External debug-file identity is not bound to Evidence.",
         ),
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, CLI_COMMANDS.inspectWithObjdump, async () => {
           const delivery = {
-            providerId: "gnu.objdump",
+            providerId: OBJDUMP_PROVIDER_IDENTITY.id,
             operation: "inspect_with_objdump",
             signal,
             detail: options.detail,
@@ -255,11 +258,11 @@ export const registerReverseEngineeringCommands = (
       ),
   });
   cli.command(CLI_COMMANDS.listObjdumpArchitectures, {
-    description: "List BFD targets advertised by the installed GNU objdump",
+    description: "Capture the selected objdump command response to -i",
     args: z.object({}),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ options }) =>
       withCommandCancellation((signal) =>
@@ -268,7 +271,7 @@ export const registerReverseEngineeringCommands = (
           CLI_COMMANDS.listObjdumpArchitectures,
           async () => {
             const delivery = {
-              providerId: "gnu.objdump",
+              providerId: OBJDUMP_PROVIDER_IDENTITY.id,
               operation: "inspect_with_objdump",
               signal,
               detail: options.detail,
@@ -308,7 +311,11 @@ export const registerReverseEngineeringCommands = (
       command: z.string().min(1).describe("One caller-selected Rizin command."),
     }),
     options: z.object({
-      commandTimeoutMs: reverseCommandTimeoutSchema,
+      asmArch: rizinInputSchema.shape.asm_arch,
+      asmBits: cliDecimalField(rizinInputSchema.shape.asm_bits),
+      asmCpu: rizinInputSchema.shape.asm_cpu,
+      baseAddress: rizinInputSchema.shape.base_address,
+      commandTimeoutMs: cliDecimalField(reverseCommandTimeoutSchema),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
@@ -317,6 +324,18 @@ export const registerReverseEngineeringCommands = (
             service.executeRizinCommand(
               {
                 ...args,
+                ...(options.asmArch === undefined
+                  ? {}
+                  : { asm_arch: options.asmArch }),
+                ...(options.asmBits === undefined
+                  ? {}
+                  : { asm_bits: options.asmBits }),
+                ...(options.asmCpu === undefined
+                  ? {}
+                  : { asm_cpu: options.asmCpu }),
+                ...(options.baseAddress === undefined
+                  ? {}
+                  : { base_address: options.baseAddress }),
                 ...(options.commandTimeoutMs === undefined
                   ? {}
                   : { command_timeout_ms: options.commandTimeoutMs }),
@@ -421,7 +440,9 @@ export const registerReverseEngineeringCommands = (
       inferiorTty: z
         .string()
         .min(1)
-        .describe("Caller-selected Linux TTY for inferior stdout and stderr."),
+        .describe(
+          "Caller-selected Linux TTY for inferior stdin, stdout and stderr.",
+        ),
       backend: z
         .string()
         .min(1)

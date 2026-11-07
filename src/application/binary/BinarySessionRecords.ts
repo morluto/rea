@@ -334,14 +334,16 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters);
+    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
+      this.evidenceForAnalysis(id),
+    );
   }
 
   protected recordSnapshot(
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {
     if (this.#snapshotInvalidated) return;
-    this.#snapshot.record(input);
+    this.#snapshot.record(input, (id) => this.evidenceForAnalysis(id));
     this.#emitSnapshotChanged();
   }
 

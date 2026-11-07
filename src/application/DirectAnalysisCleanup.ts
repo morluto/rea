@@ -36,7 +36,17 @@ export const projectDirectAnalysisFailure = (
   callerInputPath: string,
 ): ReturnType<typeof projectAnalysisError> => {
   const projection = projectInvocationFailure(error);
-  const observation = tryParseEvidence(projection.details?.partial_observation);
+  const partial = projection.details?.partial_observation;
+  const wrapped =
+    typeof partial === "object" &&
+    partial !== null &&
+    !Array.isArray(partial) &&
+    partial.kind === "unretained-evidence";
+  const observation = tryParseEvidence(wrapped ? partial.evidence : partial);
+  const rebound =
+    observation === undefined
+      ? undefined
+      : withEvidenceCallerInputPath(observation, callerInputPath);
   const completed = sourcePublicationRecoveryOf(error)?.completed;
   const completedWithPath =
     completed?.kind === "unretained-evidence" ||
@@ -57,19 +67,18 @@ export const projectDirectAnalysisFailure = (
             },
           }
         : undefined;
-  if (observation === undefined && completedWithPath === undefined)
+  if (rebound === undefined && completedWithPath === undefined)
     return projection;
   return {
     ...projection,
     details: {
       ...projection.details,
-      ...(observation === undefined
+      ...(rebound === undefined
         ? {}
         : {
-            partial_observation: withEvidenceCallerInputPath(
-              observation,
-              callerInputPath,
-            ),
+            partial_observation: wrapped
+              ? { ...partial, evidence: rebound }
+              : rebound,
           }),
       ...(completedWithPath === undefined
         ? {}

@@ -51,6 +51,55 @@ import { analysisErrorWithCleanupFailure } from "./analysisErrorCleanup.js";
 import type { AnalysisCallerLifetime } from "./analysisErrorBase.js";
 import { ProviderCleanupError } from "./providerCleanupError.js";
 
+it("projects nested workflow-publication recovery for the actual caller lifetime", () => {
+  const child = new UnknownRegistryError(
+    "limit",
+  ).retainWorkflowUnknownPublication({
+    evidence_id: `ev_${"a".repeat(64)}`,
+    evidence_retention: "retained",
+    total_questions: 3,
+    created_questions: 1,
+    existing_questions: 0,
+    next_question_index: 1,
+  });
+  const error = new AnalysisCancelledError(
+    "trace_feature",
+    childFailureDiagnostics({ child: { error: child } }),
+  );
+  const continuing = projectAnalysisError(error);
+  const invocation = projectAnalysisError(error, "invocation");
+  const childOf = (value: typeof continuing) => {
+    const diagnostics = value.details?.diagnostics;
+    if (
+      typeof diagnostics !== "object" ||
+      diagnostics === null ||
+      Array.isArray(diagnostics)
+    )
+      throw new Error("Expected child diagnostics");
+    return analysisErrorProjectionSchema.parse(diagnostics.child);
+  };
+  expect(
+    childOf(continuing).details?.workflow_unknown_publication,
+  ).toMatchObject({
+    evidence_retention: "retained",
+    created_questions: 1,
+    next_question_index: 1,
+  });
+  expect(childOf(continuing).remediation.action).toContain(
+    "get_evidence_bundle",
+  );
+  expect(
+    childOf(invocation).details?.workflow_unknown_publication,
+  ).toMatchObject({
+    evidence_retention: "invocation-only",
+    created_questions: 1,
+    next_question_index: 1,
+  });
+  expect(childOf(invocation).remediation.action).not.toContain(
+    "get_evidence_bundle",
+  );
+});
+
 describe("agent recovery metadata", () => {
   it("does not mark deterministic input validation as retryable", () => {
     const projected = projectAnalysisError(

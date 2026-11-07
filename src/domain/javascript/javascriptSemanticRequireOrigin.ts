@@ -493,11 +493,7 @@ const selectedRequireSourcesAt = (
       }
       if (facts === undefined) {
         unknown = true;
-        const retained = semanticBindingAtRead(
-          binding,
-          node,
-          state.parentsByNode,
-        ).binding;
+        const retained = semanticBindingAtRead(binding, node, state).binding;
         pending.push(
           ...inheritLoaderSourceContext(
             current,
@@ -1265,7 +1261,7 @@ const hasCommonJsModuleSource = (
       continue;
     }
     if (binding === undefined) continue;
-    const read = semanticBindingAtRead(binding, value, state.parentsByNode);
+    const read = semanticBindingAtRead(binding, value, state);
     const retainsMainModule =
       mainModulePath &&
       commonJsWrapperBindingDeclaration(value, "require", state) !==

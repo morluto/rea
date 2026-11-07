@@ -98,6 +98,7 @@ export const projectAnalysisErrorWithoutCapturedOutput = (
 /** Bounded fallback when the completed observation itself cannot be delivered. */
 export const projectAnalysisErrorWithoutPartialObservation = (
   error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
 ): AnalysisErrorProjection =>
   projectError(
     error,
@@ -106,7 +107,7 @@ export const projectAnalysisErrorWithoutPartialObservation = (
       partialObservation: false,
       secondary: true,
     },
-    "continuing",
+    callerLifetime,
   );
 
 export interface UnretainedEvidenceCandidate {
@@ -318,7 +319,8 @@ const projectionDependsOnCallerLifetime = (
       if (
         node.limit !== undefined ||
         node.continuingCallerGuidance !== undefined ||
-        node.invocationDiagnostics !== undefined
+        node.invocationDiagnostics !== undefined ||
+        node.workflowUnknownPublication !== undefined
       )
         return true;
     return false;
@@ -394,8 +396,22 @@ const projectError = (
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
+  const unknownPublication =
+    composed.workflowUnknownPublication ?? primary.workflowUnknownPublication;
   const details = {
     ...primaryDetails,
+    ...(unknownPublication === undefined
+      ? {}
+      : {
+          workflow_unknown_publication: {
+            ...unknownPublication,
+            evidence_retention:
+              callerLifetime === "invocation" &&
+              unknownPublication.evidence_retention === "retained"
+                ? "invocation-only"
+                : unknownPublication.evidence_retention,
+          },
+        }),
     ...(primary.limit === undefined
       ? {}
       : {
@@ -489,6 +505,11 @@ const projectError = (
     includesUnretainedEvidence
       ? ` ${UNRETAINED_EVIDENCE_EXPORT_GUIDANCE}`
       : "";
+  const publicationRemediation =
+    callerLifetime === "continuing" &&
+    unknownPublication?.evidence_retention === "retained"
+      ? " Use get_evidence_bundle with the Evidence ID in details.workflow_unknown_publication to retrieve the completed result; use list_unknowns to inspect recorded questions. Publication stopped at the reported index; later questions were not checked in this attempt."
+      : "";
   return {
     code,
     category: analysisErrorCategory(error),
@@ -503,8 +524,8 @@ const projectError = (
     remediation: {
       action:
         cleanupRetry === undefined
-          ? `${remediation}${retentionGuidance}`
-          : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}`,
+          ? `${remediation}${retentionGuidance}${publicationRemediation}`
+          : `${remediation}${retentionGuidance} ${cleanupRetryRemediation(cleanupRetry)}${publicationRemediation}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),
@@ -736,6 +757,9 @@ const requestErrorDetails = (
     return {
       evidence_id: error.evidenceId,
       reason: error.reason,
+      ...(typeof error.diagnostics?.operation === "string"
+        ? { operation: error.diagnostics.operation }
+        : {}),
       ...(error.referenceScope === undefined
         ? {}
         : { reference_scope: error.referenceScope }),

@@ -237,6 +237,99 @@ it.each([false, true])(
 
 const provider = { id: "fixture", name: "Fixture", version: "1" };
 
+it("retains requested live observations and links their original producer sources", async () => {
+  const upstream = createEvidence(undefined, provider, {
+    operation: "health",
+    parameters: {},
+    result: "source",
+  });
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok(
+          createAnalysisExecution("live observation", provider, {
+            cachePolicy: "live",
+            sourceEvidence: [upstream],
+          }),
+        ),
+    },
+    async (observed) => {
+      const value = await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return value.ok ? ok({ source: value.value.evidenceId ?? null }) : value;
+    },
+  );
+  if (!result.ok) throw result.error;
+  const source = result.sourceEvidence?.find(
+    (record) => record.operation === "analyze_function",
+  );
+  expect(source).toBeDefined();
+  expect(source?.evidence_links).toEqual([upstream.evidence_id]);
+  expect(result.value.result).toEqual({ source: source?.evidence_id });
+  expect(result.value.evidenceLinks).toContain(source?.evidence_id);
+  expect(result.value.cachePolicy).toBe("live");
+});
+
+it("keeps an existing session-issued source identity on replay", async () => {
+  const original = createEvidence(undefined, provider, {
+    operation: "analyze_function",
+    parameters: { procedure: "0x1" },
+    result: "original",
+  });
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () =>
+        ok({
+          ...createAnalysisExecution("original", provider, {
+            limitations: ["replayed"],
+          }),
+          evidenceId: original.evidence_id,
+        }),
+    },
+    async (observed) => {
+      const value = await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return value.ok ? ok({ source: value.value.evidenceId ?? null }) : value;
+    },
+  );
+  if (!result.ok) throw result.error;
+  expect(result.value.result).toEqual({ source: original.evidence_id });
+  expect(result.value.evidenceLinks).toEqual([original.evidence_id]);
+  expect(result.sourceEvidence).toBeUndefined();
+});
+
+it("retains a completed requested source if the composed workflow is cancelled", async () => {
+  const result = await executeComposedWorkflow(
+    {
+      execute: async () => ok(createAnalysisExecution("observed", provider)),
+    },
+    async (observed) => {
+      await observed.execute(
+        "analyze_function",
+        { procedure: "0x1" },
+        {
+          retainEvidence: true,
+        },
+      );
+      return err(new AnalysisCancelledError("trace_native_values"));
+    },
+  );
+  expect(result.ok).toBe(false);
+  expect(result.sourceEvidence?.map((record) => record.operation)).toEqual([
+    "analyze_function",
+  ]);
+});
+
 it("keeps Evidence identity stable when dependent branches finish in opposite orders", async () => {
   const run = async (order: readonly number[]) => {
     const gate = () => {
@@ -702,6 +795,71 @@ describe("workflow residual question retention", () => {
       }),
     ).toEqual(err(error));
   });
+});
+
+it("reports a retained workflow and the committed prefix when Unknown publication fails", () => {
+  const records = new InvestigationRecords();
+  const result = { residual_unknowns: ["First?", "First?", "Second?"] };
+  const evidence = createWorkflowEvidence({
+    target: undefined,
+    operation: "trace_feature",
+    parameters: {},
+    result,
+    upstreamProfile: undefined,
+    upstreamLimitations: [],
+  });
+  expect(records.recordEvidence(evidence).ok).toBe(true);
+  const failure = new AnalysisResourceConstraintError(
+    "record_unknown",
+    "capacity",
+    "full",
+    null,
+  );
+  const outcome = recordWorkflowUnknowns({
+    name: "trace_feature",
+    result,
+    evidenceId: evidence.evidence_id,
+    evidenceRetained: true,
+    recordUnknown: (input) =>
+      input.question.startsWith("Second?")
+        ? err(failure)
+        : records.recordUnknown(input),
+  });
+  expect(outcome.ok).toBe(false);
+  if (outcome.ok) throw new Error("expected failure");
+  const projected = projectAnalysisError(outcome.error);
+  expect(projected.details?.workflow_unknown_publication).toEqual({
+    evidence_id: evidence.evidence_id,
+    evidence_retention: "retained",
+    total_questions: 3,
+    created_questions: 1,
+    existing_questions: 1,
+    next_question_index: 2,
+  });
+  expect(projected.remediation.action).toContain("get_evidence_bundle");
+  const invocation = projectAnalysisError(
+    outcome.error.retainPartialObservation(evidence),
+    "invocation",
+  );
+  expect(invocation.details?.workflow_unknown_publication).toMatchObject({
+    evidence_retention: "invocation-only",
+  });
+  expect(invocation.details?.partial_observation).toEqual(evidence);
+  expect(invocation.remediation.action).not.toContain("get_evidence_bundle");
+  expect(records.listUnknowns()).toHaveLength(1);
+  expect(records.evidenceById(evidence.evidence_id)?.normalized_result).toEqual(
+    result,
+  );
+  expect(
+    recordWorkflowUnknowns({
+      name: "trace_feature",
+      result,
+      evidenceId: evidence.evidence_id,
+      evidenceRetained: true,
+      recordUnknown: (input) => records.recordUnknown(input),
+    }).ok,
+  ).toBe(true);
+  expect(records.listUnknowns()).toHaveLength(2);
 });
 
 it.each([

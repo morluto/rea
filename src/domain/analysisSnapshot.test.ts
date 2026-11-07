@@ -462,7 +462,7 @@ describe("analysis snapshot canonical ordering and scope", () => {
           foreign,
         ]),
       }),
-    ).toThrow(/another target/u);
+    ).toThrow(/unrelated to the selected target/u);
   });
 });
 
@@ -509,6 +509,61 @@ it("does not select arbitrary provenance when multiple authenticated records mat
         evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
       }),
     ).toBeUndefined();
+});
+
+it("retains linked foreign Evidence without treating it as selected-target replay", () => {
+  const { current, snapshot } = snapshotWithHistoricalEvidence();
+  const foreignTarget = { ...ANALYSIS_SNAPSHOT_TARGET, sha256: "b".repeat(64) };
+  const foreign = createEvidence(foreignTarget, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: current.operation,
+    parameters: current.parameters,
+    result: current.normalized_result,
+    analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+  });
+  const linked = createEvidence(
+    ANALYSIS_SNAPSHOT_TARGET,
+    ANALYSIS_SNAPSHOT_PROVIDER,
+    {
+      operation: current.operation,
+      parameters: current.parameters,
+      result: current.normalized_result,
+      analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      evidenceLinks: [foreign.evidence_id],
+    },
+  );
+  const bundle = createEvidenceBundle([
+    ...snapshot.evidence_bundle.records.filter(
+      (record) => record.evidence_id !== current.evidence_id,
+    ),
+    linked,
+    foreign,
+  ]);
+  const admitted = parseAnalysisSnapshot({
+    ...snapshot,
+    evidence_bundle: bundle,
+  });
+  expect(
+    snapshotEvidenceForQuery(admitted, {
+      target: ANALYSIS_SNAPSHOT_TARGET,
+      bindingProfile: ANALYSIS_SNAPSHOT_PROFILE,
+      operation: linked.operation,
+      parameters: linked.parameters,
+      provider: ANALYSIS_SNAPSHOT_PROVIDER,
+      evidenceProfile: ANALYSIS_SNAPSHOT_PROFILE,
+    }),
+  ).toEqual(linked);
+  expect(snapshotMatchesTarget(admitted.target, foreignTarget)).toBe(false);
+  const unrelated = createEvidence(foreignTarget, ANALYSIS_SNAPSHOT_PROVIDER, {
+    operation: "unrelated",
+    parameters: {},
+    result: "foreign",
+  });
+  expect(() =>
+    parseAnalysisSnapshot({
+      ...snapshot,
+      evidence_bundle: createEvidenceBundle([...bundle.records, unrelated]),
+    }),
+  ).toThrow("unrelated to the selected target and its linked sources");
 });
 
 describe("analysis snapshot Evidence binding", () => {

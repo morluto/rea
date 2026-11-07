@@ -3,7 +3,7 @@ import { crc32, deflateSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 
 import { readPngHeaderDimensions } from "../domain/pngHeader.js";
-import { comparePngScreenshots } from "./PngVisualDiff.js";
+import { comparePngScreenshots, isOneColourPng } from "./PngVisualDiff.js";
 import {
   AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
@@ -193,6 +193,22 @@ describe("PNG visual diff", () => {
         compared_pixels: 2,
       }).success,
     ).toBe(false);
+  });
+});
+
+describe("isOneColourPng", () => {
+  it("tells a one-colour frame from a drawn one, and an unreadable one from both", () => {
+    const base64 = (pixels: readonly number[]) =>
+      png(2, 2, pixels).toString("base64");
+    const black = [0, 0, 0, 255];
+
+    expect(
+      isOneColourPng(base64([...black, ...black, ...black, ...black])),
+    ).toBe(true);
+    expect(
+      isOneColourPng(base64([...black, ...black, ...black, 0, 0, 1, 255])),
+    ).toBe(false);
+    expect(isOneColourPng("AAAA")).toBeUndefined();
   });
 });
 

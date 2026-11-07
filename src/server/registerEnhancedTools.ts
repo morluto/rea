@@ -211,8 +211,9 @@ export const registerEnhancedTools = (
   server.registerTool(
     traceFeature.name,
     toolRegistrationOptions(traceFeature),
-    (input, context) =>
+    ({ detail, ...input }, context) =>
       executeEnhancedTool(registration, traceFeature, {
+        detail,
         validatedCall: { name: "trace_feature", input },
         context,
       }),
@@ -303,7 +304,12 @@ const executeEnhancedTool = async (
         registration.hasEvidence,
         registration.admitRecovery,
       );
-      await reportOperationEnd(progress, name, result.ok);
+      const finish = async (
+        response: CallToolResult,
+      ): Promise<CallToolResult> => {
+        await reportOperationEnd(progress, name, response.isError !== true);
+        return response;
+      };
       if (result.ok) {
         const evidence = createWorkflowEvidence({
           target: registration.activeTarget?.(),
@@ -318,7 +324,9 @@ const executeEnhancedTool = async (
         });
         const recorded = registration.recordEvidence?.(evidence);
         if (recorded !== undefined && !recorded.ok)
-          return registration.delivery.toCallToolResult(recorded, contract);
+          return finish(
+            registration.delivery.toCallToolResult(recorded, contract),
+          );
         if (
           name !== "trace_native_ui_action" &&
           registration.allowsSnapshotReplay?.(name) === true
@@ -333,7 +341,9 @@ const executeEnhancedTool = async (
             const snapshot =
               registration.recordWorkflowSnapshot?.(workflowRecord);
             if (snapshot !== undefined && !snapshot.ok)
-              return registration.delivery.toCallToolResult(snapshot, contract);
+              return finish(
+                registration.delivery.toCallToolResult(snapshot, contract),
+              );
           }
         }
         const unknowns = recordWorkflowUnknowns({
@@ -341,9 +351,12 @@ const executeEnhancedTool = async (
           result: result.value.result,
           evidenceId: evidence.evidence_id,
           recordUnknown: registration.recordUnknown,
+          evidenceRetained: recorded?.ok === true,
         });
         if (!unknowns.ok)
-          return registration.delivery.toCallToolResult(unknowns, contract);
+          return finish(
+            registration.delivery.toCallToolResult(unknowns, contract),
+          );
         const delivered =
           request.detail === "summary"
             ? summarizeRetainedAnalysis(evidence, {
@@ -352,16 +365,22 @@ const executeEnhancedTool = async (
               })
             : ok(evidence);
         if (!delivered.ok)
-          return registration.delivery.toCallToolResult(delivered, contract);
-        return registration.delivery.toEvidenceToolResult(
-          delivered.value,
-          contract,
-          request.detail === "summary"
-            ? registration.recordEvidence?.(delivered.value)
-            : recorded,
+          return finish(
+            registration.delivery.toCallToolResult(delivered, contract),
+          );
+        return finish(
+          registration.delivery.toEvidenceToolResult(
+            delivered.value,
+            contract,
+            request.detail === "summary"
+              ? registration.recordEvidence?.(delivered.value)
+              : recorded,
+          ),
         );
       }
-      return deliverEnhancedFailure(registration, contract, result.error);
+      return finish(
+        deliverEnhancedFailure(registration, contract, result.error),
+      );
     },
   );
   return admitted.ok

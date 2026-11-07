@@ -11,7 +11,11 @@ import {
   omitContextEvidenceForDelivery,
 } from "../application/AnalysisContextQueries.js";
 import type { BinarySessionPort } from "../application/binary/BinarySessionPort.js";
-import { createProcessCaptureEvidence } from "../application/process/ProcessEvidence.js";
+import {
+  createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
+} from "../application/process/ProcessEvidence.js";
+import { prepareProcessScenarioPlan } from "../application/process/ProcessScenarioPreparation.js";
 import { captureProcessScenario } from "../process/capture/ProcessHarness.js";
 import { ProcessCaptureResourceScope } from "../process/capture/ProcessCaptureLifecycle.js";
 import { ProcessCaptureError } from "../process/capture/ProcessCaptureError.js";
@@ -111,6 +115,39 @@ const registerProcessTools = ({
         context.mcpReq.signal,
         async () => {
           const progress = mcpProgressReporter(context);
+          if (input.dry_run) {
+            const prepared = await logToolExecution(
+              logger,
+              captureContract.name,
+              () =>
+                prepareProcessScenarioPlan(
+                  input,
+                  environment,
+                  process.platform,
+                  context.mcpReq.signal,
+                ),
+            );
+            if (!prepared.ok)
+              return server.delivery.toCallToolResult(
+                prepared,
+                captureContract,
+              );
+            const evidence = createProcessScenarioPlanEvidence(
+              prepared.value,
+              process.platform,
+            );
+            const recorded = session.recordEvidence(evidence);
+            if (!recorded.ok)
+              return server.delivery.toCallToolResult(
+                recorded,
+                captureContract,
+              );
+            return server.delivery.toEvidenceToolResult(
+              evidence,
+              captureContract,
+              recorded,
+            );
+          }
           const captured = await logToolExecution(
             logger,
             captureContract.name,
@@ -238,7 +275,10 @@ const registerOpenLifecycleTool = ({
             },
             openContract,
           )
-        : server.delivery.toCallToolResult(opened, openContract);
+        : server.delivery.toOpenFailureToolResult(
+            opened,
+            openContract.returnsTargetContent,
+          );
     },
   );
 };

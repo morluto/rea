@@ -11,6 +11,10 @@ import {
   inspectPeLoadConfigInputSchema,
   peLoadConfigSchema,
 } from "../../domain/native/peLoadConfig.js";
+import {
+  binaryHardeningSchema,
+  inspectBinaryHardeningInputSchema,
+} from "../../domain/native/binaryHardening.js";
 import { inspectByteEntropyInputSchema } from "../../domain/native/byteEntropy.js";
 import { byteEntropyOutputSchema } from "../toolOutputSchemaGroups.js";
 import {
@@ -105,13 +109,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
       },
     ],
   },
+  {
+    name: "inspect_binary_hardening",
+    ...toolContractMetadata("inspect_binary_hardening"),
+    kind: "native-provider",
+    description:
+      "Inspect compile-time and link-time hardening of one explicit local ELF, PE, or Mach-O file, including one image per universal Mach-O slice. Reports PIE or ASLR, NX, RELRO, stack-protector signs, FORTIFY signs, control-flow flags and stripped state, each with the header field or import behind it. States are enabled, disabled, partial, unknown, or not_applicable. A missing import in a static or stripped image is unknown, not disabled. Authenticode and Mach-O code-signature rows report table or load-command presence, not validity. Mach-O hardened runtime stays unknown and names inspect_signature. This inspection states that it does not execute the image and does not assess exploitability. Reads a stable regular file. A malformed header returns no partial report, except one bad slice in a universal Mach-O. A symbol table, symbol name, or GNU property note over its budget leaves those rows unknown and keeps the header rows. A dynamic-table budget still fails the ELF report.",
+    inputSchema: inspectBinaryHardeningInputSchema,
+    outputSchema: evidenceResultOf(binaryHardeningSchema),
+    examples: [
+      {
+        title: "Inspect binary hardening",
+        input: { path: "/artifacts/program" },
+      },
+    ],
+  },
 
   {
     name: "inspect_elf_notes",
     ...toolContractMetadata("inspect_elf_notes"),
     kind: "native-provider",
     description:
-      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
+      "Inspect one explicit local ELF32/ELF64 image's PT_NOTE program headers and SHT_NOTE sections without executing it or opening a disassembler. Returns note-table file ranges, owners, types, descriptor SHA-256 and hex previews, plus GNU build-id, ABI-tag and gold-version fields and Linux CORE process, mapping, signal, and auxv notes when those descriptors match. A missing table is observed absence of those declarations, not proof the image never carried notes in another container. Reads a stable regular file; malformed ELF headers, truncated notes and exhausted budgets return no partial success. Portable on supported Node hosts; no debug package or catalog is required.",
     inputSchema: inspectElfNotesInputSchema,
     outputSchema: evidenceResultOf(elfNotesSchema),
     examples: [

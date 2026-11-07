@@ -22,6 +22,9 @@ export const workflowAnalysisProfileParameters = (
 ) => ({
   upstream_analysis_profile: upstream,
   source_limitations: "provider-operation-caveats-v1",
+  ...(operation === "trace_native_values"
+    ? { value_flow_absence: "recorded-versus-unavailable-v1" }
+    : {}),
   ...(operation === "binary_overview"
     ? { workflow_revision: 5 }
     : operation === "batch_decompile"
@@ -30,5 +33,7 @@ export const workflowAnalysisProfileParameters = (
         ? { workflow_revision: 4 }
         : operation === "get_call_graph"
           ? { workflow_revision: 3 }
-          : { workflow_revision: 1 }),
+          : operation === "trace_native_values"
+            ? { workflow_revision: 2 }
+            : { workflow_revision: 1 }),
 });

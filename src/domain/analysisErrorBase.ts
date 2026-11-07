@@ -1,3 +1,5 @@
+import type { PlaywrightTrace } from "./playwrightTrace/playwrightTrace.js";
+import type { GraphqlContract } from "./apiContract/graphqlContract.js";
 import type { SavedAnalysisSnapshotPartialObservation } from "./savedAnalysisSnapshot.js";
 import type { AnalysisSettingLimit } from "./analysisSettings.js";
 import type { JsonValue } from "./jsonValue.js";
@@ -52,6 +54,17 @@ export interface AnalysisCapturedOutput {
 export interface AnalysisCleanupObservation {
   readonly reason: string;
   readonly resources: readonly string[];
+}
+
+/** Publication stopped after a workflow produced its Evidence. Counts describe
+ * question occurrences, not distinct Unknown identities. */
+export interface WorkflowUnknownPublication {
+  readonly evidence_id: string;
+  readonly evidence_retention: "retained" | "unverified";
+  readonly total_questions: number;
+  readonly created_questions: number;
+  readonly existing_questions: number;
+  readonly next_question_index: number;
 }
 
 /**
@@ -200,6 +213,7 @@ export abstract class AnalysisError extends Error {
   readonly executionFailure: string | undefined = undefined;
   partialObservation: AnalysisPartialObservation | undefined;
   sourcePublicationRecovery: SourcePublicationRecovery | undefined;
+  workflowUnknownPublication: WorkflowUnknownPublication | undefined;
 
   /** Keep the failed source and completed result with their error owner. */
   retainSourcePublication(completed: SourcePublicationCompletion): this {
@@ -354,6 +368,14 @@ export abstract class AnalysisError extends Error {
     this.partialObservation ??= observation;
     return this;
   }
+
+  /** Preserve the exact committed prefix when automatic question publication stops. */
+  retainWorkflowUnknownPublication(
+    publication: WorkflowUnknownPublication,
+  ): this {
+    this.workflowUnknownPublication ??= Object.freeze({ ...publication });
+    return this;
+  }
 }
 
 /** Confirmed cleanup reveals the typed primary; unresolved ownership stays visible. */
@@ -450,6 +472,8 @@ export type AnalysisPartialObservation =
     }
   | { readonly kind: "unretained-evidence"; readonly evidence: Evidence }
   | { readonly kind: "retained-evidence"; readonly evidence_id: string }
+  | GraphqlContract
+  | PlaywrightTrace
   | SavedAnalysisSnapshotPartialObservation
   | WebArtifactAcquisition
   | WebTraceObservation
