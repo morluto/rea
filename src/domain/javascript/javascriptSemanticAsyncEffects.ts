@@ -833,114 +833,125 @@ export const isProvenNodeEmitter = (
   receiver: t.Expression | t.Super,
   call: t.CallExpression | t.OptionalCallExpression,
   state: JavaScriptSemanticAnalysisState,
-  visitedBindings: ReadonlySet<string> = new Set(),
 ): boolean => {
-  const unwrapped = unwrapJavaScriptExpression(receiver).node;
-  if (
-    t.isCallExpression(unwrapped) ||
-    t.isOptionalCallExpression(unwrapped) ||
-    t.isNewExpression(unwrapped)
-  ) {
-    const requireOrigin = semanticRequireOrigin(unwrapped, state);
+  let currentReceiver: t.Expression | t.Super = receiver;
+  const visitedBindings = new Set<string>();
+
+  for (let depth = 0; depth <= SEMANTIC_EXPRESSION_DEPTH_LIMIT; depth++) {
+    const unwrapped = unwrapJavaScriptExpression(currentReceiver).node;
     if (
-      requireOrigin !== undefined &&
-      isProcessModuleOrigin(requireOrigin.origin)
+      t.isCallExpression(unwrapped) ||
+      t.isOptionalCallExpression(unwrapped) ||
+      t.isNewExpression(unwrapped)
+    ) {
+      const requireOrigin = semanticRequireOrigin(unwrapped, state);
+      if (
+        requireOrigin !== undefined &&
+        isProcessModuleOrigin(requireOrigin.origin)
+      ) {
+        return !hasInheritedListenerMethodOverride(state, "process", call);
+      }
+      return isProvenCreationNode(unwrapped, state, unwrapped);
+    }
+    if (
+      (t.isIdentifier(unwrapped) &&
+        semanticGlobalProcessOrigin(unwrapped, state) !== undefined) ||
+      (t.isMemberExpression(unwrapped) &&
+        semanticGlobalProcessPathOrigin(unwrapped, state)?.importedPath
+          .length === 0)
     ) {
       return !hasInheritedListenerMethodOverride(state, "process", call);
     }
-    return isProvenCreationNode(unwrapped, state, unwrapped);
-  }
-  if (
-    (t.isIdentifier(unwrapped) &&
-      semanticGlobalProcessOrigin(unwrapped, state) !== undefined) ||
-    (t.isMemberExpression(unwrapped) &&
-      semanticGlobalProcessPathOrigin(unwrapped, state)?.importedPath.length ===
-        0)
-  ) {
-    return !hasInheritedListenerMethodOverride(state, "process", call);
-  }
-  if (!t.isIdentifier(unwrapped)) return false;
-  const binding = resolveSemanticBindingState(state, unwrapped, unwrapped.name);
-  if (binding === undefined || visitedBindings.has(binding.bindingId))
-    return false;
-  if (
-    binding.mutable &&
-    semanticOpaqueBindingReadMayHaveChanged(binding, unwrapped, state)
-  )
-    return false;
-  if (
-    semanticBindingMayHaveOpaqueEffect(binding, state, unwrapped, "reference")
-  )
-    return false;
-  const activeBinding = binding.mutable
-    ? (() => {
-        const read = semanticBindingAtRead(binding, unwrapped, state);
-        return read.status === "ordered" && read.hasDefiniteInitializer
-          ? read.binding
-          : undefined;
-      })()
-    : binding;
-  if (activeBinding === undefined) return false;
-  if (
-    activeBinding.memberWrites.some(
-      ({ node }) =>
-        !semanticTopLevelEffectFollowsCapture(call, node, state.parentsByNode),
-    ) ||
-    activeBinding.escapedPaths.some(
-      (effect) =>
-        effect.node !== call &&
-        !semanticTopLevelEffectFollowsCapture(
-          call,
-          effect.node,
-          state.parentsByNode,
-        ),
-    )
-  )
-    return false;
-
-  const isImportedProcess = activeBinding.directOrigins.some(
-    isProcessModuleOrigin,
-  );
-  const isReachableProcessModule =
-    isImportedProcess ||
-    (() => {
-      const provenance = evaluateSemanticProvenance(activeBinding, state);
-      return (
-        provenance.status === "module" &&
-        provenance.origins.length === 1 &&
-        isProcessModuleOrigin(provenance.origins[0])
-      );
-    })();
-
-  if (isReachableProcessModule) {
-    return !hasInheritedListenerMethodOverride(state, "process", call);
-  }
-
-  const initializers = [
-    ...activeBinding.initializers,
-    ...activeBinding.referenceInitializers,
-  ];
-  if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
-    return false;
-  const initNode = initializers[0].node;
-  if (
-    (t.isIdentifier(initNode) &&
-      semanticGlobalProcessOrigin(initNode, state) !== undefined) ||
-    (t.isMemberExpression(initNode) &&
-      semanticGlobalProcessPathOrigin(initNode, state)?.importedPath.length ===
-        0)
-  ) {
-    return !hasInheritedListenerMethodOverride(state, "process", call);
-  }
-  if (t.isIdentifier(initNode)) {
-    return isProvenNodeEmitter(
-      initNode,
-      call,
+    if (!t.isIdentifier(unwrapped)) return false;
+    const binding = resolveSemanticBindingState(
       state,
-      new Set([...visitedBindings, binding.bindingId]),
+      unwrapped,
+      unwrapped.name,
     );
+    if (binding === undefined || visitedBindings.has(binding.bindingId))
+      return false;
+    visitedBindings.add(binding.bindingId);
+    if (
+      binding.mutable &&
+      semanticOpaqueBindingReadMayHaveChanged(binding, unwrapped, state)
+    )
+      return false;
+    if (
+      semanticBindingMayHaveOpaqueEffect(binding, state, unwrapped, "reference")
+    )
+      return false;
+    const activeBinding = binding.mutable
+      ? (() => {
+          const read = semanticBindingAtRead(binding, unwrapped, state);
+          return read.status === "ordered" && read.hasDefiniteInitializer
+            ? read.binding
+            : undefined;
+        })()
+      : binding;
+    if (activeBinding === undefined) return false;
+    if (
+      activeBinding.memberWrites.some(
+        ({ node }) =>
+          !semanticTopLevelEffectFollowsCapture(
+            call,
+            node,
+            state.parentsByNode,
+          ),
+      ) ||
+      activeBinding.escapedPaths.some(
+        (effect) =>
+          effect.node !== call &&
+          !semanticTopLevelEffectFollowsCapture(
+            call,
+            effect.node,
+            state.parentsByNode,
+          ),
+      )
+    )
+      return false;
+
+    const isImportedProcess = activeBinding.directOrigins.some(
+      isProcessModuleOrigin,
+    );
+    const isReachableProcessModule =
+      isImportedProcess ||
+      (() => {
+        const provenance = evaluateSemanticProvenance(activeBinding, state);
+        return (
+          provenance.status === "module" &&
+          provenance.origins.length === 1 &&
+          isProcessModuleOrigin(provenance.origins[0])
+        );
+      })();
+
+    if (isReachableProcessModule) {
+      return !hasInheritedListenerMethodOverride(state, "process", call);
+    }
+
+    const initializers = [
+      ...activeBinding.initializers,
+      ...activeBinding.referenceInitializers,
+    ];
+    if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
+      return false;
+    const initNode = initializers[0].node;
+    if (
+      (t.isIdentifier(initNode) &&
+        semanticGlobalProcessOrigin(initNode, state) !== undefined) ||
+      (t.isMemberExpression(initNode) &&
+        semanticGlobalProcessPathOrigin(initNode, state)?.importedPath
+          .length === 0)
+    ) {
+      return !hasInheritedListenerMethodOverride(state, "process", call);
+    }
+    if (t.isIdentifier(initNode)) {
+      currentReceiver = initNode;
+      continue;
+    }
+    return isProvenCreationNode(initNode, state, initNode);
   }
-  return isProvenCreationNode(initNode, state, initNode);
+
+  return false;
 };
 
 const collectEvent = (

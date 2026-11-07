@@ -745,3 +745,16 @@ it("drops child listener and event operation for a dynamic import expression", (
   expect(ir.childProcessInteractions).toEqual([]);
   expect(ir.eventOperations).toEqual([]);
 });
+
+it("iteratively follows emitter alias chains and bounds traversal at resource limit", () => {
+  const chain = Array.from({ length: 10 }, (_, i) =>
+    i === 0 ? "const a0 = spawn('worker');" : `const a${i} = a${i - 1};`,
+  ).join("\n");
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    ${chain}
+    a9.on("exit", 1);
+  `);
+  expect(ir.childProcessInteractions).toEqual([]);
+  expect(ir.eventOperations).toEqual([]);
+});
