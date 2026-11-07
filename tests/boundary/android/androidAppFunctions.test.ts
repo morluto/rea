@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Uint8ArrayReader, Uint8ArrayWriter, ZipWriter } from "@zip.js/zip.js";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 import {
   ANDROID_APP_FUNCTIONS_LIMITS,
   extractAndroidAppFunctionManifestBindings,
@@ -12,13 +12,21 @@ import {
 } from "../../../src/android/AndroidAppFunctions.js";
 import { parseAndroidManifestComponents } from "../../../src/android/AndroidManifestComponents.js";
 import { analyzeJadxRequest } from "../../../src/android/JadxAnalysis.js";
+import { JadxInterruption } from "../../../src/android/JadxInterruption.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
+import { ZipArtifactReader } from "../../../src/artifacts/ZipArtifactReader.js";
 import { AnalysisCancelledError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { androidResultSchemas } from "../../../src/domain/android/androidAnalysis.js";
+import type { AndroidAppFunctionAssetCheckpoint } from "../../../src/domain/android/androidAppFunctions.js";
+import { androidPartialObservationSchema } from "../../../src/domain/android/androidPartialObservation.js";
 import {
   androidAppFunctionsViewResultSchema,
   projectAnalysisView,
 } from "../../../src/domain/analysisView/analysisView.js";
+import { createEvidence } from "../../../src/domain/evidence.js";
+import { jsonValueByteLength } from "../../../src/domain/jsonValueByteLength.js";
+import type { JsonValue } from "../../../src/domain/jsonValue.js";
 import {
   createJadxProtocolFixture,
   verifyJadxFixtureCleanup,
@@ -56,6 +64,9 @@ const writeSyntheticApk = async (
 const scanApkAssets = async (
   apkPath: string,
   referencedPaths: readonly string[],
+  onObservation: (
+    checkpoint: AndroidAppFunctionAssetCheckpoint,
+  ) => void = () => {},
 ) => {
   const scope = new ArtifactResourceScope();
   try {
@@ -68,6 +79,7 @@ const scanApkAssets = async (
         new AnalysisCancelledError("inspect_android_package", {
           cause: reason,
         }),
+      onObservation,
     });
   } finally {
     await scope.close();
@@ -177,8 +189,8 @@ it("extracts AppFunctionService bindings, permission checks, and bundled v2 XML 
           resources: "full",
         },
         engine,
-        appFunctionsAssets: (referencedPaths) =>
-          scanApkAssets(apk, referencedPaths),
+        appFunctionsAssets: (manifestBindings) =>
+          scanApkAssets(apk, manifestBindings.referencedAssetPaths),
       },
     ),
   );
@@ -533,3 +545,309 @@ it.skipIf(process.platform === "win32")(
     await verifyJadxFixtureCleanup(appFnFixture.launches);
   },
 );
+
+it("preserves completed schema facts and interrupted carrier in checkpoint when a later schema read is cancelled", async () => {
+  const root = await createTestTempDirectory("rea-appfunctions-mid-cancel-");
+  const apk = join(root, "mid-cancel.apk");
+  const firstXml =
+    '<appfunctions><appfunction id="pkg#completedFn" schema_name="completedFn" schema_version="1" enabled_by_default="true"/></appfunctions>';
+  const secondXml =
+    '<appfunctions><appfunction id="pkg#interruptedFn"/></appfunctions>';
+  const thirdXml =
+    '<appfunctions><appfunction id="pkg#unexaminedFn"/></appfunctions>';
+  const firstSha256 = createHash("sha256")
+    .update(Buffer.from(firstXml, "utf8"))
+    .digest("hex");
+  await writeSyntheticApk(apk, [
+    { path: "assets/first_app_functions.xml", bytes: firstXml },
+    { path: "assets/second_app_functions.xml", bytes: secondXml },
+    { path: "assets/third_app_functions.xml", bytes: thirdXml },
+  ]);
+
+  const controller = new AbortController();
+  const reason = { caller: "cancel-before-second-schema" };
+  const originalOpen = ZipArtifactReader.prototype.open;
+  const openSpy = vi
+    .spyOn(ZipArtifactReader.prototype, "open")
+    .mockImplementation(async function (
+      this: ZipArtifactReader,
+      entry,
+      signal,
+    ) {
+      if (entry.path === "assets/second_app_functions.xml") {
+        controller.abort(reason);
+        throw new JadxInterruption(reason);
+      }
+      return originalOpen.call(this, entry, signal);
+    });
+  const scope = new ArtifactResourceScope();
+  let checkpoint: AndroidAppFunctionAssetCheckpoint | undefined;
+  try {
+    let rejected: unknown;
+    try {
+      await readAndroidAppFunctionAssets({
+        snapshot: apk,
+        referencedPaths: [],
+        resources: scope,
+        signal: controller.signal,
+        interruption: (cause) =>
+          new AnalysisCancelledError("inspect_android_package", { cause }),
+        onObservation: (observed) => {
+          checkpoint = observed;
+        },
+      });
+    } catch (cause: unknown) {
+      rejected = cause;
+    }
+
+    expect(rejected).toBeInstanceOf(AnalysisCancelledError);
+    expect((rejected as AnalysisCancelledError).cause).toBe(reason);
+    if (checkpoint === undefined) throw new Error("Missing asset checkpoint");
+    expect(checkpoint).toMatchObject({
+      scan_state: "interrupted",
+      status: "partial",
+      examined_entries: 2,
+    });
+    expect(checkpoint.schemas).toHaveLength(2);
+    expect(checkpoint.schemas[0]).toEqual({
+      path: "assets/first_app_functions.xml",
+      source_path: "assets/first_app_functions.xml",
+      sha256: firstSha256,
+      size: Buffer.byteLength(firstXml, "utf8"),
+      status: "complete",
+      functions: [
+        {
+          id: "pkg#completedFn",
+          schema_name: "completedFn",
+          schema_category: null,
+          schema_version: "1",
+          enabled_by_default: true,
+        },
+      ],
+      limitations: [],
+    });
+    expect(checkpoint.schemas[1]).toMatchObject({
+      path: "assets/second_app_functions.xml",
+      sha256: null,
+      size: null,
+      status: "unavailable",
+      functions: [],
+    });
+    expect(checkpoint.limitations.join(" ")).toContain(
+      "remaining schema assets remain unknown",
+    );
+
+    const validPartial = {
+      provider_id: "jadx" as const,
+      operation: "inspect_android_package" as const,
+      target: {
+        selected_path: apk,
+        path: apk,
+        sha256: "a".repeat(64),
+        format: "apk" as const,
+      },
+      provider_facts: {
+        jar_sha256: null,
+        bridge_sha256: null,
+        bridge_name: "rea-jadx-bridge",
+        bridge_version: "1",
+        server_name: null,
+        server_version: null,
+        engine_version: null,
+      },
+      calls: [],
+      app_functions: {
+        manifest_status: "complete" as const,
+        services: [],
+        referenced_asset_paths: [],
+        manifest_limitations: [],
+        assets: checkpoint,
+      },
+    };
+    expect(
+      androidPartialObservationSchema.safeParse(validPartial).success,
+    ).toBe(true);
+    expect(
+      androidPartialObservationSchema.safeParse({
+        ...validPartial,
+        operation: "inspect_android_jni_bindings",
+      }).success,
+    ).toBe(false);
+  } finally {
+    openSpy.mockRestore();
+    await scope.close();
+  }
+});
+
+it.skipIf(process.platform === "win32")(
+  "retains completed AppFunctions services and XML schema facts in JadxSession partialObservation when ZIP reader close fails",
+  async () => {
+    const appFnFixture = await createJadxProtocolFixture("app-functions");
+    const v2Xml =
+      '<appfunctions><appfunction id="fixture#surviveCloseFailure" schema_name="surviveCloseFailure" schema_version="2" enabled_by_default="true"/></appfunctions>';
+    const expectedSha256 = createHash("sha256")
+      .update(Buffer.from(v2Xml, "utf8"))
+      .digest("hex");
+    await writeSyntheticApk(appFnFixture.apk, [
+      { path: "AndroidManifest.xml", bytes: "<manifest/>" },
+      { path: "classes.dex", bytes: "dex" },
+      { path: "assets/app_functions_v2.xml", bytes: v2Xml },
+    ]);
+
+    const originalClose = ZipArtifactReader.prototype.close;
+    let failFirstClose = true;
+    const closeSpy = vi
+      .spyOn(ZipArtifactReader.prototype, "close")
+      .mockImplementation(async function (this: ZipArtifactReader) {
+        if (failFirstClose) {
+          failFirstClose = false;
+          throw new Error("simulated ZIP reader close failure");
+        }
+        await originalClose.call(this);
+      });
+    try {
+      const result = await appFnFixture.service.execute(
+        "inspect_android_package",
+        { path: appFnFixture.apk },
+      );
+      if (result.ok)
+        throw new Error("Expected ZIP reader close failure to reject");
+      const projected = projectAnalysisError(result.error);
+      expect(projected.code).toBe("cleanup_incomplete");
+      const partial = androidPartialObservationSchema.parse(
+        result.error.partialObservation,
+      );
+      expect(partial.app_functions?.manifest_status).toBe("complete");
+      expect(partial.app_functions?.services).toHaveLength(1);
+      expect(partial.app_functions?.services[0]?.name).toBe(
+        "com.example.fixture.AgentAppFunctionService",
+      );
+      expect(partial.app_functions?.assets).toMatchObject({
+        scan_state: "completed",
+        status: "complete",
+        schemas: [
+          {
+            path: "assets/app_functions_v2.xml",
+            sha256: expectedSha256,
+            size: Buffer.byteLength(v2Xml, "utf8"),
+            status: "complete",
+            functions: [
+              {
+                id: "fixture#surviveCloseFailure",
+                schema_name: "surviveCloseFailure",
+                schema_category: null,
+                schema_version: "2",
+                enabled_by_default: true,
+              },
+            ],
+          },
+        ],
+      });
+    } finally {
+      closeSpy.mockRestore();
+      await appFnFixture.provider.close();
+      await verifyJadxFixtureCleanup(appFnFixture.launches);
+    }
+  },
+);
+
+it("bounds unresolved pointer diagnostics using declaration_index so large service names never exceed the AppFunctions view budget", () => {
+  const hugeLocalName = `.${"S".repeat(100 * 1024)}`;
+  const pointersXml = Array.from(
+    { length: 64 },
+    (_, index) =>
+      `<meta-data android:name="android.app.appfunctions" android:resource="@xml/fn_${String(index)}_${"r".repeat(220)}" />`,
+  ).join("\n");
+  const manifestXml = `<manifest xmlns:android="http://schemas.android.com/apk/res/android" package="com.example.huge">
+    <application>
+      <service
+        android:name="${hugeLocalName}"
+        android:exported="true"
+        android:permission="android.permission.BIND_APP_FUNCTION_SERVICE">
+        ${pointersXml}
+      </service>
+    </application>
+  </manifest>`;
+
+  const components = parseAndroidManifestComponents(
+    manifestXml,
+    "complete",
+    "36",
+  );
+  const bindings = extractAndroidAppFunctionManifestBindings(components);
+  const inventory = projectAndroidAppFunctions(bindings, {
+    status: "complete",
+    examinedEntries: 1,
+    schemas: [],
+    limitations: [],
+  });
+
+  expect(inventory.services).toHaveLength(1);
+  expect(inventory.services[0]?.schema_pointers).toHaveLength(64);
+  expect(inventory.limitations[0]).toContain("Service at declaration_index 0");
+  expect(
+    inventory.limitations.some((message) => message.includes(hugeLocalName)),
+  ).toBe(false);
+  expect(inventory.limitations.join("\n")).toContain(
+    "additional AppFunctions diagnostic message(s) omitted after reaching the",
+  );
+  const diagnosticBytes = Buffer.byteLength(
+    inventory.limitations.join("\n"),
+    "utf8",
+  );
+  expect(diagnosticBytes).toBeLessThanOrEqual(
+    ANDROID_APP_FUNCTIONS_LIMITS.diagnosticBytes,
+  );
+
+  const packageReport = {
+    engine,
+    package_name: "com.example.huge",
+    version_name: "1.0",
+    version_code: "1",
+    min_sdk: "34",
+    target_sdk: "36",
+    permissions: [],
+    manifest: {
+      status: "complete" as const,
+      text: manifestXml,
+      reported_total_bytes: Buffer.byteLength(manifestXml, "utf8"),
+    },
+    components,
+    app_functions: inventory,
+    class_count: 1,
+    resource_count: 1,
+    signature_verification: "not_performed" as const,
+  };
+  const evidence = createEvidence(
+    { path: "/retained-huge.apk", sha256: "b".repeat(64), format: "apk" },
+    { id: "jadx", name: "JADX", version: "0.7.1" },
+    {
+      operation: "inspect_android_package",
+      parameters: {},
+      result: packageReport as unknown as JsonValue,
+      limitations: [],
+    },
+  );
+  const projected = projectAnalysisView(
+    {
+      predicateType: evidence.predicate_type,
+      evidenceId: evidence.evidence_id,
+      operation: evidence.operation,
+      normalizedResult: evidence.normalized_result,
+      subject: evidence.subject,
+      limitations: evidence.limitations,
+    },
+    { kind: "android", facet: "app-functions" },
+  );
+  if (!projected.ok) throw projected.error;
+  const parsedView = androidAppFunctionsViewResultSchema.parse(projected.value);
+  expect(parsedView.summary).toEqual({
+    service_count: 1,
+    system_bound_service_count: 1,
+    schema_count: 0,
+    function_count: 0,
+  });
+  expect(
+    jsonValueByteLength(parsedView as unknown as JsonValue, 1024 * 1024),
+  ).toBeLessThan(1024 * 1024);
+});

@@ -69,6 +69,26 @@ export type AndroidAppFunctionsInventory = Readonly<
   z.output<typeof androidAppFunctionsSchema>
 >;
 
+/** Parsed, JSON-only checkpoint captured before a live APK ZIP reader is finalized. */
+export const androidAppFunctionAssetCheckpointSchema = z.strictObject({
+  scan_state: z.enum(["completed", "interrupted"]),
+  status: z.enum(["complete", "partial", "unavailable"]),
+  examined_entries: z.int().nonnegative(),
+  schemas: z.array(androidAppFunctionSchemaAssetSchema),
+  limitations: z.array(z.string()),
+});
+export type AndroidAppFunctionAssetCheckpoint = Readonly<
+  z.output<typeof androidAppFunctionAssetCheckpointSchema>
+>;
+
+export const androidAppFunctionsPartialFactsSchema = z.strictObject({
+  manifest_status: z.enum(["complete", "partial", "unavailable"]).nullable(),
+  services: z.array(androidAppFunctionServiceSchema),
+  referenced_asset_paths: z.array(z.string()),
+  manifest_limitations: z.array(z.string()),
+  assets: androidAppFunctionAssetCheckpointSchema.nullable(),
+});
+
 export const androidAppFunctionsSummarySchema = z.strictObject({
   service_count: z.int().nonnegative(),
   system_bound_service_count: z.int().nonnegative(),

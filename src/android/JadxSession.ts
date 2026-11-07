@@ -91,6 +91,9 @@ export class JadxSession {
     | { readonly key: string; readonly value: AndroidAppFunctionAssetScan }
     | undefined;
   #jniObservation: NonNullable<AndroidPartialObservation["jni"]> | undefined;
+  #appFunctionsObservation:
+    | NonNullable<AndroidPartialObservation["app_functions"]>
+    | undefined;
 
   constructor(
     options: Omit<OwnedProviderProcessSpawnOptions, "runId" | "stdin">,
@@ -125,6 +128,7 @@ export class JadxSession {
     };
     this.#observedCalls = [];
     this.#jniObservation = undefined;
+    this.#appFunctionsObservation = undefined;
     if (request.operation === "inspect_android_jni_bindings") {
       const selected = request.input;
       this.#jniObservation = {
@@ -228,15 +232,41 @@ export class JadxSession {
         ...(request.operation !== "inspect_android_package"
           ? {}
           : {
-              appFunctionsAssets: async (referencedPaths) => {
-                const key = JSON.stringify(referencedPaths);
-                if (this.#appFunctionAssets?.key === key)
-                  return this.#appFunctionAssets.value;
+              appFunctionsAssets: async (manifestBindings) => {
+                const observation: NonNullable<
+                  AndroidPartialObservation["app_functions"]
+                > = {
+                  manifest_status: manifestBindings.status,
+                  services: [...manifestBindings.services],
+                  referenced_asset_paths: [
+                    ...manifestBindings.referencedAssetPaths,
+                  ],
+                  manifest_limitations: [...manifestBindings.limitations],
+                  assets: null,
+                };
+                this.#appFunctionsObservation = observation;
+                const key = JSON.stringify(
+                  manifestBindings.referencedAssetPaths,
+                );
+                if (this.#appFunctionAssets?.key === key) {
+                  const cached = this.#appFunctionAssets.value;
+                  observation.assets = {
+                    scan_state: "completed",
+                    status: cached.status,
+                    examined_entries: cached.examinedEntries,
+                    schemas: [...cached.schemas],
+                    limitations: [...cached.limitations],
+                  };
+                  return cached;
+                }
                 const value = await readAndroidAppFunctionAssets({
                   snapshot,
-                  referencedPaths,
+                  referencedPaths: manifestBindings.referencedAssetPaths,
                   resources: context.resources,
                   signal,
+                  onObservation: (checkpoint) => {
+                    observation.assets = checkpoint;
+                  },
                   interruption,
                 });
                 if (
@@ -393,6 +423,9 @@ export class JadxSession {
       ...(this.#jniObservation === undefined
         ? {}
         : { jni: this.#jniObservation }),
+      ...(this.#appFunctionsObservation === undefined
+        ? {}
+        : { app_functions: this.#appFunctionsObservation }),
     };
   }
 

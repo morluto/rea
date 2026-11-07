@@ -12,6 +12,7 @@ import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.
 import {
   ANDROID_APP_FUNCTION_SERVICE_ACTION,
   ANDROID_BIND_APP_FUNCTION_PERMISSION,
+  type AndroidAppFunctionAssetCheckpoint,
   type AndroidAppFunctionEntry,
   type AndroidAppFunctionSchemaAsset,
   type AndroidAppFunctionSchemaPointer,
@@ -19,6 +20,8 @@ import {
   type AndroidAppFunctionsInventory,
 } from "../domain/android/androidAppFunctions.js";
 import type { ObservedAndroidManifestComponentInventory } from "../domain/android/androidManifestComponents.js";
+import type { JsonValue } from "../domain/jsonValue.js";
+import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { compareUnicodeCodePoints } from "../domain/unicodeCodePointOrder.js";
 import { parseXmlDocument } from "../domain/xmlDocument.js";
@@ -38,6 +41,11 @@ export const ANDROID_APP_FUNCTIONS_LIMITS = Object.freeze({
   functionsPerSchema: 1024,
   totalFunctions: 2048,
   valueBytes: 256 * 1024,
+  diagnosticBytes: 16 * 1024,
+  perSchemaDiagnosticBytes: 4 * 1024,
+  serviceLabelNameBytes: 128,
+  serviceFactsBytes: 384 * 1024,
+  schemaFactsBytes: 384 * 1024,
 });
 
 const APP_FUNCTION_ASSET_PATTERN =
@@ -81,9 +89,60 @@ const utf8Decoder = new TextDecoder("utf-8", {
 
 export interface AndroidAppFunctionAssetScan {
   readonly status: "complete" | "partial" | "unavailable";
+  readonly examinedEntries: number;
   readonly schemas: readonly AndroidAppFunctionSchemaAsset[];
   readonly limitations: readonly string[];
 }
+
+const DIAGNOSTIC_OMISSION_RESERVE_BYTES = 160;
+const MANIFEST_DIAGNOSTIC_BYTES = 12 * 1024;
+const ASSET_SCAN_DIAGNOSTIC_BYTES = 3 * 1024;
+
+const boundedDiagnosticToken = (raw: string, maxBytes = 256): string => {
+  if (Buffer.byteLength(raw, "utf8") <= maxBytes) return raw;
+  let bytes = 0;
+  let end = 0;
+  for (const char of raw) {
+    const charBytes = Buffer.byteLength(char, "utf8");
+    if (bytes + charBytes > maxBytes) break;
+    bytes += charBytes;
+    end += char.length;
+  }
+  return `${raw.slice(0, end)}...[truncated]`;
+};
+
+const createBoundedDiagnostics = (
+  maxBytes: number = ANDROID_APP_FUNCTIONS_LIMITS.diagnosticBytes,
+) => {
+  const usableBudget = Math.max(
+    0,
+    maxBytes - DIAGNOSTIC_OMISSION_RESERVE_BYTES,
+  );
+  const items: string[] = [];
+  let usedBytes = 0;
+  let omitted = 0;
+  return {
+    pushParts: (parts: readonly string[]): void => {
+      let candidateBytes = 0;
+      for (const part of parts) {
+        candidateBytes += Buffer.byteLength(part, "utf8");
+        if (usedBytes + candidateBytes > usableBudget) {
+          omitted += 1;
+          return;
+        }
+      }
+      usedBytes += candidateBytes;
+      items.push(parts.join(""));
+    },
+    finish: (): string[] =>
+      omitted === 0
+        ? [...items]
+        : [
+            ...items,
+            `${String(omitted)} additional AppFunctions diagnostic message(s) omitted after reaching the ${String(maxBytes)}-byte diagnostic allowance.`,
+          ],
+  };
+};
 
 const isAppFunctionsMetadataName = (name: string | null): name is string =>
   name !== null &&
@@ -130,13 +189,14 @@ export const extractAndroidAppFunctionManifestBindings = (
       ],
     };
   let partial = components.status !== "complete";
-  const limitations: string[] = [];
+  const diagnostics = createBoundedDiagnostics(MANIFEST_DIAGNOSTIC_BYTES);
   if (components.status === "partial")
-    limitations.push(
+    diagnostics.pushParts([
       "Manifest component coverage is partial, so declared AppFunctionService bindings may be incomplete.",
-    );
+    ]);
   const services: AndroidAppFunctionService[] = [];
   const referencedSet = new Set<string>();
+  let retainedServiceBytes = 0;
   for (const component of components.items) {
     if (component.kind !== "service") continue;
     const declaresServiceAction = component.actions.includes(
@@ -161,21 +221,52 @@ export const extractAndroidAppFunctionManifestBindings = (
       rawPointers.length === 0
     )
       continue;
+    let namedServiceDiagnosticEmitted = false;
+    const serviceSubject = (): readonly string[] => {
+      if (
+        !namedServiceDiagnosticEmitted &&
+        Buffer.byteLength(component.name, "utf8") <=
+          ANDROID_APP_FUNCTIONS_LIMITS.serviceLabelNameBytes
+      ) {
+        namedServiceDiagnosticEmitted = true;
+        return [
+          "Service ",
+          component.name,
+          " (declaration_index ",
+          String(component.declaration_index),
+          ")",
+        ];
+      }
+      namedServiceDiagnosticEmitted = true;
+      return [
+        "Service at declaration_index ",
+        String(component.declaration_index),
+      ];
+    };
     if (component.declaration_coverage !== "complete") {
       partial = true;
-      limitations.push(
-        `Service ${component.name} has partial manifest declaration coverage; nested AppFunctions properties or metadata may be omitted.`,
-      );
+      diagnostics.pushParts([
+        ...serviceSubject(),
+        " has partial manifest declaration coverage; nested AppFunctions properties or metadata may be omitted.",
+      ]);
     }
     const schemaPointers: AndroidAppFunctionSchemaPointer[] = [];
     let hasNonXmlCompanion = false;
     for (const [source, item] of rawPointers) {
       let resolvedAssetPath: string | null = null;
+      const pointerName = boundedDiagnosticToken(item.name, 128);
       if (item.resource !== null) {
         partial = true;
-        limitations.push(
-          `Service ${component.name} declares <${source}> ${item.name} with android:resource="${item.resource}"; compiled @xml/... resource targets are not decoded from assets/.`,
-        );
+        diagnostics.pushParts([
+          ...serviceSubject(),
+          " declares <",
+          source,
+          "> ",
+          pointerName,
+          ' with android:resource="',
+          boundedDiagnosticToken(item.resource),
+          '"; compiled @xml/... resource targets are not decoded from assets/.',
+        ]);
       } else if (item.value !== null) {
         if (
           item.value.startsWith("@") ||
@@ -183,16 +274,30 @@ export const extractAndroidAppFunctionManifestBindings = (
           item.value.includes("${")
         ) {
           partial = true;
-          limitations.push(
-            `Service ${component.name} declares <${source}> ${item.name} with "${item.value}"; compiled @xml/... resource and placeholder targets are not decoded from assets/.`,
-          );
+          diagnostics.pushParts([
+            ...serviceSubject(),
+            " declares <",
+            source,
+            "> ",
+            pointerName,
+            ' with "',
+            boundedDiagnosticToken(item.value),
+            '"; compiled @xml/... resource and placeholder targets are not decoded from assets/.',
+          ]);
         } else {
           const normalized = normalizeAppFunctionAssetPath(item.value);
           if (normalized === null) {
             partial = true;
-            limitations.push(
-              `Service ${component.name} declares <${source}> ${item.name} with unsupported asset path ${JSON.stringify(item.value)}.`,
-            );
+            diagnostics.pushParts([
+              ...serviceSubject(),
+              " declares <",
+              source,
+              "> ",
+              pointerName,
+              " with unsupported asset path ",
+              JSON.stringify(boundedDiagnosticToken(item.value)),
+              ".",
+            ]);
           } else if (/\.xml$/iu.test(normalized)) {
             resolvedAssetPath = normalized;
             referencedSet.add(normalized);
@@ -202,9 +307,14 @@ export const extractAndroidAppFunctionManifestBindings = (
         }
       } else {
         partial = true;
-        limitations.push(
-          `Service ${component.name} declares <${source}> ${item.name} without a retained android:value or android:resource target.`,
-        );
+        diagnostics.pushParts([
+          ...serviceSubject(),
+          " declares <",
+          source,
+          "> ",
+          pointerName,
+          " without a retained android:value or android:resource target.",
+        ]);
       }
       schemaPointers.push({
         source,
@@ -220,11 +330,12 @@ export const extractAndroidAppFunctionManifestBindings = (
       !schemaPointers.some((pointer) => pointer.resolved_asset_path !== null)
     ) {
       partial = true;
-      limitations.push(
-        `Service ${component.name} declares non-XML AppFunctions pointer(s) without an assets/*.xml target; only XML schema assets are parsed.`,
-      );
+      diagnostics.pushParts([
+        ...serviceSubject(),
+        " declares non-XML AppFunctions pointer(s) without an assets/*.xml target; only XML schema assets are parsed.",
+      ]);
     }
-    services.push({
+    const serviceRecord: AndroidAppFunctionService = {
       declared_name: component.declared_name,
       name: component.name,
       declaration_index: component.declaration_index,
@@ -234,13 +345,31 @@ export const extractAndroidAppFunctionManifestBindings = (
       binds_system_permission: bindsSystemPermission,
       declares_service_action: declaresServiceAction,
       schema_pointers: schemaPointers,
-    });
+    };
+    const recordBytes = jsonValueByteLength(
+      serviceRecord as unknown as JsonValue,
+      ANDROID_APP_FUNCTIONS_LIMITS.serviceFactsBytes,
+    );
+    if (
+      retainedServiceBytes + recordBytes >
+      ANDROID_APP_FUNCTIONS_LIMITS.serviceFactsBytes
+    ) {
+      partial = true;
+      diagnostics.pushParts([
+        "Declared AppFunctionService inventory reached the ",
+        String(ANDROID_APP_FUNCTIONS_LIMITS.serviceFactsBytes),
+        "-byte retained-facts allowance; remaining service declarations were omitted.",
+      ]);
+      break;
+    }
+    retainedServiceBytes += recordBytes;
+    services.push(serviceRecord);
   }
   return {
     status: partial ? "partial" : "complete",
     services,
     referencedAssetPaths: [...referencedSet].sort(compareUnicodeCodePoints),
-    limitations,
+    limitations: diagnostics.finish(),
   };
 };
 
@@ -358,12 +487,18 @@ export const parseAndroidAppFunctionXml = (
       }
     }
   } else {
+    const unsupported = createBoundedDiagnostics(
+      ANDROID_APP_FUNCTIONS_LIMITS.perSchemaDiagnosticBytes,
+    );
+    unsupported.pushParts([
+      "Root element <",
+      boundedDiagnosticToken(root.nodeName, 128),
+      "> is not a recognized AppFunctions schema container.",
+    ]);
     return {
       status: "unavailable",
       functions: [],
-      limitations: [
-        `Root element <${root.nodeName}> is not a recognized AppFunctions schema container.`,
-      ],
+      limitations: unsupported.finish(),
     };
   }
   let partial = false;
@@ -438,29 +573,41 @@ export const parseAndroidAppFunctionXml = (
       enabled_by_default: enabledByDefault,
     });
   }
-  const limitations: string[] = [];
+  const diagnostics = createBoundedDiagnostics(
+    ANDROID_APP_FUNCTIONS_LIMITS.perSchemaDiagnosticBytes,
+  );
   if (functionCapReached)
-    limitations.push(
-      `Parsed AppFunction entries reached the ${String(ANDROID_APP_FUNCTIONS_LIMITS.functionsPerSchema)}-per-schema or ${String(ANDROID_APP_FUNCTIONS_LIMITS.totalFunctions)}-total limit.`,
-    );
+    diagnostics.pushParts([
+      "Parsed AppFunction entries reached the ",
+      String(ANDROID_APP_FUNCTIONS_LIMITS.functionsPerSchema),
+      "-per-schema or ",
+      String(ANDROID_APP_FUNCTIONS_LIMITS.totalFunctions),
+      "-total limit.",
+    ]);
   if (unknownElements > 0) {
     partial = true;
-    limitations.push(
-      `${String(unknownElements)} unrecognized element(s) under <${root.nodeName}> were not projected as AppFunction entries.`,
-    );
+    diagnostics.pushParts([
+      String(unknownElements),
+      " unrecognized element(s) under <",
+      boundedDiagnosticToken(root.nodeName, 128),
+      "> were not projected as AppFunction entries.",
+    ]);
   }
   if (nonliteralEnabled > 0)
-    limitations.push(
-      `${String(nonliteralEnabled)} AppFunction entry/entries declare a nonliteral enabled_by_default value; enabled_by_default is null.`,
-    );
+    diagnostics.pushParts([
+      String(nonliteralEnabled),
+      " AppFunction entry/entries declare a nonliteral enabled_by_default value; enabled_by_default is null.",
+    ]);
   if (valueLimited)
-    limitations.push(
-      `Copied AppFunction string values reached the ${String(ANDROID_APP_FUNCTIONS_LIMITS.valueBytes)}-byte budget; omitted scalar fields are null.`,
-    );
+    diagnostics.pushParts([
+      "Copied AppFunction string values reached the ",
+      String(ANDROID_APP_FUNCTIONS_LIMITS.valueBytes),
+      "-byte budget; omitted scalar fields are null.",
+    ]);
   return {
     status: partial ? "partial" : "complete",
     functions,
-    limitations,
+    limitations: diagnostics.finish(),
   };
 };
 
@@ -503,6 +650,9 @@ export const readAndroidAppFunctionAssets = async (input: {
   readonly resources: ArtifactResourceScope;
   readonly signal: AbortSignal;
   readonly interruption: (reason: unknown) => AnalysisError;
+  readonly onObservation: (
+    checkpoint: AndroidAppFunctionAssetCheckpoint,
+  ) => void;
 }): Promise<AndroidAppFunctionAssetScan> =>
   input.resources
     .run(async () => {
@@ -521,16 +671,41 @@ export const readAndroidAppFunctionAssets = async (input: {
       const seenPaths = new Set<string>();
       const duplicatePaths = new Set<string>();
       const schemas: AndroidAppFunctionSchemaAsset[] = [];
-      const limitations: string[] = [];
+      const diagnostics = createBoundedDiagnostics(ASSET_SCAN_DIAGNOSTIC_BYTES);
       const budgets = {
         valueBytesRemaining: ANDROID_APP_FUNCTIONS_LIMITS.valueBytes,
         functionsRemaining: ANDROID_APP_FUNCTIONS_LIMITS.totalFunctions,
       };
       let status: "complete" | "partial" | "unavailable" = "complete";
       let exhaustedArchive = false;
+      let archiveDegraded = false;
       let examinedEntries = 0;
       let totalReadBytes = 0;
-      let interruptedFailure: unknown;
+      let retainedSchemaBytes = 0;
+      let failed = false;
+      let primary: unknown;
+      let inProgress: AndroidAppFunctionSchemaAsset | undefined;
+      const admitSchema = (asset: AndroidAppFunctionSchemaAsset): boolean => {
+        const added = jsonValueByteLength(
+          asset as unknown as JsonValue,
+          ANDROID_APP_FUNCTIONS_LIMITS.schemaFactsBytes,
+        );
+        if (
+          retainedSchemaBytes + added >
+          ANDROID_APP_FUNCTIONS_LIMITS.schemaFactsBytes
+        ) {
+          status = "partial";
+          diagnostics.pushParts([
+            "Bundled AppFunctions schema inventory reached the ",
+            String(ANDROID_APP_FUNCTIONS_LIMITS.schemaFactsBytes),
+            "-byte retained-facts allowance; remaining schema assets were omitted.",
+          ]);
+          return false;
+        }
+        retainedSchemaBytes += added;
+        schemas.push(asset);
+        return true;
+      };
       try {
         let stoppedEarly = false;
         for await (const entry of reader.entries(input.signal)) {
@@ -539,9 +714,11 @@ export const readAndroidAppFunctionAssets = async (input: {
           if (examinedEntries > ANDROID_APP_FUNCTIONS_LIMITS.apkEntries) {
             status = "partial";
             stoppedEarly = true;
-            limitations.push(
-              `APK archive entry scan reached the ${String(ANDROID_APP_FUNCTIONS_LIMITS.apkEntries)}-entry limit; remaining AppFunctions schema assets were not inspected.`,
-            );
+            diagnostics.pushParts([
+              "APK archive entry scan reached the ",
+              String(ANDROID_APP_FUNCTIONS_LIMITS.apkEntries),
+              "-entry limit; remaining AppFunctions schema assets were not inspected.",
+            ]);
             break;
           }
           const isReferenced = referenced.has(entry.path);
@@ -553,12 +730,23 @@ export const readAndroidAppFunctionAssets = async (input: {
           if (schemas.length >= ANDROID_APP_FUNCTIONS_LIMITS.schemaAssets) {
             status = "partial";
             stoppedEarly = true;
-            limitations.push(
-              `Bundled AppFunctions schema asset scan reached the ${String(ANDROID_APP_FUNCTIONS_LIMITS.schemaAssets)}-file limit.`,
-            );
+            diagnostics.pushParts([
+              "Bundled AppFunctions schema asset scan reached the ",
+              String(ANDROID_APP_FUNCTIONS_LIMITS.schemaAssets),
+              "-file limit.",
+            ]);
             break;
           }
           const sourcePath = entry.sourcePath ?? entry.path;
+          inProgress = {
+            path: entry.path,
+            source_path: sourcePath,
+            sha256: null,
+            size: null,
+            status: "unavailable",
+            functions: [],
+            limitations: ["AppFunctions schema asset read did not complete."],
+          };
           const overBudget =
             entry.declaredSize === null ||
             !Number.isSafeInteger(entry.declaredSize) ||
@@ -569,7 +757,7 @@ export const readAndroidAppFunctionAssets = async (input: {
               ANDROID_APP_FUNCTIONS_LIMITS.totalSchemaBytes - totalReadBytes;
           if (entry.kind !== "file" || entry.encrypted || overBudget) {
             status = "partial";
-            schemas.push({
+            const unavailableAsset: AndroidAppFunctionSchemaAsset = {
               path: entry.path,
               source_path: sourcePath,
               sha256: null,
@@ -583,11 +771,17 @@ export const readAndroidAppFunctionAssets = async (input: {
                     ? "AppFunctions schema path is not a regular file in the APK archive."
                     : `AppFunctions schema asset exceeds the ${String(ANDROID_APP_FUNCTIONS_LIMITS.schemaAssetBytes)}-byte per-asset or ${String(ANDROID_APP_FUNCTIONS_LIMITS.totalSchemaBytes)}-byte cumulative XML budget.`,
               ],
-            });
+            };
+            inProgress = undefined;
+            if (!admitSchema(unavailableAsset)) {
+              stoppedEarly = true;
+              break;
+            }
             continue;
           }
           const declaredSize = entry.declaredSize!;
           totalReadBytes += declaredSize;
+          let assetObservation: AndroidAppFunctionSchemaAsset;
           try {
             const bytes = await readExactZipMemberBytes(
               reader,
@@ -597,12 +791,26 @@ export const readAndroidAppFunctionAssets = async (input: {
             );
             throwIfJadxInterrupted(input.signal);
             const sha256 = createHash("sha256").update(bytes).digest("hex");
-            let xmlText: string;
+            inProgress = {
+              path: entry.path,
+              source_path: sourcePath,
+              sha256,
+              size: bytes.length,
+              status: "unavailable",
+              functions: [],
+              limitations: [
+                "AppFunctions schema XML parsing did not complete.",
+              ],
+            };
+            let xmlText: string | undefined;
             try {
               xmlText = utf8Decoder.decode(bytes);
             } catch {
+              xmlText = undefined;
+            }
+            if (xmlText === undefined) {
               status = "partial";
-              schemas.push({
+              assetObservation = {
                 path: entry.path,
                 source_path: sourcePath,
                 sha256,
@@ -612,20 +820,21 @@ export const readAndroidAppFunctionAssets = async (input: {
                 limitations: [
                   "AppFunctions schema asset is not valid UTF-8 text.",
                 ],
-              });
-              continue;
+              };
+            } else {
+              const parsedXml = parseAndroidAppFunctionXml(xmlText, budgets);
+              throwIfJadxInterrupted(input.signal);
+              if (parsedXml.status !== "complete") status = "partial";
+              assetObservation = {
+                path: entry.path,
+                source_path: sourcePath,
+                sha256,
+                size: bytes.length,
+                status: parsedXml.status,
+                functions: [...parsedXml.functions],
+                limitations: [...parsedXml.limitations],
+              };
             }
-            const parsedXml = parseAndroidAppFunctionXml(xmlText, budgets);
-            if (parsedXml.status !== "complete") status = "partial";
-            schemas.push({
-              path: entry.path,
-              source_path: sourcePath,
-              sha256,
-              size: bytes.length,
-              status: parsedXml.status,
-              functions: [...parsedXml.functions],
-              limitations: [...parsedXml.limitations],
-            });
           } catch (cause: unknown) {
             if (cause instanceof JadxInterruption) throw cause;
             if (
@@ -634,7 +843,7 @@ export const readAndroidAppFunctionAssets = async (input: {
             )
               throw input.interruption(input.signal.reason);
             status = "partial";
-            schemas.push({
+            assetObservation = {
               path: entry.path,
               source_path: sourcePath,
               sha256: null,
@@ -642,86 +851,138 @@ export const readAndroidAppFunctionAssets = async (input: {
               status: "unavailable",
               functions: [],
               limitations: [
-                cause instanceof Error ? cause.message : String(cause),
+                boundedDiagnosticToken(
+                  cause instanceof Error ? cause.message : String(cause),
+                ),
               ],
-            });
+            };
+          }
+          inProgress = undefined;
+          if (!admitSchema(assetObservation)) {
+            stoppedEarly = true;
+            break;
           }
         }
         if (!stoppedEarly) exhaustedArchive = true;
         throwIfJadxInterrupted(input.signal);
       } catch (cause: unknown) {
         if (cause instanceof JadxInterruption) {
-          interruptedFailure = input.interruption(cause.reason);
+          failed = true;
+          primary = input.interruption(cause.reason);
         } else if (
           cause instanceof ArtifactReaderFailure &&
           cause.reason === "cancelled"
         ) {
-          interruptedFailure = input.interruption(input.signal.reason);
+          failed = true;
+          primary = input.interruption(input.signal.reason);
         } else if (cause instanceof AnalysisError) {
-          interruptedFailure = cause;
+          failed = true;
+          primary = cause;
+        } else if (input.signal.aborted) {
+          failed = true;
+          primary = input.interruption(input.signal.reason);
         } else {
+          archiveDegraded = true;
+          inProgress = undefined;
           status = schemas.length > 0 ? "partial" : "unavailable";
-          limitations.push(
-            `APK archive asset scan could not complete (${cause instanceof Error ? cause.message : String(cause)}); bundled AppFunctions XML schema assets may be unavailable.`,
-          );
+          diagnostics.pushParts([
+            "APK archive asset scan could not complete (",
+            boundedDiagnosticToken(
+              cause instanceof Error ? cause.message : String(cause),
+            ),
+            "); bundled AppFunctions XML schema assets may be unavailable.",
+          ]);
         }
       }
-      const released = await input.resources.release(owner);
-      if (released.kind === "failed") {
+      if (failed) {
+        if (inProgress !== undefined) {
+          // Retain carrier identity and authenticated digest/size if bytes finished before interruption.
+          admitSchema(inProgress);
+          inProgress = undefined;
+        }
+        status = schemas.length > 0 ? "partial" : "unavailable";
+        diagnostics.pushParts([
+          "AppFunctions schema asset scan did not exhaust APK inventory; remaining schema assets remain unknown.",
+        ]);
+      } else {
+        if (duplicatePaths.size > 0) {
+          status = "partial";
+          for (const duplicate of [...duplicatePaths].sort(
+            compareUnicodeCodePoints,
+          ))
+            diagnostics.pushParts([
+              "APK archive contains multiple entries for ",
+              boundedDiagnosticToken(duplicate),
+              "; runtime asset resolution precedence is not established.",
+            ]);
+        }
+        if (exhaustedArchive) {
+          for (const referencedPath of input.referencedPaths) {
+            if (!seenPaths.has(referencedPath)) {
+              status = "partial";
+              diagnostics.pushParts([
+                "Manifest-referenced AppFunctions schema asset ",
+                boundedDiagnosticToken(referencedPath),
+                " was not found in the APK archive.",
+              ]);
+            }
+          }
+        }
+      }
+      const limitations = diagnostics.finish();
+      const checkpoint: AndroidAppFunctionAssetCheckpoint = {
+        scan_state:
+          failed || archiveDegraded || !exhaustedArchive
+            ? "interrupted"
+            : "completed",
+        status,
+        examined_entries: examinedEntries,
+        schemas: schemas.map((schema) => ({
+          ...schema,
+          functions: [...schema.functions],
+          limitations: [...schema.limitations],
+        })),
+        limitations: [...limitations],
+      };
+      try {
+        input.onObservation(checkpoint);
+      } catch (observationError: unknown) {
+        if (!failed) {
+          primary = observationError;
+          failed = true;
+        }
+      }
+      const closeOutcome = await input.resources.release(owner);
+      if (closeOutcome.kind === "failed") {
         const reason =
-          released.cause instanceof Error
-            ? released.cause.message
-            : String(released.cause);
+          closeOutcome.cause instanceof Error
+            ? closeOutcome.cause.message
+            : String(closeOutcome.cause);
         const cleanup = new ProviderCleanupError(
           "jadx",
           [owner.resource],
           { reason },
-          { operation, cause: released.cause },
+          { operation, cause: closeOutcome.cause },
         );
-        const primary =
-          interruptedFailure ??
-          (input.signal.aborted
-            ? input.interruption(input.signal.reason)
-            : undefined);
-        const failure =
-          primary === undefined
-            ? cleanup
-            : analysisErrorWithCleanupFailure(
-                primary instanceof AnalysisError
-                  ? primary
-                  : analysisClientFailureForOperation(
-                      primary,
-                      "jadx",
-                      operation,
-                    ),
-                cleanup,
-                operation,
-              );
-        released.lease.bindCleanupError(failure);
+        if (!failed && input.signal.aborted) {
+          failed = true;
+          primary = input.interruption(input.signal.reason);
+        }
+        const failure = !failed
+          ? cleanup
+          : analysisErrorWithCleanupFailure(
+              primary instanceof AnalysisError
+                ? primary
+                : analysisClientFailureForOperation(primary, "jadx", operation),
+              cleanup,
+              operation,
+            );
+        closeOutcome.lease.bindCleanupError(failure);
         throw failure;
       }
-      if (interruptedFailure !== undefined) throw interruptedFailure;
+      if (failed) throw primary;
       throwIfJadxInterrupted(input.signal);
-      if (duplicatePaths.size > 0) {
-        status = "partial";
-        for (const duplicate of [...duplicatePaths].sort(
-          compareUnicodeCodePoints,
-        ))
-          limitations.push(
-            `APK archive contains multiple entries for ${duplicate}; runtime asset resolution precedence is not established.`,
-          );
-      }
-      if (exhaustedArchive) {
-        for (const referencedPath of input.referencedPaths) {
-          if (!seenPaths.has(referencedPath)) {
-            status = "partial";
-            limitations.push(
-              `Manifest-referenced AppFunctions schema asset ${referencedPath} was not found in the APK archive.`,
-            );
-          }
-        }
-      }
-      return { status, schemas, limitations };
+      return { status, examinedEntries, schemas, limitations };
     })
     .catch((cause: unknown) => {
       if (cause instanceof ArtifactReaderFailure && cause.cleanup !== undefined)
@@ -742,21 +1003,27 @@ export const projectAndroidAppFunctions = (
 ): AndroidAppFunctionsInventory => {
   const services = [...manifestBindings.services];
   const schemas = assetScan === null ? [] : [...assetScan.schemas];
-  const limitations = [
-    ...manifestBindings.limitations,
-    ...(assetScan === null
-      ? [
-          "Bundled APK asset inspection was not performed; only manifest AppFunctionService declarations were inspected.",
-        ]
-      : assetScan.limitations),
-  ];
+  const diagnostics = createBoundedDiagnostics(
+    ANDROID_APP_FUNCTIONS_LIMITS.diagnosticBytes,
+  );
+  for (const message of manifestBindings.limitations)
+    diagnostics.pushParts([message]);
+  if (assetScan === null) {
+    diagnostics.pushParts([
+      "Bundled APK asset inspection was not performed; only manifest AppFunctionService declarations were inspected.",
+    ]);
+  } else {
+    for (const message of assetScan.limitations)
+      diagnostics.pushParts([message]);
+  }
   const unavailableAssets = schemas.filter(
     (schema) => schema.status !== "complete",
   ).length;
   if (unavailableAssets > 0)
-    limitations.push(
-      `${String(unavailableAssets)} bundled AppFunctions schema asset(s) had partial or unavailable XML coverage.`,
-    );
+    diagnostics.pushParts([
+      String(unavailableAssets),
+      " bundled AppFunctions schema asset(s) had partial or unavailable XML coverage.",
+    ]);
   const status: AndroidAppFunctionsInventory["status"] =
     manifestBindings.status === "unavailable" &&
     (assetScan === null || assetScan.status === "unavailable")
@@ -767,11 +1034,11 @@ export const projectAndroidAppFunctions = (
         ? "complete"
         : "partial";
   if (services.length > 0 || schemas.length > 0)
-    limitations.push(STATIC_SCOPE_LIMITATION);
+    diagnostics.pushParts([STATIC_SCOPE_LIMITATION]);
   return {
     status,
     services,
     schemas,
-    limitations,
+    limitations: diagnostics.finish(),
   };
 };

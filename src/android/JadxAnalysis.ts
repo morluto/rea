@@ -65,7 +65,9 @@ export interface JadxAnalysisContext {
   readonly mapping?: AndroidMappingSource | undefined;
   readonly appFunctionsAssets?:
     | ((
-        referencedPaths: readonly string[],
+        manifestBindings: ReturnType<
+          typeof extractAndroidAppFunctionManifestBindings
+        >,
       ) => Promise<AndroidAppFunctionAssetScan>)
     | undefined;
   readonly jni?: {
@@ -300,7 +302,7 @@ const inspectPackage = async (
   const assetScan =
     appFunctionsAssets === undefined
       ? null
-      : await appFunctionsAssets(manifestBindings.referencedAssetPaths);
+      : await appFunctionsAssets(manifestBindings);
   return observedPackageSchema.parse({
     engine,
     package_name: app.package || null,

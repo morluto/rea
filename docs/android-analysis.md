@@ -154,8 +154,11 @@ matching `assets/*app_function*.xml` are read under bounded entry and byte limit
 with DTD/DOCTYPE declarations rejected, retaining each asset's path, SHA-256 digest
 and parsed function entries (`id`, `schema_name`, `schema_category`,
 `schema_version`, `enabled_by_default`). Services referencing compiled `@xml/...`
-resources or missing assets mark `app_functions.status` as `"partial"` with an
-explicit limitation. Summary views include `app_functions_summary` counts, and
+resources or missing assets mark `app_functions.status` as `"partial"` with a
+bounded limitation (identifying repeated or oversized service names by
+`declaration_index`), and interrupted or cleanup-failed scans retain completed
+manifest bindings and XML schema checkpoints on `partial_observation.app_functions`.
+Summary views include `app_functions_summary` counts, and
 `view: {kind: "android", facet: "app-functions"}` projects the retained inventory
 and counts without reopening the APK. Static declarations and XML assets do not
 establish runtime registration, caller authorization or execution.
