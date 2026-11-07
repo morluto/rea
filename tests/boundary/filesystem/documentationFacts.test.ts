@@ -19,7 +19,7 @@ const README_FACT_FIXTURE_PATHS = [
   "docs/readme/README_ko.md",
   "docs/readme/README_ar.md",
   "website/locales/languages.json",
-  "docs/installation.md",
+  "docs/getting-started/installation.md",
   "AGENTS.md",
   ".github/pull_request_template.md",
 ] as const;

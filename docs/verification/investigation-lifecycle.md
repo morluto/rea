@@ -9,7 +9,7 @@ Earlier measurements below identify their older revisions explicitly. Documentat
 was being updated during final qualification; production sources and runtime
 remained unchanged.
 
-The [MCP contract](../mcp-contracts.md) separates engine cleanup, investigation
+The [MCP contract](../reference/mcp-contracts.md) separates engine cleanup, investigation
 reset and explicit checkpointing. Automatic journaling remains tracked in
 [#4809](https://github.com/morluto/rea/issues/4809).
 
