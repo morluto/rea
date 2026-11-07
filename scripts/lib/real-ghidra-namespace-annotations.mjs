@@ -68,6 +68,21 @@ export async function verifyGhidraNamespaceAnnotations({
     assert.equal(ambiguous.code, "invalid_request");
     for (const { address } of entries)
       assert.ok(JSON.stringify(ambiguous.details.issues).includes(address));
+    // Search accepts the leaf spelling exact lookup accepts, keeping each
+    // procedure as one row under its qualified primary name.
+    const leafMatches = await call("search_procedures", {
+      pattern: "^same$",
+      mode: "regex",
+      case_sensitive: true,
+    });
+    for (const { namespace, address } of entries)
+      assert.deepEqual(
+        leafMatches
+          .filter((row) => row.address === address)
+          .map(({ value }) => value),
+        [`${namespace}::same`],
+        `Leaf-name search missed ${namespace}::same`,
+      );
     for (const { namespace, address } of entries) {
       const leaf = await call("annotate_native_function", {
         procedure: address,

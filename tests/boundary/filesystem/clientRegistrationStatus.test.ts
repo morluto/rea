@@ -167,6 +167,8 @@ describe("client registration environment validation", () => {
     const home = await createTestTempDirectory("rea-registration-budget-");
     await mkdir(join(home, ".cursor"));
     await mkdir(join(home, ".codex"));
+    await mkdir(join(home, ".lmstudio"));
+    await mkdir(join(home, ".kimi-code"));
     const entry = {
       command: "npx",
       args: ["-y", PRODUCT_IDENTITY.registrationPackageSpecifier, "mcp"],
@@ -175,6 +177,11 @@ describe("client registration environment validation", () => {
       join(home, ".cursor/mcp.json"),
       JSON.stringify({ mcpServers: { rea: entry } }),
     );
+    for (const path of [".lmstudio/mcp.json", ".kimi-code/mcp.json"])
+      await writeFile(
+        join(home, path),
+        JSON.stringify({ mcpServers: { rea: entry } }),
+      );
     await writeFile(
       join(home, ".codex/config.toml"),
       `[mcp_servers.rea]\ncommand = "npx"\nargs = ["-y", "${PRODUCT_IDENTITY.registrationPackageSpecifier}", "mcp"]\n`,
@@ -194,10 +201,13 @@ describe("client registration environment validation", () => {
     // The failing resolver must not invalidate non-Kimi/Codex registrations.
     expect(byClient.has("cursor")).toBe(true);
     expect(byClient.get("cursor")?.state).not.toBe("invalid");
-    expect(byClient.get("codex")).toMatchObject({
-      state: "invalid",
-      remediation: expect.stringContaining("budget unavailable"),
-    });
+    expect(byClient.has("lm_studio")).toBe(true);
+    expect(byClient.get("lm_studio")?.state).not.toBe("invalid");
+    for (const client of ["codex", "kimi"])
+      expect(byClient.get(client)).toMatchObject({
+        state: "invalid",
+        remediation: expect.stringContaining("budget unavailable"),
+      });
   });
 });
 

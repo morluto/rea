@@ -15,6 +15,7 @@ import type {
   AnalysisExecution,
   AnalysisOperation,
   CapabilityDescriptor,
+  ExecutionOptions,
 } from "../AnalysisProvider.js";
 import {
   isSnapshotCacheable,
@@ -41,6 +42,7 @@ interface PrepareSessionExecutionInput {
   readonly active: ActiveExecutionBinding | undefined;
   readonly operation: AnalysisOperation;
   readonly parameters: Readonly<Record<string, JsonValue>>;
+  readonly snapshotContext?: ExecutionOptions["snapshotContext"];
   readonly nativeSourceAdmitted: boolean;
   readonly unboundOperationError: (
     operation: AnalysisOperation,
@@ -84,23 +86,34 @@ export const prepareSessionExecution = (
   if (capability?.available !== true) {
     const selectionError = unboundOperationError(operation, active.route);
     if (selectionError !== undefined) return err(selectionError);
+    const entryCommentAvailable =
+      active.route.binding !== null &&
+      active.route.capabilities.get("annotate_native_function")?.available ===
+        true &&
+      active.route.capabilities.get("annotate_native_function")?.provider.id ===
+        active.route.binding.identity.id;
+    const undeclaredGuidance =
+      capability === undefined
+        ? undeclaredOperationGuidance(operation, entryCommentAvailable)
+        : undefined;
     return err(
       new AnalysisCapabilityUnavailableError(
         active.route.binding?.identity.id ?? active.route.identity.id,
         operation,
         capability?.reason ?? "operation is not declared by this provider",
-        capability === undefined
+        undeclaredGuidance === undefined
           ? {
-              userMessage: undeclaredOperationGuidance(
-                operation,
-                active.route.binding !== null &&
-                  active.route.capabilities.get("annotate_native_function")
-                    ?.available === true &&
-                  active.route.capabilities.get("annotate_native_function")
-                    ?.provider.id === active.route.binding.identity.id,
-              ),
+              ...(capability?.userMessage === undefined
+                ? {}
+                : { userMessage: capability.userMessage }),
+              ...(capability?.remediation === undefined
+                ? {}
+                : { remediationAction: capability.remediation }),
             }
-          : undefined,
+          : {
+              userMessage: undeclaredGuidance,
+              remediationAction: undeclaredGuidance,
+            },
       ),
     );
   }
@@ -111,7 +124,12 @@ export const prepareSessionExecution = (
       : undefined;
   const cacheable =
     profile !== undefined &&
-    isSnapshotCacheable(operation, capability, parameters);
+    isSnapshotCacheable(
+      operation,
+      capability,
+      parameters,
+      input.snapshotContext,
+    );
   const cached =
     cacheable &&
     (!requiresNativeSourceAdmissionBeforeReplay(capability.provider.id) ||

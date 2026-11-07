@@ -73,6 +73,7 @@ const identityResponseSchema = z.strictObject({
             process_group_id: z.int().nonnegative(),
           })
           .optional(),
+        name: z.string().optional(),
         reason: z.null().optional(),
       }),
       z.strictObject({
@@ -819,6 +820,9 @@ export const createDarwinProcessRunTokenReader = (
                       processGroupId: result.relation.process_group_id,
                     },
                   }),
+              ...(result.name === undefined || result.name === ""
+                ? {}
+                : { name: result.name }),
             }
           : result.state === "absent"
             ? { state: "absent", reason: result.reason }

@@ -5,8 +5,8 @@ import {
 import type {
   AnalysisOperation,
   CapabilityDescriptor,
+  ProviderAvailability,
 } from "../application/AnalysisProvider.js";
-import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 
 import {
   DEFAULT_REGEX_MATCHING_DEADLINE,
@@ -46,7 +46,7 @@ const KUNA_ENTRY_LIMITATION =
 /** Provider text is not comparable across providers. */
 const KUNA_TEXT_LIMITATION =
   "Pseudocode and assembly are exact Kuna text, not comparable as equal or different with another provider's text.";
-const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes before allocation; larger text stays accessible in the local project export.`;
+const KUNA_TEXT_CAPACITY_LIMITATION = `Each buffered source facet admits at most ${String(KUNA_FUNCTION_TEXT_BYTES)} bytes before allocation; larger project-export spans remain in the local project export.`;
 
 /** The limitations that apply to one operation's answer, and only those. */
 export const kunaLimitations = (
@@ -93,29 +93,24 @@ export const kunaLimitations = (
 
 /** Pseudocode answered before the project export finishes differs from the export's. */
 export const KUNA_SINGLE_FUNCTION_LIMITATION =
-  "This pseudocode came from a single-function `kuna decompile` run while the project export was still building. It lacks the export's whole-program prototypes, and a later request for the same procedure can return the export's text.";
+  "This pseudocode came from a single-function `kuna decompile` run. It lacks the project export's whole-program prototypes and may differ from project-export pseudocode.";
 
 /** Advertise Kuna's static, process-launching operations truthfully. */
 export const kunaCapabilities = (
-  availability:
-    | { readonly available: true }
-    | {
-        readonly available: false;
-        readonly reason: string;
-        readonly code: ProviderRejectionCode;
-      },
+  availability: ProviderAvailability,
   deadline: RegexMatchingDeadline = DEFAULT_REGEX_MATCHING_DEADLINE,
   heapRequest: RegexWorkerHeapRequest = DEFAULT_REGEX_WORKER_HEAP_REQUEST,
 ): readonly CapabilityDescriptor[] =>
   KUNA_OPERATIONS.map((operation) => ({
     provider: KUNA_PROVIDER_IDENTITY,
     operation,
-    ...(availability.available
+    ...(availability.status === "available"
       ? ({ available: true, reason: null } as const)
       : ({
           available: false,
           reason: availability.reason,
           availabilityCode: availability.code,
+          remediation: availability.remediation,
         } as const)),
     // Text can change when the export finishes. References own bounded session
     // reuse; generic snapshot replay must not bypass that lifecycle.
