@@ -131,7 +131,7 @@ export const exportBuild = async (
   const stdout = `${folder}/export-${attempt}.json`;
   const taskFile = `${JSON.stringify(request.task, null, 2)}\n`;
   try {
-    const bytes = await runRea(
+    const { stdoutBytes: bytes } = await runRea(
       computer,
       [
         "export-desktop-application",
