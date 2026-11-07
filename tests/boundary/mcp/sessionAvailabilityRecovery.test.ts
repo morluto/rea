@@ -532,6 +532,42 @@ const DIRECT_OPERATIONS = [
 const ADDRESS = { address: "0x1000", document: "fixture" };
 const PROCEDURE = { procedure: "main" };
 
+it("preserves the user-facing recovery for an observed refusal and clears it after success", async () => {
+  let failing = true;
+  const respond = {
+    current: (operation: string): Promise<Reply> =>
+      failing
+        ? Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  userMessage:
+                    "Project export failed. Resolve the cause and reopen the target.",
+                },
+              ),
+            ),
+          )
+        : Promise.resolve(observed("fixture-text")),
+  };
+  const { call, availability } = await connectScripted({
+    operations: ["address_name"],
+    respond,
+  });
+  expect(await call("address_name", ADDRESS)).toBe("error");
+  expect(await availability(["address_name"])).toEqual({
+    address_name:
+      "Project export failed. Resolve the cause and reopen the target.",
+  });
+  failing = false;
+  expect(await call("address_name", ADDRESS)).toBe("ok");
+  expect(await availability(["address_name"])).toEqual({
+    address_name: "available",
+  });
+});
+
 it("returns provider-inferred siblings to declared availability after one success", async () => {
   let broken = false;
   const respond = {
@@ -591,6 +627,246 @@ it("returns provider-inferred siblings to declared availability after one succes
   expect(await availability(["procedure_assembly", "procedure_info"])).toEqual({
     procedure_assembly: "available",
     procedure_info: refused,
+  });
+});
+
+it("marks declared sibling operations unavailable when a shared prerequisite fails", async () => {
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_assembly")
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              FIXTURE.id,
+              operation,
+              "project export failed",
+              { siblingOperations: ["procedure_assembly", "procedure_info"] },
+            ),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: DIRECT_OPERATIONS,
+    respond,
+  });
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+  // Independent operations remain available.
+  expect(await call("address_name", ADDRESS)).toBe("ok");
+  expect(
+    await availability([
+      "procedure_assembly",
+      "procedure_info",
+      "address_name",
+      "list_procedures",
+    ]),
+  ).toEqual({
+    procedure_assembly: refusal("procedure_assembly", "project export failed"),
+    procedure_info: refusal("procedure_info", "project export failed"),
+    address_name: "available",
+    list_procedures: "available",
+  });
+});
+
+it("marks declared sibling operations unavailable when fallback reports export failure", async () => {
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly", "procedure_info"],
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  // Independent operations remain available.
+  expect(await call("address_name", ADDRESS)).toBe("ok");
+  expect(
+    await availability([
+      "procedure_pseudo_code",
+      "procedure_assembly",
+      "procedure_info",
+      "address_name",
+      "list_procedures",
+    ]),
+  ).toEqual({
+    procedure_pseudo_code: "available",
+    procedure_assembly: refusal("procedure_assembly", "project export failed"),
+    procedure_info: refusal("procedure_info", "project export failed"),
+    address_name: "available",
+    list_procedures: "available",
+  });
+});
+
+it("preserves observed sibling recovery instructions when a later fallback reports sibling unavailability", async () => {
+  const recoveryMessage =
+    "Project export failed. Set REA_FIXTURE_TIMEOUT_MS and restart REA.";
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_assembly")
+        return Promise.resolve(
+          err(
+            new AnalysisCapabilityUnavailableError(
+              FIXTURE.id,
+              operation,
+              "project export failed",
+              {
+                userMessage: recoveryMessage,
+                siblingOperations: ["procedure_assembly", "procedure_info"],
+              },
+            ),
+          ),
+        );
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly", "procedure_info"],
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: recoveryMessage,
+  });
+
+  // A later successful fallback must not overwrite the full recovery explanation.
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: recoveryMessage,
+  });
+});
+
+it("replaces inactive past sibling failures with the current export failure when fallback reports sibling unavailability", async () => {
+  let assemblyFails = true;
+  const oldRefusal = "Import slot 0x4000 cannot be disassembled.";
+  const exportFailureMessage =
+    "Kuna's project export failed, so procedure_assembly is unavailable in this session.";
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_assembly") {
+        if (assemblyFails)
+          return Promise.resolve(
+            err(
+              new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                oldRefusal,
+                { userMessage: oldRefusal },
+              ),
+            ),
+          );
+        return Promise.resolve(observed("mov eax, 1"));
+      }
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                "project export failed",
+                {
+                  siblingOperations: ["procedure_assembly"],
+                  siblingReasons: {
+                    procedure_assembly: exportFailureMessage,
+                  },
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  // 1. Initial refusal on procedure_assembly
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("error");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: oldRefusal,
+  });
+
+  // 2. procedure_assembly succeeds later, resolving the active failure
+  assemblyFails = false;
+  expect(await call("procedure_assembly", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: "available",
+  });
+
+  // 3. Fallback observes export failure: must show the new export failure, not resurrect oldRefusal
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: exportFailureMessage,
+  });
+});
+
+it("preserves source paths and diagnostics unchanged in structured sibling unavailability", async () => {
+  const pathWithOpName = "/var/log/procedure_pseudo_code/target.c";
+  const siblingMessage = `Kuna's project export failed, so procedure_assembly is unavailable in this session: Error compiling ${pathWithOpName}.`;
+  const respond = {
+    current: (operation: string): Promise<Reply> => {
+      if (operation === "procedure_pseudo_code")
+        return Promise.resolve(
+          ok(
+            createAnalysisExecution("int main() { return 0; }", FIXTURE, {
+              siblingUnavailability: new AnalysisCapabilityUnavailableError(
+                FIXTURE.id,
+                operation,
+                `export failed for ${pathWithOpName}`,
+                {
+                  siblingOperations: ["procedure_assembly"],
+                  siblingReasons: {
+                    procedure_assembly: siblingMessage,
+                  },
+                },
+              ),
+            }),
+          ),
+        );
+      return Promise.resolve(observed("fixture-text"));
+    },
+  };
+  const { call, availability } = await connectScripted({
+    operations: [...DIRECT_OPERATIONS, "procedure_pseudo_code"],
+    respond,
+  });
+  expect(await call("procedure_pseudo_code", PROCEDURE)).toBe("ok");
+  // The path containing "procedure_pseudo_code" must remain completely intact
+  expect(await availability(["procedure_assembly"])).toEqual({
+    procedure_assembly: siblingMessage,
   });
 });
 

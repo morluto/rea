@@ -26,8 +26,10 @@ import { ProcessCaptureResourceScope } from "../../process/capture/ProcessCaptur
 import { ProcessCaptureError } from "../../process/capture/ProcessCaptureError.js";
 import {
   createProcessCaptureEvidence,
+  createProcessScenarioPlanEvidence,
   type ProcessCaptureEvidenceFailure,
 } from "./ProcessEvidence.js";
+import { prepareProcessScenarioPlan } from "./ProcessScenarioPreparation.js";
 import { readJsonFile } from "../JsonFiles.js";
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
@@ -58,6 +60,17 @@ export const captureProcessScenarioFile = async (
         input,
         { cause: parsed.error },
       );
+    if (parsed.data.dry_run) {
+      const prepared = await prepareProcessScenarioPlan(
+        parsed.data,
+        environment,
+        process.platform,
+        signal,
+      );
+      return prepared.ok
+        ? createProcessScenarioPlanEvidence(prepared.value, process.platform)
+        : cliAnalysisError(prepared.error);
+    }
     const progress = createProgressReporter(
       async (update) => {
         process.stderr.write(`${JSON.stringify({ rea_progress: update })}\n`);

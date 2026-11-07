@@ -636,6 +636,7 @@ hosted connector; see [its configuration](client-configuration.md#other-client-s
 | Claude Desktop     | `claude_desktop` |
 | Codex              | `codex`          |
 | Cursor             | `cursor`         |
+| CodeBuddy          | `codebuddy`      |
 | Gemini CLI         | `gemini_cli`     |
 | Windsurf           | `windsurf`       |
 | Devin              | `devin`          |
@@ -720,6 +721,11 @@ and status when publisher verification cannot download the current package.
 Hopper metadata and package downloads require HTTPS throughout the redirect
 chain; a redirect to HTTP or to a URL carrying credentials is refused before
 that destination is requested, and those credentials are not reported.
+A package download fails when no bytes arrive for 30 seconds or when it has not
+finished within 15 minutes, so a slow connection that keeps delivering bytes can
+complete. Release metadata and the publisher key keep a 10-second limit. A
+`timeout` failure reports the `limit` it reached (`stalled` or `deadline`), its
+`timeoutMs` and the `receivedBytes` before it stopped.
 
 On macOS, approved setup downloads the official DMG, checks its published size
 and digest, validates the application bundle, and atomically installs it to
@@ -1137,7 +1143,8 @@ and `set_addresses_names` name a function entry or any other mapped address
 session metadata edits leave executable bytes unchanged and are discarded on close. GUI controls
 require Hopper; Windows P0 remains read-only.
 
-Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs, plus explicitly
+Windows P0 admits native x86, x86-64, ARMNT (Thumb-2) and ARM64 PE applications and DLLs,
+[DOS MZ executables](ghidra-dos.md), plus explicitly
 selected [raw NMOS 6502 images](raw-binary.md#nmos-6502) with a caller-supplied
 entry at file offset 0, on fixed local NTFS volumes. Other raw CPU families remain
 unsupported on Windows.
@@ -1429,6 +1436,20 @@ in the project root; when omitted it defaults to the selected target's filename.
 Paths, globs and command flags are not program names. The matching `.rep`
 directory must be present; restore `.grez` archives with Ghidra first.
 
+For a `.gzf` packed program, first import it into a new Ghidra project in an
+existing, caller-selected directory. A packed program is not a `.grez` project
+archive:
+
+```bash
+"$GHIDRA_INSTALL_DIR/support/analyzeHeadless" "/absolute/new-project-directory" "new-project" \
+  -import "/absolute/program.gzf" -noanalysis
+```
+
+Select the resulting `new-project.gpr` with `REA_GHIDRA_PROJECT_PATH`. If the
+imported program name differs from the selected target's filename, set
+`REA_GHIDRA_PROGRAM_NAME` to the name reported by Ghidra's import. REA then
+opens its own read-only project copy; it does not import the packed program.
+
 ```bash
 export REA_ANALYSIS_PROVIDER=ghidra
 export REA_GHIDRA_PROJECT_PATH=/absolute/projects/app-analysis.gpr
@@ -1459,6 +1480,9 @@ reopen the target to resolve a new profile after intentionally changing it.
 The profile records the caller path, resolved project/name, program and content
 fingerprint. Original analysis settings and completeness remain **unknown**;
 prior annotations or edits are caller-project state, not fresh REA discoveries.
+For supported header-selected MIPS ELF targets, the profile also binds the
+selected target's ELF metadata; it does not claim a fresh-import MIPS lane was
+used for the saved project.
 A matching recorded import digest does not claim that the database is unedited.
 Saved REA seed/analyzer reports remain historical facts in retained source Evidence;
 they are not interpreted as overrides applied by this session.

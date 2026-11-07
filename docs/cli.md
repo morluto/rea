@@ -281,6 +281,17 @@ Format versions 6 through 8 retain header, block and directory facts with
 none/LZ4/LZ4HC block decompression. See [UnityFS](unityfs.md) for encryption
 and LZMA coverage boundaries.
 
+Inspect a WeChat mini-program package without WeChat or an unpacker:
+
+```sh
+rea inspect-artifact app.wxapkg --detail summary --evidence_output evidence.json --json
+rea extract-artifact app.wxapkg --json
+```
+
+Plaintext packages retain header, table and member facts with verbatim member
+bytes. `V1MMWX` packages are detected as encrypted coverage and refused on
+extraction. See [wxapkg](wxapkg.md) for layout and coverage boundaries.
+
 Inspect an ESP32-family app or bootloader image without esptool:
 
 ```sh
@@ -338,7 +349,10 @@ unknown names, resource limits and retained views. Compressed bytes stay stored.
 Zstandard (standard method 93). They retain the shared ZIP CRC, declared-size,
 overlap and archive expansion checks. The native streaming decoder keeps the
 existing 128 MiB Zstandard window cap; frames requiring a larger window are
-refused. Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
+reported as a resource limit (`reason: limit`, `boundary: memory`), rather than
+as archive corruption. The cap cannot be raised at runtime: recompress with a
+window of at most 128 MiB, or decompress externally before retrying.
+Deprecated method 20 and other unregistered ZIP codecs remain unsupported.
 
 Inventory and extract UF2 or DfuSe regions:
 
@@ -462,7 +476,8 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 utility, then inspect the decompressed file. See
 [Linux kernel modules](kernel-modules.md).
 
-Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects
+Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
+3.15 headers are qualified but their marshal layout is not pinned)
 without executing bytecode or installing Python:
 
 ```bash
@@ -482,6 +497,15 @@ rea inspect-erlang-beam /absolute/path/to/app.beam --json
 The workflow reports IFF chunk names, atom tables, exports, imports, lambdas,
 and the Code chunk header. Missing optional tables stay null. See
 [Erlang BEAM files](erlang-beam.md).
+
+Complete `rea decompile --json` Evidence can be saved and inspected through
+`inspect-analysis-view` with an inline source and
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 20000}`.
+The projection reads that saved observation without starting a provider;
+offsets/limits count UTF-16 code units. A summary view preserves the original
+selector and distinguishes null from empty text. The MCP tool additionally
+supports `detail: "summary"` on its first call to retain the complete source
+without returning the body inline; see [native investigation](native-investigation.md).
 
 Configure [Hopper or Ghidra](installation.md#hopper), the
 [IDA adapter](ida-provider.md), or [Kuna](kuna-provider.md) before analyzing a
@@ -623,6 +647,9 @@ Saved snapshots include only cache entries whose subject identifies the selected
 target. Unbound observations and observations of child artifacts remain available
 in the open session and its Evidence bundle; they are excluded from the target's
 saved replay entries without changing their subjects.
+The snapshot also retains available Evidence linked by selected records, including
+transitive sources with an unbound or different subject. Those sources are not
+replay entries for the selected target. Unrelated records remain excluded.
 
 Snapshots retain eligible target-scoped question histories in full, including
 mutation Evidence recorded while another target was active. Observations and
@@ -694,6 +721,10 @@ results and Evidence. These are cached observations, not a saved provider
 database: only eligible exact queries can reuse a result, and new or live
 queries can still require provider startup. The CLI uses the same snapshot
 format and preserves these records when loading and updating it.
+When an MCP session replays a provider observation, its delivered Evidence identifies
+the original observation through `evidence_links` and reports that the
+provider was not rerun. The original and its available source records remain
+in the investigation bundle.
 
 ## Import, export and compare Evidence
 
@@ -716,10 +747,12 @@ not read artifact contents: the inventories of two builds are unresolved
 records, or one opaque change when you pair them. Use `compare-artifacts`,
 described at the end of this section, to compare their contents.
 
-`--record_pairs` supplies an explicit JSON array of observation pairs, matching
-MCP `compare_bundles.record_pairs`. Pair IDs must exist on their named sides and
-be one-to-one. Without pairs, one-sided membership remains unknown; REA does
-not infer correspondence from position or display names.
+`--record_pairs` accepts an inline JSON array or the path to a local JSON
+file containing that array, matching MCP `compare_bundles.record_pairs`. For a
+file, use `rea compare left.json right.json --record_pairs pairs.json --json`.
+Pair IDs must exist on their named sides and be one-to-one. Without pairs,
+one-sided membership remains unknown; REA does not infer correspondence from
+position or display names.
 
 Exports preserve an existing destination unless `--overwrite` is explicit.
 
@@ -766,7 +799,8 @@ from the bundle for every supported view kind. Bundles exported from MCP work
 for these commands. Its inline source form cannot also select a bundle.
 A missing ID is refused with `details.reason: "missing"`;
 supplying a bundle does not make incompatible Evidence valid for a workflow.
-`compare-managed-members` keeps its two assembly paths, and
+`compare-managed-members` keeps its two assembly paths and an optional
+repeatable `--type` selection applied to both sides, and
 `compare-process-captures` keeps its two capture Evidence JSON paths. The bundle
 option above selects an input; producer options that write a new bundle, such
 as `inspect-managed-members --evidence-bundle`, retain their existing meaning.
@@ -804,6 +838,7 @@ Import an older source tree to compare with the current artifact:
 ```bash
 rea import-reference-source /absolute/path/to/source
 rea import-reference-source /absolute/path/to/source --detail summary --outline-depth 2 --json
+rea import-reference-source /absolute/path/to/source --exclude-paths '["vendor/","*.generated","!keep.generated"]'
 ```
 
 The default (`--detail full`) returns the complete `HistoricalSourceGraph`.
@@ -950,6 +985,10 @@ Choose the guide for the target and intended interaction:
 - [Electron fuses](electron-fuses.md): read packaged fuse bytes before expecting `--inspect` to reach an Electron main process.
 - [Node/Electron Inspector](javascript-runtime-observation.md): record script locations and execution contexts.
 - [Process capture](process-capture.md): run an executable and compare terminal, exit and filesystem observations.
+- [Desktop application capture](desktop-application-capture.md): launch a Linux desktop application and record its windows and home-directory state at checkpoints while it is used.
+- [Desktop application state](desktop-application-state.md): read a capture folder into the application's state files, typed views of each version and kinds of change.
+- [Desktop application export](desktop-application-export.md): write a capture folder as an agentenv computer app bundle with its class, skill and seed.
+- [Desktop application tasks](desktop-application-tasks.md): describe how a capture's files changed, then validate an agent-written task against the capture and export it with its verifier.
 
 Runtime requests name the target and actions. Launched targets run with your
 user permissions; consult the chosen guide for host requirements and effects.
@@ -1161,6 +1200,10 @@ such as `UNSUPPORTED_OUTPUT_COMBINATION` for `--json` with `--token-limit`. Use
 Commands reject surplus positional arguments before execution, including commands
 that accept no positionals. Use `rea <command> --help` for the declared argument
 shape; a final variadic argument continues to accept multiple values.
+`rea mcp add` accepts options only and rejects unknown options before reading or
+backing up client settings or starting registration. Its `--agent` and
+`--command`/`-c` options accept spaced and equals forms. Values must be nonempty; a following flag does not satisfy a spaced option's
+missing value.
 
 `rea mcp doctor --json` checks production MCP startup and reports child logs in
 `diagnostics`. It drains stderr while retaining at most its first 64 KiB of raw
@@ -1301,7 +1344,9 @@ the command's signal handling. Commands routed through the shared
 `withCommandCancellation` handler in the CLI set status `130` for SIGINT or
 `143` for SIGTERM after their operation settles. Current source registrations
 use that handler for process capture and comparison (`capture-process`,
-`compare-process-captures`), JavaScript application analysis (`analyze` when it
+`compare-process-captures`), desktop application capture and state
+(`capture-desktop-application`, `inspect-desktop-application-state`,
+`export-desktop-application`, `describe-desktop-application-task`), JavaScript application analysis (`analyze` when it
 selects the JavaScript lane, and `analyze-javascript-application`), selected
 browser, web and Electron commands (including `analyze-web-bundle`,
 `observe-web-execution`, `capture-browser-scenario` and
@@ -1347,7 +1392,11 @@ status with the analysis failure status, so it exits `1`. Setup has its own cont
 structured result and process status as separate signals when scripting
 cancellation.
 
-`setup --dry-run` returns `planned` and exits `0`; a cancelled setup also exits
+`setup --dry-run` returns `planned` and exits `0`. For `setup` and
+`environment-build`, explicit `--dry-run=true` and `--dry-run=false` are
+accepted; empty or other values fail with `PARSE_ERROR` before any changes.
+Every supplied value is checked even when a later occurrence overrides it.
+A cancelled setup also exits
 `0`. Setup returns `1` for `needs_confirmation` or `needs_human`.
 `doctor` returns `1` when required checks in its selected readiness scope fail;
 unavailable optional providers remain informational for unrelated tasks.
@@ -1391,6 +1440,16 @@ rea inspect-pe-load-config /absolute/path/to/application.exe --json
 Reports TLS callbacks and size-covered load-config fields without execution.
 Use `--max-callbacks` and `--max-file-bytes` to set read budgets. See
 [PE TLS and load configuration](pe-load-config.md).
+
+### Binary hardening
+
+```sh
+rea inspect-binary-hardening /absolute/path/to/program --json
+```
+
+Reports ELF, PE, and Mach-O hardening rows without execution. A missing import
+is `unknown`, not `disabled`. Use `--max-file-bytes` to set the read budget. See
+[binary hardening](binary-hardening.md).
 
 Bun standalone executables use the existing `inspect-artifact` and
 `extract-artifact` commands to inventory and materialize embedded source,

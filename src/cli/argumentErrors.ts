@@ -20,6 +20,10 @@ const adbPackageCommands = new Set([
 const isAdbSelector = (command: string, field: string): boolean =>
   (command.includes("-adb-") && field === "serial") ||
   (adbPackageCommands.has(command) && field === "package") ||
+  (command === "list-adb-directory" && field === "device-path") ||
+  (command === "resolve-adb-packages" && field === "query") ||
+  (["pull-adb-file", "push-adb-file"].includes(command) &&
+    field === "device-path") ||
   (command === "start-adb-activity" &&
     ["action", "component", "data-uri"].includes(field));
 

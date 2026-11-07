@@ -128,7 +128,8 @@ const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
     if (
       node.limit !== undefined ||
       node.continuingCallerGuidance !== undefined ||
-      node.invocationDiagnostics !== undefined
+      node.invocationDiagnostics !== undefined ||
+      node.workflowUnknownPublication !== undefined
     )
       return true;
   return false;
@@ -168,8 +169,22 @@ const projectError = (
   const underlyingCode = underlyingErrorCode(primary);
   const code = error.cleanupIncomplete ? "cleanup_incomplete" : underlyingCode;
   const primaryDetails = errorDetails(primary);
+  const publication =
+    composed.workflowUnknownPublication ?? primary.workflowUnknownPublication;
   const details = {
     ...primaryDetails,
+    ...(publication === undefined
+      ? {}
+      : {
+          workflow_unknown_publication: {
+            ...publication,
+            evidence_retention:
+              callerLifetime === "invocation" &&
+              publication.evidence_retention === "retained"
+                ? "invocation-only"
+                : publication.evidence_retention,
+          },
+        }),
     ...(primary.limit === undefined
       ? {}
       : {
@@ -225,6 +240,11 @@ const projectError = (
       ? errorRecovery(error)
       : cleanupRetryRecovery(cleanupRetry);
   const remediation = analysisErrorRemediationAction(error, callerLifetime);
+  const publicationRemediation =
+    callerLifetime === "continuing" &&
+    publication?.evidence_retention === "retained"
+      ? " Use get_evidence_bundle with the Evidence ID in details.workflow_unknown_publication to retrieve the completed result; use list_unknowns to inspect recorded questions. Publication stopped at the reported index; later questions were not checked in this attempt."
+      : "";
   return {
     code,
     category: analysisErrorCategory(error),
@@ -239,8 +259,8 @@ const projectError = (
     remediation: {
       action:
         cleanupRetry === undefined
-          ? remediation
-          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}`,
+          ? `${remediation}${publicationRemediation}`
+          : `${remediation} ${cleanupRetryRemediation(cleanupRetry)}${publicationRemediation}`,
     },
     ...(recovery === undefined ? {} : { recovery }),
     ...(Object.keys(details).length === 0 ? {} : { details }),

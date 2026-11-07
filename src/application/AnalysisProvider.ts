@@ -9,6 +9,7 @@ import type { NativeToolName } from "../contracts/native/nativeToolContracts.js"
 import type { ArtifactAnalysisOperation } from "../contracts/artifactToolContracts.js";
 import type { ManagedToolName } from "../contracts/managed/managedToolContracts.js";
 import type { AnalysisError } from "../domain/analysisErrorBase.js";
+import type { AnalysisCapabilityUnavailableError } from "../domain/analysisErrorCore.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Result } from "../domain/result.js";
@@ -18,6 +19,10 @@ import type {
   EvidenceSubjectTarget,
 } from "../domain/evidence.js";
 import { jsonValueSchema } from "../domain/jsonValue.js";
+import {
+  analysisSourceDescriptorSchema,
+  type AnalysisSourceDescriptor,
+} from "../domain/analysisSource.js";
 import type { ProgressReporter } from "./ProgressReporter.js";
 import type { ProviderRejectionCode } from "../domain/providerSelection.js";
 import type { ProcessLineageObservation } from "../process/ProcessOwnership.js";
@@ -34,6 +39,8 @@ export interface ExecutionOptions {
   readonly snapshotContext?: "one-shot-target";
   readonly signal?: AbortSignal;
   readonly progress?: ProgressReporter;
+  /** The composed workflow will cite this observation and needs its Evidence. */
+  readonly retainEvidence?: true;
   /**
    * Set when a procedure selector came from provider output, such as a
    * revisited callee, rather than from the caller. A provider-derived
@@ -58,6 +65,12 @@ export type AnalysisOperation =
 /** Atomic successful provider observation with exact producing provenance. */
 export interface AnalysisExecution extends AnalysisObservation {
   readonly provider: ProviderIdentity;
+  /**
+   * Compact provider-owned facts for this execution. This is not an Evidence
+   * record and is not restored by snapshot replay; consumers must treat its
+   * absence as unknown.
+   */
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   /** Session-issued identity of the committed record consumed by this execution. */
   readonly evidenceId?: string;
   /** Result-specific veto of snapshot replay; Evidence remains retainable. */
@@ -69,15 +82,22 @@ export interface AnalysisExecution extends AnalysisObservation {
    * output.
    */
   readonly referencesTruncated?: boolean;
+  /**
+   * Sibling operations known to be unavailable at the provider level when this
+   * operation answered from a standalone or fallback path.
+   */
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
 }
 
 interface CreateAnalysisExecutionOptions {
   readonly rawResult?: unknown;
+  readonly sourceDescriptor?: AnalysisSourceDescriptor;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly cachePolicy?: "live";
   readonly limitations?: readonly string[];
   readonly relationshipCoverage?: RelationshipCoverage;
   readonly referencesTruncated?: boolean;
+  readonly siblingUnavailability?: AnalysisCapabilityUnavailableError;
   readonly locations?: readonly EvidenceLocation[];
   readonly sourceEvidence?: readonly Evidence[];
   readonly subject?: EvidenceSubjectTarget | null;
@@ -112,6 +132,13 @@ export function createAnalysisExecution(
         ? null
         : jsonValueSchema.parse(options.rawResult),
     provider,
+    ...(options.sourceDescriptor === undefined
+      ? {}
+      : {
+          sourceDescriptor: analysisSourceDescriptorSchema.parse(
+            options.sourceDescriptor,
+          ),
+        }),
     ...(options.cachePolicy === undefined
       ? {}
       : { cachePolicy: options.cachePolicy }),
@@ -129,6 +156,9 @@ export function createAnalysisExecution(
     ...(options.referencesTruncated === undefined
       ? {}
       : { referencesTruncated: options.referencesTruncated }),
+    ...(options.siblingUnavailability === undefined
+      ? {}
+      : { siblingUnavailability: options.siblingUnavailability }),
     locations: [...(options.locations ?? [])],
     ...(options.sourceEvidence === undefined
       ? {}

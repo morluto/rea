@@ -1572,7 +1572,7 @@ const expectReaderBindingMismatch = (
   expect(projectAnalysisError(error).details).toMatchObject({
     binding_mismatch: {
       provider: {
-        snapshot: { version: "apple-metadata-reader-older" },
+        snapshot: { version: "apple-metadata-reader-2" },
         selected: { version: selectedVersion },
       },
       profile_digest: { snapshot: snapshotDigest },
@@ -1610,12 +1610,13 @@ const expectProfilelessWorkflowSnapshotRejections = async (
   if (!opened.ok) throw opened.error;
   const readerIdentity = APPLE_DISPATCH_METADATA_ANALYSIS_PROFILE.provider;
   const wrongReader = structuredClone(snapshot);
+  // Reader v2 could discard owners when their adopted-protocol list was unreadable.
   const otherReaderProfile = createAnalysisProfile(
-    { ...readerIdentity, version: "apple-metadata-reader-older" },
+    { ...readerIdentity, version: "apple-metadata-reader-2" },
     {
       operation: "inspect_native_dispatch_metadata",
       reader: "apple-dispatch-metadata",
-      revision: 0,
+      revision: 2,
     },
   );
   wrongReader.binding = {
@@ -1834,4 +1835,66 @@ it("retains a native dispatch workflow snapshot without a deep provider profile"
     provider,
     saved.value,
   );
+});
+
+it("runs decompile export against the provider after loading a pseudocode snapshot", async () => {
+  const fixture = await createSnapshotReplayFixture("rea-directory-snapshot-");
+  const original = fixture.createProvider({
+    supportedOperations: ["list_procedures", "procedure_pseudo_code"],
+  });
+  const provider: AnalysisProvider = {
+    ...original,
+    createClient: (...args) => {
+      const client = original.createClient(...args);
+      return {
+        ...client,
+        execute: async (operation, parameters, options) => {
+          const result = await client.execute(operation, parameters, options);
+          return result.ok && operation === "procedure_pseudo_code"
+            ? ok({
+                ...result.value,
+                sourceDescriptor: {
+                  kind: "single-function-decompile" as const,
+                },
+              })
+            : result;
+        },
+      };
+    },
+  };
+  const dependencies = fixture.dependencies(provider);
+  const first = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "procedure_pseudo_code",
+    { procedure: "0x1000", document: fixture.path },
+    { snapshotPath: fixture.snapshotPath },
+  );
+  expect(first.ok).toBe(true);
+  const snapshot = await readAnalysisSnapshot(fixture.snapshotPath);
+  if (!snapshot.ok) throw snapshot.error;
+  expect(
+    snapshot.value.entries.some(
+      (entry) => entry.operation === "procedure_pseudo_code",
+    ),
+  ).toBe(true);
+  const directory = join(dirname(fixture.snapshotPath), "export");
+  const exported = await runDirectAnalysis(
+    dependencies,
+    fixture.path,
+    "decompile_all",
+    { output_directory: directory, layout: "address", resume: false },
+    { snapshotPath: fixture.snapshotPath },
+  );
+  expect(exported.ok, JSON.stringify(exported)).toBe(true);
+  expect(
+    fixture.calls.filter((name) => name === "procedure_pseudo_code"),
+  ).toHaveLength(2);
+  const index = JSON.parse(
+    await readFile(join(directory, "decompile-index.json"), "utf8"),
+  ) as { functions: Array<{ provider_source?: unknown }> };
+  expect(index.functions[0]?.provider_source).toEqual({
+    status: "reported",
+    source: { kind: "single-function-decompile" },
+  });
 });
