@@ -931,6 +931,17 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
       expect(screenshot.value.artifact.media_type).toBe("image/png");
       expect(browser.openedConnectionCount()).toBe(1);
       expect(browser.activeConnectionCount()).toBe(1);
+      const targetSessionIds = new Set(
+        browser.commands.flatMap((command) =>
+          command.sessionId === undefined ? [] : [command.sessionId],
+        ),
+      );
+      expect(targetSessionIds).toEqual(new Set(["session-1", "session-2"]));
+      const detachedSessionIds = browser.commands
+        .filter((command) => command.method === "Target.detachFromTarget")
+        .map((command) => command.params.sessionId)
+        .sort();
+      expect(detachedSessionIds).toEqual(["session-1", "session-2"]);
     } finally {
       await batch?.catch(() => undefined);
       await provider.close();
@@ -994,4 +1005,133 @@ describe("CdpBrowserProvider: coalesced cold-start browser sockets", () => {
     }
     await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
   });
+});
+
+it("isolates concurrent target sessions on one shared browser socket when a shorter call detaches first", async () => {
+  const browser = await startFakeCdpBrowser();
+  trackBrowser(browser);
+  const provider = new CdpBrowserProvider();
+  const controller = new AbortController();
+  let notifyObservationArmed = (): void => undefined;
+  const observationArmed = new Promise<void>((resolve) => {
+    notifyObservationArmed = resolve;
+  });
+  let observing: ReturnType<CdpBrowserProvider["observeSession"]> | undefined;
+  let inspecting: ReturnType<CdpBrowserProvider["inspectPage"]> | undefined;
+  let capturing:
+    | ReturnType<CdpBrowserProvider["captureScreenshot"]>
+    | undefined;
+  try {
+    observing = provider.observeSession(
+      observeWebSessionInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 140,
+      }),
+      {
+        signal: controller.signal,
+        progress: {
+          report(update) {
+            if (update.completed === 1) notifyObservationArmed();
+            return Promise.resolve();
+          },
+        },
+      },
+    );
+    await awaitAcknowledgement(
+      observationArmed,
+      observing,
+      "shared browser-socket observation start",
+    );
+
+    inspecting = provider.inspectPage(
+      inspectWebPageInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+        observation_ms: 80,
+      }),
+      { signal: controller.signal },
+    );
+    capturing = provider.captureScreenshot(
+      captureWebScreenshotInputSchema.parse({
+        cdp_endpoint: browser.browserWebSocketUrl,
+        target_id: "allowed-page",
+      }),
+      { signal: controller.signal },
+    );
+
+    const screenshot = await capturing;
+    if (!screenshot.ok) throw screenshot.error;
+    expect(screenshot.value.artifact.media_type).toBe("image/png");
+    const detachesAfterScreenshot = browser.commands
+      .filter((command) => command.method === "Target.detachFromTarget")
+      .map((command) => command.params.sessionId);
+    expect(detachesAfterScreenshot).toHaveLength(1);
+    const detachedScreenshotSession = detachesAfterScreenshot[0];
+    expect(typeof detachedScreenshotSession).toBe("string");
+    expect(detachedScreenshotSession).not.toBe("session-1");
+
+    browser.emitEvent({
+      method: "Page.navigatedWithinDocument",
+      sessionId: String(detachedScreenshotSession),
+      params: {
+        frameId: "frame-main",
+        url: `${browser.allowedOrigin}/ignored-detached-peer`,
+        navigationType: "historyApi",
+        timestamp: 40,
+      },
+    });
+    browser.emitEvent({
+      method: "Page.navigatedWithinDocument",
+      sessionId: "session-1",
+      params: {
+        frameId: "frame-main",
+        url: `${browser.allowedOrigin}/after-peer-detach`,
+        navigationType: "historyApi",
+        timestamp: 41,
+      },
+    });
+
+    const [inspected, observed] = await Promise.all([inspecting, observing]);
+    if (!inspected.ok) throw inspected.error;
+    if (!observed.ok) throw observed.error;
+    expect(inspected.value.target.origin).toBe(browser.allowedOrigin);
+    expect(observed.value.window.end_reason).toBe("window_elapsed");
+    expect(observed.value.timeline).toContainEqual(
+      expect.objectContaining({
+        type: "same_document_navigation",
+        url: `${browser.allowedOrigin}/after-peer-detach`,
+      }),
+    );
+    expect(observed.value.timeline).not.toContainEqual(
+      expect.objectContaining({
+        url: `${browser.allowedOrigin}/ignored-detached-peer`,
+      }),
+    );
+    expect(browser.openedConnectionCount()).toBe(1);
+    expect(browser.activeConnectionCount()).toBe(1);
+
+    const allTargetSessions = new Set(
+      browser.commands.flatMap((command) =>
+        command.sessionId === undefined ? [] : [command.sessionId],
+      ),
+    );
+    expect(allTargetSessions).toEqual(
+      new Set(["session-1", "session-2", "session-3"]),
+    );
+    const allDetachedSessions = browser.commands
+      .filter((command) => command.method === "Target.detachFromTarget")
+      .map((command) => command.params.sessionId)
+      .sort();
+    expect(allDetachedSessions).toEqual([
+      "session-1",
+      "session-2",
+      "session-3",
+    ]);
+  } finally {
+    controller.abort(new Error("test teardown"));
+    await Promise.allSettled([observing, inspecting, capturing]);
+    await provider.close();
+  }
+  await vi.waitFor(() => expect(browser.activeConnectionCount()).toBe(0));
 });

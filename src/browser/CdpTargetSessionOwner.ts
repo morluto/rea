@@ -78,10 +78,14 @@ interface BrowserSocketWaiter {
   detachAbort: () => void;
 }
 
+interface PendingBrowserSocketOutcome {
+  readonly cleanupFailure: unknown;
+}
+
 interface PendingBrowserSocket {
   readonly controller: AbortController;
   readonly waiters: Set<BrowserSocketWaiter>;
-  done: Promise<void>;
+  done: Promise<PendingBrowserSocketOutcome | undefined>;
 }
 
 /** Retains exact REA-owned CDP transports until their close is observed. */
@@ -176,7 +180,7 @@ export class CdpTargetSessionOwner {
       const created: PendingBrowserSocket = {
         controller: new AbortController(),
         waiters: new Set(),
-        done: Promise.resolve(),
+        done: Promise.resolve(undefined),
       };
       this.#pendingBrowserSockets.set(url, created);
       startPending = () => {
@@ -212,11 +216,11 @@ export class CdpTargetSessionOwner {
         if (this.#pendingBrowserSockets.get(url) === activePending)
           this.#pendingBrowserSockets.delete(url);
         activePending.controller.abort(options.signal?.reason);
-        void activePending.done.then(
-          () => reject(cancelError),
-          (cleanupCause: unknown) =>
-            reject(rebindPendingConnectFailure(cleanupCause, waiter)),
-        );
+        void activePending.done.then((outcome) => {
+          if (outcome !== undefined)
+            reject(rebindPendingConnectFailure(outcome.cleanupFailure, waiter));
+          else reject(cancelError);
+        }, reject);
       };
       if (options.signal !== undefined) {
         options.signal.addEventListener("abort", onAbort, { once: true });
@@ -237,7 +241,7 @@ export class CdpTargetSessionOwner {
     readonly pending: PendingBrowserSocket;
     readonly initialOperation: BrowserObservationOperation;
     readonly limits: BrowserSocketLimits;
-  }): Promise<void> {
+  }): Promise<PendingBrowserSocketOutcome | undefined> {
     const { url, pending, initialOperation, limits } = context;
     try {
       const root = await this.connect(
@@ -257,7 +261,7 @@ export class CdpTargetSessionOwner {
         this.#pendingBrowserSockets.delete(url);
       if (pending.waiters.size === 0) {
         await this.finish(root);
-        return;
+        return undefined;
       }
       const record = this.#connections.get(root);
       if (record !== undefined) {
@@ -278,6 +282,7 @@ export class CdpTargetSessionOwner {
           reused: false,
         });
       }
+      return undefined;
     } catch (cause: unknown) {
       if (this.#pendingBrowserSockets.get(url) === pending)
         this.#pendingBrowserSockets.delete(url);
@@ -288,10 +293,12 @@ export class CdpTargetSessionOwner {
         waiter.reject(rebindPendingConnectFailure(cause, waiter));
       }
       if (
-        (cause instanceof AnalysisError && cause.cleanupIncomplete) ||
-        cause instanceof AggregateError
+        snapshot.length === 0 &&
+        ((cause instanceof AnalysisError && cause.cleanupIncomplete) ||
+          cause instanceof AggregateError)
       )
-        throw cause;
+        return { cleanupFailure: cause };
+      return undefined;
     }
   }
 
@@ -650,6 +657,42 @@ const rebindPendingConnectFailure = (
     return cause.cleanupIncomplete
       ? rebound.bindCleanupDependencies([cause])
       : rebound;
+  }
+  if (
+    cause instanceof AnalysisError &&
+    cause.cleanupPrimary !== undefined &&
+    cause.cause instanceof AggregateError
+  ) {
+    const [, cleanupFailure] = cause.cause.errors;
+    const reboundPrimary = rebindPendingConnectFailure(
+      cause.cleanupPrimary,
+      waiter,
+    );
+    if (
+      reboundPrimary instanceof AnalysisError &&
+      cleanupFailure instanceof AnalysisError &&
+      reboundPrimary !== cause.cleanupPrimary
+    ) {
+      return bindCdpTransportCleanup(
+        cleanupFailure,
+        analysisErrorWithCleanupFailure(
+          reboundPrimary,
+          cleanupFailure,
+          waiter.operation,
+        ),
+      );
+    }
+  }
+  if (
+    cause instanceof CdpTransportCleanupFailure &&
+    cause.operation !== waiter.operation
+  ) {
+    return new CdpTransportCleanupFailure(cause.cleanupLeases, {
+      resources: cause.cleanupResources,
+      operation: waiter.operation,
+      diagnostics: cause.diagnostics ?? {},
+      cause: cause.cause,
+    });
   }
   return cause;
 };
