@@ -1402,6 +1402,16 @@ cliTest(
     expect(JSON.stringify(misleadingResult.json)).not.toContain(
       resolvedRegularFileRemediation(real),
     );
+    const misleadingMcp = parseMcpToolError(
+      await call("inspect_model_artifact", { path: misleading }),
+    );
+    expect(misleadingMcp.error).toMatchObject({
+      code: "target_unavailable",
+      details: { path: misleading, reason: expect.stringContaining("ENOTDIR") },
+    });
+    expect(JSON.stringify(misleadingMcp.error)).not.toContain(
+      resolvedRegularFileRemediation(real),
+    );
 
     const resolved = await cli.run({
       arguments: ["inspect-model-artifact", real, "--json"],
