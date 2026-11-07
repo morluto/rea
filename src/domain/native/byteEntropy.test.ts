@@ -1,8 +1,10 @@
 import { expect, it } from "vitest";
 import {
   computeBlockEntropy,
+  entropyFromCounts,
   inspectByteEntropyInputSchema,
   mergeEntropyRuns,
+  wholeFileByteCounts,
 } from "./byteEntropy.js";
 
 it("computes known Shannon answers including partial and empty blocks", () => {
@@ -50,4 +52,14 @@ it("rejects unsafe windows, unknown fields and unsupported block sizes", () => {
         .success,
     ).toBe(false);
   }
+});
+it("keeps whole-file entropy exact above 2^32 occurrences of one byte", () => {
+  // A file larger than 4 GiB with one dominant byte value. A `Uint32Array` bin wraps
+  // at 2^32 and reports 0.5283 for a uniform file instead of 0, so the census counter
+  // from `wholeFileByteCounts` has to hold the exact total.
+  const total = 2 ** 32 + 2 ** 31;
+  const counts = wholeFileByteCounts();
+  counts[0] = total;
+  expect(counts[0]).toBe(total);
+  expect(entropyFromCounts(counts, total)).toBe(0);
 });
