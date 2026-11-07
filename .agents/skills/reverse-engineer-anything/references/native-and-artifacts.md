@@ -154,7 +154,7 @@ signatures. Unknown IDList items and ExtraData signatures remain raw with
 SHA-256; they are not guessed. Version-1 UUID MAC and timestamp values are
 labelled derived. A missing optional section is observed absence of that
 structure. See
-[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/windows-shortcut.md).
+[Windows Shell Link shortcuts](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
 
 ## PE TLS callbacks and load configuration
 

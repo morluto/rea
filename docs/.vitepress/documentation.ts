@@ -48,6 +48,11 @@ export const documentationSections = [
         source: "guides/native/recorded-crashes.md",
         route: "/recorded-crashes",
       },
+      {
+        text: "Windows Shell Link shortcuts",
+        source: "guides/native/windows-shortcut.md",
+        route: "/windows-shortcut",
+      },
     ],
   },
   {
@@ -639,11 +644,6 @@ export const documentationSections = [
         text: "UnityFS AssetBundle archives",
         source: "unityfs.md",
         route: "/unityfs",
-      },
-      {
-        text: "Windows Shell Link shortcuts",
-        source: "windows-shortcut.md",
-        route: "/windows-shortcut",
       },
     ],
   },

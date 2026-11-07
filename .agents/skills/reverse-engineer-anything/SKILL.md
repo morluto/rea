@@ -275,7 +275,7 @@ explicit path or endpoint and do not need it.
   signatures, and Tracker droid facts labelled derived. Unknown IDList items
   and ExtraData signatures stay raw with SHA-256. The target path is not
   resolved or executed. See the
-  [Windows shortcut guide](https://github.com/morluto/rea/blob/main/docs/windows-shortcut.md).
+  [Windows shortcut guide](https://github.com/morluto/rea/blob/main/docs/guides/native/windows-shortcut.md).
 - PE TLS callbacks and load configuration: `inspect_pe_load_config` with the
   explicit local PE32/PE32+ file. This built-in target-free inspection requires
   no Windows SDK. Preserve callback VAs as strings with their RVA, file offset

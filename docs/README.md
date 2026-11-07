@@ -17,6 +17,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [Go binary build metadata](guides/native/go-binaries.md)
 - [Offline binary diagnostics](guides/native/binary-diagnostics.md)
 - [Recorded crash evidence](guides/native/recorded-crashes.md)
+- [Windows Shell Link shortcuts](guides/native/windows-shortcut.md)
 
 ## JavaScript and Electron
 
@@ -193,4 +194,3 @@ the exact commit messages and references from the release they describe.
 - [Rust binary dependency metadata](rust-binaries.md)
 - [U-Boot legacy uImage containers](uimage.md)
 - [UnityFS AssetBundle archives](unityfs.md)
-- [Windows Shell Link shortcuts](windows-shortcut.md)

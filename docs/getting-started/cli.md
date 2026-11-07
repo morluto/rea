@@ -450,7 +450,7 @@ The workflow reports header flags and FILETIMEs, IDList items, LinkInfo volume
 and network names, StringData arguments and icon location, ExtraData blocks
 including Tracker droid facts labelled derived, and derived observations such
 as argument length and a minimized ShowCommand. See
-[Windows Shell Link shortcuts](windows-shortcut.md).
+[Windows Shell Link shortcuts](../guides/native/windows-shortcut.md).
 
 Inspect ELF PT_NOTE and SHT_NOTE tables without executing the image:
 
