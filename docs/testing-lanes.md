@@ -1251,9 +1251,12 @@ For catalog-loading measurements, use the real Codex
 from advertisement bytes and from completed-task correctness.
 
 `npm run verify:agent` evaluates investigation scenarios through a real local
-Codex CLI. The lane runs sequentially; select scenarios with
-`REA_AGENT_EVAL_SCENARIOS` and choose the installed client/model with
-`REA_CODEX_CLI` and `REA_AGENT_EVAL_MODEL`. The detailed
+agent CLI. Codex is the default; set `REA_AGENT_EVAL_CLIENT=claude-code` or
+`REA_AGENT_EVAL_CLIENT=gemini-cli` to run the same scenarios and grading against
+Claude Code or Gemini CLI. The lane runs sequentially; select scenarios with
+`REA_AGENT_EVAL_SCENARIOS`, commands with
+`REA_CODEX_CLI`/`REA_AGENT_EVAL_CLAUDE_COMMAND`/`REA_AGENT_EVAL_GEMINI_COMMAND`,
+and the model with `REA_AGENT_EVAL_MODEL`. The detailed
 [agent evaluation reference](client-verification.md#agent-evaluation-and-conformance-records)
 contains isolation, authentication cleanup, grading, and conformance boundaries.
 
