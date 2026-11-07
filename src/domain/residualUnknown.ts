@@ -1,3 +1,8 @@
+import {
+  redactJsonValue,
+  redactLogicalPath,
+  type ResolvedLogicalPathConfig,
+} from "./logicalPath.js";
 import { uniqueSorted } from "./canonicalOrdering.js";
 import { z } from "zod";
 import { digestCanonicalValue } from "./canonicalDigest.js";
@@ -278,6 +283,123 @@ export const updateUnknownInputSchema = z.strictObject({
 });
 
 export type UpdateUnknownInput = z.infer<typeof updateUnknownInputSchema>;
+
+/** Decode the registry-owned mutation input, retaining its explicit identity references. */
+export const parseUnknownMutationInput = (
+  operation: string,
+  input: unknown,
+): RecordUnknownInput | UpdateUnknownInput =>
+  operation === "record_unknown"
+    ? recordUnknownInputSchema.parse(input)
+    : updateUnknownInputSchema.parse(input);
+
+/** Map references in registry mutation input without treating arbitrary strings as identifiers. */
+export const mapUnknownMutationInput = (
+  input: RecordUnknownInput | UpdateUnknownInput,
+  evidenceId: (id: string) => string,
+  unknownId: (id: string) => string,
+): RecordUnknownInput | UpdateUnknownInput => ({
+  ...input,
+  ...("unknown_id" in input ? { unknown_id: unknownId(input.unknown_id) } : {}),
+  ...("comparison_conclusion_scope" in input &&
+  input.comparison_conclusion_scope !== undefined
+    ? {
+        comparison_conclusion_scope: {
+          ...input.comparison_conclusion_scope,
+          comparison_evidence_id: evidenceId(
+            input.comparison_conclusion_scope.comparison_evidence_id,
+          ),
+        },
+      }
+    : {}),
+  supporting_evidence_ids: input.supporting_evidence_ids.map(evidenceId),
+  contradicting_evidence_ids: input.contradicting_evidence_ids.map(evidenceId),
+  relationships: input.relationships.map((relationship) => ({
+    ...relationship,
+    unknown_id: unknownId(relationship.unknown_id),
+  })),
+  ...("resolution" in input && input.resolution !== null
+    ? {
+        resolution: {
+          ...input.resolution,
+          evidence_ids: input.resolution.evidence_ids.map(evidenceId),
+        },
+      }
+    : {}),
+});
+
+/** Recompute the immutable Unknown identity after its selected paths and comparison source change. */
+export const mappedUnknownIdentity = (
+  unknown: ResidualUnknown,
+  config: ResolvedLogicalPathConfig,
+  evidenceId: (id: string) => string,
+): string => {
+  const scope = unknown.comparison_conclusion_scope;
+  return stableUnknownId(
+    redactLogicalPath(unknown.question, config),
+    redactLogicalPath(unknown.domain, config),
+    unknown.scope_digest,
+    scope === undefined
+      ? undefined
+      : {
+          ...scope,
+          comparison_evidence_id: evidenceId(scope.comparison_evidence_id),
+        },
+  );
+};
+
+/** Reseal one revision using final Evidence and Unknown identities. */
+export const mapUnknownRevision = (
+  unknown: ResidualUnknown,
+  config: ResolvedLogicalPathConfig,
+  evidenceId: (id: string) => string,
+  unknownId: (id: string) => string,
+  previousDigest: string | null,
+): ResidualUnknown => {
+  const mapped = redactJsonValue(
+    residualUnknownSchema.parse(unknown),
+    config,
+  ) as ResidualUnknown;
+  const scope = mapped.comparison_conclusion_scope;
+  const { revision_digest: _digest, ...value } = mapped;
+  return createRevision({
+    ...value,
+    unknown_id: unknownId(unknown.unknown_id),
+    previous_revision_digest: previousDigest,
+    ...(scope === undefined
+      ? {}
+      : {
+          comparison_conclusion_scope: {
+            ...scope,
+            comparison_evidence_id: evidenceId(scope.comparison_evidence_id),
+          },
+        }),
+    supporting_evidence_ids: uniqueSorted(
+      mapped.supporting_evidence_ids.map(evidenceId),
+    ),
+    contradicting_evidence_ids: uniqueSorted(
+      mapped.contradicting_evidence_ids.map(evidenceId),
+    ),
+    mutation_evidence_ids: uniqueSorted(
+      mapped.mutation_evidence_ids.map(evidenceId),
+    ),
+    relationships: sortedRelationships(
+      mapped.relationships.map((relationship) => ({
+        ...relationship,
+        unknown_id: unknownId(relationship.unknown_id),
+      })),
+    ),
+    resolution:
+      mapped.resolution === null
+        ? null
+        : {
+            ...mapped.resolution,
+            evidence_ids: uniqueSorted(
+              mapped.resolution.evidence_ids.map(evidenceId),
+            ),
+          },
+  });
+};
 
 /** Create stable identity from immutable question and domain fields. */
 export const createResidualUnknown = (

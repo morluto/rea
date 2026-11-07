@@ -5,7 +5,11 @@ import {
   ANALYSIS_SNAPSHOT_PROVIDER as provider,
 } from "../../domain/analysisSnapshot.fixture.js";
 import { createEvidence } from "../../domain/evidence.js";
-import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import {
+  createEvidenceBundle,
+  redactEvidenceBundle,
+  parseEvidenceBundle,
+} from "../../domain/evidenceBundle.js";
 import {
   recordUnknownInputSchema,
   updateUnknownInputSchema,
@@ -267,4 +271,99 @@ it("rejects changed creation intent after the original unknown was updated", () 
     });
     expect(records.exportEvidenceBundle()).toEqual(retained);
   }
+});
+
+it("exports a mapped unknown history with matching mutation identities", () => {
+  const records = new InvestigationRecords();
+  const input = unknownInput("What happened at /tmp/private/app?");
+  const first = records.recordUnknown(input, target);
+  if (!first.ok) throw first.error;
+  const update = updateUnknownInputSchema.parse({
+    unknown_id: first.value.unknown_id,
+    expected_revision: 1,
+    status: "investigating",
+    severity: first.value.severity,
+    supporting_evidence_ids: [],
+    contradicting_evidence_ids: [],
+    required_authority: first.value.required_authority,
+    required_confidence: first.value.required_confidence,
+    required_environment: null,
+    recommended_probes: [],
+    relationships: [],
+    resolution: null,
+  });
+  const next = records.updateUnknown(update, target);
+  if (!next.ok) throw next.error;
+  const mapped = redactEvidenceBundle(
+    records.exportEvidenceBundle(),
+    "/tmp/private",
+  );
+  expect(() => parseEvidenceBundle(mapped)).not.toThrow();
+  const [created, revised] = mapped.unknowns;
+  expect(created?.question).toBe("What happened at $WORKSPACE/app?");
+  expect(created?.unknown_id).not.toBe(first.value.unknown_id);
+  expect(revised?.unknown_id).toBe(created?.unknown_id);
+  expect(revised?.previous_revision_digest).toBe(created?.revision_digest);
+  const mutation = mapped.records.find(
+    (row) => row.operation === "update_unknown",
+  );
+  expect(mutation?.parameters.unknown_id).toBe(created?.unknown_id);
+  expect(revised?.mutation_evidence_ids).toContain(mutation?.evidence_id);
+});
+
+it("rekeys a comparison-scoped unknown and related mutation inputs", () => {
+  const records = new InvestigationRecords();
+  const comparison = createEvidence(undefined, provider, {
+    operation: "compare_functions",
+    parameters: {},
+    result: { path: "/tmp/private/example" },
+  });
+  expect(records.recordEvidence(comparison).ok).toBe(true);
+  const scopedInput = recordUnknownInputSchema.parse({
+    ...unknownInput("Compare /tmp/private/example"),
+    domain: "function-comparison",
+    comparison_conclusion_scope: {
+      comparison_evidence_id: comparison.evidence_id,
+      dimensions: ["overall"],
+    },
+    supporting_evidence_ids: [comparison.evidence_id],
+  });
+  const scoped = records.recordUnknown(scopedInput, target);
+  if (!scoped.ok) throw scoped.error;
+  const dependentInput = recordUnknownInputSchema.parse({
+    ...unknownInput("Depends on comparison"),
+    relationships: [
+      { type: "depends-on", unknown_id: scoped.value.unknown_id },
+    ],
+  });
+  const dependent = records.recordUnknown(dependentInput, target);
+  if (!dependent.ok) throw dependent.error;
+  const mapped = parseEvidenceBundle(
+    redactEvidenceBundle(records.exportEvidenceBundle(), "/tmp/private"),
+  );
+  const newComparison = mapped.records.find(
+    (row) => row.operation === "compare_functions",
+  )!;
+  const newScoped = mapped.unknowns.find(
+    (row) => row.domain === "function-comparison",
+  )!;
+  const newDependent = mapped.unknowns.find(
+    (row) => row.domain === "investigation",
+  )!;
+  expect(newScoped.comparison_conclusion_scope?.comparison_evidence_id).toBe(
+    newComparison.evidence_id,
+  );
+  expect(newScoped.supporting_evidence_ids).toContain(
+    newComparison.evidence_id,
+  );
+  expect(newScoped.unknown_id).not.toBe(scoped.value.unknown_id);
+  expect(newDependent.relationships[0]?.unknown_id).toBe(newScoped.unknown_id);
+  const mutation = mapped.records.find(
+    (row) =>
+      row.operation === "record_unknown" &&
+      row.parameters.question === "Depends on comparison",
+  )!;
+  expect(mutation.parameters.relationships).toEqual([
+    { type: "depends-on", unknown_id: newScoped.unknown_id },
+  ]);
 });

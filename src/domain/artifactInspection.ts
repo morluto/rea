@@ -1,3 +1,4 @@
+import { redactJsonValue } from "./logicalPath.js";
 import { readEvidencePayload } from "./evidenceValidation.js";
 import type { EvidenceIntegrityError } from "./evidenceErrors.js";
 import { ok, type Result } from "./result.js";
@@ -624,4 +625,77 @@ export const readArtifactInspectionSources = (
     ? result
     : parsed.value;
   return ok(artifactInspectionSources(inspection));
+};
+
+/** Rebind an inspection to mapped source Evidence while retaining its recorded coverage. */
+export const mapArtifactInspectionEvidence = (
+  input: unknown,
+  config: import("./logicalPath.js").ResolvedLogicalPathConfig,
+  sourceFor: (original: Evidence) => Evidence,
+  evidenceId: (originalId: string) => string,
+): ArtifactInspectionResult => {
+  const original = artifactInspectionResultSchema.parse(input);
+  const mapped = redactJsonValue(original, config) as ArtifactInspectionResult;
+  const substeps = mapped.substeps.map((step, index) => {
+    const source = sourceFor(original.substeps[index]!.evidence);
+    return {
+      ...step,
+      evidence_id: source.evidence_id,
+      evidence: source,
+      substep_id: `ais_${digestCanonicalValue({ operation: step.operation, evidence_id: source.evidence_id }, "Artifact inspection")}`,
+    };
+  });
+  const observations = mapped.observations.map(
+    ({ observation_id: _id, ...value }) => {
+      const semantic = { ...value, evidence_id: evidenceId(value.evidence_id) };
+      return {
+        ...semantic,
+        observation_id: `aio_${digestCanonicalValue(semantic, "Artifact inspection")}`,
+      };
+    },
+  );
+  const hypotheses = mapped.hypotheses.map(
+    ({ hypothesis_id: _id, ...value }) => {
+      const semantic = {
+        ...value,
+        basis_evidence_ids: value.basis_evidence_ids.map(evidenceId),
+      };
+      return {
+        ...semantic,
+        hypothesis_id: `aih_${digestCanonicalValue(semantic, "Artifact inspection")}`,
+      };
+    },
+  );
+  const contradictions = mapped.contradictions.map(
+    ({ contradiction_id: _id, ...value }) => {
+      const semantic = { ...value, evidence_id: evidenceId(value.evidence_id) };
+      return {
+        ...semantic,
+        contradiction_id: `aic_${digestCanonicalValue(semantic, "Artifact inspection")}`,
+      };
+    },
+  );
+  const unexplored = mapped.unexplored_branches.map(
+    ({ branch_id: _id, ...value }) => {
+      const semantic = { ...value, evidence_id: evidenceId(value.evidence_id) };
+      return {
+        ...semantic,
+        branch_id: `aib_${digestCanonicalValue(semantic, "Artifact inspection")}`,
+      };
+    },
+  );
+  const { inspection_id: _id, ...value } = mapped;
+  const semantic = {
+    ...value,
+    substeps,
+    observations,
+    hypotheses,
+    contradictions,
+    unexplored_branches: unexplored,
+    evidence_links: mapped.evidence_links.map(evidenceId),
+  };
+  return artifactInspectionResultSchema.parse({
+    ...semantic,
+    inspection_id: `ai_${digestCanonicalValue(semantic, "Artifact inspection")}`,
+  });
 };

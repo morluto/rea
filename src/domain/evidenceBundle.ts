@@ -1,3 +1,4 @@
+import { mapEvidenceIdentityGraph } from "./mappedEvidenceIdentityGraph.js";
 import { InvalidResidualUnknownGraphError } from "./residualUnknownGraphError.js";
 import { withEvidenceSubjectDeclaration } from "./evidenceSubject.js";
 import { digestSchema } from "./digests.js";
@@ -18,6 +19,10 @@ import {
   providerSchema,
   type Evidence,
 } from "./evidence.js";
+import {
+  type LogicalPathRootInput,
+  resolveLogicalPathConfig,
+} from "./logicalPath.js";
 import {
   residualUnknownSchema,
   type ResidualUnknown,
@@ -682,4 +687,19 @@ const uniqueSorted = <Value>(values: readonly Value[]): Value[] => {
   return [...unique.entries()]
     .sort(([left], [right]) => compareUnicodeCodePoints(left, right))
     .map(([, value]) => value);
+};
+
+/** Opt-in logical path-root redaction applied across an entire Evidence bundle. */
+export const redactEvidenceBundle = (
+  bundle: EvidenceBundle,
+  options?: LogicalPathRootInput,
+): EvidenceBundle => {
+  const config = resolveLogicalPathConfig(options);
+  if (config === undefined) return bundle;
+
+  const authenticated = parseEvidenceBundle(bundle);
+  const mapped = mapEvidenceIdentityGraph(authenticated, config);
+  return parseEvidenceBundle(
+    createEvidenceBundle(mapped.records, mapped.unknowns),
+  );
 };
