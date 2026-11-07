@@ -296,11 +296,19 @@ const classifyInteraction = (
   const listenerMethod = CHILD_LISTENER_METHODS.find(
     (candidate) => candidate === method,
   );
+  if (listenerMethod === undefined) return null;
   const eventName = dataEffectLiteralString(argument);
-  return listenerMethod !== undefined &&
-    (eventName === "exit" || eventName === "error")
-    ? { kind: "listener", interactionMethod: listenerMethod, eventName }
-    : null;
+  if (eventName === "exit" || eventName === "error") {
+    return { kind: "listener", interactionMethod: listenerMethod, eventName };
+  }
+  if (t.isSpreadElement(argument)) {
+    return {
+      kind: "listener",
+      interactionMethod: listenerMethod,
+      eventName: null,
+    };
+  }
+  return null;
 };
 
 const resolveChildCandidates = (

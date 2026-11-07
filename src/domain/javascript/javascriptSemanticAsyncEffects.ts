@@ -35,6 +35,7 @@ import {
   semanticOpaqueNameMayHaveChanged,
 } from "./javascriptSemanticOpaqueEffects.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
+import { semanticKnownArrayIterationAt } from "./javascriptSemanticReferenceSources.js";
 import {
   semanticGlobalProcessOrigin,
   semanticGlobalProcessPathOrigin,
@@ -301,6 +302,13 @@ export function* flattenCallArguments(
       }
       const inner = unwrapped.node;
       if (t.isArrayExpression(inner)) {
+        if (
+          state !== undefined &&
+          !semanticKnownArrayIterationAt(inner, state)
+        ) {
+          yield arg;
+          continue;
+        }
         for (const element of inner.elements) {
           if (element === null) {
             yield undefined;
@@ -377,6 +385,9 @@ export const rejectsEventListener = (
         return false;
       }
       if (t.isArrayExpression(unwrappedArg.node)) {
+        if (!semanticKnownArrayIterationAt(unwrappedArg.node, state)) {
+          return false;
+        }
         const flattened = [
           ...flattenCallArguments([current.node], current.depth, state),
         ];

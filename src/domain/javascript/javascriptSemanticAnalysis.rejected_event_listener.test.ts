@@ -721,3 +721,17 @@ it("retains child listener and event operation when leading spread resolves to v
     ]),
   );
 });
+
+it("retains candidate when Array.prototype[Symbol.iterator] has changed", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    Array.prototype[Symbol.iterator] = function* () {
+      yield "exit";
+      yield () => {};
+    };
+    const child = spawn("worker");
+    child.on(...["exit", 1]);
+  `);
+  expect(ir.childProcessInteractions.length).toBeGreaterThan(0);
+  expect(ir.eventOperations.length).toBeGreaterThan(0);
+});
