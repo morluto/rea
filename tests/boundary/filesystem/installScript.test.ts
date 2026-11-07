@@ -277,7 +277,9 @@ describe("truncated installer download", { timeout: 20_000 }, () => {
     const failure: unknown = await runInstaller(
       fixture,
       ["--version", "0.3.0", "--no-setup"],
-      {},
+      // Bash localizes its parser diagnostics; pin the C locale so the
+      // assertion below does not depend on the host language.
+      { LC_ALL: "C" },
       truncated,
     ).then(
       () => undefined,
