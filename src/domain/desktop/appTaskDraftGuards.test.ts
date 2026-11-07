@@ -9,6 +9,7 @@ import {
   xmlDraft,
 } from "./appTaskDraft.fixture.js";
 import { draftGuards } from "./appTaskDraftGuards.js";
+import { lineGuards } from "./appTaskDraftLineGuards.js";
 
 const FILE = "Documents/doc.xml";
 
@@ -214,5 +215,16 @@ describe("draftGuards on a long list", () => {
 
     expect(guards).toEqual([]);
     expect(noisy.mock.calls.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe("lineGuards text bound", () => {
+  it("leaves a huge unchanged line out of the guard", () => {
+    const huge = "word ".repeat(500);
+    expect(
+      lineGuards("Documents/note.txt", [huge, "milk"], ["eggs", huge, "milk"]),
+    ).toEqual([
+      { kind: "lines_present", file: "Documents/note.txt", lines: ["milk"] },
+    ]);
   });
 });
