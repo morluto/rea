@@ -4,6 +4,7 @@ import { readRegularFileText } from "./RegularFileRead.js";
 import {
   effectiveClientServer,
   parseClientConfiguration,
+  parseGgcodeLegacyConfiguration,
   type ClientConfigurationDocument,
   type ClientRegistrationDialect,
 } from "./ClientConfigurationDocument.js";
@@ -142,6 +143,43 @@ export const readClientConfigurationFiles = async (
           ),
         );
       documents.push({ ...document.value, sourcePath: path });
+    }
+  }
+  // ggcode honors its legacy in-main section only while the standalone file
+  // is absent, so the fallback joins as the lowest-precedence layer only then.
+  if (
+    client.format === "ggcode" &&
+    client.fallbackConfigPath !== undefined &&
+    !documents.some(({ sourcePath }) => sourcePath === client.configPath)
+  ) {
+    const fallbackText = await readConfigurationText(
+      client.fallbackConfigPath,
+      resources,
+    );
+    if (!fallbackText.ok) return fallbackText;
+    if (fallbackText.value !== undefined) {
+      try {
+        const document = parseGgcodeLegacyConfiguration(fallbackText.value);
+        const environment = clientRegistrationEnvironment(
+          document,
+          {},
+          "fragment",
+        );
+        if (!environment.ok)
+          return err(
+            invalidEnvironment(client.fallbackConfigPath, environment.error),
+          );
+        documents.unshift({
+          ...document,
+          sourcePath: client.fallbackConfigPath,
+        });
+      } catch (cause: unknown) {
+        return err({
+          kind: "malformed",
+          path: client.fallbackConfigPath,
+          detail: `Configuration ${client.fallbackConfigPath} is malformed: ${cause instanceof Error ? cause.message : String(cause)}`,
+        });
+      }
     }
   }
   const environment = clientRegistrationEnvironment(
@@ -297,12 +335,17 @@ export const readEffectiveClientRegistrationConfiguration = async (
   );
   const fallbackPath =
     client.format === "zcode" ? client.zcodeFallbackPath : undefined;
+  // A fallback-layer client reports the file its registration was read from.
+  const effectivePath =
+    client.fallbackConfigPath === undefined
+      ? client.configPath
+      : (nativeSources.value.at(-1)?.sourcePath ?? client.configPath);
   if (
     fallbackPath === undefined ||
     (nativeDocument !== undefined &&
       Object.keys(nativeDocument.servers).length > 0)
   )
-    return ok({ document: nativeDocument, configPath: client.configPath });
+    return ok({ document: nativeDocument, configPath: effectivePath });
 
   const fallbackClient: SetupClient = {
     ...client,
