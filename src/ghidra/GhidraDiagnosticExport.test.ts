@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { access, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it, vi } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
@@ -7,6 +7,8 @@ import { GhidraDiagnosticExport } from "./GhidraDiagnosticExport.js";
 
 let failClose = false;
 let failStderrOpen = false;
+let failRemoval = false;
+let allocationCloses = 0;
 let pauseStdoutClose: (() => Promise<void>) | undefined;
 vi.mock("node:fs/promises", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs/promises")>();
@@ -19,14 +21,22 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const paused = String(args[0]).endsWith("stdout.log")
         ? pauseStdoutClose
         : undefined;
-      if (!failClose && !paused) return handle;
+      const allocation =
+        failStderrOpen && String(args[0]).endsWith("stdout.log");
+      if (!failClose && !paused && !allocation) return handle;
       const close = handle.close.bind(handle);
       handle.close = async () => {
         await paused?.();
         if (failClose) throw new Error("close failed");
         await close();
+        if (allocation) allocationCloses += 1;
       };
       return handle;
+    },
+    rm: async (...args: Parameters<typeof actual.rm>) => {
+      if (failRemoval && String(args[0]).includes("rea-ghidra-"))
+        throw new Error("directory removal failed");
+      return actual.rm(...args);
     },
   };
 });
@@ -226,10 +236,49 @@ it("retains an output handle when allocation rollback cannot close it", async ()
     expect(resources.cleanupResources).toEqual(
       expect.arrayContaining([expect.stringContaining("stdout.log")]),
     );
+    const [directory] = await readdir(root);
+    if (directory === undefined) throw new Error("Missing retained directory");
+    const path = join(root, directory);
+    expect(resources.cleanupResources).toContain(
+      `Ghidra diagnostic export directory ${path}`,
+    );
+    await expect(resources.retryCleanup()).rejects.toThrow();
+    await expect(access(path)).resolves.toBeUndefined();
   } finally {
     failClose = false;
     failStderrOpen = false;
     await resources.retryCleanup();
   }
   expect(resources.hasPending).toBe(false);
+  expect(await readdir(root)).toEqual([]);
+});
+
+it("retries directory removal without reclosing an already released output", async () => {
+  const root = await createTestTempDirectory("ghidra-export-removal-");
+  const resources = new ArtifactResourceScope();
+  failStderrOpen = true;
+  failRemoval = true;
+  allocationCloses = 0;
+  try {
+    await expect(
+      GhidraDiagnosticExport.create(
+        root,
+        "secret",
+        { run_id: "run", target_sha256: "sha", profile_digest: "profile" },
+        resources,
+      ),
+    ).rejects.toThrow("stderr open failed");
+    expect(allocationCloses).toBe(1);
+    expect(resources.cleanupResources).toEqual([
+      expect.stringContaining("Ghidra diagnostic export directory"),
+    ]);
+    await expect(resources.retryCleanup()).rejects.toThrow();
+    expect(allocationCloses).toBe(1);
+  } finally {
+    failStderrOpen = false;
+    failRemoval = false;
+    await resources.retryCleanup();
+  }
+  expect(allocationCloses).toBe(1);
+  expect(await readdir(root)).toEqual([]);
 });

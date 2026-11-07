@@ -1,13 +1,8 @@
-import {
-  mkdtempSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-  writeSync,
-} from "node:fs";
+import { mkdtempSync, renameSync, writeFileSync, writeSync } from "node:fs";
 import { open, rm, type FileHandle } from "node:fs/promises";
 import { join } from "node:path";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
+import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 
 /** Redacts an exact ASCII credential even when it crosses input chunks. */
 class RedactedFile {
@@ -52,7 +47,7 @@ class RedactedFile {
     this.#write(input.subarray(0, safe));
     this.#tail = Buffer.from(input.subarray(safe));
   }
-  async close(complete: boolean): Promise<void> {
+  async close(complete: boolean, rollbackDirectory?: string): Promise<void> {
     let writeFailure: { readonly cause: unknown } | undefined;
     try {
       let tail = this.#tail;
@@ -77,10 +72,34 @@ class RedactedFile {
     } catch (cause) {
       writeFailure = { cause };
     }
+    let handleClosed = false;
+    const outputResource = `Ghidra diagnostic output ${this.path}`;
+    const directoryResource =
+      rollbackDirectory === undefined
+        ? undefined
+        : `Ghidra diagnostic export directory ${rollbackDirectory}`;
+    const lease = new AnalysisCleanupLease(
+      async () => {
+        if (!handleClosed) {
+          await this.handle.close();
+          handleClosed = true;
+        }
+        if (rollbackDirectory !== undefined)
+          await rm(rollbackDirectory, { recursive: true, force: true });
+      },
+      {
+        get cleanupResources() {
+          return [
+            ...(handleClosed ? [] : [outputResource]),
+            ...(directoryResource === undefined ? [] : [directoryResource]),
+          ];
+        },
+      },
+    );
     const closed = await this.resources.release({
       kind: "lease",
-      resource: `Ghidra diagnostic output ${this.path}`,
-      lease: { release: () => this.handle.close() },
+      resource: outputResource,
+      lease,
     });
     if (closed.kind === "failed") {
       if (writeFailure !== undefined)
@@ -149,18 +168,17 @@ export class GhidraDiagnosticExport {
       });
     } catch (cause) {
       try {
-        await stdout?.close(false);
+        if (stdout !== undefined) await stdout.close(false, path);
+        else
+          await resources.release({
+            kind: "lease",
+            resource: `Ghidra diagnostic export directory ${path}`,
+            lease: {
+              release: () => rm(path, { recursive: true, force: true }),
+            },
+          });
       } catch {
-        /* Resource scope retains an unclosed handle. */
-      }
-      try {
-        rmSync(path, { recursive: true });
-      } catch {
-        resources.retain({
-          kind: "lease",
-          resource: `Ghidra diagnostic export directory ${path}`,
-          lease: { release: () => rm(path, { recursive: true, force: true }) },
-        });
+        /* The scope retains the ordered file and directory cleanup. */
       }
       throw cause;
     }
