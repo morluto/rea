@@ -156,6 +156,26 @@ describe("draftTaskFiles for a named record that also holds a save time", () => 
       true,
     );
   });
+
+  it("checks the paragraph, which a later save keeps, when the new text sits in a run beside a save time", () => {
+    const box = (inner: string, modified: string) =>
+      `<doc><box name="target"><body><p>${inner}</p></body><modified>${modified}</modified></box></doc>`;
+    const before = box("<span>Old</span>", "2026-11-07T10:12:00Z");
+    const saved = box("<span>New</span>", "2026-11-07T10:12:00Z");
+    const unwrapped = box("New", "2026-11-08T09:00:00Z");
+    const file = xmlDraft(before, saved);
+
+    expect(
+      file.suggested.flatMap((check) =>
+        "pointer" in check ? [check.pointer] : [],
+      ),
+    ).toEqual([
+      "/root/children/[name=box]/children/[name=body]/children/[name=p]",
+    ]);
+    expect(passing(FILE, xml(unwrapped), file.suggested).every(Boolean)).toBe(
+      true,
+    );
+  });
 });
 
 describe("draftTaskFiles for a record removed whole", () => {
