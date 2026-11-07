@@ -448,8 +448,7 @@ describe("analysis provider registry: automatic selection diagnostics", () => {
     ]);
 
     const selected = await registry.select(DATABASE_TARGET);
-    expect(selected.ok).toBe(true);
-    if (!selected.ok) return;
+    if (!selected.ok) throw selected.error;
     expect(
       selected.value.candidates.map(({ provider }) => provider.id),
     ).toEqual(["alpha", "beta", "gamma"]);
@@ -791,8 +790,7 @@ describe("analysis provider registry: rejection origins", () => {
       candidate("gamma", { available: false, unconfigured: true }).provider,
     ]);
     const selection = await registry.select(DATABASE_TARGET);
-    expect(selection.ok).toBe(true);
-    if (!selection.ok) return;
+    if (!selection.ok) throw selection.error;
     const projected = projectAnalysisError(
       registry.unboundOperationError("binary_overview", selection.value),
     );
