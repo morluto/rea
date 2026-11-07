@@ -892,7 +892,7 @@ export const createGhidraProviderClient = (input: {
           }),
       analysisProfile: committedProfile,
       limitations: [
-        ...limitationsFor(operation, projection.source),
+        ...limitationsFor(operation, projection.source, transport),
         ...(observation.limitations ?? []),
         ...sessionLimitations(),
       ],
@@ -989,7 +989,7 @@ export const createGhidraProviderClient = (input: {
           createAnalysisExecution(started.value, committedProfile.provider, {
             analysisProfile: committedProfile,
             limitations: [
-              ...ghidraHealthLimitations(projection.source),
+              ...ghidraHealthLimitations(projection.source, transport),
               ...sessionLimitations(),
             ],
           }),

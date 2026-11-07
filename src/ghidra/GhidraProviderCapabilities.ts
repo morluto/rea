@@ -8,6 +8,7 @@ import { GHIDRA_FUNCTION_OPERATIONS } from "./GhidraFunctionOperations.js";
 import { GHIDRA_INVENTORY_OPERATIONS } from "./GhidraInventoryOperations.js";
 import { GHIDRA_MUTATING_OPERATIONS } from "./GhidraSessionValues.js";
 import { ghidraLoadImageVerificationNote } from "./GhidraVerifiedLoadImageFormats.js";
+import type { GhidraTransportKind } from "./GhidraTransport.js";
 
 /** Target architectures admitted by the Windows P0 native PE boundary. */
 export const WINDOWS_P0_NATIVE_PE_ARCHITECTURES: readonly string[] =
@@ -22,6 +23,8 @@ const providerOperations = Object.freeze([
 /** Health limitations shared by every Ghidra-backed capability. */
 const checkpointDisabledLimitation =
   "Ghidra Program checkpoint mode is disabled: closing discards metadata edits; original executable bytes are unchanged. For stock ELF/PE/Mach-O on Linux/macOS, set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory before starting REA (restart MCP after changing its startup environment).";
+const loopbackCheckpointLimitation =
+  "Ghidra checkpoints require the Unix socket bridge and cannot be used with authenticated loopback.";
 
 export const healthLimitations = Object.freeze([
   "The session serves operations only after Ghidra reports default auto-analysis complete; incomplete analysis does not expose partial results.",
@@ -44,6 +47,7 @@ export type GhidraSessionSource =
 /** Existing databases have their own unknown analysis history; reopening does not complete it. */
 export const ghidraHealthLimitations = (
   source: GhidraSessionSource = "fresh-import",
+  transport: GhidraTransportKind = "unix-socket",
 ): readonly string[] =>
   source === "existing-project"
     ? [
@@ -57,7 +61,13 @@ export const ghidraHealthLimitations = (
           "REA saves initial completed analysis and metadata changes on normal close (close_binary in MCP). A failed save retains the live session for close retry. Cancellation or process failure can lose changes after the last successful save; unfinished initial auto-analysis is not resumable.",
           "The live project is a temporary working copy. Checkpoints persist in REA_GHIDRA_CHECKPOINT_DIR; source executables and caller-selected source projects are not modified.",
         ]
-      : healthLimitations;
+      : transport === "authenticated-loopback-tcp"
+        ? healthLimitations.map((limitation) =>
+            limitation === checkpointDisabledLimitation
+              ? loopbackCheckpointLimitation
+              : limitation,
+          )
+        : healthLimitations;
 
 /** Reason mutation stays unavailable when a POSIX host opts into loopback. */
 export const LOOPBACK_TRANSPORT_MUTATION_REASON =
@@ -111,9 +121,10 @@ export const ghidraEmptyInstructionOutgoingLimitation =
 export const limitationsFor = (
   operation: string,
   source: GhidraSessionSource = "fresh-import",
+  transport: GhidraTransportKind = "unix-socket",
 ): readonly string[] => {
   const common = [
-    ...ghidraHealthLimitations(source),
+    ...ghidraHealthLimitations(source, transport),
     "Default-space addresses use lowercase 0x-prefixed hexadecimal; other address spaces use <percent-encoded-space>:0x<hex>.",
   ];
   switch (operation) {
@@ -342,10 +353,11 @@ export const loopbackTransportCapabilities =
     Object.freeze(
       CAPABILITIES.map((capability): CapabilityDescriptor => {
         const limitations = Object.freeze([
-          ...capability.limitations.filter(
-            (limitation) => limitation !== checkpointDisabledLimitation,
+          ...limitationsFor(
+            capability.operation,
+            "fresh-import",
+            "authenticated-loopback-tcp",
           ),
-          "Ghidra checkpoints require the Unix socket bridge and cannot be used with authenticated loopback.",
           ...loopbackTransportLimitations,
         ]);
         if (!capability.effects.mutatesArtifact)
@@ -373,7 +385,11 @@ export const windowsP0Capabilities = (
   return Object.freeze(
     CAPABILITIES.map((capability): CapabilityDescriptor => {
       const limitations = Object.freeze([
-        ...capability.limitations,
+        ...limitationsFor(
+          capability.operation,
+          "fresh-import",
+          "authenticated-loopback-tcp",
+        ),
         ...windowsP0Limitations,
       ]);
       if (capability.effects.mutatesArtifact)

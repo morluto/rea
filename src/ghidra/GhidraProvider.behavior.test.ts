@@ -9,6 +9,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
+  ghidraHealthLimitations,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
@@ -5115,14 +5116,23 @@ describe("Ghidra bridge transport selection", () => {
     expect(listed.value.limitations).toEqual(
       expect.arrayContaining([...loopbackTransportLimitations]),
     );
-    for (const capability of ghidra.capabilities()) {
-      expect(capability.limitations).toContain(
-        "Ghidra checkpoints require the Unix socket bridge and cannot be used with authenticated loopback.",
+    const common = ghidraHealthLimitations(
+      "fresh-import",
+      "authenticated-loopback-tcp",
+    );
+    for (const capability of ghidra.capabilities())
+      expect(capability.limitations).toEqual(
+        expect.arrayContaining([...common]),
       );
-      expect(capability.limitations.join(" ")).not.toContain(
-        "set REA_GHIDRA_CHECKPOINT_DIR to a private absolute directory",
-      );
-    }
+    expect(listed.value.limitations).toEqual(
+      expect.arrayContaining([...common]),
+    );
+    const health = await client.execute("health", {});
+    expect(health.ok).toBe(true);
+    if (!health.ok) throw health.error;
+    expect(health.value.limitations).toEqual(
+      expect.arrayContaining([...common]),
+    );
     expect(annotation(ghidra)).toMatchObject({
       available: false,
       reason: LOOPBACK_TRANSPORT_MUTATION_REASON,
@@ -5156,6 +5166,9 @@ describe("Ghidra bridge transport selection", () => {
     await client.close();
   });
 
+});
+
+describe("Ghidra bridge transport admission", () => {
   it("withholds a configured NativeAOT extension under loopback and keeps the session", async () => {
     const directory = await createTestTempDirectory("rea-loopback-extension-");
     const jar = join(directory, "addon.jar");
