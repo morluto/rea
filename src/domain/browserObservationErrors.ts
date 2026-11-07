@@ -25,6 +25,7 @@ export type BrowserObservationFailureReason =
   | "target_not_found"
   | "target_not_allowed"
   | "service_worker_blocked"
+  | "service_worker_state_unknown"
   | "target_changed"
   | "target_session_detached"
   | "protocol_error"
