@@ -408,6 +408,23 @@ describe("response status line", () => {
       record("response", [["WARC-Record-ID", "<urn:1>"]], padded),
     );
     expect(archive.records[0]?.http).toBeNull();
+    // `http: null` alone cannot tell this apart from a body, so the ceiling is
+    // named and coverage becomes partial rather than "complete-within-scope".
+    expect(archive.records[0]?.http_status_line_over_ceiling).toBe(true);
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "http-status-line-limit-reached" }),
+    ]);
+    expect(archive.source_coverage.status).toBe("partial");
+  });
+
+  it("leaves an ordinary body undiagnosed at the same ceiling", () => {
+    const html = `<html>${" ".repeat(9000)}</html>`;
+    const archive = parsed(
+      record("response", [["WARC-Record-ID", "<urn:1>"]], html),
+    );
+    expect(archive.records[0]?.http).toBeNull();
+    expect(archive.records[0]?.http_status_line_over_ceiling).toBe(false);
+    expect(archive.diagnostics).toEqual([]);
   });
 
   it("rejects a bare carriage return in a status line below the size cap", () => {

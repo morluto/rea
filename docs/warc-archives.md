@@ -13,6 +13,13 @@ version line, `WARC-Type`, `WARC-Date`, `WARC-Record-ID`, `WARC-Target-URI`,
 `WARC-Segment-Number` and the byte extent the record actually occupies.
 `response` records also carry the embedded HTTP status line.
 
+A status line is read only from the first 8 KiB of the payload. A payload that
+begins `HTTP/` and whose status line exceeds that ceiling keeps `http: null`,
+sets `http_status_line_over_ceiling: true` and reports an
+`http-status-line-limit-reached` diagnostic, so a skipped status line is never
+reported as an ordinary non-HTTP body. The ceiling is a resource allowance, not
+an HTTP limit.
+
 Record payloads, further HTTP headers and HTTP bodies are not decoded. Declared
 digests are reported as written and are not verified. Records are not linked to
 each other by `WARC-Record-ID` or payload digest. A `revisit` record stays a

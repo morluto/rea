@@ -77,6 +77,12 @@ export const warcRecordSchema = z.strictObject({
       header_bytes: z.int().nonnegative(),
     })
     .nullable(),
+  /**
+   * True when the payload began an HTTP status line longer than the reader's
+   * ceiling. `http` is then null and a diagnostic names the ceiling, so this
+   * case is distinguishable from a payload that was never an HTTP response.
+   */
+  http_status_line_over_ceiling: z.boolean(),
   malformed_header_lines: z.array(z.string()),
 });
 export type WarcRecord = z.output<typeof warcRecordSchema>;
@@ -97,6 +103,7 @@ export const warcDiagnosticSchema = z.strictObject({
     "diagnostic-limit-reached",
     "header-line-limit-reached",
     "header-block-limit-reached",
+    "http-status-line-limit-reached",
     "invalid-version-line",
     "invalid-version-limit-reached",
   ]),

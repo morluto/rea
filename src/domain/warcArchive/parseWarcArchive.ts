@@ -212,6 +212,12 @@ const readHttpStatusCode = (
   return { code, cursor };
 };
 
+/** A payload that begins `HTTP/` and so promises a status line. */
+const HTTP_PREFIX_BYTES = Buffer.from("HTTP/", "latin1");
+const startsLikeHttpStatusLine = (payload: Buffer): boolean =>
+  payload.length >= HTTP_PREFIX_BYTES.length &&
+  payload.subarray(0, HTTP_PREFIX_BYTES.length).equals(HTTP_PREFIX_BYTES);
+
 const readHttpStatus = (payload: Buffer): HttpFacts | null => {
   const line = findLineEnd(payload, 0);
   if (line === null) return null;
@@ -503,14 +509,23 @@ const readOneRecord = (
       "truncated-record",
       `Content-Length declares ${declaredLength} bytes but only ${payloadBytes} are present.`,
     );
-  return {
-    record: buildRecord(data, {
-      block,
-      offset,
+  const record = buildRecord(data, {
+    block,
+    offset,
+    ordinal,
+    payloadBytes,
+    payload,
+  });
+  // Only a status line that began like HTTP and exceeded the ceiling lost
+  // facts; an ordinary body reads as `http: null` without a diagnostic.
+  if (record.http_status_line_over_ceiling)
+    diagnostic(
       ordinal,
-      payloadBytes,
-      payload,
-    }),
+      "http-status-line-limit-reached",
+      `The response payload at decoded offset ${offset} begins an HTTP status line longer than ${HTTP_STATUS_LINE_BYTES} bytes; its status code and reason phrase were not read.`,
+    );
+  return {
+    record,
     nextCursor:
       payloadBytes < declaredLength ? null : payloadStart + payloadBytes,
   };
@@ -530,8 +545,16 @@ const buildRecord = (
   const type = block.fields.get("warc-type") ?? "";
   const version = block.version;
   const contentLength = parseNonNegativeInt(block.fields.get("content-length"));
-  const http =
-    type === "response" && payloadBytes > 0 ? readHttpStatus(payload) : null;
+  const isResponse = type === "response" && payloadBytes > 0;
+  const http = isResponse ? readHttpStatus(payload) : null;
+  // `http: null` alone cannot tell a non-HTTP payload from a status line the
+  // reader skipped at its ceiling; only the latter lost facts, and only it is
+  // reported, so an ordinary body does not carry a diagnostic per record.
+  const statusLineOverCeiling =
+    isResponse &&
+    http === null &&
+    startsLikeHttpStatusLine(payload) &&
+    (findLineEnd(payload, 0)?.contentEnd ?? 0) > HTTP_STATUS_LINE_BYTES;
   return {
     record_id: digestOf(
       "warc_record",
@@ -559,6 +582,7 @@ const buildRecord = (
       block.fields.get("warc-segment-number"),
     ),
     http,
+    http_status_line_over_ceiling: statusLineOverCeiling,
     malformed_header_lines: [...block.malformed],
   };
 };
