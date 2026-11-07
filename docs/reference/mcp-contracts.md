@@ -390,7 +390,12 @@ parent operation, use a discovered ID with a compatible `inspect_analysis_view`;
 neither discovery nor retained selection starts a provider. For records without
 a supported view, use `detail: "records"` to retrieve selected complete records,
 or export the bundle to a caller-selected path. Record and bundle delivery are
-subject to the MCP response budget.
+subject to the MCP response budget. Summary rows are not complete records.
+Retained `procedure_pseudo_code` Evidence supports `summary` and
+`native`/`pseudocode` views of the original observation, including
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`;
+pages do not start a provider or create another decompilation. An
+`analyze_function` dossier is a different observation.
 `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
