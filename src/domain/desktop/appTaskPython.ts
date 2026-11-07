@@ -251,7 +251,11 @@ def _whole_text(check, entry):
         return False, problem
     if kind == "unresolved":
         return False, f"{at}: {found}"
+    if form == "zip":
+        truncated = _zip_leaves_out(view, check["pointer"])
     if kind == "none":
+        if truncated:
+            return _undecided(check)
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     # Only an element has attributes of its own and of its descendants to join.
     attribute = check.get("text_attribute")
@@ -259,8 +263,6 @@ def _whole_text(check, entry):
         what = "an element, a text node or an attribute value" if attribute is None else "an element"
         return False, f"{at} is {_shown(found)}, not {what}"
     # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
-    if form == "zip":
-        truncated = _zip_leaves_out(view, check["pointer"])
     if not isinstance(found, str) and truncated:
         return _undecided(check)
     return _compared_text(check, at, _element_text(found, attribute))

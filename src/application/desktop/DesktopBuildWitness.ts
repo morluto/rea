@@ -28,7 +28,7 @@ import {
   stageExpectation,
   stageVerdict,
   unrestoredChecks,
-  unreadSeedDifferences,
+  unreadResetChecks,
   WITNESS_STAGES,
   type WitnessStage,
   type WitnessStageRecord,
@@ -36,7 +36,10 @@ import {
 import { ProviderAdapterError } from "../../domain/providerAdapterError.js";
 import { err, ok, type Result } from "../../domain/result.js";
 import { safeParseUtf8Json } from "../../domain/safeJson.js";
-import type { AgentEnvComputer } from "../../desktop/AgentEnvComputer.js";
+import type {
+  AgentEnvComputer,
+  RecordingManifest,
+} from "../../desktop/AgentEnvComputer.js";
 import { AGENTENV_PROVIDER } from "../../desktop/AgentEnvComputerHelper.js";
 import { readHostFile } from "../../desktop/HostFileRead.js";
 import { isPortableBundleName } from "../environment/environmentBundle.js";
@@ -155,6 +158,10 @@ const bundleTaskDifference = async (
 interface OpenWitness extends EndedWitness {
   state: "open" | "saving" | "saved";
   record?: WitnessRecord;
+  /** A manifest whose segments still need to be fetched. */
+  pendingManifest?: RecordingManifest | undefined;
+  /** Close the published record's handles again, without rewriting it. */
+  release?: (() => Promise<void>) | undefined;
 }
 
 /** What the witness says of one filed stage. */
@@ -304,7 +311,7 @@ export class DesktopBuildWitness {
     if (verdict === "undecided") {
       const unreadSeed =
         stage === "after_reset"
-          ? unreadSeedDifferences(witness.stages, results).map(
+          ? unreadResetChecks(witness.stages, results).map(
               (result) => result.id,
             )
           : [];
@@ -315,7 +322,7 @@ export class DesktopBuildWitness {
               result.undecided === true ? [result.description] : [],
             ),
             ...unreadSeed.map(
-              (id) => `${id} was not readable when the seed was filed`,
+              (id) => `${id} could not be compared with the seed`,
             ),
           ].join("; ")}). Nothing was filed.`,
           `Check ${stage} again once the app's files read whole; a view that is always cut short or unreadable needs a task whose checks read other files.`,
@@ -357,16 +364,43 @@ export class DesktopBuildWitness {
     filed: WitnessStageRecord,
     signal: AbortSignal,
   ): Promise<Result<WitnessSummary, AnalysisError>> {
-    const record = await writeWitnessRecord(
+    if (witness.record !== undefined && witness.release !== undefined) {
+      try {
+        await witness.release();
+      } catch (cause: unknown) {
+        return err(
+          new ProviderAdapterError(AGENTENV_PROVIDER, "check_build_task", {
+            userMessage: `The witness record was written to ${witness.directory} and is complete, but its output handles could not be closed: ${errorText(cause)}.`,
+            cause,
+            remediationAction:
+              "Check this stage again to release the handles; the record is not rewritten.",
+          }),
+        );
+      }
+      witness.release = undefined;
+      witness.state = "saved";
+      return ok(summaryOf(filed, null, witness.record));
+    }
+    const written = await writeWitnessRecord(
       this.computer,
       witness,
       this.actions,
       signal,
+      witness.pendingManifest,
     );
-    if (!record.ok) return record;
+    if (written.kind === "retry") {
+      if (written.manifest !== undefined)
+        witness.pendingManifest = written.manifest;
+      return err(written.error);
+    }
+    witness.pendingManifest = undefined;
+    witness.record = written.record;
+    if (written.kind === "published") {
+      witness.release = written.release;
+      return err(written.error);
+    }
     witness.state = "saved";
-    witness.record = record.value;
-    return ok(summaryOf(filed, null, record.value));
+    return ok(summaryOf(filed, null, written.record));
   }
 
   /**
