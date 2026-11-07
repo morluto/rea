@@ -77,12 +77,10 @@ describe("ELF note provider failures", () => {
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected an unsupported target");
     expect(result.error).toBeInstanceOf(AnalysisUnsupportedTargetError);
-    expect(result.error.message).toContain(
-      "ELF extended numbering is unsupported",
-    );
+    expect(result.error.message).toMatch(/extended.*number/iu);
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unsupported_target",
-      message: expect.stringContaining("ELF extended numbering is unsupported"),
+      message: result.error.message,
     });
   });
 

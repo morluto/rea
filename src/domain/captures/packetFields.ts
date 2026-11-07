@@ -5,9 +5,7 @@ export const inspectPacketFieldsInputSchema = z.strictObject({
   kind: z
     .enum(["protocols", "fields"])
     .default("protocols")
-    .describe(
-      "Return protocol registrations or field definitions; defaults to protocols",
-    ),
+    .describe("Return protocol registrations or field definitions"),
   protocol: z
     .string()
     .min(1)
@@ -30,7 +28,7 @@ export const inspectPacketFieldsInputSchema = z.strictObject({
     .nonnegative()
     .max(Number.MAX_SAFE_INTEGER)
     .default(0)
-    .describe("Number of matching records to skip; defaults to 0"),
+    .describe("Number of matching records to skip"),
   limit: z
     .number()
     .int()
