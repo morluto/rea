@@ -699,7 +699,9 @@ describe("Ghidra MCP evidence parity", () => {
             .limitations,
         },
         limitations: expect.arrayContaining([
-          expect.stringContaining("default auto-analysis complete"),
+          // Wording-tolerant: the loop below already pins the provider's exact
+          // text, so a literal here would only re-couple the test to prose.
+          expect.stringMatching(/auto.analysis.*complete/iu),
           expect.stringMatching(/original executable bytes.*unchanged/iu),
         ]),
       });
