@@ -34,7 +34,7 @@ import { rejectsEventListener } from "./javascriptSemanticAsyncEffects.js";
 import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
-  builtinDataEffectMethod,
+  builtinChildProcessMethod,
   dataEffectLiteralString,
   dataEffectMemberCallee,
   assignedSemanticResultBindings,
@@ -42,7 +42,6 @@ import {
   semanticProjectedBindingFacts,
 } from "./javascriptSemanticDataEffectHelpers.js";
 
-const CHILD_PROCESS_METHODS = ["spawn", "exec", "execFile", "fork"] as const;
 const CHILD_LISTENER_METHODS = ["on", "once", "addListener"] as const;
 
 interface ChildProcessAnalysis {
@@ -107,7 +106,7 @@ const collectSpawns = (
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       if (t.isCallExpression(node) || t.isOptionalCallExpression(node)) {
-        const method = childProcessMethod(node.callee, state);
+        const method = builtinChildProcessMethod(node.callee, state);
         if (method !== null) {
           const projectedResultBindings = assignedSemanticResultBindings(
             node,
@@ -285,19 +284,6 @@ const classifyInteraction = (
     (eventName === "exit" || eventName === "error")
     ? { kind: "listener", interactionMethod: listenerMethod, eventName }
     : null;
-};
-
-const childProcessMethod = (
-  callee: t.Node,
-  state: JavaScriptSemanticAnalysisState,
-): JavaScriptSemanticChildProcessSpawn["method"] | null => {
-  const method = builtinDataEffectMethod(callee, state, [
-    "child_process",
-    "node:child_process",
-  ]);
-  return (
-    CHILD_PROCESS_METHODS.find((candidate) => candidate === method) ?? null
-  );
 };
 
 const resolveChildCandidates = (

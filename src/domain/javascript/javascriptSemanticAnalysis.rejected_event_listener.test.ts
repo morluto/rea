@@ -27,6 +27,16 @@ it("keeps optional and non-function listener candidates for unknown emitter APIs
   );
 });
 
+it("does not emit generic listener candidates for a rejected Node child listener", () => {
+  const ir = analyzeJavaScriptSemantics(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", 1);
+  `);
+  expect(ir.eventOperations).toEqual([]);
+  expect(ir.childProcessInteractions).toEqual([]);
+});
+
 it.each([
   `e.off = function () {};`,
   `EventEmitter.prototype.off = function () {};`,

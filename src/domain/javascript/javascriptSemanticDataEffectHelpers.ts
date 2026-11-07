@@ -10,6 +10,7 @@ import {
 } from "./javascriptSemanticRequireOrigin.js";
 import type {
   JavaScriptModuleOrigin,
+  JavaScriptSemanticChildProcessSpawn,
   JavaScriptSemanticProjectedResultBinding,
 } from "./javascriptSemanticIr.js";
 import {
@@ -164,6 +165,22 @@ export const builtinDataEffectMethod = (
 ): string | null => {
   const path = builtinDataEffectCallablePath(callee, state, specifiers);
   return path?.length === 1 ? (path[0] ?? null) : null;
+};
+
+/** Identify Node's supported child-process creation methods at their origin. */
+export const builtinChildProcessMethod = (
+  callee: t.Node,
+  state: JavaScriptSemanticAnalysisState,
+): JavaScriptSemanticChildProcessSpawn["method"] | null => {
+  const method = builtinDataEffectMethod(callee, state, [
+    "child_process",
+    "node:child_process",
+  ]);
+  return (
+    (["spawn", "exec", "execFile", "fork"] as const).find(
+      (candidate) => candidate === method,
+    ) ?? null
+  );
 };
 
 /** Recover the complete callable export path using the shared mutation proof. */

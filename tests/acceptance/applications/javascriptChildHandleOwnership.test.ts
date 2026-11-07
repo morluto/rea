@@ -65,6 +65,23 @@ it("retains unknown emitter overloads as candidates through CLI and MCP", async 
   );
 }, 60000);
 
+it("does not project a rejected child listener as a generic event", async () => {
+  const evidence = await analyzeThroughCliAndMcp(`
+    import { spawn } from "node:child_process";
+    const child = spawn("worker");
+    child.on("exit", 1);
+  `);
+  const graph = javascriptApplicationAnalysisResultSchema.parse(
+    evidence.normalized_result,
+  ).semantic_graph;
+  expect(
+    graph.relations.filter(
+      ({ relation }) =>
+        relation === "registers-listener" || relation === "listens-exit",
+    ),
+  ).toEqual([]);
+}, 60000);
+
 it("keeps only possibly callable child listeners through CLI and MCP", async () => {
   const evidence =
     await analyzeThroughCliAndMcp(`import { spawn } from 'node:child_process';

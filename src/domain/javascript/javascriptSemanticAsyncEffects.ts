@@ -26,6 +26,7 @@ import { semanticOpaqueNameMayHaveChanged } from "./javascriptSemanticOpaqueEffe
 import { range } from "./javascriptStaticAnalysisHelpers.js";
 import {
   builtinDataEffectMethod,
+  builtinChildProcessMethod,
   dataEffectArgumentBindingId,
   dataEffectLiteralString,
   dataEffectMemberCallee,
@@ -247,7 +248,7 @@ export const rejectsEventListener = (
   return true;
 };
 
-/** Only a stable instance of Node's EventEmitter has Node's listener contract. */
+/** Identify stable Node-owned emitter instances without inferring generic APIs. */
 const isProvenNodeEmitter = (
   receiver: t.Expression | t.Super,
   call: t.CallExpression | t.OptionalCallExpression,
@@ -266,9 +267,13 @@ const isProvenNodeEmitter = (
     ...binding.initializers,
     ...binding.referenceInitializers,
   ];
-  if (initializers.length !== 1 || !t.isNewExpression(initializers[0]?.node))
+  if (initializers.length !== 1 || initializers[0]?.projection.length !== 0)
     return false;
-  const constructor = initializers[0].node.callee;
+  const initial = unwrapJavaScriptExpression(initializers[0].node).node;
+  if (t.isCallExpression(initial) || t.isOptionalCallExpression(initial))
+    return builtinChildProcessMethod(initial.callee, state) !== null;
+  if (!t.isNewExpression(initial)) return false;
+  const constructor = initial.callee;
   if (!t.isIdentifier(constructor)) return false;
   const owner = resolveSemanticBindingState(
     state,
