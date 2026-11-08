@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { jsonValueSchema } from "../jsonValue.js";
 import { READER_TIMEOUT_S, type DesktopTaskReader } from "./appTask.js";
+import { PYTHON_EXACT_JSON_NUMBER } from "./pythonExactJsonNumber.js";
 import type { TaskFileView } from "./appTaskChecks.js";
 
 /** A runner command's outcome, as computer-exec answers it or a run on this host gives it. */
@@ -30,6 +31,7 @@ cannot hand the file to the running app and holds no control token; it can chang
 folder. Lines it prints starting with MARKER make its view; everything else it prints is left out.
 """
 import json
+import math
 import os
 import re
 import shutil
@@ -57,9 +59,7 @@ FRESH = (("XDG_CONFIG_HOME", ".config"), ("XDG_DATA_HOME", ".local/share"), ("XD
          ("XDG_STATE_HOME", ".local/state"))
 
 
-class _Inexact(Exception):
-    """A JSON number the view cannot hold as the checks compare it."""
-
+${PYTHON_EXACT_JSON_NUMBER}
 
 def _say(answer: dict) -> int:
     line = json.dumps(answer)
@@ -81,20 +81,6 @@ def _environment(home: str, display: bool) -> dict:
     return kept
 
 
-def _integer(text: str) -> int:
-    value = int(text)
-    if abs(value) > MAX_SAFE_INTEGER:
-        raise _Inexact(text)
-    return value
-
-
-def _float(text: str) -> float:
-    value = float(text)
-    if value in (float("inf"), float("-inf")):
-        raise _Inexact(text)
-    return value
-
-
 def _not_json(text: str):
     raise ValueError(f"{text} is not JSON")
 
@@ -104,7 +90,7 @@ def _view(output: str, lines: list) -> dict:
         return {"view": {"format": "text", "view": {"lines": lines[:MAX_LINES], "line_count": len(lines),
                                                     "truncated": len(lines) > MAX_LINES}}}
     try:
-        value = json.loads("\n".join(lines), parse_int=_integer, parse_float=_float, parse_constant=_not_json)
+        value = json.loads("\n".join(lines), parse_int=_exact_number, parse_float=_exact_number, parse_constant=_not_json)
     except _Inexact:
         return {"error": "a number in the reader's view cannot be read exactly, such as an integer above 2^53"}
     except (ValueError, RecursionError) as error:

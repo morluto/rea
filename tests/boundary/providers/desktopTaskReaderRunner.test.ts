@@ -176,6 +176,12 @@ it.each([
     "json",
     ["cannot be read exactly"],
   ],
+  ...["9007199254740993.0", "1e-400", "-0.0"].map((number) => [
+    `prints an inexact decimal ${number}`,
+    ["sh", "-c", `echo 'REA {"id": ${number}}'; : {file}`],
+    "json",
+    ["cannot be read exactly"],
+  ]),
   [
     "prints more than 1 MiB",
     ["python3", "-c", "print('REA ' + 'x' * (1 << 20))", "{file}"],
