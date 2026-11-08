@@ -164,6 +164,20 @@ describe("CLI JSON streamed input", () => {
     }
   });
 
+  it("keeps malformed source excerpts out of native and streamed file diagnostics", async () => {
+    const root = await createTestTempDirectory("rea-json-input-excerpt-");
+    const path = join(root, "input.json");
+    for (const prefix of ["", " ".repeat(9 * 1024 * 1024)]) {
+      await writeFile(path, `${prefix}{"$ref":"https://u:p@h","":NaN}`);
+      const result = await parseCliJsonInput(path, "test-input");
+      expect(result).toMatchObject({
+        ok: false,
+        error: { input_reason: "invalid-json" },
+      });
+      expect(JSON.stringify(result)).not.toContain("u:p@h");
+    }
+  });
+
   it("names a leading byte-order mark in small and streamed files", async () => {
     const root = await createTestTempDirectory("rea-json-input-bom-");
     const path = join(root, "input.json");

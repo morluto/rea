@@ -135,6 +135,7 @@ export type JavaScriptReferenceInput = {
   readonly node: t.Node;
   readonly specifier: string | undefined;
   readonly resolutionBasePath?: string;
+  readonly loader?: JavaScriptStaticReference["loader"];
 } & (
   | { readonly kind: "vite-table-candidate"; readonly operation: "candidate" }
   | {

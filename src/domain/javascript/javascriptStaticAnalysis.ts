@@ -8,6 +8,7 @@ import { collectElectronWrappedCallPathsSteps } from "./electronWrappedCallPaths
 import {
   ELECTRON_IDENTITY_LIMITATION,
   ELECTRON_MODULE,
+  ELECTRON_REFERENCE_KINDS,
 } from "./javascriptElectronMemberWrites.js";
 
 import {
@@ -187,12 +188,16 @@ export function* analyzeParsedJavaScriptStaticSourceSteps(
     accumulator.moduleRangeIndex,
   );
   let hasElectronReference = false;
-  for (const [index, { kind, specifier }] of references.entries()) {
+  for (const [
+    index,
+    { kind, loader, operation, specifier },
+  ] of references.entries()) {
     if (index > 0 && index % 1024 === 0) yield;
     if (
-      (kind === "static-import" ||
-        kind === "dynamic-import" ||
-        kind === "require") &&
+      ELECTRON_REFERENCE_KINDS.has(kind) &&
+      operation === "load" &&
+      // a factory-loader reference names a module inside the artifact.
+      loader !== "factory-loader" &&
       specifier !== null &&
       ELECTRON_MODULE.test(specifier)
     ) {

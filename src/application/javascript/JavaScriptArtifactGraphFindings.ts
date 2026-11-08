@@ -733,8 +733,14 @@ const resolveReference = (
     ? null
     : resolveBundlerChunkReference(context, sourcePath, reference);
   if (chunk !== null) return chunk;
+  // Only a recovered factory loader names a bundle module key. A real CommonJS
+  // `require("electron")` inside a factory body records `commonjs-loader`, so its
+  // specifier is an external package name even though the finding sits inside a
+  // module range and carries that range's runtime.
   const module =
-    isWorker || reference.module_runtime === undefined
+    isWorker ||
+    reference.module_runtime === undefined ||
+    reference.loader === "commonjs-loader"
       ? undefined
       : context.moduleNodes.get(
           moduleLookupKey(sourcePath, reference.module_runtime, specifier),

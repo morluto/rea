@@ -1,4 +1,8 @@
 import { contractsForToolFamilies } from "../../../src/contracts/toolFamilies.js";
+import {
+  HOT_TOOL_NAMES,
+  progressiveCatalogIdentity,
+} from "../../../src/catalogDiscovery.js";
 import { Client } from "@modelcontextprotocol/client";
 import { StdioClientTransport } from "@modelcontextprotocol/client/stdio";
 import { execFile, spawn } from "node:child_process";
@@ -19,6 +23,7 @@ import {
   runProductionMcpDoctorCli,
 } from "../../../src/mcpDoctor.js";
 import {
+  DEFAULT_CATALOG_IDENTITY,
   FULL_CATALOG_IDENTITY,
   catalogIdentityForToolFamilies,
   createCatalogIdentity,
@@ -194,6 +199,33 @@ const catalogProfiles = [
     }),
   },
 ];
+
+it("recognizes a hot/cold initial catalog and its inventory identity", async () => {
+  const result = await runProductionMcpDoctor({
+    command: process.execPath,
+    args: [resolve("scripts/rea.mjs"), "mcp"],
+    cwd: process.cwd(),
+    environment: { ...process.env, REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+  });
+  expect(result.healthy).toBe(true);
+  expect(result.inventory?.tools).toMatchObject({
+    expected: HOT_TOOL_NAMES.size + 1,
+    observed: HOT_TOOL_NAMES.size + 1,
+    missing: [],
+    unexpected: [],
+  });
+  expect(result.identity?.observed_catalog_digest).toBe(
+    progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY).digests
+      .combined_sha256,
+  );
+  const environment = {
+    ...process.env,
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+  };
+  const identity = progressiveCatalogIdentity(DEFAULT_CATALOG_IDENTITY);
+  await assertStatusCatalogIdentity(environment, identity);
+  await assertCliCatalogIdentity(environment, identity);
+});
 
 describe("production MCP doctor", () => {
   it("reuses immutable compiled profile digests and preserves custom-budget identity", async () => {

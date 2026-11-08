@@ -4,7 +4,11 @@ import { isExactJsonNumber } from "../exactJsonNumber.js";
 import { MAX_JSON_DEPTH, type JsonValue } from "../jsonValue.js";
 import { err, ok, type Result } from "../result.js";
 import { safeParseJson } from "../safeJson.js";
-import { parseXmlDocument } from "../xmlDocument.js";
+import {
+  declaredDocumentType,
+  isWellFormedXml,
+  parseXmlDocument,
+} from "../xmlDocument.js";
 
 /** Formats the state view reads into JSON. */
 export type DesktopStateFormat =
@@ -14,6 +18,7 @@ export type DesktopStateFormat =
   | "xml"
   | "sqlite"
   | "dconf"
+  | "zip"
   | "binary";
 
 const SQLITE_HEADER = "SQLite format 3\0";
@@ -23,12 +28,19 @@ export const SQLITE_SIDECARS = [
   { suffix: "-journal", label: "rollback journal" },
 ] as const;
 const GVDB_HEADER = "GVariant";
+/** A zip archive's local file header, which FreeCAD, ODF, OOXML, EPUB and JAR files begin with. */
+const ZIP_HEADER = "PK\u0003\u0004";
 const XML_EXTENSIONS = /\.(?:xml|xbel|plist|svg|ui)$/iu;
+/** A DOCTYPE that only names its DTD reads as XML; one with an internal subset, which can declare entities, does not. */
+const XML_POLICY = { doctype: "external", lineEndings: "normalize" } as const;
 const MAX_TEXT_LINES = 5000;
 const MAX_XML_NODES = 5000;
 const MAX_XML_DEPTH = 64;
 /** Half of Evidence's nesting limit, leaving room for the result around a view. */
 const MAX_JSON_VIEW_DEPTH = MAX_JSON_DEPTH / 2;
+const MIB = 1024 * 1024;
+/** Largest JSON or key file read into a view, whose whole value enters Evidence. */
+const MAX_PARSED_VIEW_BYTES = 4 * MIB;
 
 type KeyfileLine =
   | { readonly kind: "skip" }
@@ -43,13 +55,16 @@ const keyfileLine = (raw: string): KeyfileLine => {
     return { kind: "skip" };
   const name = /^\[(?<name>[^\]]+)\]$/u.exec(line)?.groups?.name;
   if (name !== undefined) return { kind: "group", name };
-  const equals = line.indexOf("=");
-  return equals <= 0
+  const equals = raw.indexOf("=");
+  if (equals < 0) return { kind: "other" };
+  const key = raw.slice(0, equals).trim();
+  return key.length === 0
     ? { kind: "other" }
     : {
         kind: "entry",
-        key: line.slice(0, equals).trim(),
-        value: line.slice(equals + 1).trim(),
+        key,
+        // Only ASCII space and tab immediately after '=' are padding.
+        value: raw.slice(equals + 1).replace(/^[ \t]+/u, ""),
       };
 };
 
@@ -80,6 +95,149 @@ export const decodeStateText = (bytes: Uint8Array): string | undefined => {
   }
 };
 
+const JSON_NUMBER = /-?(?:0|[1-9][0-9]*)(?:\.[0-9]+)?(?:[eE][+-]?[0-9]+)?/uy;
+const JSON_HEX4 = /[0-9a-fA-F]{4}/uy;
+const JSON_ESCAPES = new Set(['"', "\\", "/", "b", "f", "n", "r", "t"]);
+
+/** Where the JSON string opening at `start` ends, past its closing quote, or -1 when it is malformed. */
+const jsonStringEnd = (text: string, start: number): number => {
+  for (let at = start + 1; at < text.length; at += 1) {
+    const code = text.charCodeAt(at);
+    if (code === 0x22) return at + 1;
+    if (code < 0x20) return -1;
+    if (code === 0x5c) {
+      const escape = text.charAt(at + 1);
+      JSON_HEX4.lastIndex = at + 2;
+      if (escape === "u" && JSON_HEX4.test(text)) at += 5;
+      else if (JSON_ESCAPES.has(escape)) at += 1;
+      else return -1;
+    }
+  }
+  return -1;
+};
+
+/** Where the JSON string, number or literal starting at `start` ends, or -1 when none does. */
+const jsonScalarEnd = (text: string, start: number): number => {
+  if (text.charCodeAt(start) === 0x22) return jsonStringEnd(text, start);
+  for (const literal of ["true", "false", "null"])
+    if (text.startsWith(literal, start)) return start + literal.length;
+  JSON_NUMBER.lastIndex = start;
+  return JSON_NUMBER.test(text) ? JSON_NUMBER.lastIndex : -1;
+};
+
+/** How far a JSON text has been read: what may come next, and the containers still open. */
+interface JsonScan {
+  expect: "value" | "key" | "colon" | "after";
+  /** The innermost container was just opened, so it may close at once. */
+  empty: boolean;
+  /** Each open container's opening bracket, innermost at `depth - 1`. */
+  open: Uint8Array;
+  depth: number;
+}
+
+/** Open a container, growing the brackets held as it nests deeper. */
+const openJson = (scan: JsonScan, bracket: number): void => {
+  if (scan.depth === scan.open.length) {
+    const grown = new Uint8Array(scan.open.length * 2);
+    grown.set(scan.open);
+    scan.open = grown;
+  }
+  scan.open[scan.depth] = bracket;
+  scan.depth += 1;
+  scan.expect = bracket === 0x5b ? "value" : "key";
+  scan.empty = true;
+};
+
+/** Read one bracket, comma or colon into the scan; false when the text cannot hold it there. */
+const jsonPunctuation = (scan: JsonScan, char: string): boolean => {
+  const code = char.charCodeAt(0);
+  const inner = scan.depth > 0 ? scan.open[scan.depth - 1] : undefined;
+  switch (char) {
+    case "[":
+    case "{":
+      if (scan.expect !== "value") return false;
+      openJson(scan, code);
+      return true;
+    case "]":
+    case "}":
+      // A closing bracket's code is its opening's plus two.
+      if ((scan.expect !== "after" && !scan.empty) || inner !== code - 2)
+        return false;
+      scan.depth -= 1;
+      break;
+    case ",":
+      if (scan.expect !== "after" || inner === undefined) return false;
+      scan.expect = inner === 0x5b ? "value" : "key";
+      return true;
+    default:
+      if (scan.expect !== "colon") return false;
+      scan.expect = "value";
+      return true;
+  }
+  scan.expect = "after";
+  scan.empty = false;
+  return true;
+};
+
+/** Read a string, number or literal into the scan; false when the text cannot hold it there. */
+const jsonScalar = (scan: JsonScan, string: boolean): boolean => {
+  if (scan.expect === "value") scan.expect = "after";
+  else if (string && scan.expect === "key") scan.expect = "colon";
+  else return false;
+  scan.empty = false;
+  return true;
+};
+
+/**
+ * Whether text is one JSON value as `JSON.parse` reads it, checked a token at
+ * a time without building the value: it holds a byte per open container, so
+ * text too large to parse into a view is still told apart from other text.
+ */
+export const isJsonText = (text: string): boolean => {
+  const scan: JsonScan = {
+    expect: "value",
+    empty: false,
+    open: new Uint8Array(64),
+    depth: 0,
+  };
+  for (let at = 0; at < text.length;) {
+    const char = text.charAt(at);
+    if (" \t\n\r".includes(char)) at += 1;
+    else if ("[]{},:".includes(char)) {
+      if (!jsonPunctuation(scan, char)) return false;
+      at += 1;
+    } else {
+      at = jsonScalarEnd(text, at);
+      if (at < 0 || !jsonScalar(scan, char === '"')) return false;
+    }
+  }
+  return scan.expect === "after" && scan.depth === 0;
+};
+
+/** Whether a file's name or leading text marks it as JSON, which it is if it parses. */
+const namedJson = (path: string, trimmed: string): boolean =>
+  path.toLowerCase().endsWith(".json") || /^[[{]/u.test(trimmed);
+
+/** Whether a file's name or XML declaration marks it as XML, which it is if it parses. */
+const namedXml = (path: string, trimmed: string): boolean =>
+  XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml");
+
+/**
+ * Whether decoded text is JSON or XML as `detectStateFormat` reads it, told
+ * by syntax alone so no value or document is built: JSON a token at a time
+ * and XML by its well-formedness pass, each holding only what is open.
+ */
+export const textSyntaxFormat = (
+  path: string,
+  text: string,
+): "json" | "xml" | "text" => {
+  const trimmed = text.trimStart();
+  if (namedJson(path, trimmed) && isJsonText(text)) return "json";
+  if (namedXml(path, trimmed) && isWellFormedXml(text, XML_POLICY))
+    return "xml";
+  return "text";
+};
+
 /** Pick the reader for one retained file from its leading bytes and name. */
 export const detectStateFormat = (
   path: string,
@@ -88,32 +246,43 @@ export const detectStateFormat = (
   const header = new TextDecoder("latin1").decode(bytes.subarray(0, 16));
   if (header === SQLITE_HEADER) return "sqlite";
   if (header.startsWith(GVDB_HEADER)) return "dconf";
+  if (header.startsWith(ZIP_HEADER)) return "zip";
   const text = decodeStateText(bytes);
   if (text === undefined) return "binary";
   const trimmed = text.trimStart();
   if (
-    (path.endsWith(".json") || /^[[{]/u.test(trimmed)) &&
-    safeParseJson(text).ok
+    namedJson(path, trimmed) &&
+    // JSON too large for a view is told apart without building its value.
+    (bytes.length > MAX_PARSED_VIEW_BYTES
+      ? isJsonText(text)
+      : safeParseJson(text).ok)
   )
     return "json";
-  if (XML_EXTENSIONS.test(path) || trimmed.startsWith("<?xml"))
-    return parseXmlDocument(text, {
-      doctype: "reject",
-      lineEndings: "normalize",
-    }).ok
-      ? "xml"
-      : "text";
+  if (namedXml(path, trimmed))
+    return parseXmlDocument(text, XML_POLICY).ok ? "xml" : "text";
   return isKeyfile(text) ? "keyfile" : "text";
 };
 
-/** Whether a parsed JSON value nests deeper than a limit, checked without recursion. */
-const deeperThan = (root: JsonValue, limit: number): boolean => {
-  const pending: [JsonValue, number][] = [[root, 0]];
-  for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
-    const [value, depth] = next;
-    if (depth > limit) return true;
-    if (typeof value === "object" && value !== null)
-      for (const item of Object.values(value)) pending.push([item, depth + 1]);
+/** An object's own values one at a time, without copying them into an array. */
+function* ownValues(record: Record<string, JsonValue>): Generator<JsonValue> {
+  for (const key in record)
+    if (Object.hasOwn(record, key)) yield record[key] ?? null;
+}
+
+/**
+ * Whether a parsed JSON value nests deeper than a limit, checked without
+ * recursion: a value's depth is the number of levels open above it, each
+ * walked by one iterator, so no container's members are copied or queued.
+ */
+export const deeperThan = (root: JsonValue, limit: number): boolean => {
+  const levels: Iterator<JsonValue>[] = [[root].values()];
+  for (let level = levels.at(-1); level !== undefined; level = levels.at(-1)) {
+    const next = level.next();
+    if (next.done === true) levels.pop();
+    else if (levels.length - 1 > limit) return true;
+    else if (Array.isArray(next.value)) levels.push(next.value.values());
+    else if (typeof next.value === "object" && next.value !== null)
+      levels.push(ownValues(next.value));
   }
   return false;
 };
@@ -183,9 +352,32 @@ interface XmlBudget {
 interface XmlScope {
   /** `xml:space="preserve"` applies. */
   readonly preserve: boolean;
-  /** The parent holds child elements, so whitespace-only text between them is formatting. */
+  /**
+   * The parent holds child elements and no text but whitespace, so whitespace-only
+   * text between them is formatting; in mixed content, text beside elements, it is text.
+   */
   readonly elementContent: boolean;
 }
+
+/** XML's whitespace: space, tab, carriage return and line feed, not Unicode's wider set. */
+const XML_WHITESPACE = /^[ \t\r\n]*$/u;
+
+const isTextNode = (node: Node): boolean =>
+  node.nodeType === node.TEXT_NODE || node.nodeType === node.CDATA_SECTION_NODE;
+
+/** Whether an element holds child elements and no text but whitespace beside them. */
+const holdsElementContent = (element: Element): boolean => {
+  let elements = false;
+  for (
+    let child = element.firstChild;
+    child !== null;
+    child = child.nextSibling
+  )
+    if (child.nodeType === child.ELEMENT_NODE) elements = true;
+    else if (isTextNode(child) && !XML_WHITESPACE.test(child.nodeValue ?? ""))
+      return false;
+  return elements;
+};
 
 const xmlNode = (
   node: Node,
@@ -198,12 +390,9 @@ const xmlNode = (
     return undefined;
   }
   budget.remaining -= 1;
-  if (
-    node.nodeType === node.TEXT_NODE ||
-    node.nodeType === node.CDATA_SECTION_NODE
-  ) {
+  if (isTextNode(node)) {
     const text = node.nodeValue ?? "";
-    return text.trim().length === 0 && scope.elementContent && !scope.preserve
+    return XML_WHITESPACE.test(text) && scope.elementContent && !scope.preserve
       ? undefined
       : text;
   }
@@ -215,17 +404,10 @@ const xmlNode = (
     if (attribute !== null) attributes[attribute.name] = attribute.value;
   }
   const space = element.getAttribute("xml:space");
-  let elementContent = false;
-  for (
-    let child = element.firstChild;
-    child !== null && !elementContent;
-    child = child.nextSibling
-  )
-    elementContent = child.nodeType === child.ELEMENT_NODE;
   const inner: XmlScope = {
     preserve:
       space === null || space === "" ? scope.preserve : space === "preserve",
-    elementContent,
+    elementContent: holdsElementContent(element),
   };
   const children: JsonValue[] = [];
   for (
@@ -239,20 +421,74 @@ const xmlNode = (
   return { name: element.tagName, attributes, children };
 };
 
-/** An XML document as a bounded element tree; DOCTYPEs are refused. */
+/**
+ * An XML document as a bounded element tree. A DOCTYPE that only names its DTD
+ * is recorded as `doctype`, its DTD never read; one with an internal subset is
+ * refused, as is a reference to any entity but XML's five.
+ */
 export const xmlView = (text: string): JsonValue | undefined => {
-  const parsed = parseXmlDocument(text, {
-    doctype: "reject",
-    lineEndings: "normalize",
-  });
+  const parsed = parseXmlDocument(text, XML_POLICY);
   const root = parsed.ok ? parsed.value.documentElement : null;
-  if (root === null) return undefined;
+  if (!parsed.ok || root === null) return undefined;
   const budget: XmlBudget = { remaining: MAX_XML_NODES, truncated: false };
   const tree = xmlNode(root, 0, budget, {
     preserve: false,
     elementContent: false,
   });
-  return tree === undefined
-    ? undefined
-    : { root: tree, truncated: budget.truncated };
+  if (tree === undefined) return undefined;
+  const doctype = declaredDocumentType(parsed.value);
+  return {
+    ...(doctype === undefined
+      ? {}
+      : {
+          doctype: {
+            name: doctype.name,
+            public_id: doctype.publicId,
+            system_id: doctype.systemId,
+          },
+        }),
+    root: tree,
+    truncated: budget.truncated,
+  };
+};
+
+/** Formats read from a file's bytes alone, without a tool or worker. */
+export type TextualStateFormat = "text" | "json" | "keyfile" | "xml";
+
+/** Whether a format is one of the text formats, read as UTF-8. */
+export const isTextualFormat = (
+  format: string | null,
+): format is TextualStateFormat =>
+  format === "text" ||
+  format === "json" ||
+  format === "keyfile" ||
+  format === "xml";
+
+/** A text, JSON, key file or XML file's view, or why it has none. */
+export const textualView = (
+  format: TextualStateFormat,
+  bytes: Uint8Array,
+): Result<JsonValue, string> => {
+  if (
+    (format === "json" || format === "keyfile") &&
+    bytes.length > MAX_PARSED_VIEW_BYTES
+  )
+    return err(
+      `larger than the ${String(MAX_PARSED_VIEW_BYTES / MIB)} MiB limit for JSON and key file views`,
+    );
+  const text = decodeStateText(bytes) ?? "";
+  switch (format) {
+    case "text":
+      return ok(textView(text));
+    case "json":
+      return jsonView(text);
+    case "keyfile":
+      return ok({ groups: keyfileView(text) });
+    case "xml": {
+      const tree = xmlView(text);
+      return tree === undefined
+        ? err("not well-formed XML, or its DOCTYPE has an internal subset")
+        : ok(tree);
+    }
+  }
 };

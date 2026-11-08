@@ -1,4 +1,5 @@
 import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import { electronSemanticsState } from "./ElectronBoundaryAnalysis.js";
 import { ELECTRON_IDENTITY_LIMITATION } from "../../domain/javascript/javascriptElectronMemberWrites.js";
 import type { ArtifactInventorySnapshot } from "../../domain/artifactInventorySnapshot.js";
 import {
@@ -240,6 +241,7 @@ function* buildJavaScriptArtifactGraphInputSteps(
       projectionContext.analysis,
       ipc,
       context.directoryPaths,
+      context.analysis,
     ),
     graph: {
       schema: "JavaScriptApplicationGraph",
@@ -356,20 +358,9 @@ const graphLimitations = (
 ): string[] => {
   const ipc = ipcContext.records;
   const pairings = ipcContext.states;
-  const electronFindings = context.analysis.files.reduce(
-    (count, { javascript }) =>
-      count +
-      (javascript === null
-        ? 0
-        : javascript.electron.browser_windows.length +
-          javascript.electron.context_bridge_apis.length +
-          javascript.electron.ipc.length +
-          javascript.electron.sender_validations.length +
-          javascript.electron.utility_processes.length +
-          javascript.electron.native_addon_bindings.length +
-          javascript.electron.protocols.length),
-    0,
-  );
+  // Shared with the Electron summary so both outputs describe one coverage
+  // result, including when a rejected projection drops a file from the graph.
+  const electronSemantics = electronSemanticsState(context.analysis);
   return [
     ...context.analysis.limitations,
     ...((context.fileSet.source_selection?.unselected_files ?? 0) === 0
@@ -395,11 +386,15 @@ const graphLimitations = (
     )
       ? [ELECTRON_IDENTITY_LIMITATION]
       : []),
-    ...(electronFindings === 0
-      ? []
-      : [
-          "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
-        ]),
+    ...(electronSemantics === "empty"
+      ? [
+          "Electron modules are referenced but no Electron boundary fact was recovered from inert syntax. Zero IPC operations and zero BrowserWindows here mean empty coverage, not evidence that the application has none.",
+        ]
+      : electronSemantics === "recovered"
+        ? [
+            "Electron relationships are derived from inert syntax; runtime registration, reachability, defaults, and enforcement remain unproven.",
+          ]
+        : []),
     ...(ipc.some(({ finding }) => finding.channel === null)
       ? [
           "Dynamic IPC channel expressions remain unresolved and are never paired by textual similarity.",

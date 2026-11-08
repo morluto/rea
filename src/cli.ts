@@ -25,8 +25,13 @@ import { registerBinaryDiagnosticsCommands } from "./cli/binaryDiagnosticsComman
 import { registerFridaCommands } from "./cli/fridaCommands.js";
 import type { FridaInstrumentationPort } from "./application/frida/FridaInstrumentationPort.js";
 import { Cli, z } from "incur";
+import { redactExplicitText } from "./domain/explicitSensitiveValues.js";
 import {
   adaptCliOutputArgumentsForIncur,
+  classifyMcpAddDiscovery,
+  expandMcpAddEqualsArguments,
+  declaredSensitiveValues,
+  readMcpAddArguments,
   normalizeCliArguments,
   splitIncurBuiltinArguments,
 } from "./cliBuiltinArguments.js";
@@ -78,12 +83,13 @@ import {
 import { registerReverseEngineeringCommands } from "./cli/reverseEngineeringCommands.js";
 import { registerCutterCommands } from "./cli/cutterCommands.js";
 import { excludeDeclaredSensitiveArguments } from "./cli/explicitSensitiveArguments.js";
-import { rejectSurplusCliArguments } from "./cli/strictPositionals.js";
+import { validateCliArguments } from "./cli/strictPositionals.js";
 import {
   encodeCliArgumentErrors,
   presentCliArgumentErrors,
 } from "./cli/argumentErrors.js";
 import { completionHelpNote, createCliCompletions } from "./cli/completions.js";
+import { reportUnknownMcpSubcommand } from "./cli/mcpBuiltinCommands.js";
 import {
   closeCliGuidanceResources,
   registerGuidanceCommands,
@@ -247,7 +253,7 @@ export const createCli = (
   });
   presentOmittableDefaults(cli);
   if (resultOutput !== undefined) streamCliCommandResults(cli, resultOutput);
-  const serveStrict = rejectSurplusCliArguments(cli);
+  const serveStrict = validateCliArguments(cli);
   presentCliArgumentErrors(cli);
   const serveDeclared = excludeDeclaredSensitiveArguments(cli);
   encodeCliArgumentErrors(cli);
@@ -261,21 +267,19 @@ export const createCli = (
     let normalized = normalizeCliArguments(arguments_);
     const { command, flags } = splitIncurBuiltinArguments(normalized);
     const builtin = command[0] === PRODUCT_IDENTITY.cliBinary ? 1 : 0;
+    const discovery = classifyMcpAddDiscovery(flags);
     if (
       command[builtin] === "mcp" &&
       command[builtin + 1] === "add" &&
-      !flags.has("--help") &&
-      !flags.has("-h") &&
-      !flags.has("--llms") &&
-      !flags.has("--llms-full")
+      discovery !== "bypass"
     ) {
       const write =
         options?.stdout ?? ((text: string) => process.stdout.write(text));
-      if (flags.has("--version")) {
+      if (discovery === "version") {
         write(`${PRODUCT_IDENTITY.packageVersion}\n`);
         return Promise.resolve();
       }
-      if (flags.has("--schema")) {
+      if (discovery === "schema") {
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
@@ -309,37 +313,21 @@ export const createCli = (
         )(1);
         return Promise.resolve();
       }
-      // Incur's `mcp add` silently skips a valued option with no value and
-      // swallows the next flag as the value: the registration succeeds without
-      // the requested agent or command. Reject a trailing --agent/--command/-c,
-      // a value position occupied by another flag, and an empty `--flag=` form
-      // up front.
-      const valued = ["--agent", "--command", "-c"];
-      let missingValue: string | undefined;
-      for (let index = 0; index < command.length; index += 1) {
-        const next = command[index + 1];
-        if (
-          valued.includes(command[index]!) &&
-          (next === undefined || next.startsWith("-"))
-        ) {
-          missingValue = command[index];
-          break;
-        }
-      }
-      const emptyValue = command.find(
-        (token) =>
-          (token.startsWith("--agent=") ||
-            token.startsWith("--command=") ||
-            token.startsWith("-c=")) &&
-          token.length === token.indexOf("=") + 1,
+      // Validate before reading settings, creating a backup or invoking Incur's
+      // writer. The same owner supplies the agent selection used below.
+      const parsedRegistration = readMcpAddArguments(
+        command.slice(builtin + 2),
       );
-      if (missingValue !== undefined || emptyValue !== undefined) {
-        const flag = missingValue ?? emptyValue!;
-        const message = `Missing value for flag: ${flag.replace(/=.*$/, "")}`;
+      if (!parsedRegistration.validation.ok) {
+        const failure = parsedRegistration.validation.error;
+        const message = redactExplicitText(
+          failure.kind === "missing_value"
+            ? `Missing value for flag: ${failure.flag}`
+            : `Unexpected argument: ${failure.token}`,
+          declaredSensitiveValues(command),
+        );
         const field =
-          flag.includes("command") || flag === "-c" || flag.startsWith("-c=")
-            ? "command"
-            : "agent";
+          failure.kind === "missing_value" ? failure.field : "arguments";
         const output = parseCliOutputArguments(normalized);
         if (!output.validation.ok)
           write(renderCliOutputArgumentError(output.validation));
@@ -374,14 +362,9 @@ export const createCli = (
       // equals form like `--agent=amp` is silently ignored, which would drop
       // the requested agent and register against the default target. Normalize
       // equals forms back to spaced forms before handing over to Incur.
-      const serveArguments = normalized.flatMap((token) => {
-        if (token.startsWith("--agent=") || token.startsWith("--command=")) {
-          const separator = token.indexOf("=");
-          const value = token.slice(separator + 1);
-          return value === "" ? [token] : [token.slice(0, separator), value];
-        }
-        return [token];
-      });
+      // Shared with the project-scope guard through
+      // `expandMcpAddEqualsArguments`, so both read the same agent selection.
+      const serveArguments = expandMcpAddEqualsArguments(normalized);
       // Incur's Amp registration overwrites an existing rea entry (dropping its
       // environment map) and reports success even when the settings file
       // prevents a save. Guard that path: reject a settings file REA cannot
@@ -393,17 +376,7 @@ export const createCli = (
       // non-Amp equals forms. Incur consumes command values before agent flags.
       normalized = serveArguments;
       const registration = splitIncurBuiltinArguments(serveArguments);
-      const rest = registration.command.slice(builtin + 2);
-      const agents: string[] = [];
-      for (let index = 0; index < rest.length; index += 1) {
-        if (
-          (rest[index] === "--command" || rest[index] === "-c") &&
-          rest[index + 1]
-        )
-          index += 1;
-        else if (rest[index] === "--agent" && rest[index + 1])
-          agents.push(rest[++index]!);
-      }
+      const { agents } = parsedRegistration;
       const ampRequested =
         ![
           "--help",
@@ -614,7 +587,9 @@ export const createCli = (
     }
     const result = serveStrict(normalized, options ?? {}, (tokens, selected) =>
       serveDeclared(tokens, selected, (declared, declaredOptions) =>
-        serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
+        reportUnknownMcpSubcommand(cli.name, declared, declaredOptions)
+          ? Promise.resolve()
+          : serve(adaptCliOutputArgumentsForIncur(declared), declaredOptions),
       ),
     );
     const note = completionHelpNote(normalized);

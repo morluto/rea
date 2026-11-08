@@ -276,6 +276,15 @@ explicit path or endpoint and do not need it.
   linker declarations, not proof of enforcement. A missing directory is observed
   absence of that declaration. See the
   [PE load configuration guide](https://github.com/morluto/rea/blob/main/docs/pe-load-config.md).
+- ELF, PE, and Mach-O hardening: `inspect_binary_hardening` with the explicit
+  local file. This built-in target-free inspection requires no pwntools or other
+  host tool. One image per Mach-O slice. Each property is `enabled`, `disabled`,
+  `partial`, `unknown`, or `not_applicable`, with the header field or import
+  behind it. A missing stack-protector or fortify import is `unknown`, not
+  proof the protection was omitted. Authenticode and Mach-O code signatures
+  report presence, not validity. Hardened runtime stays unknown and names
+  `inspect_signature`. The image is not executed. See the
+  [binary hardening guide](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
 - ELF note tables: `inspect_elf_notes` with the explicit local ELF32/ELF64
   file. This built-in target-free inspection requires no disassembler. Preserve
   PT_NOTE and SHT_NOTE ranges, owners, types, descriptor SHA-256, and GNU
@@ -396,6 +405,10 @@ flags are true and omitted known flags are false. Provider candidate facts
 describe possible providers, while top-level session capabilities describe the
 current route and `analysis_provider_binding` names the selected provider. Do
 not treat those scopes as interchangeable.
+
+For editable Ghidra analysis that must survive a later agent process, select
+the [owned Program checkpoint workflow](references/native-and-artifacts.md#continue-editable-ghidra-analysis-across-processes)
+before making metadata edits. It is separate from Evidence/Unknown persistence.
 
 For a Ghidra startup timeout on a large native target, follow
 [deadline recovery](references/native-and-artifacts.md#ghidra-startup-deadline-recovery)
