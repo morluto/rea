@@ -15,6 +15,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascript/javascriptSem
 import {
   semanticRequireCallAt,
   semanticRequireLoaderAt,
+  semanticSelectedMemberMayHaveChanged,
   type JavaScriptRequireCallFact,
 } from "./javascript/javascriptSemanticRequireOrigin.js";
 import {
@@ -211,18 +212,9 @@ const hasPriorMemberMutation = (
   site: ReferenceSourceRequireInvocation,
 ): boolean => {
   const callee = unwrapJavaScriptExpression(site.callee).node;
-  const chain = semanticMemberChain(callee);
-  if (chain === undefined) return true;
-  const facts = index.effectsForReferenceAt(site, callee);
   return (
-    !facts.memberEffectsIndexed ||
-    facts.effects.some(
-      ({ kind, timing, path }) =>
-        timing !== "after" &&
-        (kind === "escape" ||
-          (kind === "member-write" &&
-            (path === undefined || path.length <= chain.members.length))),
-    )
+    semanticMemberChain(callee) === undefined ||
+    semanticSelectedMemberMayHaveChanged(index, site, callee)
   );
 };
 

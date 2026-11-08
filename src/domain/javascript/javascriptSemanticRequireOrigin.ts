@@ -716,6 +716,28 @@ export interface JavaScriptRequireCallFact {
   readonly sourceRelativePath?: string;
 }
 
+/** A child-property write does not replace the selected callable itself. */
+export const semanticSelectedMemberMayHaveChanged = (
+  index: JavaScriptBindingIndex,
+  site: t.Node,
+  member: t.Node,
+): boolean => {
+  const effects = index.effectsForReferenceAt(site, member);
+  const targetDepth = semanticMemberChain(member)?.members.length;
+  return (
+    !effects.memberEffectsIndexed ||
+    effects.effects.some(
+      ({ kind, timing, path }) =>
+        timing !== "after" &&
+        (kind === "escape" ||
+          (kind === "member-write" &&
+            (targetDepth === undefined ||
+              path === undefined ||
+              path.length <= targetDepth))),
+    )
+  );
+};
+
 /** Classify the selected loader and normalize invocation arguments once. */
 export const semanticRequireCallAt = (
   node: t.CallExpression | t.OptionalCallExpression | t.NewExpression,
@@ -768,20 +790,7 @@ export const semanticRequireCallAt = (
           member = unwrapJavaScriptExpression(member.object).node;
           continue;
         }
-        const effects = index.effectsForReferenceAt(node, member);
-        const targetDepth = semanticMemberChain(member)?.members.length;
-        if (
-          !effects.memberEffectsIndexed ||
-          effects.effects.some(
-            ({ kind, timing, path }) =>
-              timing !== "after" &&
-              (kind === "escape" ||
-                (kind === "member-write" &&
-                  (targetDepth === undefined ||
-                    path === undefined ||
-                    path.length <= targetDepth))),
-          )
-        )
+        if (semanticSelectedMemberMayHaveChanged(index, node, member))
           return {
             operation: "load",
             loader: "unknown",
