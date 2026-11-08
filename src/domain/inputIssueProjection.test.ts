@@ -523,6 +523,29 @@ describe("discriminated union input issue projection", () => {
       },
     ]);
   });
+
+  it("narrows branches when union includes a strict object variant without the discriminator key", () => {
+    const schema = z.union([
+      z.strictObject({
+        kind: z.literal("target"),
+        value: z.number(),
+      }),
+      z.strictObject({
+        unrelated: z.string(),
+      }),
+    ]);
+    const input = { kind: "target", value: "not-a-number" };
+    const parsed = schema.safeParse(input);
+    if (parsed.success) throw new Error("expected invalid input");
+    const projected = projectInputIssues(parsed.error.issues, input);
+    expect(projected).toEqual([
+      {
+        path: ["value"],
+        reason: "invalid_type",
+        expected: "number",
+      },
+    ]);
+  });
 });
 
 describe("union branch diagnostic merging", () => {

@@ -266,6 +266,12 @@ const branchIssuesForRelativeKey = (
   for (const err of branchErrors) {
     if (err.path.length === 1 && err.path[0] === key) {
       result.push(err);
+    } else if (
+      err.code === "unrecognized_keys" &&
+      err.path.length === 0 &&
+      err.keys.includes(key)
+    ) {
+      result.push(err);
     } else if (err.code === "invalid_union" && err.path.length === 0) {
       for (const nestedBranch of err.errors) {
         result.push(...branchIssuesForRelativeKey(nestedBranch, key));
@@ -396,14 +402,15 @@ const projectUnionIssue = (
     targetValue !== null &&
     !Array.isArray(targetValue)
   ) {
+    const narrowed = narrowUnionBranches(issue.errors, targetValue);
     const discriminatorDiagnostic = resolveUnionDiscriminatorDiagnostic(
-      issue.errors,
+      narrowed,
       path,
       targetValue,
       budget,
     );
     if (discriminatorDiagnostic !== undefined) return discriminatorDiagnostic;
-    activeErrors = narrowUnionBranches(issue.errors, targetValue);
+    activeErrors = narrowed;
   }
 
   return uniqueIssues(
@@ -516,6 +523,7 @@ const uniqueIssues = (
 ): AnalysisInputIssue[] => {
   const merged: AnalysisInputIssue[] = [];
   const invalidValueIndexByPath = new Map<string, number>();
+  const seenSerializedKeys = new Set<string>();
 
   for (const issue of issues) {
     const pathKey = JSON.stringify(issue.path);
@@ -537,7 +545,8 @@ const uniqueIssues = (
       invalidValueIndexByPath.set(pathKey, merged.length);
     }
     const fullKey = JSON.stringify(issue);
-    if (!merged.some((m) => JSON.stringify(m) === fullKey)) {
+    if (!seenSerializedKeys.has(fullKey)) {
+      seenSerializedKeys.add(fullKey);
       merged.push(issue);
     }
   }
