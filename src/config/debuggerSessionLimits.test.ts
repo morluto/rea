@@ -133,10 +133,10 @@ it.each([
     expect(detail.setting).toBe(setting);
     expect(detail.constraint).toContain(setting);
     expect(detail.constraint).toMatch(/positive decimal integer/i);
-    expect(detail.constraint).toContain(String(minimum));
-    expect(detail.constraint).toContain(String(maximum));
-    expect(detail.constraint).toContain(String(defaultValue));
-    expect(detail.constraint).toContain(unit);
+    expect(detail.constraint).toContain(
+      `from ${minimum} to ${maximum} ${unit}`,
+    );
+    expect(detail.constraint).toContain(`default is ${defaultValue} ${unit}`);
     const startup = parseEnvironment({ [setting]: value });
     if (startup.ok) throw new Error(`${setting} was accepted at startup`);
     expect(projectAnalysisError(startup.error)).toMatchObject({
