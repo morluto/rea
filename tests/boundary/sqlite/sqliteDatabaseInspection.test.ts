@@ -726,9 +726,83 @@ it("pages a rowid table in rowid order without repeating or dropping rows", asyn
   // counts and offsets would pass even if a page repeated the first rows.
   expect(
     [first, second, last].flatMap((page) =>
-      (page.rows?.values ?? []).map((row) => row.map((cell) => cell.value)),
+      (page.rows?.values ?? []).map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
     ),
   ).toEqual([["a"], ["b"], ["c"], ["d"], ["e"]]);
+});
+
+it.each(["UTF-16le", "UTF-16be"] as const)(
+  "orders a %s WITHOUT ROWID table by its decoded primary key",
+  async (encoding) => {
+    const path = await createDatabase(
+      `PRAGMA encoding='${encoding}'; CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID; INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`,
+    );
+    const result = inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "keyed",
+      row_limit: 20,
+    });
+    expect(result.rows).toMatchObject({ order: "primary_key" });
+    expect(
+      result.rows?.values.map((row) =>
+        row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+      ),
+    ).toEqual([
+      ["1", "a"],
+      ["2", "b"],
+    ]);
+  },
+);
+
+it("orders by a free rowid spelling when a virtual generated column shadows one", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE generated(name TEXT, rowid TEXT GENERATED ALWAYS AS (name || '!') VIRTUAL);
+    INSERT INTO generated(name) VALUES ('b'), ('a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "generated",
+    columns: ["name"],
+    row_limit: 20,
+  });
+  // Rowid order is insertion order, which the generated expression reverses.
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["b"], ["a"]]);
+});
+
+it("does not decode an unselected malformed primary-key name on a rowid table", async () => {
+  // `key` is the declared primary key, but a rowid table orders by an alias, so
+  // its name never reaches ORDER BY. A selection that omits it must stay
+  // readable even when the stored name is not valid UTF-8.
+  const path = await createApplicationDatabase(
+    `CREATE TABLE wide("key" INTEGER PRIMARY KEY, label TEXT);
+     INSERT INTO wide("key", label) VALUES (1, 'a'), (2, 'b');`,
+    (bytes) => {
+      const marker = Buffer.from('"key"');
+      const offset = bytes.indexOf(marker);
+      if (offset < 0 || bytes.indexOf(marker, offset + 1) !== -1)
+        throw new Error("Expected unique authored key marker");
+      bytes[offset + 1] = 0xff;
+    },
+  );
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "wide",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 20,
+  });
+  expect(result.rows).toMatchObject({ order: "rowid" });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"], ["b"]]);
 });
 
 it("orders a WITHOUT ROWID table by its primary key, including DESC direction and collation", async () => {

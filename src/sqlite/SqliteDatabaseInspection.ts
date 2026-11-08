@@ -305,18 +305,40 @@ type RowKeyFacts = {
 
 const ROWID_ALIASES = ["rowid", "_rowid_", "oid"] as const;
 
-const asciiLower = (bytes: Uint8Array): string | undefined => {
+const asciiLower = (
+  bytes: Uint8Array,
+  encoding: DatabaseEncoding,
+): string | undefined => {
+  if (encoding === "UTF-8") {
+    let text = "";
+    for (const byte of bytes) {
+      if (byte >= 0x80) return undefined;
+      text += String.fromCharCode(
+        byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte,
+      );
+    }
+    return text;
+  }
+  if (bytes.length % 2 !== 0) return undefined;
+  const lowFirst = encoding === "UTF-16le";
   let text = "";
-  for (const byte of bytes) {
-    if (byte >= 0x80) return undefined;
+  for (let index = 0; index < bytes.length; index += 2) {
+    const unit = lowFirst
+      ? bytes[index]! | (bytes[index + 1]! << 8)
+      : (bytes[index]! << 8) | bytes[index + 1]!;
+    if (unit >= 0x80) return undefined;
     text += String.fromCharCode(
-      byte >= 0x41 && byte <= 0x5a ? byte + 0x20 : byte,
+      unit >= 0x41 && unit <= 0x5a ? unit + 0x20 : unit,
     );
   }
   return text;
 };
 
-const readRowKeyFacts = (db: DatabaseSync, name: string): RowKeyFacts => {
+const readRowKeyFacts = (
+  db: DatabaseSync,
+  name: string,
+  encoding: DatabaseEncoding,
+): RowKeyFacts => {
   const row = z
     .object({ wr: z.union([z.bigint(), z.number()]) })
     .optional()
@@ -327,11 +349,12 @@ const readRowKeyFacts = (db: DatabaseSync, name: string): RowKeyFacts => {
         )
         .get(name) ?? undefined,
     );
+  const withoutRowid = row !== undefined && row.wr !== 0 && row.wr !== 0n;
   const shadowed = new Set<string>();
   const primaryKey: { name: string; position: number }[] = [];
   for (const raw of db
     .prepare(
-      "SELECT cid, CAST(name AS BLOB) AS name, pk FROM temp.pragma_table_xinfo(?, 'main') WHERE hidden IN (0, 3) ORDER BY cid",
+      "SELECT cid, CAST(name AS BLOB) AS name, pk FROM temp.pragma_table_xinfo(?, 'main') WHERE hidden IN (0, 2, 3) ORDER BY cid",
     )
     .iterate(name)) {
     const value = z
@@ -341,22 +364,24 @@ const readRowKeyFacts = (db: DatabaseSync, name: string): RowKeyFacts => {
         pk: z.union([z.bigint(), z.number()]),
       })
       .parse(raw);
-    const alias = asciiLower(value.name);
+    const alias = asciiLower(value.name, encoding);
     if (
       alias !== undefined &&
       (ROWID_ALIASES as readonly string[]).includes(alias)
     )
       shadowed.add(alias);
-    // Only key columns reach ORDER BY, so only they are decoded.
+    // A rowid table's ORDER BY names an alias, never a declared key, so only a
+    // WITHOUT ROWID table's key columns are worth decoding — and a malformed
+    // unselected key name must not abort an otherwise readable selection.
     const pk = Number(value.pk);
-    if (pk > 0)
+    if (withoutRowid && pk > 0)
       primaryKey.push({
-        name: decodeSchemaText(value.name, "UTF-8", "primary key column"),
+        name: decodeSchemaText(value.name, encoding, "primary key column"),
         position: pk,
       });
   }
   return {
-    withoutRowid: row !== undefined && row.wr !== 0 && row.wr !== 0n,
+    withoutRowid,
     primaryKey: primaryKey.sort(
       (left, right) => left.position - right.position,
     ),
@@ -511,7 +536,7 @@ const readSchema = (
         selectedColumns: input.columns,
       }),
       without_rowid: selectedRowSource.wr !== 0n,
-      orderKey: readRowKeyFacts(db, selectedRowSourceName),
+      orderKey: readRowKeyFacts(db, selectedRowSourceName, encoding),
     };
   // NOCASE folds only ASCII letters, as SQLite does when it resolves the
   // table named by an index or trigger. Fold only for an ordinary table whose
@@ -605,7 +630,7 @@ const readSchema = (
             kind: table.kind,
             columns,
             without_rowid: table.without_rowid,
-            orderKey: readRowKeyFacts(db, value.name),
+            orderKey: readRowKeyFacts(db, value.name, encoding),
           };
         if (scope !== "inventory") table.columns = columns;
       }
@@ -615,7 +640,7 @@ const readSchema = (
           kind: table.kind,
           columns: table.columns,
           without_rowid: table.without_rowid,
-          orderKey: readRowKeyFacts(db, value.name),
+          orderKey: readRowKeyFacts(db, value.name, encoding),
         };
       schema.tables.push(table);
     } else if (value.type === "index") {
