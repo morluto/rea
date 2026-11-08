@@ -330,10 +330,7 @@ const requireCallSpecifier = (
         : semanticCandidateRequireSpecifier(node, bindings);
     return {
       specifier: candidate,
-      operation:
-        candidate !== undefined && isRequireResolveCall(node)
-          ? "resolve"
-          : call.operation,
+      operation: call.operation,
       ...(candidate === undefined
         ? {}
         : { loaderAuthority: "candidate" as const }),
@@ -386,14 +383,14 @@ export const finishModuleRequireCalls = (
   );
 };
 
-const isRequireResolveCall = (
-  node: JavaScriptCallLike,
-): node is t.CallExpression | t.OptionalCallExpression =>
-  (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
-  (t.isMemberExpression(node.callee) ||
-    t.isOptionalMemberExpression(node.callee)) &&
-  semanticStaticPropertyKey(node.callee.property, node.callee.computed) ===
-    "resolve";
+const isRequireResolveCall = (node: JavaScriptCallLike): boolean => {
+  if (t.isNewExpression(node)) return false;
+  const callee = unwrapJavaScriptExpression(node.callee).node;
+  return (
+    (t.isMemberExpression(callee) || t.isOptionalMemberExpression(callee)) &&
+    semanticStaticPropertyKey(callee.property, callee.computed) === "resolve"
+  );
+};
 
 const chunkLoadSpecifier = (
   node: JavaScriptCallLike,

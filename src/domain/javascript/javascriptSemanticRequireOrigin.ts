@@ -825,7 +825,7 @@ export const semanticRequireCallAt = (
     );
     if (loader === "unknown")
       return {
-        operation: "load",
+        operation: "resolve",
         loader,
         arguments: undefined,
         sourceRelative: false,

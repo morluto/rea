@@ -65,25 +65,26 @@ const expectUnknownLoaderCandidates = (
   expect(staticCandidate?.evidence.limitations.join(" ")).toContain(
     "loader is unknown",
   );
-  expect(graph.edges).toContainEqual(
-    expect.objectContaining({
-      relation: "imports",
-      properties: expect.objectContaining({
-        kind: "require",
-        operation: "resolve",
-        specifier: "./dep.cjs",
-        loader_authority: "candidate",
-        resolved_path: null,
-        resolution_mode: null,
-      }),
-      evidence: expect.objectContaining({
-        confidence: "low",
-        location: expect.objectContaining({
-          value: expect.objectContaining({ source: "upper-resolve.MJS" }),
+  for (const source of ["upper-resolve.MJS", "wrapped-resolve.TS"])
+    expect(graph.edges).toContainEqual(
+      expect.objectContaining({
+        relation: "imports",
+        properties: expect.objectContaining({
+          kind: "require",
+          operation: "resolve",
+          specifier: "./dep.cjs",
+          loader_authority: "candidate",
+          resolved_path: null,
+          resolution_mode: null,
+        }),
+        evidence: expect.objectContaining({
+          confidence: "low",
+          location: expect.objectContaining({
+            value: expect.objectContaining({ source }),
+          }),
         }),
       }),
-    }),
-  );
+    );
   for (const source of ["upper-shadow.MJS", "upper-mutated.MJS"]) {
     expect(
       graph.edges.some(
@@ -226,6 +227,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "dep.cjs": "module.exports = 42;",
       "upper-export.MJS": "module.exports = { value: 42 };",
       "upper-resolve.MJS": 'require.resolve("./dep.cjs");',
+      "wrapped-resolve.TS": '(require.resolve as any)("./dep.cjs");',
       "upper-shadow.MJS":
         'const require = { resolve() {} }; require.resolve("./dep.cjs");',
       "upper-mutated.MJS":

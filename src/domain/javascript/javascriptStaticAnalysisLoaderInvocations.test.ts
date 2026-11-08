@@ -3,11 +3,30 @@ import * as path from "node:path";
 import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
-import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import {
+  analyzeJavaScriptStaticSource,
+  analyzeParsedJavaScriptStaticSource,
+} from "./javascriptStaticAnalysis.js";
 import { analyzeCommonJsStaticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
 import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 import { referenceSourceRequireCalls } from "../referenceSourceRequireBindings.js";
 import { parseReferenceSourceImports } from "../referenceSourceImportParsing.js";
+
+it("retains unknown-host resolver operation through a TypeScript wrapper", () => {
+  const source = '(require.resolve as any)("./dep.cjs");';
+  const parsed = parseJavaScriptSource(source, "entry.TS");
+  if (parsed === null) throw new Error("Expected TypeScript fixture");
+  expect(
+    analyzeParsedJavaScriptStaticSource(source, parsed).references,
+  ).toContainEqual(
+    expect.objectContaining({
+      kind: "require",
+      specifier: "./dep.cjs",
+      operation: "resolve",
+      loader_authority: "candidate",
+    }),
+  );
+});
 
 it.each([
   ["require", "load"],
