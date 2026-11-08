@@ -362,7 +362,8 @@ const completedInventory = (
       path_entries_examined: context.examined,
       reference_resolution: "not-attempted",
       schema_validation: "not-performed",
-      duplicate_json_members: context.format === "openapi-yaml" ? "rejected" : "last-value-wins",
+      duplicate_json_members:
+        context.format === "openapi-yaml" ? "rejected" : "last-value-wins",
     },
     limitations: [
       "Operations are document declarations, not evidence of runtime implementation, reachability or authorization.",

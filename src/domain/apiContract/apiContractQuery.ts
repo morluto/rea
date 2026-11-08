@@ -77,9 +77,7 @@ export const inspectApiContractInputSchema = z
       ...commonInput,
       // Both OpenAPI syntaxes share one declaration contract; only the decoder
       // differs, so they form one input group.
-      format: z
-        .enum(["openapi-json", "openapi-yaml"])
-        .default("openapi-json"),
+      format: z.enum(["openapi-json", "openapi-yaml"]).default("openapi-json"),
       view: apiContractViewRequestSchema
         .optional()
         .describe(selectionDescription),
