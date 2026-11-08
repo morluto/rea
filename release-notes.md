@@ -7,6 +7,7 @@
 
 ### ⚠ BREAKING CHANGES
 
+* **desktop:** require contemporaneous SQLite member evidence ([#9470](https://github.com/morluto/rea/issues/9470))
 * **inspector:** retain context lifetimes across protocol ID reuse ([#9471](https://github.com/morluto/rea/issues/9471))
 * Strict clients that cached the previous full inspect_address_context output schema must refresh tools/list and accept the typed error field on unavailable facets.
 * **ghidra:** qualify memory effect coverage ([#8651](https://github.com/morluto/rea/issues/8651))
@@ -431,6 +432,7 @@
 * **desktop:** read SQLite state despite metadata name collisions ([93ce13e](https://github.com/morluto/rea/commit/93ce13e76f0054dbe7a03e17ae188b37415232e3))
 * **desktop:** read the PPA key add-apt-repository writes into Signed-By ([#8982](https://github.com/morluto/rea/issues/8982)) ([f8356f3](https://github.com/morluto/rea/commit/f8356f3d713d707b4a6d9eb5ab3941787f546ccc))
 * **desktop:** recognise JSON scalar files with mixed-case suffixes ([#9152](https://github.com/morluto/rea/issues/9152)) ([2cf9c42](https://github.com/morluto/rea/commit/2cf9c42df61d05e1cc7c6db3e7f06fa9883b9f08))
+* **desktop:** require contemporaneous SQLite member evidence ([#9470](https://github.com/morluto/rea/issues/9470)) ([5a25d42](https://github.com/morluto/rea/commit/5a25d42f23ba1bc6515355c9dd7b9c3afdf5fb8b))
 * **desktop:** retain UTF-16 seed content after the signature ([#9098](https://github.com/morluto/rea/issues/9098)) ([8766bce](https://github.com/morluto/rea/commit/8766bcef5987b04d3a19c2a739b990b47391893a))
 * **devicetree:** reject duplicate node paths in Evidence ([#8970](https://github.com/morluto/rea/issues/8970)) ([6fceda8](https://github.com/morluto/rea/commit/6fceda83d5cb1a0dac1993c9e6b1e93652668b72))
 * **discovery:** advertise attached IDA navigation effects ([#7017](https://github.com/morluto/rea/issues/7017)) ([dd31958](https://github.com/morluto/rea/commit/dd319587430e01d71362cbca8f53bbc13b08a798))
@@ -460,6 +462,7 @@
 * **electron:** select nested handlers by source coordinates ([319fee4](https://github.com/morluto/rea/commit/319fee4691e444d5ac9870f114f93f79ef89707b))
 * **electron:** share ASAR node validation ([2146cae](https://github.com/morluto/rea/commit/2146caeb3d8da645d608b5adae8947215a511766))
 * **electron:** share wrapped member identity parsing ([c11fb48](https://github.com/morluto/rea/commit/c11fb48c98a2d5db58cc9f3ab68c5beca2968835))
+* **elf:** report incomplete kernel module coverage ([#9475](https://github.com/morluto/rea/issues/9475)) ([5553acf](https://github.com/morluto/rea/commit/5553acfe500b4ae32fee9fa9e147d0996a45917a))
 * **elf:** share section-table presence validation with notes ([#7706](https://github.com/morluto/rea/issues/7706)) ([c01ed78](https://github.com/morluto/rea/commit/c01ed783ac970a47546d664b6792f69cacc2fca9))
 * **elf:** validate completed note coverage ([3655dfd](https://github.com/morluto/rea/commit/3655dfd7d5db25f52a0a68c2651527d80935be2d))
 * **enhanced:** bound batch decompile input size ([#5937](https://github.com/morluto/rea/issues/5937)) ([585fe56](https://github.com/morluto/rea/commit/585fe56712105bf4d791def65fda054b4b28d5f6))
@@ -901,7 +904,9 @@
 * **providers:** preserve selected filesystem identities ([9be640a](https://github.com/morluto/rea/commit/9be640a8b42cf81ace04d2b97eae3ec28cfc897a))
 * **providers:** reject invalid parsed MCP JSON ([cce244f](https://github.com/morluto/rea/commit/cce244f03761227bc1497264c5df43582818bcc3))
 * **providers:** reject malformed UTF-8 before MCP decoding ([f8c5a6c](https://github.com/morluto/rea/commit/f8c5a6cc10547e87bb7ad097d3a534a669a77d57))
+* **providers:** retain cleanup ownership across probes and queued work ([#9468](https://github.com/morluto/rea/issues/9468)) ([3602b64](https://github.com/morluto/rea/commit/3602b64c4544c27362d262ba42f8d9f9bad02c41))
 * **providers:** retain completed cleanup observations ([55b4efc](https://github.com/morluto/rea/commit/55b4efcb88bb3278e141af774a4be5622eecb783))
+* **providers:** retry live waiters after abandoned startup drains ([#9467](https://github.com/morluto/rea/issues/9467)) ([44d232f](https://github.com/morluto/rea/commit/44d232fccb2532d2a68fffc10c9dd426d9df3aa7))
 * **pwntools:** separate reply admission from debugger enrichment ([e813c4c](https://github.com/morluto/rea/commit/e813c4c344d2414d1b8dfe42a421792d91b01dcc))
 * **pyinstaller:** leave PE carrier binary members unmarked ([#6730](https://github.com/morluto/rea/issues/6730)) ([9317c7d](https://github.com/morluto/rea/commit/9317c7d42265a5ddce5561fe76a729004ce9c670))
 * **python:** preserve code objects after STORE_SLICE ([#7815](https://github.com/morluto/rea/issues/7815)) ([a6295e4](https://github.com/morluto/rea/commit/a6295e433b7e141740ee1aeccd1c077952e77808))
