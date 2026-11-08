@@ -16,6 +16,7 @@ import { readSafetensorsHeader } from "../../../src/model/SafetensorsHeader.js";
 import { GgufHeader } from "../../../src/model/GgufHeader.js";
 import { createModelArtifactService } from "../../../src/composition/model.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { modelArtifactSchema } from "../../../src/domain/model/modelArtifact.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
@@ -1246,6 +1247,11 @@ it("bounds expansion before allocation and distinguishes unsupported pickle and 
   await symlink(path, alias);
   const linked = await provider.inspect({ path: alias, hash: "header" });
   expect(linked.ok).toBe(false);
+  if (!linked.ok && process.platform !== "win32") {
+    const projected = projectAnalysisError(linked.error);
+    expect(projected.message).toContain("symbolic link");
+    expect(projected.remediation.action).toContain(path);
+  }
   const service = createModelArtifactService();
   onTestFinished(() => service.close());
   const invalid = await service.inspect({

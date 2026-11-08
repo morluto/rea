@@ -511,6 +511,8 @@ const outcomeUserMessage = (error: AnalysisError): string => {
     error.constraint === "wasm_requires_static_inspection"
   )
     return `${error.message}. Static WebAssembly inspection uses a separate optional WABT lane, not a native analysis engine.`;
+  if (error instanceof BinaryTargetError && error.remediationAction !== undefined)
+    return error.remediationAction;
   if (error instanceof BinaryTargetError)
     return error.constraint === "directory_requires_file"
       ? `open_binary accepts files and Apple bundle directories (${OPENABLE_APPLE_BUNDLE_TYPES_TEXT}). This target is another directory; JavaScript/Electron application directories can be analyzed directly with analyze_javascript_application or \`rea analyze <directory>\`.`

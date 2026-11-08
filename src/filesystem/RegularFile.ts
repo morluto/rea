@@ -1,7 +1,13 @@
 import { constants } from "node:fs";
 import { constants as osConstants } from "node:os";
 import type { BigIntStats, Stats } from "node:fs";
-import { lstat, open, stat, type FileHandle } from "node:fs/promises";
+import {
+  lstat,
+  open,
+  realpath,
+  stat,
+  type FileHandle,
+} from "node:fs/promises";
 
 import { settleChangeTimeBaseline } from "./ChangeTimeBaseline.js";
 import { OwnedFileHandle } from "./OwnedFileHandle.js";
@@ -92,6 +98,23 @@ export const isSelectedRegularFileError = (
   return (
     typeof code === "string" && SELECTED_REGULAR_FILE_ERROR_CODES.has(code)
   );
+};
+
+/** Describe a selected symlink rejected by O_NOFOLLOW without following it for admission. */
+export const rejectedSymlinkPath = async (
+  path: string,
+): Promise<{ readonly resolvedPath?: string } | undefined> => {
+  try {
+    const named = await lstat(path);
+    if (!named.isSymbolicLink()) return undefined;
+    try {
+      return { resolvedPath: await realpath(path) };
+    } catch {
+      return {};
+    }
+  } catch {
+    return undefined;
+  }
 };
 
 /** One admitted file descriptor and the metadata that identified its contents. */

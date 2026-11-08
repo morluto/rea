@@ -1,5 +1,5 @@
 import { expect, it, onTestFinished } from "vitest";
-import { writeFile } from "node:fs/promises";
+import { symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { deflateSync } from "node:zlib";
 import { createHash } from "node:crypto";
@@ -7,6 +7,7 @@ import { parseEvidence } from "../../../src/domain/evidence.js";
 import { gpuCodeObjectsPartialSchema } from "../../../src/domain/gpu/gpuCodeObjects.js";
 import { GpuCodeObjectsProvider } from "../../../src/gpu/GpuCodeObjectsProvider.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   cudaFixture,
   cubinFixture,
@@ -35,6 +36,29 @@ const inspect = async (
   onTestFinished(() => provider.close());
   return provider.inspect({ path, analysis: "kernels", ...options });
 };
+
+it.skipIf(process.platform === "win32")(
+  "reports the resolved target when a selected model is a symlink",
+  async () => {
+    const root = await createTestTempDirectory("rea-gpu-symlink-");
+    const target = join(root, "target.bin");
+    const selected = join(root, "selected.bin");
+    await writeFile(target, cudaFixture());
+    await symlink(target, selected);
+    const provider = new GpuCodeObjectsProvider();
+    onTestFinished(() => provider.close());
+    const result = await provider.inspect({
+      path: selected,
+      analysis: "kernels",
+    });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      const projected = projectAnalysisError(result.error);
+      expect(projected.message).toContain("symbolic link");
+      expect(projected.remediation.action).toContain(target);
+    }
+  },
+);
 it.each(["none", "zstd"] as const)(
   "reads selected CUDA metadata and PTX with %s compression",
   async (compression) => {

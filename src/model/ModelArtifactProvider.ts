@@ -49,6 +49,7 @@ import { jsonValueByteLength } from "../domain/jsonValueByteLength.js";
 import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import {
   isSelectedRegularFileError,
+  rejectedSymlinkPath,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
 
@@ -177,8 +178,28 @@ export class ModelArtifactProvider implements ModelArtifactPort {
           {},
           { cause: primary },
         );
-      else if (isSelectedRegularFileError(primary))
-        error = new BinaryTargetError(input.path, primary.message, { cause });
+      else if (isSelectedRegularFileError(primary)) {
+        const symlink =
+          primary.code === "ELOOP"
+            ? await rejectedSymlinkPath(input.path)
+            : undefined;
+        error = new BinaryTargetError(
+          input.path,
+          symlink === undefined
+            ? primary.message
+            : symlink.resolvedPath === undefined
+              ? `Selected path is a symbolic link whose target cannot be resolved: ${input.path}`
+              : `Selected path is a symbolic link and is not admitted: ${input.path}`,
+          {
+            cause,
+            ...(symlink?.resolvedPath === undefined
+              ? {}
+              : {
+                  remediationAction: `Retry with the resolved regular file path ${symlink.resolvedPath}. The selected symlink is not admitted; the retry will validate the target again.`,
+                }),
+          },
+        );
+      }
       else
         error = new ProviderAdapterError(this.identity.id, OPERATION, {
           cause,
