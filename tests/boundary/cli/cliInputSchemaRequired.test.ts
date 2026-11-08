@@ -121,6 +121,45 @@ const registerParserAdvertisementInventoryTests = (): void => {
     }
     expect(mismatches).toEqual([]);
   });
+
+  it("advertise the argv token grammar of every numeric field", async () => {
+    const cli = createCli({});
+    const ajv = new Ajv2020({ strict: false });
+    const mismatches: string[] = [];
+    let checked = 0;
+    for (const command of createCliInventory(cli).primary) {
+      const advertised = await advertisedSchema(cli, command);
+      for (const group of INPUT_GROUPS) {
+        const parser = parserSchema(cli, command, group);
+        for (const [key, field] of Object.entries(parser?.shape ?? {})) {
+          // A repeated option parses each argv token as one array item.
+          const list = (field as z.ZodType).safeParse(["1"]);
+          const repeated = list.success && Array.isArray(list.data);
+          const token = (value: string): unknown =>
+            repeated ? [value] : value;
+          const parsed = (field as z.ZodType).safeParse(token("1"));
+          const item: unknown =
+            parsed.success && Array.isArray(parsed.data)
+              ? parsed.data[0]
+              : parsed.data;
+          if (!parsed.success || typeof item !== "number") continue;
+          checked += 1;
+          const schema = advertised[group]?.properties[key];
+          if (schema === undefined) continue;
+          const validate = ajv.compile(schema as object);
+          if (!validate(token("1")))
+            mismatches.push(`${command} ${group}.${key}: rejects token "1"`);
+          for (const value of ["0x1", "1e0"])
+            if (validate(token(value)))
+              mismatches.push(
+                `${command} ${group}.${key}: admits token ${JSON.stringify(value)}`,
+              );
+        }
+      }
+    }
+    expect(checked).toBeGreaterThan(100);
+    expect(mismatches).toEqual([]);
+  });
 };
 
 describe("CLI advertised input schemas", () => {
