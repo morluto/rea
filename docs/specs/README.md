@@ -6,6 +6,11 @@ directory owns one `spec.md`, one `plan.md` and one `tasks.md`.
 Follow [documentation ownership and authoring](../development/documentation.md#feature-lifecycle)
 for the specification lifecycle, roadmap granularity and producer-owned contracts.
 
+## Artifacts
+
+- [Release exposure audit](artifacts/release-exposure/spec.md)
+  ([plan](artifacts/release-exposure/plan.md), [tasks](artifacts/release-exposure/tasks.md))
+
 ## Documentation
 
 - [Organization](documentation/organization/spec.md)
