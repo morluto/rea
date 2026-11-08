@@ -18,8 +18,10 @@ cliTest(
     });
     expect(empty.exitCode).not.toBe(0);
     expect(empty.json).toMatchObject({
-      code: "invalid_request",
-      category: "invalid_input",
+      code: "VALIDATION_ERROR",
+      fieldErrors: expect.arrayContaining([
+        expect.objectContaining({ path: "path", code: "too_small" }),
+      ]),
     });
     const explicit = await cli.run({
       arguments: ["inspect-desktop-application", ".", "--json"],
@@ -191,3 +193,51 @@ cliTest.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     }
   },
 );
+
+// Numeric coercion admits each spelling within the field's bounds:
+// "0x1" as 1 entry, "1e1" as 10 entries and "0x1000" as 4096 bytes.
+cliTest.for([
+  ["max_entries", "0x1"],
+  ["max_entries", "1e1"],
+  ["max_probe_bytes", "0x1000"],
+] as const)(
+  "rejects %s %s as a non-decimal desktop limit",
+  async ([field, value], { cli }) => {
+    const root = await createTestTempDirectory("rea-desktop-limit-");
+    const result = await cli.run({
+      arguments: [
+        "inspect-desktop-application",
+        root,
+        `--${field}=${value}`,
+        "--json",
+      ],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "VALIDATION_ERROR",
+      fieldErrors: [expect.objectContaining({ path: field })],
+    });
+  },
+);
+
+cliTest("keeps a decimal desktop entry limit", async ({ cli }) => {
+  const root = await createTestTempDirectory("rea-desktop-limit-");
+  await writeFile(join(root, "a.txt"), "a");
+  await writeFile(join(root, "b.txt"), "b");
+  const result = await cli.run({
+    arguments: [
+      "inspect-desktop-application",
+      root,
+      "--max_entries=01",
+      "--json",
+    ],
+  });
+  expect(result.exitCode, result.stderr).toBe(0);
+  expect(parseEvidence(result.json).normalized_result).toMatchObject({
+    coverage: {
+      status: "partial",
+      entries_examined: 1,
+      limits: { max_entries: 1 },
+    },
+  });
+});

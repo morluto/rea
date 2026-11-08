@@ -16,12 +16,12 @@ it("keeps a cleanup-shaped caller cancellation opaque before JSON admission", as
   const path = join(root, "input.json");
   await writeFile(path, "{}");
   const owner = new OwnedFileHandle(await open(path, "r"));
-  const reason = new RegularFileCleanupFailure(
+  const reason = new RegularFileCleanupFailure({
     path,
     owner,
-    { kind: "completed", value: null },
-    new Error("foreign owner"),
-  );
+    outcome: { kind: "completed", value: null },
+    cleanupCause: new Error("foreign owner"),
+  });
   const controller = new AbortController();
   controller.abort(reason);
   const close = vi.spyOn(owner, "close");
@@ -56,7 +56,6 @@ it("retains and retries a JSON file owner after a persistent close failure", asy
     });
   try {
     const result = await readJsonFile(path, undefined, resources);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a typed JSON cleanup failure");
     expect(result.error).toBeInstanceOf(EvidenceFileError);
     expect(result.error.cleanupIncomplete).toBe(true);

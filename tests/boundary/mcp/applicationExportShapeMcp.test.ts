@@ -1,6 +1,6 @@
 import { describe, expect, it, onTestFinished } from "vitest";
 import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { z } from "zod";
 
@@ -166,22 +166,22 @@ describe("application workflow MCP parity", () => {
       right_export_name: "default",
     };
     try {
-      const relativePath = relative(process.cwd(), leftRoot);
-      const relativeApplication = await client.callTool({
+      const selectedPath = `${leftRoot}${sep}.`;
+      const selectedApplication = await client.callTool({
         name: "analyze_javascript_application",
-        arguments: { input_path: relativePath },
+        arguments: { input_path: selectedPath },
       });
-      expect(relativeApplication.isError).not.toBe(true);
-      const relativeEvidence = parseEvidence(
-        relativeApplication.structuredContent,
+      expect(selectedApplication.isError).not.toBe(true);
+      const selectedEvidence = parseEvidence(
+        selectedApplication.structuredContent,
       );
-      expect(relativeEvidence.parameters.input_path).toBe(relativePath);
+      expect(selectedEvidence.parameters.input_path).toBe(selectedPath);
       expect(left.value.parameters.input_path).toBe(leftRoot);
-      expect(relativeEvidence.normalized_result).toEqual(
+      expect(selectedEvidence.normalized_result).toEqual(
         left.value.normalized_result,
       );
-      expect(relativeEvidence.subject).toEqual(left.value.subject);
-      expect(relativeEvidence.evidence_id).not.toBe(left.value.evidence_id);
+      expect(selectedEvidence.subject).toEqual(left.value.subject);
+      expect(selectedEvidence.evidence_id).not.toBe(left.value.evidence_id);
       const full = await client.callTool({
         name: "compare_javascript_export_shapes",
         arguments: { left: left.value, right: right.value, ...selectors },

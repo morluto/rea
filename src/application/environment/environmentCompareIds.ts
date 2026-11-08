@@ -1,4 +1,5 @@
 import type { JsonObject } from "../../domain/analysisView/environmentStateRules.js";
+import type { BodyAddress } from "../../domain/analysisView/environmentStateWriteRules.js";
 import { isUuid } from "../../domain/analysisView/environmentStateWriteValues.js";
 import type { JsonValue } from "../../domain/jsonValue.js";
 import type { ProbeToolCall } from "./environmentCompareMatch.js";
@@ -404,6 +405,19 @@ export const learnIds = (
     { at: "", own: false },
   );
 
+/** A live identifier as the environment's value, in its own type; unchanged when unmapped. */
+const inEnvTerms = (
+  value: string | number,
+  env: string | number | undefined,
+): JsonValue => {
+  if (env === undefined) return value;
+  return typeof value === "string"
+    ? String(env)
+    : typeof env === "number"
+      ? env
+      : value;
+};
+
 /** A value with every string or number equal to a mapped live identifier replaced by the environment's value, in its own type. */
 export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
   if (Array.isArray(value))
@@ -415,27 +429,64 @@ export const translateValue = (value: JsonValue, map: IdMap): JsonValue => {
         translateValue(item, map),
       ]),
     );
-  if (!isScalarId(value)) return value;
-  const env = map.env(value);
-  if (env === undefined) return value;
-  return typeof value === "string"
-    ? String(env)
-    : typeof env === "number"
-      ? env
-      : value;
+  return isScalarId(value) ? inEnvTerms(value, map.env(value)) : value;
 };
 
-/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, and every other value translated. */
+/** A bulk write's body argument, how it names its entities, and the collection whose own mapping translates those ids. */
+export interface BulkIds {
+  readonly body: string;
+  readonly address: BodyAddress;
+  readonly idField: string;
+  readonly scope: string;
+}
+
+/** A bulk write's body with each id it names translated by its collection's own mapping, and every other value as `translateValue` does. */
+const translateBulkBody = (
+  body: JsonValue,
+  map: IdMap,
+  bulk: BulkIds,
+): JsonValue => {
+  const { address, idField, scope } = bulk;
+  const id = (value: JsonValue): JsonValue =>
+    isScalarId(value) ? inEnvTerms(value, map.env(value, scope)) : value;
+  const entries = (value: JsonValue): JsonValue =>
+    Array.isArray(value)
+      ? value.map((entry) =>
+          address.by === "ids"
+            ? id(entry)
+            : isObject(entry) && Object.hasOwn(entry, idField)
+              ? {
+                  ...(translateValue(entry, map) as JsonObject),
+                  [idField]: id(entry[idField]!),
+                }
+              : translateValue(entry, map),
+        )
+      : translateValue(value, map);
+  if (address.member === null) return entries(body);
+  return isObject(body)
+    ? Object.fromEntries(
+        Object.entries(body).map(([key, value]) => [
+          key,
+          key === address.member ? entries(value) : translateValue(value, map),
+        ]),
+      )
+    : translateValue(body, map);
+};
+
+/** The arguments the environment is called with: path values as matched, already in its terms, paging values as sent, a bulk body's ids by their collection's mapping, and every other value translated. */
 export const environmentArguments = (
   call: ProbeToolCall,
   map: IdMap,
+  bulk?: BulkIds,
 ): Record<string, JsonValue> =>
   Object.fromEntries(
     Object.entries(call.args).map(([name, value]) => [
       name,
       call.pathArguments.includes(name) || call.pagingArguments.includes(name)
         ? value
-        : translateValue(value, map),
+        : bulk !== undefined && name === bulk.body
+          ? translateBulkBody(value, map, bulk)
+          : translateValue(value, map),
     ]),
   );
 

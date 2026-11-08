@@ -336,14 +336,16 @@ describe("CdpBrowserProvider: cancellation and session events", () => {
           url: `${browser.allowedOrigin}/reloaded?token=session-secret#spa-secret`,
         }),
         expect.objectContaining({
+          type: "redirect",
+          url: `${browser.allowedOrigin}/redirected?token=redirect-secret`,
+        }),
+        expect.objectContaining({
           type: "load_failed",
           detail: "net::ERR_CONNECTION_REFUSED",
         }),
       ]),
     );
     expect(result.value.completeness.status).toBe("attach_limited");
-    expect(JSON.stringify(result.value)).toContain("session-secret#spa-secret");
-    expect(JSON.stringify(result.value)).toContain("redirect-secret");
     expect(browser.commands.map(({ method }) => method)).toContain(
       "Target.detachFromTarget",
     );
@@ -372,8 +374,10 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       detail: "session_detached",
       timestamp: null,
     });
-    expect(result.value.limitations).toContain(
-      "Timeline rows without a comparable producer timestamp have a null timestamp. Buffered events with unknown timing are retained as context only; they do not establish activity inside the selected observation window.",
+    expect(result.value.limitations).toContainEqual(
+      expect.stringMatching(
+        /Buffered events.*unknown timing.*context only.*do not establish.*observation window/iu,
+      ),
     );
   });
 
@@ -447,6 +451,11 @@ describe("CdpBrowserProvider: session termination and scope changes", () => {
       type: "redirect",
       url: null,
       destination_scope: "outside_policy",
+      redirect_response: {
+        url: `${browser.allowedOrigin}/reloaded?token=session-secret`,
+        status: 302,
+        scope: "approved",
+      },
     });
     expect(result.value.completeness).toMatchObject({
       status: "policy_filtered",

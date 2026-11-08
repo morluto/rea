@@ -1,13 +1,17 @@
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
 import { GHIDRA_BRIDGE_SOURCES } from "../src/ghidra/GhidraBridgeSources.ts";
 
-const exec = promisify(execFile);
 const packedHopperBridge = "package/bridge/hopper_bridge.py";
 const packedCutterBridge = "package/bridge/cutter/rea_bridge.py";
 
 /** Check shipped bridge files; real-provider lanes verify runtime behavior. */
-export async function verifyPackedBridge({ tarball, packedFiles }) {
+export async function verifyPackedBridge({ tarball, packedFiles, commands }) {
+  if (
+    packedFiles.some(
+      (path) => path.includes("__pycache__") || path.endsWith(".pyc"),
+    )
+  ) {
+    throw new Error("package contained generated Python bytecode");
+  }
   for (const path of [
     packedHopperBridge,
     packedCutterBridge,
@@ -20,7 +24,7 @@ export async function verifyPackedBridge({ tarball, packedFiles }) {
   // Read the packed source without extracting into the caller's leased root.
   // Only the interpreter's standard library is needed; caller-local modules
   // and site startup hooks must not replace the parser or execute here.
-  await exec("python3", [
+  await commands.exec("python3", [
     "-I",
     "-S",
     "-c",

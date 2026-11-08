@@ -18,6 +18,8 @@ const endpoint = (options: {
   readonly method?: string;
   readonly candidate?: boolean;
   readonly value?: string;
+  readonly resolution?: null | "unresolved";
+  readonly state?: "unknown" | "unavailable";
 }): ApplicationNode => {
   const path = options.path ?? "main.js";
   const line = options.line ?? 1;
@@ -35,11 +37,28 @@ const endpoint = (options: {
       endpoint_kind: options.kind ?? "fetch",
       value: options.value ?? "API_BASE",
       ...(options.partial ? { resolution: "partial" } : {}),
+      ...(options.resolution === undefined
+        ? {}
+        : { resolution: options.resolution }),
       ...(options.candidate ? { interpretation: "candidate" } : {}),
       ...(options.method === undefined ? {} : { method: options.method }),
     },
     {
       ...artifactEvidence(options.sha, path, "ast-static-analysis"),
+      ...(options.state === undefined
+        ? {}
+        : {
+            state: options.state,
+            authority: "unknown",
+            confidence: "unknown",
+            coverage: {
+              status: "unknown",
+              truncated: false,
+              omitted_count: null,
+              limits: [],
+            },
+            limitations: ["Endpoint target was not established."],
+          }),
       location: {
         available: true,
         value: {
@@ -162,14 +181,10 @@ it("keeps unrelated unresolved endpoint kinds from hiding exact target absence",
 it.each([null, "unresolved"] as const)(
   "preserves explicit unknown endpoint resolution %s",
   (resolution) => {
-    const right = endpoint({ sha: "b".repeat(64) });
-    const result = compare(endpoint({ sha: "a".repeat(64) }), {
-      ...right,
-      observations: right.observations.map((observation) => ({
-        ...observation,
-        properties: { ...observation.properties, resolution },
-      })),
-    });
+    const result = compare(
+      endpoint({ sha: "a".repeat(64) }),
+      endpoint({ sha: "b".repeat(64), resolution }),
+    );
     expect(result.items).toHaveLength(2);
     expect(
       result.items.every(
@@ -183,29 +198,9 @@ it.each([null, "unresolved"] as const)(
 it.each(["unknown", "unavailable"] as const)(
   "keeps %s endpoint Evidence from proving another target absent",
   (state) => {
-    const right = endpoint({ sha: "b".repeat(64), value: "unestablished" });
-    const uncertain: ApplicationNode = {
-      ...right,
-      observations: right.observations.map((observation) => ({
-        ...observation,
-        evidence: {
-          ...observation.evidence,
-          state,
-          authority: "unknown",
-          confidence: "unknown",
-          coverage: {
-            status: "unknown",
-            truncated: false,
-            omitted_count: null,
-            limits: [],
-          },
-          limitations: ["Endpoint target was not established."],
-        },
-      })),
-    };
     const result = compare(
       endpoint({ sha: "a".repeat(64), value: "known" }),
-      uncertain,
+      endpoint({ sha: "b".repeat(64), value: "unestablished", state }),
     );
     expect(result.items).toHaveLength(2);
     expect(

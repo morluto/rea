@@ -10,10 +10,16 @@ import {
   type ZeroFillMapping,
 } from "../native/metadata/BinaryContainer.js";
 import { readBinaryContainer } from "../native/metadata/readBinaryContainer.js";
+import type {
+  GoModuleMetadata,
+  GoStringLiterals,
+} from "../domain/go/goBinary.js";
+import { parseGoModuleBytes } from "./GoModuleText.js";
 import {
   goBuildInfoSearch,
   type GoBuildInfoSearchRange,
 } from "./GoBuildInfoSearch.js";
+import { recoverGoStringLiterals } from "./GoStringLiterals.js";
 
 const MAGIC = Buffer.from("ff20476f206275696c64696e663a", "hex");
 const MODULE_START = Buffer.from("3077af0c9274080241e1c107e6d618e6", "hex");
@@ -37,6 +43,7 @@ export interface GoBuildInfo {
   readonly module_bytes_base64: string;
   readonly version_location: GoStringLocation;
   readonly module_location: GoStringLocation;
+  readonly module: GoModuleMetadata;
 }
 
 /** Native image identity and optional Go build information; absence is not a language verdict. */
@@ -46,14 +53,43 @@ export interface GoBinaryImage {
   readonly bits: 32 | 64;
   readonly byte_order: "little" | "big";
   readonly build_info: GoBuildInfo | null;
+  readonly string_literals?: GoStringLiterals;
+  readonly macho_chained_fixups?: boolean;
   /** Native section-name coverage, retained for discovery limitations. */
   readonly section_names_limitation?: string;
 }
 
+export interface ReadGoBinaryImageOptions {
+  readonly includeStringLiterals?: boolean;
+  readonly maxStringLiterals?: number | undefined;
+  readonly checkActive?: (() => void) | undefined;
+}
+
 /** Inspect bounded executable bytes using native mappings, without loading or executing code. */
-export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
+export const readGoBinaryImage = (
+  bytes: Buffer,
+  options?: ReadGoBinaryImageOptions,
+): GoBinaryImage => {
   const container = readBinaryContainer(bytes);
   const { format, architecture, bits, byte_order } = container;
+  const stringLiterals =
+    options?.includeStringLiterals === true
+      ? recoverGoStringLiterals(
+          bytes,
+          container,
+          options.maxStringLiterals,
+          options.checkActive,
+        )
+      : undefined;
+  const stringMetadata =
+    stringLiterals === undefined
+      ? {}
+      : {
+          string_literals: stringLiterals,
+          ...(container.macho_chained_fixups === true
+            ? { macho_chained_fixups: true }
+            : {}),
+        };
   let selected: { search: GoBuildInfoSearchRange; header: number } | null =
     null;
   const searched = new Set<string>();
@@ -85,6 +121,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       bits,
       byte_order,
       build_info: null,
+      ...stringMetadata,
       ...(sectionNamesLimitation === undefined
         ? {}
         : { section_names_limitation: sectionNamesLimitation }),
@@ -180,6 +217,7 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
     );
   const goVersion = observedText(version.bytes);
   let moduleText: string | null = "";
+  let moduleBody = module.bytes;
   if (module.bytes.length !== 0) {
     if (
       module.bytes.length < 33 ||
@@ -191,7 +229,8 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
         "malformed",
         "Go module string framing is invalid",
       );
-    moduleText = observedText(module.bytes.subarray(16, -16));
+    moduleBody = module.bytes.subarray(16, -16);
+    moduleText = observedText(moduleBody);
   }
   return {
     format,
@@ -207,7 +246,9 @@ export const readGoBinaryImage = (bytes: Buffer): GoBinaryImage => {
       module_bytes_base64: module.bytes.toString("base64"),
       version_location: version.location,
       module_location: module.location,
+      module: parseGoModuleBytes(moduleBody),
     },
+    ...stringMetadata,
     ...(sectionNamesLimitation === undefined
       ? {}
       : { section_names_limitation: sectionNamesLimitation }),
@@ -252,9 +293,11 @@ const inlineDataEnd = (
 
 const observedText = (bytes: Buffer): string | null => {
   try {
-    return observedUtf8(bytes, "Go build string");
+    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+      bytes,
+    );
   } catch (cause) {
-    if (cause instanceof BinaryFormatFailure) return null;
+    if (cause instanceof TypeError) return null;
     throw cause;
   }
 };
@@ -384,17 +427,3 @@ const readOptionalModuleString = (
   isZeroFilledSpan(mappings, zeroFills, address, (pointerBits / 8) * 2)
     ? { bytes: Buffer.alloc(0), location: { offset: pointerField, bytes: 0 } }
     : readPointerString(reader, mappings, zeroFills, address, pointerBits);
-
-/** Decode metadata text without replacing invalid bytes or stripping an initial BOM. */
-export const observedUtf8 = (bytes: Buffer, label: string): string => {
-  try {
-    return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
-      bytes,
-    );
-  } catch (cause) {
-    throw new BinaryFormatFailure(
-      "malformed",
-      `${label} contains malformed UTF-8: ${String(cause)}`,
-    );
-  }
-};

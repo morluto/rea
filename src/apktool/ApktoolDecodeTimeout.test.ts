@@ -13,7 +13,10 @@ import {
   OwnedCommandFailure,
   runOwnedCommand,
 } from "../process/OwnedCommand.js";
-import type { ProviderProcessSnapshot } from "../process/ProviderProcess.js";
+import type {
+  ProcessDiagnosticBudget,
+  ProviderProcessSnapshot,
+} from "../process/ProviderProcess.js";
 import { ApktoolProvider } from "./ApktoolProvider.js";
 
 vi.mock("../process/OwnedCommand.js", async (importOriginal) => ({
@@ -37,8 +40,8 @@ const MANIFEST = [
   "",
 ].join("\n");
 
-const decodeTimeouts: number[] = [];
-const outputBudgets: number[] = [];
+const decodeTimeouts: (number | null)[] = [];
+const outputBudgets: ProcessDiagnosticBudget[] = [];
 
 afterEach(() => {
   decodeTimeouts.length = 0;
@@ -46,11 +49,15 @@ afterEach(() => {
   vi.mocked(runOwnedCommand).mockReset();
 });
 
-const completed = (text: string): ProviderProcessSnapshot =>
-  ({
-    stdout: { text },
-    stderr: { text: "" },
-  }) as ProviderProcessSnapshot;
+const completed = (text: string): ProviderProcessSnapshot => {
+  const bytes = Buffer.byteLength(text);
+  return {
+    stdout: { text, bytes, observedBytes: bytes },
+    stderr: { text: "", bytes: 0, observedBytes: 0 },
+    exitCode: 0,
+    signal: null,
+  };
+};
 
 const installLauncher = (): void => {
   vi.mocked(runOwnedCommand).mockImplementation(async (spawn, limits) => {
@@ -111,7 +118,6 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     expect(outputBudgets).toEqual([4 * 1024 * 1024]);
 
     const timedOut = await decode(provider, path, 200);
-    expect(timedOut.ok).toBe(false);
     if (timedOut.ok) throw new Error("Expected a decode deadline");
     const projected = projectAnalysisError(timedOut.error);
     expect(projected).toMatchObject({
@@ -141,7 +147,6 @@ it("applies the omitted 600000 ms decode deadline and a selected value on the ne
     ]);
 
     const maximum = await decode(provider, path, MAX_APKTOOL_DECODE_TIMEOUT_MS);
-    expect(maximum.ok).toBe(false);
     if (maximum.ok) throw new Error("Expected the maximum decode deadline");
     expect(projectAnalysisError(maximum.error).remediation.action).toContain(
       "do not increase it further",

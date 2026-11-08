@@ -36,7 +36,7 @@ const observe = async (path: string) => {
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventory),
+      result: inventory,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -62,7 +62,7 @@ const inspectPages = (
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse({
+      result: {
         inspection_id: `ai_${"f".repeat(64)}`,
         subject: {
           manifest_id: inventory.manifest.manifest_id,
@@ -96,7 +96,7 @@ const inspectPages = (
         },
         evidence_links: pages.map(({ evidence_id }) => evidence_id),
         limitations: [],
-      }),
+      },
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -144,7 +144,7 @@ describe("leaf artifact comparison", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse(withoutCoverage),
+        result: withoutCoverage,
         confidence: "observed",
         authority: "shipped-artifact",
       },
@@ -306,11 +306,11 @@ describe("artifact inventory coverage", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...graph,
           coverage: { scope: "root", status: "unknown" },
           limitations: ["No extra child entries were observed."],
-        }),
+        },
         confidence: "derived",
         authority: "shipped-artifact",
       },
@@ -348,10 +348,10 @@ describe("artifact inventory coverage", () => {
       {
         operation: "inventory_artifact",
         parameters: fragment.parameters,
-        result: jsonValueSchema.parse({
+        result: {
           ...fragmentGraph,
           coverage: { ...fragmentGraph.coverage, status: "unknown" },
-        }),
+        },
         confidence: "derived",
         authority: "shipped-artifact",
       },
@@ -448,10 +448,10 @@ describe("artifact comparison", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...completeInventory,
           nodes: [],
-        }),
+        },
         confidence: "observed",
         authority: "shipped-artifact",
         limitations: ["Inventory node observations are unavailable."],
@@ -496,10 +496,10 @@ describe("artifact comparison completeness", () => {
         {
           operation: "inventory_artifact",
           parameters: {},
-          result: jsonValueSchema.parse({
+          result: {
             ...inventory,
             coverage: { scope: "root", status: "complete" },
-          }),
+          },
           confidence: "derived",
           authority: "shipped-artifact",
         },
@@ -862,10 +862,10 @@ describe("artifact comparison fragment integrity", () => {
       {
         operation: "inventory_artifact",
         parameters: {},
-        result: jsonValueSchema.parse({
+        result: {
           ...artifactInventoryResultSchema.parse(fragment.normalized_result),
           coverage: { scope: "root", status: "complete" },
-        }),
+        },
       },
     );
     expect(() =>

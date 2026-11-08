@@ -72,14 +72,13 @@ it.each([
         runtime_kind: kind,
         observation_ms: 0,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected Inspector admission refusal");
       const diagnostic = projectAnalysisError(result.error);
       expect(diagnostic).toMatchObject({
         code: "target_unavailable",
         message: expect.stringContaining(message),
+        remediation: { action: expect.stringContaining(action) },
       });
-      expect(JSON.stringify(diagnostic)).toContain(action);
       expect(inspector.commands).toEqual([]);
     } finally {
       await inspector.close();

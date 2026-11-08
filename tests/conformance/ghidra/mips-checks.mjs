@@ -362,6 +362,53 @@ export function assertMipsGlobal(bytes, byteOrder) {
 }
 
 /**
+ * Cut a complete ELF32 MIPS image one byte before its section header table,
+ * keeping every program header and payload. The section table is then the
+ * only out-of-file declaration, so its declared range names the refusal.
+ */
+export function carveMipsElfBeforeSectionTable(bytes, byteOrder) {
+  language(byteOrder);
+  const little = byteOrder === "little";
+  const read16 = (offset) =>
+    little ? bytes.readUInt16LE(offset) : bytes.readUInt16BE(offset);
+  const read32 = (offset) =>
+    little ? bytes.readUInt32LE(offset) : bytes.readUInt32BE(offset);
+  const programOffset = read32(28);
+  const sectionOffset = read32(32);
+  const programCount = read16(44);
+  const sectionCount = read16(48);
+  assert.equal(read16(42), 32);
+  assert.equal(read16(46), 40);
+  // Extended numbering would move the counts into uncaptured section zero.
+  assert.ok(sectionCount !== 0 && programCount !== 0xffff);
+  assert.notEqual(read16(50), 0xffff);
+  const cut = sectionOffset - 1;
+  assert.ok(cut >= programOffset + programCount * 32);
+  for (let i = 0; i < programCount; i += 1) {
+    const offset = programOffset + i * 32;
+    assert.ok(read32(offset + 4) + read32(offset + 16) <= cut);
+  }
+  return {
+    bytes: bytes.subarray(0, cut),
+    sectionOffset,
+    reason: `truncated ELF section header table: declared file range ${sectionOffset}..${sectionOffset + sectionCount * 40} exceeds the ${cut}-byte file`,
+  };
+}
+
+/**
+ * Opening the carved copy fails before provider selection, naming the declared
+ * range and the captured size; it is not admitted as a smaller program.
+ */
+export function assertMipsCarvedTargetRefusal(error, path, reason) {
+  assert.equal(error.code, "target_unavailable");
+  assert.deepEqual(error.details, {
+    path,
+    reason,
+    constraint: "file_format_rejected",
+  });
+}
+
+/**
  * Soft-float o32 places float/double values exactly where a same-size integer
  * goes: Ghidra joins register pairs most-significant word first. The struct
  * return keeps its hidden $a0 pointer and its float in $a1.

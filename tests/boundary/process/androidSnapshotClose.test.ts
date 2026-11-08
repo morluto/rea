@@ -546,15 +546,15 @@ test("keeps the snapshot hash when cancellation wraps the finished copy", () => 
     } as FileHandle),
     { outcome: { kind: "completed", value: copy }, reason },
   );
-  const source = new RegularFileCleanupFailure(
-    copy.sourcePath,
-    new OwnedFileHandle({
+  const source = new RegularFileCleanupFailure({
+    path: copy.sourcePath,
+    owner: new OwnedFileHandle({
       fd: 8,
       close: async () => undefined,
     } as FileHandle),
-    { kind: "failed", cause: destination },
-    new Error("source EIO"),
-  );
+    outcome: { kind: "failed", cause: destination },
+    cleanupCause: new Error("source EIO"),
+  });
   const error = captureJadxFailure({
     cause: source,
     request: {
@@ -587,26 +587,26 @@ test("classifies a nested snapshot close as cancellation", () => {
     snapshotPath: "/workspace/snap/target.apk",
     bytes: 12,
   };
-  const destination = new RegularFileCleanupFailure(
-    copy.snapshotPath,
-    new OwnedFileHandle({
+  const destination = new RegularFileCleanupFailure({
+    path: copy.snapshotPath,
+    owner: new OwnedFileHandle({
       fd: 7,
       close: async () => undefined,
     } as FileHandle),
-    { kind: "completed", value: copy },
-    new Error("dest EIO"),
-    { kind: "not_requested" },
-    { reason },
-  );
-  const source = new RegularFileCleanupFailure(
-    copy.sourcePath,
-    new OwnedFileHandle({
+    outcome: { kind: "completed", value: copy },
+    cleanupCause: new Error("dest EIO"),
+    retention: { kind: "not_requested" },
+    completionCancellation: { reason },
+  });
+  const source = new RegularFileCleanupFailure({
+    path: copy.sourcePath,
+    owner: new OwnedFileHandle({
       fd: 8,
       close: async () => undefined,
     } as FileHandle),
-    { kind: "failed", cause: destination },
-    new Error("source EIO"),
-  );
+    outcome: { kind: "failed", cause: destination },
+    cleanupCause: new Error("source EIO"),
+  });
   const error = captureJadxFailure({
     cause: source,
     request: {

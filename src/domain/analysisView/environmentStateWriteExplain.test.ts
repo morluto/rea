@@ -7,11 +7,12 @@ import {
   explainCreate,
   explainUpdate,
   insertCandidates,
+  randomIdentities,
   insertIndex,
   responseShapeOf,
   type CreateEvidence,
-  type UpdateEvidence,
 } from "./environmentStateWriteExplain.js";
+import type { UpdateEvidence } from "./environmentStateWriteChanges.js";
 import {
   callRenewal,
   unexplainedRenewals,
@@ -396,6 +397,7 @@ it("explains an update's sent members as echoes, constants or the identity", () 
       kinds: [],
     },
     unexplained: [],
+    unstamped: [],
   });
 });
 
@@ -583,6 +585,174 @@ it("offers each strictly ordered field in its direction, then last and first", (
   expect(insertCandidates([{ id: 1 }], ["id"])).toEqual(fallback);
   expect(insertCandidates([], ["id"])).toEqual(fallback);
 });
+
+it("offers a sort by a random identity only after last", () => {
+  const members = [
+    { id: "0a7f", at: "2026-03-01T00:00:00Z" },
+    { id: "5c21", at: "2026-03-02T00:00:00Z" },
+  ];
+  expect(insertCandidates(members, ["id", "at"], { random: "id" })).toEqual([
+    { rule: "sorted", field: "at", direction: "ascending" },
+    { rule: "last" },
+    { rule: "sorted", field: "id", direction: "ascending" },
+    { rule: "first" },
+  ]);
+});
+
+it("claims no sort before last when the consistent sorts place the created entity differently", () => {
+  const members = [
+    { id: 1, name: "Alpha", at: "2026-03-02T00:00:00Z" },
+    { id: 2, name: "Delta", at: "2026-03-01T00:00:00Z" },
+  ];
+  const created = { id: 3, name: "Bravo", at: "2026-03-03T00:00:00Z" };
+  expect(insertCandidates(members, ["id", "name", "at"], { created })).toEqual([
+    { rule: "last" },
+    { rule: "sorted", field: "id", direction: "ascending" },
+    { rule: "sorted", field: "name", direction: "ascending" },
+    { rule: "sorted", field: "at", direction: "descending" },
+    { rule: "first" },
+  ]);
+  const agreeing = { id: 3, name: "Echo", at: "2026-02-28T00:00:00Z" };
+  expect(
+    insertCandidates(members, ["id", "name", "at"], { created: agreeing })[0],
+  ).toEqual({ rule: "sorted", field: "id", direction: "ascending" });
+});
+
+it.each([
+  [
+    "version 4 UUIDs",
+    [
+      "9b2f1c3e-0d4a-4b6e-8f1a-2c3d4e5f6a7b",
+      "1c0e8a2b-7f3d-4e9a-b1c2-d3e4f5a6b7c8",
+    ],
+    ["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"],
+    true,
+  ],
+  [
+    "ids every clock lists otherwise",
+    ["k2", "a9"],
+    ["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"],
+    true,
+  ],
+  [
+    "time-ordered ids",
+    ["0a1", "0b2"],
+    ["2026-03-01T00:00:00Z", "2026-03-02T00:00:00Z"],
+    false,
+  ],
+])("reads %s as random: %s", (_, ids, clocks, random) => {
+  const members = ids.map((id, index) => ({ id, at: clocks[index]! }));
+  expect(randomIdentities(members, "id", ["at"])).toBe(random);
+});
+
+it.each([
+  [undefined, undefined, undefined],
+  ["2026-03-01T00:00:00Z", undefined, undefined],
+  [undefined, "2026-03-02T00:00:00Z", "2026-03-03T00:00:00Z"],
+])(
+  "does not treat missing creation clocks as identity inversions: %s",
+  (...clocks) => {
+    const members = clocks.map((at, index) => {
+      const member: JsonObject = { id: `id-${String(index)}` };
+      if (at !== undefined) member.at = at;
+      return member;
+    });
+    expect(randomIdentities(members, "id", ["at"])).toBe(false);
+  },
+);
+
+it("still recognizes a witnessed identity inversion when another clock value is missing", () => {
+  expect(
+    randomIdentities(
+      [
+        { id: "id-0", at: "2026-03-02T00:00:00Z" },
+        { id: "id-1", at: "2026-03-01T00:00:00Z" },
+        { id: "id-2" },
+      ],
+      "id",
+      ["at"],
+    ),
+  ).toBe(true);
+});
+
+it.each([undefined, null, false, {}] as const)(
+  "recognizes a real inversion across a noncomparable clock: %s",
+  (gap) => {
+    const middle: JsonObject = { id: "id-1" };
+    if (gap !== undefined) middle.at = gap;
+    expect(
+      randomIdentities(
+        [
+          { id: "id-0", at: "2026-03-02T00:00:00Z" },
+          middle,
+          { id: "id-2", at: "2026-03-01T00:00:00Z" },
+        ],
+        "id",
+        ["at"],
+      ),
+    ).toBe(true);
+  },
+);
+
+it("keeps a known ordered clock from classifying IDs as random across another clock's gap", () => {
+  expect(
+    randomIdentities(
+      [
+        {
+          id: "id-0",
+          at: "2026-03-02T00:00:00Z",
+          other: "2026-03-01T00:00:00Z",
+        },
+        { id: "id-1" },
+        {
+          id: "id-2",
+          at: "2026-03-01T00:00:00Z",
+          other: "2026-03-02T00:00:00Z",
+        },
+      ],
+      "id",
+      ["at", "other"],
+    ),
+  ).toBe(false);
+});
+
+it.each([
+  [1772409602, "not-a-clock", 1772409601],
+  ["2026-03-02T00:00:00Z", "not-a-clock", "2026-03-01T00:00:00Z"],
+  [1772409602, "1772409600", 1772409601],
+])(
+  "keeps invalid clock text from hiding a known inversion: %s",
+  (first, gap, last) => {
+    expect(
+      randomIdentities(
+        [
+          { id: "id-0", at: first! },
+          { id: "id-1", at: gap! },
+          { id: "id-2", at: last! },
+        ],
+        "id",
+        ["at"],
+      ),
+    ).toBe(true);
+  },
+);
+
+it.each([
+  [1772409602, 1772409601000, true],
+  [1772409602000, 1772409602, false],
+  ["2026-03-01T00:00:00.123000002Z", "2026-03-01T00:00:00.123000001Z", true],
+] as const)(
+  "compares creation clocks by their instants across gaps and units: %s",
+  (first, last, random) => {
+    expect(
+      randomIdentities(
+        [{ id: "id-0", at: first }, { id: "id-1" }, { id: "id-2", at: last }],
+        "id",
+        ["at"],
+      ),
+    ).toBe(random);
+  },
+);
 
 it("uses retained submillisecond precision to recognize and place sorted timestamps", () => {
   const members = [
@@ -1046,5 +1216,91 @@ it("accepts a copied member only with its recorded value when a template keeps i
   expect(result.body.fixed).toContainEqual({
     member: "group",
     sent: "group-alpha-2",
+  });
+});
+
+it.each<[string, JsonValue, readonly JsonValue[], boolean]>([
+  [
+    "a time-based id no held entity takes",
+    1656166527623168,
+    [1655476044521472, 1655476044521999],
+    true,
+  ],
+  [
+    "one a held entity already holds",
+    1655476044521472,
+    [1655476044521472],
+    false,
+  ],
+  [
+    "one among held ids of another length",
+    1656166527623168,
+    [16554760445214],
+    false,
+  ],
+  [
+    "one among held ids spelled as text",
+    1656166527623168,
+    ["1655476044521472"],
+    false,
+  ],
+  [
+    "one among held entities sharing an id",
+    1656166527623168,
+    [1655476044521472, 1655476044521472],
+    false,
+  ],
+  ["one with no held entity to compare", 1656166527623168, [], false],
+  ["a short number", 123456789, [987654321], false],
+])("learns %s as generated", (_name, value, held, unique) => {
+  const result = explainCreate(
+    created(
+      { id: 7, ref: value },
+      {},
+      { type: held.map((ref, index) => ({ id: index + 1, ref })) },
+    ),
+  );
+  expect(ruleFor(result.rules, "ref")).toEqual(
+    unique ? { field: "ref", rule: "unique" } : undefined,
+  );
+});
+
+it("trims a created clock's fraction, and its sibling clock's, when held entities spell the field trimmed", () => {
+  const at = new Date(START).toISOString().replace(".000Z", "");
+  const result = explainCreate(
+    created(
+      {
+        id: 7,
+        createdAt: `${at}.123456789Z`,
+        updatedAt: `${at}.123456791Z`,
+      },
+      {},
+      {
+        type: [
+          {
+            id: 1,
+            createdAt: "2026-01-01T00:00:00.12345678Z",
+            updatedAt: "2026-01-01T00:00:00.123456789Z",
+          },
+        ],
+      },
+    ),
+  );
+  const trimmed = {
+    kind: "iso",
+    separator: "T",
+    fraction: 9,
+    zone: "Z",
+    trimmed: true,
+  };
+  expect(ruleFor(result.rules, "createdAt")).toEqual({
+    field: "createdAt",
+    rule: "clock",
+    format: trimmed,
+  });
+  expect(ruleFor(result.rules, "updatedAt")).toEqual({
+    field: "updatedAt",
+    rule: "clock",
+    format: trimmed,
   });
 });

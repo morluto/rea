@@ -190,7 +190,7 @@ const readUtf8 = (
     return err(
       pyInstallerFailure("format", "PYZ marshal string is not valid UTF-8"),
     );
-  return value;
+  return ok(value.value.text);
 };
 
 const readByteString = (

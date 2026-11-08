@@ -66,9 +66,21 @@ for (const scenario of [
               .parse(record.result).error
           : record.result;
         expect(failure).toMatchObject({
-          code: "unreadable_output",
-          remediation: { action: expect.stringContaining("--format json") },
-          details: { reason: expect.stringContaining("JSON Lines requires") },
+          code: "invalid_request",
+          category: "invalid_input",
+          remediation: {
+            action: expect.stringMatching(
+              /--format json.*record collection.*--filter-output/iu,
+            ),
+          },
+          details: {
+            issues: [
+              {
+                path: [scenario.filtered ? "filter-output" : "format"],
+                reason: "invalid_value",
+              },
+            ],
+          },
         });
         return;
       }

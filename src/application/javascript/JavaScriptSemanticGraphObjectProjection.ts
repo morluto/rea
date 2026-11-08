@@ -33,6 +33,10 @@ export function* projectSemanticObjects(
       operation,
       target.slotApplicability,
     );
+    if (occurrence !== null) {
+      if (operation.kind === "read") context.readNodes.push(occurrence);
+      if (operation.kind === "write") context.writeNodes.push(occurrence);
+    }
     const ends = objectRelationEnds(context, operation, occurrence, target);
     const resolved =
       operation.resolution === "complete" &&

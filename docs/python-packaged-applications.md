@@ -25,15 +25,22 @@ metadata retains the original name, table index, type, compression flag,
 relative offset and known directory record extent. Logical paths follow the
 carrier's path dialect: backslashes separate components for PE carriers, while
 they remain literal filename characters for POSIX carriers. The source name
-always retains its stored spelling. If the carrier dialect is unconfirmed, REA
-preserves backslashes verbatim instead of inferring POSIX semantics.
+always retains its stored spelling in occurrence `source_path` and
+`format_metadata.source_name`. For PYZ rows, that source is the exact module or
+data key in the PYZ table, not a reconstructed filesystem name;
+`format_metadata.container_name` identifies the containing PYZ image. If the
+carrier dialect is unconfirmed, REA preserves backslashes verbatim instead of
+inferring POSIX semantics.
 `relative_offset` is relative to the CArchive start for CArchive rows, or to
 the decoded PYZ image for PYZ rows. A CArchive directory record starts at
 `archive_start + toc_offset + directory_record_offset`; its size is
 `directory_record_size`. PYZ row directory extents remain unknown.
-CArchive type `b` retains PyInstaller's executable-member declaration in the
-generic `executable` fact; type `x` remains non-executable. This comes from the
-archive type code, not the filename or member contents.
+In a POSIX carrier, CArchive type `b` retains PyInstaller's executable-member
+declaration in the generic `executable` fact; type `x` remains non-executable.
+The Windows bootloader sets no execute bit, so type `b` members of a PE carrier,
+usually DLLs and `.pyd` extensions, stay non-executable, as do those of an
+unconfirmed carrier. This comes from the carrier dialect and the archive type
+code, not the filename or member contents.
 Distinct CArchive rows retain their table-index identities even when they
 share a logical path. Inventory can preserve both a file and a decoded PYZ
 directory at that path, including the PYZ children; extraction refuses a
@@ -73,14 +80,17 @@ table index; original names remain available in the supplied artifact.
 Path failures use bounded escaped previews and report the original length;
 accepted paths and retained source names are not shortened.
 
-`compare_artifacts` compares these node-less records as declarations using the
-container, container name, source name and type code. Equal option or dependency
-declarations can therefore compare unchanged without implying that an external
-dependency's bytes were found. For materialized PyInstaller members, the same
-fields participate in the metadata delta independently of content identity;
-archive offsets and table positions remain location facts, not declaration
-identity. Missing declaration facts and unavailable non-metadata content remain
-unknown.
+`compare_artifacts` compares node-less records, namely runtime options,
+dependencies and namespace packages, as declarations using the container,
+container name, source name and type code, and whether the record is
+encrypted; their limitations are not compared. Equal declarations can
+therefore compare unchanged without implying that an external dependency's
+bytes were found or that unread legacy namespace payloads match. For
+materialized PyInstaller members, the same fields participate in the metadata
+delta independently of content identity, including when the member's bytes
+are unavailable; archive offsets and table positions remain location facts,
+not declaration identity. Missing declaration facts remain unknown, as does
+unavailable non-metadata content whose declaration is unchanged.
 
 Request `detail: "summary"` for a compact inspection, then query retained
 Evidence with `inspect_analysis_view`. An inventory view can select

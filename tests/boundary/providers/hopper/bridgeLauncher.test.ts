@@ -119,7 +119,6 @@ for (const deniedStops of [0, 2])
           token: "fixture-token",
           runId: randomUUID(),
         });
-        expect(launched.ok).toBe(false);
         if (launched.ok) throw new Error("Expected private-display timeout");
         const original = launched.error;
         expect(projectAnalysisError(original).details).toMatchObject({
@@ -878,7 +877,7 @@ it("ordinary executable launches pass a verified private image with configured l
     expect(supervisor.snapshot().stdout.text).toBe(preparedPath);
     expect(launched.value.preparedImagePath).toBe(preparedPath);
     await writeFile(targetPath, "replacement bytes");
-    expect(await readFile(preparedPath)).toEqual(selected);
+    expect(Buffer.compare(await readFile(preparedPath), selected)).toBe(0);
   } finally {
     await supervisor.stop();
     await launched.value.releaseLease?.();

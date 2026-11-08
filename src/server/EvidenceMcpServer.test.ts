@@ -13,11 +13,10 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod";
 
 import { InvestigationRecords } from "../application/investigation/InvestigationRecords.js";
-import {
-  EvidenceMcpServer,
-  forgetPendingMcpRequest,
-} from "./EvidenceMcpServer.js";
-import { ToolResultDelivery } from "./toolResult.js";
+import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
+import { EvidenceMcpServer } from "./EvidenceMcpServer.js";
+import { forgetPendingMcpRequest } from "./EvidenceMcpServerCore.js";
+import { createToolResultDelivery } from "./toolResult.js";
 
 const firstText = (result: {
   readonly content: readonly {
@@ -48,13 +47,17 @@ const expectFittingSdkValidationRecovery = (result: {
       },
       details: {
         operation: "procedure_pseudo_code",
-        issues: [
-          {
-            path: [],
-            reason: "invalid_value",
-            message: expect.stringContaining("required"),
-          },
-        ],
+        issues: expect.arrayContaining([
+          expect.objectContaining({
+            path: ["required"],
+            reason: "missing_argument",
+            expected: "string",
+          }),
+          expect.objectContaining({
+            path: ["unexpected"],
+            reason: "unknown_argument",
+          }),
+        ]),
       },
     },
   });
@@ -116,7 +119,7 @@ describe("MCP request bookkeeping", () => {
 describe("Modern protocol error delivery", () => {
   it("preserves the modern wire envelope when replacing an oversized error", async () => {
     const records = new InvestigationRecords();
-    const delivery = new ToolResultDelivery(16384);
+    const delivery = createToolResultDelivery(16384);
     const info = { name: "wire-error-recovery", version: "1" };
     const handler = createMcpHandler(() => {
       const server = new EvidenceMcpServer(
@@ -226,7 +229,7 @@ describe("SDK validation error delivery", () => {
   it.each(["2025-11-25", "2026-07-28"])(
     "bounds and retains errors through the public stdio entry on %s",
     async (revision) => {
-      const delivery = new ToolResultDelivery(4096);
+      const delivery = createToolResultDelivery(4096);
       const records = new InvestigationRecords();
       const server = new EvidenceMcpServer(
         { name: "sdk-validation-budget-test", version: "1" },
@@ -365,4 +368,138 @@ describe("SDK validation error delivery", () => {
       }
     },
   );
+});
+
+const createGuidanceClientServer = async (
+  toolName: string,
+  inputSchema: z.ZodTypeAny,
+) => {
+  const delivery = createToolResultDelivery(4096);
+  const records = new InvestigationRecords();
+  const server = new EvidenceMcpServer(
+    { name: "sdk-argument-guidance-test", version: "1" },
+    { capabilities: {} },
+    (evidence) => records.recordEvidence(evidence),
+    delivery,
+  );
+  server.registerTool(toolName, { inputSchema }, async () => ({
+    content: [{ type: "text", text: "valid call" }],
+  }));
+  const client = new Client(
+    { name: "sdk-argument-guidance-client", version: "1" },
+    { versionNegotiation: { mode: { pin: "2026-07-28" } } },
+  );
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  const serving = serveStdio(() => server, { transport: serverTransport });
+  await client.connect(clientTransport);
+  return {
+    client,
+    close: () => Promise.all([client.close(), serving.close()]),
+  };
+};
+
+const officialContract = (
+  name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
+) => {
+  const contract = OFFICIAL_TOOL_CONTRACTS.find((c) => c.name === name);
+  if (contract === undefined)
+    throw new Error(`Missing official contract: ${name}`);
+  return contract;
+};
+
+describe("SDK argument name guidance", () => {
+  it("guides procedure_pseudo_code caller from address to procedure without duplicating diagnostic", async () => {
+    const session = await createGuidanceClientServer(
+      "procedure_pseudo_code",
+      officialContract("procedure_pseudo_code").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "procedure_pseudo_code",
+        arguments: { address: "0x401000" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: expect.stringMatching(/address.*procedure/i),
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
+      expect(payload.error.message).not.toContain("address");
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("guides search_strings caller from query to pattern", async () => {
+    const session = await createGuidanceClientServer(
+      "search_strings",
+      officialContract("search_strings").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "search_strings",
+        arguments: { query: "admin" },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["query"],
+          reason: "unknown_argument",
+          expected: "pattern",
+          message: expect.stringMatching(/query.*pattern/i),
+        }),
+      );
+      expect(payload.error.remediation.action).toMatch(/pattern.*query/i);
+    } finally {
+      await session.close();
+    }
+  });
+
+  it("rejects address with procedure guidance and retains unexplained key count in diagnostics", async () => {
+    const session = await createGuidanceClientServer(
+      "read_function_instructions",
+      officialContract("read_function_instructions").inputSchema,
+    );
+    try {
+      const result = await session.client.callTool({
+        name: "read_function_instructions",
+        arguments: { address: "0x401000", count: 10 },
+      });
+      expect(result.isError).toBe(true);
+      const payload = JSON.parse(firstText(result) ?? "null");
+      expect(payload.error.code).toBe("invalid_request");
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["address"],
+          reason: "unknown_argument",
+          expected: "procedure",
+          message: expect.stringMatching(/address.*procedure/i),
+        }),
+      );
+      expect(payload.error.details.issues).toContainEqual(
+        expect.objectContaining({
+          path: ["count"],
+          reason: "unknown_argument",
+        }),
+      );
+      const countIssue = payload.error.details.issues.find(
+        (issue: { path: string[] }) => issue.path?.[0] === "count",
+      );
+      expect(payload.error.remediation.action).toMatch(/procedure.*address/i);
+      expect(countIssue?.expected).toBeUndefined();
+      expect(countIssue?.message).toBeUndefined();
+      expect(payload.error.message).toContain("count");
+    } finally {
+      await session.close();
+    }
+  });
 });

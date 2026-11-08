@@ -7,6 +7,11 @@ import {
   findMetadataRegistration,
 } from "./Il2cppBinaryRegistration.js";
 import { createTypeNamer } from "./Il2cppBinaryTypes.js";
+import {
+  genericMethodLayouts,
+  linkGenericMethodsSteps,
+  type Il2cppGenericMethodLink,
+} from "./Il2cppBinaryGenerics.js";
 import type {
   Il2cppMetadataDecoded,
   Il2cppMetadataLinkFacts,
@@ -40,13 +45,20 @@ export interface Il2cppBinaryLink {
    * slot is zero, "unknown" when its owner or relocated pointer is unresolved.
    */
   readonly method_addresses: Il2cppMethodAddress[];
-  /** Address of MetadataRegistration's typesCount field. */
-  readonly types_field: bigint;
+  /**
+   * Address of MetadataRegistration's typesCount field, or null when no static
+   * registration matched and an executable byte-pattern candidate identified
+   * the type table; types_count is then the inferred run length, at least
+   * every referenced type index but not an observed typesCount.
+   */
+  readonly types_field: bigint | null;
   readonly types_count: number;
   /** Il2CppType table index and display name per method return, field and parameter. */
   readonly return_types: Il2cppTypeReference[];
   readonly field_types: Il2cppTypeReference[];
   readonly parameter_types: Il2cppTypeReference[];
+  /** Null unless generic instances were requested. */
+  readonly generic_methods: Il2cppGenericMethodLink | null;
 }
 
 export type Il2cppTypeReference = {
@@ -57,7 +69,10 @@ export type Il2cppTypeReference = {
 export type Il2cppBinaryReadOptions = Pick<
   Il2cppMetadataReadOptions,
   "beforeText" | "onRow"
->;
+> & {
+  /** Also link genericMethodTable rows; unrequested paths read no generic table. */
+  readonly genericInstances?: boolean;
+};
 
 /**
  * Link metadata methods to native code addresses without executing the image.
@@ -71,6 +86,8 @@ export function* linkIl2cppBinarySteps(
   options: Il2cppBinaryReadOptions = {},
 ): Generator<void, Il2cppBinaryLink> {
   const version = metadata.metadata_version;
+  // Refuse an undecoded version before any table is read.
+  if (options.genericInstances === true) genericMethodLayouts(version);
   yield;
   const image = yield* openImageSteps(bytes, architecture);
   const modules = yield* findModules(image, metadata);
@@ -158,6 +175,7 @@ export function* linkIl2cppBinarySteps(
   const registration = yield* findMetadataRegistration(
     image,
     metadata.types.length,
+    yield* referencedTypeCount(facts),
   );
   const typeName = createTypeNamer(
     image,
@@ -202,6 +220,18 @@ export function* linkIl2cppBinarySteps(
   const return_types = yield* column(facts.returnTypes);
   const field_types = yield* column(facts.fieldTypes);
   const parameter_types = yield* column(facts.parameterTypes);
+  const generic_methods =
+    options.genericInstances === true
+      ? yield* linkGenericMethodsSteps(
+          image,
+          metadata,
+          facts,
+          registration_.field,
+          // findMetadataRegistration reports typesCount, word 6.
+          registration.field === null ? null : registration.field - 48n,
+          options,
+        )
+      : null;
   return {
     format: image.container.format,
     architecture: image.container.architecture,
@@ -215,22 +245,26 @@ export function* linkIl2cppBinarySteps(
     return_types,
     field_types,
     parameter_types,
+    generic_methods,
   };
+}
+
+/** One past the highest type index any return, field or parameter references. */
+function* referencedTypeCount(
+  facts: Il2cppMetadataLinkFacts,
+): Generator<void, number> {
+  let count = 0;
+  for (const types of [
+    facts.returnTypes,
+    facts.fieldTypes,
+    facts.parameterTypes,
+  ])
+    for (let index = 0; index < types.length; index++) {
+      if (index % LINK_BATCH === 0) yield;
+      count = Math.max(count, types[index]! + 1);
+    }
+  return count;
 }
 
 /** Rows between cooperative yields while linking. */
 const LINK_BATCH = 256;
-
-/** Synchronous linking for byte-level callers. */
-export const linkIl2cppBinary = (
-  bytes: Buffer,
-  metadata: Il2cppMetadataDecoded,
-  facts: Il2cppMetadataLinkFacts,
-  architecture?: string,
-): Il2cppBinaryLink => {
-  const steps = linkIl2cppBinarySteps(bytes, metadata, facts, architecture);
-  for (;;) {
-    const step = steps.next();
-    if (step.done) return step.value;
-  }
-};

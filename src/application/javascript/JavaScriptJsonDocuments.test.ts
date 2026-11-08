@@ -18,6 +18,67 @@ const mutableFile = (): MutableArtifactFile => ({
   text: { included: true, value: '{"main":"a.cjs"}' },
 });
 
+it("retains only declared package metadata despite inherited host fields", () => {
+  const documents = new JavaScriptJsonDocuments();
+  const absentFile = mutableFile();
+  absentFile.text = { included: true, value: "{}" };
+  const declaredFile = mutableFile();
+  declaredFile.text = {
+    included: true,
+    value:
+      '{"name":"source-name","version":"1.0.0","main":null,"browser":"source-browser.cjs"}',
+  };
+  const inherited = {
+    name: "host-name",
+    version: "host-version",
+    main: "host-entry.cjs",
+    renderer: "host-renderer.cjs",
+    browser: "host-browser.cjs",
+    module: "host-module.mjs",
+  };
+  const previous = Object.fromEntries(
+    Object.keys(inherited).map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(Object.prototype, key),
+    ]),
+  );
+  let absent: ReturnType<JavaScriptJsonDocuments["read"]>;
+  let declared: ReturnType<JavaScriptJsonDocuments["read"]>;
+  try {
+    for (const [key, value] of Object.entries(inherited))
+      Object.defineProperty(Object.prototype, key, {
+        configurable: true,
+        writable: true,
+        value,
+      });
+    absent = documents.read(absentFile);
+    declared = documents.read(declaredFile);
+  } finally {
+    for (const key of Object.keys(inherited)) {
+      const descriptor = previous[key];
+      if (descriptor === undefined)
+        Reflect.deleteProperty(Object.prototype, key);
+      else Object.defineProperty(Object.prototype, key, descriptor);
+    }
+  }
+  expect(absent.status).toBe("included");
+  expect(declared.status).toBe("included");
+  if (absent.packageFields === null || declared.packageFields === null)
+    throw new Error("Expected package metadata fields");
+  expect(Object.getPrototypeOf(absent.packageFields)).toBeNull();
+  expect(Object.getPrototypeOf(declared.packageFields)).toBeNull();
+  for (const key of Object.keys(inherited))
+    expect(Object.hasOwn(absent.packageFields, key)).toBe(false);
+  expect(declared.packageFields).toEqual({
+    name: "source-name",
+    version: "1.0.0",
+    main: null,
+    browser: "source-browser.cjs",
+  });
+  expect(Object.hasOwn(declared.packageFields, "renderer")).toBe(false);
+  expect(Object.hasOwn(declared.packageFields, "module")).toBe(false);
+});
+
 it("reparses changed text and availability on a reused file object", () => {
   const documents = new JavaScriptJsonDocuments();
   const file = mutableFile();

@@ -2,8 +2,53 @@ import { expect, it } from "vitest";
 import { CdpBrowserProvider } from "../../../src/browser/CdpBrowserProvider.js";
 import { discoverWebMcpToolsInputSchema } from "../../../src/domain/webMcpDiscovery.js";
 import { digestCanonicalValue } from "../../../src/domain/canonicalDigest.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import { startFakeCdpBrowser } from "../../fixtures/fakeCdpBrowser.js";
 import { trackBrowser } from "./cdpBrowserProvider.support.js";
+
+it.each(["initial", "final"])(
+  "explains WebMCP %s current-document origin refusal",
+  async (stage) => {
+    const browser = await startFakeCdpBrowser({
+      webMcpTools: true,
+      commandResult: ({ method }, origin, frameReads) =>
+        method === "Page.getFrameTree"
+          ? {
+              frameTree: {
+                frame: {
+                  id: "frame-main",
+                  url:
+                    stage === "initial" || frameReads > 1
+                      ? "https://outside.example/page"
+                      : origin + "/app",
+                },
+              },
+            }
+          : undefined,
+    });
+    trackBrowser(browser);
+    const result = await new CdpBrowserProvider().discoverWebMcpTools(
+      discoverWebMcpToolsInputSchema.parse({
+        cdp_endpoint: browser.endpoint,
+        target_id: "allowed-page",
+        observation_ms: 0,
+      }),
+    );
+    if (result.ok) throw new Error("Expected WebMCP origin refusal");
+    expect(projectAnalysisError(result.error)).toMatchObject({
+      code: "target_unavailable",
+      message: expect.stringContaining("permitted HTTP(S) origin scope"),
+      remediation: { action: expect.stringContaining("allowed_origins") },
+      details: {
+        operation: "discover_webmcp_tools",
+        reason: "target_not_allowed",
+      },
+    });
+    expect(
+      browser.commands.some(({ method }) => method === "WebMCP.enable"),
+    ).toBe(stage === "final");
+  },
+);
 
 it.each([false, true])(
   "accepts optional WebMCP input schema (declared=%s)",

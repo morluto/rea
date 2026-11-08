@@ -1,3 +1,4 @@
+import { selectCdpDiscoveryTarget } from "../browser/CdpDiscoveryTargets.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -23,17 +24,16 @@ import { ProviderCleanupError } from "../domain/providerCleanupError.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
 import type { BrowserObservationOperation } from "../domain/browserObservationErrors.js";
 import { err, ok, type Result } from "../domain/result.js";
+import { delayWithCancellation } from "../browser/CdpCaptureValues.js";
 import {
-  numberValue,
-  recordValue,
-  cdpStringValue,
-  scriptMetadataValues,
-  delayWithCancellation,
-} from "../browser/CdpCaptureValues.js";
+  readCdpScriptParsed,
+  readCdpExecutionContextCreated,
+  readCdpExecutionContextDestroyed,
+} from "../browser/CdpScriptContextFacts.js";
 import type { CdpConnection, CdpEvent } from "../browser/CdpConnection.js";
 import {
+  ElectronFileScope,
   mapElectronFileAuthorizationFailure,
-  retryElectronFileCleanup,
 } from "../browser/ElectronFileScope.js";
 import {
   CdpTargetSessionOwner,
@@ -53,82 +53,99 @@ import {
 import {
   discoverV8Inspector,
   type AuthorizedV8InspectorTarget,
-  type V8InspectorTarget,
+  type V8InspectorDiscovery,
 } from "./V8InspectorEndpoint.js";
 
 import { V8_INSPECTOR_PROVIDER_IDENTITY } from "./providerIdentity.js";
 
-// Providers are created per application operation, so exact transport cleanup
-// ownership must survive their return and gate the next Inspector connection.
-const inspectorConnections = new CdpTargetSessionOwner();
-let inspectorActiveOperations = 0;
-let inspectorClosing = false;
-let inspectorClosePromise: Promise<void> | undefined;
-const inspectorIdleWaiters = new Set<() => void>();
+/**
+ * Admission and transport cleanup for one Inspector host. Providers are created
+ * per operation; the host passes one admission so those providers share cleanup
+ * without a process-global counter.
+ */
+export class V8InspectorAdmission {
+  readonly files = new ElectronFileScope();
+  readonly connections = new CdpTargetSessionOwner();
+  #activeOperations = 0;
+  #closing = false;
+  #closePromise: Promise<void> | undefined;
+  readonly #idleWaiters = new Set<() => void>();
 
-const withInspectorAdmission = async <Value>(
-  operation: BrowserObservationOperation,
-  work: () => Promise<Value>,
-): Promise<Value> => {
-  if (inspectorClosing && inspectorClosePromise !== undefined)
-    await inspectorClosePromise;
-  if (inspectorClosing)
-    throw new ProviderAdapterError(
-      V8_INSPECTOR_PROVIDER_IDENTITY.id,
-      operation,
-      {
-        diagnostics: { reason: "provider_closing" },
-        userMessage: "Inspector provider cleanup is in progress.",
-      },
-    );
-  inspectorActiveOperations += 1;
-  try {
-    return await work();
-  } finally {
-    inspectorActiveOperations -= 1;
-    if (inspectorActiveOperations === 0) {
-      for (const resolve of inspectorIdleWaiters) resolve();
-      inspectorIdleWaiters.clear();
+  async run<Value>(
+    operation: BrowserObservationOperation,
+    work: () => Promise<Value>,
+  ): Promise<Value> {
+    if (this.#closing && this.#closePromise !== undefined)
+      await this.#closePromise;
+    if (this.#closing)
+      throw new ProviderAdapterError(
+        V8_INSPECTOR_PROVIDER_IDENTITY.id,
+        operation,
+        {
+          diagnostics: { reason: "provider_closing" },
+          userMessage: "Inspector provider cleanup is in progress.",
+        },
+      );
+    this.#activeOperations += 1;
+    try {
+      return await work();
+    } finally {
+      this.#activeOperations -= 1;
+      if (this.#activeOperations === 0) {
+        for (const resolve of this.#idleWaiters) resolve();
+        this.#idleWaiters.clear();
+      }
     }
   }
-};
 
-const closeInspectorResources = async (): Promise<void> => {
-  inspectorClosing = true;
-  try {
-    while (inspectorActiveOperations > 0)
-      await new Promise<void>((resolve) => inspectorIdleWaiters.add(resolve));
-    const failures: AnalysisError[] = [];
+  async close(): Promise<void> {
+    if (this.#closePromise !== undefined) return await this.#closePromise;
+    const attempt = this.#closeResources();
+    this.#closePromise = attempt;
     try {
-      await inspectorConnections.retryPending();
-    } catch (cause: unknown) {
-      failures.push(providerError(cause, "observe_javascript_runtime"));
+      await attempt;
+    } finally {
+      if (this.#closePromise === attempt) this.#closePromise = undefined;
     }
-    try {
-      await retryElectronFileCleanup();
-    } catch (cause: unknown) {
-      failures.push(providerError(cause, "observe_javascript_runtime"));
-    }
-    if (failures.length === 0) return;
-    if (failures.length === 1) throw failures[0]!;
-    const cleanup = new ProviderCleanupError(
-      V8_INSPECTOR_PROVIDER_IDENTITY.id,
-      failures.flatMap(({ cleanupResources }) => cleanupResources),
-      { reason: "Inspector provider cleanup remains incomplete." },
-      {
-        operation: "observe_javascript_runtime",
-        cause: new AggregateError(
-          failures,
-          "Inspector provider cleanup owners remain unresolved.",
-        ),
-      },
-    );
-    cleanup.bindCleanupDependencies(failures);
-    throw cleanup;
-  } finally {
-    inspectorClosing = false;
   }
-};
+
+  async #closeResources(): Promise<void> {
+    this.#closing = true;
+    try {
+      while (this.#activeOperations > 0)
+        await new Promise<void>((resolve) => this.#idleWaiters.add(resolve));
+      const failures: AnalysisError[] = [];
+      try {
+        await this.connections.retryPending();
+      } catch (cause: unknown) {
+        failures.push(providerError(cause, "observe_javascript_runtime"));
+      }
+      try {
+        await this.files.retryCleanup();
+      } catch (cause: unknown) {
+        failures.push(providerError(cause, "observe_javascript_runtime"));
+      }
+      if (failures.length === 0) return;
+      if (failures.length === 1) throw failures[0]!;
+      const cleanup = new ProviderCleanupError(
+        V8_INSPECTOR_PROVIDER_IDENTITY.id,
+        failures.flatMap(({ cleanupResources }) => cleanupResources),
+        { reason: "Inspector provider cleanup remains incomplete." },
+        {
+          operation: "observe_javascript_runtime",
+          cause: new AggregateError(
+            failures,
+            "Inspector provider cleanup owners remain unresolved.",
+          ),
+        },
+      );
+      cleanup.bindCleanupDependencies(failures);
+      throw cleanup;
+    } finally {
+      this.#closing = false;
+    }
+  }
+}
 
 /** Maximum decoded CDP message accepted while observing one Inspector target. */
 export const INSPECTOR_MAX_PAYLOAD_BYTES = 16 * 1024 * 1024;
@@ -139,6 +156,7 @@ const RETAINED_OBJECT_OVERHEAD_BYTES = 512;
 export interface ScriptDraft {
   readonly rawUrl: string;
   readonly executionContextKey: string | null;
+  readonly executionContextId: number | null;
   readonly cdpHash: string | null;
   readonly length: number | null;
   readonly isModule: boolean | null;
@@ -146,6 +164,7 @@ export interface ScriptDraft {
 
 export interface ContextDraft {
   readonly contextKey: string;
+  readonly executionContextId: number;
   state: "created" | "destroyed" | "cleared";
   readonly name: string | null;
   readonly origin: string | null;
@@ -154,6 +173,7 @@ export interface ContextDraft {
 export interface CaptureState {
   readonly scripts: ScriptDraft[];
   readonly contexts: Map<string, ContextDraft>;
+  readonly latestContexts: Map<string, ContextDraft>;
   eventsObserved: number;
   eventsRetained: number;
   eventsDropped: number;
@@ -169,12 +189,19 @@ export interface CaptureState {
 /** Attach-only provider; sends only Runtime.enable and Debugger.enable. */
 export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
   readonly #asarHeaderAdmission: AsarHeaderAdmission;
+  readonly #admission: V8InspectorAdmission;
 
-  /** The admission comes from the composition root's environment; default otherwise. */
+  /**
+   * Header admission comes from the composition root's environment.
+   * Pass one {@link V8InspectorAdmission} when several providers must share
+   * transport cleanup. Omitted means this provider owns a fresh admission.
+   */
   constructor(
     asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+    admission: V8InspectorAdmission = new V8InspectorAdmission(),
   ) {
     this.#asarHeaderAdmission = asarHeaderAdmission;
+    this.#admission = admission;
   }
 
   identity(): ProviderIdentity {
@@ -182,14 +209,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
   }
 
   async close(): Promise<void> {
-    if (inspectorClosePromise !== undefined) return await inspectorClosePromise;
-    const attempt = closeInspectorResources();
-    inspectorClosePromise = attempt;
-    try {
-      await attempt;
-    } finally {
-      if (inspectorClosePromise === attempt) inspectorClosePromise = undefined;
-    }
+    await this.#admission.close();
   }
 
   async listTargets(
@@ -197,9 +217,8 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<JavaScriptRuntimeTargetList, AnalysisError>> {
     try {
-      return await withInspectorAdmission(
-        "list_javascript_runtime_targets",
-        () => this.#listTargets(input, options),
+      return await this.#admission.run("list_javascript_runtime_targets", () =>
+        this.#listTargets(input, options),
       );
     } catch (cause: unknown) {
       return err(providerError(cause, "list_javascript_runtime_targets"));
@@ -220,7 +239,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
         options.signal,
         "list_javascript_runtime_targets",
       );
-      await retryElectronFileCleanup();
+      await this.#admission.files.retryCleanup();
       discovery = await discoverV8Inspector(
         input.inspector_endpoint,
         "list_javascript_runtime_targets",
@@ -237,6 +256,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
           options.signal,
           "list_javascript_runtime_targets",
           this.#asarHeaderAdmission,
+          this.#admission.files,
         );
         if (!decision.allowed) {
           excluded[inspectorExclusionKey(decision.reason)] += 1;
@@ -327,7 +347,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     options: ExecutionOptions = {},
   ): Promise<Result<JavaScriptRuntimeObservation, AnalysisError>> {
     try {
-      return await withInspectorAdmission("observe_javascript_runtime", () =>
+      return await this.#admission.run("observe_javascript_runtime", () =>
         this.#observe(input, options),
       );
     } catch (cause: unknown) {
@@ -352,29 +372,30 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
     const closeConnection = (): Promise<void> => {
       if (connection === undefined) return Promise.resolve();
       const ownedConnection = connection;
-      connectionClosePromise ??= inspectorConnections.finish(ownedConnection);
+      connectionClosePromise ??=
+        this.#admission.connections.finish(ownedConnection);
       return connectionClosePromise;
     };
     try {
       throwIfRuntimeObservationCancelled(options.signal);
-      await inspectorConnections.retryPending();
-      await retryElectronFileCleanup();
+      await this.#admission.connections.retryPending();
+      await this.#admission.files.retryCleanup();
       discovery = await discoverV8Inspector(
         input.inspector_endpoint,
         "observe_javascript_runtime",
         options.signal,
       );
       target = await authorizedTarget(
-        discovery.targets,
+        discovery,
         input,
-        discovery.runtime.product,
         this.#asarHeaderAdmission,
         options.signal,
+        this.#admission.files,
       );
       if (input.runtime_kind !== undefined)
         assertRuntimeKind(target, input.runtime_kind);
       throwIfRuntimeObservationCancelled(options.signal);
-      connection = await inspectorConnections.connect(
+      connection = await this.#admission.connections.connect(
         target.webSocketUrl,
         "observe_javascript_runtime",
         options,
@@ -405,6 +426,7 @@ export class V8InspectorProvider implements JavaScriptRuntimeObservationPort {
             signal,
             "observe_javascript_runtime",
             this.#asarHeaderAdmission,
+            this.#admission.files,
           ),
         ...(options.signal === undefined ? {} : { signal: options.signal }),
       });
@@ -507,14 +529,19 @@ const projectTarget = (target: AuthorizedV8InspectorTarget) => ({
 });
 
 const authorizedTarget = async (
-  targets: readonly V8InspectorTarget[],
+  discovery: V8InspectorDiscovery,
   input: ObserveJavaScriptRuntimeInput,
-  product: string,
   asarHeaderAdmission: AsarHeaderAdmission,
   signal?: AbortSignal,
+  files?: ElectronFileScope,
 ): Promise<AuthorizedV8InspectorTarget> => {
   throwIfRuntimeObservationCancelled(signal);
-  const target = targets.find(({ id }) => id === input.target_id);
+  const target = selectCdpDiscoveryTarget(
+    discovery.targets,
+    input.target_id,
+    "observe_javascript_runtime",
+    discovery.ambiguousTargetIds,
+  );
   if (target === undefined)
     throw new BrowserObservationError(
       "observe_javascript_runtime",
@@ -522,10 +549,11 @@ const authorizedTarget = async (
     );
   const decision = await authorizeRuntimeTargetLocation(
     target.url,
-    { type: target.type, product },
+    { type: target.type, product: discovery.runtime.product },
     signal,
     "observe_javascript_runtime",
     asarHeaderAdmission,
+    files,
   );
   throwIfRuntimeObservationCancelled(signal);
   if (target.attached === true)
@@ -596,6 +624,7 @@ const assertRuntimeKind = (
 const emptyCaptureState = (): CaptureState => ({
   scripts: [],
   contexts: new Map(),
+  latestContexts: new Map(),
   eventsObserved: 0,
   eventsRetained: 0,
   eventsDropped: 0,
@@ -623,11 +652,8 @@ const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
     return;
   }
   if (event.method === "Debugger.scriptFailedToParse") {
-    const params = recordValue(event.params);
-    if (
-      typeof params?.scriptId !== "string" ||
-      typeof params.url !== "string"
-    ) {
+    const facts = readCdpScriptParsed(event.params);
+    if (facts.scriptId === undefined || facts.url === undefined) {
       state.invalidScripts += 1;
       retainEvent(state, 0);
       return;
@@ -641,17 +667,24 @@ const ingestEvent = (event: CdpEvent, state: CaptureState): void => {
 
 const ingestScript = (event: CdpEvent, state: CaptureState): void => {
   state.scriptsObserved += 1;
-  const value = recordValue(event.params);
-  const rawUrl = cdpStringValue(value?.url);
+  const facts = readCdpScriptParsed(event.params);
+  const rawUrl = facts.url;
   if (rawUrl === undefined) {
     state.invalidScripts += 1;
     retainEvent(state, 0);
     return;
   }
-  const metadata = scriptMetadataValues(value);
+  const { metadata } = facts;
+  const context =
+    facts.contextKey === null
+      ? undefined
+      : state.latestContexts.get(facts.contextKey);
   const draft: ScriptDraft = {
     rawUrl,
-    executionContextKey: contextKey(value?.executionContextId),
+    executionContextKey:
+      context?.state === "created" ? context.contextKey : null,
+    executionContextId:
+      facts.contextKey === null ? null : (facts.contextId ?? null),
     cdpHash: metadata.hash,
     length: metadata.length,
     isModule: metadata.isModule,
@@ -663,50 +696,45 @@ const ingestScript = (event: CdpEvent, state: CaptureState): void => {
 
 const ingestContext = (event: CdpEvent, state: CaptureState): void => {
   if (event.method === "Runtime.executionContextsCleared") {
-    let byteDelta = 0;
-    for (const context of state.contexts.values()) {
-      byteDelta +=
-        retainedMetadataBytes({ ...context, state: "cleared" }) -
-        retainedMetadataBytes(context);
+    for (const context of state.latestContexts.values()) {
+      if (context.state === "created") context.state = "cleared";
     }
-    if (replaceRetainedMetadata(state, byteDelta)) {
-      for (const context of state.contexts.values()) context.state = "cleared";
-      retainEvent(state, 0);
-    }
+    state.latestContexts.clear();
+    retainEvent(state, 0);
     return;
   }
-  const parameters = recordValue(event.params);
-  const runtimeContext =
-    event.method === "Runtime.executionContextCreated"
-      ? recordValue(parameters?.context)
-      : parameters;
-  const key = contextKey(
-    event.method === "Runtime.executionContextCreated"
-      ? runtimeContext?.id
-      : runtimeContext?.executionContextId,
-  );
-  if (key === null) {
+  const created = event.method === "Runtime.executionContextCreated";
+  const createdContext = created
+    ? readCdpExecutionContextCreated(event.params)
+    : undefined;
+  const identity =
+    createdContext ?? readCdpExecutionContextDestroyed(event.params);
+  const key = identity.contextKey;
+  if (key === null || identity.id === undefined) {
     state.invalidContexts += 1;
     retainEvent(state, 0);
     return;
   }
-  const previous = state.contexts.get(key);
-  const created = event.method === "Runtime.executionContextCreated";
+  const previous = state.latestContexts.get(key);
+  // A lifecycle transition invalidates the old binding even if the new
+  // record cannot be retained within the metadata budget.
+  state.latestContexts.delete(key);
+  if (!created && previous !== undefined) {
+    previous.state = "destroyed";
+    state.latestContexts.set(key, previous);
+    retainEvent(state, 0);
+    return;
+  }
   const draft: ContextDraft = {
-    contextKey: key,
+    contextKey: `context_${String(state.contexts.size)}`,
+    executionContextId: identity.id,
     state: created ? "created" : "destroyed",
-    name: created
-      ? (cdpStringValue(runtimeContext?.name) ?? null)
-      : (previous?.name ?? null),
-    origin: created
-      ? (cdpStringValue(runtimeContext?.origin) ?? null)
-      : (previous?.origin ?? null),
+    name: createdContext?.name ?? null,
+    origin: createdContext?.origin ?? null,
   };
-  const bytes =
-    retainedMetadataBytes(draft) -
-    (previous === undefined ? 0 : retainedMetadataBytes(previous));
-  if (!retainEvent(state, bytes)) return;
-  state.contexts.set(key, draft);
+  if (!retainEvent(state, retainedMetadataBytes(draft))) return;
+  state.contexts.set(draft.contextKey, draft);
+  state.latestContexts.set(key, draft);
 };
 
 const retainEvent = (state: CaptureState, bytes: number): boolean => {
@@ -776,13 +804,6 @@ const retainedMetadataBytes = (value: ScriptDraft | ContextDraft): number => {
     RETAINED_OBJECT_OVERHEAD_BYTES +
     strings.reduce((total, text) => total + (text?.length ?? 0) * 2, 0)
   );
-};
-
-const contextKey = (value: unknown): string | null => {
-  const identifier = numberValue(value);
-  return identifier !== undefined && Number.isSafeInteger(identifier)
-    ? String(identifier)
-    : null;
 };
 
 const providerError = (

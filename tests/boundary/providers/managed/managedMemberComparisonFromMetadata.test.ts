@@ -3,7 +3,11 @@ import {
   metadataRowOffset,
   readManagedMetadataLayout,
 } from "../../../../src/dotnet/ManagedMetadataLayout.js";
-import { buildManagedNestedTypeFixture } from "../../../../src/dotnet/ManagedPe.fixture.js";
+import {
+  buildManagedNestedTypeFixture,
+  buildManagedPeFixture,
+  managedPeFixtureTarget,
+} from "../../../../src/dotnet/ManagedPe.fixture.js";
 import { createHash } from "node:crypto";
 
 import { describe, expect, it } from "vitest";
@@ -14,27 +18,15 @@ import {
 } from "../../../../src/domain/managed/managedMemberComparison.js";
 import { managedMemberInspectionSchema } from "../../../../src/domain/managed/managedArtifact.js";
 import { inspectManagedMembersBytes } from "../../../../src/dotnet/ManagedMemberInspector.js";
-import {
-  buildManagedPeFixture,
-  managedPeFixtureTarget,
-} from "../../../../src/dotnet/ManagedPe.fixture.js";
 
 import { buildManagedPeFixture as buildMultiMethodFixture } from "../../../../scripts/fixtures/managed/pe.mjs";
+import {
+  distinctSelectedNestedOwners,
+  namespaceBearingNestedTypes,
+} from "../../../fixtures/managedSelectedScope.js";
 
 it("selects namespace-bearing nested declarations from parsed type facts and compares the observed scope", () => {
-  const bytes = buildManagedNestedTypeFixture();
-  const pe = readManagedPeLayout(bytes);
-  if (pe.cli === null) throw new Error("Missing fixture CLI");
-  const layout = readManagedMetadataLayout(
-    bytes,
-    pe.rvaToOffset(pe.cli.metadata.rva, pe.cli.metadata.size, "fixture"),
-    pe.cli.metadata.size,
-  );
-  const column = 4 + layout.stringIndexSize;
-  const namespace = bytes.readUInt16LE(
-    metadataRowOffset(layout, 2, 2) + column,
-  );
-  bytes.writeUInt16LE(namespace, metadataRowOffset(layout, 2, 4) + column);
+  const bytes = namespaceBearingNestedTypes();
   const selected = inspect(bytes, "/fixture/nested-selection.dll", ["Inner"]);
   expect(selected.result.selection?.unmatched_type_names).toEqual([]);
   expect(selected.result.types.map(({ token }) => token)).toEqual([
@@ -44,8 +36,12 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
   expect(selected.result.methods).toHaveLength(2);
   expect(selected.result.fields).toHaveLength(2);
   const comparison = compareManagedMembers(selected, selected);
+  expect(comparison.methods).toHaveLength(2);
+  expect(comparison.fields).toHaveLength(2);
   expect(
-    comparison.methods.every(({ match }) => match.status === "matched"),
+    [...comparison.methods, ...comparison.fields].every(
+      ({ match }) => match.status === "matched",
+    ),
   ).toBe(true);
   expect(comparison.summary).toMatchObject({ added: 0, removed: 0 });
   expect(
@@ -65,6 +61,7 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
     ),
     topPe.cli.metadata.size,
   );
+  const column = 4 + topLayout.stringIndexSize;
   topLevel.writeUInt16LE(
     topLevel.readUInt16LE(metadataRowOffset(topLayout, 2, 2) + column),
     metadataRowOffset(topLayout, 2, 4) + column,
@@ -72,6 +69,222 @@ it("selects namespace-bearing nested declarations from parsed type facts and com
   expect(
     inspect(topLevel, "/fixture/top-level.dll", ["Inner"]).result.types,
   ).toEqual([]);
+});
+
+describe("managed comparison selected nominal membership", () => {
+  it("retains known selected pairs in a partial inventory without needing display labels", () => {
+    const source = inspect(
+      distinctSelectedNestedOwners().left,
+      "/fixture/known.dll",
+      ["Fixture.Inner"],
+    );
+    const partial = structuredClone(source.result);
+    partial.metadata.status = "partial";
+    partial.coverage.state = "partial";
+    partial.methods = partial.methods.map((method) => ({
+      ...method,
+      declaring_type: null,
+    }));
+    partial.fields = partial.fields.map((field) => ({
+      ...field,
+      declaring_type: null,
+    }));
+    const comparison = compareManagedMembers(source, {
+      ...source,
+      result: partial,
+    });
+    expect(comparison.coverage.status).toBe("partial");
+    expect(comparison.summary).toEqual({
+      added: 0,
+      removed: 0,
+      unknown: 0,
+      changed: 0,
+      unchanged: 2,
+    });
+    expect(
+      [...comparison.methods, ...comparison.fields].every(
+        ({ match, right }) =>
+          match.status === "matched" && right?.declaring_type === null,
+      ),
+    ).toBe(true);
+  });
+
+  it.each(["current", "historical"])(
+    "does not recover missing %s selected identity from display names",
+    (kind) => {
+      const source = inspect(
+        distinctSelectedNestedOwners().left,
+        "/fixture/selected.dll",
+        ["Fixture.Inner"],
+      );
+      const unknown = structuredClone(source.result);
+      unknown.types = unknown.types.map((type) => ({
+        ...type,
+        name_sha256: null,
+      }));
+      if (kind === "historical") unknown.nesting_read = null;
+      const comparison = compareManagedMembers(source, {
+        ...source,
+        result: unknown,
+      });
+      expect(comparison.summary).toEqual({
+        added: 0,
+        removed: 0,
+        unknown: 4,
+        changed: 0,
+        unchanged: 0,
+      });
+      expect(comparison.matching.unmatched).toBe(4);
+      expect(comparison.coverage.status).toBe("partial");
+    },
+  );
+
+  it("keeps one-sided members unknown when distinct selected owners share a display name", () => {
+    const bytes = distinctSelectedNestedOwners();
+    const left = inspect(bytes.left, "/fixture/left.dll", ["Fixture.Inner"]);
+    const right = inspect(bytes.right, "/fixture/right.dll", ["Fixture.Inner"]);
+    expect(left.result.coverage.state).toBe("complete");
+    expect(right.result.coverage.state).toBe("complete");
+    expect(left.result.types[0]?.full_name).toBe("Fixture.Inner");
+    expect(right.result.types[0]?.full_name).toBe("Fixture.Inner");
+    expect(left.result.types[0]?.name_sha256).not.toBe(
+      right.result.types[0]?.name_sha256,
+    );
+    const selected = compareManagedMembers(left, right);
+    expect(selected.coverage.status).toBe("partial");
+    expect(selected.summary).toEqual({
+      added: 0,
+      removed: 0,
+      unknown: 4,
+      changed: 0,
+      unchanged: 0,
+    });
+    expect(selected.matching.unmatched).toBe(4);
+    expect(selected.methods).toHaveLength(2);
+    expect(selected.fields).toHaveLength(2);
+    const whole = compareManagedMembers(
+      inspect(bytes.left, "/fixture/left.dll"),
+      inspect(bytes.right, "/fixture/right.dll"),
+    );
+    expect(whole.coverage.status).toBe("complete-within-inputs");
+    expect(whole.summary).toMatchObject({ added: 5, removed: 5, unknown: 0 });
+  });
+});
+
+describe("managed comparison selected scope agreement", () => {
+  it("compares retained types rather than equivalent request spellings", () => {
+    const bytes = namespaceBearingNestedTypes();
+    const bare = inspect(bytes, "/fixture/bare.dll", ["Inner"]);
+    const explicit = inspect(bytes, "/fixture/explicit.dll", [
+      "Inner",
+      "Fixture.Inner",
+    ]);
+    expect(explicit.result.types).toEqual(bare.result.types);
+    expect(explicit.result.selection).not.toEqual(bare.result.selection);
+    const comparison = compareManagedMembers(bare, explicit);
+    expect(comparison.coverage.status).toBe("complete-within-inputs");
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Inner.*Inner.*not the whole assembly/iu,
+      ),
+    );
+  });
+
+  it("distinguishes selected nested owners with identical request and display names", () => {
+    const observe = (swapEnclosing: boolean) =>
+      inspect(
+        buildManagedNestedTypeFixture({
+          swapEnclosing,
+          literalTopLevelName: "OtherInner",
+        }),
+        `/fixture/owner-${String(swapEnclosing)}.dll`,
+        ["Inner"],
+      );
+    const left = observe(false);
+    const right = observe(true);
+    expect(left.result.selection).toEqual(right.result.selection);
+    expect(left.result.types.map(({ full_name }) => full_name)).toEqual([
+      "Inner",
+    ]);
+    expect(right.result.types.map(({ full_name }) => full_name)).toEqual([
+      "Inner",
+    ]);
+    expect(left.result.types[0]?.name_sha256).not.toBe(
+      right.result.types[0]?.name_sha256,
+    );
+    const comparison = compareManagedMembers(left, right);
+    expect(comparison.coverage.status).toBe("partial");
+    expect(comparison.summary).toEqual({
+      added: 0,
+      removed: 0,
+      unknown: 4,
+      changed: 0,
+      unchanged: 0,
+    });
+    expect(comparison.matching.unmatched).toBe(4);
+    expect(comparison.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
+    );
+  });
+
+  it.each(["historical identities", "partial prefix", "unavailable"])(
+    "keeps selected scope agreement unknown for %s",
+    (condition) => {
+      const source = inspect(
+        namespaceBearingNestedTypes(),
+        "/fixture/scope.dll",
+        ["Inner"],
+      );
+      const limited = structuredClone(source.result);
+      if (condition === "historical identities")
+        limited.types = limited.types.map((type) => ({
+          ...type,
+          name_sha256: null,
+        }));
+      else {
+        limited.metadata.status =
+          condition === "unavailable" ? "malformed" : "partial";
+        limited.coverage.state =
+          condition === "unavailable" ? "unavailable" : "partial";
+        limited.types = limited.types.slice(
+          0,
+          condition === "unavailable" ? 0 : 1,
+        );
+      }
+      const comparison = compareManagedMembers(source, {
+        ...source,
+        result: limited,
+      });
+      expect(comparison.coverage.status).toBe("partial");
+      expect(comparison.limitations).toContainEqual(
+        expect.stringContaining(
+          "Selected declaring-type scope agreement is unknown",
+        ),
+      );
+      expect(comparison.limitations).not.toContainEqual(
+        expect.stringMatching(/different declaring types/iu),
+      );
+    },
+  );
+
+  it("recognizes complete empty selected scopes despite different unmatched requests", () => {
+    const bytes = buildManagedPeFixture();
+    const left = inspect(bytes, "/fixture/empty-left.dll", ["Absent.Left"]);
+    const right = inspect(bytes, "/fixture/empty-right.dll", ["Absent.Right"]);
+    expect(left.result.types).toEqual([]);
+    expect(right.result.types).toEqual([]);
+    expect(left.result.selection?.unmatched_type_names).toEqual([
+      "Absent.Left",
+    ]);
+    expect(right.result.selection?.unmatched_type_names).toEqual([
+      "Absent.Right",
+    ]);
+    const comparison = compareManagedMembers(left, right);
+    expect(comparison.coverage.status).toBe("complete-within-inputs");
+    expect(comparison.limitations).toContain(
+      "Both observations select no observed declaring types; requested and unmatched names remain in each source selection.",
+    );
+  });
 });
 
 describe("managed comparison method row coverage", () => {
@@ -817,6 +1030,132 @@ describe("managed member structural matching", () => {
   });
 });
 
+describe("managed LocalVarSig comparison", () => {
+  const observe = (signature: Buffer, path: string, maxStack = 8) => {
+    const body = Buffer.alloc(13);
+    body.writeUInt16LE(0x3003, 0);
+    body.writeUInt16LE(maxStack, 2);
+    body.writeUInt32LE(1, 4);
+    body.writeUInt32LE(0x11000001, 8);
+    body[12] = 0x2a;
+    return inspect(
+      buildManagedPeFixture({
+        ilBody: body,
+        standaloneSignatures: [signature],
+        mvid: createHash("md5").update(path).digest(),
+      }),
+      path,
+    );
+  };
+
+  it("retains changed validated primitive local signature bytes with identical CIL", () => {
+    const left = observe(
+      Buffer.from([0x07, 0x01, 0x08]),
+      "/fixture/locals-int32.dll",
+    );
+    const right = observe(
+      Buffer.from([0x07, 0x01, 0x0a]),
+      "/fixture/locals-int64.dll",
+    );
+    expect(left.result.coverage).toMatchObject({
+      state: "complete",
+      issues: [],
+    });
+    expect(right.result.coverage).toMatchObject({
+      state: "complete",
+      issues: [],
+    });
+    expect(left.result.methods[0]?.body).toMatchObject({
+      status: "present",
+      local_var_sig_token: "0x11000001",
+      local_var_signature: { has_context_dependent_types: false },
+      il_sha256: right.result.methods[0]?.body.il_sha256,
+      normalized_il_sha256: right.result.methods[0]?.body.normalized_il_sha256,
+    });
+    const result = managedMemberComparisonResultSchema.parse(
+      compareManagedMembers(left, right),
+    );
+    expect(result.methods[0]).toMatchObject({
+      status: "changed",
+      dimensions: ["metadata"],
+      match: { basis: "exact-il-signature" },
+      limitations: [expect.stringContaining("encoding difference")],
+    });
+  });
+
+  it.each([
+    ["named type", [0x12, 0x04]],
+    ["type variable", [0x13, 0x00]],
+    ["method variable", [0x1e, 0x00]],
+    ["custom modifier", [0x1f, 0x04, 0x08]],
+  ] as const)(
+    "keeps cross-artifact %s locals unknown while retaining observed header changes",
+    (_name, type) => {
+      const signature = Buffer.from([0x07, 0x01, ...type]);
+      const left = observe(signature, "/fixture/locals-context-left.dll");
+      const right = observe(signature, "/fixture/locals-context-right.dll", 16);
+      expect(left.result.methods[0]?.body).toMatchObject({
+        status: "present",
+        local_var_signature: { has_context_dependent_types: true },
+      });
+      expect(compareManagedMembers(left, right).methods[0]).toMatchObject({
+        status: "changed",
+        dimensions: ["metadata", "availability"],
+        limitations: [
+          expect.stringContaining(
+            "Local variable signature identity is unknown",
+          ),
+        ],
+      });
+      const sameHeader = observe(
+        signature,
+        "/fixture/locals-context-same-header.dll",
+      );
+      expect(compareManagedMembers(left, sameHeader).methods[0]).toMatchObject({
+        status: "unknown",
+        dimensions: ["availability"],
+      });
+      expect(compareManagedMembers(left, left).methods[0]).toMatchObject({
+        status: "unchanged",
+        dimensions: [],
+      });
+    },
+  );
+
+  it("preserves historical locals uncertainty across artifacts and byte identity within one artifact", () => {
+    const left = observe(
+      Buffer.from([0x07, 0x01, 0x08]),
+      "/fixture/locals-current.dll",
+    );
+    const currentRight = observe(
+      Buffer.from([0x07, 0x01, 0x0a]),
+      "/fixture/locals-old.dll",
+    );
+    const historical = (side: typeof left) => ({
+      ...side,
+      result: managedMemberInspectionSchema.parse({
+        ...side.result,
+        methods: side.result.methods.map((method) => ({
+          ...method,
+          body: { ...method.body, local_var_signature: undefined },
+        })),
+      }),
+    });
+    expect(
+      compareManagedMembers(left, historical(currentRight)).methods[0],
+    ).toMatchObject({
+      status: "unknown",
+      dimensions: ["availability"],
+    });
+    expect(
+      compareManagedMembers(left, historical(left)).methods[0],
+    ).toMatchObject({
+      status: "unchanged",
+      dimensions: [],
+    });
+  });
+});
+
 describe("managed member comparison", () => {
   it.each([
     { label: "initialization flag", flags: 0x3013, maxStack: 8 },
@@ -1255,6 +1594,53 @@ describe("managed member comparison beside user strings", () => {
   });
 });
 
+it.each([
+  ["wrong member kinds", [0x06, 0x08], [0x00, 0x00, 0x01]],
+  ["empty blobs", [], []],
+  ["truncated blobs", [0x00, 0x80], [0x06]],
+  ["invalid headers", [0x08, 0x00, 0x08], [0x26, 0x08]],
+] as const)(
+  "keeps equal malformed %s unknown regardless of resolution attestation",
+  (_label, methodBytes, fieldBytes) => {
+    const side = inspect(
+      buildManagedPeFixture({
+        methodSignature: Buffer.from(methodBytes),
+        fieldSignature: Buffer.from(fieldBytes),
+        ilBody: Buffer.from([0x06, 0x2a]),
+      }),
+      "/tmp/malformed-signatures.dll",
+    );
+    expect(side.result.methods[0]?.signature.parse_status).toBe("malformed");
+    expect(side.result.fields[0]?.signature.parse_status).toBe("malformed");
+    expect(side.result.coverage.state).toBe("partial");
+
+    for (const signature_resolution of [
+      side.result.signature_resolution,
+      null,
+    ]) {
+      const observation = {
+        ...side,
+        result: { ...side.result, signature_resolution },
+      };
+      const comparison = compareManagedMembers(observation, observation);
+      expect(comparison.coverage.status).toBe("partial");
+      expect(comparison.summary).toMatchObject({
+        unchanged: 0,
+        changed: 0,
+        added: 0,
+        removed: 0,
+        unknown: 2,
+      });
+      for (const item of [...comparison.methods, ...comparison.fields])
+        expect(item).toMatchObject({
+          status: "unknown",
+          match: { status: "matched", confidence: "exact" },
+          limitations: [expect.stringMatching(/^signature-malformed:/)],
+        });
+    }
+  },
+);
+
 describe("managed member comparison of undecoded signatures", () => {
   it("remaps renamed methods only when raw signatures and complete normalized IL match", () => {
     const signature = Buffer.from([0x00, 0x00, 0x7f]);
@@ -1479,8 +1865,8 @@ describe("managed member comparison of selected types", () => {
       right: null,
     });
     expect(result.coverage.status).toBe("partial");
-    expect(result.limitations).toContain(
-      "The observations select different declaring types; a member outside the other side's selection is unknown, not added or removed.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/different declaring types.*unknown/iu),
     );
   });
 
@@ -1525,8 +1911,10 @@ describe("managed member comparison of selected types", () => {
 
     expect(result.methods[0]).toMatchObject({ status: "unchanged" });
     expect(result.coverage.status).toBe("complete-within-inputs");
-    expect(result.limitations).toContain(
-      "Both observations cover only the selected declaring types (Fixture.Program); member totals and statuses describe those types, not the whole assembly.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(
+        /selected declaring types.*Fixture\.Program.*not the whole assembly/iu,
+      ),
     );
   });
 });
@@ -2189,62 +2577,43 @@ describe("managed member comparison of ownerless members", () => {
     }
   });
 
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the left, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-left.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    // The left holds the resolved Foo and an ownerless Foo with the same CIL
-    // and signature; the right holds only the resolved Foo. The ownerless
-    // Foo's owner may be the resolved one, so the three stay ambiguous.
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
+  it.each(["left", "right"] as const)(
+    "keeps a resolved copy out of the declared round when an ownerless competitor is on the %s",
+    (side) => {
+      const base = inspect(
+        buildManagedPeFixture(),
+        `/tmp/ownerless-${side}.dll`,
+      );
+      const [method] = base.result.methods;
+      if (method === undefined) throw new Error("Expected a fixture method");
+      const ownerless = {
+        ...method,
+        declaring_type: null,
+        declaring_type_token: null,
+      };
+      // The ownerless Foo may belong to the same type as the resolved Foo,
+      // so both comparison directions must leave the three members ambiguous.
+      const withOwnerless = {
+        ...base,
+        result: { ...base.result, methods: [method, ownerless], fields: [] },
+      };
+      const resolvedOnly = {
+        ...base,
+        result: { ...base.result, methods: [method], fields: [] },
+      };
 
-    const result = compareManagedMembers(withOwnerless, resolvedOnly);
+      const result =
+        side === "left"
+          ? compareManagedMembers(withOwnerless, resolvedOnly)
+          : compareManagedMembers(resolvedOnly, withOwnerless);
 
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
-
-  it("keeps a resolved copy out of the declared round when an ownerless competitor is on the right, as main does", () => {
-    const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-right.dll");
-    const [method] = base.result.methods;
-    if (method === undefined) throw new Error("Expected a fixture method");
-    const ownerless = {
-      ...method,
-      declaring_type: null,
-      declaring_type_token: null,
-    };
-    const withOwnerless = {
-      ...base,
-      result: { ...base.result, methods: [method, ownerless], fields: [] },
-    };
-    const resolvedOnly = {
-      ...base,
-      result: { ...base.result, methods: [method], fields: [] },
-    };
-
-    const result = compareManagedMembers(resolvedOnly, withOwnerless);
-
-    expect(result.matching.ambiguous).toBe(1);
-    expect(
-      result.methods.filter(({ match }) => match.status === "matched"),
-    ).toEqual([]);
-    expect(result.summary).toMatchObject({ added: 0, removed: 0 });
-  });
+      expect(result.matching.ambiguous).toBe(1);
+      expect(
+        result.methods.filter(({ match }) => match.status === "matched"),
+      ).toEqual([]);
+      expect(result.summary).toMatchObject({ added: 0, removed: 0 });
+    },
+  );
 
   it("keeps an ownerless method ambiguous beside a resolved method of the same shape", () => {
     const base = inspect(buildManagedPeFixture(), "/tmp/ownerless-shape.dll");
@@ -2688,8 +3057,8 @@ describe("managed member comparison of resolved signatures", () => {
     expect(result.fields).toEqual([
       expect.objectContaining({ status: "unchanged" }),
     ]);
-    expect(result.limitations).toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).toContainEqual(
+      expect.stringMatching(/signature type.name resolution.*raw bytes/iu),
     );
   });
 });
@@ -2918,8 +3287,8 @@ describe("managed member comparison limitations for resolved signatures", () => 
     };
     const result = compareManagedMembers(empty, empty);
 
-    expect(result.limitations).not.toContain(
-      "At least one managed member observation does not attest signature type-name resolution, so signatures compare by raw bytes, which name types by build-local metadata row.",
+    expect(result.limitations).not.toContainEqual(
+      expect.stringMatching(/does not attest signature type.name resolution/iu),
     );
   });
 });

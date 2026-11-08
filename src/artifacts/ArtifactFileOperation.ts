@@ -1,5 +1,8 @@
 import type { FileHandle } from "node:fs/promises";
-import { RegularFileOperationCancelled } from "../filesystem/RegularFile.js";
+import {
+  RegularFileOperationCancelled,
+  type StableRegularFileDescriptor,
+} from "../filesystem/RegularFile.js";
 import { OwnedFileHandle } from "../filesystem/OwnedFileHandle.js";
 import {
   withOwnedFileHandle,
@@ -33,17 +36,17 @@ export class ArtifactFileCleanupFailure<
   ) {
     const outcome = fileCleanupFailure.outcome;
     if (
+      fileCleanupFailure.operationFailure === undefined &&
       outcome.kind === "failed" &&
       outcome.cause instanceof RegularFileOperationCancelled
     )
-      fileCleanupFailure = new RegularFileCleanupFailure(
-        fileCleanupFailure.path,
-        fileCleanupFailure.owner,
-        { kind: "failed", cause: artifactOperationCause(outcome.cause) },
-        fileCleanupFailure.cleanupCause,
-        fileCleanupFailure.retention,
-        fileCleanupFailure.completionCancellation,
-      );
+      fileCleanupFailure = new RegularFileCleanupFailure({
+        ...fileCleanupFailure,
+        outcome: {
+          kind: "failed",
+          cause: artifactOperationCause(outcome.cause),
+        },
+      });
     const completionCancellation = fileCleanupFailure.completionCancellation;
     const primary =
       fileCleanupFailure.outcome.kind === "failed"
@@ -58,7 +61,15 @@ export class ArtifactFileCleanupFailure<
               },
             );
     const projected = ArtifactReaderFailure.withCleanup(
-      primary,
+      fileCleanupFailure.operationFailure !== undefined &&
+        fileCleanupFailure.outcome.kind === "failed" &&
+        Object.is(primary, fileCleanupFailure.operationFailure.operationCause)
+        ? new ArtifactReaderFailure(
+            "io",
+            primary instanceof Error ? primary.message : String(primary),
+            { cause: primary },
+          )
+        : primary,
       ArtifactReaderFailure.cleanupObservation(
         fileCleanupFailure.cleanupCause,
         fileCleanupFailure.path,
@@ -80,6 +91,7 @@ export class ArtifactFileCleanupFailure<
     );
     this.fileCleanupFailure = fileCleanupFailure;
     const inherited =
+      fileCleanupFailure.operationFailure === undefined &&
       fileCleanupFailure.outcome.kind === "failed"
         ? artifactPrimaryCleanupLeases(fileCleanupFailure.outcome.cause)
         : [];
@@ -125,31 +137,42 @@ export const mapArtifactFileFailure = (
   const physical = cause.fileCleanupFailure;
   if (physical.outcome.kind !== "failed") return cause;
   const primary =
+    physical.operationFailure === undefined &&
     physical.outcome.cause instanceof ArtifactFileCleanupFailure
       ? mapArtifactFileFailure(physical.outcome.cause, classify)
       : classify(physical.outcome.cause);
-  if (primary === physical.outcome.cause) return cause;
+  if (Object.is(primary, physical.outcome.cause)) return cause;
   return new ArtifactFileCleanupFailure(
-    new RegularFileCleanupFailure(
-      physical.path,
-      physical.owner,
-      { kind: "failed", cause: primary },
-      physical.cleanupCause,
-      physical.retention,
-      physical.completionCancellation,
-    ),
+    new RegularFileCleanupFailure({
+      ...physical,
+      outcome: { kind: "failed", cause: primary },
+    }),
     cause.cleanupLease,
   );
 };
 
-/** Read only the physical outcomes carried by known nested file owners. */
-export const artifactFilePrimaryFailure = (cause: unknown): unknown => {
-  while (
-    cause instanceof ArtifactFileCleanupFailure &&
-    cause.fileCleanupFailure.outcome.kind === "failed"
-  )
-    cause = cause.fileCleanupFailure.outcome.cause;
-  return cause;
+export interface ArtifactFilePrimaryFacts {
+  readonly cause: unknown;
+  readonly origin: "opaque-operation" | "owned-or-classified";
+}
+
+/** Preserve physical origin while inspecting only explicit nested operation owners. */
+export const artifactFilePrimaryFacts = (
+  cause: unknown,
+): ArtifactFilePrimaryFacts => {
+  while (cause instanceof ArtifactFileCleanupFailure) {
+    const physical = cause.fileCleanupFailure;
+    if (physical.outcome.kind !== "failed") break;
+    cause = physical.outcome.cause;
+    if (physical.operationFailure !== undefined)
+      return {
+        cause,
+        origin: Object.is(cause, physical.operationFailure.operationCause)
+          ? "opaque-operation"
+          : "owned-or-classified",
+      };
+  }
+  return { cause, origin: "owned-or-classified" };
 };
 
 /** Cancellation after confirmed close retains the completed physical operation. */
@@ -232,7 +255,7 @@ export const withArtifactRegularFile = async <Value>(
     ): void;
   },
   signal: AbortSignal | undefined,
-  operation: (file: FileHandle) => Promise<Value>,
+  operation: (source: StableRegularFileDescriptor) => Promise<Value>,
   symlinks: "follow" | "reject" = "reject",
 ): Promise<Value> => {
   let cleanupLease: AnalysisCleanupLease | undefined;
@@ -252,9 +275,9 @@ export const withArtifactRegularFile = async <Value>(
           });
         },
       },
-      async (file) => {
+      async (source) => {
         assertArtifactReadActive(signal);
-        return await operation(file);
+        return await operation(source);
       },
     );
     return value;

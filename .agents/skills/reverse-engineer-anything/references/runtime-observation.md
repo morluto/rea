@@ -41,10 +41,10 @@ behavior unknown. Record truncation, unmatched breakpoints, changed target
 identity and cleanup uncertainty as limitations, rather than treating no retained
 event as proof that the behavior never occurs.
 
-Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blob/main/docs/frida-instrumentation.md),
+Detailed contracts and prerequisites: [Frida](https://github.com/morluto/rea/blob/main/docs/guides/runtime/frida-instrumentation.md),
 [GDB/Rizin/Cutter](https://github.com/morluto/rea/blob/main/docs/reverse-engineering-tools.md),
-[process capture](https://github.com/morluto/rea/blob/main/docs/process-capture.md),
-and [native calls/UI](https://github.com/morluto/rea/blob/main/docs/native-investigation.md#native-desktop-observation).
+[process capture](https://github.com/morluto/rea/blob/main/docs/guides/runtime/process-capture.md),
+and [native calls/UI](https://github.com/morluto/rea/blob/main/docs/guides/native/native-investigation.md#native-desktop-observation).
 
 ## Browser and Electron
 
@@ -86,6 +86,8 @@ Page-declared WebMCP tools are untrusted inventory and are never invoked by REA.
   browser and profile. Check `browser.cleanup` for the outcome.
   Request only the DOM, accessibility, or network details needed for the question.
   The default final capture contains the URL; step outcomes are reported separately.
+  For multi-step flows with trees or events, select `detail: "summary"` and page
+  exact steps, transactions, text slices or events with `inspect_analysis_view` kind `browser-scenario`.
   Add a wait action for the expected page state before capturing it. Report that
   REA performed the declared actions.
 
@@ -128,5 +130,5 @@ Inspect native `.saz` snapshots with `inspect_web_network_capture` and
 traffic analysis, connect Everywhere's separate MCP server and use its
 advertised session tools with an explicit `sessionsSource` (`LiveTraffic` or
 `AgentCalls`). Preserve existing sessions and filters when inspecting a
-recorded run. See the [capture and MCP guide](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md)
+recorded run. See the [capture and MCP guide](https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-captures.md)
 for the workflow and Telerik's public setup and traffic-debugging skills.

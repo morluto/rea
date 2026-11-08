@@ -6,9 +6,11 @@ import { pathToFileURL } from "node:url";
 import { join } from "node:path";
 import { expect } from "vitest";
 import { toolContract } from "../../src/contracts/toolContracts.js";
+import { RUST_RESOURCE_GUARD_LIMITATION } from "../../src/rust/RustBinaryProvider.js";
 import { machoImageWithUnknownCommand } from "../../src/artifacts/apple/MachoImage.fixture.js";
 import {
   compressRustElfSectionNames,
+  createRustHashOverflowImage,
   createRustImage,
   createRustImageWithGoSection,
   RUSTC_HASH,
@@ -17,6 +19,7 @@ import {
 import { createTestTempDirectory } from "../fixtures/temporaryDirectory.js";
 import { cliTest } from "../support/cli/cliFixture.js";
 import { connectLocalToolsMcp } from "../fixtures/localToolsMcp.js";
+import { expectCliMcpEvidenceParity } from "../fixtures/cliMcpEvidenceParity.js";
 import { parseMcpToolError } from "../fixtures/mcpToolError.js";
 
 cliTest(
@@ -68,7 +71,7 @@ cliTest(
         auditable_metadata: null,
       });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     }
     await client.ping();
   },
@@ -267,7 +270,8 @@ cliTest(
     );
     for (const fixture of [
       { name: "zlib", type: 1, supported: true },
-      { name: "unknown", type: 2, supported: false },
+      { name: "zstd", type: 2, supported: true },
+      { name: "unknown", type: 3, supported: false },
     ]) {
       const path = join(root, `${fixture.name}.elf`);
       await writeFile(
@@ -296,8 +300,8 @@ cliTest(
         });
       } else {
         expect(report.auditable_metadata).toBeNull();
-        expect(report.limitations.join("\n")).toContain(
-          "ELF section names are unavailable because compression type 2 is unsupported",
+        expect(report.limitations.join("\n")).toMatch(
+          /section names.*unavailable.*compression type 3.*unsupported/iu,
         );
         expect(report.limitations.join("\n")).toContain(
           "The presence of .dep-v0 could not be determined",
@@ -463,6 +467,9 @@ cliTest(
     expect(metadata?.uncompressed_bytes).toBeLessThanOrEqual(
       (metadata?.compressed_bytes ?? 0) * 64,
     );
+    // Padding separates the section size from the consumed stream that the
+    // inflate guidance names.
+    expect(evidence.limitations).toContain(RUST_RESOURCE_GUARD_LIMITATION);
     expect(evidence.locations).toContainEqual({
       kind: "file-offset-range",
       start: metadata?.file_offset,
@@ -470,7 +477,7 @@ cliTest(
     });
     const response = await call("inspect_rust_binary", { path });
     expect(response.isError, JSON.stringify(response)).not.toBe(true);
-    expect(response.structuredContent).toEqual(evidence);
+    expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
     await client.ping();
   },
   30000,
@@ -585,7 +592,7 @@ cliTest(
       { stage: "denied", handleId: 0, open: true },
       { stage: "released", handleId: 0, fd: -1 },
     ]);
-    expect(await readFile(path)).toEqual(bytes);
+    expect(Buffer.compare(await readFile(path), bytes)).toBe(0);
   },
 );
 
@@ -648,7 +655,7 @@ cliTest(
       });
       const response = await call("inspect_rust_binary", { path });
       expect(response.isError, JSON.stringify(response)).not.toBe(true);
-      expect(response.structuredContent).toEqual(evidence);
+      expectCliMcpEvidenceParity(evidence, response.structuredContent, path);
       const go = await cli.run({
         arguments: ["inspect-go-binary", path, "--json"],
       });
@@ -678,4 +685,32 @@ cliTest(
     await client.ping();
   },
   30000,
+);
+
+cliTest(
+  "refuses distinct rustc paths above capacity with non-retryable guidance",
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-rust-cli-overflow-");
+    const path = join(root, "overflow.elf");
+    await writeFile(path, createRustHashOverflowImage());
+    const result = await cli.run({
+      arguments: ["inspect-rust-binary", path, "--json"],
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      category: "resource_constraint",
+      retryable: false,
+      remediation: {
+        action: expect.stringMatching(
+          /rustc commit.path inventory.*fixed count/iu,
+        ),
+      },
+      details: {
+        operation: "inspect_rust_binary",
+        resource: "capacity",
+        reported_limits: { maximum_rustc_hashes: 64 },
+      },
+    });
+  },
 );

@@ -184,7 +184,7 @@ describe("guided prompt completion from investigation records", () => {
     const inspectionEvidence = createEvidence(undefined, fixtureProvider, {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryInspection),
+      result: inventoryInspection,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: inventoryInspection.evidence_links,
@@ -246,8 +246,22 @@ describe("guided prompt completion from investigation records", () => {
     expect(resolved.ok).toBe(true);
     expect(await completion.complete("unknown", "")).toEqual([]);
 
-    await session.close();
-    expect(await completion.complete("evidence", "ev_")).toEqual([]);
+    const retained = await completion.complete("evidence", "ev_");
+    expect(retained).toContain(PROCESS_CAPTURE_REFERENCE.evidence_id);
+    expect((await session.close()).ok).toBe(true);
+    expect(await completion.complete("evidence", "ev_")).toEqual(retained);
+    expect(await completion.complete("manifest", "agm_")).toEqual([
+      inventory.manifest.manifest_id,
+    ]);
+    expect((await session.resetInvestigation()).ok).toBe(true);
+    for (const kind of [
+      "evidence",
+      "capture",
+      "manifest",
+      "occurrence",
+      "unknown",
+    ] as const)
+      expect(await completion.complete(kind, "")).toEqual([]);
   });
 });
 
@@ -426,7 +440,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inventory_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(inventoryResult),
+      result: inventoryResult,
       confidence: "observed",
       authority: "shipped-artifact",
     },
@@ -530,7 +544,7 @@ const createPagedInspectionEvidence = async (
     {
       operation: "inspect_artifact",
       parameters: {},
-      result: jsonValueSchema.parse(result),
+      result: result,
       confidence: "observed",
       authority: "shipped-artifact",
       evidenceLinks: result.evidence_links,

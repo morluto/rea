@@ -6,6 +6,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 import { z } from "incur";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { createGpuCodeObjectsService } from "../composition/gpu.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
@@ -22,9 +23,9 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
     description:
       "Inspect embedded CUDA/HIP targets and selected static kernel metadata",
     args: z.object({
-      path: z
-        .string()
-        .describe("Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle"),
+      path: localPathStringSchema.describe(
+        "Local ELF/PE, CUDA fatbin, CUBIN, PTX or HIP bundle",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -38,10 +39,10 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
         .enum(["inventory", "kernels"])
         .default("inventory")
         .describe("Inventory GPU targets or decode selected kernel metadata"),
-      expected_sha256: z
-        .string()
-        .optional()
-        .describe("Inventory SHA-256; required with --object_ids"),
+      expected_sha256:
+        inspectGpuCodeObjectsInputSchema.shape.expected_sha256.describe(
+          "Inventory SHA-256 as 64 lowercase hex digits; required with --object_ids",
+        ),
       object_ids: z
         .string()
         .optional()
@@ -98,6 +99,7 @@ export const registerGpuCommands = (cli: CliInstance, logger: Logger): void => {
             );
           const service = createGpuCodeObjectsService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

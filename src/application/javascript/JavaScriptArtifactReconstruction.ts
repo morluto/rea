@@ -1,3 +1,7 @@
+import { discoverJavaScriptPreloadPaths } from "./JavaScriptPreloadDiscovery.js";
+import { artifactNameForClassification } from "../../domain/artifactNameSelection.js";
+import type { AnalysisSettingValues } from "../../domain/analysisSettings.js";
+import { absoluteCallerPath } from "../../filesystem/callerPath.js";
 import {
   DEFAULT_ASAR_HEADER_ADMISSION,
   type AsarHeaderAdmission,
@@ -7,7 +11,7 @@ import {
   buildJavaScriptRouteInventorySteps,
   type JavaScriptRouteInventory,
 } from "../../domain/javascript/javascriptRouteInventory.js";
-import { access, lstat, realpath } from "node:fs/promises";
+import { access, realpath, stat } from "node:fs/promises";
 import { setImmediate } from "node:timers/promises";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
@@ -20,8 +24,11 @@ import { createJavaScriptArtifactReader as createReader } from "../../artifacts/
 import type { JavaScriptApplicationGraph } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptSemanticGraph } from "../../domain/javascript/javascriptSemanticGraph.js";
 import type { JavaScriptSourceSelection } from "../../domain/javascript/javascriptSourceSelection.js";
-import type { ElectronBoundarySummary } from "../../domain/javascript/javascriptApplicationAnalysis.js";
-import { parseOwnedJavaScriptApplicationAnalysisSteps } from "../../domain/javascript/javascriptApplicationAnalysis.js";
+import {
+  parseOwnedJavaScriptApplicationAnalysisSteps,
+  type AnalyzeJavaScriptApplicationInput,
+  type ElectronBoundarySummary,
+} from "../../domain/javascript/javascriptApplicationAnalysis.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import { analysisErrorWithCleanupFailure } from "../../domain/analysisErrorCleanup.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
@@ -38,13 +45,8 @@ import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "../../domain/javascript/j
 import { createOwnedJavaScriptApplicationEvidenceCooperatively } from "./JavaScriptApplicationEvidence.js";
 import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScriptArtifactFiles.js";
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
-import {
-  javascriptArtifactReconstructionInputSchema,
-  type JavaScriptArtifactReconstructionInput,
-} from "./JavaScriptArtifactReconstructionInput.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
-import { summarizeElectronBoundaries } from "./ElectronBoundaryAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
@@ -80,13 +82,14 @@ export interface JavaScriptArtifactReconstructionResult {
   readonly limitations: readonly string[];
 }
 
-/** Reconstruct one local ASAR or extracted directory without executing code. */
+/** Reconstruct a parsed local ASAR/directory request without executing code. */
 export const reconstructJavaScriptArtifact = async (
-  rawInput: unknown,
+  input: AnalyzeJavaScriptApplicationInput,
   scope: ArtifactResourceScope,
   signal?: AbortSignal,
   progress?: ProgressReporter,
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  overrides?: Readonly<Partial<AnalysisSettingValues>>,
 ): Promise<JavaScriptArtifactReconstructionResult> =>
   scope.run(async () => {
     const reportPhase = async (
@@ -101,22 +104,32 @@ export const reconstructJavaScriptArtifact = async (
       });
       await checkpointJavaScriptAnalysis(signal);
     };
-    const input = javascriptArtifactReconstructionInputSchema.parse(rawInput);
     abortIfNeeded(signal);
-    const { path, metadata } = await resolveSelectedInput(input.input_path);
-    const format = resolveFormat(path, metadata, input);
-    const snapshot = await scanCanonicalArtifactInventoryInScope(path, {
-      resourceScope: scope,
-      signal,
-      integrity: { mode: input.integrity_policy },
-      asarHeaderAdmission,
-    });
+    const selectedPath = absoluteCallerPath(input.input_path);
+    const { path, metadata } = await resolveSelectedInput(selectedPath);
+    const format = resolveFormat(path, metadata, input, selectedPath);
+    const snapshot = await scanCanonicalArtifactInventoryInScope(
+      path,
+      {
+        resourceScope: scope,
+        signal,
+        integrity: input.integrity_policy,
+        asarHeaderAdmission,
+      },
+      undefined,
+      selectedPath,
+    );
     if (snapshot.manifest.root_format !== format)
       throw new ArtifactReaderFailure(
         "format",
         `Artifact inventory classified ${path} as ${snapshot.manifest.root_format}, not ${format}`,
       );
-    const reader = createReader(path, format, asarHeaderAdmission);
+    const reader = createReader(
+      path,
+      format,
+      asarHeaderAdmission,
+      selectedPath,
+    );
     const readerOwner = {
       kind: "reader" as const,
       reader,
@@ -146,14 +159,10 @@ export const reconstructJavaScriptArtifact = async (
       const earlyCleanup = await scope.release(readerOwner);
       readerOpen = false;
       if (earlyCleanup.kind === "failed")
-        throw ArtifactReaderFailure.withCleanup(
-          earlyCleanup.cause,
-          ArtifactReaderFailure.cleanupObservation(
-            earlyCleanup.cause,
-            readerOwner.resource,
-          ),
-          { kind: "artifact-inventory", inventory: snapshot },
-        );
+        throw scope.cleanupFailure({ kind: "completed" }, [earlyCleanup], {
+          kind: "artifact-inventory",
+          inventory: snapshot,
+        });
       await reportPhase(
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
@@ -172,14 +181,24 @@ export const reconstructJavaScriptArtifact = async (
           ? {}
           : { fileNodes: input.max_semantic_nodes_per_file }),
       });
+      const sourceLimits = {
+        heapMb:
+          input.max_heap_mb ??
+          overrides?.["javascript.max_heap_mb"] ??
+          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
+        timeoutMs:
+          input.analysis_timeout_ms ??
+          overrides?.["javascript.analysis_timeout_ms"] ??
+          JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
+      };
+      const preloads = await discoverJavaScriptPreloadPaths(
+        files,
+        sourceLimits,
+        scope,
+        signal,
+      );
       const worker = await createJavaScriptSourceAnalysis(
-        {
-          heapMb:
-            input.max_heap_mb ?? JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.heapMb,
-          timeoutMs:
-            input.analysis_timeout_ms ??
-            JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.timeoutMs,
-        },
+        sourceLimits,
         files.files.filter(
           (file) => file.kind === "javascript" && file.text.included,
         ).length,
@@ -218,6 +237,8 @@ export const reconstructJavaScriptArtifact = async (
             });
             abortIfNeeded(signal);
           },
+          preloads.paths,
+          preloads.limitations,
         );
       } finally {
         try {
@@ -269,7 +290,7 @@ export const reconstructJavaScriptArtifact = async (
         "seal_javascript_application_graph",
         "Sealing the validated application graph",
       );
-      const graph = await completeJavaScriptAnalysisSteps(
+      const { graph, electronSummary } = await completeJavaScriptAnalysisSteps(
         applicationGraphSteps,
       );
       await reportCompletedPhase(
@@ -293,9 +314,10 @@ export const reconstructJavaScriptArtifact = async (
           .map(({ logical_path }) => logical_path),
       );
       const nextAppContext = createJavaScriptNextAppContext(
-        files.files,
+        files,
         analysis.jsonDocuments,
         directoryPaths,
+        snapshot.coverage,
       );
       const completed = {
         route_inventory: await completeJavaScriptAnalysisSteps(
@@ -353,7 +375,7 @@ export const reconstructJavaScriptArtifact = async (
           : { source_selection: files.source_selection }),
         graph,
         semantic_graph: semanticGraph,
-        electron_summary: summarizeElectronBoundaries(analysis, directoryPaths),
+        electron_summary: electronSummary,
         statistics: {
           relevant_files:
             files.files.length + files.unavailable_relevant_files.length,
@@ -407,19 +429,13 @@ export const reconstructJavaScriptArtifact = async (
     if (readerOpen) {
       const cleanupAttempt = await scope.release(readerOwner);
       if (cleanupAttempt.kind === "failed") {
-        const cleanup = ArtifactReaderFailure.cleanupObservation(
-          cleanupAttempt.cause,
-          readerOwner.resource,
-        );
         const partialObservation: ArtifactInventoryPartialObservation = {
           kind: "artifact-inventory",
           inventory: snapshot,
         };
-        throw ArtifactReaderFailure.withCleanup(
-          reconstructionOutcome.kind === "failed"
-            ? reconstructionOutcome.cause
-            : cleanupAttempt.cause,
-          cleanup,
+        throw scope.cleanupFailure(
+          reconstructionOutcome,
+          [cleanupAttempt],
           partialObservation,
         );
       }
@@ -440,8 +456,10 @@ const resolveSelectedInput = async (
   inputPath: string,
 ): Promise<{ readonly path: string; readonly metadata: Stats }> => {
   try {
+    // Native lookup must admit the selected traversal first: Darwin realpath
+    // can collapse file/.. even though that path cannot be opened.
+    const metadata = await stat(inputPath);
     const path = await realpath(inputPath);
-    const metadata = await lstat(path);
     // Directory enumeration needs read access; resolving its entries also needs search access.
     await access(
       path,
@@ -487,11 +505,15 @@ const selectedInputResolutionMessage = (
 const resolveFormat = (
   path: string,
   metadata: Stats,
-  input: JavaScriptArtifactReconstructionInput,
+  input: AnalyzeJavaScriptApplicationInput,
+  selectedPath: string,
 ): "asar" | "directory" => {
   const observed = metadata.isDirectory()
     ? "directory"
-    : metadata.isFile() && path.toLowerCase().endsWith(".asar")
+    : metadata.isFile() &&
+        artifactNameForClassification(selectedPath, path)
+          .toLowerCase()
+          .endsWith(".asar")
       ? "asar"
       : undefined;
   if (observed === undefined)

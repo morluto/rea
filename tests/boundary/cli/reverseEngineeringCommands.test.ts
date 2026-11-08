@@ -10,13 +10,14 @@ import {
   AnalysisTimeoutError,
   AnalysisOutputError,
 } from "../../../src/domain/analysisErrorCore.js";
-import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
   evidenceSchema,
 } from "../../../src/domain/evidence.js";
 import { err, ok } from "../../../src/domain/result.js";
+import { ProviderCleanupError } from "../../../src/domain/providerCleanupError.js";
 import { RizinDebugSessionManager } from "../../../src/rizin/RizinDebugSessionManager.js";
+import { closeOwnedDebuggerSessions } from "../../../src/process/ownedDebuggerSession.js";
 import { ReverseEngineeringService as CoreReverseEngineeringService } from "../../../src/application/reverse/ReverseEngineeringService.js";
 import { createReverseEngineeringCommandPort } from "../../../src/composition/reverseEngineering.js";
 import { OwnedCommandFailure } from "../../../src/process/OwnedCommand.js";
@@ -250,7 +251,7 @@ it("promotes only complete production cleanup-only Evidence after CLI cleanup re
     const result = await runObjdump(service, path);
 
     expect(result).toMatchObject({
-      provider: { id: "gnu.objdump" },
+      provider: { id: "objdump.command" },
       normalized_result: { completion_status: "complete" },
     });
     expect(producedCleanupFailure?.cleanupOnly).toBe(true);
@@ -346,7 +347,9 @@ it("preserves an independent timeout after cleanup succeeds", async () => {
     },
   });
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).not.toHaveProperty("cleanup");
+  expect((result as { details: unknown }).details).not.toHaveProperty(
+    "cleanup",
+  );
 });
 
 it("does not project cancellation cleanup as incomplete after a successful retry", async () => {
@@ -361,17 +364,19 @@ it("does not project cancellation cleanup as incomplete after a successful retry
     }),
   };
 
-  await runObjdump(service);
+  const result = await runObjdump(service);
 
   expect(error.cleanupIncomplete).toBe(false);
-  expect(projectAnalysisError(error).details).toMatchObject({
-    cleanup: "complete",
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { cleanup: "complete" },
   });
 });
 
 it("returns cancellation with the completed observation when the caller interrupts service close", async () => {
+  const evidence = observation("complete");
   const service = {
-    inspectWithObjdump: vi.fn(async () => ok(observation("complete"))),
+    inspectWithObjdump: vi.fn(async () => ok(evidence)),
     close: vi.fn(async () => {
       process.emit("SIGINT");
     }),
@@ -379,8 +384,61 @@ it("returns cancellation with the completed observation when the caller interrup
 
   const result = await runObjdump(service);
 
-  expect(result).toMatchObject({ code: "cancelled" });
+  expect(result).toMatchObject({
+    code: "cancelled",
+    details: { partial_observation: evidence },
+  });
   expect(process.exitCode).toBe(130);
+});
+
+it("retains completed objdump Evidence when final cleanup fails", async () => {
+  const evidence = observation("complete");
+  const result = await runObjdump({
+    inspectWithObjdump: async () => ok(evidence),
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    details: {
+      resources: ["owned-run"],
+      partial_observation: evidence,
+    },
+  });
+});
+
+it("retains an unexpected operation failure and an independent cleanup failure", async () => {
+  const result = await runObjdump({
+    inspectWithObjdump: async () => {
+      throw new AnalysisTimeoutError("inspect_with_objdump", 1_000);
+    },
+    close: async () => {
+      throw new ProviderCleanupError(
+        "objdump.command",
+        ["owned-run"],
+        { reason: "process cleanup remains incomplete" },
+        { operation: "inspect_with_objdump" },
+      );
+    },
+  });
+
+  expect(result).toMatchObject({
+    code: "cleanup_incomplete",
+    category: "timeout",
+    details: {
+      diagnostics: {
+        primary_error: { code: "provider_timeout" },
+        cleanup_error: { details: { resources: ["owned-run"] } },
+      },
+    },
+  });
 });
 
 it.each([false, true])(
@@ -510,5 +568,153 @@ it.each([false, true])(
     expect(optionsSchema.parse({ inferiorTty: "/dev/pts/7" })).toMatchObject({
       inferiorTty: "/dev/pts/7",
     });
+  },
+);
+
+it.each(["incomplete", "interrupt", "control"] as const)(
+  "reports final Rizin cleanup %s as a typed outcome",
+  async (mode) => {
+    const commands = new Map<
+      string,
+      { run(input: unknown): Promise<unknown> }
+    >();
+    const cli = {
+      command(
+        name: string,
+        definition: { run(input: unknown): Promise<unknown> },
+      ) {
+        commands.set(name, definition);
+        return cli;
+      },
+    } as unknown as CliInstance;
+    const previous = process.exitCode;
+    const evidence = createEvidence(
+      undefined,
+      { id: "rizin.debugger", name: "Rizin debugger", version: null },
+      {
+        predicateType: "rea.debugger.command-observation",
+        operation: "rizin_debug_command",
+        parameters: {
+          session_id: "fixture-session",
+          command: "dr",
+          inferior_tty: "/dev/pts/7",
+        },
+        result: { output: "registers" },
+        rawResult: { output: "registers" },
+      },
+    );
+    const sessions = new Map([
+      [
+        "fixture-session",
+        {
+          id: "fixture-session",
+          launched: { process: { pid: 4242 } },
+          supervisor: { ref: vi.fn(), unref: vi.fn() },
+        },
+      ],
+    ]);
+    vi.spyOn(RizinDebugSessionManager.prototype, "start").mockResolvedValue(
+      ok({ session_id: "fixture-session", backend: null }),
+    );
+    const execute = vi
+      .spyOn(RizinDebugSessionManager.prototype, "execute")
+      .mockResolvedValue(
+        ok({
+          evidence,
+          result: {
+            command: "dr",
+            output: "registers",
+            output_scope: "command_and_interleaved_session_output",
+            output_truncated: false,
+            completion_status: "complete",
+            backend: null,
+          },
+        }),
+      );
+    vi.spyOn(RizinDebugSessionManager.prototype, "close").mockImplementation(
+      async () => {
+        if (mode === "incomplete")
+          return err(
+            new AnalysisOutputError(
+              "close_rizin_debug_session",
+              "stop unconfirmed",
+              {
+                cleanup: {
+                  reason: "stop unconfirmed",
+                  resources: ["fixture-session"],
+                },
+              },
+            ),
+          );
+        sessions.clear();
+        return ok({ target_state: "unknown" });
+      },
+    );
+    let abortedAtCleanupEnd = false;
+    let signal: AbortSignal | undefined;
+    const closeAll = vi
+      .spyOn(RizinDebugSessionManager.prototype, "closeAll")
+      .mockImplementation(async () => {
+        signal = execute.mock.calls[0]?.[2];
+        await new Promise<void>((resolve) =>
+          setImmediate(() => {
+            if (mode === "interrupt") process.emit("SIGINT");
+            resolve();
+          }),
+        );
+        abortedAtCleanupEnd = signal?.aborted === true;
+        await closeOwnedDebuggerSessions(
+          sessions,
+          async () => ({ status: "incomplete", reason: "stop unconfirmed" }),
+          "Rizin",
+        );
+      });
+    registerReverseEngineeringCommands(cli, pino({ enabled: false }), {});
+    const command = commands.get(CLI_COMMANDS.debugWithRizin);
+    if (command === undefined)
+      throw new Error("Rizin CLI command was not registered");
+    try {
+      process.exitCode = 0;
+      const result = await command.run({
+        args: { path: "./sample.bin", command: "dr" },
+        options: { inferiorTty: "/dev/pts/7" },
+      });
+      expect(closeAll).toHaveBeenCalledOnce();
+      if (mode === "control") {
+        expect(result).toBe(evidence);
+        expect(process.exitCode).toBe(0);
+        expect(abortedAtCleanupEnd).toBe(false);
+      } else if (mode === "interrupt") {
+        expect(result).toMatchObject({
+          code: "cancelled",
+          details: {
+            partial_observation: {
+              operation: "rizin_debug_command",
+              parameters: { session_id: "fixture-session" },
+            },
+          },
+        });
+        expect(process.exitCode).toBe(130);
+        expect(abortedAtCleanupEnd).toBe(true);
+      } else {
+        expect(result).toMatchObject({
+          code: "cleanup_incomplete",
+          details: {
+            cleanup: "incomplete",
+            resources: ["fixture-session"],
+            diagnostics: { retained_debugger_pids: [4242] },
+            partial_observation: {
+              operation: "rizin_debug_command",
+              parameters: { session_id: "fixture-session" },
+            },
+          },
+        });
+        expect(sessions.size).toBe(1);
+        expect(process.exitCode).toBe(1);
+      }
+    } finally {
+      process.exitCode = previous;
+      vi.restoreAllMocks();
+    }
   },
 );

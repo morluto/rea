@@ -557,7 +557,7 @@ describe("advertised client-compatible literals", () => {
       }),
     ]);
     const advertised = presentInputJsonSchema(
-      z.toJSONSchema(schema),
+      z.toJSONSchema(schema, { io: "input" }),
       () => undefined,
     );
     expect(advertised).toHaveProperty(

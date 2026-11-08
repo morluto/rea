@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   defaultHopperLauncherPath,
-  nativeAnalysisConfigurationError,
+  inspectNativeAnalysisConfiguration,
   parseConfig,
 } from "./config/parseConfig.js";
 import {
@@ -10,6 +10,41 @@ import {
   parseJebMcpTimeoutMs,
 } from "./config/environment.js";
 import { projectAnalysisError } from "./domain/analysisErrorProjection.js";
+
+it("keeps the caller's opt-in Ghidra checkpoint directory and leaves it disabled by default", () => {
+  const selected = parseConfig({
+    REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints with spaces",
+  });
+  expect(selected.ok && selected.value.ghidraCheckpointDirectory).toBe(
+    "/tmp/checkpoints with spaces",
+  );
+  const defaults = parseConfig({});
+  expect(
+    defaults.ok && defaults.value.ghidraCheckpointDirectory,
+  ).toBeUndefined();
+  expect(parseConfig({ REA_GHIDRA_CHECKPOINT_DIR: "relative" }).ok).toBe(false);
+});
+
+it.each([
+  ["REA_GHIDRA_PROJECT_PATH", "/tmp/selected.gpr"],
+  ["REA_GHIDRA_SEED_FILE", "/tmp/seeds.json"],
+  ["REA_GHIDRA_LANGUAGE_ID", "x86:LE:64:default"],
+  ["REA_GHIDRA_NATIVEAOT_JAR", "/tmp/extension.jar"],
+  ["REA_GHIDRA_DISABLED_ANALYZERS", "Stack"],
+])(
+  "refuses %s with checkpoints rather than silently dropping the selected input",
+  (setting, value) => {
+    const result = parseConfig({
+      REA_GHIDRA_CHECKPOINT_DIR: "/tmp/checkpoints",
+      [setting]: value,
+    });
+    if (result.ok) throw new Error("conflicting inputs accepted");
+    expect(result.error.message).toContain("checkpoints");
+    expect(result.error).toMatchObject({
+      settings: [expect.objectContaining({ setting })],
+    });
+  },
+);
 
 it("reports a configuration failure for a NUL in Hopper loader arguments", () => {
   const result = parseConfig({
@@ -34,7 +69,6 @@ it.each([
       parseEnvironmentValues(environment),
       parseConfig(environment),
     ]) {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected invalid environment");
       expect(result.error.settings).toHaveLength(1);
       expect(result.error.settings[0]?.constraint).toContain("NUL");
@@ -56,6 +90,24 @@ it("accepts ordinary custom environment strings and omitted values", () => {
 });
 
 describe("runtime configuration", () => {
+  it("preserves a selected MCP input allowance for deferred startup and refuses disabling values", () => {
+    expect(parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "8192" })).toMatchObject({
+      ok: true,
+      value: { mcpMaxInputElements: 8192 },
+    });
+    const invalid = parseConfig({ REA_MCP_MAX_INPUT_ELEMENTS: "Infinity" });
+    expect(invalid.ok).toBe(false);
+    if (invalid.ok)
+      throw new Error(
+        "Infinite MCP input allowance must not be accepted from the environment",
+      );
+    expect(invalid.error.settings).toEqual([
+      {
+        setting: "REA_MCP_MAX_INPUT_ELEMENTS",
+        constraint: expect.stringContaining("positive decimal safe integer"),
+      },
+    ]);
+  });
   it("allows target-free startup and applies runtime defaults", () => {
     const empty = parseConfig({});
     expect(empty.ok).toBe(true);
@@ -100,16 +152,16 @@ describe("runtime configuration", () => {
   });
 
   it("shares native admission with doctor and ignores the JEB-only timeout", () => {
-    expect(nativeAnalysisConfigurationError({})).toBeUndefined();
+    expect(inspectNativeAnalysisConfiguration({})).toEqual({ issues: [] });
     expect(
-      nativeAnalysisConfigurationError({ REA_JEB_MCP_TIMEOUT_MS: "abc" }),
-    ).toBeUndefined();
+      inspectNativeAnalysisConfiguration({ REA_JEB_MCP_TIMEOUT_MS: "abc" }),
+    ).toEqual({ issues: [] });
     expect(parseConfig({ REA_JEB_MCP_TIMEOUT_MS: "abc" }).ok).toBe(true);
-    const rejected = nativeAnalysisConfigurationError({
+    const rejected = inspectNativeAnalysisConfiguration({
       REA_ANALYSIS_PROVIDER: "Hopper",
       REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
     });
-    expect(rejected?.settings.map(({ setting }) => setting)).toEqual([
+    expect(rejected.issues.map(({ setting }) => setting)).toEqual([
       "REA_ANALYSIS_PROVIDER",
       "REA_GHIDRA_STARTUP_TIMEOUT_MS",
     ]);
@@ -119,6 +171,33 @@ describe("runtime configuration", () => {
         REA_GHIDRA_STARTUP_TIMEOUT_MS: "abc",
       }).ok,
     ).toBe(false);
+  });
+
+  it("preserves the timeout's schema cause when aggregate admission stops at NUL", () => {
+    const inspected = inspectNativeAnalysisConfiguration({
+      CALLER_SETTING: "private\0value",
+      REA_HOPPER_STARTUP_TIMEOUT_MS: "0",
+    });
+    expect(inspected.issues).toEqual([
+      {
+        setting: "CALLER_SETTING",
+        constraint:
+          "Environment variable names and values must not contain NUL bytes",
+      },
+    ]);
+    const timeout = inspected.configuredHopperStartupTimeout;
+    if (timeout === undefined || timeout.ok)
+      throw new Error("Expected the configured timeout's independent refusal");
+    expect(timeout.error.cause).toMatchObject({
+      name: "ZodError",
+      issues: [{ message: "must be a positive decimal integer" }],
+    });
+    expect(timeout.error.settings).toEqual([
+      {
+        setting: "REA_HOPPER_STARTUP_TIMEOUT_MS",
+        constraint: "must be a positive decimal integer",
+      },
+    ]);
   });
 
   it("parses absolute BYO Ghidra and optional Java paths", () => {
@@ -315,6 +394,12 @@ describe("configuration failure diagnostics", () => {
     "accepts Swift compile deadline %s without changing Hopper's deadline",
     (value) => {
       expect(
+        parseEnvironmentValues({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
+      ).toMatchObject({
+        ok: true,
+        value: { REA_SWIFTC_COMPILE_TIMEOUT_MS: Number(value) },
+      });
+      expect(
         parseConfig({ REA_SWIFTC_COMPILE_TIMEOUT_MS: value }),
       ).toMatchObject({
         ok: true,
@@ -355,18 +440,22 @@ describe("configuration failure diagnostics", () => {
       const result = parseConfig({ [setting]: value });
       expect(result.ok).toBe(false);
       if (result.ok) return;
-      const constraint = `${setting} must be absolute`;
-      expect(projectAnalysisError(result.error)).toMatchObject({
+      const projected = projectAnalysisError(result.error);
+      expect(projected).toMatchObject({
         code: "configuration_invalid",
         category: "invalid_input",
-        message: `REA configuration is invalid: ${constraint}.`,
-        remediation: { action: expect.stringContaining(`Correct ${setting} `) },
-        details: { settings: [{ setting, constraint }] },
+        message: expect.stringContaining(setting),
+        remediation: { action: expect.stringContaining(setting) },
+        details: {
+          settings: [
+            { setting, constraint: expect.stringMatching(/absolute/iu) },
+          ],
+        },
       });
+      expect(projected.message).toMatch(/absolute/iu);
+      expect(projected.remediation.action).toMatch(/correct/iu);
       // The rejected value itself is not echoed.
-      expect(JSON.stringify(projectAnalysisError(result.error))).not.toContain(
-        value,
-      );
+      expect(JSON.stringify(projected)).not.toContain(value);
     },
   );
 
@@ -486,4 +575,47 @@ describe("default macOS Hopper launcher", () => {
       value: { hopperLauncherPath: configured },
     });
   });
+});
+
+describe("Ghidra decompile limit configuration", () => {
+  it.each([
+    [undefined, undefined],
+    ["1", 1],
+    ["30", 30],
+    ["86400", 86_400],
+    ["86401", 86_401],
+    ["2147483", 2_147_483],
+  ] as const)(
+    "reads the Ghidra decompile limit %j as %j seconds",
+    (value, expected) => {
+      const result = parseConfig(
+        value === undefined
+          ? {}
+          : { REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value },
+      );
+      if (!result.ok) throw result.error;
+      expect(result.value.ghidraDecompileTimeoutSeconds).toBe(expected);
+    },
+  );
+
+  it.each(["", "0", "-1", "1.5", "30s", "2147484", "2147483647"])(
+    "rejects malformed Ghidra decompile limit %j with its setting",
+    (value) => {
+      const result = parseConfig({
+        REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS: value,
+      });
+      if (result.ok) throw new Error("Expected invalid decompile limit");
+      expect(projectAnalysisError(result.error)).toMatchObject({
+        code: "configuration_invalid",
+        details: {
+          settings: [
+            {
+              setting: "REA_GHIDRA_DECOMPILE_TIMEOUT_SECONDS",
+              constraint: expect.any(String),
+            },
+          ],
+        },
+      });
+    },
+  );
 });

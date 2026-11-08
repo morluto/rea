@@ -10,12 +10,14 @@ import {
 } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import { createTestTempDirectory } from "../../../tests/fixtures/temporaryDirectory.js";
-import { snapshotRoots } from "./FilesystemSnapshot.js";
+import {
+  snapshotRoots,
+  ProcessCaptureSnapshotFailure,
+} from "./FilesystemSnapshot.js";
 import { classifyFilesystemEffects } from "./ProcessFilesystemEffects.js";
 import { prepareProcessCapture } from "./ProcessCaptureLifecycle.js";
-import { ProcessCaptureSnapshotFailure } from "./FilesystemSnapshot.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 
 it.each(["after", "before"] as const)(
@@ -27,7 +29,7 @@ it.each(["after", "before"] as const)(
     await writeFile(join(root, "a1.txt"), "first");
     await writeFile(join(root, "a2.txt"), "second");
     await writeFile(join(root, "z.txt"), "target");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -68,7 +70,7 @@ it("preserves proven deletion in an exhausted root while another root is partial
   await writeFile(join(complete, "removed.txt"), "removed");
   await writeFile(join(partial, "first.txt"), "first");
   await writeFile(join(partial, "second.txt"), "second");
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [complete, partial],
@@ -88,7 +90,7 @@ it("preserves proven deletion in an exhausted root while another root is partial
 it("distinguishes unavailable content hashes from completed path enumeration", async () => {
   const root = await createTestTempDirectory("rea-fs-hash-coverage-");
   await writeFile(join(root, "removed.txt"), "larger than the byte budget");
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [root],
@@ -115,7 +117,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(visible, "visible");
     await mkdir(blocked);
     await chmod(blocked, 0);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -155,7 +157,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(unreadable, "permission denied");
     await writeFile(readable, "still observed");
     await chmod(unreadable, 0);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -171,7 +173,7 @@ it.skipIf(process.platform === "win32")(
       expect(
         snapshot.files.find(({ path }) => path === "root_0:readable.txt")
           ?.sha256,
-      ).not.toBeNull();
+      ).toEqual(expect.any(String));
       expect(
         snapshot.files.find(({ path }) => path === "root_0:unreadable.txt"),
       ).toMatchObject({ type: "file", size: 17, sha256: null });
@@ -219,7 +221,7 @@ it.each([
     const file = join(root, "b.txt");
     await writeFile(file, "before");
     if (beforeOmitted) await writeFile(budgetFile, "budget");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -255,7 +257,7 @@ it("preserves observed content and metadata changes without treating missing has
   const root = await createTestTempDirectory("rea-fs-observed-changes-");
   for (const name of ["changed", "stable", "unhashed", "retyped"])
     await writeFile(join(root, name), "before");
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [root],
@@ -276,7 +278,7 @@ it("preserves observed content and metadata changes without treating missing has
   expect(effects.find(({ path }) => path === "root_0:retyped")?.status).toBe(
     "modified",
   );
-  const noHashes = parseProcessScenario({
+  const noHashes = processScenarioSchema.parse({
     ...scenario,
     limits: { file_bytes: 1 },
   });
@@ -300,7 +302,7 @@ it.skipIf(process.platform === "win32")(
     const root = await createTestTempDirectory("rea-fs-mode-change-");
     const file = join(root, "file");
     await writeFile(file, "before", { mode: 0o600 });
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [file],
@@ -324,7 +326,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(join(root, "b.txt"), "unused");
     await symlink("a.txt", join(root, "stable-link"));
     await symlink("a.txt", join(root, "moved-link"));
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -355,7 +357,7 @@ it.skipIf(process.platform === "win32")(
     // Equal length, so only the target spelling distinguishes the links;
     // "bbb" does not exist, so the replacement link is broken.
     await symlink("aaa/../target", join(root, "link"));
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -381,7 +383,7 @@ it.skipIf(process.platform === "win32")(
 it("preserves creation when the selected root was observed missing before capture", async () => {
   const root = await createTestTempDirectory("rea-fs-missing-root-");
   const file = join(root, "created.txt");
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     working_directory: root,
     filesystem_observation_paths: [file],
@@ -410,7 +412,7 @@ it.skipIf(process.platform === "win32")(
     await mkdir(join(root, "denied"));
     await chmod(join(root, "denied"), 0);
     const scenarioFor = (path: string) =>
-      parseProcessScenario({
+      processScenarioSchema.parse({
         executable: process.execPath,
         working_directory: root,
         filesystem_observation_paths: [path],
@@ -480,7 +482,7 @@ it.skipIf(process.platform === "win32")(
     await writeFile(join(listed, "child.txt"), "child");
     // Read without search permission: names enumerate, lookups are denied.
     await chmod(listed, 0o444);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [root],
@@ -509,7 +511,7 @@ it.skipIf(process.platform === "win32")(
   "keeps an admitted root behind a symlink loop unobserved",
   async () => {
     const root = await createTestTempDirectory("rea-fs-root-loop-");
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       working_directory: root,
       filesystem_observation_paths: [join(root, "loop", "child")],
@@ -532,7 +534,7 @@ it.skipIf(process.platform === "win32")(
     const link = join(root, "link");
     await mkdir(target);
     await symlink(target, link);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       filesystem_observation_paths: [link],
     });
@@ -561,7 +563,7 @@ it.skipIf(process.platform === "win32")(
 
 it("allocates the observer directory before baseline and excludes it before entry accounting", async () => {
   const root = await createTestTempDirectory("rea-observer-filesystem-");
-  const scenario = parseProcessScenario({
+  const scenario = processScenarioSchema.parse({
     executable: process.execPath,
     filesystem_observation_paths: [root],
     limits: { files: 1 },
@@ -611,7 +613,7 @@ it.skipIf(process.platform === "win32")(
       "target",
     );
     await symlink(physicalParent, alias);
-    const scenario = parseProcessScenario({
+    const scenario = processScenarioSchema.parse({
       executable: process.execPath,
       filesystem_observation_paths: [join(alias, "root")],
     });
@@ -628,5 +630,109 @@ it.skipIf(process.platform === "win32")(
       "root_0:other/observer-run/target.txt",
     ]);
     expect(snapshot.coverage.enumeration_truncated).toBe(false);
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "preserves non-UTF-8 symlink target bytes through snapshot effects and schema parsing",
+  async () => {
+    const { processFilesystemSnapshotSchema } =
+      await import("../../domain/process/processCapture.js");
+    const root = await createTestTempDirectory("rea-fs-symlink-bytes-");
+    const path = join(root, "link");
+    const first = Buffer.from([0x61, 0xff]);
+    const second = Buffer.from([0x61, 0xfe]);
+    await symlink(first, path);
+    const scenario = processScenarioSchema.parse({
+      executable: process.execPath,
+      filesystem_observation_paths: [root],
+    });
+    const before = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    await rm(path);
+    await symlink(second, path);
+    const after = processFilesystemSnapshotSchema.parse(
+      await snapshotRoots(scenario),
+    );
+    const link = before.files.find((file) => file.type === "symlink");
+    expect(link).toMatchObject({
+      symlink_target: null,
+      symlink_target_hex: "61ff",
+    });
+    expect(
+      classifyFilesystemEffects(before, after).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("modified");
+    expect(
+      classifyFilesystemEffects(before, before).find(
+        ({ path }) => path === "root_0:link",
+      )?.status,
+    ).toBe("unchanged");
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target: "a�" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: "f" }],
+      }).success,
+    ).toBe(false);
+    expect(
+      processFilesystemSnapshotSchema.safeParse({
+        ...before,
+        files: [{ ...link, symlink_target_hex: undefined }],
+      }).success,
+    ).toBe(false);
+    const legacy = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [{ ...link, symlink_target: "a�", symlink_target_hex: undefined }],
+    });
+    expect(classifyFilesystemEffects(legacy, legacy)[0]?.status).toBe(
+      "unknown",
+    );
+    const differentLegacy = processFilesystemSnapshotSchema.parse({
+      ...legacy,
+      files: legacy.files.map((file) => ({ ...file, symlink_target: "b�" })),
+    });
+    expect(classifyFilesystemEffects(legacy, differentLegacy)[0]?.status).toBe(
+      "modified",
+    );
+    const valid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        {
+          ...link,
+          symlink_target: "a�",
+          symlink_target_hex: Buffer.from("a�").toString("hex"),
+        },
+      ],
+    });
+    expect(classifyFilesystemEffects(valid, valid)[0]?.status).toBe(
+      "unchanged",
+    );
+    const oldValid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        { ...link, symlink_target: "target", symlink_target_hex: undefined },
+      ],
+    });
+    const newValid = processFilesystemSnapshotSchema.parse({
+      ...before,
+      files: [
+        {
+          ...link,
+          symlink_target: "target",
+          symlink_target_hex: Buffer.from("target").toString("hex"),
+        },
+      ],
+    });
+    expect(classifyFilesystemEffects(oldValid, newValid)[0]?.status).toBe(
+      "unchanged",
+    );
   },
 );

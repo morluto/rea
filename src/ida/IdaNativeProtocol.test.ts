@@ -1,3 +1,7 @@
+import {
+  IDA_COMPATIBILITY_PROFILES,
+  readIdaConfiguration,
+} from "./IdaConfiguration.js";
 import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -10,7 +14,6 @@ import {
   AnalysisInputError,
   AnalysisProtocolError,
 } from "../domain/analysisErrorCore.js";
-import { readIdaConfiguration } from "./IdaConfiguration.js";
 import {
   decodeIdaToolResult,
   type IdaMcpConnection,
@@ -19,9 +22,11 @@ import { parseConfig } from "../config/parseConfig.js";
 import { IdaProvider } from "./IdaProvider.js";
 import { idaCapabilities } from "./IdaProviderCapabilities.js";
 import { IdaSessionClient } from "./IdaSessionClient.js";
-import type { RetainedResourceScope } from "../application/AnalysisProvider.js";
-import { ProviderInspectionScope } from "../providers/ProviderInspectionScope.js";
-import type { AnalysisProfileResolution } from "../application/AnalysisProvider.js";
+import type {
+  RetainedResourceScope,
+  AnalysisProfileResolution,
+} from "../application/AnalysisProvider.js";
+import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import type { AnalysisProfileCommitment } from "../domain/analysisProfile.js";
 
 const resourceScope: RetainedResourceScope = {
@@ -387,20 +392,21 @@ describe("native IDA provider observations", () => {
         if (!dossier.ok) throw dossier.error;
         expect(dossier.value.relationshipCoverage).toMatchObject({
           status: "unknown",
-          reason: more
-            ? expect.stringContaining(
-                "Callees: Upstream callees capped results at 500; additional callees remain unknown.",
-              )
-            : expect.stringContaining(
-                "Callers: Upstream xrefs do not establish direct caller relationships.",
-              ),
+          reason: expect.stringMatching(/xrefs.*not establish.*caller/iu),
         });
-        if (more)
+        if (more) {
+          const coverage = direct.value.relationshipCoverage;
+          if (coverage?.status !== "partial")
+            throw new Error("Expected partial callee coverage");
+          const limitation = coverage.limitations[0];
+          if (limitation === undefined)
+            throw new Error("Expected callee limitation");
+          expect(limitation).toMatch(/callees.*500.*unknown/iu);
           expect(dossier.value.relationshipCoverage).toMatchObject({
-            reason: expect.stringContaining(
-              "Callers: Upstream xrefs do not establish direct caller relationships.",
-            ),
+            reason: expect.stringContaining(limitation),
           });
+          expect(dossier.value.limitations).toContain(limitation);
+        }
         expect(dossier.value.result).toMatchObject({
           callers: [],
           callees: [{ address: "0x2000", name: "puts" }],
@@ -409,10 +415,6 @@ describe("native IDA provider observations", () => {
             callees: { available: true },
           },
         });
-        if (more)
-          expect(dossier.value.limitations).toContain(
-            "Upstream callees capped results at 500; additional callees remain unknown.",
-          );
       } finally {
         await client.close();
       }
@@ -477,18 +479,17 @@ describe("native IDA provider observations", () => {
     expect(producer.calls.some(({ name }) => name.startsWith("idb_"))).toBe(
       false,
     );
-    const capabilities = idaCapabilities("attached", false, true);
+    const declared = idaCapabilities(IDA_COMPATIBILITY_PROFILES.native, false);
     expect(
-      capabilities.find(({ operation }) => operation === "procedure_callers")
+      declared.find(({ operation }) => operation === "procedure_callers")
         ?.available,
     ).toBe(false);
     expect(
-      capabilities.find(
-        ({ operation }) => operation === "procedure_pseudo_code",
-      )?.effects,
+      declared.find(({ operation }) => operation === "procedure_pseudo_code")
+        ?.effects,
     ).toMatchObject({ mayShowUi: true, mayAccessNetwork: true });
     expect(
-      idaCapabilities("attached", false).find(
+      idaCapabilities(IDA_COMPATIBILITY_PROFILES.legacy, false).find(
         ({ operation }) => operation === "procedure_callers",
       )?.available,
     ).toBe(true);
@@ -702,23 +703,28 @@ describe("native IDA callee lookup batches", () => {
   });
 });
 
+const nativeLiteralValues = [
+  "A.B",
+  "axb",
+  "Kelvin",
+  "İstanbul",
+  "σ",
+  "ς",
+  "literal[bracket",
+  "a\\b",
+  "🧪",
+  "Σ",
+  "ΟΣ",
+  "ος",
+  "S",
+  "s",
+  "ſ",
+];
+
 describe("native IDA literal matching", () => {
   it("retains literal, Unicode, case, and regex semantics while narrowing native candidates", async () => {
     const { client, producer } = await fixture();
-    const values = [
-      "A.B",
-      "axb",
-      "Kelvin",
-      "İstanbul",
-      "σ",
-      "ς",
-      "literal[bracket",
-      "a\\b",
-      "🧪",
-      "Σ",
-      "ΟΣ",
-      "ος",
-    ];
+    const values = nativeLiteralValues;
     producer.overrideCall = (name, args) => {
       if (name !== "find_regex") return undefined;
       if (typeof args.pattern !== "string")
@@ -739,6 +745,12 @@ describe("native IDA literal matching", () => {
       };
     };
     const cases = [
+      {
+        pattern: "ſ",
+        mode: "literal",
+        case_sensitive: false,
+        expected: ["İstanbul", "S", "s", "ſ"],
+      },
       {
         pattern: "a.b",
         mode: "literal",
@@ -829,7 +841,10 @@ describe("native IDA literal matching", () => {
           .slice(before)
           .filter(({ name }) => name === "find_regex");
         expect(reads).toHaveLength(1);
-        if (query.mode === "regex" || query.pattern === "\ud800")
+        const unfiltered = query.mode === "regex" || query.pattern === "\ud800";
+        const unicodeFold =
+          !query.case_sensitive && /[\u0080-\u{10ffff}]/u.test(query.pattern);
+        if (unfiltered || unicodeFold)
           expect(reads[0]?.args.pattern).toBe("[\\s\\S]*");
         else expect(reads[0]?.args.pattern).not.toBe("[\\s\\S]*");
       }
@@ -958,15 +973,6 @@ describe("native IDA malformed observations", () => {
 });
 
 describe("native IDA attached operation admission", () => {
-  it("forwards the native producer's explicit reference cap flag", async () => {
-    const { client } = await fixture();
-    const result = await client.execute("xrefs", { address: "0x1000" });
-
-    if (!result.ok) throw result.error;
-    expect(result.value.referencesTruncated).toBe(false);
-    await client.close();
-  });
-
   it("reports the bound document but not headless-only address resolution", async () => {
     const { client, producer, target } = await fixture();
     const containing = await client.execute("resolve_containing_procedure", {

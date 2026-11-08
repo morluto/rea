@@ -1,5 +1,4 @@
 import { createEvidence, type Evidence } from "../evidence.js";
-import { jsonValueSchema } from "../jsonValue.js";
 import type { ProcessCapture } from "./processCaptureParsing.js";
 import {
   compareProcessCaptures,
@@ -37,9 +36,9 @@ export const compareProcessCaptureEvidence = (
         : { max_capture_age_ms: options.maxCaptureAgeMs }),
       ...(options.traceSpecification === undefined
         ? {}
-        : { trace_spec: jsonValueSchema.parse(options.traceSpecification) }),
+        : { trace_spec: options.traceSpecification }),
     },
-    result: jsonValueSchema.parse(comparison),
+    result: comparison,
     confidence: "derived",
     authority: "analyst-inference",
     limitations: comparison.limitations,

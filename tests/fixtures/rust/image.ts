@@ -1,4 +1,4 @@
-import { deflateSync } from "node:zlib";
+import { deflateSync, zstdCompressSync } from "node:zlib";
 
 /** zlib payload matching the embedded dependency JSON shape. */
 export const rustDependencyPayload = (
@@ -31,7 +31,8 @@ export const compressRustElfSectionNames = (
   const names = Buffer.from(
     bytes.subarray(namesOffset, namesOffset + namesSize),
   );
-  const compressed = deflateSync(names);
+  const compressed =
+    compressionType === 2 ? zstdCompressSync(names) : deflateSync(names);
   const compressionHeader = Buffer.alloc(24);
   compressionHeader.writeUInt32LE(compressionType, 0);
   compressionHeader.writeBigUInt64LE(BigInt(names.length), 8);
@@ -78,6 +79,18 @@ export const createRustImage = (options: {
   if (options.format === "elf") writeElf(image);
   else if (options.format === "pe") writePe(image);
   else writeMacho(image);
+  return bytes;
+};
+
+/** Read-only ELF data stays independent of its section-name spelling or availability. */
+export const rustElfSectionNameFixture = (
+  name: "named" | "empty" | "unavailable",
+): Buffer => {
+  const bytes = createRustImage({ format: "elf", omitSection: true });
+  // This fixture's read-only PROGBITS header is at 384. Its PT_LOAD is writable,
+  // so compiler-path recovery must use the section rather than segment fallback.
+  if (name === "empty") bytes.writeUInt32LE(0, 384);
+  if (name === "unavailable") bytes.writeUInt16LE(0, 62);
   return bytes;
 };
 

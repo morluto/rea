@@ -6,6 +6,9 @@ import {
 /** Query parameters that page or bound a list without filtering it. */
 const PAGING_PARAMETERS = new Set([
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "offset",
   "page",
   "per_page",
@@ -44,6 +47,9 @@ export const startsAtBeginning = (query: string | undefined): boolean => {
 /** Paging parameters that bound how many items a page holds. */
 const PAGE_SIZE_PARAMETERS = new Set([
   "limit",
+  "max_results",
+  "maxresults",
+  "maxsize",
   "per_page",
   "perpage",
   "page_size",
@@ -58,15 +64,21 @@ const pageLimit = (
 ): number | undefined => {
   let size = Infinity;
   const range = { start: 0, end: Infinity };
+  let unsafeNumber = false;
   for (const [name, value] of iterateUrlQueryParameters(query ?? "")) {
     const key = name.toLowerCase();
     if (!/^\d+$/u.test(value)) continue;
     const number = Number(value);
+    if (!Number.isSafeInteger(number)) {
+      unsafeNumber = true;
+      continue;
+    }
     if (PAGE_SIZE_PARAMETERS.has(key)) {
       if (number > 0 || !unboundedZero) size = Math.min(size, number);
     } else if (key === "_start") range.start = number;
     else if (key === "_end") range.end = number;
   }
+  if (unsafeNumber) return undefined;
   const width = Math.min(size, Math.max(range.end - range.start, 0));
   return Number.isFinite(width) ? width : undefined;
 };

@@ -1,3 +1,4 @@
+import { currentClientRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
 import { access, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { expect, it } from "vitest";
@@ -12,7 +13,7 @@ import {
   clientConfigurationAligned,
 } from "../../../src/application/SetupClientConfiguration.js";
 import { readClientRegistrationStatuses } from "../../../src/application/ClientRegistrationStatus.js";
-import { npxRegistrationCommand } from "../../../src/application/ClientRegistrationIdentity.js";
+
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import {
   effectiveClientConfiguration,
@@ -20,7 +21,9 @@ import {
 } from "../../../src/application/ClientConfigurationFiles.js";
 import { clientRegistrationEnvironmentDetails } from "../../../src/application/ClientRegistrationEnvironment.js";
 
-const command = npxRegistrationCommand(process.platform);
+const command = currentClientRegistrationCommand({
+  platform: process.platform,
+});
 const language = "x86:LE:32:default";
 const compiler = "borlandcpp";
 
@@ -73,7 +76,6 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const files = await readClientConfigurationFiles(client);
-    expect(files.ok).toBe(true);
     if (!files.ok) throw new Error(files.error.detail);
     const effective = effectiveClientConfiguration(files.value);
     expect(effective?.dialect).toBe("opencode_v2");
@@ -129,7 +131,7 @@ const layered = async (lower: unknown, upper: unknown) => {
   } as const;
   const status = async () =>
     (
-      await readClientRegistrationStatuses(home, "rea", {
+      await readClientRegistrationStatuses(home, command[1], {
         environment: { XDG_CONFIG_HOME: join(home, ".config") },
       })
     ).find(({ client }) => client === "opencode");
@@ -159,12 +161,10 @@ it.skipIf(process.platform !== "win32").each([
       ),
     ).toMatchObject({ status: "configured" });
     const sources = await readClientConfigurationFiles(fixture.client);
-    expect(sources.ok).toBe(true);
     if (!sources.ok) throw new Error(sources.error.detail);
     const environment = clientRegistrationEnvironmentDetails(
       effectiveClientConfiguration(sources.value),
     );
-    expect(environment.ok).toBe(true);
     if (!environment.ok) throw environment.error;
     expect(environment.value.timeoutInputs?.analysisProvider).toBe("ghidra");
     expect(environment.value.values).toHaveProperty(

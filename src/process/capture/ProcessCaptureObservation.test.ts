@@ -8,7 +8,7 @@ import { buildCaptureResult } from "./ProcessCaptureLifecycle.js";
 import { isInitializedPtyRoot } from "./ProcessSampling.js";
 import { readLinuxChildren } from "./LinuxProcessSampling.js";
 import { TerminalRenderer } from "./TerminalRenderer.js";
-import { parseProcessScenario } from "../../domain/process/processScenario.js";
+import { processScenarioSchema } from "../../domain/process/processScenario.js";
 import type { ProcessCapture } from "../../domain/process/processCaptureParsing.js";
 import type {
   FilesystemCoverage,
@@ -143,7 +143,7 @@ it("preserves rendered observation order instead of timestamp sorting", () => {
       coverage: emptyFilesystemCoverage(),
     },
     truncationDetails: truncationDetails([], renderedFrames, []),
-    scenario: parseProcessScenario(base),
+    scenario: processScenarioSchema.parse(base),
     rootPid: 1,
     samplingPartial: false,
     renderedFrames,
@@ -179,7 +179,7 @@ it("marks redacted scripted input as an interaction unknown", () => {
       coverage: emptyFilesystemCoverage(),
     },
     truncationDetails: truncationDetails([], [], []),
-    scenario: parseProcessScenario({
+    scenario: processScenarioSchema.parse({
       ...base,
       events: [{ type: "input", at_ms: 0, data: "secret", sensitive: true }],
     }),
@@ -192,7 +192,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
         scheduled_at_ms: 0,
         dispatched_at_ms: 0,
         type: "input",
-        data: "<redacted-input:6-bytes>",
+        data: "",
+        sensitive: true,
+        input_bytes: 6,
         outcome: "dispatched",
       },
     ],
@@ -207,8 +209,9 @@ it("marks redacted scripted input as an interaction unknown", () => {
 
   expect(result.residual_unknowns).toContainEqual({
     scope: "interaction",
-    reason:
-      "Sensitive scripted input values are redacted from process capture Evidence.",
+    reason: expect.stringMatching(
+      /sensitive scripted input.*terminal echoes.*redacted.*terminal states.*redacted stream.*private display effects.*transformed values.*unknown/iu,
+    ),
   });
 });
 
@@ -259,6 +262,24 @@ it("admits PTY samples only after stable session and token setup", () => {
       rootPid: 100,
       expectedRunId: "run-token",
       before: initialized,
+      observedRunId: "other-run",
+      after: initialized,
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
+      observedRunId: "run-token",
+      after: { ...initialized, parent_pid: 11 },
+    }),
+  ).toBe(false);
+  expect(
+    isInitializedPtyRoot({
+      rootPid: 100,
+      expectedRunId: "run-token",
+      before: initialized,
       observedRunId: "run-token",
       after: initialized,
     }),
@@ -278,7 +299,7 @@ it("cancels filesystem snapshots before traversing declared roots", async () => 
   const controller = new AbortController();
   controller.abort();
   const failure: unknown = await snapshotRoots(
-    parseProcessScenario({
+    processScenarioSchema.parse({
       ...base,
       filesystem_observation_paths: ["/tmp"],
     }),
@@ -330,7 +351,7 @@ it.each(["symlink_not_followed", "observer_owned"] as const)(
           filesystem_before: coverage,
           filesystem_after: coverage,
         },
-        scenario: parseProcessScenario({
+        scenario: processScenarioSchema.parse({
           ...base,
           filesystem_observation_paths: ["/selected"],
         }),

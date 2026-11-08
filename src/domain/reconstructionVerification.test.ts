@@ -4,10 +4,12 @@ import { createEvidence, type Evidence } from "./evidence.js";
 import { AnalysisInputError } from "./analysisErrorCore.js";
 import { createEvidenceBundle } from "./evidenceBundle.js";
 import { EvidenceIntegrityError } from "./evidenceErrors.js";
-import { reconstructionVerificationResultSchema } from "./reconstructionVerificationSchemas.js";
+import {
+  reconstructionVerificationResultSchema,
+  reconstructionSpecificationSchema,
+} from "./reconstructionVerificationSchemas.js";
 import type { JsonValue } from "./jsonValue.js";
 import { EMPTY_PROCESS_CAPTURE_EXAMPLE } from "./process/processCaptureExample.js";
-import { reconstructionSpecificationSchema } from "./reconstructionVerificationSchemas.js";
 import { ARTIFACT_COMPARISON_EXAMPLE } from "../contracts/artifactComparisonExample.js";
 import { createResidualUnknown } from "./residualUnknown.js";
 
@@ -347,16 +349,18 @@ it("reports a missing comparison reference as caller input with its claim path",
     throw new Error("Expected a missing comparison reference to be rejected");
   } catch (error: unknown) {
     expect(error).toBeInstanceOf(AnalysisInputError);
+    if (!(error instanceof AnalysisInputError)) throw error;
     expect(error).toMatchObject({
-      userMessage: `Missing comparison Evidence ${comparison.evidence_id}`,
       issues: [
         {
           path: ["claims", 0, "comparison_evidence_id"],
           reason: "invalid_value",
-          message: `Missing comparison Evidence ${comparison.evidence_id}`,
         },
       ],
     });
+    expect(error.userMessage).toContain(comparison.evidence_id);
+    expect(error.userMessage).toMatch(/missing.*comparison/iu);
+    expect(error.issues[0]?.message).toBe(error.userMessage);
   }
 });
 

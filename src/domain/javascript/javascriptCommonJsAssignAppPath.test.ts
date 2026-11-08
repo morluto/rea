@@ -3,6 +3,7 @@ import { runInNewContext } from "node:vm";
 import { expect, it } from "vitest";
 
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
+import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
 
 const cases = [
   [
@@ -134,8 +135,37 @@ it("retains native source uncertainty when an array iterator is overwritten", ()
   });
   runInNewContext("change.call(app,'./lib');", module.exports);
   expect(changed).toBe(0);
-  // The static owner does not execute this custom iterator; it must retain the
-  // native origin still present in the source rather than silently drop it.
+  runInNewContext("app.setAppPath('./lib');", module.exports);
+  expect(changed).toBe(1);
+  // The local change function is harmless, but the published app still permits
+  // a caller to select the native setter. Unknown iteration retains that
+  // possibility without identifying a yielded value or an exact export link.
   const analysis = analyzeJavaScriptStaticSource(defining);
   expect((analysis.electron.app_path_changes ?? []).length).toBeGreaterThan(0);
+  const ir = analyzeJavaScriptSemantics(defining);
+  expect(
+    ir.moduleLinks.filter(({ kind }) => kind === "commonjs-export"),
+  ).toEqual([
+    expect.objectContaining({
+      exportedName: "*",
+      specifier: null,
+      importedName: null,
+      callableId: null,
+    }),
+  ]);
+});
+
+it.each([
+  [
+    "opaque iteration without an Electron source",
+    "const sources=[{change(){}}];sources[Symbol.iterator]=opaqueIterator;Object.assign(exports,...sources);",
+  ],
+  [
+    "unresolved iteration into a detached export receiver",
+    "const{app}=require('electron');const sources=[{change:app.setAppPath,app}];sources[Symbol.iterator]=opaqueIterator;module.exports={};Object.assign(exports,...sources);",
+  ],
+])("does not invent a public app-path effect from %s", (_name, source) => {
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.electron.app_path_changes ?? []).toEqual([]);
 });

@@ -60,46 +60,52 @@ export const startFakeCdpBrowser = async (
   });
   webSockets.on("connection", (socket: WebSocket, request: IncomingMessage) => {
     const directPage = request.url?.startsWith("/devtools/page/") === true;
+    const sessionState: SocketSessionState = {
+      nextSessionNumber: 1,
+      attachedSessions: new Set(),
+    };
     openedConnections += 1;
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
     socket.on("message", (raw) => {
       const command = parseCommand(raw.toString());
       commands.push(command);
-      const commandError = options.commandError?.(command);
-      if (commandError !== undefined) {
-        sendCommandReply(socket, command, { error: commandError });
-        if (options.closeAfterMethod === command.method)
-          setImmediate(() => socket.close());
-        return;
-      }
-      if (options.closeOnMethod === command.method) {
-        socket.close();
-        return;
-      }
-      if (options.hangOnMethod === command.method) return;
-      if (options.malformedMessageOnMethod === command.method) {
-        socket.send("{not-json");
-        return;
-      }
-      if (options.unsupportedMethods?.includes(command.method) === true) {
-        sendCommandReply(socket, command, {
-          error: { code: -32_601, message: "Method not found" },
-        });
-        return;
-      }
       if (
-        directPage &&
-        (command.method === "Target.attachToTarget" ||
-          command.sessionId !== undefined)
-      ) {
-        sendCommandReply(socket, command, {
-          error: { code: -32_600, message: "Direct page socket expected" },
-        });
+        handleSimulatedWireFault(
+          socket,
+          command,
+          directPage,
+          options,
+          sessionState,
+        )
+      )
+        return;
+      if (command.method === "Page.getFrameTree") frameTreeReads += 1;
+      const delayMs = options.commandDelayMs?.(command);
+      if (delayMs !== undefined && delayMs > 0) {
+        const currentFrameReads = frameTreeReads;
+        const timer = setTimeout(() => {
+          if (socket.readyState === WebSocket.OPEN)
+            replyToCommand(
+              socket,
+              command,
+              port,
+              options,
+              currentFrameReads,
+              sessionState,
+            );
+        }, delayMs);
+        socket.once("close", () => clearTimeout(timer));
         return;
       }
-      if (command.method === "Page.getFrameTree") frameTreeReads += 1;
-      replyToCommand(socket, command, port, options, frameTreeReads);
+      replyToCommand(
+        socket,
+        command,
+        port,
+        options,
+        frameTreeReads,
+        sessionState,
+      );
     });
   });
   await new Promise<void>((resolve, reject) => {
@@ -120,6 +126,9 @@ export const startFakeCdpBrowser = async (
     },
     emitEvent(event) {
       for (const socket of sockets) socket.send(JSON.stringify(event));
+    },
+    closeActiveConnections() {
+      for (const socket of sockets) socket.close();
     },
     httpRequests,
     async close() {
@@ -219,6 +228,65 @@ const sendCommandReply = (
   );
 };
 
+interface SocketSessionState {
+  nextSessionNumber: number;
+  readonly attachedSessions: Set<string>;
+}
+
+const sessionNotFoundError = {
+  code: -32_001,
+  message: "Session with given id not found",
+} as const;
+
+const handleSimulatedWireFault = (
+  socket: WebSocket,
+  command: FakeCdpCommand,
+  directPage: boolean,
+  options: FakeOptions,
+  sessionState: SocketSessionState,
+): boolean => {
+  const commandError = options.commandError?.(command);
+  if (commandError !== undefined) {
+    sendCommandReply(socket, command, { error: commandError });
+    if (options.closeAfterMethod === command.method)
+      setImmediate(() => socket.close());
+    return true;
+  }
+  if (options.closeOnMethod === command.method) {
+    socket.close();
+    return true;
+  }
+  if (options.hangOnMethod === command.method) return true;
+  if (options.malformedMessageOnMethod === command.method) {
+    socket.send("{not-json");
+    return true;
+  }
+  if (options.unsupportedMethods?.includes(command.method) === true) {
+    sendCommandReply(socket, command, {
+      error: { code: -32_601, message: "Method not found" },
+    });
+    return true;
+  }
+  if (
+    directPage &&
+    (command.method === "Target.attachToTarget" ||
+      command.sessionId !== undefined)
+  ) {
+    sendCommandReply(socket, command, {
+      error: { code: -32_600, message: "Direct page socket expected" },
+    });
+    return true;
+  }
+  if (
+    command.sessionId !== undefined &&
+    !sessionState.attachedSessions.has(command.sessionId)
+  ) {
+    sendCommandReply(socket, command, { error: sessionNotFoundError });
+    return true;
+  }
+  return false;
+};
+
 /** Emit a configured producer reply and its associated events. */
 const replyToCommand = (
   socket: WebSocket,
@@ -226,13 +294,48 @@ const replyToCommand = (
   port: number,
   options: FakeOptions,
   frameTreeReads: number,
+  sessionState: SocketSessionState,
 ): void => {
+  if (
+    command.sessionId !== undefined &&
+    !sessionState.attachedSessions.has(command.sessionId)
+  ) {
+    sendCommandReply(socket, command, { error: sessionNotFoundError });
+    return;
+  }
+  const customResult = options.commandResult?.(
+    command,
+    `http://127.0.0.1:${String(port)}`,
+    frameTreeReads,
+  );
+  if (
+    customResult === undefined &&
+    command.method === "Target.detachFromTarget"
+  ) {
+    const sessionId = command.params.sessionId;
+    if (
+      typeof sessionId !== "string" ||
+      !sessionState.attachedSessions.delete(sessionId)
+    ) {
+      sendCommandReply(socket, command, { error: sessionNotFoundError });
+      return;
+    }
+  }
   const result =
-    options.commandResult?.(
-      command,
-      `http://127.0.0.1:${String(port)}`,
-      frameTreeReads,
-    ) ?? resultFor(command, port, options, frameTreeReads);
+    customResult ??
+    resultFor(command, port, options, frameTreeReads, () => {
+      const sessionId = `session-${String(sessionState.nextSessionNumber)}`;
+      sessionState.nextSessionNumber += 1;
+      return sessionId;
+    });
+  if (
+    command.method === "Target.attachToTarget" &&
+    result !== undefined &&
+    typeof result.sessionId === "string" &&
+    result.sessionId.length > 0
+  ) {
+    sessionState.attachedSessions.add(result.sessionId);
+  }
   if (result === undefined) {
     sendCommandReply(socket, command, {
       error: {
@@ -268,6 +371,8 @@ const serveSourceMap = (
   response: ServerResponse,
   options: FakeOptions,
 ): boolean => {
+  if (options.sourceMapReply?.(request.url ?? "", response) === true)
+    return true;
   if (
     options.hangSourceMap === true &&
     request.url?.startsWith("/app.js.map") === true

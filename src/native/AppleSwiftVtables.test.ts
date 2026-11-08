@@ -226,6 +226,7 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
   const values = new Map<bigint, number>([
     [0x20cn, 0], // simple, unconditional conformance
     [0x500n, 3], // protocol descriptor kind
+    [0x800n, 0], // module context
     [0x50cn, 0], // signature count
     [0x510n, 1], // witness requirement count
     [0x2b0n, 16], // nominal type descriptor kind
@@ -279,6 +280,8 @@ it("returns a located issue for an emitted unresolved witness slot", () => {
           [0x100n, 0x200n],
           [0x200n, 0x500n],
           [0x508n, 0x600n],
+          [0x504n, 0x800n],
+          [0x808n, 0x820n],
           [0x204n, 0x2b0n],
           [0x2b8n, 0x700n],
           [0x208n, 0x380n],

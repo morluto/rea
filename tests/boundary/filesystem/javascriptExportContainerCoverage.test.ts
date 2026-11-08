@@ -44,7 +44,8 @@ describe("JavaScript export container coverage through authenticated Evidence", 
       before: "",
       after: ", options: { nested: {} }",
       paths: ["/options", "/options/nested"],
-      addedPaths: ["/options"],
+      // Complete root coverage proves the absent ancestor and its descendants.
+      addedPaths: ["/options", "/options/nested"],
     },
     {
       name: "escaped property keys",

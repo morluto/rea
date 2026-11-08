@@ -24,14 +24,25 @@ requires an absolute filesystem path and preserves that exact selection:
 
 The inline Evidence result contains the artifact path, SHA-256, and byte length.
 `tables` lists each declared note program header or section, including the
-section name when a string table is present. Zlib-compressed section-name
-tables are decompressed within the selected file-size budget. An unsupported
+section name when a string table is present. Zlib- and Zstandard-compressed
+section-name tables are decompressed within the selected file-size budget. An unsupported
 compression type leaves section names unknown and adds a limitation; note bytes
 remain independently examined. Each `entries[]` item reports owner, type,
 descriptor SHA-256, and a hex preview for descriptors of 64 bytes or less.
 
+A section name also stays null when its offset is outside the declared string
+table or its bytes lack a NUL terminator. A limitation explains that missing
+name. Note coverage remains complete when all declared note tables and entries
+were examined; an unavailable section name does not erase those note facts.
+
 For GNU notes, `gnu.build_id_hex`, `gnu.abi_tag`, or `gnu.gold_version` are
 filled when the descriptor matches that type. Other owners keep `gnu` null.
+
+For Linux `CORE` notes, `core.prpsinfo`, `core.file`, `core.siginfo`, or
+`core.auxv` are decoded for process arguments and status (`NT_PRPSINFO`), mapped
+file memory regions and paths (`NT_FILE`), fault signal and code (`NT_SIGINFO`), and
+auxiliary vectors (`NT_AUXV`) across 32-bit and 64-bit images. Other owners or unparsed
+notes keep `core` null.
 
 `PT_NOTE` and `SHT_NOTE` are examined independently. The same file range may
 appear twice when both tables declare it.
@@ -43,7 +54,7 @@ the image never carried notes in another container or overlay.
 
 The selected file is limited to 64 MiB by default (512 MiB maximum). At most
 32 note entries are examined by default across every table. Retained note
-names, section names, and GNU descriptor text share a scan budget based on
+names, section names, GNU descriptor text, and core dump string representations share a scan budget based on
 the source bytes plus any decoded section-name table, capped at
 `max_file_bytes`. The raw source and decoded table must also fit together
 within that ceiling. If admission fails, the error reports the required
@@ -57,6 +68,8 @@ note entries fail without partial success. ELF extended
 numbering (`PN_XNUM`, including a section count stored when `e_shnum` is 0) is
 unsupported and returns an unsupported-target outcome rather than invalid-input
 recovery.
+
+Zstandard section-name tables also use a 128 MiB decoder window limit.
 
 `SHF_COMPRESSED` note sections return `unsupported_target` before their payload
 is interpreted or decompressed. Their compression header is storage metadata,

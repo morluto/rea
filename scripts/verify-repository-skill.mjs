@@ -1,15 +1,15 @@
 import { cp, mkdir, readFile, readdir } from "node:fs/promises";
 import { dirname, join, relative } from "node:path";
 
-import { exec, execNpm, pathExists } from "./lib/verify-package-core.mjs";
+import { pathExists } from "./lib/verify-package-core.mjs";
 
 /** Install the separately locked Skills CLI so verification resolves no registry metadata. */
-const lockedSkillsCli = async (root, workspace) => {
+const lockedSkillsCli = async (commands, root, workspace) => {
   const tool = join(workspace, "skills-cli");
   await mkdir(tool, { recursive: true });
   for (const file of ["package.json", "package-lock.json"])
     await cp(join(root, "scripts/verify-tools/skills", file), join(tool, file));
-  await execNpm(
+  await commands.execNpm(
     ["ci", "--prefer-offline", "--ignore-scripts", "--no-audit", "--no-fund"],
     { cwd: tool, timeout: 120_000 },
   );
@@ -24,12 +24,12 @@ const lockedSkillsCli = async (root, workspace) => {
 };
 
 /** Exercise Skills' default root discovery without ignored build outputs. */
-export async function verifyRepositorySkill({ root, workspace }) {
+export async function verifyRepositorySkill({ root, workspace, commands }) {
   const snapshot = join(workspace, "repository");
   const consumer = join(workspace, "skill-consumer");
   const home = join(workspace, "skill-consumer-home");
   const tracked = (
-    await exec(
+    await commands.exec(
       "git",
       ["ls-files", "--cached", "--format=%(objectmode) %(path)", "-z"],
       { cwd: root },
@@ -54,10 +54,11 @@ export async function verifyRepositorySkill({ root, workspace }) {
   await mkdir(consumer, { recursive: true });
   await mkdir(home, { recursive: true });
   const { version: skillsVersion, entry } = await lockedSkillsCli(
+    commands,
     root,
     workspace,
   );
-  await exec(
+  await commands.exec(
     process.execPath,
     [
       entry,

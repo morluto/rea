@@ -321,8 +321,7 @@ it("keeps unrelated catalog names outside the selected-table reply budget", asyn
   ).toThrowError(
     expect.objectContaining({
       reason: "selection",
-      message:
-        "Selected ordinary table does not exist with that exact name: absent",
+      message: expect.stringMatching(/ordinary table.*exact name.*absent/i),
     }),
   );
   for (const schema_scope of ["inventory", "database"] as const)
@@ -769,6 +768,6 @@ it.each(["inventory", "selected_table", "database"] as const)(
           ),
         }),
       );
-    expect(await readFile(path)).toEqual(before);
+    expect(Buffer.compare(await readFile(path), before)).toBe(0);
   },
 );

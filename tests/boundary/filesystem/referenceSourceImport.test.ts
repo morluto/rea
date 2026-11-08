@@ -234,7 +234,6 @@ describe("reference source ignore policy read failures", () => {
           new ArtifactResourceScope(),
         );
         expect(intercepted).toBe(true);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Expected ignore policy read failure");
         expect(result.error.code).toBe(expected);
         expect(result.error.cause).toBe(
@@ -309,7 +308,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         resources,
       );
       expect(interceptedRead).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(physical);
@@ -331,12 +329,12 @@ describe("reference source ignore policy cleanup ownership", () => {
     await writeFile(path, "ignored/\n");
     await writeFile(foreignPath, "foreign bytes");
     const foreignOwner = new OwnedFileHandle(await open(foreignPath, "r"));
-    const reason = new RegularFileCleanupFailure(
-      foreignPath,
-      foreignOwner,
-      { kind: "completed", value: "foreign value" },
-      new Error("foreign cleanup failure"),
-    );
+    const reason = new RegularFileCleanupFailure({
+      path: foreignPath,
+      owner: foreignOwner,
+      outcome: { kind: "completed", value: "foreign value" },
+      cleanupCause: new Error("foreign cleanup failure"),
+    });
     const controller = new AbortController();
     const probe = await open(path, "r");
     const identity = await probe.stat();
@@ -373,7 +371,6 @@ describe("reference source ignore policy cleanup ownership", () => {
         new ArtifactResourceScope(),
       );
       expect(intercepted).toBe(true);
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Expected ignore policy read failure");
       expect(result.error.code).toBe("io");
       expect(result.error.cause).toBe(reason);
@@ -497,7 +494,7 @@ describe("reference source symlink import", () => {
       limitations: [],
     };
 
-    const parsed = parseReferenceSourceEntries(read, new Set(), []);
+    const parsed = parseReferenceSourceEntries(read, []);
     expect(parsed.entries).toContainEqual(
       expect.objectContaining({
         kind: "symlink",

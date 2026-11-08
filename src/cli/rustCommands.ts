@@ -14,6 +14,7 @@ import { safeParseJson } from "../domain/safeJson.js";
 import type { Logger } from "pino";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { machoSliceArchitectureSchema } from "../domain/apple/machoTargetSelection.js";
 
@@ -26,9 +27,9 @@ export const registerRustCommands = (
     description:
       "Inspect an embedded cargo-auditable Rust dependency list without target execution",
     args: z.object({
-      path: z
-        .string()
-        .describe("Local ELF, PE, thin Mach-O or universal Mach-O image"),
+      path: localPathStringSchema.describe(
+        "Local ELF, PE, thin Mach-O or universal Mach-O image",
+      ),
     }),
     options: z.object({
       ...analysisEvidenceDeliveryOptions,
@@ -91,6 +92,7 @@ export const registerRustCommands = (
             );
           const service = createRustBinaryService();
           return deliverCliAnalysisEvidence({
+            callerInputPath: args.path,
             run: () =>
               service.inspect(
                 {

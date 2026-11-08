@@ -1,3 +1,5 @@
+import type { AnalysisSettingsReader } from "../domain/analysisSettings.js";
+import { runtimeAnalysisConfig } from "../config/runtimeAnalysisSettings.js";
 import { isAppleDispatchMetadataTarget } from "../domain/native/objcSwiftMetadata.js";
 import { snapshotEnvironment } from "../process/snapshotEnvironment.js";
 import type { AppConfig } from "../config/types.js";
@@ -27,8 +29,15 @@ export const createBinarySession = (
   config: AppConfig,
   logger: Logger,
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
+  settings?: AnalysisSettingsReader,
 ): BinarySession =>
-  composeDeepBinarySession(config, logger, selectedEnvironment);
+  composeDeepBinarySession(
+    runtimeAnalysisConfig(config, settings),
+    logger,
+    selectedEnvironment,
+    undefined,
+    settings,
+  );
 
 /** Prefer byte-backed dispatch inspection while retaining deep symbol fallback. */
 export const createNativeDispatchBinarySession = (
@@ -48,6 +57,7 @@ const composeDeepBinarySession = (
   logger: Logger,
   selectedEnvironment: Readonly<NodeJS.ProcessEnv>,
   inspection?: "inspect_native_dispatch_metadata",
+  settings?: AnalysisSettingsReader,
 ): BinarySession => {
   const environment = snapshotEnvironment(selectedEnvironment);
   const hopper = new HopperProvider(config, logger, environment);
@@ -57,8 +67,11 @@ const composeDeepBinarySession = (
     regexMatchingDeadline: config.regexMatchingDeadline,
     regexWorkerHeapRequest: config.regexWorkerHeapRequest,
   });
-  const auxiliaryDeclarations =
-    auxiliaryAnalysisProviderDeclarations(environment);
+  const auxiliaryDeclarations = auxiliaryAnalysisProviderDeclarations(
+    environment,
+    process.platform,
+    settings,
+  );
   const nativeInspectionAvailable =
     inspection !== undefined &&
     auxiliaryDeclarations.some(({ capabilities }) =>
@@ -75,13 +88,14 @@ const composeDeepBinarySession = (
     auxiliaryDeclarations.map(
       (declaration) => new LazyAnalysisProvider(declaration),
     ),
-    createBundleResourceFactory(environment, process.platform),
+    createBundleResourceFactory(environment, process.platform, settings),
   );
 };
 
 const createBundleResourceFactory = (
   environment: Readonly<NodeJS.ProcessEnv>,
   platform: NodeJS.Platform,
+  settings?: AnalysisSettingsReader,
 ) => {
   return {
     createClient: async (
@@ -93,7 +107,7 @@ const createBundleResourceFactory = (
           import("../native/NativeMacOSProvider.js"),
         ],
       );
-      const artifact = new ArtifactProvider(environment, platform);
+      const artifact = new ArtifactProvider(environment, platform, settings);
       const native = new NativeMacOSProvider(environment, undefined, platform);
       const capabilities = [
         ...artifact

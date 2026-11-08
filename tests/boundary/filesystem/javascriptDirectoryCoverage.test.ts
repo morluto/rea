@@ -135,7 +135,9 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
           expect.objectContaining({
             properties: expect.objectContaining({ content_available: false }),
             evidence: expect.objectContaining({
-              operation: "inventory-unavailable-entry",
+              extractor: expect.objectContaining({
+                operation: "inventory-unavailable-entry",
+              }),
             }),
           }),
         ],

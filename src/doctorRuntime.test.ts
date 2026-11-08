@@ -2,6 +2,8 @@ import { chmod, mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { expect, it as test, vi } from "vitest";
+import { withVerifierCleanup } from "../scripts/lib/verifier-cleanup.mjs";
+import { awaitAcknowledgement } from "../tests/fixtures/lifecycleAcknowledgement.js";
 
 import { createSystemDoctorHost } from "./doctorRuntime.js";
 import { DOCTOR_PROVIDER_IDS } from "./application/DoctorProviderIds.js";
@@ -273,16 +275,15 @@ test.each([true, false])(
       .finally(() => {
         settled = true;
       });
-    try {
-      await entered;
+    await withVerifierCleanup(async () => {
+      await awaitAcknowledgement(entered, pending, "display selection");
       expect(selected.mock.calls).toHaveLength(1);
       if (cancel) {
         controller.abort(reason);
         const result = await pending;
-        expect(selected.mock.calls[0]?.[0]).toHaveProperty(
-          "signal",
-          controller.signal,
-        );
+        const selectedSignal = selected.mock.calls[0]?.[0].signal;
+        expect(selectedSignal?.aborted).toBe(true);
+        expect(selectedSignal?.reason).toBe(reason);
         expect(inspected).not.toHaveBeenCalled();
         expect(result.error).toBeInstanceOf(AnalysisCancelledError);
         expect((result.error as Error).cause).toBe(reason);
@@ -296,13 +297,17 @@ test.each([true, false])(
           expect.objectContaining({ name: "hopper-demo-runtime", ok: true }),
         );
       }
-    } finally {
-      release();
-      await pending;
-      await system.close?.();
-      inspected.mockRestore();
-      selected.mockRestore();
-    }
+    }, [
+      release,
+      async () => {
+        await pending;
+      },
+      async () => {
+        await system.close?.();
+      },
+      () => inspected.mockRestore(),
+      () => selected.mockRestore(),
+    ]);
   },
   5_000,
 );
@@ -341,8 +346,8 @@ test("joins display finalization before preserving a late cancellation", async (
     .finally(() => {
       settled = true;
     });
-  try {
-    await entered;
+  await withVerifierCleanup(async () => {
+    await awaitAcknowledgement(entered, pending, "display finalization");
     controller.abort(reason);
     await Promise.resolve();
     expect(settled).toBe(false);
@@ -352,13 +357,17 @@ test("joins display finalization before preserving a late cancellation", async (
     expect(failure).toBeInstanceOf(AnalysisCancelledError);
     expect((failure as Error).cause).toBe(reason);
     expect(inspected).not.toHaveBeenCalled();
-  } finally {
-    release();
-    await pending;
-    await system.close?.();
-    inspected.mockRestore();
-    selected.mockRestore();
-  }
+  }, [
+    release,
+    async () => {
+      await pending;
+    },
+    async () => {
+      await system.close?.();
+    },
+    () => inspected.mockRestore(),
+    () => selected.mockRestore(),
+  ]);
 });
 
 test("rejects a pre-aborted caller before the Hopper display check", async () => {

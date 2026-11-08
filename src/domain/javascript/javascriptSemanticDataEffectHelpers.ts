@@ -31,7 +31,7 @@ import {
   type JavaScriptSemanticMemberEffect,
   type JavaScriptSemanticRequiredModuleEffect,
 } from "./javascriptSemanticState.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { traverseJavaScriptValueAst } from "./javascriptSemanticTraversal.js";
 import {
   readExactJavaScriptLiteral,
   semanticMemberChain,
@@ -57,7 +57,7 @@ export const assignedSemanticResultBindings = (
     if (t.isVariableDeclarator(owner)) {
       pattern = owner.id;
       source = owner.init ?? null;
-    } else if (t.isAssignmentExpression(owner)) {
+    } else if (t.isAssignmentExpression(owner, { operator: "=" })) {
       pattern = owner.left;
       source = owner.right;
     }
@@ -901,7 +901,7 @@ export const traverseDataEffects = (
     context.callableStack,
   );
   context.ancestors.length = 0;
-  traverseJavaScriptAst(program, {
+  traverseJavaScriptValueAst(program, context.state.erasedSyntaxNodes, {
     enter: (node, parent) => {
       callableStack.enter(node, parent);
       visit(node, parent);

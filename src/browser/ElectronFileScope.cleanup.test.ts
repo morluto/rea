@@ -140,24 +140,26 @@ it("retains Inspector scripts and contexts when final ASAR authorization cannot 
   };
   try {
     const control = await observeJavaScriptRuntime(provider, input);
-    expect(control.ok).toBe(true);
     if (!control.ok) throw control.error;
     expect(control.value.normalized_result).toMatchObject({
       scripts: { observed_total: 1 },
-      execution_contexts: [{ name: "main" }],
+      execution_contexts: [{ name: "node[fixture]" }],
     });
     await prependAsarJsonWhitespace(archive, " ");
     handleState.failCloseCount = 1;
     const result = await observeJavaScriptRuntime(provider, input);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected descriptor close failure");
     expect(result.error.cleanupIncomplete).toBe(true);
     expect(result.error.partialObservation).toMatchObject({
-      scripts: {
-        observed_total: 1,
-        items: [{ location: { kind: "unresolved", reported_url: scriptUrl } }],
+      normalized_result: {
+        scripts: {
+          observed_total: 1,
+          items: [
+            { location: { kind: "unresolved", reported_url: scriptUrl } },
+          ],
+        },
+        execution_contexts: [{ name: "node[fixture]" }],
       },
-      execution_contexts: [{ name: "main" }],
     });
     await provider.close();
     expect(result.error.cleanupIncomplete).toBe(false);
@@ -408,7 +410,7 @@ it.each(["completed", "read-failed", "cancelled"] as const)(
       const origin = result.error.cleanupPrimary ?? result.error;
       expect(origin.diagnostics).toMatchObject({
         completed_prefix: {
-          examined_targets: 2,
+          examined_targets: 1,
           allowed_targets: [{ target_id: "page-0", file_path: page }],
           coverage: expect.stringContaining("remaining targets are unknown"),
         },

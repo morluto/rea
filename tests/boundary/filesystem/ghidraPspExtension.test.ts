@@ -138,6 +138,34 @@ async function installation() {
 describe.skipIf(process.platform === "win32")(
   "PSP installed-extension and profile boundary",
   () => {
+    it("refuses an otherwise supported custom PSP loader in stock checkpoint mode", async () => {
+      const f = await installation();
+      const checkpoints = new GhidraProvider(
+        {
+          ...f.config,
+          ghidraCheckpointDirectory: join(f.directory, "checkpoints"),
+        },
+        silentLogger,
+        {},
+        host,
+      );
+      try {
+        const supported = await f.provider.resolveAnalysisProfile(target);
+        if (!supported.ok) throw supported.error;
+        expect(supported.value.profile?.parameters.loader).toBe("PspElfLoader");
+        const refused = await checkpoints.resolveAnalysisProfile(target);
+        expect(refused).toMatchObject({
+          ok: false,
+          error: {
+            _tag: "ConfigurationError",
+            settings: [{ setting: "REA_GHIDRA_CHECKPOINT_DIR" }],
+          },
+        });
+      } finally {
+        await checkpoints.closeOwnedResources();
+        await f.provider.closeOwnedResources();
+      }
+    });
     it("binds source interpretation and installed content, not mtimes or discovery order", async () => {
       const { provider, root } = await installation();
       expect(provider.inspectTargetSupport(target).status).toBe("supported");
@@ -145,6 +173,7 @@ describe.skipIf(process.platform === "win32")(
       if (!first.ok) throw first.error;
       const again = await provider.resolveAnalysisProfile(target);
       if (!again.ok) throw again.error;
+      expect(first.value.profile?.digest).toEqual(expect.any(String));
       expect(again.value.profile?.digest).toBe(first.value.profile?.digest);
       expect(first.value.profile?.parameters).toMatchObject({
         architecture: "mips",
@@ -184,6 +213,7 @@ describe.skipIf(process.platform === "win32")(
       );
       const changed = await provider.resolveAnalysisProfile(target);
       if (!changed.ok) throw changed.error;
+      expect(changed.value.profile?.digest).toEqual(expect.any(String));
       expect(changed.value.profile?.digest).not.toBe(
         first.value.profile?.digest,
       );
@@ -237,18 +267,30 @@ describe.skipIf(process.platform === "win32")(
       if (!before.ok) throw before.error;
       await rename(root, `${root}-removed`);
       const missing = await provider.resolveAnalysisProfile(target);
-      expect(missing.ok).toBe(false);
       if (missing.ok) throw new Error("Missing installation was accepted");
       expect(missing.error.message).toContain("PSP_EXTENSION_UNAVAILABLE");
     });
+  },
+);
 
+describe.skipIf(process.platform === "win32")(
+  "PSP extension admission codes",
+  () => {
     it.each([
-      ["name=other\nversion=12.1.3\n", "does not match"],
-      ["name=ghidra-allegrex\nversion=12.1.4\n", "does not match"],
-      ["name=ghidra-allegrex\nversion=12.1.\\uZZZZ\n", "Unicode escape"],
-    ])(
+      ["name=other\nversion=12.1.3\n", "metadata_mismatch", undefined],
+      [
+        "name=ghidra-allegrex\nversion=12.1.4\n",
+        "metadata_mismatch",
+        undefined,
+      ],
+      [
+        "name=ghidra-allegrex\nversion=12.1.\\uZZZZ\n",
+        "properties_invalid",
+        "malformed_unicode_escape",
+      ],
+    ] as const)(
       "rejects mismatched or malformed extension metadata %s",
-      async (properties, reason) => {
+      async (properties, code, parserCode) => {
         const { root } = await installation();
         await writeFile(join(root, "extension.properties"), properties);
         await expect(
@@ -257,7 +299,14 @@ describe.skipIf(process.platform === "win32")(
             "12.1.3",
             new ArtifactResourceScope(),
           ),
-        ).rejects.toThrow(reason);
+        ).rejects.toMatchObject({
+          diagnostics: {
+            code,
+            ...(parserCode === undefined
+              ? { ghidra_version: "12.1.3" }
+              : { parser_code: parserCode }),
+          },
+        });
       },
     );
 
@@ -269,7 +318,12 @@ describe.skipIf(process.platform === "win32")(
       );
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("Module.manifest");
+      ).rejects.toMatchObject({
+        diagnostics: {
+          code: "component_missing",
+          component: "Module.manifest",
+        },
+      });
     });
 
     it("rejects symlinked code instead of hashing an untracked external producer", async () => {
@@ -279,7 +333,9 @@ describe.skipIf(process.platform === "win32")(
       await symlink(join(directory, "external.jar"), path);
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("regular files");
+      ).rejects.toMatchObject({
+        diagnostics: { code: "entry_kind", relative: "lib/extension.jar" },
+      });
     });
 
     it("bounds sparse extension input before reading or allocating its declared extent", async () => {
@@ -287,7 +343,12 @@ describe.skipIf(process.platform === "win32")(
       await truncate(join(root, "lib/extension.jar"), 64 * 1024 * 1024 + 1);
       await expect(
         inspectGhidraPspExtension(root, "12.1.3", new ArtifactResourceScope()),
-      ).rejects.toThrow("inspection limit");
+      ).rejects.toMatchObject({
+        diagnostics: {
+          code: "bytes_exceed_limit",
+          max_bytes: 64 * 1024 * 1024,
+        },
+      });
     });
   },
 );
@@ -314,7 +375,9 @@ describe.skipIf(process.platform === "win32")(
             "12.1.3",
             new ArtifactResourceScope(),
           ),
-        ).rejects.toThrow("inventory exceeds the inspection limit");
+        ).rejects.toMatchObject({
+          diagnostics: { code: "inventory_exceeds_limit", max_entries: 1024 },
+        });
       },
     );
   },
@@ -328,7 +391,6 @@ describe.skipIf(process.platform === "win32")(
       const result = await provider.resolveAnalysisProfile(target, {
         signal: AbortSignal.abort(),
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Cancellation was ignored");
       expect(result.error._tag).toBe("AnalysisCancelledError");
     });
@@ -367,7 +429,6 @@ describe.skipIf(process.platform === "win32")(
           "unsupported",
         );
         const result = await provider.resolveAnalysisProfile(altered);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Invalid target was admitted");
         expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
       },
@@ -422,30 +483,18 @@ describe.skipIf(process.platform === "win32")(
   "PSP inspected ABI declaration boundary",
   () => {
     it("refuses a PSP image whose section headers lie beyond the captured file", async () => {
-      const { directory, provider } = await installation();
+      const { directory } = await installation();
       const path = join(directory, "psp-truncated-sections.elf");
       await writeFile(path, pspElfBytes({ sectionHeadersBeyondEof: true }));
       const parsed = await parseBinaryTarget(path);
-      if (!parsed.ok) throw parsed.error;
-      if (
-        parsed.value.kind !== "executable" ||
-        parsed.value.architecture !== "mips"
-      )
-        throw new Error("PSP ELF was not recognized as MIPS");
-      expect(parsed.value.mips.abiFlags).toEqual(pspAbiFlags);
-      expect(parsed.value.mips.limitations).toContainEqual(
-        expect.stringContaining("ABI declarations in unavailable headers"),
-      );
-      expect(provider.inspectTargetSupport(parsed.value).status).toBe(
-        "unsupported",
-      );
-      const result = await provider.resolveAnalysisProfile(parsed.value);
-      expect(result.ok).toBe(false);
-      if (result.ok) throw new Error("Incomplete ABI inspection was admitted");
-      expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
-      expect(result.error.message).toContain(
-        "MIPS ABI declaration inspection is incomplete",
-      );
+      expect(parsed).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "BinaryTargetError",
+          constraint: "file_format_rejected",
+          reason: expect.stringContaining("truncated ELF section header table"),
+        },
+      });
     });
 
     it("retains independently inspected PSP ABI bytes through the real target reader", async () => {
@@ -507,7 +556,6 @@ describe.skipIf(process.platform === "win32")(
           "unsupported",
         );
         const result = await provider.resolveAnalysisProfile(altered);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Invalid ABI was admitted");
         expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
         expect(result.error.message).toContain(
@@ -533,7 +581,6 @@ describe.skipIf(process.platform === "win32")(
           },
         };
         const result = await provider.resolveAnalysisProfile(altered);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Missing ABI was inferred");
         expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
         expect(result.error.message).toContain(
@@ -559,10 +606,16 @@ describe.skipIf(process.platform === "win32")(
       expect(result.ok).toBe(false);
       if (result.ok)
         throw new Error("Conflicting language override was accepted");
-      expect(result.error._tag).toBe("AnalysisUnsupportedTargetError");
-      expect(result.error.message).toContain(
-        "does not accept REA_GHIDRA_LANGUAGE_ID overrides",
-      );
+      expect(result.error).toMatchObject({
+        _tag: "ConfigurationError",
+        settings: [
+          {
+            setting: "REA_GHIDRA_LANGUAGE_ID",
+            constraint:
+              "The bounded PSP Allegrex profile does not accept processor or compiler specification overrides.",
+          },
+        ],
+      });
     });
 
     it("keeps PSP and generic language-override launch paths mutually exclusive", () => {
@@ -577,7 +630,12 @@ describe.skipIf(process.platform === "win32")(
       const languageOverride = { languageId: "x86:LE:64:default" };
       expect(() =>
         ghidraHeadlessArguments({ ...paths, psp: true, languageOverride }),
-      ).toThrow("PSP ELF import cannot be combined");
+      ).toThrow(
+        expect.objectContaining({
+          _tag: "GhidraAdmissionError",
+          code: "psp_combined",
+        }),
+      );
       expect(ghidraHeadlessArguments({ ...paths, languageOverride })).toEqual(
         expect.arrayContaining(["-processor", "x86:LE:64:default"]),
       );
@@ -688,7 +746,6 @@ describe.skipIf(process.platform === "win32")(
           const result = await provider.resolveAnalysisProfile(target, {
             signal: controller.signal,
           });
-          expect(result.ok).toBe(false);
           if (result.ok) throw new Error("Failed read admitted");
           expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
           expect(result.error.message).toContain(readFailure.message);
@@ -728,7 +785,6 @@ describe.skipIf(process.platform === "win32")(
           const result = await provider.resolveAnalysisProfile(target, {
             signal: controller.signal,
           });
-          expect(result.ok).toBe(false);
           if (result.ok) throw new Error("Cancelled inspection admitted");
           expect(result.error._tag).toBe("AnalysisCancelledError");
           expect(result.error.cause).toBe(reason);
@@ -750,8 +806,9 @@ describe.skipIf(process.platform === "win32")(
       controls.directory = (handle) => {
         controls.directory = undefined;
         vi.spyOn(handle, "read").mockRejectedValue(readFailure);
-        const close = handle.close.bind(handle);
-        vi.spyOn(handle, "close").mockImplementation(async () => {
+        const directory: { close(): Promise<void> } = handle;
+        const close = directory.close.bind(handle);
+        vi.spyOn(directory, "close").mockImplementation(async () => {
           closes++;
           await close();
           controller.abort({ caller: "directory finalization" });
@@ -761,7 +818,6 @@ describe.skipIf(process.platform === "win32")(
       const result = await provider.resolveAnalysisProfile(target, {
         signal: controller.signal,
       });
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Failed directory admitted");
       expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
       expect(result.error.message).toContain(readFailure.message);
@@ -828,7 +884,6 @@ describe.skipIf(process.platform === "win32")(
       });
       try {
         const result = await client.start(controller.signal);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Failed PSP inspection started");
         expect(result.error.kind).toBe("start");
         expect(result.error.cleanupFailure?.cleanupIncomplete).toBe(true);
@@ -906,13 +961,15 @@ describe.skipIf(process.platform === "win32")(
           });
         };
         const result = await provider.resolveAnalysisProfile(target);
-        expect(result.ok).toBe(false);
         if (result.ok) throw new Error("Changed file admitted");
-        expect(result.error.message).toContain(
-          change === "growth"
-            ? "changed during inspection"
-            : "Truncated Allegrex component",
-        );
+        expect(result.error).toMatchObject({
+          diagnostics: {
+            code:
+              change === "growth" ? "component_changed" : "component_truncated",
+            relative:
+              change === "growth" ? "Module.manifest" : "extension.properties",
+          },
+        });
         expect(closes).toBe(1);
         expect(result.error.cleanupIncomplete).toBe(false);
         expect(provider.hasPendingOwnedResources()).toBe(false);
@@ -1022,7 +1079,6 @@ describe.skipIf(process.platform === "win32")(
                   providerId: "ghidra",
                   signal: controller.signal,
                 });
-          expect(result.ok).toBe(false);
           if (result.ok) throw new Error("Failed profile admitted");
           expect(result.error._tag).toBe("AnalysisCapabilityUnavailableError");
           expect(result.error.message).toContain(readFailure.message);

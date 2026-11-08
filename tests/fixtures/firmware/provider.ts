@@ -22,6 +22,9 @@ export const firmwareFixture = async (mode = "normal", banner?: string) => {
       process.execPath,
       // Keep the synthetic JS producer within the real engines' address-space ceiling.
       "--jitless",
+      // Node 22 warns when jitless implicitly disables Wasm. Newer releases do
+      // not need this flag, and Node 26 no longer accepts it.
+      ...(process.versions.node.startsWith("22.") ? ["--no-expose-wasm"] : []),
       fileURLToPath(new URL("./producer.mjs", import.meta.url)),
       engine,
     ]

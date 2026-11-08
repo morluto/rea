@@ -64,7 +64,7 @@ it("finds state entities using the recorded path's repeated separators", () => {
     ["GET", "/api//books/1", { id: 1, title: "Book" }],
   ]);
   const tool = serving.source.manifest.tools.find(
-    (candidate) => candidate.path_template === "/api//books/{id}",
+    (candidate) => candidate.path_template === "/api//books/{numeric}",
   );
   if (tool === undefined) throw new Error("Missing double-separator item tool");
   const result = answerFromState(serving, tool, { id: "1" });

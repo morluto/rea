@@ -1,3 +1,4 @@
+import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { localPathStringSchema } from "../domain/localPath.js";
 import { compareWasmInterfaces } from "../application/wasm/WasmInterfaceComparisonService.js";
 import { parseCliJsonInput } from "../cliJsonInput.js";
@@ -5,12 +6,16 @@ import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { z } from "incur";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
-import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
-import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
+import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
+import {
+  evidenceBundleOption,
+  runEvidenceInputCommand,
+} from "./evidenceInputCommand.js";
 import {
   inspectWasmArtifactInputSchema,
   wasmArtifactPathsSchema,
@@ -29,19 +34,34 @@ export const registerWasmCommands = (
       input: z
         .string()
         .describe(
-          "Inline JSON or input file containing left/right complete Evidence and required scope",
+          "Inline JSON or input file containing left/right Evidence or retained references and required scope",
         ),
     }),
-    run: ({ args }) =>
+    options: z.object({ evidenceBundle: evidenceBundleOption }),
+    run: ({ args, options }) =>
       withCommandCancellation(async (signal) =>
         logCliCommand(logger, CLI_COMMANDS.compareWasmInterfaces, async () => {
           const input = await parseCliJsonInput(
             args.input,
             "compare_wasm_interfaces",
+            signal,
           );
           if (!input.ok) return input.error;
-          const result = await compareWasmInterfaces(input.value, { signal });
-          return result.ok ? result.value : projectAnalysisError(result.error);
+          return runEvidenceInputCommand(
+            "compare_wasm_interfaces",
+            options.evidenceBundle,
+            signal,
+            async (lookup) => {
+              const result = await compareWasmInterfaces(
+                input.value,
+                { signal },
+                lookup,
+              );
+              return result.ok
+                ? { ok: true, value: result.value.evidence }
+                : result;
+            },
+          ).then(projectCliAnalysisResult);
         }),
       ),
   });
@@ -52,7 +72,9 @@ export const registerWasmCommands = (
       path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      commandTimeoutMs: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      ),
       glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),
@@ -63,7 +85,8 @@ export const registerWasmCommands = (
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>
         logCliCommand(logger, wasmArtifactModule.cliCommand, () =>
-          finishAnalysisCommand(
+          finishCliEvidenceCommand(
+            args.path,
             () =>
               service.inspect(
                 {
@@ -84,7 +107,7 @@ export const registerWasmCommands = (
             "wabt-artifact",
             "inspect_wasm_artifact",
             signal,
-          ),
+          ).then(projectCliAnalysisResult),
         ),
       ),
   });

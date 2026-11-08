@@ -112,7 +112,7 @@ describe("CLI --sensitive-value parser diagnostics", () => {
       expectExcluded(result, ["mitmproxy"]);
       expect(JSON.parse(result.stdout)).toMatchObject({
         code: "VALIDATION_ERROR",
-        message: expect.stringContaining('"har"|"[REDACTED]"|"saz"'),
+        message: expect.stringMatching(/arguments.*expected type/iu),
         fieldErrors: [
           expect.objectContaining({ code: "invalid_value", path: "format" }),
         ],

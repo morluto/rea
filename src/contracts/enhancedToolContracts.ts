@@ -1,14 +1,18 @@
+import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
+import { analysisDetailSchema } from "./analysisDetail.js";
 import { z } from "zod";
 
 import { enhancedInputSchemas } from "./enhancedInputs.js";
 import { enhancedOutputSchemas } from "./toolOutputSchemaGroups.js";
-import { requireOutputSchema } from "./toolOutputSchemaPrimitives.js";
 import { examplesFor } from "./toolContractHelpers.js";
 import type { ToolContract } from "./toolContractTypes.js";
 import { toolContractMetadata } from "./toolEffects.js";
 import { FUNCTION_WORKFLOW_TOOL_CONTRACTS } from "./functionWorkflowToolContracts.js";
 
-const enhanced = <Name extends string, Schema extends z.ZodObject>(
+const enhanced = <
+  Name extends keyof typeof enhancedOutputSchemas,
+  Schema extends z.ZodObject,
+>(
   name: Name,
   description: string,
   inputSchema: Schema,
@@ -43,18 +47,22 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "batch_decompile",
-    "Decompile each explicit procedure symbol or address, with one provider read active per batch. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item success or error results and aggregate counts. The complete reply retains every pseudocode body; use selected small batches to bound retained output.",
-    enhancedInputSchemas.batch_decompile,
+    "Decompile each explicit procedure symbol or address, with one provider read active per batch. Preserves each input selector in address and reports the observed canonical entry and entry label in procedure; identity or label failures remain explicit without discarding usable pseudocode. Returns ordered per-item outcomes and aggregate counts. An unavailable item means the provider returned null pseudocode; its limitations retain any reported reason without asserting provider capability or retryability. Errors report failed operations or malformed output. Failed counts include unavailable items. The complete reply carries every pseudocode body. Select detail summary to retain the batch and receive only counts, then read rows or one body by index through inspect_analysis_view. A per-function limit is not a batch deadline; allow for every item or split calls.",
+    enhancedInputSchemas.batch_decompile.extend({
+      detail: analysisDetailSchema,
+    }),
   ),
   enhanced(
     "decompile_all",
-    "Write provider pseudocode for every analyzed function, or a filtered subset, into a caller-selected directory and return only a manifest. Each file records the provider function name, canonical address, inclusive body ranges when procedure_info supplies them, and that function's procedure_info and pseudocode limitations. Each function's index record keeps its complete limitations. Evidence keeps at most eight first-observed distinct per-function limitations within an encoded-text budget; the omitted count measures observations, not distinct warnings. The manifest reports counts, the output directory, the index path, at most 32 failure details within 2,048 JSON-encoded UTF-8 bytes (names can be omitted; full names remain in the index), provider identity, and the analysis-profile digest. Pseudocode stays in the files. An existing directory is refused unless resume is set and the journal matches the target SHA-256, provider, and analysis profile; verified files are skipped and conflicting files are left unchanged. layout dwarf reports that compilation-unit paths are unavailable and names files by address. A failure of one function does not stop the others. Functions procedure_info classifies as external are counted as external, get no file, and are not decompiled; a resume skips them. Cancellation leaves files already written.",
+    "Write provider pseudocode for every analyzed function, or a filtered subset, into a caller-selected directory and return only a manifest. Each file records the provider function name, canonical address, inclusive body ranges when procedure_info supplies them, and that function's procedure_info and pseudocode limitations. Each function's index record keeps its latest attempt and its complete limitations; the journal keeps earlier attempts and their limitations. Evidence keeps at most eight first-observed distinct per-function limitations within an encoded-text budget; the omitted count measures observations, not distinct warnings. The manifest reports counts, the output directory, the index path, at most 32 failure details within 2,048 JSON-encoded UTF-8 bytes (names can be omitted; full names remain in the index), provider identity, and the analysis-profile digest. Pseudocode stays in the files. An existing directory is refused unless resume is set and the journal matches the target SHA-256, provider, and analysis profile; verified files are skipped and conflicting files are left unchanged. layout dwarf reports that compilation-unit paths are unavailable and names files by address. Set retry_failed: independent_fresh to retry a null result explicitly reported as a function failure when supported; the failed attempt stays in the journal and the new attempt may use different analysis context. Errors and omissions without that typed fact are not retried. A failure of one function does not stop the others. Functions procedure_info classifies as external are counted as external, get no file, and are not decompiled; a resume skips them. Cancellation leaves files already written. Per-function limits do not bound the whole call; use limit and resume to select work that fits the client deadline, including import, listing and file work.",
     enhancedInputSchemas.decompile_all,
   ),
   enhanced(
     "get_call_graph",
-    "Resolve one symbol or address to its canonical procedure entry, then traverse the bound provider's caller or callee relationships until the reachable graph is exhausted. Every node uses a canonical address and has an ok/error status; failures use safe typed projections. Unresolved indirect calls may be missing and results are not a whole-program CFG.",
-    enhancedInputSchemas.get_call_graph,
+    "Resolve one symbol or address to its canonical procedure entry, then traverse the bound provider's caller or callee relationships until the reachable graph is exhausted. Every node uses a canonical address and has an ok/error status; failures use safe typed projections. Unresolved indirect calls may be missing and results are not a whole-program CFG. Select detail summary for a bounded first node page with shared message references; native-observation pages and native-context fields retain complete source access.",
+    enhancedInputSchemas.get_call_graph.extend({
+      detail: analysisDetailSchema,
+    }),
   ),
   enhanced(
     "analyze_swift_types",
@@ -63,23 +71,23 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "find_xrefs_to_name",
-    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections.",
+    "Resolve an exact name against the bound provider's name inventory and return a resolved or unresolved result. Unresolved names use the stable name_not_found reason; this xref workflow returns address-only projections. Kuna lacks this general name inventory; xrefs can instead resolve names present in Kuna's inventory, but unlisted names may still exist in the target.",
     enhancedInputSchemas.find_xrefs_to_name,
   ),
   enhanced(
     "binary_overview",
-    "Return the bound document and exhaustive procedure/string counts, plus every segment and segment_count when the provider supports segment enumeration. If segment fields are omitted, segment coverage is unavailable rather than empty. When every observed segment agrees on an analysis image base, return it as image_base so callers can relate provider addresses to their loader coordinates. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
+    "Return the bound document and procedure/string counts totalling every row of the bound provider's inventories (inventory_coverage: provider scope, discovery unknown; not comparable across providers), plus every segment and segment_count when the provider supports segment enumeration. If segment fields are omitted, segment coverage is unavailable rather than empty. When every observed segment agrees on an analysis image base, return it as image_base so callers can relate provider addresses to their loader coordinates. Use search_procedures, list_procedures, or analyze_function directly when you already know which procedure to inspect.",
     enhancedInputSchemas.binary_overview,
   ),
   ...FUNCTION_WORKFLOW_TOOL_CONTRACTS,
   enhanced(
     "trace_feature",
-    "Trace the complete literal query, preserving spaces, through every matching string and procedure, their xrefs, and truthful containing-procedure resolution. Returns observations and residual unknowns without inferring reference kinds.",
-    enhancedInputSchemas.trace_feature,
+    "Search provider string and procedure inventories for the complete literal query, preserving spaces, then query xrefs at each matched start address. References to interior bytes of strings and procedures are not searched. An empty result or truncated: false does not prove there are no references. Preserve an explicit unavailable owner for a non-retryable containment capability refusal; reference kinds remain unknown. For a procedure match, use procedure_references with direction incoming for provider-reported kinds when supported; it covers the procedure body, so compare target addresses when selecting exact-entry references. Select detail summary to retain complete Evidence and page matches, references and unknowns with inspect_analysis_view kind native-feature-trace.",
+    enhancedInputSchemas.trace_feature.extend({ detail: analysisDetailSchema }),
   ),
   enhanced(
     "trace_call_path",
-    "Resolve start and optional goal symbols or addresses to canonical procedure entries, then trace direct callers or callees until the graph is exhausted or the goal is reached. Results use canonical addresses; Evidence preserves supplied selectors. Returns visited nodes, direct-call edges, a shortest traversal path, provider failures, and residual unknowns. A requested goal is unknown when unresolved expansions prevent proving it absent; unresolved indirect calls remain unknown.",
+    "Resolve start and optional goal symbols or addresses, then trace direct callers or callees. Returns observed edges and a shortest path within the provider-observed graph. search_scope distinguishes the observed-graph result from whether discovery is established; a missing goal is unknown when relationship reads or discovery are incomplete. Unresolved indirect calls remain unknown.",
     enhancedInputSchemas.trace_call_path,
   ),
   enhanced(
@@ -89,7 +97,7 @@ export const ENHANCED_TOOL_CONTRACTS = [
   ),
   enhanced(
     "trace_native_values",
-    "Trace a bounded static dependency graph from one explicit native procedure. Includes high-p-code def-use, constants, operators, memory and branch operations, resolved call edges, and derived argument/parameter and return/output bindings. Missing bindings, alias semantics, persistent state and RNG roles remain unknown. Budgets bound depth, decompilations, graph size and payloads; nodes are paginated.",
+    "Trace a bounded static dependency graph from one explicit native procedure. Includes high-p-code def-use, constants, operators, memory and branch operations, resolved call edges, and derived argument/parameter and return/output bindings. Missing bindings, alias semantics, persistent state and RNG roles remain unknown. Budgets bound depth, decompilations, graph size and payloads; nodes are paginated. A Ghidra per-function timeout does not bound the whole traversal; allow startup, every attempted function and other work, or reduce max_functions.",
     enhancedInputSchemas.trace_native_values,
   ),
 ] as const satisfies readonly ToolContract[];
