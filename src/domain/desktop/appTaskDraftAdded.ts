@@ -365,7 +365,14 @@ export const recordChecks = (
             isStamp(text) ||
             isVolatileValue(text, isBookkeeping(field))
             ? []
-            : [{ kind: "text_contains" as const, file, pointer: at, value: text }];
+            : [
+                {
+                  kind: "text_contains" as const,
+                  file,
+                  pointer: at,
+                  value: text,
+                },
+              ];
         });
       return value.trim() === "" ||
         value.length > context.chars ||
