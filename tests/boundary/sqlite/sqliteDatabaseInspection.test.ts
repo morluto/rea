@@ -896,17 +896,21 @@ it("does not publish a next offset the row-offset rule would refuse", async () =
     `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
      INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
   );
-  expect(
-    inspectSqliteDatabaseSnapshot(path, {
-      path,
-      table: "shadowed",
-      row_limit: 1,
-    }).rows,
-  ).toMatchObject({
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
     order: "unspecified",
     truncated: true,
     next_row_offset: null,
   });
+  // A truncated sample with no stated order also carries a null offset, so the
+  // limitation must not read as an end-of-window signal.
+  expect(result.limitations.join("\n")).toMatch(
+    /next_row_offset is null either when the window reaches the end or when rows\.order is unspecified/,
+  );
 });
 
 it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
