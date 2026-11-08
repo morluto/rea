@@ -338,6 +338,8 @@ def _members(check, entry):
     if kind == "unresolved":
         return False, f"{at}: {found}"
     if kind == "none":
+        if _array_leaves_out(form, view, pointer):
+            return _undecided(check)
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     if not isinstance(found, list):
         return False, f"{at} is {_shown(found)}, not an array"

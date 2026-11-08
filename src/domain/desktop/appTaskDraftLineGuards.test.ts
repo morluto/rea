@@ -34,6 +34,30 @@ describe("draftTaskFiles for lines holding values the app generates", () => {
     ]);
   });
 
+  it("keeps quoted ID-like text exact", () => {
+    const line = 'msgstr "Enter ID_329023692"';
+    const file = drafted('msgid "Enter"', `msgid "Enter"\n${line}`);
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
+    const checks = file.suggested.map((check, index) => ({
+      ...check,
+      id: `c${index}`,
+    }));
+    const wrong = new Map([
+      [
+        FILE,
+        {
+          format: "text" as const,
+          view: textView('msgid "Enter"\nmsgstr "Enter WRONG"'),
+        },
+      ],
+    ]);
+    expect(
+      evaluateTaskChecks(checks, wrong).map(({ passed }) => passed),
+    ).toEqual([false]);
+  });
+
   it("keeps an escaped quote inside ordinary text", () => {
     const translation = 'msgstr "Set \\\"created=2025550123 and save"';
     const file = drafted('msgid "Hello"', `msgid "Hello"\n${translation}`);
@@ -313,11 +337,12 @@ describe("draftTaskFiles for added lines", () => {
     expect(file.notes).toEqual([]);
   });
 
-  it("notes a new line whose generated value comes first, as no text tells it apart", () => {
-    const file = drafted(lines(), lines("ID_329023692 1793955250671"));
-
-    expect(file.suggested).toEqual([]);
-    expect(file.notes.map(({ code }) => code)).toEqual(["volatile_lines"]);
+  it("keeps an ID-like token without a generated ID field", () => {
+    const line = "ID_329023692 1793955250671";
+    const file = drafted(lines(), lines(line));
+    expect(file.suggested).toEqual([
+      { kind: "lines_present", file: FILE, lines: [line] },
+    ]);
   });
 
   it("guards a kept line beside a new one, never a lone closing tag any such file holds", () => {

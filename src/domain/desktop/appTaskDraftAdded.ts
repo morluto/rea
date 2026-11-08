@@ -45,11 +45,24 @@ export interface AddedContext {
   };
   readonly named: (view: JsonValue | null, pointer: string) => boolean;
   readonly chars: number;
+  /** XML views owning identifiers the seed may reference. */
+  readonly referenceRoots: () => readonly JsonValue[];
   /** Whether a change at a pointer is noise, which no field check takes. */
   readonly noisy?: (pointer: string) => boolean;
   /** Fields left unchecked because their text is past `chars`. */
   readonly long?: string[];
 }
+
+/** Record a field omitted because its whole value exceeds the check limit. */
+export const checkFits = (
+  context: Pick<AddedContext, "chars" | "long">,
+  pointer: string,
+  value: string,
+): boolean => {
+  if (value.length <= context.chars) return true;
+  context.long?.push(pointer);
+  return false;
+};
 
 type Element = Extract<JsonValue, Record<string, JsonValue>> & {
   readonly name: string;
@@ -101,9 +114,10 @@ const copiesSibling = (
   });
 
 /** The values of the `id`, `xmi:id` and `key` attributes of the elements in a view, outside a view the app keeps of it: what another element's attribute may refer to. */
-const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
+const idsIn = (roots: readonly JsonValue[]): ReadonlySet<string> => {
   const ids = new Set<string>();
-  const pending: JsonValue[] = [view];
+  const pending: JsonValue[] = [];
+  for (const root of roots) pending.push(root);
   for (let node = pending.pop(); node !== undefined; node = pending.pop()) {
     if (isXmlElement(node)) {
       if (isViewStateName(node.name)) continue;
@@ -111,10 +125,11 @@ const idsIn = (view: JsonValue | null): ReadonlySet<string> => {
         if (typeof value === "string" && /^(?:[^:]*:)?(?:id|key)$/iu.test(key))
           ids.add(value);
       for (const child of node.children) pending.push(child);
-    } else if (isRecord(node))
+    } else if (isRecord(node)) {
       for (const child of Object.values(node)) pending.push(child);
-    // An archive keeps its documents in an `entries` array; one at a time, as a spread overflows on a wide one.
-    else if (Array.isArray(node)) for (const child of node) pending.push(child);
+    } else if (Array.isArray(node)) {
+      for (const child of node) pending.push(child);
+    }
   }
   return ids;
 };
@@ -166,7 +181,7 @@ export const attributeChecks = (
   // Copied from a sibling, only a reference to an element the seed holds by an id, not a plain number, is the user's.
   let fields = own;
   if (copiesSibling(context, pointer, element, own)) {
-    const ids = idsIn(ends.baseline);
+    const ids = idsIn(context.referenceRoots());
     fields = own.filter(
       ({ value }) => ids.has(value) && !/^-?\d+$/u.test(value),
     );
@@ -197,11 +212,10 @@ export const attributeChecks = (
       ) &&
       !isViewStateName(key),
   );
-  for (const { key, value } of eligible)
-    if (value.length > context.chars)
-      context.long?.push(`${pointer}/attributes/${escapeToken(key)}`);
   return rankAttributes(
-    eligible.filter(({ value }) => value.length <= context.chars),
+    eligible.filter(({ key, value }) =>
+      checkFits(context, `${pointer}/attributes/${escapeToken(key)}`, value),
+    ),
   )
     .toSorted(
       (left, right) =>
@@ -223,38 +237,28 @@ export const attributeChecks = (
  * joining them would look for text the file never contains.
  */
 const keptFieldPieces = (node: JsonValue, bookkeeping = false): string[] => {
-  if (typeof node === "string")
-    return isStamp(node) || isVolatileValue(node.trim(), bookkeeping)
-      ? []
-      : [node];
-  if (!isXmlElement(node)) return [];
-  const inBookkeeping = bookkeeping || isBookkeeping(node);
   const pieces: string[] = [];
   let run = "";
   const flush = () => {
     if (run !== "") pieces.push(run);
     run = "";
   };
-  for (const child of node.children) {
-    if (typeof child === "string") {
-      if (isStamp(child) || isVolatileValue(child.trim(), inBookkeeping))
+  const visit = (value: JsonValue, inBookkeeping: boolean): void => {
+    if (typeof value === "string") {
+      if (isStamp(value) || isVolatileValue(value.trim(), inBookkeeping))
         flush();
-      else run += child;
-      continue;
+      else run += value;
+      return;
     }
-    if (!isXmlElement(child)) continue;
-    if (isStamp(elementText(child))) {
+    if (!isXmlElement(value)) return;
+    if (isStamp(elementText(value))) {
       flush();
-      continue;
+      return;
     }
-    const nested = keptFieldPieces(child, inBookkeeping);
-    if (nested.length !== 1) {
-      flush();
-      pieces.push(...nested);
-      continue;
-    }
-    run += nested[0] ?? "";
-  }
+    const nestedBookkeeping = inBookkeeping || isBookkeeping(value);
+    for (const child of value.children) visit(child, nestedBookkeeping);
+  };
+  visit(node, bookkeeping);
   flush();
   return pieces;
 };
@@ -535,10 +539,7 @@ const fieldsOf = (
         context.long?.push(at);
         return [];
       }
-      return [
-        wholeTextCheck(file, at, { value, children: field.children }, undefined)
-          .check,
-      ];
+      return [wholeTextCheck(file, at, value, undefined)];
     }
     return pieces.flatMap((value) =>
       value.length > context.chars

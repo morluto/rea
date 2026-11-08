@@ -1,3 +1,4 @@
+import { XML_ELEMENT_OPENING } from "../xmlDocument.js";
 import { PYTHON_JSON_READER } from "./appExportPythonJson.js";
 import { PYTHON_XML_READER } from "./appExportPythonXml.js";
 import { PYTHON_ZIP_HELPERS } from "./appExportPythonZip.js";
@@ -38,12 +39,19 @@ from agentenv_protocol.computer.app_data import INITIAL, add, get, in_thread, ke
 from agentenv_protocol.types import DataPart
 `;
 
+/** Translate the shared XML grammar's code point escapes into Python regex escapes. */
+const PYTHON_XML_ELEMENT_OPENING = XML_ELEMENT_OPENING.replaceAll(
+  /\\u\{([0-9a-f]+)\}/giu,
+  (_, code: string) => `\\U${code.padStart(8, "0")}`,
+);
+
 /** Python helpers the class uses to seed the home, load dconf keys and read typed views. */
 export const PYTHON_HELPERS = String.raw`
 XML_SUFFIXES = (".xml", ".xbel", ".plist", ".svg", ".ui")
+XML_ELEMENT_OPENING = re.compile(r"${PYTHON_XML_ELEMENT_OPENING}")
 def _opens_element(text: str) -> bool:
     """Whether text opens with an element, after a DOCTYPE with no internal subset or none. A '[' inside a quoted id is not a subset."""
-    if re.match(r"<[A-Za-z_:]", text):
+    if XML_ELEMENT_OPENING.match(text):
         return True
     declared = re.match(r"(?:<\?xml[^>]*>\s*)?<!DOCTYPE\b", text)
     if declared is None:
@@ -60,7 +68,7 @@ def _opens_element(text: str) -> bool:
         elif character == "[":
             return False
         elif character == ">":
-            return re.match(r"<[A-Za-z_:]", text[index + 1:].lstrip()) is not None
+            return XML_ELEMENT_OPENING.match(text[index + 1:].lstrip()) is not None
     return False
 GROUP_HEADER = re.compile(r"^\[([^\]]+)\]$")
 LINE_BREAK = re.compile(r"\r?\n")
