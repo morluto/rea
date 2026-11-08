@@ -220,9 +220,6 @@ export const exportedStateFiles = (
   return { homePath, files, collisions, paths };
 };
 
-/** Text safe inside a Python triple-quoted docstring. */
-const docText = (value: string): string => value.replace(/["\\]/gu, "'");
-
 /** A value as one single-quoted shell word. */
 export const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
@@ -284,14 +281,13 @@ export const renderEnvToml = (
 
 /** The class body: data hooks only for owned paths, and captured settings either way. */
 const classBody = (plan: DesktopAppExportPlan): string => {
-  const title = docText(plan.title);
   if (plan.paths.length > 0)
-    return `    """${title}, launched at boot with the captured state in its home.
+    return `    ${py(`${plan.title}, launched at boot with the captured state in its home.
 
     Declaring data hooks switches off agentenv's default data plane, so these call its helpers: the seed is kept as
     the initial state, reset restores it, add writes files under PATHS, and get returns those files plus a typed JSON
     view of each.
-    """
+    `)}
 
     def __init__(self) -> None:
         super().__init__()
@@ -301,13 +297,13 @@ const classBody = (plan: DesktopAppExportPlan): string => {
         keep_initial(self.paths)
 ${PYTHON_DATA_HOOKS}${PYTHON_READY_CHECK}`;
   if (plan.dconf.length > 0)
-    return `    """${title}, launched at boot with its captured settings. It owns no files, so it serves no data operations."""
+    return `    ${py(`${plan.title}, launched at boot with its captured settings. It owns no files, so it serves no data operations.`)}
 
     def __init__(self) -> None:
         super().__init__()
         _load_dconf(Path.home())
 ${PYTHON_READY_CHECK}`;
-  return `    """${title}, launched at boot. No state was observed, so it serves no data operations."""\n${PYTHON_READY_CHECK}`;
+  return `    ${py(`${plan.title}, launched at boot. No state was observed, so it serves no data operations.`)}\n${PYTHON_READY_CHECK}`;
 };
 
 /** The package as apt takes it: `name`, or `name/release` for a vendor release. */
@@ -358,11 +354,11 @@ export const renderInstallScript = (file: ExportPackageFile): string =>
 /** The computer app class: install, launch, owned paths, seed and data hooks. */
 export const renderAppClass = (plan: DesktopAppExportPlan): string => {
   const hooks = classBody(plan);
-  return `"""${docText(plan.title)} as an agentenv computer app, exported by REA from a desktop application capture.
+  return `${py(`${plan.title} as an agentenv computer app, exported by REA from a desktop application capture.
 
 Package: ${plan.aptPackage}${plan.packageVersion === null ? "" : ` (captured at ${plan.packageVersion})`}. Capture Evidence: ${plan.captureEvidenceId}.
-The seed is the user's state at checkpoint ${docText(plan.seedCheckpoint)}: keep this bundle local.
-"""
+The seed is the user's state at checkpoint ${plan.seedCheckpoint}: keep this bundle local.
+`)}
 
 ${PYTHON_IMPORTS}
 HERE = Path(__file__).resolve().parent
@@ -387,7 +383,7 @@ ${hooks}`;
 /** The skill an agent reads before using the app. */
 export const renderSkill = (plan: DesktopAppExportPlan): string =>
   `---
-description: Use ${plan.title} on this Linux desktop; its window has class ${plan.windowClass}.
+description: ${JSON.stringify(`Use ${plan.title} on this Linux desktop; its window has class ${plan.windowClass}.`)}
 ---
 
 # ${plan.title}
