@@ -366,10 +366,15 @@ const projectError = (
   ) {
     for (const failure of owner.secondaryFailures) secondary.add(failure);
   }
-  const partialObservation =
-    composed.partialObservation ??
-    error.partialObservation ??
-    publication?.source;
+  let partialObservation =
+    composed.partialObservation ?? error.partialObservation;
+  for (
+    let owner = composed.cleanupPrimary;
+    partialObservation === undefined && owner !== undefined;
+    owner = owner.cleanupPrimary
+  )
+    partialObservation = owner.partialObservation;
+  partialObservation ??= publication?.source;
   const completedSourceObservation =
     publication?.completed.kind === "omitted"
       ? undefined
