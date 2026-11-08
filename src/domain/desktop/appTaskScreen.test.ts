@@ -95,6 +95,17 @@ describe("screen_judge checks", () => {
     expect(screenExamplesOf("CHECKS = []\n")).toBeUndefined();
   });
 
+  it("compares JSON objects by value and still detects a newly created null file", () => {
+    const seed = new Map<string, TaskFileView>([
+      ["settings.json", { format: "json", view: { theme: "light", zoom: 1 } }],
+    ]);
+    const end = new Map<string, TaskFileView>([
+      ["settings.json", { format: "json", view: { zoom: 1, theme: "light" } }],
+      ["new.json", { format: "json", view: null }],
+    ]);
+    expect(readableChanges(seed, end)).toEqual(["new.json"]);
+  });
+
   it("finds the files whose change a check could read, ignoring unreadable and unchanged ones", () => {
     const text = (...lines: string[]): TaskFileView => ({
       format: "text",
