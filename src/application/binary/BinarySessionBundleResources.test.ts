@@ -394,7 +394,6 @@ it.each([false, true])(
     releaseClose();
 
     const result = await opening;
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected failed resource switch");
     expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
     expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -480,7 +479,6 @@ it("keeps an earlier resource close failure primary when a later cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource switch");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -569,7 +567,6 @@ it("keeps cancellation primary when binary retirement fails before opening resou
   releaseClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);
@@ -661,7 +658,6 @@ it("keeps an earlier resource close failure primary when binary candidate cleanu
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed binary open");
   expect(result.selection).toEqual({ kind: "none" });
   expect(result.error).toBe(originalFailure);
@@ -765,7 +761,6 @@ it("keeps an earlier binary close failure primary when candidate cleanup is canc
   releaseCandidateClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected failed resource open");
   expect(result.error).toBe(originalFailure);
   expect(result.error.cleanupPrimary).toBeUndefined();
@@ -866,7 +861,6 @@ it("cancels a binary switch during resource retirement and retains null-subject 
   releaseResourceClose();
 
   const result = await opening;
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancelled binary open");
   expect(result.error.cleanupPrimary).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cleanupPrimary?.cause).toBe(reason);

@@ -98,6 +98,7 @@ print(json.dumps(_text_view("state.json", text, len(text.encode("utf-8")))))
   expect(output.format).toBe(format);
   if (native.ok) {
     expect(output.error).toBeUndefined();
+    if (format === "json") expect(output).toMatchObject({ truncated: false });
     // Compare JSON values on their wire form, independent of object prototypes.
     expect(JSON.stringify(output.view)).toBe(JSON.stringify(native.value));
     if (

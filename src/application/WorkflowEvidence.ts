@@ -216,6 +216,10 @@ export const executeComposedWorkflow = async (
   );
 };
 
+/** Scope of the exact-address reference lookups composed by trace_feature. */
+export const TRACE_FEATURE_REFERENCE_LIMITATION =
+  "Reference queries cover only each matched start address, not interior bytes of strings and procedures. Empty references and truncated: false do not establish complete reference coverage.";
+
 /** Build the shared Evidence record for a successful composed binary workflow. */
 export interface WorkflowEvidenceInput {
   readonly target: BinaryTarget | undefined;
@@ -228,6 +232,13 @@ export interface WorkflowEvidenceInput {
 }
 
 const WORKFLOW_DERIVATION_LIMITATION = "Derived by an REA composed workflow.";
+
+const workflowLimitations = (
+  operation: AnalysisOperation,
+): readonly string[] =>
+  operation === "trace_feature"
+    ? [WORKFLOW_DERIVATION_LIMITATION, TRACE_FEATURE_REFERENCE_LIMITATION]
+    : [WORKFLOW_DERIVATION_LIMITATION];
 
 export const createWorkflowEvidence = (
   input: WorkflowEvidenceInput,
@@ -248,7 +259,10 @@ export const createWorkflowEvidence = (
     ...(input.upstreamEvidenceLinks === undefined
       ? {}
       : { evidenceLinks: input.upstreamEvidenceLinks }),
-    limitations: [WORKFLOW_DERIVATION_LIMITATION, ...input.upstreamLimitations],
+    limitations: [
+      ...workflowLimitations(input.operation),
+      ...input.upstreamLimitations,
+    ],
     ...(input.operation === "batch_decompile"
       ? { locations: batchProcedureLocations(input.result) }
       : {}),
@@ -302,7 +316,7 @@ const admitWorkflowRecovery = (
             },
           }),
       confidence: "derived",
-      limitations: [WORKFLOW_DERIVATION_LIMITATION],
+      limitations: workflowLimitations(evidenceInput.operation),
       locations: [],
       evidenceLinks: [],
     },

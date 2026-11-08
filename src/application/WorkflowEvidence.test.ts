@@ -825,7 +825,6 @@ it("reports a retained workflow and the committed prefix when Unknown publicatio
         ? err(failure)
         : records.recordUnknown(input),
   });
-  expect(outcome.ok).toBe(false);
   if (outcome.ok) throw new Error("expected failure");
   const projected = projectAnalysisError(outcome.error);
   expect(projected.details?.workflow_unknown_publication).toEqual({

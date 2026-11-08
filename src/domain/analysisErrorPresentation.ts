@@ -94,6 +94,11 @@ export const analysisErrorRemediationAction = (
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
+  if (
+    error instanceof AnalysisCapabilityUnavailableError &&
+    error.fallbackRemediationAction !== undefined
+  )
+    return error.fallbackRemediationAction;
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return error.published.path === undefined
       ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."

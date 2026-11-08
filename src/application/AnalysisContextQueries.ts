@@ -285,6 +285,7 @@ const unavailableFacet = (
       remediation:
         error.retryable ||
         error.remediationAction !== undefined ||
+        error.fallbackRemediationAction !== undefined ||
         error.continuingCallerGuidance?.remediationAction !== undefined
           ? projected.remediation.action
           : "Review provider availability in binary_session with detail complete and select another supported provider if appropriate. After switching, if a name is known and search_procedures is available, use it to find candidates and verify their identity and coordinates.",
