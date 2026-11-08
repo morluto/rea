@@ -29,9 +29,9 @@ afterEach(async () => {
   );
 });
 
-const connectGuidance = async (
-  revision: "2025-11-25" | "2026-07-28",
-): Promise<Client> => {
+const REVISIONS = ["2025-11-25", "2026-07-28"] as const;
+
+const connectGuidance = async (revision: (typeof REVISIONS)[number]) => {
   const server = new EvidenceMcpServer(
     { name: "guidance-test", version: "1" },
     { capabilities: { tools: { listChanged: true } } },
@@ -53,53 +53,63 @@ const connectGuidance = async (
   open.push({ client, serving, resources });
   await client.connect(clientTransport);
   expect(client.getNegotiatedProtocolVersion()).toBe(revision);
-  return client;
+  const advertised = {
+    search_guidance: await advertisedMcpToolSchemas(client, "search_guidance"),
+    read_guidance_section: await advertisedMcpToolSchemas(
+      client,
+      "read_guidance_section",
+    ),
+  };
+  // A typeless union root is wrapped in `{result}` by 2025-era projections and
+  // left bare by 2026-era ones, so clients disagree about the payload shape.
+  for (const [name, { outputSchema }] of Object.entries(advertised))
+    expect(outputSchema.type, name).toBe("object");
+  return { client, advertised };
 };
 
-/**
- * A typeless union root is wrapped in `{result}` by 2025-era projections and
- * left bare by 2026-era ones, so clients disagree about the payload shape.
- * Guidance results must be the advertised object itself on every revision.
- */
+/** Guidance results must be the advertised object itself on every revision. */
 const guidanceResult = async <T>(
-  client: Client,
-  name: "search_guidance" | "read_guidance_section",
+  { client, advertised }: Awaited<ReturnType<typeof connectGuidance>>,
+  name: keyof Awaited<ReturnType<typeof connectGuidance>>["advertised"],
   schema: { parse(value: unknown): T },
   arguments_: Record<string, unknown>,
 ): Promise<T> => {
-  const advertised = await advertisedMcpToolSchemas(client, name);
-  expect(advertised.outputSchema.type, name).toBe("object");
+  const { ajv, outputSchema } = advertised[name];
   const response = await client.callTool({ name, arguments: arguments_ });
   expect(response.isError).not.toBe(true);
   expect(
-    advertised.ajv.validate(
-      advertised.outputSchema,
-      response.structuredContent,
-    ),
-    JSON.stringify(advertised.ajv.errors),
+    ajv.validate(outputSchema, response.structuredContent),
+    JSON.stringify(ajv.errors),
   ).toBe(true);
   return schema.parse(response.structuredContent);
 };
 
-it.each(["2025-11-25", "2026-07-28"] as const)(
+it.each(REVISIONS)(
   "returns guidance results that match the advertised output schemas on %s",
   async (revision) => {
-    const client = await connectGuidance(revision);
-    for (const query of ["web application clone", "browser scenario"])
-      expect(
-        await guidanceResult(
-          client,
-          "search_guidance",
-          searchGuidanceOutputSchema,
-          {
-            query,
-            limit: 10,
-          },
-        ),
-      ).toMatchObject({ source: "installed_rea_guidance", query });
+    const connection = await connectGuidance(revision);
+    expect(
+      await guidanceResult(
+        connection,
+        "search_guidance",
+        searchGuidanceOutputSchema,
+        { query: "web application clone", limit: 10 },
+      ),
+    ).toMatchObject({
+      source: "installed_rea_guidance",
+      query: "web application clone",
+    });
+    expect(
+      await guidanceResult(
+        connection,
+        "search_guidance",
+        searchGuidanceOutputSchema,
+        { query: "browser scenario", limit: 10 },
+      ),
+    ).toMatchObject({ status: "matches", query: "browser scenario" });
 
     const parsed = await guidanceResult(
-      client,
+      connection,
       "search_guidance",
       searchGuidanceOutputSchema,
       { query: "exact JavaScript module" },
@@ -112,7 +122,7 @@ it.each(["2025-11-25", "2026-07-28"] as const)(
     expect(selected).toBeDefined();
     expect(
       await guidanceResult(
-        client,
+        connection,
         "read_guidance_section",
         readGuidanceSectionOutputSchema,
         { locator: selected?.locator },
@@ -125,46 +135,45 @@ it.each(["2025-11-25", "2026-07-28"] as const)(
   },
 );
 
-it("advertises strict provider-free contracts and pages packaged guide results over MCP", async () => {
-  const client = await connectGuidance("2025-11-25");
-  const listed = await client.listTools();
-  expect(listed.tools.map(({ name }) => name)).toEqual(
-    expect.arrayContaining(["search_guidance", "read_guidance_section"]),
-  );
-  expect(
-    searchGuidanceInputSchema.safeParse({
-      query: "module",
-      unexpected: true,
-    }).success,
-  ).toBe(false);
-  const invalidLocator = await client.callTool({
-    name: "read_guidance_section",
-    arguments: { locator: "../../outside.md" },
-  });
-  expect(invalidLocator.isError).toBe(true);
-  const invalidLimit = await client.callTool({
-    name: "search_guidance",
-    arguments: { query: "module", limit: 21 },
-  });
-  expect(invalidLimit.isError).toBe(true);
-  const firstResult = await guidanceResult(
-    client,
-    "search_guidance",
-    searchGuidanceOutputSchema,
-    { query: "module", limit: 1 },
-  );
-  if (firstResult.status !== "matches" || firstResult.next_cursor === undefined)
-    throw new Error("Expected a guidance continuation token");
-  expect(
-    await guidanceResult(
-      client,
+it.each(REVISIONS)(
+  "rejects invalid guidance input and pages packaged guide results on %s",
+  async (revision) => {
+    const connection = await connectGuidance(revision);
+    const { client } = connection;
+    expect(
+      searchGuidanceInputSchema.safeParse({
+        query: "module",
+        unexpected: true,
+      }).success,
+    ).toBe(false);
+    const invalidLocator = await client.callTool({
+      name: "read_guidance_section",
+      arguments: { locator: "../../outside.md" },
+    });
+    expect(invalidLocator.isError).toBe(true);
+    const invalidLimit = await client.callTool({
+      name: "search_guidance",
+      arguments: { query: "module", limit: 21 },
+    });
+    expect(invalidLimit.isError).toBe(true);
+    const firstResult = await guidanceResult(
+      connection,
       "search_guidance",
       searchGuidanceOutputSchema,
-      {
-        query: "module",
-        limit: 1,
-        cursor: firstResult.next_cursor,
-      },
-    ),
-  ).toMatchObject({ status: "matches", offset: 1 });
-});
+      { query: "module", limit: 1 },
+    );
+    if (
+      firstResult.status !== "matches" ||
+      firstResult.next_cursor === undefined
+    )
+      throw new Error("Expected a guidance continuation token");
+    expect(
+      await guidanceResult(
+        connection,
+        "search_guidance",
+        searchGuidanceOutputSchema,
+        { query: "module", limit: 1, cursor: firstResult.next_cursor },
+      ),
+    ).toMatchObject({ status: "matches", offset: 1 });
+  },
+);
