@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { getDefaultHighWaterMark } from "node:stream";
 import { buffer } from "node:stream/consumers";
 import { finished } from "node:stream/promises";
 import { setImmediate } from "node:timers/promises";
@@ -60,8 +61,18 @@ const consumptionCases = ({ image, createReader }: LifecycleFixture): void => {
       const controller = new AbortController();
       const reason = new Error("cancel buffered member");
       try {
-        const [entry] = await entries(reader);
-        const stream = await reader.open(entry!, controller.signal);
+        // Unread bytes buffer fully only below the readable high-water mark.
+        // Node's default is 16 KiB on Windows and 64 KiB elsewhere.
+        const entry = (await entries(reader)).find(
+          ({ declaredSize }) =>
+            declaredSize !== null &&
+            declaredSize > 0 &&
+            declaredSize < getDefaultHighWaterMark(false),
+        );
+        if (entry === undefined)
+          throw new Error("fixture has no member that fits one stream buffer");
+        const stream = await reader.open(entry, controller.signal);
+        expect(entry.declaredSize).toBeLessThan(stream.readableHighWaterMark);
         await finished(stream, { readable: false, cleanup: true });
         await setImmediate();
         expect(stream.readableLength).toBeGreaterThan(0);
@@ -243,7 +254,8 @@ const validationCases = ({ image, createReader }: LifecycleFixture): void => {
 };
 
 /** Stored-member readers share ownership and native I/O regression oracles.
- * The fixture must have a nonempty first entry with a physical byte range.
+ * The fixture must have a nonempty first entry with a physical byte range,
+ * and a nonempty entry smaller than Node's default stream buffer.
  */
 export const artifactReaderLifecycleCases = (setup: LifecycleFixture): void => {
   describe("stored member lifecycle", () => {
