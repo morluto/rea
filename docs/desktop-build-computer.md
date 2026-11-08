@@ -37,14 +37,14 @@ recorded instead. It records `REA_AGENT_ENV_COMMAND`, `REA_DOCKER_COMMAND` and
 `REA_BUILD_COMPUTER_REA_ARCHIVE` as absolute paths in that client's REA
 registration, keeping a value the registration already has other than an
 archive setup packed for an earlier REA version, and refreshes the skill.
-`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1431`
+`--install-agentenv` runs `uv tool install agentenv-framework==0.9.1464`
 when `uv` is on `PATH`, and otherwise prints the command. Setup never
 installs Docker or Node.js and never runs `sudo`. Restart the client
 afterwards.
 
 Doctor is read-only and checks, in order: a Linux amd64 or arm64 host,
 Node.js, procps `ps`, the Docker CLI, a Docker daemon reachable without
-`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1431,
+`sudo`, 20 GB free where Docker keeps images, agentenv-framework 0.9.1464,
 the runtime archive of this REA version, the build settings in the
 registration or the environment, and the skill. Each failure names its fix.
 It also reports, without counting them against `healthy`, whether a model
@@ -67,9 +67,9 @@ rest of this page is the same setup by hand.
 - [Docker Engine](https://docs.docker.com/engine/install/) and its
   [post-install steps](https://docs.docker.com/engine/install/linux-postinstall/):
   add yourself to the `docker` group, then log in again.
-- agentenv-framework 0.9.1431, the version bundles target. Install
+- agentenv-framework 0.9.1464, the version bundles target. Install
   [uv](https://docs.astral.sh/uv/getting-started/installation/) first, then
-  run `uv tool install agentenv-framework==0.9.1431`. Set
+  run `uv tool install agentenv-framework==0.9.1464`. Set
   `REA_AGENT_ENV_COMMAND` to the absolute path of the resulting `agent-env`
   program, normally `$HOME/.local/bin/agent-env`; `command -v agent-env`
   shows the path when its install directory is on your `PATH`. Installing it

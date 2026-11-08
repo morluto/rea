@@ -520,5 +520,5 @@ when a DOCTYPE names a DTD. Known differences remain:
 
 Unless it was [made for the task](#a-seed-made-for-the-task), the seed is the
 user's real data. Keep the bundle local and do not publish it.
-The class was checked against agentenv-framework 0.9.1431 with
+The class was checked against agentenv-framework 0.9.1464 with
 `python -m agentenv_protocol.computer._declare` and `agent-env run --dry-run`.

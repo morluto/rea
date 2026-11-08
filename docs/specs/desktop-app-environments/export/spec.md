@@ -44,7 +44,7 @@ state through `data/add`, `data/get` and `data/reset`.
   application are compiled into the user's dconf database with `dconf-cli`,
   without D-Bus.
 - The README and the result state the agentenv-framework release the class was
-  checked against (0.9.1431), and that the seed is real user data, unless
+  checked against (0.9.1464), and that the seed is real user data, unless
   `--synthetic-seed` says it was made for the task.
 
 ## Non-goals
