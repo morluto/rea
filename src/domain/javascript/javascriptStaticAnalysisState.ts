@@ -86,6 +86,10 @@ export interface JavaScriptAnalysisAccumulator {
     | t.CallExpression
     | t.OptionalCallExpression
   )[];
+  contextBridgeMemberBudget?: {
+    remainingVisits: number;
+    remainingBytes: number;
+  };
   readonly ipc: LocatedJavaScriptFinding<ElectronIpcFinding>[];
   readonly senderValidations: LocatedJavaScriptFinding<ElectronSenderValidationFinding>[];
   readonly utilityProcesses: LocatedJavaScriptFinding<ElectronUtilityProcessFinding>[];

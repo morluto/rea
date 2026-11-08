@@ -770,6 +770,13 @@ export class JavaScriptSymbolicBindings {
         : symbolicUnknown("unbound identifier");
     if (binding.definitions.some((d) => d.kind === "assignment"))
       return symbolicUnknown("reassigned binding");
+    if (
+      this.state.program.sourceType !== "module" &&
+      binding.kind === "function" &&
+      binding.scopeId.startsWith("scope:program:") &&
+      this.state.ambientWrites.covers(["global", binding.name])
+    )
+      return symbolicUnknown("classic-script global function overwrite");
     // Electron member identity is checked at the selected property. A write
     // to one method must not erase the module origin or unaffected siblings.
     const electronOrigin = this.#electronIdentity.exportPath(node);

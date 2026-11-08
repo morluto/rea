@@ -13,6 +13,7 @@ import { contextBridgeExposureArguments } from "./javascriptContextBridgeExposur
 import {
   boundedExpression,
   collectContextBridgeMembers,
+  createContextBridgeMemberBudget,
   electronCalleePath,
   electronStaticValue,
 } from "./electronStaticAnalysisValues.js";
@@ -329,10 +330,15 @@ const inspectContextBridge = (
   }
   const keyNode = argumentNode(exposure.apiKey);
   const key = electronStaticValue(context.source, keyNode);
+  const budget = (context.accumulator.contextBridgeMemberBudget ??=
+    createContextBridgeMemberBudget());
   const api =
     index === undefined
-      ? { ...collectContextBridgeMembers(apiNode), resolutionSources: [] }
-      : resolveContextBridgeApi(apiNode, node, index);
+      ? {
+          ...collectContextBridgeMembers(apiNode, undefined, budget),
+          resolutionSources: [],
+        }
+      : resolveContextBridgeApi(apiNode, node, index, budget);
   const worldId =
     exposure.worldId === null
       ? null

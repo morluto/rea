@@ -4,6 +4,8 @@ import type { ElectronContextBridgeFinding } from "./electronStaticAnalysisTypes
 import {
   collectContextBridgeMembers,
   contextBridgeMemberPathDepth,
+  createContextBridgeMemberBudget,
+  type ContextBridgeMemberBudget,
   type ContextBridgeNestedPropertyResolution,
 } from "./electronStaticAnalysisValues.js";
 import { unwrapJavaScriptExpression } from "./javascriptAstValues.js";
@@ -125,6 +127,7 @@ const resolveContextBridgeValue = (
   site: t.Node,
   index: JavaScriptBindingIndex,
   activeNodes: ReadonlySet<t.Node>,
+  budget: ContextBridgeMemberBudget,
 ): ExpressionResolution => {
   let current = unwrapJavaScriptExpression(input).node;
   const nextActive = new Set(activeNodes);
@@ -137,12 +140,16 @@ const resolveContextBridgeValue = (
       index.bindings,
     );
     if (frozen !== undefined) {
+      if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
+      budget.remainingVisits -= 1;
       nextActive.add(current);
       substituted = true;
       current = unwrapJavaScriptExpression(frozen).node;
       continue;
     }
     if (!t.isIdentifier(current)) break;
+    if (budget.remainingVisits <= 0) return { kind: "invalid-or-cyclic" };
+    budget.remainingVisits -= 1;
     const binding = index.bindingForReferenceAt(current);
     if (binding === undefined) return { kind: "non-object-leaf" };
     if (seenBindings.has(binding.bindingId))
@@ -198,6 +205,7 @@ export const resolveContextBridgeApi = (
   apiNode: t.Node | undefined,
   site: t.Node,
   index: JavaScriptBindingIndex,
+  budget: ContextBridgeMemberBudget = createContextBridgeMemberBudget(),
 ): {
   readonly status: ElectronContextBridgeFinding["api_status"];
   readonly members: readonly string[];
@@ -217,7 +225,13 @@ export const resolveContextBridgeApi = (
     const key = javascriptSourceRangeKey(location);
     if (!sourcesByKey.has(key)) sourcesByKey.set(key, location);
   };
-  const root = resolveContextBridgeValue(apiNode, site, index, new Set());
+  const root = resolveContextBridgeValue(
+    apiNode,
+    site,
+    index,
+    new Set(),
+    budget,
+  );
   if (root.kind === "function") {
     if (root.substituted) recordSource(root.fn);
     return {
@@ -255,6 +269,7 @@ export const resolveContextBridgeApi = (
       site,
       index,
       new Set([...root.activeNodes, ...activeNodes]),
+      budget,
     );
     if (resolved.kind === "object") {
       if (resolved.substituted) recordSource(resolved.object);
@@ -268,7 +283,11 @@ export const resolveContextBridgeApi = (
       return { kind: "leaf" };
     return { kind: "unknown" };
   };
-  const collected = collectContextBridgeMembers(root.object, resolveNested);
+  const collected = collectContextBridgeMembers(
+    root.object,
+    resolveNested,
+    budget,
+  );
   return {
     ...collected,
     resolutionSources: [...sourcesByKey.values()],

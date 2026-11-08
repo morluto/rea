@@ -1,5 +1,6 @@
 import { expect, it } from "vitest";
 
+import { contextBridgeMemberVisitLimit } from "./electronStaticAnalysisValues.js";
 import { analyzeJavaScriptStaticSource } from "./javascriptStaticAnalysis.js";
 
 it("resolves hoisted const, Object.freeze, nested const, DAGs, and TS wrappers in main and isolated worlds", () => {
@@ -262,15 +263,8 @@ it("preserves source order when mixing inline, deferred constant, and dynamic co
 });
 
 it.each([
-  ["mutable let object", "let api = { send: () => {} };"],
-  ["mutable var object", "var api = { send: () => {} };"],
   ["reassigned binding", "let api = { a: 1 }; api = { b: 2 };"],
   ["direct property mutation", "const api = { a: 1 }; api.extra = 2;"],
-  ["escaped binding", "const api = { a: 1 }; mutate(api);"],
-  [
-    "Object.assign mutation",
-    "const api = { a: 1 }; Object.assign(api, extra);",
-  ],
   ["mutated callable", "const api = () => {}; api.extra = 1;"],
   [
     "shadowed Object.freeze",
@@ -304,6 +298,39 @@ it.each([
 });
 
 it.each([
+  ["mutable let object", "let api = { send: () => {} };", ["send"]],
+  ["mutable var object", "var api = { send: () => {} };", ["send"]],
+  ["escaped binding", "const api = { a: 1 }; mutate(api);", ["a"]],
+  [
+    "Object.assign mutation",
+    "const api = { a: 1 }; Object.assign(api, extra);",
+    ["a"],
+  ],
+])(
+  "refuses to promote %s to object-literal while allowing candidate substitution",
+  (_label, declaration, expectedMembers) => {
+    const analysis = analyzeJavaScriptStaticSource(`
+        const { contextBridge } = require("electron");
+        ${declaration}
+        contextBridge.exposeInMainWorld("AppApi", api);
+      `);
+
+    expect(analysis.parse_status).toBe("partial");
+    expect(analysis.electron.context_bridge_apis).toMatchObject([
+      {
+        api_key: "AppApi",
+        api_status: "dynamic",
+        resolution_basis: "wrapper-substitution",
+        members: expectedMembers,
+      },
+    ]);
+    expect(analysis.electron.context_bridge_apis[0]).not.toHaveProperty(
+      "resolution_sources",
+    );
+  },
+);
+
+it.each([
   [
     "nested const mutated after parent construction",
     "const sub = { a: 1 }; const api = { sub }; sub.extra = 2;",
@@ -322,21 +349,146 @@ it.each([
     "mutually referencing const objects",
     "const a = { next: b }; const b = { prev: a }; const api = a;",
   ],
-])(
-  "keeps nested unsoundness %s dynamic with unknown count",
-  (_label, setup) => {
-    const analysis = analyzeJavaScriptStaticSource(`
+])("keeps nested unsoundness %s partial and dynamic", (_label, setup) => {
+  const analysis = analyzeJavaScriptStaticSource(`
         const { contextBridge } = require("electron");
         ${setup}
         contextBridge.exposeInMainWorld("AppApi", api);
       `);
 
-    expect(analysis.parse_status).toBe("partial");
-    const [finding] = analysis.electron.context_bridge_apis;
-    expect(finding?.api_status).toBe("dynamic");
-    expect(finding?.unknown_members).toBeGreaterThanOrEqual(1);
-  },
-);
+  expect(analysis.parse_status).toBe("partial");
+  const [finding] = analysis.electron.context_bridge_apis;
+  expect(finding?.api_status).toBe("dynamic");
+  expect(finding).not.toHaveProperty("resolution_sources");
+});
+
+it("preserves symbolic member and world-ID recovery alongside resolved API shapes", () => {
+  const analysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+
+      const bag = {
+        api: {
+          ping: () => ipcRenderer.invoke("bag:ping"),
+        },
+      };
+      const shared = {
+        notify: () => ipcRenderer.send("shared:notify"),
+      };
+      const worldId = 7;
+      const isolatedObj = Object.freeze({ ok: true });
+
+      contextBridge.exposeInMainWorld("memberApi", bag.api);
+      contextBridge.exposeInMainWorld("spreadApi", { ...shared });
+      contextBridge.exposeInIsolatedWorld(
+        worldId,
+        "isolatedCallable",
+        () => ipcRenderer.invoke("isolated:call"),
+      );
+      contextBridge.exposeInIsolatedWorld(worldId, "isolatedObject", isolatedObj);
+    `);
+
+  expect(analysis.electron.context_bridge_apis).toMatchObject([
+    {
+      world: "main",
+      api_key: "memberApi",
+      api_status: "dynamic",
+      resolution_basis: "wrapper-substitution",
+      members: ["ping"],
+      unknown_members: 0,
+    },
+    {
+      world: "main",
+      api_key: "spreadApi",
+      api_status: "dynamic",
+      resolution_basis: "wrapper-substitution",
+      members: ["notify"],
+      unknown_members: 0,
+    },
+    {
+      world: "isolated",
+      world_id: { status: "literal", value: 7, expression: null },
+      api_key: "isolatedCallable",
+      api_status: "function",
+      resolution_basis: "wrapper-substitution",
+      members: [],
+      unknown_members: 0,
+    },
+    {
+      world: "isolated",
+      world_id: { status: "literal", value: 7, expression: null },
+      api_key: "isolatedObject",
+      api_status: "object-literal",
+      resolution_basis: "wrapper-substitution",
+      members: ["ok"],
+      unknown_members: 0,
+      resolution_sources: [expect.any(Object)],
+    },
+  ]);
+
+  expect(analysis.electron.call_paths).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        entry_kind: "bridge-member",
+        entry: "memberApi.ping",
+        channel: "bag:ping",
+        terminal: "electron.ipcRenderer.invoke",
+      }),
+      expect.objectContaining({
+        entry_kind: "bridge-member",
+        entry: "spreadApi.notify",
+        channel: "shared:notify",
+        terminal: "electron.ipcRenderer.send",
+      }),
+      expect.objectContaining({
+        entry_kind: "bridge-member",
+        entry: "isolatedCallable",
+        entry_path: ["isolatedCallable"],
+        channel: "isolated:call",
+        terminal: "electron.ipcRenderer.invoke",
+      }),
+    ]),
+  );
+});
+
+it("bounds exponential shared const sub-object DAGs and records truncated branches as unknown", () => {
+  const keys = Array.from({ length: 20 }, (_, i) => `k${String(i)}`);
+  const leafEntries = keys.map((key) => `${key}: 1`).join(", ");
+  const levels = [`const l7 = { ${leafEntries} };`];
+  for (let depth = 6; depth >= 0; depth -= 1) {
+    const entries = keys
+      .map((key) => `${key}: l${String(depth + 1)}`)
+      .join(", ");
+    levels.push(`const l${String(depth)} = { ${entries} };`);
+  }
+  const callableLeaf = keys
+    .map((key) => `${key}: () => ipcRenderer.send("dag:leaf")`)
+    .join(", ");
+  const callableLevels = [`const c7 = { ${callableLeaf} };`];
+  for (let depth = 6; depth >= 0; depth -= 1) {
+    const entries = keys
+      .map((key) => `${key}: c${String(depth + 1)}`)
+      .join(", ");
+    callableLevels.push(`const c${String(depth)} = { ${entries} };`);
+  }
+
+  const analysis = analyzeJavaScriptStaticSource(`
+      import { contextBridge, ipcRenderer } from "electron";
+      ${levels.join("\n")}
+      ${callableLevels.join("\n")}
+      contextBridge.exposeInMainWorld("DataDag", l0);
+      contextBridge.exposeInMainWorld("CallableDag", c0);
+    `);
+
+  expect(analysis.parse_status).toBe("partial");
+  expect(analysis.electron.context_bridge_apis).toHaveLength(2);
+  for (const finding of analysis.electron.context_bridge_apis) {
+    expect(finding.api_status).toBe("dynamic");
+    expect(finding.unknown_members).toBeGreaterThan(0);
+    expect(finding.members.length).toBeLessThanOrEqual(
+      contextBridgeMemberVisitLimit,
+    );
+  }
+});
 
 it("rejects TDZ read-before-init, uninvoked parameters, shadowed bindings, and classic-script global function overwrites", () => {
   const tdz = analyzeJavaScriptStaticSource(`
