@@ -59,7 +59,9 @@ describe("parsePerfData", () => {
     expect(archive.diagnostics).toEqual([]);
     expect(archive.source_coverage.status).toBe("complete-within-scope");
   });
+});
 
+describe("parsePerfData event attributes", () => {
   it("keeps each event's sampling settings rather than summarising them", () => {
     const archive = parsed(
       buildPerfRecording({
