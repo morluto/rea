@@ -378,6 +378,12 @@ it("advertises typed module references and preserves portable/retained Evidence 
       JSON.stringify(ajv.errors),
     ).toBe(true);
     const evidence = parseEvidence(response.structuredContent);
+    const typedPage = analysisViewResultSchema.parse(
+      evidence.normalized_result,
+    );
+    if (typedPage.kind !== "javascript")
+      throw new Error("Expected JavaScript page");
+    expect(typedPage.source_coverage.semantic).not.toHaveProperty("files");
     expect(evidence).toMatchObject({
       evidence_links: [parent.evidence_id],
       normalized_result: {

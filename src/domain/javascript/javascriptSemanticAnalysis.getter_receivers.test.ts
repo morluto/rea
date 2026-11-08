@@ -767,6 +767,24 @@ describe("instance field calls through widened getters", () => {
 
 describe("static field calls through widened getters", () => {
   it.each([
+    "static method = () => ({}); static method() { return shared; }",
+    "static method() { return shared; } static method = () => ({});",
+  ])("keeps static fields ahead of methods in either order: %s", (members) => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        ${members}
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      B.a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+  it.each([
     ["() => ({})", "shared", "literal"],
     ["() => shared", "{}", "unknown"],
   ])(

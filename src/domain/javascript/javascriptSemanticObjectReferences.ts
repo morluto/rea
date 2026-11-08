@@ -197,7 +197,11 @@ const classPropertyDescriptors = (
     propertyName === null
       ? []
       : indexedMembers.filter(({ key }) => key === propertyName);
-  if (propertyName !== null)
+  // Static fields are installed after all methods, regardless of source order.
+  if (
+    propertyName !== null &&
+    !matchingMembers.some(({ member }) => t.isClassProperty(member))
+  )
     for (const { member, key } of [...indexedMembers].reverse()) {
       if (key !== null && key !== propertyName) continue;
       if (t.isClassMethod(member) && member.kind === "method")
