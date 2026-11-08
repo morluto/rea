@@ -416,8 +416,9 @@ Write `{"name", "prompt", "checks"}` from the draft and what you did.
   or a stretch of it with `text_contains`. Cell texts join with nothing
   between, so a row reads `February23100`.
 - For a line added to free text, such as an item on a note's list, the
-  draft suggests `text_contains` of the new line, which passes however the
-  app spaces or orders it, and a guard per line it kept.
+  draft compares the whole text with `text_equals`. This rejects longer or
+  negated items, but can reject a correct edit with different ordering or
+  spacing. Report that limitation when the task permits such variations.
 - For a note placed by its own `x` and `y`, such as Xournal++'s `<text>`
   on a layer, the draft checks its text on the layer with `text_contains`,
   which passes wherever the user puts it, and guards each note it kept.

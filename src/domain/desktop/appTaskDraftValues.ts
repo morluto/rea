@@ -12,11 +12,7 @@ import { alternativePointers } from "./appTaskDraftAlternatives.js";
 import { isIdReference } from "./appTaskDraftMirrors.js";
 import { recordListsOf } from "./appTaskDraftNested.js";
 import { holdsFields, isRecordAt } from "./appTaskDraftText.js";
-import {
-  attributesOf,
-  compactValue,
-  previewWriter,
-} from "./compactValue.js";
+import { attributesOf, compactValue, previewWriter } from "./compactValue.js";
 import { pairMembers, pairedAtSeed } from "./memberPairing.js";
 import {
   escapeToken,

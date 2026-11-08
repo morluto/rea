@@ -226,12 +226,10 @@ operation `describe_desktop_application_task` and predicate type
     no text that is added or removed there, such as an image or a line break,
     keeps its own, since the text check never reads it. A decimal that is an
     element's only text, such as a spreadsheet cell's, is checked by its
-    number instead. Text that grew by whole lines and kept the rest, as a note
-    gaining `olive oil` on a line of its own, gets a `text_contains` of the
-    added lines instead, so a correct edit with a blank line after it or the
-    line elsewhere still passes, and guards that each kept line is still
-    there; text replaced, or grown inside a line, keeps `text_equals`. Text
-    an app keeps in an attribute, one element per run, as Scribus's
+    number instead. Free text that gains a line, such as a shopping list,
+    uses `text_equals` on the whole text: the current XML checks cannot
+    compare an unstructured line as a whole item. This can reject a correct
+    edit that puts the item elsewhere or changes spacing. Text an app keeps in an attribute, one element per run, as Scribus's
     `<StoryText><ITEXT CH="Spring "/><ITEXT CH="Fair"/>`, gets a `text_equals`
     with `text_attribute` on the nearest ancestor an attribute names, as
     `[name=PAGEOBJECT][@ANNAME=Headline]` with `"text_attribute": "CH"`, where
@@ -259,6 +257,7 @@ operation `describe_desktop_application_task` and predicate type
     whose runs split a sentence at a space, as `Meet ` and a linked
     `Monday`. Nor does an element holding a date the app stamps in parts
     take a text check.
+
   - An element added to a list, where another element of its tag is at either
     end, gets a `value_equals` for each of its attributes, best ranked first,
     at most six, leaving out its selector's attributes, identifiers, times,
@@ -412,11 +411,8 @@ operation `describe_desktop_application_task` and predicate type
   at both ends instead, as Tiled's objects by `[@id=2]` rather than the
   `name` the guard reads, or Glade's button by `[>packing=TrueTrue0]`, or
   else the guard reads another field, or there is none. A `text_equals` with `text_attribute`
-  reads its siblings the same way. Text that grew by lines gets a
-  `text_contains` of each line it kept, of three or more characters, the
-  four nearest the new text, so a correct edit that puts the line elsewhere
-  among them passes; a text file a `lines_present` of the nearest two
-  unchanged lines of its first new line's kind, list items with the same
+  reads its siblings the same way. A text file gets a `lines_present` of the
+  nearest two unchanged lines of its first new line's kind, list items with the same
   marker, as Zim's other `[ ]` action items, or lines the same command
   opens, as the other headings after LyX's `\begin_layout Section`, or lines
   of the same keyword or `key:` in other records, as a gettext catalogue's
@@ -436,9 +432,8 @@ operation `describe_desktop_application_task` and predicate type
   added or removed; never of runs in an element a text check reads, and
   only where the end holds the same number. A guard of a coordinate comes
   after those of text. At most four a file besides the count guard, which
-  sits outside that cap, so kept-line and sibling guards never squeeze it
-  out. They pass on the seed, which
-  the export allows, since one check failing there is enough.
+  sits outside that cap, so sibling guards never squeeze it out. They pass
+  on the seed, which the export allows, since one check failing there is enough.
 - `notes`: why `files` is empty, or why a file's suggestions are thin. Each
   note has a `code` and a `message`. For a draft with no files: `no_change`
   when no file under the home changed between the two checkpoints and nor
