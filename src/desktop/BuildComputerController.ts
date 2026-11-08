@@ -18,6 +18,8 @@ const CONTROLLER = fileURLToPath(
 );
 /** The most file bytes one `data/get` brings back, so a large bundle arrives in several answers. */
 const FETCH_BATCH_BYTES = 8 * 1024 * 1024;
+/** Default time allowed for one REA command in the build computer. */
+export const BUILD_REA_TIMEOUT_S = 1800;
 /**
  * Linux `MAX_ARG_STRLEN` on a 4 KiB page, excluding the NUL the kernel counts.
  * One argument past this fails with E2BIG before the process starts.
@@ -179,9 +181,12 @@ export const runRea = async (
         argv: [...argv],
         stdout: options.stdout,
         files: { ...options.files },
-        timeout_s: options.timeoutS ?? 1800,
+        timeout_s: options.timeoutS ?? BUILD_REA_TIMEOUT_S,
       },
-      { timeoutS: options.timeoutS ?? 1800, signal: options.signal },
+      {
+        timeoutS: options.timeoutS ?? BUILD_REA_TIMEOUT_S,
+        signal: options.signal,
+      },
     ),
   );
   if (answer.exit_code === undefined || answer.stdout_bytes === undefined)

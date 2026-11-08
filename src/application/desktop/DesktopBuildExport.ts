@@ -3,6 +3,11 @@ import { Readable } from "node:stream";
 import { z } from "zod";
 
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
+import {
+  READER_RUNNER_SLACK_S,
+  readerTimeout,
+} from "../../domain/desktop/appTaskReaders.js";
+import { BUILD_REA_TIMEOUT_S } from "../../desktop/BuildComputerController.js";
 import type { desktopTaskSchema } from "../../domain/desktop/appTask.js";
 import { jsonValueSchema, type JsonValue } from "../../domain/jsonValue.js";
 import { err, ok, type Result } from "../../domain/result.js";
@@ -154,6 +159,15 @@ export const exportBuild = async (
       {
         stdout,
         files: { [task]: taskFile },
+        // Export reads each declared reader at both checkpoints.
+        timeoutS:
+          BUILD_REA_TIMEOUT_S +
+          2 *
+            (request.task.readers ?? []).reduce(
+              (sum, reader) =>
+                sum + readerTimeout(reader) + READER_RUNNER_SLACK_S,
+              0,
+            ),
         signal,
       },
     );
