@@ -1,6 +1,7 @@
 import type { ApplicationGraphEvidence } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
 import type { JavaScriptSourceRange } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JsonValue } from "../../domain/jsonValue.js";
 
 const INFERENCE_LIMITATION =
   "This relationship is a conservative static candidate; it does not prove runtime execution or causal flow.";
@@ -80,13 +81,31 @@ export const candidateBuiltinSemanticEvidence = (
   };
 };
 
+type SemanticBuiltinOperation = {
+  readonly builtinAuthority?: "candidate" | undefined;
+  readonly location: JavaScriptSourceRange;
+};
+
+/** Keep the candidate marker and its Evidence together on built-in nodes. */
+export const builtinSemanticNode = (
+  file: JavaScriptArtifactFile,
+  operation: SemanticBuiltinOperation,
+  properties: Readonly<Record<string, JsonValue>>,
+): {
+  readonly properties: Readonly<Record<string, JsonValue>>;
+  readonly evidence?: ApplicationGraphEvidence;
+} =>
+  operation.builtinAuthority === "candidate"
+    ? {
+        evidence: candidateBuiltinSemanticEvidence(file, operation.location),
+        properties: { ...properties, builtin_authority: "candidate" },
+      }
+    : { properties };
+
 /** Keep conditional built-in authority and relation resolution together. */
 export const builtinSemanticRelation = (
   file: JavaScriptArtifactFile,
-  operation: {
-    readonly builtinAuthority?: "candidate" | undefined;
-    readonly location: JavaScriptSourceRange;
-  },
+  operation: SemanticBuiltinOperation,
   resolution: "resolved" | "candidate",
 ): {
   readonly resolution: "resolved" | "candidate";

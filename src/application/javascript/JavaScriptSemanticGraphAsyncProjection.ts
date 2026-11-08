@@ -11,7 +11,7 @@ import {
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
   unknownSemanticEvidence,
-  candidateBuiltinSemanticEvidence,
+  builtinSemanticNode,
   builtinSemanticRelation,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -162,21 +162,10 @@ export const projectSemanticTimers = (
         location: operation.location,
         label: operation.method,
         functionNodeId: owner?.node_id ?? null,
-        ...(operation.builtinAuthority === "candidate"
-          ? {
-              evidence: candidateBuiltinSemanticEvidence(
-                context.file,
-                operation.location,
-              ),
-            }
-          : {}),
-        properties: {
-          ...(operation.builtinAuthority === "candidate"
-            ? { builtin_authority: "candidate" }
-            : {}),
+        ...builtinSemanticNode(context.file, operation, {
           delay_milliseconds: operation.delayMilliseconds,
           method: operation.method,
-        },
+        }),
       });
       return timer === null ? [] : [[operation.timerId, timer] as const];
     }),

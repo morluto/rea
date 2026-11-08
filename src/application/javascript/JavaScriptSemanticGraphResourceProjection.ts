@@ -6,8 +6,8 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  builtinSemanticNode,
   builtinSemanticRelation,
-  candidateBuiltinSemanticEvidence,
   unknownSemanticEvidence,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import type { SemanticFlowProjectionContext } from "./JavaScriptSemanticGraphFlowProjection.js";
@@ -48,20 +48,9 @@ const addResourceNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    ...(operation.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            operation.location,
-          ),
-        }
-      : {}),
-    properties: {
+    ...builtinSemanticNode(context.file, operation, {
       method: operation.method,
-      ...(operation.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
-    },
+    }),
   });
 
 const projectRelease = (

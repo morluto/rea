@@ -10,7 +10,7 @@ import {
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
   unknownSemanticEvidence,
-  candidateBuiltinSemanticEvidence,
+  builtinSemanticNode,
   builtinSemanticRelation,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -66,24 +66,13 @@ const addChildProcessNode = (
       spawn.ownerCallableId === null
         ? null
         : (context.callableNodes.get(spawn.ownerCallableId)?.node_id ?? null),
-    ...(spawn.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            spawn.location,
-          ),
-        }
-      : {}),
-    properties: {
-      ...(spawn.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
+    ...builtinSemanticNode(context.file, spawn, {
       argv_count: spawn.argvCount,
       command: spawn.command,
       environment_supplied: spawn.environmentSupplied,
       method: spawn.method,
       stdio_mode: spawn.stdioMode,
-    },
+    }),
   });
 
 const projectSpawn = (
@@ -189,20 +178,9 @@ const addStdioNode = (
     location: spawn.location,
     label: spawn.stdioMode,
     functionNodeId: child.function_node_id,
-    ...(spawn.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            spawn.location,
-          ),
-        }
-      : {}),
-    properties: {
+    ...builtinSemanticNode(context.file, spawn, {
       mode: spawn.stdioMode,
-      ...(spawn.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
-    },
+    }),
   });
 
 const projectInteraction = (
@@ -272,21 +250,10 @@ const addChildListenerNode = (
         ? null
         : (context.callableNodes.get(interaction.ownerCallableId)?.node_id ??
           null),
-    ...(interaction.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            interaction.location,
-          ),
-        }
-      : {}),
-    properties: {
-      ...(interaction.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
+    ...builtinSemanticNode(context.file, interaction, {
       event_name: interaction.eventName,
       method: interaction.method,
-    },
+    }),
   });
 
 const addSignalNode = (
@@ -303,20 +270,9 @@ const addSignalNode = (
         ? null
         : (context.callableNodes.get(interaction.ownerCallableId)?.node_id ??
           null),
-    ...(interaction.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            interaction.location,
-          ),
-        }
-      : {}),
-    properties: {
+    ...builtinSemanticNode(context.file, interaction, {
       signal_name: interaction.signalName,
-      ...(interaction.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
-    },
+    }),
   });
 
 const addChildUnknown = (input: ChildUnknownInput): void => {

@@ -10,8 +10,8 @@ import {
   addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
 import {
+  builtinSemanticNode,
   builtinSemanticRelation,
-  candidateBuiltinSemanticEvidence,
   unknownSemanticEvidence,
 } from "./JavaScriptSemanticGraphEvidence.js";
 import {
@@ -99,25 +99,14 @@ const addConfigurationNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    ...(operation.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            operation.location,
-          ),
-        }
-      : {}),
-    properties: {
-      ...(operation.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
+    ...builtinSemanticNode(context.file, operation, {
       key: operation.key,
       source_kind: operation.kind,
       value: operation.value,
       ...(operation.valueResourceLimit === undefined
         ? {}
         : { value_resource_limit: operation.valueResourceLimit }),
-    },
+    }),
   });
 
 const configurationRelation = (
@@ -184,22 +173,11 @@ const addRequestNode = (
         ? null
         : (context.callableNodes.get(operation.ownerCallableId)?.node_id ??
           null),
-    ...(operation.builtinAuthority === "candidate"
-      ? {
-          evidence: candidateBuiltinSemanticEvidence(
-            context.file,
-            operation.location,
-          ),
-        }
-      : {}),
-    properties: {
-      ...(operation.builtinAuthority === "candidate"
-        ? { builtin_authority: "candidate" }
-        : {}),
+    ...builtinSemanticNode(context.file, operation, {
       endpoint: operation.endpoint,
       method: operation.method,
       operation_kind: operation.kind,
-    },
+    }),
   });
 
 const projectRequestConstruction = (
@@ -208,23 +186,22 @@ const projectRequestConstruction = (
   request: JavaScriptSemanticGraphNode,
 ): void => {
   const callSite = context.callSiteAt(operation.location);
+  const authority = builtinSemanticRelation(
+    context.file,
+    operation,
+    operation.resolution === "complete" ? "resolved" : "candidate",
+  );
   addSemanticGraphRelation(context.state, {
     source: callSite,
     target: request,
     relation: "constructs-request",
-    ...builtinSemanticRelation(
-      context.file,
-      operation,
-      operation.resolution === "complete" ? "resolved" : "candidate",
-    ),
+    ...authority,
   });
   projectSemanticResultBindings(
     context,
     request,
     operation.projectedResultBindings,
-    operation.builtinAuthority === "candidate"
-      ? candidateBuiltinSemanticEvidence(context.file, operation.location)
-      : undefined,
+    authority.evidence,
   );
   for (const field of operation.fields)
     addSemanticGraphRelation(context.state, {
