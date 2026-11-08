@@ -8,6 +8,7 @@ import { expect, it } from "vitest";
 import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory.js";
 import { systemDoctorHost } from "../application/Doctor.js";
 import { readDesktopBuildFacts } from "./DesktopBuildDoctorFacts.js";
+import { defaultBuildComputerArchive } from "./BuildComputerEnvironment.js";
 
 const execute = promisify(execFile);
 
@@ -40,6 +41,49 @@ const readFacts = async (
     await host.close?.();
   }
 };
+
+it.skipIf(process.platform === "win32")(
+  "compares registrations to resolved defaults when the terminal has no overrides",
+  async () => {
+    const { root, bin, home } = await buildHost("rea-desktop-doctor-defaults-");
+    await program(join(bin, "docker"), "exit 1");
+    await program(join(bin, "agent-env"), 'echo "agent-env 0.9.1431"');
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: `${bin}:/usr/bin:/bin`,
+      XDG_CACHE_HOME: join(root, "cache"),
+    };
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: join(bin, "docker"),
+              REA_AGENT_ENV_COMMAND: join(bin, "agent-env"),
+              REA_BUILD_COMPUTER_REA_ARCHIVE: defaultBuildComputerArchive(
+                environment,
+                "linux",
+              ),
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(environment, ["claude_code"]);
+    expect(facts.registrations).toEqual([
+      {
+        client: "claude_code",
+        registered: true,
+        unrecorded: [],
+        unresolved: [],
+      },
+    ]);
+  },
+);
 
 it.skipIf(process.platform === "win32")(
   "compares explicitly selected paths and reports unchecked recorded paths by name only",
@@ -78,8 +122,7 @@ it.skipIf(process.platform === "win32")(
       {
         client: "claude_code",
         registered: true,
-        differing: ["REA_AGENT_ENV_COMMAND"],
-        unchecked: ["REA_BUILD_COMPUTER_REA_ARCHIVE"],
+        differing: ["REA_AGENT_ENV_COMMAND", "REA_BUILD_COMPUTER_REA_ARCHIVE"],
       },
     ]);
     expect(JSON.stringify(facts.registrations)).not.toContain("/private/");
