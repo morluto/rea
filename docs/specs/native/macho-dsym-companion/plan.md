@@ -14,7 +14,8 @@
   `Contents/Resources/DWARF` through `OwnedDirectoryHandle` and
   `withRegularFileCompletion`, deduplicate `(dev, ino)` digests, and attach
   `MachODebugCompanion` to Mach-O `BinaryTarget` variants or project
-  `debug_companion_rejected` refusals via `src/domain/targetDiagnostics.ts`.
+  `debug_companion_rejected` refusals via `src/domain/analysisErrorProjection.ts`
+  and `src/domain/analysisErrorPresentation.ts`.
 - `src/contracts/sessionLifecycleInputs.ts`,
   `src/contracts/sessionToolContracts.ts`, `src/cli/coreNativeCommands.ts`,
   `src/application/DirectAnalysis.ts`, and
@@ -45,7 +46,7 @@
    (`tests/boundary/filesystem/ghidraDebugCompanion.test.ts`,
    `tests/process-global/ghidraDebugCompanionStagingLifetime.test.ts`,
    `src/ghidra/GhidraProvider.behavior.test.ts`,
-   `src/ghidra/GhidraCheckpointStore.test.ts`).
+   `src/ghidra/GhidraCheckpoint.test.ts`).
 5. Author [provider documentation](../../../providers/dsym.md), register public
    navigation and route entries, and run documentation, route, static, and deep
    verification checks.
