@@ -20,6 +20,8 @@ const digest = (prefix: string, ...parts: readonly (string | number)[]) =>
 /** One admitted archive member, as the ZIP directory states it. */
 export interface NugetArchiveMember {
   readonly path: string;
+  /** The reader's own name for the member, present only when `path` rewrote it. */
+  readonly sourcePath?: string | undefined;
   readonly bytes: number | null;
   readonly directory: boolean;
   readonly encrypted: boolean;
@@ -94,9 +96,14 @@ const targetFramework = (path: string, directory: boolean): string | null => {
   if (segments.length < 3) return null;
   if (segments[0] === "lib" || segments[0] === "ref")
     return frameworkSegment(segments[1]);
-  // build/ and contentFiles/ qualify their framework in the second segment:
-  // build/<tfm>/<file|folder> and contentFiles/<codeLanguage>/<tfm>/<file|folder>.
-  if (segments[0] === "build")
+  // build/, buildTransitive/ and buildMultiTargeting/ qualify their framework
+  // in the second segment: <prefix>/<tfm>/<file|folder>. contentFiles/ keeps
+  // its code language there: contentFiles/<codeLanguage>/<tfm>/<file|folder>.
+  if (
+    segments[0] === "build" ||
+    segments[0] === "buildTransitive" ||
+    segments[0] === "buildMultiTargeting"
+  )
     return directory || segments.length >= 3
       ? frameworkSegment(segments[1])
       : null;
@@ -392,8 +399,9 @@ export const parseNugetPackage = (
       break;
     }
     for (const limitation of member.limitations ?? [])
-      if (limitation.includes("leading current-directory prefix"))
-        normalisations.add(limitation);
+      // The reader's own `sourcePath` states whether it rewrote the name; the
+      // limitation text is prose and may be reworded.
+      if (member.sourcePath !== undefined) normalisations.add(limitation);
       else nameLimitations.add(limitation);
     const path = normalisePath(member.path);
     if (!isSafeMemberPath(path)) {

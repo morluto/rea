@@ -234,6 +234,8 @@ describe("parseNugetPackage: asset layout", () => {
         member("analyzers/dotnet/cs/Example.Analyzers.dll"),
         member("buildTransitive/Example.props"),
         member("buildMultiTargeting/Example.props"),
+        member("buildTransitive/net8.0/Example.targets"),
+        member("buildMultiTargeting/net8.0/Example.targets"),
         member("contentFiles/any/any/readme.txt"),
         member("tools/install.ps1"),
         member("readme.md"),
@@ -270,6 +272,15 @@ describe("parseNugetPackage: asset layout", () => {
     expect(byPath.get("buildMultiTargeting/Example.props")?.kind).toBe(
       "build-multitargeting",
     );
+    // Every build asset prefix keeps its framework folder; buildTransitive and
+    // buildMultiTargeting are separate kinds, not a reason to drop the TFM.
+    expect(
+      byPath.get("buildTransitive/net8.0/Example.targets")?.target_framework,
+    ).toBe("net8.0");
+    expect(
+      byPath.get("buildMultiTargeting/net8.0/Example.targets")
+        ?.target_framework,
+    ).toBe("net8.0");
     expect(byPath.get("contentFiles/any/any/readme.txt")?.kind).toBe(
       "content-files",
     );
@@ -603,10 +614,28 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
     const package_ = parsed(
       parse([
         member("Example.Package.nuspec", { text: NUSPEC }),
-        member("lib/net8.0/Example.dll", { limitations: [note] }),
+        member("lib/net8.0/Example.dll", {
+          limitations: [note],
+          sourcePath: "./lib/net8.0/Example.dll",
+        }),
       ]),
     );
     expect(package_.limitations).toContain(note);
+    expect(package_.source_coverage.status).toBe("complete-within-scope");
+  });
+
+  it("treats a rewritten limitation as prose, not a coverage signal", () => {
+    // The reader states the rewrite with `sourcePath`; its message is only
+    // explanatory, so different wording must not change coverage.
+    const package_ = parsed(
+      parse([
+        member("Example.Package.nuspec", { text: NUSPEC }),
+        member("lib/net8.0/Example.dll", {
+          limitations: ["Member name had a redundant ./ prefix."],
+          sourcePath: "./lib/net8.0/Example.dll",
+        }),
+      ]),
+    );
     expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
 });

@@ -229,6 +229,7 @@ const inventoryMembers = async (
         : undefined;
     members.push({
       path: entry.path,
+      sourcePath: entry.sourcePath,
       bytes: entry.declaredSize,
       directory: entry.kind === "directory",
       encrypted: entry.encrypted || entry.kind === "symlink",
