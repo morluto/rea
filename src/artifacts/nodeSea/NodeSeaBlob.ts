@@ -32,10 +32,8 @@ const NO_OVERRIDE = "This release has no runtime override.";
 
 const NODE_SEA_BAD_MAGIC = "Node SEA blob magic is not 0x143da20";
 export const NODE_SEA_TRUNCATED = "Node SEA blob is truncated";
-const NODE_SEA_UNKNOWN_FLAGS =
-  "Node SEA blob flags contain unknown bits";
-const NODE_SEA_UNKNOWN_EXTENSION =
-  "Node SEA exec argv extension is unknown";
+const NODE_SEA_UNKNOWN_FLAGS = "Node SEA blob flags contain unknown bits";
+const NODE_SEA_UNKNOWN_EXTENSION = "Node SEA exec argv extension is unknown";
 const NODE_SEA_TRAILING_BYTES = "Node SEA blob has trailing bytes";
 export const NODE_SEA_DUPLICATE_BLOB =
   "Node SEA blob is declared more than once";

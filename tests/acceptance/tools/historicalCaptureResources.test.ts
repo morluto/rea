@@ -166,9 +166,7 @@ it.skipIf(process.versions.bun !== undefined && jobLimit === null)(
       normalized_result: { total_records: 2 },
     });
     const controlText = JSON.stringify(control.structuredContent);
-    expect(controlText).toContain(
-      captureDecoderHeapRecovery(testHeap),
-    );
+    expect(controlText).toContain(captureDecoderHeapRecovery(testHeap));
     const defaultServer = await connectLocalToolsMcp();
     const defaultControl = await defaultServer.call(
       "inspect_web_network_capture",

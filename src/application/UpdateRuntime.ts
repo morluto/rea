@@ -171,9 +171,7 @@ const npmLatestVersionCommand = (
  * Read one latest version from `npm view --json`.
  * npm 11 emits a JSON string. npm 12 emits that string as a one-element array.
  */
-const parseNpmLatestVersion = (
-  metadata: string,
-): Result<string, string> => {
+const parseNpmLatestVersion = (metadata: string): Result<string, string> => {
   const decoded = safeParseJson(metadata);
   if (!decoded.ok) return err(decoded.error);
   const version = readNpmLatestVersion(decoded.value);

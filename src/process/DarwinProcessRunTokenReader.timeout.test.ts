@@ -31,5 +31,4 @@ describe("resolveSwiftcCompileTimeoutMs", () => {
       }),
     ).toBe(120_000);
   });
-
 });
