@@ -1,5 +1,16 @@
 # Connection and task recovery
 
+Read only the sections needed for the selected task.
+
+- [Choose the remedy from the observed failure](#choose-the-remedy-from-the-observed-failure)
+- [Distinguish client and server deadlines](#distinguish-client-and-server-deadlines)
+- [Recovery ladder](#recovery-ladder)
+- [REA installed as a client plugin](#rea-installed-as-a-client-plugin)
+- [Repair registration when needed](#repair-registration-when-needed)
+- [Codex tool approval is separate from REA readiness](#codex-tool-approval-is-separate-from-rea-readiness)
+- [Repair an editable REA limit](#repair-an-editable-rea-limit)
+- [Continue through an installed CLI](#continue-through-an-installed-cli)
+
 Read this guide only for an observed connection, command, approval or provider
 blocker. Keep the user's target and question in view. Explain what prevented the
 operation and the next useful step; after repair, continue the investigation.
@@ -216,6 +227,25 @@ values. Updates survive target close/open but disappear on REA restart. They do
 not edit host deadlines, response buffers, registrations or fixed limits.
 
 ## Continue through an installed CLI
+
+A concrete CLI fallback for an operator-supplied JavaScript tree or ASAR is:
+
+```bash
+npx -y rea-agents@latest analyze-javascript-application /absolute/path/to/app --json
+```
+
+No MCP registration or native engine is required. Read the returned Evidence,
+graph, limitations, and unknowns with the same care as an MCP result; the CLI
+returns the Evidence record directly. This fallback does not establish that
+MCP is configured. Native CLI tasks still require their selected engine.
+Prefer an existing `rea` CLI. When none is installed and REA package acquisition
+is within the authorized scope, use `npx -y rea-agents@latest` in its place from a
+trusted directory outside the target project, with absolute target paths. Managed
+setup binds the current installation directly; retain its runtime and package
+cache entry, or restore that installation before repairing its registration.
+For setup-owned registration, configuration repair starts with a read-only setup plan; show paths, backups and
+skill replacement before applying authorized changes. Preserve existing approval
+and target-execution boundaries.
 
 Check the command environment only if the launcher fails:
 

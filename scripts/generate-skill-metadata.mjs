@@ -37,22 +37,21 @@ const generated = addSkillManifestToolCount(
   FULL_CATALOG_IDENTITY.counts.mcp_tools,
 );
 if (!generated.ok) throw generated.error;
-const source = generated.value.replaceAll(latestSpecifier, pinnedSpecifier);
 const paths = await filePaths(sourceRoot);
 // Rebuild this owned output directory so removed references cannot survive a build.
 if (!check) await rm(outputRoot, { recursive: true, force: true });
 for (const relativePath of paths) {
   const path = join(outputRoot, relativePath);
   if (!check) await mkdir(dirname(path), { recursive: true });
+  const content =
+    relativePath === "SKILL.md"
+      ? generated.value
+      : await readFile(join(sourceRoot, relativePath), "utf8");
   await ensureGeneratedFile({
     path,
-    source:
-      relativePath === "SKILL.md"
-        ? source
-        : (await readFile(join(sourceRoot, relativePath), "utf8")).replaceAll(
-            "\r\n",
-            "\n",
-          ),
+    source: content
+      .replaceAll("\r\n", "\n")
+      .replaceAll(latestSpecifier, pinnedSpecifier),
     check,
     generateCommand: "npm run docs:generate",
   });

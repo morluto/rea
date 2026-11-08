@@ -1,7 +1,20 @@
 # Evidence, comparison, and verification workflows
 
-Evidence-producing tools return the complete Evidence record directly in MCP
-`structuredContent` and CLI JSON. Read `normalized_result` for operation data,
+Read only the sections needed for the selected task.
+
+- [Read and compose source Evidence](#read-and-compose-source-evidence)
+- [Inventory and decompilation views](#inventory-and-decompilation-views)
+- [Unknowns and comparisons](#unknowns-and-comparisons)
+- [Process captures and environment views](#process-captures-and-environment-views)
+- [Native export table pages](#native-export-table-pages)
+- [Recover oversized delivery and find retained Evidence](#recover-oversized-delivery-and-find-retained-evidence)
+- [Plan broader investigations](#plan-broader-investigations)
+
+## Read and compose source Evidence
+
+Evidence-producing tools return Evidence directly in MCP `structuredContent`
+and CLI JSON. Advertised summary delivery retains the complete source separately;
+complete inline delivery is available where the connected contract says so. Read `normalized_result` for operation data,
 and cite `evidence_id` when another tool or your explanation needs a stable
 reference. Preserve authority, limitations, coverage, and residual unknowns. If a result
 is incomplete or paginated, continue only when the remaining data matters to
@@ -49,6 +62,8 @@ An input bundle grants no implicit file lookup: `evidence-file` and historical
 graph file selectors are accepted only by contracts advertising them. See the
 [CLI reuse guide](https://github.com/morluto/rea/blob/main/docs/getting-started/cli.md#import-export-and-compare-evidence).
 
+## Inventory and decompilation views
+
 Completed `inspect_artifact` inventory also supports a summary and
 `view: {kind: "inventory", collection: "occurrences", logical_paths: ["package.json", "main.js"]}`.
 Omit `logical_paths` to page all available occurrences; `[]` selects none.
@@ -81,6 +96,8 @@ exact `where.indices`, `addresses`, `procedure_addresses` or `statuses`. Add
 `collection: "pseudocode"` with one row's `index` to page a large body. Batch
 limitations aggregate every item, so do not attribute them to one successful row.
 
+## Unknowns and comparisons
+
 Use `record_unknown` to track unresolved questions in the user's investigation
 and name the authority or environment still required. Supply supporting and
 contradicting evidence IDs. It updates the session registry directly.
@@ -110,6 +127,8 @@ or absence:
   hypotheses, not causality. Both comparison arrays accept exact references.
 - `verify_reconstruction` evaluates a finite typed specification. A pass covers
   only declared comparable claims, not global equivalence.
+
+## Process captures and environment views
 
 Process captures are opt-in behavioral evidence, not a security sandbox. V3
 captures cannot be upgraded to V4; rerun the original scenario. Distinguish root
@@ -164,6 +183,8 @@ catalog and state size checks. `rea environment-build <capture.har> <dir>`
 inspects, projects and exports in one step and prints the same coverage, or
 `null` when the bundle serves replay.
 
+## Native export table pages
+
 For a PE/ELF export question, `inspect_native_exports` accepts `detail: "summary"`
 and retains the complete table. Query `inspect_analysis_view` with
 `view: {kind: "native-exports", collection: "exports", names: ["selected_name"],
@@ -174,3 +195,69 @@ coverage describes selected retained rows; `summary.coverage` or `exports.covera
 still describes the source table, so an empty partial page does not prove absence.
 CLI `inspect-native-exports --detail summary --evidence_output PATH` saves the
 complete bundle for later `inspect-analysis-view --evidence-bundle PATH` requests.
+
+## Recover oversized delivery and find retained Evidence
+
+If MCP reports `resource_constraint` with `details.resource: "transport"`, call
+`inspect_analysis_view` with its reported same-session Evidence reference for a
+summary, one section/module, or a stable page. Use `trace_application_feature`
+once a seed is known, or call `export_evidence_bundle` to write the complete
+session to a selected path. The analysis remains complete in the ledger; avoid
+repeating it merely to request the same oversized response. Complete CLI JSON
+output also streams without a single MCP frame.
+
+When the retained parent ID is unknown, use `get_evidence_bundle` with
+`detail: "summary"` and exact filters for operation, target SHA-256,
+analysis-profile digest or canonical procedure address. Select its returned
+Evidence ID for the next view instead of requesting the complete bundle. When
+that record has no supported view (for example an annotation), read it with
+`detail: "records"` and an `evidence_id` filter; `missing_evidence_links`
+names linked sources this session does not retain.
+`retention: "complete-record"` means the whole record is stored; native
+value-flow truncation and unknown metadata remain separate. For an exported
+portable bundle, use `rea inspect-evidence-bundle` with JSON containing `path`,
+`detail: "summary"` and the same `filters`. Reading that file still requires
+validating its full contents within the local memory budget.
+
+A client can also truncate a successful tool result without a REA transport
+error. Treat that preview as incomplete; use the retained parent ID for smaller
+views or export when the full record is needed. Do not parse the preview as
+canonical JSON or repeat the producer. For JavaScript, read the
+[module-view and trace recipes](javascript-applications.md) before
+drilling into a large graph; a broad bidirectional trace can expand unrelated
+containment relationships even after summary analysis.
+
+## Plan broader investigations
+
+For requests that span multiple features or subsystems, use a staged workflow:
+
+1. Turn the request into a checklist of questions and the evidence each answer
+   needs. Resolve target identity and constraints from the conversation and
+   workspace before asking for information again.
+2. Inspect the current REA session, artifact identity, saved analysis database,
+   bookmarks, and prior evidence. Reuse matching state; do not open duplicate
+   sessions or repeat identical analysis.
+3. Start with the smallest useful overview or inventory. Follow each question
+   from its entry point through relevant data and state changes to its result.
+   Batch related operations around a specific hypothesis, then expand only when
+   the returned evidence leaves a concrete gap.
+4. Inspect relevant packaged resources and configuration alongside code when
+   they affect the question. Use format-aware inventory and parsers; do not
+   infer behavior from filenames, strings, or layout alone.
+5. Corroborate a conclusion with the evidence type it requires. Use runtime
+   observation only when static evidence cannot answer the question and the
+   required host runtime and OS access are available. For JavaScript behavior,
+   run probes against the actual app through the available browser, Electron,
+   or process capture workflow.
+6. Decompose work into independent questions. When parallel workers are
+   available and the questions do not depend on one another, assign distinct
+   scopes, point workers to existing evidence, and ask them to return sources,
+   conclusions, and unresolved gaps. Otherwise, work sequentially.
+7. Keep a concise finding ledger linking each conclusion to Evidence IDs,
+   confidence/evidence type, search boundary, and remaining unknowns. Update
+   the shared index or investigation report so later passes can reuse results.
+
+Before finishing, revisit the original checklist. Mark each question as
+answered, partially answered, or unresolved based on its evidence; keep
+bounded negative searches bounded, and do not describe a broad investigation
+as complete while required questions remain open.

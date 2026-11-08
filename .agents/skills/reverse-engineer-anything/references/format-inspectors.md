@@ -1,6 +1,6 @@
 # Offline format and metadata inspection
 
-Read the section matching the supplied artifact; other sections are optional.
+Read only the sections needed for the selected task.
 
 - [Go build metadata](#go-build-metadata)
 - [Model files](#model-files)
@@ -22,6 +22,8 @@ Read the section matching the supplied artifact; other sections are optional.
 - [Offline APK signatures](#offline-apk-signatures)
 - [Offline PE resource inventory](#offline-pe-resource-inventory)
 - [Offline PE and ELF export tables](#offline-pe-and-elf-export-tables)
+- [EVM bytecode](#evm-bytecode)
+- [Embedded GPU code objects](#embedded-gpu-code-objects)
 
 ## Go build metadata
 
@@ -35,7 +37,13 @@ unparsed module-text line. A missing record is an unknown, not proof of a
 non-Go binary; observed metadata does not authenticate its claims. Function,
 source and type recovery remain a separate native-analysis question.
 
+See the [Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md).
+
 ## Model files
+
+Optional `view` selects one page in the initial call. Batch metadata keys or
+tensor names and select only needed fields; do not infer model behavior from
+declared architecture or tensor types.
 
 Use `inspect_model_artifact` (`inspect-model-artifact PATH`) for local GGUF v2/v3
 and safetensors declarations without a model runtime. Header-only mode does not
@@ -59,11 +67,22 @@ and collection; page offsets count filtered matches. Parameters support batch
 `method_indices` to read one method's parameters directly. Historical reports
 without member collections retain unknown counts rather than empty inventories. Preserve
 artifact SHA-256 and index widths. Unrecognized magic may mean encryption and
-is unsupported, not decrypted. Linking names to `GameAssembly` or
-`UnityFramework` code addresses remains a separate native-analysis question.
+is unsupported, not decrypted.
+
+Optional matching `binary_path` enables static native addresses and type
+references. Query `method_addresses` with indices or addresses/states, preserving
+every shared-body method and both artifact identities. Without a linked binary,
+native counts remain unknown. Byte-pattern fallback is inferred; no runtime
+behavior or same-build pairing is proved.
 See [IL2CPP metadata](https://github.com/morluto/rea/blob/main/docs/il2cpp-metadata.md).
 
 ## Rust dependency metadata
+
+For selected crates, use `view: {collection: "packages", names: [...],
+fields: ["name", "version", "source"]}` on the first call. Include `dependencies`
+explicitly for direct index references. Select `detail: "summary"` for counts and
+ranges; retained Rust package/edge views support later filters. Keep complete
+parent Evidence accessible; CLI compact delivery requires `--evidence_output`.
 
 Use `inspect_rust_binary` for an explicit local ELF, PE, or Mach-O (universal
 files need `architecture`) when
@@ -105,6 +124,10 @@ resolution remain unobserved. See
 
 ## PE TLS callbacks and load configuration
 
+Preserve each callback's RVA, file offset and section alongside its VA and the
+size-covered declaration fields. A missing directory is observed absence of
+that declaration.
+
 Use `inspect_pe_load_config` for an explicit local PE32/PE32+ image when the
 question concerns code that runs before the entry point through TLS callbacks,
 or the security cookie, SafeSEH, CFG, EH-continuation and XFG declarations in
@@ -118,6 +141,9 @@ See
 
 ## Binary hardening
 
+Each property reports `enabled`, `disabled`, `partial`, `unknown`, or
+`not_applicable`, with the header field or import behind it.
+
 Use `inspect_binary_hardening` for an explicit local ELF, PE, or Mach-O file
 when the question concerns PIE or ASLR, NX, RELRO, stack-protector or FORTIFY
 signs, control-flow flags, or stripped state. No `open_binary`, pwntools, or
@@ -129,6 +155,8 @@ Authenticode and Mach-O code-signature rows report presence, not validity.
 [binary hardening](https://github.com/morluto/rea/blob/main/docs/binary-hardening.md).
 
 ## ELF note tables
+
+Retain each note's owner, type, descriptor SHA-256, and PT_NOTE/SHT_NOTE ranges.
 
 Use `inspect_elf_notes` for an explicit local ELF32/ELF64 image when the
 question concerns PT_NOTE/SHT_NOTE owners, GNU build-id, or GNU ABI-tag
@@ -236,6 +264,10 @@ read a single object.
 
 ## Offline WASM
 
+Supply WABT 1.0.42 through `REA_WABT_BIN_DIRECTORY`. Select JavaScript glue and
+candidate paths explicitly, preserving URL/path ambiguity and exact byte/tool
+identity; no implicit fetch is performed.
+
 Use `inspect_wasm_artifact` with caller-supplied WABT for selected local bytes.
 For counts, validation and WAT identity, select `detail: "summary"` on the first
 MCP call. The complete original Evidence stays retained; use
@@ -255,6 +287,8 @@ interface equality is not runtime compatibility. CLI accepts complete inline
 Evidence in `rea compare-wasm-interfaces input.json --json`, or exact references
 with `--evidence-bundle /absolute/path/evidence.json`. Use the complete parent
 ID when the inspection returned a summary.
+
+See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md).
 
 ## Offline APK signatures
 
@@ -280,6 +314,8 @@ lineage, and the strongest scheme.
 It never claims authenticity: no signature or lineage is cryptographically
 verified.
 
+See the [APK signature guide](https://github.com/morluto/rea/blob/main/docs/apk-signature.md).
+
 ## Offline PE resource inventory
 
 Use `inspect_pe_resources` with an absolute `path`, or
@@ -301,3 +337,22 @@ target. Ordinal-only, forwarded and hidden-version exports stay distinct;
 partial or unsupported coverage means the inventory is incomplete, not that
 exports are absent. Use `inspect_macho` for Mach-O. See
 [offline binary diagnostics](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
+
+## EVM bytecode
+
+Explicit local EVM bytecode carrier: `inspect_evm_interface` with caller-selected
+`raw` or `hex` encoding. The owned worker deadline is `timeout_ms` (default
+30000 ms, range 1..2147483647, next call). It does not raise the fixed byte,
+address-space, or CPU allowances. Preserve carrier/decoded digests and treat selectors,
+argument strings and mutability as inferred candidates; this performs no chain
+lookup or target execution. For the complete inferred interface without hex or
+duplicate stdout, discover support and select `detail: "summary"`; complete
+Evidence stays retained under its original identity. Use the returned
+`parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
+Candidate coverage does not establish interface completeness. See the
+[EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md).
+
+## Embedded GPU code objects
+
+Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
+first, then decode selected payloads and query retained GPU Evidence.
