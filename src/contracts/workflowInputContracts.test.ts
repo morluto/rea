@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest";
 
-import { managedNativeVerificationInputSchema } from "../domain/managed/managedNativeVerificationSchemas.js";
 import { toolContract } from "./toolContracts.js";
 import { toolInputSchemaWithMetadata } from "./toolSchemaMetadata.js";
 
@@ -133,7 +132,6 @@ describe("workflow input contracts", () => {
       };
       const contract = toolContract("verify_managed_native_boundaries");
       for (const schema of [
-        managedNativeVerificationInputSchema,
         contract.inputSchema,
         toolInputSchemaWithMetadata(contract),
       ]) {

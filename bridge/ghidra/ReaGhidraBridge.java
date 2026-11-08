@@ -181,6 +181,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
     private List<FunctionEntry> procedureInventory;
     private List<InventoryItem> stringInventory;
     private DecompInterface decompiler;
+    private boolean existingProject;
     // A refused Program may only report its admission failure to the client.
     private String identityAdmissionFailure;
     /** Per-function native decompiler limit from the session; 0 leaves it unbounded. */
@@ -201,6 +202,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         Path descriptorPath = Path.of(arguments[0]);
         checkpointDirectory = descriptorPath.toAbsolutePath().normalize().getParent();
         SessionDescriptor descriptor = readDescriptor(descriptorPath);
+        existingProject = descriptor.existingProject;
         decompileTimeoutSeconds = descriptor.decompileTimeoutSeconds();
         // Windows retains a native immutable bearer descriptor lease until
         // runtime_close; POSIX removes it after this read. Normal cleanup removes
@@ -879,6 +881,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         JsonArray blocks = new JsonArray();
         JsonArray skipped = new JsonArray();
         JsonArray notLoaded = new JsonArray();
+        JsonArray overlays = new JsonArray();
         List<ByteSearchBlock> eligible = new ArrayList<>();
         for (MemoryBlock block : ordered) {
             monitor.checkCancelled();
@@ -886,8 +889,14 @@ public final class ReaGhidraBridge extends HeadlessScript {
             Address high = block.getEnd();
             Address bound = start == null ? end : start;
             if (bound != null && !bound.getAddressSpace().equals(low.getAddressSpace())) continue;
-            if (bound == null && (!block.isLoaded() || block.isOverlay())) {
+            // Without bounds, search loaded non-overlay memory. Unloaded file
+            // parts and loaded overlays stay reachable through explicit bounds.
+            if (bound == null && !block.isLoaded()) {
                 notLoaded.add(byteSearchCoverage(block, low, high));
+                continue;
+            }
+            if (bound == null && block.isOverlay()) {
+                overlays.add(byteSearchCoverage(block, low, high));
                 continue;
             }
             if (start != null && low.compareTo(start) < 0) low = start;
@@ -963,6 +972,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         searched.addProperty("bytes", covered);
         searched.add("skipped_uninitialized", skipped);
         searched.add("skipped_not_loaded", notLoaded);
+        searched.add("skipped_overlays", overlays);
         JsonObject result = new JsonObject();
         result.add("matches", matches);
         result.add("searched", searched);
@@ -1422,8 +1432,29 @@ public final class ReaGhidraBridge extends HeadlessScript {
         flow.addProperty("conditional", false);
         flow.addProperty("computed", false);
         if (instruction == null) {
-            result.addProperty("status", !currentProgram.getMemory().contains(address) ? "outside-memory" : currentProgram.getListing().getInstructionContaining(address) != null
-                ? "not-instruction-boundary" : currentProgram.getListing().getDefinedDataContaining(address) != null ? "data" : "not-in-listing");
+            Instruction containing = currentProgram.getListing().getInstructionContaining(address);
+            boolean inMemory = currentProgram.getMemory().contains(address);
+            Data containingData = inMemory && containing == null
+                ? currentProgram.getListing().getDefinedDataContaining(address) : null;
+            result.addProperty("status", !inMemory ? "outside-memory" : containing != null
+                ? "not-instruction-boundary" : containingData != null ? "data" : "not-in-listing");
+            if (inMemory && containing == null && containingData != null) {
+                JsonObject parentData = new JsonObject();
+                parentData.addProperty("address", canonicalAddress(containingData.getAddress()));
+                parentData.addProperty("length", containingData.getLength());
+                parentData.addProperty("type_id", containingData.getDataType().getPathName());
+                parentData.addProperty("provenance", "ghidra-listing");
+                result.add("containing_data", parentData);
+            }
+            if (containing != null && currentProgram.getMemory().contains(address)) {
+                JsonObject containingInstruction = new JsonObject();
+                containingInstruction.addProperty("address", canonicalAddress(containing.getAddress()));
+                containingInstruction.addProperty("length", containing.getLength());
+                containingInstruction.addProperty("mnemonic", containing.getMnemonicString());
+                containingInstruction.addProperty("raw_disassembly", containing.toString());
+                containingInstruction.addProperty("provenance", "ghidra-listing");
+                result.add("containing_instruction", containingInstruction);
+            }
             for (String key : List.of("bytes", "length", "mnemonic", "raw_disassembly")) result.add(key, JsonNull.INSTANCE);
         } else {
             result.addProperty("status", "decoded");
@@ -2384,7 +2415,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
                 if (!match.matched()) {
                     continue;
                 }
-                JsonObject item = resultItem(entry.item, null);
+                JsonObject item = resultItem(entry.item, "procedure");
                 if (!match.aliases().isEmpty()) {
                     JsonArray aliases = new JsonArray();
                     for (String alias : match.aliases()) aliases.add(alias);
@@ -2399,7 +2430,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (!matcher.matches(item.value)) {
                 continue;
             }
-            items.add(resultItem(item, null));
+            items.add(resultItem(item, procedureSearch ? "procedure" : "string"));
         }
         return items;
     }
@@ -3724,7 +3755,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
         return result;
     }
 
-    private static JsonObject callRelationshipCoverage(
+    private JsonObject callRelationshipCoverage(
             CallBoundaryObservation calls, Integer missingCallers) {
         JsonObject coverage = completeResolvedCallCoverage();
         Integer omitted = calls == null ? null : calls.unrepresentedCalleeCalls();
@@ -3741,7 +3772,7 @@ public final class ReaGhidraBridge extends HeadlessScript {
             if (calls == null && missingCallers == null) directions.add("callers");
             directions.add("callees");
             coverage.add("limited_directions", directions);
-            return coverage;
+            return qualifyProjectCallCoverage(coverage, calls, missingCallers);
         }
         JsonArray limitations = new JsonArray();
         if (callerLimitation != null) limitations.add(callerLimitation);
@@ -3755,6 +3786,35 @@ public final class ReaGhidraBridge extends HeadlessScript {
             coverage.add("limitations", limitations);
             coverage.add("limited_directions", directions);
         }
+        return qualifyProjectCallCoverage(coverage, calls, missingCallers);
+    }
+
+    private JsonObject qualifyProjectCallCoverage(
+            JsonObject coverage, CallBoundaryObservation calls, Integer missingCallers) {
+        if (!existingProject) return coverage;
+        String reason = "The selected project's prior analysis completeness is unknown; " +
+            "the recorded call relationships may omit undiscovered callers or callees.";
+        String status = coverage.get("status").getAsString();
+        // A single-direction read with known omissions is still partial; an
+        // unknown project history adds a limitation rather than erasing them.
+        if (status.equals("partial") && (calls == null || missingCallers == null)) {
+            coverage.getAsJsonArray("limitations").add(reason);
+            return coverage;
+        }
+        if (status.equals("unknown")) reason += " " + coverage.get("reason").getAsString();
+        if (status.equals("partial")) {
+            for (JsonElement limitation : coverage.getAsJsonArray("limitations"))
+                reason += " " + limitation.getAsString();
+        }
+        JsonArray directions = new JsonArray();
+        if (missingCallers != null || (calls == null && missingCallers == null))
+            directions.add("callers");
+        if (calls != null || (calls == null && missingCallers == null))
+            directions.add("callees");
+        coverage.addProperty("status", "unknown");
+        coverage.addProperty("reason", reason);
+        coverage.remove("limitations");
+        coverage.add("limited_directions", directions);
         return coverage;
     }
 

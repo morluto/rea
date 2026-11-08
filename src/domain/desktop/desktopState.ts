@@ -78,6 +78,7 @@ export const desktopStatePathSchema = z.strictObject({
       "selected_path",
       "dconf_application_keys",
       "desktop_service",
+      "desktop_trash",
     ]),
   ),
   /** The latest readable version's format. */

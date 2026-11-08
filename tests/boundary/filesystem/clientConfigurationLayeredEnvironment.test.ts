@@ -76,7 +76,6 @@ it.each(["missing", "empty", "legacy", "native"] as const)(
       await configureClientConfiguration(client, {}, command),
     ).toMatchObject({ status: "configured" });
     const files = await readClientConfigurationFiles(client);
-    expect(files.ok).toBe(true);
     if (!files.ok) throw new Error(files.error.detail);
     const effective = effectiveClientConfiguration(files.value);
     expect(effective?.dialect).toBe("opencode_v2");
@@ -162,12 +161,10 @@ it.skipIf(process.platform !== "win32").each([
       ),
     ).toMatchObject({ status: "configured" });
     const sources = await readClientConfigurationFiles(fixture.client);
-    expect(sources.ok).toBe(true);
     if (!sources.ok) throw new Error(sources.error.detail);
     const environment = clientRegistrationEnvironmentDetails(
       effectiveClientConfiguration(sources.value),
     );
-    expect(environment.ok).toBe(true);
     if (!environment.ok) throw environment.error;
     expect(environment.value.timeoutInputs?.analysisProvider).toBe("ghidra");
     expect(environment.value.values).toHaveProperty(

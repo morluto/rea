@@ -572,7 +572,6 @@ describe("JavaScript application symbolic coverage", () => {
       format: "directory",
       source_paths: ["self.js", "mutual.js"],
     });
-    expect(result.ok).toBe(true);
     if (!result.ok) throw result.error;
     const normalized = javascriptApplicationAnalysisResultSchema.parse(
       result.value.normalized_result,

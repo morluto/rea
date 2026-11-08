@@ -1,7 +1,6 @@
 import { z } from "zod";
 
 import { emptyArraySchema } from "../emptyArraySchema.js";
-import { evidenceSchema } from "../evidence.js";
 import { evidenceInputSchema } from "../evidenceReference.js";
 import {
   cliMetadataGuidSchema,
@@ -137,11 +136,6 @@ const distinctNativeSources = (
     ids.add(evidence.evidence_id);
   }
 };
-
-/** Complete record inputs used by the managed semantic owner and fixture builders. */
-export const managedNativeVerificationInputSchema = z
-  .strictObject(nativeVerificationShape(evidenceSchema))
-  .superRefine(distinctNativeSources);
 
 /** Public workflow sources may be inline records or exact retained identities. */
 export const managedNativeVerificationRequestSchema = z

@@ -4,7 +4,7 @@ import { z } from "zod";
 import {
   analysisInputErrorFromIssues,
   projectInputIssues,
-  projectInputIssuesWithinBudget,
+  projectInputIssueGroupsWithinBudget,
 } from "./inputIssueProjection.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
@@ -12,6 +12,10 @@ import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
 import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
+
+const projectFlattenedIssueGroups = (
+  ...args: Parameters<typeof projectInputIssueGroupsWithinBudget>
+) => projectInputIssueGroupsWithinBudget(...args)?.flat();
 
 const officialContract = (
   name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
@@ -322,7 +326,7 @@ describe("input issue argument guidance suppression", () => {
     expect(action).not.toContain(suppressedGuidance!.remediation);
     expect(action).toContain("annotate_native_function");
 
-    const budgeted = projectInputIssuesWithinBudget(
+    const budgeted = projectFlattenedIssueGroups(
       parsed.error.issues,
       inputWithBoth,
       1024,
@@ -371,10 +375,10 @@ describe("bounded input issue projection", () => {
     const parsed = schema.safeParse(input);
     if (parsed.success) throw new Error("expected invalid input");
     expect(
-      projectInputIssuesWithinBudget(parsed.error.issues, input, 32_768),
+      projectFlattenedIssueGroups(parsed.error.issues, input, 32_768),
     ).toEqual(projectInputIssues(parsed.error.issues, input));
     expect(
-      projectInputIssuesWithinBudget(parsed.error.issues, input, 300),
+      projectFlattenedIssueGroups(parsed.error.issues, input, 300),
     ).toBeUndefined();
   });
 
@@ -411,7 +415,7 @@ describe("bounded input issue projection", () => {
       errors: [[{ ...child, path }]],
     };
     expect(
-      projectInputIssuesWithinBudget([largePathIssue], input, 1024),
+      projectFlattenedIssueGroups([largePathIssue], input, 1024),
     ).toBeUndefined();
     expect(copied).toBe(false);
   });
@@ -424,10 +428,10 @@ describe("bounded input issue projection", () => {
       message: "Unrecognized keys",
     };
     expect(projectInputIssues([issue], {})).toHaveLength(10);
-    expect(projectInputIssuesWithinBudget([issue], {}, 5000)).toBeUndefined();
-    expect(projectInputIssuesWithinBudget([issue], {}, 32_000)).toHaveLength(
-      10,
-    );
+    expect(projectFlattenedIssueGroups([issue], {}, 5000)).toBeUndefined();
+    const groups = projectInputIssueGroupsWithinBudget([issue], {}, 32_000);
+    expect(groups).toHaveLength(1);
+    expect(groups?.[0]).toHaveLength(10);
   });
 
   it("bounds pre-allocation budget accounting for guided unrecognized keys", () => {
@@ -437,12 +441,12 @@ describe("bounded input issue projection", () => {
       keys: ["address"],
       message: "Unrecognized keys: address",
     };
-    expect(projectInputIssuesWithinBudget([issue], {}, 800)).toEqual([
+    expect(projectFlattenedIssueGroups([issue], {}, 800)).toEqual([
       { path: ["address"], reason: "unknown_argument" },
     ]);
 
     expect(
-      projectInputIssuesWithinBudget(
+      projectFlattenedIssueGroups(
         [issue],
         {},
         800,
@@ -456,7 +460,7 @@ describe("bounded input issue projection", () => {
     );
     expect(guidance).toBeDefined();
     expect(
-      projectInputIssuesWithinBudget(
+      projectFlattenedIssueGroups(
         [issue],
         {},
         2000,

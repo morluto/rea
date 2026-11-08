@@ -223,14 +223,18 @@ export const exportedStateFiles = (
 /** Text safe inside a Python triple-quoted docstring. */
 const docText = (value: string): string => value.replace(/["\\]/gu, "'");
 
-const shellQuote = (value: string): string =>
+/** A value as one single-quoted shell word. */
+export const shellQuote = (value: string): string =>
   `'${value.replaceAll("'", `'"'"'`)}'`;
 
 /**
- * The launch command for the computer. Arguments that are or start with a
- * path under the captured home, and `<option>=<path>` values that do, are
- * respelled under the computer user's `$HOME` through `sh -c`, since the
- * declared command is not expanded by a shell.
+ * The launch command for the computer, through `sh -c` since the declared
+ * command is not expanded by a shell. It starts in the captured working
+ * directory, which the framework would otherwise replace with the app's own
+ * folder, where an open or save dialog would show build files. That
+ * directory, arguments that are or start with a path under the captured home,
+ * and `<option>=<path>` values that do, are respelled under the computer
+ * user's `$HOME`.
  */
 export const launchCommand = (
   argv: readonly string[],
@@ -254,25 +258,11 @@ export const launchCommand = (
         : `${shellQuote(argument.slice(0, equals + 1))}${value}`)
     );
   };
-  // The framework launches from the app's folder; a missing working directory must not stop the boot.
-  // A relative program path such as `./app` needs that directory too.
-  const relative = argv.some(
-    (argument, index) =>
-      argument.length > 0 &&
-      !argument.startsWith("/") &&
-      !argument.startsWith("-") &&
-      (index > 0 || argument.includes("/")),
-  );
   const respelled = argv.map(respell);
-  if (!relative && respelled.every((argument) => argument === undefined))
-    return argv;
   const command = `exec ${argv.map((argument, index) => respelled[index] ?? shellQuote(argument)).join(" ")}`;
   const directory = underHome(workingDirectory) ?? shellQuote(workingDirectory);
-  return [
-    "sh",
-    "-c",
-    relative ? `cd ${directory} 2>/dev/null; ${command}` : command,
-  ];
+  // A missing working directory must not stop the boot.
+  return ["sh", "-c", `cd ${directory} 2>/dev/null; ${command}`];
 };
 
 /** A Python string literal; JSON escapes are valid Python escapes. */
