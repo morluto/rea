@@ -1640,6 +1640,11 @@ const MUTABLE_BUILTIN_DEFAULTS = new Set([
   // `EventEmitter.prototype` makes `createReadStream(p, {start:-1})` return a handle
   // while the unmutated call throws `ERR_OUT_OF_RANGE`.
   "events",
+  // `fs.createReadStream` builds its `StringDecoder` from this module at first use, so a
+  // replaced export changes which encodings a read stream accepts. Measured on Node
+  // 24.22.1 with an admitting `Buffer.isEncoding`, replacing `StringDecoder` through the
+  // default export constructs a handle from `{encoding:"nope"}`.
+  "string_decoder",
 ]);
 
 /** Mutable default/object selections share CommonJS identity; namespace slots do not. */
@@ -1674,7 +1679,10 @@ export const semanticMutableBuiltinOrigin = <Key = never>(
         (path[0] === "Readable" ||
           path[0] === "Writable" ||
           path[0] === "Stream")) ||
-      (specifier === "events" && path[0] === "EventEmitter"))
+      (specifier === "events" && path[0] === "EventEmitter") ||
+      // The default-import form is handled by the `default` arm above; this covers a
+      // named `StringDecoder` import, whose binding is the same constructor object.
+      (specifier === "string_decoder" && path[0] === "StringDecoder"))
   )
     return { specifier, path };
   if (specifier === "process" && (path[0] === "env" || path[0] === "argv"))

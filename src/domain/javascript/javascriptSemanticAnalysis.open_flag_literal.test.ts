@@ -500,6 +500,33 @@ it.each([
   },
 );
 
+it.each([
+  [
+    "a default import",
+    `import sd from "node:string_decoder";
+     sd.StringDecoder = class { write(c) { return String(c); } end() { return ""; } };`,
+  ],
+  [
+    "a named StringDecoder import",
+    `import { StringDecoder } from "node:string_decoder";
+     StringDecoder.extra = 1;`,
+  ],
+] as const)(
+  "retains a read stream when the decoder is replaced through %s",
+  (_label, setup) => {
+    // `fs.createReadStream` builds its `StringDecoder` from this module at first use.
+    // Measured on Node 24.22.1 with an admitting `Buffer.isEncoding`, replacing the
+    // export through an ESM default import constructs a handle from `{encoding:"nope"}`.
+    const operations = analyzeJavaScriptSemantics(`
+      ${setup}
+      import fs from "node:fs";
+      Buffer.isEncoding = () => true;
+      const stream = fs.createReadStream("input", { encoding: "nope" });
+      stream.close();
+    `).resourceOperations;
+    expect(operations.filter(({ kind }) => kind === "acquire")).toHaveLength(1);
+  },
+);
 it("retains a read stream mutated through the events root export", () => {
   // The CommonJS root export of `node:events` *is* the constructor, so
   // `const EventEmitter = require("node:events")` records its mutation at
