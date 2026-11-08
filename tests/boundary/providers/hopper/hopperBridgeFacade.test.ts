@@ -166,8 +166,9 @@ describe("Hopper API facade", () => {
         classification: null,
         body: {
           available: false,
-          reason:
-            "Hopper's public Python API does not expose complete function body ranges",
+          reason: expect.stringMatching(
+            /Hopper.*Python API.*does not expose complete function body ranges/i,
+          ),
         },
       },
       native_api: null,

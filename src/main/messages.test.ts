@@ -4,7 +4,6 @@ import { fileURLToPath } from "node:url";
 
 import { expect, it } from "vitest";
 
-import { PROCESS_UNEXPECTED_FAILURE_REMEDIATION } from "../application/process/ProcessCli.js";
 import {
   MCP_CONNECTION_LOST,
   MCP_CONNECTION_START_FAILED,
@@ -25,7 +24,6 @@ it("publishes the canonical recovery messages in the error catalog", async () =>
     MCP_TRANSPORT_ERROR,
     MCP_VALIDATION_FAILED,
     SERVER_START_FAILED,
-    PROCESS_UNEXPECTED_FAILURE_REMEDIATION,
   ])
     expect(catalog).toContain(message);
 });

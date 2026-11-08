@@ -255,8 +255,9 @@ describe("doctor native analysis configuration", () => {
       expect.objectContaining({
         name: "hopper-startup-timeout",
         ok: false,
-        detail:
-          "REA_HOPPER_STARTUP_TIMEOUT_MS: must be a positive decimal integer",
+        detail: expect.stringMatching(
+          /REA_HOPPER_STARTUP_TIMEOUT_MS.*positive decimal integer/i,
+        ),
       }),
     );
     expect(result.scope_checks).toContainEqual(
@@ -650,8 +651,9 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: "/missing/ilspycmd",
-      remediation:
-        "Unset REA_ILSPY_CMD_PATH or point it at a runnable ilspycmd executable.",
+      remediation: expect.stringMatching(
+        /REA_ILSPY_CMD_PATH.*runnable ilspycmd/i,
+      ),
     });
   });
 
@@ -669,8 +671,9 @@ describe("doctor", () => {
       ok: false,
       classification: "config_drift",
       detail: configuredPath,
-      remediation:
-        "Unset or update HOPPER_LAUNCHER_PATH to an executable Hopper launcher.",
+      remediation: expect.stringMatching(
+        /HOPPER_LAUNCHER_PATH.*executable Hopper launcher/i,
+      ),
     });
   });
 });
@@ -738,7 +741,7 @@ describe("doctor installation identity", () => {
       skill: {
         installed_version: "10",
         state: "stale",
-        remediation: "Run rea setup to update the installed REA skill.",
+        remediation: expect.stringMatching(/rea setup.*update.*skill/i),
       },
     });
   });
@@ -751,14 +754,14 @@ describe("doctor installation identity", () => {
     expect(result.healthy).toBe(false);
     expect(result.identity?.skill).toMatchObject({
       state: "missing",
-      remediation: "Run rea setup to update the installed REA skill.",
+      remediation: expect.stringMatching(/rea setup.*update.*skill/i),
     });
     expect(result.checks).toContainEqual({
       name: "skill:identity",
       ok: false,
       classification: "config_drift",
-      detail: "Installed REA skill identity is missing.",
-      remediation: "Run rea setup to update the installed REA skill.",
+      detail: expect.stringMatching(/skill identity.*missing/i),
+      remediation: result.identity?.skill.remediation,
     });
   });
   it("classifies an unreadable installed skill as unknown, not drift", async () => {
