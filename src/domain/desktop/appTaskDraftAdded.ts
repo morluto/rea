@@ -282,7 +282,7 @@ export const recordChecks = (
               at,
               { value, children: field.children },
               undefined,
-            ).check,
+            ),
           ];
     })
     .slice(0, MAX_FIELD_CHECKS);

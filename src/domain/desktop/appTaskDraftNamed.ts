@@ -591,19 +591,16 @@ export const namedDraft = (
     referenceRoots: (view) => referenceRoots(tree, view),
   });
   const guards = edited
-    ? [
-        ...texts.guards,
-        ...draftGuards(
-          {
-            file,
-            ends,
-            named,
-            noisy: (pointer) => noise(pointer) !== undefined,
-            chars: options.limit.chars,
-          },
-          suggested,
-        ),
-      ].slice(0, MAX_GUARDS)
+    ? draftGuards(
+        {
+          file,
+          ends,
+          named,
+          noisy: (pointer) => noise(pointer) !== undefined,
+          chars: options.limit.chars,
+        },
+        suggested,
+      ).slice(0, MAX_GUARDS)
     : [];
   return {
     suggested,
