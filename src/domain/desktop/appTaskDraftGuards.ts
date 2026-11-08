@@ -1,12 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import { collapseWhitespace, type DesktopTaskCheckInput } from "./appTask.js";
 import { sameJson } from "./appTaskChecks.js";
-import {
-  holdsSplitDate,
-  isCoordinates,
-  isRenumberedKey,
-  isStamp,
-} from "./appTaskDraftNoise.js";
+import { holdsSplitDate, isCoordinates, isStamp } from "./appTaskDraftNoise.js";
 import { holdsNoisyText } from "./appTaskDraftText.js";
 import { decimalOf, valueEqualsCheck } from "./appTaskDraftScalars.js";
 import {
@@ -127,12 +122,6 @@ const guardAt = (
     : undefined;
 };
 
-/** Whether a selector key keys a member by a value the app renumbers, as Gnumeric's `[@ExprID=2]`. */
-const renumberedKey = (key: string) =>
-  [...key.matchAll(/\[@(?<attribute>[^=\]]+)=/gu)].some(({ groups }) =>
-    isRenumberedKey(groups?.attribute ?? ""),
-  );
-
 /** A like sibling of a checked member: its pointer by the selector it pairs by at both ends, and its element at the seed. */
 interface Sibling {
   readonly member: string;
@@ -215,7 +204,6 @@ const siblingsOf = (
       const element = partner === undefined ? undefined : older[partner];
       return key === undefined ||
         /^\d+$/u.test(key) ||
-        renumberedKey(key) ||
         partner === undefined ||
         pairing.older.keys[partner] !== key ||
         !isXmlElement(element)
@@ -309,7 +297,6 @@ const rekeyed = (
       !value.includes("][") &&
       !isStamp(value) &&
       !isPlaceholder(value) &&
-      !isRenumberedKey(key) &&
       !isSaveNumberedId(key, value)
         ? [{ prefix: "@" as const, key, value }]
         : [],
@@ -383,7 +370,6 @@ const guardField = (
       typeof value === "string" &&
       !selected.has(key) &&
       !isIdentifyingAttribute(key) &&
-      !isRenumberedKey(key) &&
       !isStamp(value) &&
       !numberedInOrder(all, String(sibling.element.name), key) &&
       varies(["attributes", escapeToken(key)])
