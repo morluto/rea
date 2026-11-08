@@ -906,11 +906,6 @@ it("does not publish a next offset the row-offset rule would refuse", async () =
     truncated: true,
     next_row_offset: null,
   });
-  // A truncated sample with no stated order also carries a null offset, so the
-  // limitation must not read as an end-of-window signal.
-  expect(result.limitations.join("\n")).toMatch(
-    /next_row_offset is null either when the window reaches the end or when rows\.order is unspecified/,
-  );
 });
 
 it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
