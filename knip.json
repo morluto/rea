@@ -40,6 +40,11 @@
     "types": "error",
     "nsTypes": "error",
     "enumMembers": "error",
-    "duplicates": "error"
-  }
+    "duplicates": "error",
+    "unresolved": "error"
+  },
+  "ignoreUnresolved": [
+    "^#web-bundle-analysis-worker$",
+    "^#javascript-analysis-worker$"
+  ]
 }
