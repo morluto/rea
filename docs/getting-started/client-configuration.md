@@ -109,7 +109,25 @@ unfamiliar prefix. The unavailable fork reported in
 For a client that supports MCP catalog refresh, set
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` in REA's server environment and restart
 the connection. REA then advertises a small initial catalog and loads other
-named tools through `discover_tools`. Setup preserves this explicit setting.
+named tools through `discover_tools`. Setup can record the explicit choice:
+
+```bash
+rea setup --client codex --tool-catalog-profile hot-cold --dry-run
+rea setup --client codex --tool-catalog-profile hot-cold
+```
+
+The plan shows `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` before approval. This
+selects server catalog loading; enable and verify the client's catalog refresh
+separately. Setup preserves its existing feature flags and tool approval lists.
+To restore upfront advertisement, use `--tool-catalog-profile full`, then
+reconnect. Omitting the option preserves the saved profile and keeps `full` for
+a new registration. Existing explicit environment selections are also retained.
+
+Setup does not infer refresh from a client name or enable experimental client
+features. The verified Codex trial below covers one version with an explicit
+flag; FastMCP was tested with explicit refresh calls. Neither establishes
+automatic refresh for every installed version or other client. Keep `full`
+until refresh is established for the selected client and configuration.
 See the [discovery contract](../reference/mcp-contracts.md#hotcold-catalog-discovery) for
 pagination, identity and family-scope semantics.
 

@@ -754,3 +754,26 @@ describe("setup tool family scope", () => {
     );
   });
 });
+
+it("discloses the selected catalog profile before applying it with the family scope", async () => {
+  const host = new FakeSetupHost();
+  host.doctorHealthy = true;
+  host.skill = "unchanged";
+  host.clients = [{ name: "cursor", configPath: "/cursor.json" }];
+  const selection = {
+    clientIds: ["cursor"],
+    toolCatalogProfile: "hot-cold" as const,
+    toolFamilies: "session,application",
+  };
+  const plan = await runSetup({ ...options(false), ...selection }, host);
+  expect(plan.plannedActions[0]?.detail).toContain(
+    "REA_MCP_TOOL_CATALOG_PROFILE=hot-cold",
+  );
+  expect(host.configuredProviderEnvironments).toEqual([]);
+  const applied = await runSetup({ ...options(true), ...selection }, host);
+  expect(applied.status).toBe("ready");
+  expect(host.configuredProviderEnvironments).toContainEqual({
+    REA_MCP_TOOL_FAMILIES: "session,application",
+    REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold",
+  });
+});

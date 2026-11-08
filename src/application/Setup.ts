@@ -131,13 +131,18 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
-  // The advertised family scope is a registration setting, not a detected
-  // provider fact; merge it after discovery so it cannot suppress the
+  // Catalog loading and family scope are registration settings, not detected
+  // provider facts; merge them after discovery so they cannot suppress the
   // Hopper installation offer on an otherwise unconfigured machine.
   if (options.toolFamilies !== undefined)
     providerEnvironment = {
       ...providerEnvironment,
       REA_MCP_TOOL_FAMILIES: options.toolFamilies,
+    };
+  if (options.toolCatalogProfile !== undefined)
+    providerEnvironment = {
+      ...providerEnvironment,
+      REA_MCP_TOOL_CATALOG_PROFILE: options.toolCatalogProfile,
     };
   clientStates = discovery.clientStates;
   const clientSelectionAllowed =
