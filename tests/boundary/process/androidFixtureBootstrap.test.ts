@@ -108,7 +108,8 @@ for (const { name, statuses, body, exitCode, requests, error } of [
 import { writeFileSync } from "node:fs";
 const statuses = ${JSON.stringify(statuses)};
 const requests = [];
-globalThis.fetch = async (url) => {
+globalThis.fetch = async (url, options) => {
+  if (options.headers.Accept !== "application/octet-stream") throw new Error("Release assets require binary content negotiation");
   requests.push(url);
   writeFileSync(${JSON.stringify(calls)}, JSON.stringify(requests));
   const status = statuses.shift();

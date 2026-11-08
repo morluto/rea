@@ -203,7 +203,9 @@ separately checks binary input, backpressure, EOF and pending-write job closure.
 `REA_JADX_MCP_JAR` for jadx-headless-mcp 0.7.1. Set `REA_ANDROID_TEST_APK` to the
 fixed public ApiDemos v6.0.18 fixture. Obtain both with the explicit
 `npm run fixtures:android` command; files are SHA-256 verified and
-kept under ignored `_reference/`. Downloads retry HTTP 429/502/503/504 up to three
+kept under ignored `_reference/`. The pinned JADX and APK release assets are downloaded
+through GitHub's asset API with binary content negotiation, using the same SHA-256 pins.
+Downloads retry HTTP 429/502/503/504 up to three
 attempts within one two-minute deadline per artifact. Checksum mismatches and
 other HTTP errors fail immediately; existing mismatched files are not overwritten.
 No Gradle build, Android SDK, emulator or

@@ -4,7 +4,7 @@ export const JADX_RELEASE = Object.freeze({
   version: "0.7.1",
   revision: "5844800a486d2248fa949b74c9896285f5b54de2",
   sha256: "6e5eacf500b64292bfb73c49797c1958f6ee44646e43e868039ae7feb573ff75",
-  url: "https://github.com/1013503897/jadx-headless-mcp/releases/download/v0.7.1/jadx-headless-mcp-0.7.1-all.jar",
+  url: "https://api.github.com/repos/1013503897/jadx-headless-mcp/releases/assets/571963366",
 });
 
 /** Identity of REA's metadata bridge, distinct from the producing engine. */

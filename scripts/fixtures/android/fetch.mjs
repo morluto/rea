@@ -27,7 +27,10 @@ const fetchFixture = async (url) => {
   // Retries share the existing deadline rather than extending the CI budget.
   const signal = AbortSignal.timeout(120_000);
   for (let attempt = 1; ; attempt++) {
-    const response = await fetch(url, { signal });
+    const response = await fetch(url, {
+      signal,
+      headers: { Accept: "application/octet-stream" },
+    });
     if (
       ![429, 502, 503, 504].includes(response.status) ||
       attempt === maxAttempts
