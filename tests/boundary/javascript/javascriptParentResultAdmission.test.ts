@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
+import { setTimeout as delay } from "node:timers/promises";
 import { afterAll, expect, it, vi } from "vitest";
 
 const heapObservation = vi.hoisted(() => ({
   reclaimedBytes: 0,
   remainingBytes: 320 * 1024 * 1024,
+  checkpointWaitUntilMs: 0,
 }));
 
 // Give the parent a stable 64 MiB result envelope after its transfer reserve.
@@ -27,6 +29,19 @@ vi.mock("node:v8", async (importOriginal) => {
   };
 });
 
+vi.mock("node:fs/promises", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs/promises")>();
+  return {
+    ...actual,
+    readFile: async (...args: Parameters<typeof actual.readFile>) => {
+      const waitMs = heapObservation.checkpointWaitUntilMs - performance.now();
+      if (waitMs > 0 && String(args[0]).endsWith(".static.json"))
+        await delay(waitMs);
+      return actual.readFile(...args);
+    },
+  };
+});
+
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
@@ -44,6 +59,7 @@ import { spawnOwnedProviderProcess } from "../../../src/process/ProviderProcess.
 import { staticCheckpointFacts } from "../../fixtures/javascriptWorkerCheckpoint.js";
 
 afterAll(() => {
+  vi.doUnmock("node:fs/promises");
   vi.doUnmock("node:v8");
   vi.resetModules();
 });
@@ -175,98 +191,114 @@ it("keeps parent-budget recovery when capacity is exhausted after a static check
   }
 });
 
-it("stops timeout_policy record-and-continue when a recovered checkpoint after timeout exhausts parent capacity", async () => {
-  heapObservation.remainingBytes = 320 * 1024 * 1024;
-  const makeSourceFile = (
-    path: string,
-    value: string,
-  ): JavaScriptArtifactFile => ({
-    path,
-    sha256: createHash("sha256").update(value).digest("hex"),
-    container_sha256: "1".repeat(64),
-    bytes: Buffer.byteLength(value),
-    inventory_artifact_id: `fixture-${path}`,
-    kind: "javascript",
-    unpacked: false,
-    text: { included: true, value },
-  });
-  const firstFile = makeSourceFile(
-    "a-late-timeout.mjs",
-    "export const first = 1;",
-  );
-  const secondFile = makeSourceFile(
-    "b-never-started.mjs",
-    "export const second = 2;",
-  );
-  const fileSet: JavaScriptArtifactFileSet = {
-    files: [firstFile, secondFile],
-    unavailable_relevant_files: [],
-    containers: [],
-    text_bytes_read: firstFile.bytes + secondFile.bytes,
-    invalid_utf8_files: 0,
-  };
-  const checkpoint = JSON.stringify(
-    javaScriptWorkerStaticAnalysisSchema.parse(staticCheckpointFacts),
-  );
-  const ready =
-    'process.stdout.write(JSON.stringify({kind:"ready",heap_limit_bytes:require("node:v8").getHeapStatistics().heap_size_limit})+"\\n");';
-  let launches = 0;
-  const worker = new JavaScriptAnalysisWorker(
-    { heapMb: 128, timeoutMs: 1_500 },
-    async (request) => {
-      launches += 1;
-      return spawnOwnedProviderProcess({
-        ...request,
-        arguments: [
-          "-e",
-          `${ready} const fs=require("node:fs"); const checkpoint=${JSON.stringify(checkpoint)}; require("node:readline").createInterface({input:process.stdin}).on("line", line => { const job=JSON.parse(line); if(job.file) { fs.writeFileSync(job.id+".static.json", checkpoint); process.stdout.write(JSON.stringify({kind:"phase",id:job.id,phase:"static"})+"\\n"); } });`,
-        ],
-      });
-    },
-    2,
-  );
-  try {
-    const outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
-      fileSet,
-      worker,
-      createJavaScriptSemanticGraphProjection(),
-      async () => {},
-      undefined,
-      async (_file, phase) => {
-        if (phase === "static")
-          heapObservation.remainingBytes = 128 * 1024 * 1024;
-      },
-      new Set(),
-      [],
-      "record-and-continue",
-    );
-    expect(launches).toBe(1);
-    expect(outcome.interruption).toBeInstanceOf(
-      AnalysisResourceConstraintError,
-    );
-    expect(outcome.interruption).toMatchObject({
-      _tag: "AnalysisResourceConstraintError",
-      reportedLimits: { parent_result_budget_exhausted: true },
-    });
-    expect(outcome.interruption?.secondaryFailures).toHaveLength(1);
-    expect(outcome.interruption?.secondaryFailures[0]).toBeInstanceOf(
-      AnalysisTimeoutError,
-    );
-    expect(outcome.analysis.files).toHaveLength(2);
-    expect(outcome.analysis.files[0]?.file.path).toBe("a-late-timeout.mjs");
-    expect(outcome.analysis.files[0]?.javascript?.parse_status).toBe(
-      "complete",
-    );
-    expect(outcome.analysis.files[0]?.analysis_failure?.limits).toMatchObject({
-      parent_result_budget_exhausted: true,
-    });
-    expect(outcome.analysis.files[1]?.file.path).toBe("b-never-started.mjs");
-    expect(outcome.analysis.files[1]?.javascript).toBeNull();
-    expect(outcome.analysis.files[1]?.analysis_failure?.status).toBe(
-      "not-started",
-    );
-  } finally {
+it.each([
+  "unadvertised-checkpoint",
+  "advertised-checkpoint-racing-timeout",
+] as const)(
+  "stops timeout_policy record-and-continue when parent capacity is exhausted (%s)",
+  async (mode) => {
+    const timeoutMs = 2_000;
     heapObservation.remainingBytes = 320 * 1024 * 1024;
-    await worker.close();
-  }
-});
+    heapObservation.checkpointWaitUntilMs = 0;
+    const makeSourceFile = (
+      path: string,
+      value: string,
+    ): JavaScriptArtifactFile => ({
+      path,
+      sha256: createHash("sha256").update(value).digest("hex"),
+      container_sha256: "1".repeat(64),
+      bytes: Buffer.byteLength(value),
+      inventory_artifact_id: `fixture-${path}`,
+      kind: "javascript",
+      unpacked: false,
+      text: { included: true, value },
+    });
+    const firstFile = makeSourceFile(
+      "a-late-timeout.mjs",
+      "export const first = 1;",
+    );
+    const secondFile = makeSourceFile(
+      "b-never-started.mjs",
+      "export const second = 2;",
+    );
+    const fileSet: JavaScriptArtifactFileSet = {
+      files: [firstFile, secondFile],
+      unavailable_relevant_files: [],
+      containers: [],
+      text_bytes_read: firstFile.bytes + secondFile.bytes,
+      invalid_utf8_files: 0,
+    };
+    const checkpoint = JSON.stringify(
+      javaScriptWorkerStaticAnalysisSchema.parse(staticCheckpointFacts),
+    );
+    const advertiseStatic = mode === "advertised-checkpoint-racing-timeout";
+    const ready =
+      'process.stdout.write(JSON.stringify({kind:"ready",heap_limit_bytes:require("node:v8").getHeapStatistics().heap_size_limit})+"\\n");';
+    let launches = 0;
+    const worker = new JavaScriptAnalysisWorker(
+      { heapMb: 128, timeoutMs },
+      async (request) => {
+        launches += 1;
+        return spawnOwnedProviderProcess({
+          ...request,
+          arguments: [
+            "-e",
+            `${ready} const fs=require("node:fs"); const {createHash}=require("node:crypto"); const checkpoint=${JSON.stringify(checkpoint)}; require("node:readline").createInterface({input:process.stdin}).on("line", line => { const job=JSON.parse(line); if(job.file) { fs.writeFileSync(job.id+".static.json", checkpoint); process.stdout.write(JSON.stringify({kind:"phase",id:job.id,phase:"static"})+"\\n"); if(${String(advertiseStatic)}) process.stdout.write(JSON.stringify({kind:"static",id:job.id,bytes:Buffer.byteLength(checkpoint),sha256:createHash("sha256").update(checkpoint).digest("hex")})+"\\n"); } });`,
+          ],
+        });
+      },
+      2,
+    );
+    try {
+      const outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
+        fileSet,
+        worker,
+        createJavaScriptSemanticGraphProjection(),
+        async () => {},
+        undefined,
+        async (_file, phase) => {
+          if (phase === "static") {
+            heapObservation.remainingBytes = 128 * 1024 * 1024;
+            if (advertiseStatic)
+              heapObservation.checkpointWaitUntilMs =
+                performance.now() + timeoutMs + 150;
+          }
+        },
+        new Set(),
+        [],
+        "record-and-continue",
+      );
+      expect(launches).toBe(1);
+      expect(outcome.interruption).toBeInstanceOf(
+        AnalysisResourceConstraintError,
+      );
+      expect(outcome.interruption).toMatchObject({
+        _tag: "AnalysisResourceConstraintError",
+        reportedLimits: { parent_result_budget_exhausted: true },
+      });
+      expect(outcome.interruption?.secondaryFailures).toHaveLength(1);
+      expect(outcome.interruption?.secondaryFailures[0]).toBeInstanceOf(
+        AnalysisTimeoutError,
+      );
+      expect(outcome.analysis.files).toHaveLength(2);
+      expect(outcome.analysis.files[0]?.file.path).toBe("a-late-timeout.mjs");
+      expect(outcome.analysis.files[0]?.javascript?.parse_status).toBe(
+        "complete",
+      );
+      expect(outcome.analysis.files[0]?.analysis_failure?.limits).toMatchObject(
+        {
+          parent_result_budget_exhausted: true,
+        },
+      );
+      expect(outcome.analysis.files[1]?.file.path).toBe("b-never-started.mjs");
+      expect(outcome.analysis.files[1]?.javascript).toBeNull();
+      expect(outcome.analysis.files[1]?.analysis_failure?.status).toBe(
+        "not-started",
+      );
+    } finally {
+      heapObservation.checkpointWaitUntilMs = 0;
+      heapObservation.remainingBytes = 320 * 1024 * 1024;
+      await worker.close();
+    }
+  },
+);

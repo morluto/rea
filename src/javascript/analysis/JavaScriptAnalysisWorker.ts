@@ -543,7 +543,6 @@ export class JavaScriptAnalysisWorker {
             capturedOutput: this.#captured(),
           }),
         );
-      error = this.#withParentCapacityFailure(file.path, error);
       this.#lastFailure = error;
       // Complete checkpoints remain readable after a child crash or cancellation.
       const cleanup = await this.#stop(error);
@@ -557,8 +556,9 @@ export class JavaScriptAnalysisWorker {
         } catch (checkpointCause: unknown) {
           void checkpointCause;
         }
-        error = this.#withParentCapacityFailure(file.path, error);
       }
+      if (cleanup === undefined)
+        error = this.#withParentCapacityFailure(file.path, error);
       result = err({ error: cleanup ?? error, javascript, module, projection });
     } finally {
       deadline?.dispose();
