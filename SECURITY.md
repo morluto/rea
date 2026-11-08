@@ -31,6 +31,12 @@ REA is not a general-purpose sandbox or a multi-tenant authorization service.
   application. See
   [runtime and network responsibilities](DISCLAIMER.md#runtime-network-and-device-operations).
 
+Standard client registrations use a dedicated stdio process. Opt-in
+[HTTP MCP](docs/reference/mcp-contracts.md#transports) uses plain HTTP without
+TLS or client authentication and shares provider/active-target state across
+protocol sessions. Its session ID is not a user-authentication or isolation
+boundary. Keep this endpoint within a trusted local or isolated environment.
+
 ### Intended security properties
 
 Static JavaScript and .NET inspection do not run the target application.
