@@ -110,7 +110,14 @@ const readFailure = (
             { failed_limit: cause.boundary },
             { cause, retryable: false, remediationAction: ZIP_LIMIT_RECOVERY },
           );
-    if (cause.reason === "path" || cause.reason === "format")
+    // "unavailable" is the reader's own refusal of a method or codec it cannot
+    // decode; leaving it to the generic branch would report an I/O failure for
+    // a file that was read fine.
+    if (
+      cause.reason === "path" ||
+      cause.reason === "format" ||
+      cause.reason === "unavailable"
+    )
       return inputFailure(cause.message, cause);
   }
   if (cause instanceof Error && "code" in cause) {
