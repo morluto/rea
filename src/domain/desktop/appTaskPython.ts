@@ -335,13 +335,15 @@ def _whole_text(check, entry):
         return False, problem
     if kind == "unresolved":
         return False, f"{at}: {found}"
+    if form == "zip":
+        truncated = _zip_leaves_out(view, check["pointer"])
     if kind == "none":
+        if truncated:
+            return False, f"the view of {check['file']} is truncated, so what it leaves out is unknown ({check['pointer']})"
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     if not (_text_at(view, check["pointer"]) if isinstance(found, str) else _is_element(found)):
         return False, f"{at} is {_shown(found)}, not an element, a text node or an attribute value"
-    # A text node is whole; an element's text is whole only if its view left nothing out.
-    if form == "zip":
-        truncated = _zip_leaves_out(view, check["pointer"])
+    # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
     if not isinstance(found, str) and truncated:
         return _undecided(check)
     return _compared_text(check, at, _element_text(found))

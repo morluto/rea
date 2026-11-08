@@ -1,5 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
-import { filterGhidraLiteralCandidates } from "./GhidraLiteralSearch.js";
+import {
+  filterGhidraLiteralCandidates,
+  GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+} from "./GhidraLiteralSearch.js";
 import { ghidraCheckpointSelectionSchema } from "./GhidraCheckpoint.js";
 import { ghidraProjectHistoryEvidence } from "./GhidraProjectHistory.js";
 import type { Evidence, EvidenceLocation } from "../domain/evidence.js";
@@ -1065,7 +1068,14 @@ export const createGhidraProviderClient = (input: {
           normalized,
           input.value.pattern,
         );
-        executionMetadata = { ...executionMetadata, rawResult: called.value };
+        executionMetadata = {
+          ...executionMetadata,
+          rawResult: called.value,
+          limitations: [
+            ...(executionMetadata.limitations ?? []),
+            GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+          ],
+        };
       }
       if (
         operation === "inspect_native_data_type" &&
@@ -1401,7 +1411,7 @@ const projectPrimarySessionError = (
         break;
       case "file_offset_ambiguous":
         recovery =
-          "Choose an explicit analysis address from the reported mappings. Use inspect_native_load_image to inspect the loaded mappings; REA does not select one automatically.";
+          "Choose a space-qualified analysis address from the reported mappings, such as ram:0x1000. A bare 0x... selector falls back to file-offset lookup and can report this ambiguity again. Use inspect_native_load_image to inspect the loaded mappings and Ghidra's observed default address space; REA does not select one automatically.";
         break;
       case "procedure_ambiguous":
         recovery =

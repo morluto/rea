@@ -308,8 +308,10 @@ process.stdin.on("data", (chunk) => {
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 1,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "1",
+      },
     });
     managers.push(manager);
 
@@ -369,8 +371,10 @@ process.stdin.on("data", (chunk) => {
       releaseSecondSpawn = resolve;
     });
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      maxSessions: 2,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_MAX_SESSIONS: "2",
+      },
       spawnProcess: async (options) => {
         spawnCalls += 1;
         if (spawnCalls === 2) {
@@ -470,7 +474,6 @@ process.stdin.resume();
     }
     const started = await starting;
     await closing;
-    expect(started.ok).toBe(false);
     if (started.ok) throw new Error("GDB unexpectedly started");
     expect(started.error._tag).toBe("AnalysisCancelledError");
     expect(await readFile(signalPath, "utf8")).toBe("SIGTERM");
@@ -556,8 +559,10 @@ setTimeout(() => process.exit(0), 250).unref();
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
     });
     managers.push(manager);
     const started = await manager.start();
@@ -613,8 +618,10 @@ setTimeout(() => process.exit(0), 250);
     );
     await chmod(provider, 0o700);
     const manager = createGdbManagerForInjectedPlatform({
-      environment: { REA_GDB_COMMAND: provider },
-      commandTimeoutMs: 40,
+      environment: {
+        REA_GDB_COMMAND: provider,
+        REA_DEBUGGER_COMMAND_DEADLINE_MS: "40",
+      },
       stopProcess: async () => ({
         status: "incomplete",
         reason: "simulated incomplete stop",
@@ -701,9 +708,14 @@ process.stdin.on("data", (chunk) => {
       controller.signal,
     );
     await new Promise((resolveDelay) => setTimeout(resolveDelay, 20));
-    controller.abort();
+    const reason = { source: "cancelled while queued" };
+    controller.abort(reason);
     const third = manager.execute(started.value.session_id, "third");
-    expect((await second).ok).toBe(false);
+    const cancelled = await second;
+    expect(cancelled).toMatchObject({
+      ok: false,
+      error: { _tag: "AnalysisCancelledError", cause: reason },
+    });
     expect((await first).ok).toBe(true);
     expect((await third).ok).toBe(true);
     await expect(readFile(overlapPath, "utf8")).rejects.toThrow();

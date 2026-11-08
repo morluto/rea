@@ -21,12 +21,17 @@ export interface TaskFileView {
   readonly error?: string | null;
 }
 
-/** How one check came out against one set of views. */
-export interface TaskCheckOutcome {
+/**
+ * How one check came out against one set of views. `undecided` marks a failure
+ * that shows nothing about the task: its file or table could not be read, or
+ * what would turn it may lie in what its view left out.
+ */
+export type TaskCheckOutcome = {
   readonly id: string;
   readonly passed: boolean;
   readonly description: string;
-}
+  readonly undecided?: true;
+};
 
 type Verdict = Omit<TaskCheckOutcome, "id">;
 type Check<Kind extends DesktopTaskCheck["kind"]> = Extract<
@@ -43,8 +48,16 @@ const shown = (value: JsonValue): string => {
   const text = JSON.stringify(value);
   return text.length > 200 ? `${text.slice(0, 200)}…` : text;
 };
+/** A failure for want of a readable or whole view, not for what the view holds. */
+const unread = (description: string): Verdict => ({
+  ...fail(description),
+  undecided: true,
+});
 const undecided = (file: string): Verdict =>
-  fail(`the view of ${file} is truncated, so what it leaves out is unknown`);
+  unread(`the view of ${file} is truncated, so what it leaves out is unknown`);
+/** A failure to find what a check looks for, undecided when its view is cut, since it may lie past what the view kept. */
+const notFound = (description: string, cut: boolean): Verdict =>
+  cut ? unread(description) : fail(description);
 
 const isRecord = (
   value: JsonValue | null | undefined,
@@ -119,7 +132,7 @@ const viewOf = (
 ): { view: JsonValue | null; truncated: boolean } | Verdict => {
   if (entry === undefined) return { view: null, truncated: false };
   if (typeof entry.error === "string")
-    return fail(`${check.file} has no view: ${entry.error}`);
+    return unread(`${check.file} has no view: ${entry.error}`);
   if (entry.format === null || entry.format === "binary")
     return fail(`${check.file} is binary and has no view`);
   if (format !== undefined && entry.format !== format)
@@ -164,7 +177,7 @@ const lineVerdict = (
     const missing = check.lines.find((line) => !lines.includes(line));
     return missing === undefined
       ? pass(`${file} has the line(s) ${shown(check.lines)}`)
-      : fail(`${file} has no line ${shown(missing)}`);
+      : notFound(`${file} has no line ${shown(missing)}`, read.truncated);
   }
   if (read.truncated) return undecided(file);
   if (check.kind === "lines_absent") {
@@ -215,8 +228,10 @@ const unreadOrPartial = (
 ): Verdict | undefined => {
   const zip = format === "zip";
   const viewless = zip ? viewlessEntryAt(read.view, check.pointer) : undefined;
-  if (viewless !== undefined)
-    return fail(`${check.file} entry ${viewless.name} ${viewless.reason}`);
+  if (viewless !== undefined) {
+    const description = `${check.file} entry ${viewless.name} ${viewless.reason}`;
+    return viewless.unread ? unread(description) : fail(description);
+  }
   // A selector tells one member from several only in an array the view holds whole.
   const partial = (array: string) =>
     zip ? zipArrayLeavesOut(read.view, array) : read.truncated;
@@ -225,12 +240,17 @@ const unreadOrPartial = (
 
 const NOTHING: Located = { kind: "none", searched: [], byPosition: [] };
 
-/** A value found where its pointer leads, or why it is none. */
-const noValue = (at: string, located: Located & { kind: "none" }) =>
-  fail(
+/** Why a pointer names no value, undecided when its view is cut, since the value may lie past what the view kept. */
+const noValue = (
+  at: string,
+  located: Located & { kind: "none" },
+  cut: boolean,
+): Verdict =>
+  notFound(
     located.reason === undefined
       ? `${at} has no value`
       : `${at}: ${located.reason}`,
+    cut,
   );
 
 const valueVerdict = (
@@ -257,7 +277,7 @@ const valueVerdict = (
     check.value !== null;
   if (whole && truncated) return undecided(check.file);
   if (check.kind === "value_equals") {
-    if (located.kind === "none") return noValue(at, located);
+    if (located.kind === "none") return noValue(at, located, truncated);
     if (check.tolerance !== undefined && typeof check.value === "number")
       return nearVerdict(at, located.value, check.value, check.tolerance);
     return sameJson(located.value, check.value)
@@ -362,7 +382,18 @@ const textVerdict = (
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
   if (problem !== undefined) return fail(problem);
   if (located.kind === "unresolved") return fail(`${at}: ${located.problem}`);
-  if (located.kind === "none") return noValue(at, located);
+  // A zip view's truncation that matters is the entry the pointer goes into.
+  // A child past the kept nodes of a cut view may still hold the text.
+  const truncated = zip
+    ? zipLeavesOutAt(read.view, check.pointer)
+    : read.truncated;
+  // A missing child of a cut view is the same undecided result in both evaluators.
+  if (located.kind === "none")
+    return truncated
+      ? unread(
+          `the view of ${check.file} is truncated, so what it leaves out is unknown (${check.pointer})`,
+        )
+      : noValue(at, located, false);
   const found = located.value;
   if (
     typeof found === "string"
@@ -372,10 +403,8 @@ const textVerdict = (
     return fail(
       `${at} is ${shown(found)}, not an element, a text node or an attribute value`,
     );
-  // A text node is whole; an element's text is whole only if its view left nothing out.
-  const truncated = zip
-    ? zipLeavesOutAt(read.view, check.pointer)
-    : read.truncated;
+  // A text node is whole. An element's text in a cut view may lack what the cut
+  // dropped from its middle, so its kept runs can read as text it never had.
   if (typeof found !== "string" && truncated) return undecided(check.file);
   return comparedText(check, at, elementText(found));
 };
@@ -396,7 +425,7 @@ const tableOf = (
     return undecided(check.file);
   const read = isRecord(table) ? table : {};
   if (typeof read.error === "string")
-    return fail(
+    return unread(
       `${check.file} table ${check.table} could not be read: ${read.error}`,
     );
   return {
@@ -444,7 +473,10 @@ const rowVerdict = (
   if (check.kind === "row_present")
     return n > 0
       ? pass(`${name} has a row with ${shown(check.where)}`)
-      : fail(`${name} has no row with ${shown(check.where)}`);
+      : notFound(
+          `${name} has no row with ${shown(check.where)}`,
+          table.truncated,
+        );
   if (table.truncated) return undecided(check.file);
   if (check.kind === "row_absent")
     return n === 0

@@ -864,6 +864,73 @@ describe("document-scoped snapshot admission", () => {
   });
 });
 
+it("retains producer-required xrefs without replaying a filesystem-writing query", () => {
+  const descriptor: CapabilityDescriptor = {
+    operation: "xrefs",
+    provider: ANALYSIS_SNAPSHOT_PROVIDER,
+    available: true,
+    reason: null,
+    effects: {
+      mutatesArtifact: false,
+      launchesProcess: true,
+      mayShowUi: false,
+      mayAccessNetwork: false,
+      mayWriteFilesystem: false,
+      changesPermissions: false,
+      requiresRoot: false,
+    },
+    limitations: [],
+  };
+  const xrefs = descriptor;
+  expect(
+    isSourceEvidenceRetainable("xrefs", xrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(isSnapshotCacheable("xrefs", xrefs, { address: "0x1000" })).toBe(
+    false,
+  );
+  expect(isSourceEvidenceRetainable("xrefs", xrefs, {})).toBe(false);
+  const writingXrefs = {
+    ...xrefs,
+    effects: { ...xrefs.effects, mayWriteFilesystem: true },
+  };
+  expect(
+    isSourceEvidenceRetainable("xrefs", writingXrefs, { address: "0x1000" }),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(true);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      writingXrefs,
+      {},
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSourceEvidenceRetainable(
+      "xrefs",
+      {
+        ...writingXrefs,
+        effects: { ...writingXrefs.effects, mutatesArtifact: true },
+      },
+      { address: "0x1000" },
+      { requiresSourceEvidence: true },
+    ),
+  ).toBe(false);
+  expect(
+    isSnapshotCacheable("xrefs", writingXrefs, {
+      address: "0x1000",
+      document: "fixture",
+    }),
+  ).toBe(false);
+});
+
 describe("analysis snapshot cache partitioning", () => {
   it.each<{
     operation: Exclude<AnalysisOperation, "health">;
@@ -986,7 +1053,9 @@ describe("analysis snapshot cache partitioning", () => {
     ).toMatchObject({
       provider: ANALYSIS_SNAPSHOT_PROVIDER,
       analysisProfile: ANALYSIS_SNAPSHOT_PROFILE,
-      limitations: [expect.stringContaining("local REA analysis snapshot")],
+      limitations: [
+        expect.stringMatching(/snapshot.*did not re.run the provider/iu),
+      ],
     });
     const changedProfile = createAnalysisProfile(ANALYSIS_SNAPSHOT_PROVIDER, {
       loader: "configured-override",
@@ -1128,60 +1197,87 @@ describe("relationship coverage snapshot replay", () => {
   });
 });
 
-it("does not replay pre-envelope call graphs under the revised workflow profile", () => {
-  const cache = new AnalysisSnapshotCache();
-  const target = ANALYSIS_SNAPSHOT_TARGET;
-  const profile = ANALYSIS_SNAPSHOT_PROFILE;
-  const operation = "get_call_graph" as const;
-  const parameters = { address: "0x1000", direction: "forward" };
-  const oldProfile = workflowAnalysisProfile(profile);
-  const revisedProfile = workflowAnalysisProfile(profile, operation);
-  const oldResult = { "0": [] };
-  cache.recordWorkflow({
-    target,
-    profile,
-    operation,
-    parameters,
-    execution: {
-      ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
-        subject: target,
-        rawResult: oldResult,
-      }),
-      analysisProfile: oldProfile,
+it.each([
+  {
+    operation: "get_call_graph",
+    parameters: { address: "0x1000", direction: "forward" },
+    result: { "0": [] },
+  },
+  {
+    operation: "trace_native_values",
+    parameters: { procedure: "0x1000" },
+    result: {
+      seed: "0x1000",
+      target_sha256: ANALYSIS_SNAPSHOT_TARGET.sha256,
+      nodes: [],
+      edges: [],
+      procedures: [],
+      unknowns: [],
+      total_nodes: 0,
+      total_edges: 0,
+      decompilations: 1,
+      next_offset: null,
+      page_truncated: false,
+      traversal: { status: "complete" },
+      truncated: false,
+      limitations: [],
     },
-  });
-  const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
-    operation,
-    confidence: "derived",
-    parameters,
-    result: oldResult,
-    rawResult: oldResult,
-    analysisProfile: oldProfile,
-  });
-  const exported = cache.export(
-    target,
-    profile,
-    createEvidenceBundle([evidence]),
-  );
-  if (!exported.ok) throw exported.error;
-  const snapshot = parseAnalysisSnapshot(exported.value);
-
-  expect(
-    snapshotEvidenceForQuery(snapshot, {
+  },
+] as const)(
+  "does not replay old $operation results under the revised workflow profile",
+  ({ operation, parameters, result: oldResult }) => {
+    const cache = new AnalysisSnapshotCache();
+    const target = ANALYSIS_SNAPSHOT_TARGET;
+    const profile = ANALYSIS_SNAPSHOT_PROFILE;
+    const oldProfile = workflowAnalysisProfile(profile);
+    const revisedProfile = workflowAnalysisProfile(profile, operation);
+    cache.recordWorkflow({
       target,
-      bindingProfile: profile,
+      profile,
       operation,
       parameters,
-      provider: REA_WORKFLOW_PROVIDER,
-      evidenceProfile: revisedProfile,
-    }),
-  ).toBeUndefined();
-  expect(
-    enhancedOutputSchemas.get_call_graph.safeParse({
-      normalized_result: oldResult,
-    }).success,
-  ).toBe(false);
-});
+      execution: {
+        ...createAnalysisExecution(oldResult, REA_WORKFLOW_PROVIDER, {
+          subject: target,
+          rawResult: oldResult,
+        }),
+        analysisProfile: oldProfile,
+      },
+    });
+    const evidence = createEvidence(target, REA_WORKFLOW_PROVIDER, {
+      operation,
+      confidence: "derived",
+      parameters,
+      result: oldResult,
+      rawResult: oldResult,
+      analysisProfile: oldProfile,
+    });
+    const exported = cache.export(
+      target,
+      profile,
+      createEvidenceBundle([evidence]),
+    );
+    if (!exported.ok) throw exported.error;
+    const snapshot = parseAnalysisSnapshot(exported.value);
+
+    expect(
+      snapshotEvidenceForQuery(snapshot, {
+        target,
+        bindingProfile: profile,
+        operation,
+        parameters,
+        provider: REA_WORKFLOW_PROVIDER,
+        evidenceProfile: revisedProfile,
+      }),
+    ).toBeUndefined();
+    if (operation === "get_call_graph")
+      expect(
+        enhancedOutputSchemas.get_call_graph.safeParse({
+          normalized_result: oldResult,
+        }).success,
+      ).toBe(false);
+  },
+);
 
 it("keeps older value-trace Evidence as history without replaying its source IDs", () => {
   const cache = new AnalysisSnapshotCache();
@@ -1303,6 +1399,41 @@ it("declines source-bearing snapshot entries while replaying omitted and empty s
     ).toBe("source-free observation");
   }
   expect(cache.entries()).toHaveLength(2);
+});
+
+it("distinguishes value-flow caveat propagation from source-ownership revisions", () => {
+  const upstream = ANALYSIS_SNAPSHOT_PROFILE;
+  const prior = {
+    ...workflowAnalysisProfile(upstream).parameters,
+    value_flow_absence: "recorded-versus-unavailable-v1",
+    workflow_revision: 1,
+  };
+  const baseline = createAnalysisProfile(REA_WORKFLOW_PROVIDER, prior);
+  const ownership = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+    ...prior,
+    workflow_revision: 2,
+  });
+  const limitations = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+    ...prior,
+    value_flow_limitations: "provider-attributed-v1",
+  });
+  const combined = createAnalysisProfile(REA_WORKFLOW_PROVIDER, {
+    ...limitations.parameters,
+    workflow_revision: 2,
+  });
+  const scoped = workflowAnalysisProfile(upstream, "trace_native_values");
+  expect(scoped.digest).toBe(combined.digest);
+  expect(scoped.parameters.value_flow_limitations).toBe(
+    "provider-attributed-v1",
+  );
+  expect(
+    new Set([
+      baseline.digest,
+      ownership.digest,
+      limitations.digest,
+      combined.digest,
+    ]).size,
+  ).toBe(4);
 });
 
 it("replays source-bearing entries only when their complete retained closure exists", () => {
@@ -1490,21 +1621,54 @@ describe("executions that report truncated references", () => {
   });
 });
 
-it("revises the trace_feature workflow profile so earlier results are not replayed", () => {
+it("does not replay references when the snapshot would lose their classifications", () => {
+  const cache = new AnalysisSnapshotCache();
+  const parameters = { address: "0x1000", document: "fixture" };
+  cache.record({
+    target: ANALYSIS_SNAPSHOT_TARGET,
+    profile: ANALYSIS_SNAPSHOT_PROFILE,
+    operation: "xrefs",
+    parameters,
+    execution: createAnalysisExecution(["0x2000"], ANALYSIS_SNAPSHOT_PROVIDER, {
+      referenceClassifications: [
+        {
+          sourceAddress: "0x2000",
+          targetAddress: "0x1000",
+          kind: "stored_pointer",
+          provenance: "relocation",
+          width: 8,
+        },
+      ],
+    }),
+  });
+  expect(
+    cache.lookup(
+      ANALYSIS_SNAPSHOT_TARGET,
+      ANALYSIS_SNAPSHOT_PROFILE,
+      "xrefs",
+      parameters,
+    ),
+  ).toBeUndefined();
+});
+
+it("revises trace workflow profiles so earlier results are not replayed", () => {
   const profile = ANALYSIS_SNAPSHOT_PROFILE;
 
   expect(
     workflowAnalysisProfile(profile, "trace_feature").parameters
       .workflow_revision,
-  ).toBe(4);
+  ).toBe(9);
 
   expect(workflowAnalysisProfile(profile, "trace_feature")).not.toEqual(
     workflowAnalysisProfile(profile),
   );
   expect(
-    workflowAnalysisProfile(profile, "trace_call_path"),
-    "other workflows keep their profile",
-  ).toEqual(workflowAnalysisProfile(profile));
+    workflowAnalysisProfile(profile, "trace_call_path").parameters
+      .workflow_revision,
+  ).toBe(2);
+  expect(workflowAnalysisProfile(profile, "trace_call_path")).not.toEqual(
+    workflowAnalysisProfile(profile),
+  );
 });
 
 it("binds native value-trace absence semantics without changing other workflows", () => {
@@ -1514,7 +1678,7 @@ it("binds native value-trace absence semantics without changing other workflows"
     "recorded-versus-unavailable-v1",
   );
   expect(valueTrace.digest).not.toBe(workflowAnalysisProfile(profile).digest);
-  expect(workflowAnalysisProfile(profile, "trace_call_path")).toEqual(
+  expect(workflowAnalysisProfile(profile, "xrefs")).toEqual(
     workflowAnalysisProfile(profile),
   );
 });

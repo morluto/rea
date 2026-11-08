@@ -1,6 +1,6 @@
 import { z } from "zod";
+import { GHIDRA_LITERAL_CANDIDATES_LIMITATION } from "./GhidraLiteralSearch.js";
 import {
-  EXISTING_PROJECT_WINDOWS_REMEDIATION,
   EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
   existingProjectCapabilities,
   ghidraEmptyIncomingReferencesLimitation,
@@ -9,6 +9,7 @@ import {
   ghidraEmptyInstructionOutgoingLimitation,
   ghidraEmptyOutgoingReferencesLimitation,
   ghidraEmptyXrefsLimitation,
+  limitationsFor,
 } from "./GhidraProviderCapabilities.js";
 import { AnalysisProviderRegistry } from "../application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../application/binary/BinarySessionComposition.js";
@@ -21,6 +22,7 @@ import {
   type AnalysisCallerLifetime,
 } from "../domain/analysisErrorBase.js";
 import { createDeferred } from "../../tests/fixtures/binarySession.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 import { ProviderInspectionScope } from "../application/ProviderInspectionScope.js";
 import { ok as javaProbeOk, err, ok } from "../domain/result.js";
 import type { GhidraJavaObservation } from "./GhidraJavaProbe.js";
@@ -66,7 +68,6 @@ import type { BinaryTarget } from "../domain/binaryTargetTypes.js";
 import { parseExecutableHeader } from "../domain/binaryTarget.js";
 import { elf, thinMach } from "../domain/binaryTarget.fixture.js";
 import { GhidraProvider } from "./GhidraProvider.js";
-import { GHIDRA_RESTRICTED_TEMP_REMEDIATION } from "./GhidraTemporaryDirectory.js";
 import type { GhidraTargetSnapshot } from "./GhidraClient.js";
 import {
   GHIDRA_ANNOTATIONS_RETAINED,
@@ -80,7 +81,10 @@ import {
   GhidraLaunchError,
   type GhidraHeadlessLauncher,
 } from "./GhidraLauncher.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
 import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -280,6 +284,17 @@ it.each([
     expect(exported.value.evidence_bundle.records).toContainEqual(evidence);
   },
 );
+
+it("states the fresh-session and pseudocode boundaries", () => {
+  const functionNotes = limitationsFor("analyze_function").join("\n");
+  expect(functionNotes).toMatch(/auto.analysis.*complete/iu);
+  expect(functionNotes).toMatch(
+    /original executable bytes (?:are unchanged|are never written|remain unmodified)/iu,
+  );
+  const pseudocodeNotes = limitationsFor("procedure_pseudo_code").join("\n");
+  expect(pseudocodeNotes).toMatch(/not original source/iu);
+  expect(pseudocodeNotes).toMatch(/not text.equivalent to Hopper/iu);
+});
 
 it("carries the inspected release identity into the production launcher", async () => {
   const launchers: GhidraHeadlessLauncher[] = [];
@@ -881,7 +896,7 @@ describe("Ghidra Windows platform support", () => {
       status: "unsupported",
       code: "target_format_unsupported",
     });
-    // ARM64 PE is admitted on Windows P0 (bounded; see docs/windows-ghidra-p0.md).
+    // ARM64 PE is admitted on Windows P0 (bounded; see docs/providers/windows-ghidra-p0.md).
     expect(
       ghidra.inspectTargetSupport(executableTarget("pe", "arm64")).status,
     ).toBe("supported");
@@ -1302,6 +1317,8 @@ describe("Ghidra result projection", () => {
     ["invalid_request", "AnalysisInputError"],
     ["not_found", "AnalysisInputError"],
     ["ambiguous", "AnalysisInputError"],
+    ["file_offset_ambiguous", "AnalysisInputError"],
+    ["procedure_ambiguous", "AnalysisInputError"],
     ["method_unavailable", "AnalysisCapabilityUnavailableError"],
   ] as const)(
     "projects remote %s without losing its typed meaning",
@@ -1641,8 +1658,7 @@ describe("Ghidra file-offset outcome projection", () => {
       if (result.ok) throw new Error("Expected an input refusal");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "invalid_request",
-        message:
-          "Analysis input is invalid. Check the arguments and try again.",
+        message: expect.stringMatching(/input.*invalid/iu),
         recovery: { kind: "inspect_input_contract", operation },
         details: {
           issues: [
@@ -2097,6 +2113,7 @@ describe("Ghidra PE CodeView debug symbol limitations", () => {
 
 describe("Ghidra relationship coverage", () => {
   it("marks the full direct call-reference response complete while keeping static caveats", async () => {
+    const diagnostic = "fixture coverage caveat";
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: (operation) =>
@@ -2108,9 +2125,7 @@ describe("Ghidra relationship coverage", () => {
                   limitations: [],
                   relationship_coverage: {
                     status: "complete",
-                    diagnostics: [
-                      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-                    ],
+                    diagnostics: [diagnostic],
                   },
                 }
               : { value: [], limitations: [] },
@@ -2126,13 +2141,9 @@ describe("Ghidra relationship coverage", () => {
     if (!execution.ok) throw execution.error;
     expect(execution.value.relationshipCoverage).toEqual({
       status: "complete",
-      diagnostics: [
-        "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-      ],
+      diagnostics: [diagnostic],
     });
-    expect(execution.value.limitations).not.toContain(
-      "Only resolved Ghidra call references are returned; unresolved computed or indirect calls remain unknown, while function classifications distinguish thunks and externals.",
-    );
+    expect(execution.value.limitations).not.toContain(diagnostic);
     await client.close();
   });
 });
@@ -2475,7 +2486,6 @@ it.each([
     const detail = await client.execute("inspect_native_data_type", {
       address,
     });
-    expect(detail.ok).toBe(true);
     if (!detail.ok) throw detail.error;
     expect(detail.value.result).toMatchObject({ address: resolvedAddress });
     if (expectedTable === null) {
@@ -3673,13 +3683,19 @@ describe("Ghidra empty instruction reference facets", () => {
     ...compactInstruction(outgoing),
     incoming_references: incoming,
   });
-  const nonDecoded = (status: JsonValue, incoming: JsonValue[]) => ({
+  const definedData = (incoming: JsonValue[]) => ({
     ...compactInstruction(),
-    status,
+    status: "data",
     bytes: null,
     length: null,
     mnemonic: null,
     raw_disassembly: null,
+    containing_data: {
+      address: "0x401000",
+      length: 1,
+      type_id: "/undefined1",
+      provenance: "ghidra-listing",
+    },
     incoming_references: incoming,
   });
   const executeInspect = async (
@@ -3730,15 +3746,13 @@ describe("Ghidra empty instruction reference facets", () => {
   });
 
   it("keeps only the address caveat when a data address resolves no incoming references", async () => {
-    const limitations = await executeInspect(nonDecoded("data", []));
+    const limitations = await executeInspect(definedData([]));
     expect(limitations).toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
 
   it("adds no caveat for a data address whose incoming references were observed", async () => {
-    const limitations = await executeInspect(
-      nonDecoded("data", [compactReference()]),
-    );
+    const limitations = await executeInspect(definedData([compactReference()]));
     expect(limitations).not.toContain(ghidraEmptyXrefsLimitation);
     expect(limitations).not.toContain(ghidraEmptyInstructionOutgoingLimitation);
   });
@@ -4471,8 +4485,11 @@ describe("Ghidra missing project program", () => {
     expect(projected.message).toContain(path);
     expect(projected.message).toContain("Win32 error 5");
     expect(projected.message).not.toMatch(/antivirus|DACL/iu);
-    expect(projected.remediation.action).toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).toMatch(
+      /TMP and TEMP.*allowed tree.*no dot-prefixed element.*restart REA/iu,
+    );
+    expect(projected.remediation.action).toMatch(
+      /java_home\.save.*creating that file in advance does not help/iu,
     );
   });
 
@@ -4482,8 +4499,8 @@ describe("Ghidra missing project program", () => {
       {},
       "java.io.FileNotFoundException: C:\\x\\other.txt (Access is denied)\n",
     );
-    expect(projected.remediation.action).not.toBe(
-      GHIDRA_RESTRICTED_TEMP_REMEDIATION,
+    expect(projected.remediation.action).not.toMatch(
+      /TMP and TEMP.*allowed tree/iu,
     );
   });
 });
@@ -4973,8 +4990,8 @@ describe("Ghidra disabled analyzer applicability per program", () => {
     expect(procedures.value.analysisProfile?.digest).toBe(profile.digest);
     expect(procedures.value.limitations).toEqual(
       expect.arrayContaining([
-        expect.stringContaining(
-          "Applied analyzer preset: ghidra-default+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer(n/a).",
+        expect.stringMatching(
+          /ghidra-default\+disabled:Decompiler Switch Analysis,Objective-C Message Analyzer\(n\/a\)/iu,
         ),
       ]),
     );
@@ -5930,6 +5947,105 @@ it("reuses readiness only inside its active task and provider lifetime", async (
   }
 });
 
+it.each(["retry", "physical", "cleanup", "close"] as const)(
+  "handles %s during an abandoned installation inspection",
+  async (outcome) => {
+    const entered = createDeferred<void>();
+    const aborted = createDeferred<void>();
+    const release = createDeferred<void>();
+    const base = installationHost();
+    let probes = 0;
+    let denyCleanup = outcome === "cleanup";
+    const physical = new AnalysisArtifactChangedError(
+      "ghidra:installation",
+      "/selected/java",
+      "Java changed during inspection",
+    );
+    const ghidra = provider({
+      ...base,
+      probeJava: async (command, environment, options) => {
+        probes++;
+        if (probes === 1) {
+          options.signal?.addEventListener("abort", () => aborted.resolve(), {
+            once: true,
+          });
+          entered.resolve();
+          await release.promise;
+          if (outcome === "physical") return err(physical);
+          if (outcome === "cleanup") {
+            options.resourceOwner?.retain(
+              {
+                close: async () => {
+                  if (denyCleanup) throw new Error("close refused");
+                },
+              },
+              "controlled Java descriptor",
+            );
+            return err(
+              new AnalysisCancelledError("ghidra:installation", {
+                cause: options.signal?.reason,
+                cleanup: {
+                  reason: "close refused",
+                  resources: ["controlled Java descriptor"],
+                },
+              }),
+            );
+          }
+        }
+        return base.probeJava(command, environment, options);
+      },
+    });
+    const controller = new AbortController();
+    const first = ghidra.inspectAvailability({ signal: controller.signal });
+    void first.catch(() => undefined);
+    let second: ReturnType<typeof ghidra.inspectAvailability> | undefined;
+    let closing: ReturnType<typeof ghidra.closeOwnedResources> | undefined;
+    try {
+      await awaitAcknowledgement(entered.promise, first, "Java inspection");
+      controller.abort("first inspection");
+      await awaitAcknowledgement(aborted.promise, first, "inspection abort");
+      second = ghidra.inspectAvailability();
+      void second.catch(() => undefined);
+      await Promise.resolve();
+      expect(probes).toBe(1);
+      if (outcome === "close") closing = ghidra.closeOwnedResources();
+      release.resolve();
+      if (outcome === "retry") {
+        await expect(first).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await second).status).toBe("available");
+        expect(probes).toBe(2);
+      } else if (outcome === "physical") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisArtifactChangedError",
+          path: "/selected/java",
+        });
+        expect(probes).toBe(1);
+      } else if (outcome === "cleanup") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cleanupIncomplete: true,
+          cleanupResources: ["controlled Java descriptor"],
+        });
+        expect(probes).toBe(1);
+      } else {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await closing)?.ok).toBe(true);
+        expect(probes).toBe(1);
+      }
+    } finally {
+      controller.abort();
+      release.resolve();
+      await Promise.allSettled([first, second, closing]);
+      denyCleanup = false;
+      expect((await ghidra.closeOwnedResources()).ok).toBe(true);
+    }
+  },
+);
+
 it("refuses a changed installation before creating a target-bound native client", async () => {
   let release = "12.1.4",
     nativeCreates = 0;
@@ -6375,7 +6491,18 @@ it.each(["search_procedures", "search_strings"] as const)(
       { address: "0x1001", value: "SOURCE" },
       { address: "0x1002", value: "İource" },
       { address: "0x1003", value: "unrelated" },
-    ];
+    ].map((row) => ({
+      ...row,
+      ...(operation === "search_procedures"
+        ? { procedure: { external: false, thunk: false, thunk_target: null } }
+        : {
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: Buffer.byteLength(row.value, "utf8") + 1,
+            },
+          }),
+    }));
     const ghidra = provider(installationHost(), () => ({
       start: () => Promise.resolve(ok(sessionInfo())),
       callTool: () => Promise.resolve(ok(jsonValueSchema.parse(rows))),
@@ -6387,18 +6514,27 @@ it.each(["search_procedures", "search_strings"] as const)(
       if (!result.ok) throw result.error;
       expect(result.value.result).toEqual(rows.slice(0, 2));
       expect(result.value.rawResult).toEqual(rows);
+      expect(result.value.limitations).toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
       const regex = await client.execute(operation, {
         pattern: "source",
         mode: "regex",
       });
       if (!regex.ok) throw regex.error;
       expect(regex.value.result).toEqual(rows);
+      expect(regex.value.limitations).not.toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
       const sensitive = await client.execute(operation, {
         pattern: "source",
         case_sensitive: true,
       });
       if (!sensitive.ok) throw sensitive.error;
       expect(sensitive.value.result).toEqual(rows);
+      expect(sensitive.value.limitations).not.toContain(
+        GHIDRA_LITERAL_CANDIDATES_LIMITATION,
+      );
     } finally {
       await client.close();
     }
@@ -6462,11 +6598,17 @@ describe("Windows Ghidra readiness repair", () => {
   });
 
   it("gives every operation of a Windows existing-project session the same repair", () => {
-    for (const capability of existingProjectCapabilities("win32"))
+    const capabilities = existingProjectCapabilities("win32");
+    expect(capabilities.length).toBeGreaterThan(0);
+    for (const capability of capabilities)
       expect(capability).toMatchObject({
         available: false,
-        reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
+        reason: expect.stringMatching(
+          /existing Ghidra project.*cannot be opened.*Windows/iu,
+        ),
+        remediation: expect.stringMatching(
+          /unset REA_GHIDRA_PROJECT_PATH.*ephemeral project.*Linux or macOS.*restart REA/iu,
+        ),
       });
   });
 });

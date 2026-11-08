@@ -84,8 +84,18 @@ gone, the capture looks for any process still carrying the run token, so a
 worker whose launcher exited before it was sampled keeps the session open. A
 sample whose window list could not be read is not taken as an empty one; the
 limitations say how many there were. One queued line is handled between
-samples, and reading stdin pauses while 16 lines wait. Progress lines on stderr say when
-the window has opened and when each checkpoint is taken.
+samples, and reading stdin pauses while 16 lines wait.
+
+Progress lines on stderr are JSON, `{"rea_progress": {"phase":
+"desktop_capture", "message": ...}}`. Those a driver waits on also carry an
+`event`: `{"kind": "window_open"}` once the window opens; `{"kind":
+"checkpoint", "name", "trigger", "at_ms", "entries", "changes",
+"retained_files", "retained_bytes"}` once a checkpoint has been taken, the
+baseline, `stop` and `exit` included, with the paths walked, the paths
+changed since the checkpoint before and the files retained; and `{"kind":
+"checkpoint_refused", "name", "reason"}` for a requested name it refused. A
+driver that sends `checkpoint <name>` waits for the event naming it rather
+than for a fixed time.
 
 When the session ends the capture sends SIGTERM to the launched process, its
 process group and every process that carries the run token, waits up to five
@@ -348,6 +358,10 @@ remaining content budget is not read, unless stored content of the same size
 could make it a duplicate. Files that could not be
 retained are listed with the reason: too large, over the content budget,
 changed since the walk, changed during the read, or unreadable.
+The baseline also records the paths and types of non-file entries it observed,
+including symlinks, without following them. This is required to distinguish an
+unreadable SQLite sidecar from an absent one. Captures made before this field
+was added must be made again before state inspection, task drafting or export.
 Directories the application held files open in, but whose starting content was
 not retained, are listed so a second capture can pass them with
 `--state-path`.

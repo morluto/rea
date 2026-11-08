@@ -4,14 +4,10 @@ import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { parseEnvironment } from "./environment.js";
 import {
-  DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
   WINDOWS_CHANGE_TIME_DRIFT_MS,
   WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   WINDOWS_CHANGE_TIME_SETTLE_POLL_MS,
   resolveWindowsChangeTimeSettle,
-  windowsChangeTimeSettleRecovery,
-  windowsChangeTimeSettingFailure,
-  windowsChangeTimeSettingMessage,
 } from "./windowsChangeTimeSettle.js";
 
 const requiredFacts = (
@@ -37,7 +33,14 @@ const requiredFacts = (
 it("keeps today's settle defaults when the settings are unset", () => {
   expect(resolveWindowsChangeTimeSettle({})).toEqual({
     ok: true,
-    value: DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS,
+    value: {
+      driftMs: 2_000,
+      driftSource: "default",
+      pollMs: 25,
+      pollSource: "default",
+      maxPolls: 40,
+      maxPollsSource: "default",
+    },
   });
   const startup = parseEnvironment({});
   if (!startup.ok) throw new Error("unset settle settings were rejected");
@@ -46,17 +49,6 @@ it("keeps today's settle defaults when the settings are unset", () => {
   expect(
     startup.value.REA_WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS,
   ).toBeUndefined();
-  requiredFacts(
-    windowsChangeTimeSettleRecovery(DEFAULT_WINDOWS_CHANGE_TIME_SETTLE_LIMITS),
-    {
-      setting: WINDOWS_CHANGE_TIME_DRIFT_MS.setting,
-      currentValue: "2000",
-      source: "default",
-      defaultValue: 2_000,
-      floor: 1,
-      maximum: 60_000,
-    },
-  );
 });
 
 it("uses valid settle overrides", () => {
@@ -100,22 +92,12 @@ it.each([
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "0"],
   [WINDOWS_CHANGE_TIME_SETTLE_MAX_POLLS, "1001"],
 ] as const)("rejects %s=%j", (bound, value) => {
-  const failure = windowsChangeTimeSettingFailure(bound, value);
-  expect(failure).toEqual({
-    setting: bound.setting,
-    currentValue: value,
-    source: "setting",
-    defaultValue: bound.defaultValue,
-    floor: bound.floor,
-    maximum: bound.maximum,
-    unit: bound.unit,
-    restartRequired: true,
-  });
-  const message = windowsChangeTimeSettingMessage(failure);
-  requiredFacts(message, failure);
   const resolved = resolveWindowsChangeTimeSettle({ [bound.setting]: value });
   if (resolved.ok) throw new Error(`Accepted ${bound.setting}=${value}`);
   expect(resolved.error).toBeInstanceOf(ConfigurationError);
+  const message = resolved.error.settings[0]?.constraint;
+  if (message === undefined) throw new Error("Missing configuration guidance");
+  requiredFacts(message, { ...bound, currentValue: value, source: "setting" });
   expect(resolved.error.settings).toEqual([
     { setting: bound.setting, constraint: message },
   ]);

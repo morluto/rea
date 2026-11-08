@@ -283,7 +283,6 @@ const registerRiscvAdmissionAndCapabilityCases = () => {
     const resolved = await ghidra({
       REA_GHIDRA_LANGUAGE_ID: "RISCV:LE:32:AndeStar_v5",
     }).resolveAnalysisProfile(target({ elfClass: 32 }));
-    expect(resolved.ok).toBe(false);
     if (resolved.ok) throw new Error("expected a refusal");
     expect(resolved.error.message).toContain("generic little-endian RISC-V");
     expect(resolved.error).toMatchObject({
@@ -389,9 +388,9 @@ describe("RISC-V lane and calling-convention tables", () => {
     });
   });
 
-  it("keeps the decision record in docs/ghidra-riscv.md in step with the tables", async () => {
+  it("keeps the decision record in docs/providers/ghidra-riscv.md in step with the tables", async () => {
     const docs = await readFile(
-      new URL("../../docs/ghidra-riscv.md", import.meta.url),
+      new URL("../../docs/providers/ghidra-riscv.md", import.meta.url),
       "utf8",
     );
     for (const lane of GHIDRA_RISCV_LANES)
@@ -773,10 +772,10 @@ const canonical: GhidraRiscvLoadPreparationReport = {
   code: { ...movedCode, space_before: "ram" },
 };
 
-// Profiles of images without a section overlap, as main 8eff65127 commits them.
+// Profiles of images without a section overlap, as main 5553acfe5 commits them.
 const UNCHANGED_DIGESTS = {
-  ilp32: "c1e367c4f863e01b54720e8e5d90f577ddf85bf90f6307cd63c1e0616cfe906a",
-  double64: "f2bb7db1ce8f1e707f06ee739efb2b2c383f039e856b4ce79102f5fe92ddf6e7",
+  ilp32: "c9b452a217bbe78ff115a32b54e75b59687c8e152412a22f6ad0cb6d42825bb6",
+  double64: "7a89b2fb6c68a79e2d4267a7df0784134f2db175fa06f833480cc431fd6f30e6",
 } as const;
 
 describe("RISC-V load preparation admission", () => {
