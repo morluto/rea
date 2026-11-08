@@ -114,6 +114,7 @@ export const renderInteractiveSetupResult = (
   result: SetupResult,
   environment: Readonly<NodeJS.ProcessEnv> = process.env,
 ): void => {
+  renderHopperInstallUnavailable(result);
   if (result.status === "ready") {
     const changedClients = Object.entries(result.clients)
       .filter(([, client]) => client.status === "configured")
@@ -136,6 +137,23 @@ export const renderInteractiveSetupResult = (
     `Run \`${cliInvocation(environment)} doctor\` for the remaining checks.`,
     promptStreams,
   );
+};
+
+const renderHopperInstallUnavailable = (result: SetupResult): void => {
+  const unavailable = result.hopperInstallUnavailable;
+  if (unavailable === undefined) return;
+  const { architecture, distribution, remediation } = unavailable;
+  const host =
+    distribution === null
+      ? "an unidentified Linux distribution"
+      : JSON.stringify(
+          [distribution.id, distribution.version].filter(Boolean).join(" "),
+        );
+  writeLine(
+    `!  Automatic Hopper installation is unavailable on ${host} (${architecture}).`,
+  );
+  if (result.remediation?.includes(remediation) !== true)
+    writeLine(`   ${remediation}`);
 };
 
 const selectSetupActions = async (

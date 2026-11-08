@@ -203,12 +203,15 @@ const runSetupWorkflow = async (
   const clients = progress.clients;
   let clientStates: readonly SetupClientState[] = [];
   let readinessScope = options.readinessScope;
-  const fail = (remediation: string) =>
-    setupFailure(
+  let diagnostics: Pick<SetupResult, "hopperInstallUnavailable"> = {};
+  const fail = async (remediation: string): Promise<SetupResult> => ({
+    ...(await setupFailure(
       remediation,
       [host, plannedActions, appliedActions, clients, clientStates],
       readinessScope,
-    );
+    )),
+    ...diagnostics,
+  });
   const failSkill = async (
     error: SetupSkillInstallError,
   ): Promise<SetupResult> => ({
@@ -228,6 +231,10 @@ const runSetupWorkflow = async (
       options.proposeHopper ?? (confirm !== undefined && !options.structured),
     initialDoctor: initialState.doctor,
   });
+  if (discovery.hopperInstallUnavailable !== undefined)
+    diagnostics = {
+      hopperInstallUnavailable: discovery.hopperInstallUnavailable,
+    };
   // Catalog loading and family scope are registration settings, not detected
   // provider facts; merge them after discovery so they cannot suppress the
   // Hopper installation offer on an otherwise unconfigured machine.
@@ -294,12 +301,15 @@ const runSetupWorkflow = async (
     });
     assertSetupActive(options.signal);
     if (isSetupDecisionCancelled(decision))
-      return setupCancelled(
-        selectionActions.plannedActions,
-        clients,
-        clientStates,
-        discovery.initialDoctor,
-      );
+      return {
+        ...setupCancelled(
+          selectionActions.plannedActions,
+          clients,
+          clientStates,
+          discovery.initialDoctor,
+        ),
+        ...diagnostics,
+      };
     const selectedActionIds = new Set(
       typeof decision === "boolean"
         ? decision
@@ -386,6 +396,7 @@ const runSetupWorkflow = async (
   if (options.dryRun === true)
     return {
       status: "planned",
+      ...diagnostics,
       plannedActions,
       appliedActions,
       clients,
@@ -411,12 +422,15 @@ const runSetupWorkflow = async (
     assertSetupActive(options.signal);
     if (decision !== undefined) {
       if (isSetupDecisionCancelled(decision))
-        return setupCancelled(
-          plannedActions,
-          clients,
-          clientStates,
-          discovery.initialDoctor,
-        );
+        return {
+          ...setupCancelled(
+            plannedActions,
+            clients,
+            clientStates,
+            discovery.initialDoctor,
+          ),
+          ...diagnostics,
+        };
       approved = typeof decision === "boolean" ? decision : decision.approved;
       interactiveApproval = approved;
     }
@@ -424,6 +438,7 @@ const runSetupWorkflow = async (
   if (!approved)
     return {
       status: confirm === undefined ? "needs_confirmation" : "cancelled",
+      ...diagnostics,
       plannedActions,
       appliedActions,
       clients,
@@ -544,6 +559,7 @@ const runSetupWorkflow = async (
   );
   return {
     status: remediation === undefined ? "ready" : "needs_human",
+    ...diagnostics,
     plannedActions,
     appliedActions,
     clients,

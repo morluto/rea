@@ -26,6 +26,7 @@ import { currentClientRegistrationCommand } from "./ClientRegistrationIdentity.j
 /** Recording setup host for service-level planning and recovery tests. */
 export class FakeSetupHost implements SetupHost {
   readonly platform: NodeJS.Platform;
+  architecture: NodeJS.Architecture = "x64";
   readonly homeDirectory = "/fixture/home";
   skillDestinations(clientIds: readonly string[]) {
     return skillDestinations(this.homeDirectory, clientIds, {}, this.platform);
