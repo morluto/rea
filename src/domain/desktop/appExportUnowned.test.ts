@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 
 import {
   heldOpenLimitation,
-  isAppLog,
   isLockFile,
   leftOutFiles,
   unretainedOpenedDirectories,
@@ -211,23 +210,22 @@ describe("isLockFile", () => {
     ]);
     const underFolder = leftOutFiles(files, [], ["Documents"]);
 
-    expect(underFolder.isLeftOut("Documents/.household.gsb.lock")).toBe(true);
-    expect(underFolder.isLeftOut("Documents/.notes.lock")).toBe(false);
+    expect(underFolder("Documents/.household.gsb.lock")).toBe(true);
+    expect(underFolder("Documents/.notes.lock")).toBe(false);
     const homeFiles = new Map([
       ["Cargo.lock", file("document")],
       ["poedit.lock", file("application_state")],
     ]);
     const home = leftOutFiles(homeFiles, [], []);
-    expect(home.isLeftOut("Cargo.lock")).toBe(false);
-    expect(home.isLeftOut("poedit.lock")).toBe(true);
-    expect(underFolder.isLeftOut("Documents/household.gsb")).toBe(false);
+    expect(home("Cargo.lock")).toBe(false);
+    expect(home("poedit.lock")).toBe(true);
+    expect(underFolder("Documents/household.gsb")).toBe(false);
     expect(
       leftOutFiles(
         files,
         [],
         ["Documents/.household.gsb.lock"],
-        ["Documents/.household.gsb.lock"],
-      ).isLeftOut("Documents/.household.gsb.lock"),
+      )("Documents/.household.gsb.lock"),
     ).toBe(false);
   });
 
@@ -294,76 +292,6 @@ describe("the limitations on folders the app held files open in", () => {
     expect(seeded).not.toContain("registrymodifications");
     expect(none).toContain("the seed holds none from there");
     expect(heldOpenLimitation([], home, [])).toBeUndefined();
-  });
-});
-
-describe("isAppLog", () => {
-  it("knows a log by its name or as a log's lock, and nothing else", () => {
-    const logs = [
-      ".config/freeplane/1.7.x/logs/log.0",
-      ".config/freeplane/1.7.x/logs/log.0.lck",
-      ".qet/20261106.log",
-      ".config/app/App.LOG",
-      ".config/app/log.12",
-      ".config/app/app.log.lock",
-    ];
-    const others = [
-      ".local/share/app/logs/session.txt",
-      ".config/app/catalog.xml",
-      ".config/app/logo.png",
-      ".config/app/changelog",
-      ".config/app/logs.json",
-      ".config/app/blog.0",
-      ".config/app/log.txt",
-      ".config/app/settings.lck",
-    ];
-
-    expect(logs.filter(isAppLog)).toEqual(logs);
-    expect(others.filter(isAppLog)).toEqual([]);
-  });
-
-  it("leaves out the app's logs in its state, but not a database's write-ahead log, which holds saved writes", () => {
-    const left = [
-      ".config/freeplane/1.7.x/logs/log.0",
-      ".qet/20261106.log",
-      // A numbered log with no LevelDB beside it is a log like any other.
-      ".config/app/sync2/000009.log",
-    ];
-    const files = new Map(
-      [
-        ...left,
-        ".config/app/Local Storage/leveldb/000003.log",
-        ".config/app/store/leveldb/000007.log",
-        ".config/app/sync/000005.log",
-        ".config/app/sync/CURRENT",
-        ".config/app/sync/MANIFEST-000004",
-        ".config/app/journal/000011.log",
-        ".config/app/journal/MANIFEST-000010",
-      ].map((home) => [home, file("application_state")] as const),
-    );
-
-    const { isLeftOut } = leftOutFiles(files, [".config/app"], []);
-
-    expect([...files.keys()].filter(isLeftOut)).toEqual(left);
-  });
-
-  it("seeds what an app keeps under a logs folder, as Pidgin's conversations and fldigi's logbook", () => {
-    const left = [".config/freeplane/1.7.x/logs/log.0", ".qet/20261106.log"];
-    const files = new Map(
-      [
-        ...left,
-        ".purple/logs/jabber/me@x/bob@y/2024-01-01.120000+0000UTC.html",
-        ".fldigi/logs/logbook.adif",
-      ].map((home) => [home, file("application_state")] as const),
-    );
-
-    const { isLeftOut } = leftOutFiles(
-      files,
-      [".config/freeplane", ".qet", ".purple", ".fldigi"],
-      [],
-    );
-
-    expect([...files.keys()].filter(isLeftOut)).toEqual(left);
   });
 });
 

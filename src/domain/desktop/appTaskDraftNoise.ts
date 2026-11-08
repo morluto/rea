@@ -216,6 +216,7 @@ const volatileAt = (
   key: string | undefined,
   value: JsonValue | undefined,
   fresh: boolean,
+  xml: boolean,
 ) =>
   (typeof value === "string" &&
     (isVolatileValue(
@@ -228,7 +229,7 @@ const volatileAt = (
   (key !== undefined && ID_COUNTER.test(key.split(":").at(-1) ?? key)) ||
   metadataCount(elements, key, value) ||
   elements.some(assignedId) ||
-  (isXmlElement(value) && assignedId(value));
+  (xml && isXmlElement(value) && assignedId(value));
 
 /**
  * The ids of the elements a change added (`id`, `xid`, `uuid`, `guid`, as
@@ -365,10 +366,12 @@ const upkeepOf = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
   noise: (pointer: string) => NoiseReason | undefined,
+  xml: (view: JsonValue | null, pointer: string) => boolean,
 ) => {
   const added = new Set(change.added);
   const gained = (pointer: string) =>
     added.has(pointer) &&
+    xml(ends.final, pointer) &&
     attributeKeyOf(pointer) !== undefined &&
     [ends.baseline, ends.final].every((view) =>
       isXmlElement(resolvePointer(view, ownerOfAttribute(pointer))),
@@ -408,11 +411,12 @@ const upkeepOf = (
         ? ends.baseline
         : ends.final;
     return (
-      ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
-      (key !== undefined &&
-        /style-name$/iu.test(key) &&
-        automatic(pointer, key)) ||
-      elementsAlong(view, pointer).some(({ name }) => STYLE_AREA.test(name))
+      xml(view, pointer) &&
+      (ENTRY_VIEW.exec(pointer)?.[0] === "/entries/[name=styles.xml]/view/" ||
+        (key !== undefined &&
+          /style-name$/iu.test(key) &&
+          automatic(pointer, key)) ||
+        elementsAlong(view, pointer).some(({ name }) => STYLE_AREA.test(name)))
     );
   };
   // The user's edit is elsewhere when a change no other rule calls noise lies outside the styles.
@@ -631,9 +635,22 @@ const namesLayout = (
 export const changeNoise = (
   change: Pick<DesktopStateDifference, "added" | "changed" | "removed">,
   ends: Ends,
+  xml: (view: JsonValue | null, pointer: string) => boolean,
 ): ((pointer: string) => NoiseReason | undefined) => {
+  const isXmlPointer = (pointer: string) =>
+    xml(
+      resolvePointer(ends.final, pointer) === undefined
+        ? ends.baseline
+        : ends.final,
+      pointer,
+    );
+  const xmlChange = {
+    added: change.added.filter((pointer) => xml(ends.final, pointer)),
+    changed: change.changed.filter(isXmlPointer),
+    removed: change.removed.filter((pointer) => xml(ends.baseline, pointer)),
+  };
   const byPosition = positionalRenumbering(ends);
-  const fresh = freshIds(change, ends);
+  const fresh = freshIds(xmlChange, ends);
   const added = new Set(change.added);
   // A reference on an element both ends hold, as a split moved to the new account, is the user's.
   const freshAt = (
@@ -656,8 +673,9 @@ export const changeNoise = (
       resolvePointer(ends.final, pointer) === undefined
         ? ends.baseline
         : ends.final;
-    const key = attributeKeyOf(pointer);
-    const elements = elementsAlong(view, pointer);
+    const isXml = xml(view, pointer);
+    const key = isXml ? attributeKeyOf(pointer) : undefined;
+    const elements = isXml ? elementsAlong(view, pointer) : [];
     const value = resolvePointer(view, pointer);
     const reason: NoiseReason | undefined =
       elements.some(showsView) || (key !== undefined && isViewStateName(key))
@@ -666,28 +684,36 @@ export const changeNoise = (
             isIdentifyingAttribute(key) &&
             byPosition(pointer, key)
           ? "renumbered"
-          : volatileAt(elements, key, value, freshAt(pointer, key, value))
+          : volatileAt(
+                elements,
+                key,
+                value,
+                freshAt(pointer, key, value),
+                isXml,
+              )
             ? "volatile"
             : isStamp(value ?? null) ||
                 stampedAlong(elements) ||
                 stampedWhole(elements, value)
               ? "timestamp"
-              : elements.some(isSlots) || isMemberCount(ends, pointer, key)
+              : elements.some(isSlots) ||
+                  (isXml && isMemberCount(ends, pointer, key))
                 ? "upkeep"
                 : undefined;
     known.set(pointer, reason);
     return reason;
   };
-  const upkeep = upkeepOf(change, ends, base);
+  const upkeep = upkeepOf(change, ends, base, xml);
   const layout = derivedLayout(change, ends);
   const drawing = drawingLayout(change, ends, base);
-  const mirror = mirrorsOf(change, ends);
-  const reference = idReferencesOf(change, ends);
+  const mirror = mirrorsOf(xmlChange, ends);
+  const reference = idReferencesOf(xmlChange, ends);
   return (pointer) =>
     base(pointer) ??
-    (upkeep(pointer) || mirror(pointer) || reference(pointer)
+    (isXmlPointer(pointer) &&
+    (upkeep(pointer) || mirror(pointer) || reference(pointer))
       ? "upkeep"
-      : layout(pointer) || drawing(pointer)
+      : isXmlPointer(pointer) && (layout(pointer) || drawing(pointer))
         ? "layout"
         : undefined);
 };

@@ -1,4 +1,5 @@
 import type { JsonValue } from "../jsonValue.js";
+import { leftOutFiles } from "./appExportUnowned.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import { evaluateTaskChecks } from "./appTaskChecks.js";
 import { draftTaskFiles, type TaskDraftFile } from "./appTaskDraft.js";
@@ -45,8 +46,7 @@ export const draftOf = (
       seed: 0,
       end: 1,
     },
-    leftOutFiles(new Map(Object.entries(files)), [], selected, selected)
-      .isLeftOut,
+    leftOutFiles(new Map(Object.entries(files)), [], selected),
   );
 
 /** An XML text's view, which a test's own text always has. */
