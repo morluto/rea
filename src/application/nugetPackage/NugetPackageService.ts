@@ -60,6 +60,14 @@ const inputFailure = (message: string, cause?: unknown) =>
     [{ path: ["path"], reason: "invalid_format", message }],
   );
 
+/**
+ * The ZIP reader can refuse after the carrier passed `max_file_bytes`. Naming
+ * that setting as the failing limit would tell a caller to pick a smaller
+ * package that fails the same way, so report the reader's own allowance.
+ */
+const ZIP_LIMIT_RECOVERY =
+  "The archive's members exceed this ZIP expansion or decoder allowance, which a smaller file does not necessarily fix; inspect a package that stays within it.";
+
 /** Keep the reader's typed reasons instead of flattening every failure into "io". */
 const readFailure = (
   failure: unknown,
@@ -82,18 +90,26 @@ const readFailure = (
         { cause },
       );
     if (cause.reason === "limit")
-      return new AnalysisResourceConstraintError(
-        operation,
-        cause.boundary ?? "file-size",
-        cause.message,
-        { max_file_bytes: input.max_file_bytes },
-        {
-          cause,
-          retryable: false,
-          remediationAction:
-            "Select a package within max_file_bytes; entry paging does not change this file admission.",
-        },
-      );
+      return cause.boundary === undefined || cause.boundary === "file-size"
+        ? new AnalysisResourceConstraintError(
+            operation,
+            cause.boundary ?? "file-size",
+            cause.message,
+            { max_file_bytes: input.max_file_bytes },
+            {
+              cause,
+              retryable: false,
+              remediationAction:
+                "Select a package within max_file_bytes; entry paging does not change this file admission.",
+            },
+          )
+        : new AnalysisResourceConstraintError(
+            operation,
+            cause.boundary,
+            cause.message,
+            { failed_limit: cause.boundary },
+            { cause, retryable: false, remediationAction: ZIP_LIMIT_RECOVERY },
+          );
     if (cause.reason === "path" || cause.reason === "format")
       return inputFailure(cause.message, cause);
   }
