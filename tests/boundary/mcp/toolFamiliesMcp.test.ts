@@ -18,6 +18,7 @@ import { toolRegistrationOptions } from "../../../src/server/toolRegistrationOpt
 import { createTestMcp } from "../../support/mcp/mcpFixture.js";
 import { createTestBinarySession } from "../../fixtures/binarySession.js";
 import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 
 const scopedServer = (
   advertisedToolFamilies: ReadonlySet<string> | undefined,
@@ -293,7 +294,7 @@ it.each([
           return result;
         });
       try {
-        await adbStarted;
+        await awaitAcknowledgement(adbStarted, call, "ADB availability probe");
         await new Promise<void>((resolve) => setImmediate(resolve));
         expect(settled).toBe(false);
         release();
@@ -315,6 +316,7 @@ it.each([
             : {}),
         });
       } finally {
+        started();
         release();
         await call;
       }

@@ -12,6 +12,7 @@ import { join } from "node:path";
 import { afterEach, expect, it, vi } from "vitest";
 import { AnalysisError } from "../../../../src/domain/analysisErrorBase.js";
 import { projectAnalysisError } from "../../../../src/domain/analysisErrorProjection.js";
+import { awaitAcknowledgement } from "../../../fixtures/lifecycleAcknowledgement.js";
 
 import { ArtifactResourceScope } from "../../../../src/artifacts/ArtifactResourceScope.js";
 import type { RetainedResourceScope } from "../../../../src/application/AnalysisProvider.js";
@@ -237,7 +238,7 @@ it.skipIf(process.platform === "win32").each([
     });
     let second: ReturnType<typeof client.execute> | undefined;
     try {
-      await closeEntered;
+      await awaitAcknowledgement(closeEntered, first, "Kuna hash close");
       injected.holdCloseFailures = true;
       controller.abort(reason);
       await new Promise<void>((resolve) => setImmediate(resolve));
