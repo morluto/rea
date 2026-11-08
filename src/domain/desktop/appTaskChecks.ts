@@ -353,7 +353,7 @@ const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
   const segments = pointer.split("/");
   const field = segments.at(-2);
   if (field !== "children" && field !== "attributes") return false;
-  const owner = locatePointer(view, segments.slice(0, -2).join("/"));
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"), "xml");
   return owner.kind === "value" && isXmlElement(owner.value);
 };
 

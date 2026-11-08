@@ -403,7 +403,7 @@ describe("draftTaskFiles for an AbiWord document", () => {
     ).toEqual([]);
     // Every check names the elements it goes through, so a reordered save keeps it.
     for (const pointer of pointers) {
-      const located = locatePointer(after, pointer);
+      const located = locatePointer(after, pointer, "xml");
       expect([pointer, located.byPosition]).toEqual([pointer, []]);
     }
     expect(

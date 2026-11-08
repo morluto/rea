@@ -154,7 +154,9 @@ export const presenceValues = (
   return draftValues(change, {
     ends: from,
     listed: tree.listed,
-    noise: changeNoise(change, from),
+    noise: changeNoise(change, from, (view, pointer) =>
+      valueFormat(tree, view, pointer),
+    ),
     format: (view, pointer) => valueFormat(tree, view, pointer),
     referenceRoots: (view) => referenceRoots(tree, view),
   });

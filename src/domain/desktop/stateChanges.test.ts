@@ -336,7 +336,7 @@ describe("diffStateViews selector lookups", () => {
     ]);
     for (const key of Object.keys(keyed))
       expect(
-        resolvePointer({ items: listed }, `/items/${key}`) === undefined,
+        resolvePointer({ items: listed }, `/items/${key}`, "xml") === undefined,
       ).toBe(difference.removed.includes(`/items/${key}`));
   });
 

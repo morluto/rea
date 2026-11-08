@@ -129,10 +129,10 @@ const elementHolds = (
 const holdsInside = (
   member: JsonValue,
   { key, value }: Condition,
-  format?: string | null,
+  format: string | null | undefined,
 ) => {
   const steps = insideSteps(key) ?? [];
-  if (format === "xml" || (format === undefined && isXmlElement(member)))
+  if (format === "xml")
     return isXmlElement(member) && elementHolds(member, steps, value);
   let found: JsonValue | undefined = member;
   for (const step of steps)
@@ -144,7 +144,7 @@ const holdsInside = (
 const selects = (
   member: JsonValue,
   conditions: readonly Condition[],
-  format?: string | null,
+  format: string | null | undefined,
 ) =>
   isRecord(member) &&
   conditions.every((condition) =>
@@ -156,7 +156,7 @@ const selects = (
 /** Whether a member meets a selector's conditions, or undefined when the string is no selector. */
 export const selectorTest = (
   selector: string,
-  format?: string | null,
+  format: string | null | undefined,
 ): ((member: JsonValue) => boolean) | undefined => {
   const conditions = selectorOf(selector);
   return conditions === undefined
@@ -169,7 +169,7 @@ const arrayStep = (
   items: readonly JsonValue[],
   token: string,
   last: boolean,
-  format?: string | null,
+  format: string | null | undefined,
 ): { readonly member: JsonValue } | Stepped => {
   if (INDEX.test(token)) {
     const index = Number(token);
@@ -212,7 +212,7 @@ const arrayStep = (
 export const locatePointer = (
   view: JsonValue | null,
   pointer: string,
-  format?: string | null,
+  format: string | null | undefined,
 ): Located => {
   if (pointer === "")
     return { kind: "value", value: view, searched: [], byPosition: [] };
@@ -302,7 +302,7 @@ const selectorGroups = (tokens: Iterable<string>) => {
 const selectedMembers = (
   items: readonly JsonValue[],
   tokens: Iterable<string>,
-  format?: string | null,
+  format: string | null | undefined,
 ): ReadonlyMap<string, JsonValue> => {
   const selected = new Map<string, JsonValue>();
   const listed = [...tokens];
@@ -336,8 +336,8 @@ const selectedMembers = (
  */
 export const memberLookup = (
   value: JsonValue | undefined,
-  tokens: Iterable<string> = [],
-  format?: string | null,
+  tokens: Iterable<string>,
+  format: string | null | undefined,
 ): ((token: string) => JsonValue | undefined) => {
   if (!Array.isArray(value))
     return (token) =>
@@ -351,7 +351,7 @@ export const memberLookup = (
 export const resolvePointer = (
   view: JsonValue | null,
   pointer: string,
-  format?: string | null,
+  format: string | null | undefined,
 ): JsonValue | undefined => {
   const located = locatePointer(view, pointer, format);
   return located.kind === "value" ? located.value : undefined;

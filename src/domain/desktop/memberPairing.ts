@@ -535,11 +535,11 @@ const pairElements = (
 export const pairMembers = (
   newer: readonly JsonValue[],
   older: readonly JsonValue[],
-  place?: ListPlace,
-  format?: string | null,
+  place: ListPlace | undefined,
+  format: string | null | undefined,
 ): { readonly newer: PairedSide; readonly older: PairedSide } =>
   (format === "xml" ? undefined : pairRecordsById(newer, older)) ??
-  pairElements(newer, older, place, format === "json");
+  pairElements(newer, older, place, format !== "xml");
 
 /**
  * The member a pointer names at the end, as its seed version: the other
@@ -556,16 +556,18 @@ export const pairedAtSeed = (
 ): JsonValue | undefined => {
   const list = /^(?<list>.*\/children)\/[^/]+$/u.exec(member)?.groups?.list;
   const newer =
-    list === undefined ? undefined : resolvePointer(ends.final, list);
+    list === undefined ? undefined : resolvePointer(ends.final, list, "xml");
   const older =
-    list === undefined ? undefined : resolvePointer(ends.baseline, list);
-  const element = resolvePointer(ends.final, member);
+    list === undefined ? undefined : resolvePointer(ends.baseline, list, "xml");
+  const element = resolvePointer(ends.final, member, "xml");
   if (list === undefined || !Array.isArray(newer) || !Array.isArray(older))
     return undefined;
   const index = newer.indexOf(element ?? null);
   const partner =
     index < 0
       ? undefined
-      : pairMembers(newer, older, holdsTagOnly(list)).newer.partners[index];
+      : pairMembers(newer, older, holdsTagOnly(list), "xml").newer.partners[
+          index
+        ];
   return partner === undefined ? undefined : older[partner];
 };

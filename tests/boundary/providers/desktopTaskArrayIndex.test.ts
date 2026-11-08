@@ -41,7 +41,7 @@ print(json.dumps(results))
   );
   expect(results).toEqual(
     cases.map(({ items, pointer }) => {
-      const located = locatePointer(items, pointer);
+      const located = locatePointer(items, pointer, "xml");
       return [
         located.kind,
         located.kind === "value" ? located.value : null,

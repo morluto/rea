@@ -58,7 +58,7 @@ def _viewless_entry(view, pointer: str):
     parts = pointer[1:].split("/")
     if len(parts) < 3 or parts[0] != "entries" or parts[2] != "view":
         return None
-    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
     if kind != "value" or not isinstance(item, dict):
         return None
     if isinstance(item.get("view_error"), str):
@@ -88,7 +88,7 @@ def _zip_leaves_out(view, pointer: str) -> bool:
         return False
     parts = pointer[1:].split("/")
     if parts[0] == "entries" and len(parts) > 1:
-        kind, entry, _ = _locate(view, "/entries/" + parts[1])
+        kind, entry, _ = _locate(view, "/entries/" + parts[1], "zip")
         return _entry_leaves_out(entry) if kind == "value" else view.get("truncated") is True
     entries = view.get("entries") if isinstance(view.get("entries"), list) else []
     return view.get("truncated") is True or any(_entry_leaves_out(entry) for entry in entries)
@@ -178,7 +178,7 @@ def _xml_text(entry, view, pointer: str, found) -> bool:
     parts = pointer[1:].split("/")
     if len(parts) < 2 or parts[0] != "entries":
         return False
-    kind, item, _ = _locate(view, "/entries/" + parts[1])
+    kind, item, _ = _locate(view, "/entries/" + parts[1], "zip")
     return kind == "value" and isinstance(item, dict) and item.get("format") == "xml"
 
 
@@ -242,7 +242,7 @@ def _text_at(view, pointer: str) -> bool:
     segments = pointer.split("/")
     if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
         return False
-    kind, owner, _ = _locate(view, "/".join(segments[:-2]))
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]), "xml")
     return kind == "value" and _is_element(owner)
 
 
@@ -254,7 +254,7 @@ def _not_xml_entry(check, view):
         return f"{check['file']} at {check['pointer']} does not point into an entry's view"
     if parts[1] != "entries":
         return None
-    kind, item, _ = _locate(view, "/entries/" + parts[2])
+    kind, item, _ = _locate(view, "/entries/" + parts[2], "zip")
     if kind != "value" or not isinstance(item, dict) or item.get("format") == "xml":
         return None
     # An entry without a view failed before this, so its format is one with a view.

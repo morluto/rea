@@ -91,7 +91,7 @@ const keyedMembers = (
     : pairMembers(from, others, hold, at.format);
   const older = at.older;
   const side = older ? pairing.older : pairing.newer;
-  const lookup = memberLookup(other);
+  const lookup = memberLookup(other, [], at.format);
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
     // Once the array became another type, a member's counterpart is what its pointer names there.
@@ -141,7 +141,11 @@ const walk = (
       if (member !== undefined) visit(member.key, item, member.counterpart);
     });
   } else if (Array.isArray(from)) {
-    const lookup = memberLookup(other);
+    const lookup = memberLookup(
+      other,
+      [],
+      into.format?.(path.segments.map((segment) => `/${segment}`).join("")),
+    );
     from.forEach((item, index) =>
       visit(String(index), item, lookup(String(index))),
     );
