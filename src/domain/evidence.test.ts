@@ -9,6 +9,7 @@ import {
 } from "./binaryTargetTypes.js";
 import {
   createEvidence,
+  evidenceEnvelopeForAdmission,
   evidenceSchema,
   parseEvidence,
   immutableEvidence,
@@ -894,4 +895,21 @@ it("diagnoses a previous explicit-null coverage commitment without admitting or 
     result: { observed: true },
   });
   expect(parseEvidence(current)).toEqual(current);
+});
+
+it("borrows variable-size collections for admission", () => {
+  const limitations = ["one", "two"];
+  const locations: never[] = [];
+  const evidenceLinks = ["ev_" + "a".repeat(64)];
+  const envelope = evidenceEnvelopeForAdmission(TARGET, PROVIDER, {
+    operation: "borrow",
+    parameters: {},
+    result: {},
+    limitations,
+    locations,
+    evidenceLinks,
+  });
+  expect(envelope.limitations).toBe(limitations);
+  expect(envelope.locations).toBe(locations);
+  expect(envelope.evidence_links).toBe(evidenceLinks);
 });
