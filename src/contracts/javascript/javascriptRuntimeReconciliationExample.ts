@@ -110,8 +110,10 @@ const semanticGraph = createJavaScriptSemanticGraph({
       status: "unknown" as const,
       retained_relations: 0,
       omitted_relations: 0,
-      unknown_ids: [],
+      retained_unknowns: 0,
+      omitted_unknowns: 0,
     })),
+    files: [],
   },
   limitations: ["Semantic relations are unavailable in this minimal example."],
 });

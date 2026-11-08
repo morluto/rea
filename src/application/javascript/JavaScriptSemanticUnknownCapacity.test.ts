@@ -36,6 +36,7 @@ const fileProjection = (file = source(), nodes = 200, unknowns = 200) => {
   const steps = projectJavaScriptSemanticFileSteps(
     file,
     analyzeJavaScriptSemantics(file.text.value),
+    null,
     { nodes, unknowns },
   );
   let step = steps.next();
@@ -47,8 +48,20 @@ it("bounds unknowns independently of retained nodes and accounts for examined om
   const complete = fileProjection();
   const bounded = fileProjection(source(), 200, 2);
   expect(complete.unknowns.length).toBeGreaterThan(2);
-  expect(bounded.nodes).toEqual(complete.nodes);
-  expect(bounded.relations).toEqual(complete.relations);
+  expect(
+    [...bounded.nodes].sort((a, b) => a.node_id.localeCompare(b.node_id)),
+  ).toEqual(
+    [...complete.nodes].sort((a, b) => a.node_id.localeCompare(b.node_id)),
+  );
+  expect(
+    [...bounded.relations].sort((a, b) =>
+      a.relation_id.localeCompare(b.relation_id),
+    ),
+  ).toEqual(
+    [...complete.relations].sort((a, b) =>
+      a.relation_id.localeCompare(b.relation_id),
+    ),
+  );
   expect(bounded.unknowns).toHaveLength(2);
   expect(
     bounded.omittedUnknownOccurrences!.reduce(
@@ -60,7 +73,7 @@ it("bounds unknowns independently of retained nodes and accounts for examined om
     totalUnknowns: 2,
     fileUnknowns: 2,
   });
-  projection.adoptFileProjection(bounded);
+  projection.adoptFileProjection(source(), bounded);
   const graph = projection.finish(digest, application);
   expect(graph.coverage).toMatchObject({
     truncated: true,
@@ -113,11 +126,12 @@ it("enforces per-file and total unknown capacities across transferred files", ()
     const steps = projectJavaScriptSemanticFileSteps(
       file,
       analyzeJavaScriptSemantics(text),
+      null,
       capacity,
     );
     let step = steps.next();
     while (!step.done) step = steps.next();
-    projection.adoptFileProjection(step.value);
+    projection.adoptFileProjection(file, step.value);
   }
   expect(projection.remainingFileCapacity().unknowns).toBe(0);
   const graph = projection.finish(digest, application);
@@ -208,9 +222,9 @@ it("rejects excess transferred unknowns before adopting any file facts", () => {
     fileUnknowns: 1,
   });
   const before = projection.remainingFileCapacity();
-  expect(() => projection.adoptFileProjection(fileProjection())).toThrow(
-    "Transferred semantic unknowns exceed",
-  );
+  expect(() =>
+    projection.adoptFileProjection(source(), fileProjection()),
+  ).toThrow("Transferred semantic unknowns exceed");
   expect(projection.remainingFileCapacity()).toEqual(before);
 });
 
@@ -261,7 +275,7 @@ it("does not intern omitted provenance and counts repeated omitted emissions as 
 
 it("preserves omission-free graph identity and refuses contradictory omission coverage", () => {
   const projection = createJavaScriptSemanticGraphProjection();
-  projection.adoptFileProjection(fileProjection());
+  projection.adoptFileProjection(source(), fileProjection());
   const graph = projection.finish(digest, application);
   expect(Object.hasOwn(graph.coverage, "omitted_unknown_occurrences")).toBe(
     false,
@@ -308,11 +322,12 @@ it("applies the same unknown admission in direct and transferred construction", 
     const steps = projectJavaScriptSemanticFileSteps(
       file,
       analyzeJavaScriptSemantics(text),
+      null,
       transferred.remainingFileCapacity(),
     );
     let step = steps.next();
     while (!step.done) step = steps.next();
-    transferred.adoptFileProjection(step.value);
+    transferred.adoptFileProjection(file, step.value);
   }
   expect(direct.finish(digest, application)).toEqual(
     transferred.finish(digest, application),
@@ -328,7 +343,7 @@ it("bounds reads within unmodeled nested operator operands", () => {
     totalUnknowns: 1,
     fileUnknowns: 1,
   });
-  projection.adoptFileProjection(bounded);
+  projection.adoptFileProjection(source("app.js", body), bounded);
   const graph = projection.finish(digest, application);
   expect(graph.coverage.truncated).toBe(true);
   const trace = queryJavaScriptSemanticGraph(

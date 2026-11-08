@@ -16,6 +16,7 @@ import type { JavaScriptSemanticPropertyPath as PropertyPath } from "./javascrip
 import {
   SemanticGetterQuery,
   type GetterQueryJob,
+  type GetterInvocation,
 } from "./javascriptSemanticGetterQueries.js";
 
 type ClassNode = t.ClassDeclaration | t.ClassExpression;
@@ -60,6 +61,10 @@ export interface GetterResultResolvers {
     node: t.ObjectExpression | t.ArrayExpression,
     path: PropertyPath,
   ) => readonly Reference[];
+  readonly methodCalls?: (
+    invocation: GetterInvocation,
+    callee: t.MemberExpression | t.OptionalMemberExpression,
+  ) => readonly GetterInvocation[];
 }
 
 /** Branch syntax contributes alternatives without evaluating application code. */
@@ -244,7 +249,9 @@ export class GetterResultWalker {
     const read = current.privateRead;
     if (read === undefined) return;
     const { getter, receiver = owner } = this.job.invocation;
-    const isStatic = t.isClassMethod(getter) && getter.static;
+    const isStatic =
+      (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
+      getter.static;
     if (
       !t.isClass(receiver) ||
       !this.resolvers.privateReceiver(receiver, owner, current.path, isStatic)
@@ -280,7 +287,10 @@ export class GetterResultWalker {
           {
             owner: receiver,
             kind:
-              t.isClassMethod(getter) && getter.static ? "static" : "instance",
+              (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
+              getter.static
+                ? "static"
+                : "instance",
           },
           current.path,
           current.escapes || this.job.escapes,
@@ -310,7 +320,10 @@ export class GetterResultWalker {
           owner: base,
           receiver: t.isClass(receiver) ? receiver : owner,
           kind:
-            t.isClassMethod(getter) && getter.static ? "static" : "prototype",
+            (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
+            getter.static
+              ? "static"
+              : "prototype",
         },
         [key, ...current.path],
         current.escapes || this.job.escapes,
@@ -360,6 +373,24 @@ export class GetterResultWalker {
 
   #visit(current: GetterWork): void {
     const expression = unwrapJavaScriptExpression(current.node).node;
+    if (
+      this.query.widening &&
+      (t.isCallExpression(expression) || t.isOptionalCallExpression(expression))
+    ) {
+      const callee = unwrapJavaScriptExpression(expression.callee).node;
+      if (
+        t.isMemberExpression(callee) ||
+        t.isOptionalMemberExpression(callee)
+      ) {
+        const methods =
+          this.resolvers.methodCalls?.(this.job.invocation, callee) ?? [];
+        if (methods.length > 0) {
+          for (const method of methods)
+            this.query.schedule(method, current.path, true);
+          return;
+        }
+      }
+    }
     if (t.isIdentifier(expression) && this.#alias(current, expression)) return;
     if (t.isForOfStatement(expression)) {
       this.#enqueue(() => ({

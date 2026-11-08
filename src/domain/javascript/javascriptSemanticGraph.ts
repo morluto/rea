@@ -98,6 +98,14 @@ export class JavaScriptSemanticEvidenceContextRegistry {
     return { ...evidenceContext, location: reference.location };
   }
 
+  /** Return one interned context row by identifier. */
+  context(contextId: string): JavaScriptSemanticEvidenceContext {
+    const context = this.#contexts.get(contextId);
+    if (context === undefined)
+      throw new TypeError("Semantic evidence context is absent");
+    return context;
+  }
+
   /** Return the deterministic context table owned by this graph projection. */
   get contexts(): JavaScriptSemanticEvidenceContext[] {
     return [...this.#contexts.values()].sort((left, right) =>
@@ -339,12 +347,15 @@ function* checkCoverageSteps(
     const family = JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation.relation];
     relationsByFamily.set(family, (relationsByFamily.get(family) ?? 0) + 1);
   }
-  const unknownsById = new Map<string, GraphRecord["unknowns"][number]>();
-  const unknownFamilies = new Set<string>();
+  const unknownsByFamily = new Map(
+    JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => [family, 0]),
+  );
   for (const [index, unknown] of graph.unknowns.entries()) {
     if (index % 256 === 0) yield;
-    unknownsById.set(unknown.unknown_id, unknown);
-    unknownFamilies.add(unknown.family);
+    unknownsByFamily.set(
+      unknown.family,
+      (unknownsByFamily.get(unknown.family) ?? 0) + 1,
+    );
   }
   for (const [index, family] of graph.coverage.families.entries()) {
     if (family.retained_relations !== relationsByFamily.get(family.family))
@@ -353,27 +364,42 @@ function* checkCoverageSteps(
         path: ["coverage", "families", index, "retained_relations"],
         message: "Family retained relation count does not match graph content",
       });
-    if (
-      family.unknown_ids.some(
-        (identifier) => unknownsById.get(identifier)?.family !== family.family,
-      )
-    )
+    if (family.retained_unknowns !== unknownsByFamily.get(family.family))
       context.addIssue({
         code: "custom",
-        path: ["coverage", "families", index, "unknown_ids"],
-        message: "Family coverage references an unknown from another family",
+        path: ["coverage", "families", index, "retained_unknowns"],
+        message: "Family retained unknown count does not match graph content",
       });
     if (
       family.status === "complete" &&
       (family.omitted_relations !== 0 ||
-        family.unknown_ids.length > 0 ||
-        unknownFamilies.has(family.family) ||
+        family.retained_unknowns > 0 ||
+        family.omitted_unknowns !== 0 ||
         omittedUnknowns.some((omitted) => omitted.family === family.family))
     )
       context.addIssue({
         code: "custom",
         path: ["coverage", "families", index],
         message: "Complete family coverage cannot omit or retain unknown facts",
+      });
+  }
+  for (let index = 1; index < graph.coverage.files.length; index += 1) {
+    if (index % 256 === 0) yield;
+    const previous = graph.coverage.files[index - 1];
+    const current = graph.coverage.files[index];
+    if (
+      previous !== undefined &&
+      current !== undefined &&
+      (compareUnicodeCodePoints(previous.module_path, current.module_path) ||
+        compareUnicodeCodePoints(
+          previous.artifact_sha256,
+          current.artifact_sha256,
+        )) >= 0
+    )
+      context.addIssue({
+        code: "custom",
+        path: ["coverage", "files", index],
+        message: "File coverage must be sorted and unique by source identity",
       });
   }
 }
@@ -621,22 +647,6 @@ function* checkUnknownsSteps(
   }
 }
 
-const checkUnknownReferences = (
-  graph: GraphRecord,
-  context: GraphIssueReporter,
-): void => {
-  const unknownIds = new Set(
-    graph.unknowns.map(({ unknown_id }) => unknown_id),
-  );
-  for (const [index, family] of graph.coverage.families.entries())
-    if (family.unknown_ids.some((identifier) => !unknownIds.has(identifier)))
-      context.addIssue({
-        code: "custom",
-        path: ["coverage", "families", index, "unknown_ids"],
-        message: "Family coverage references an absent unknown frontier",
-      });
-};
-
 function* checkFingerprintsSteps(
   graph: GraphRecord,
   nodes: ReadonlyMap<string, JavaScriptSemanticGraphNode>,
@@ -708,7 +718,6 @@ function* checkGraphContentSteps(
   yield* checkRootsSteps(graph, nodes, context);
   yield* checkRelationsSteps(graph, nodes, evidenceContexts, context);
   yield* checkUnknownsSteps(graph, nodes, evidenceContexts, context);
-  checkUnknownReferences(graph, context);
   yield* checkFingerprintsSteps(graph, nodes, context);
   yield* checkCoverageSteps(graph, context);
   if (graph.coverage.status !== "complete" && graph.limitations.length === 0)
@@ -780,6 +789,14 @@ const normalizeGraphInput = (
         canonicalJson(right, "JavaScript semantic graph"),
       ),
     ),
+    families: [...parsed.coverage.families].sort((left, right) =>
+      compareUnicodeCodePoints(left.family, right.family),
+    ),
+    files: [...parsed.coverage.files].sort(
+      (left, right) =>
+        compareUnicodeCodePoints(left.module_path, right.module_path) ||
+        compareUnicodeCodePoints(left.artifact_sha256, right.artifact_sha256),
+    ),
     ...(parsed.coverage.omitted_unknown_occurrences === undefined
       ? {}
       : {
@@ -792,14 +809,6 @@ const normalizeGraphInput = (
             ),
           ),
         }),
-    families: [...parsed.coverage.families]
-      .map((family) => ({
-        ...family,
-        unknown_ids: uniqueSorted(family.unknown_ids),
-      }))
-      .sort((left, right) =>
-        compareUnicodeCodePoints(left.family, right.family),
-      ),
   },
   limitations: uniqueSorted(parsed.limitations),
 });
@@ -831,12 +840,16 @@ export const createJavaScriptSemanticGraph = (
 const validatedImmutableSemanticGraphs = new WeakSet<object>();
 
 const semanticGraphShape = javaScriptSemanticGraphInputSchema.shape;
+const semanticCoverageShape = semanticGraphShape.coverage.shape;
 const semanticGraphContainerSchema = javaScriptSemanticGraphInputSchema.extend({
   evidence_contexts: arrayContainerSchema(semanticGraphShape.evidence_contexts),
   nodes: arrayContainerSchema(semanticGraphShape.nodes),
   relations: arrayContainerSchema(semanticGraphShape.relations),
   fingerprints: arrayContainerSchema(semanticGraphShape.fingerprints),
   unknowns: arrayContainerSchema(semanticGraphShape.unknowns),
+  coverage: semanticGraphShape.coverage.extend({
+    files: arrayContainerSchema(semanticCoverageShape.files),
+  }),
 });
 
 /**
@@ -886,6 +899,15 @@ function* parseAndSealSemanticGraphSteps(
       ["unknowns"],
       issues,
     ),
+    coverage: {
+      ...container.coverage,
+      files: yield* parseElementSteps(
+        semanticCoverageShape.files.element,
+        container.coverage.files,
+        ["coverage", "files"],
+        issues,
+      ),
+    },
   };
   if (issues.length > 0) throw new z.ZodError(issues);
   return yield* validateAndSealSemanticGraphSteps(normalizeGraphInput(parsed));

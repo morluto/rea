@@ -95,3 +95,31 @@ it("preserves first-input duplicates and retains the last occurrence when later 
   });
   expect(accumulator.nodes()[0]?.observations).toHaveLength(2);
 });
+
+it("charges retained observations once and refuses growth before mutating the node", () => {
+  let remaining = 8192;
+  const budget = {
+    remainingBytes: () => remaining,
+    reserveBytes: (bytes: number) => {
+      if (bytes > remaining) return false;
+      remaining -= bytes;
+      return true;
+    },
+    releaseBytes: (bytes: number) => {
+      remaining += bytes;
+    },
+  };
+  const accumulator = new JavaScriptArtifactGraphAccumulator(budget);
+  const first = nodeInput("one");
+  const node = accumulator.addNode(first);
+  const afterFirst = remaining;
+  accumulator.addNode(first);
+  expect(remaining).toBe(afterFirst);
+  accumulator.addNode(nodeInput("two"));
+  expect(remaining).toBeLessThan(afterFirst);
+  const before = [...node.observations];
+  expect(() => accumulator.addNode(nodeInput("x".repeat(10_000)))).toThrow(
+    /Evidence budget/u,
+  );
+  expect(node.observations).toEqual(before);
+});

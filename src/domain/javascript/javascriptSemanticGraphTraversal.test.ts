@@ -410,8 +410,10 @@ const directionalGraph = (
             JAVASCRIPT_SEMANTIC_RELATION_FAMILY[relation] === family,
         ).length,
         omitted_relations: 0,
-        unknown_ids: [],
+        retained_unknowns: 0,
+        omitted_unknowns: 0,
       })),
+      files: [],
     },
     limitations: partial ? ["One source graph node was omitted."] : [],
   });

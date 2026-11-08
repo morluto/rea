@@ -83,8 +83,8 @@ const semanticControl = {
     perFile: "max_semantic_nodes_per_file",
     ceiling: "semantic_graph_node_ceiling",
     fileCeiling: "semantic_graph_file_node_ceiling",
-    totalDefault: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodes,
-    perFileDefault: JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+    totalDefault: null,
+    perFileDefault: null,
     cliTotal: "--max-semantic-nodes",
     cliPerFile: "--max-semantic-nodes-per-file",
     doesNotRaise:
@@ -108,11 +108,11 @@ const semanticControl = {
 const semanticAdjustment = (
   name: string,
   value: number,
-  fallback: number,
+  fallback: number | null,
 ): string =>
   value >= JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM
     ? `${name} is already ${String(value)}, the maximum ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)}. Do not increase it further.`
-    : `${name} is ${String(value)} (default ${String(fallback)}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
+    : `${name} is ${String(value)} (${fallback === null ? "no default node ceiling" : `default ${String(fallback)}`}; an integer from 1 to ${String(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)})`;
 
 /**
  * Name the caller arguments for one semantic retention ceiling.
@@ -121,8 +121,8 @@ const semanticAdjustment = (
  */
 export const javaScriptSemanticCeilingCoverage = (
   kind: "nodes" | "unknowns",
-  total: number,
-  perFile: number,
+  total: number | null,
+  perFile: number | null,
   reached: { readonly total: boolean; readonly perFile: boolean },
 ): {
   readonly limits: ApplicationCoverage["limits"];
@@ -130,13 +130,21 @@ export const javaScriptSemanticCeilingCoverage = (
 } => {
   const control = semanticControl[kind];
   const limits: ApplicationCoverage["limits"] = [
-    { name: control.ceiling, value: total, unit: "items" },
-    { name: control.fileCeiling, value: perFile, unit: "items" },
-    { name: control.total, value: total, unit: "items" },
-    { name: control.perFile, value: perFile, unit: "items" },
+    ...(total === null
+      ? []
+      : [
+          { name: control.ceiling, value: total, unit: "items" as const },
+          { name: control.total, value: total, unit: "items" as const },
+        ]),
+    ...(perFile === null
+      ? []
+      : [
+          { name: control.fileCeiling, value: perFile, unit: "items" as const },
+          { name: control.perFile, value: perFile, unit: "items" as const },
+        ]),
   ];
   const reachedControls = [
-    ...(reached.total
+    ...(reached.total && total !== null
       ? [
           {
             name: control.total,
@@ -146,7 +154,7 @@ export const javaScriptSemanticCeilingCoverage = (
           },
         ]
       : []),
-    ...(reached.perFile
+    ...(reached.perFile && perFile !== null
       ? [
           {
             name: control.perFile,
@@ -207,7 +215,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
     .max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
     .optional()
     .describe(
-      "Maximum retained semantic nodes across the application; defaults to 100000. Worker heap and parent result admission remain enforced.",
+      "Maximum retained semantic nodes across the application. Omitted, only the serialized Evidence byte budget bounds the semantic graph; worker heap and parent result admission remain enforced.",
     ),
   max_semantic_nodes_per_file: z
     .number()
@@ -216,7 +224,7 @@ export const javaScriptAnalysisResourceControlsSchema = z.strictObject({
     .max(JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM)
     .optional()
     .describe(
-      "Maximum retained semantic nodes per source file; defaults to 20000, additionally bounded by max_semantic_nodes and memory/transfer limits.",
+      "Maximum retained semantic nodes per source file, additionally bounded by max_semantic_nodes and the source's serialized Evidence byte budget. Omitted, only the byte budget applies.",
     ),
   max_semantic_unknowns: z
     .number()

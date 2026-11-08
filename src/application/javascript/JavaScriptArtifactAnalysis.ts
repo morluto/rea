@@ -97,7 +97,17 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
   const selectedFileCount =
     fileSet.files.length - (fileSet.source_selection?.unselected_files ?? 0);
   let selectedFileIndex = 0;
-  for (const file of fileSet.files) {
+  // Selected sources own the available semantic capacity before inventory-only unknowns.
+  const selectedFirst = function* () {
+    for (const outside of [false, true])
+      for (const file of fileSet.files)
+        if (
+          (!file.text.included &&
+            file.text.reason === "outside-analysis-scope") === outside
+        )
+          yield file;
+  };
+  for (const file of selectedFirst()) {
     let analysisStarted = false;
     try {
       await setImmediate();
@@ -152,7 +162,7 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
       }
       const applicationProjectionFailure = facts.applicationProjectionFailure;
       if (facts.projection !== null)
-        projection.adoptFileProjection(facts.projection);
+        projection.adoptFileProjection(file, facts.projection);
       const error = result.ok ? null : result.error.error;
       const limits =
         error instanceof AnalysisResourceConstraintError
@@ -297,15 +307,16 @@ export const analyzeAndAdoptJavaScriptArtifactFiles = async (
         semantic: null,
         ...(unavailable === undefined ? {} : { analysis_failure: unavailable }),
       });
-      projection.recordUnavailableFile(
-        file,
-        failure.reason,
-        failure.limits,
-        interruption instanceof AnalysisResourceConstraintError ||
-          interruption instanceof AnalysisTimeoutError
-          ? "resource-limit"
-          : "incomplete-module",
-      );
+      if (file.kind === "javascript")
+        projection.recordUnavailableFile(
+          file,
+          failure.reason,
+          failure.limits,
+          interruption instanceof AnalysisResourceConstraintError ||
+            interruption instanceof AnalysisTimeoutError
+            ? "resource-limit"
+            : "incomplete-module",
+        );
     }
   }
   return {
@@ -318,6 +329,11 @@ const finalizeArtifactAnalysis = (
   state: MutableArtifactAnalysis,
   preloadLimitations: readonly string[],
 ): JavaScriptArtifactAnalysis => {
+  const failedFiles = state.files.filter(
+    ({ analysis_failure, application_projection_failure }) =>
+      analysis_failure !== undefined ||
+      application_projection_failure !== undefined,
+  ).length;
   return {
     jsonDocuments: state.jsonDocuments,
     files: state.files,
@@ -339,13 +355,12 @@ const finalizeArtifactAnalysis = (
     limitations: [
       "JavaScript and HTML were parsed as inert text; bundle bootstrap code was never executed.",
       "Static paths and relationships may remain unresolved when expressions are dynamic or obfuscated.",
+      ...(failedFiles === 0
+        ? []
+        : [
+            `${String(failedFiles)} source file(s) have analysis or application projection failures; inspect the application graph's per-file parse-scope observations for available details.`,
+          ]),
       ...state.htmlInlineScripts.map(htmlInlineScriptLimitation),
-      ...state.files.flatMap(
-        ({ analysis_failure, application_projection_failure }) =>
-          [analysis_failure, application_projection_failure].flatMap(
-            (failure) => (failure === undefined ? [] : [failure.reason]),
-          ),
-      ),
       ...preloadLimitations,
     ],
   };

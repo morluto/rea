@@ -370,6 +370,44 @@ describe("owned JavaScript result bindings", () => {
 });
 
 describe("graphs transferred to their sealing steps", () => {
+  it("parses per-file coverage incrementally and retains the same graph", () => {
+    const { graph_id: _id, ...semantic } = example().semantic_graph;
+    let visited = 0;
+    const files = Array.from({ length: 160 }, (_, index) => ({
+      get module_path() {
+        visited += 1;
+        return `file-${String(index).padStart(3, "0")}.js`;
+      },
+      artifact_sha256: semantic.root_artifact_sha256,
+      status: "complete" as const,
+      graph_byte_budget: null,
+      retained_graph_bytes: 0,
+      omitted_nodes: 0,
+      omitted_relations: 0,
+      omitted_fingerprints: 0,
+      unknowns: [],
+    }));
+    const input = { ...semantic, coverage: { ...semantic.coverage, files } };
+    const steps = sealTransferredJavaScriptSemanticGraphSteps(input);
+    expect(visited).toBe(0);
+    while (visited === 0) expect(steps.next().done).toBe(false);
+    expect(visited).toBeLessThan(files.length);
+    expect(complete(steps)).toEqual(createJavaScriptSemanticGraph(input));
+  });
+
+  it("preserves issue paths for malformed per-file coverage", () => {
+    const { graph_id: _id, ...semantic } = example().semantic_graph;
+    const input = {
+      ...semantic,
+      coverage: { ...semantic.coverage, files: [{ module_path: 7 }] },
+    };
+    expect(
+      issuesFrom(() =>
+        complete(sealTransferredJavaScriptSemanticGraphSteps(input)),
+      ),
+    ).toEqual(issuesFrom(() => createJavaScriptSemanticGraph(input)));
+  });
+
   it("seal the same validated graphs as the copying factories", () => {
     const input = example();
     const { graph_id: _applicationId, ...application } = input.graph;

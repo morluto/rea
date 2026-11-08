@@ -5,6 +5,7 @@ import {
   javaScriptSemanticUnknownSchema,
   javaScriptSemanticFingerprintSchema,
   javaScriptSemanticEvidenceContextSchema,
+  javaScriptSemanticFileProjectionCoverageSchema,
 } from "../../domain/javascript/javascriptSemanticGraphSchemas.js";
 import { z } from "zod";
 import { digestSchema } from "../../domain/digests.js";
@@ -710,6 +711,7 @@ export const javaScriptWorkerProjectionHeaderSchema = z.strictObject({
   omittedUnknownOccurrences:
     javaScriptSemanticUnknownOmissionsSchema.exactOptional(),
   roots: z.array(javaScriptSemanticNodeSchema.shape.node_id),
+  coverage: javaScriptSemanticFileProjectionCoverageSchema,
   nodesTruncated: z.boolean(),
 });
 

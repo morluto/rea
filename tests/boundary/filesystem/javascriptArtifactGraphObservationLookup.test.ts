@@ -6,6 +6,11 @@ import { expect, it } from "vitest";
 import { scanCanonicalArtifactInventory } from "../../fixtures/artifactInventory.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { readJavaScriptArtifactFiles } from "../../support/javascriptApplicationScope.js";
+import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
+import { buildImmutableJavaScriptArtifactGraphSteps } from "../../../src/application/javascript/JavaScriptArtifactGraphBuilder.js";
+import { createJavaScriptSemanticGraphProjection } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
+import { AnalysisResourceConstraintError } from "../../../src/domain/analysisErrorCore.js";
+import { err } from "../../../src/domain/result.js";
 import { analyzeArtifactFiles } from "../../fixtures/javascriptArtifactAnalysis.js";
 import { immutableArtifactGraph } from "../../fixtures/javascriptArtifactGraph.js";
 import { createJavaScriptArtifactReader } from "../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
@@ -14,6 +19,109 @@ import type {
   JavaScriptPackageObservation,
   JavaScriptSourceMapObservation,
 } from "../../../src/application/javascript/JavaScriptArtifactAnalysisTypes.js";
+
+it("keeps per-file failure reasons in the graph while summarizing them globally", async () => {
+  const root = await createTestTempDirectory("rea-artifact-failure-summary-");
+  await Promise.all([
+    writeFile(join(root, "one.js"), "x"),
+    writeFile(join(root, "two.js"), "x"),
+  ]);
+  const snapshot = await scanCanonicalArtifactInventory(root, {});
+  const reader = createJavaScriptArtifactReader(root, "directory");
+  try {
+    const files = await readJavaScriptArtifactFiles(reader, snapshot);
+    const outcome = await analyzeAndAdoptJavaScriptArtifactFiles(
+      files,
+      {
+        analyze: async (file) =>
+          err({
+            error: new AnalysisResourceConstraintError(
+              "analyze",
+              "memory",
+              `failure for ${file.path}`,
+              null,
+            ),
+            javascript: null,
+            module: null,
+            projection: null,
+          }),
+      },
+      createJavaScriptSemanticGraphProjection(),
+      async () => {},
+    );
+    const graph = await immutableArtifactGraph(
+      snapshot,
+      files,
+      outcome.analysis,
+    );
+    expect(outcome.analysis.limitations).toHaveLength(3);
+    const observations = graph.nodes
+      .filter(({ kind }) => kind === "unknown")
+      .flatMap(({ observations }) => observations);
+    for (const path of ["one.js", "two.js"])
+      expect(observations).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            properties: expect.objectContaining({
+              path,
+              limitation: expect.stringContaining(`failure for ${path}`),
+            }),
+          }),
+        ]),
+      );
+    const available = Buffer.byteLength(JSON.stringify(graph)) + 1024;
+    const admission = () => {
+      let remaining = available;
+      return {
+        remainingBytes: () => remaining,
+        reserveBytes: (bytes: number) => {
+          if (bytes > remaining) return false;
+          remaining -= bytes;
+          return true;
+        },
+        releaseBytes: (bytes: number) => {
+          remaining += bytes;
+        },
+      };
+    };
+    const complete = buildImmutableJavaScriptArtifactGraphSteps(
+      snapshot,
+      files,
+      outcome.analysis,
+      admission(),
+    );
+    while (!complete.next().done) {
+      /* drain the cooperative graph */
+    }
+    const enlarged = {
+      ...outcome.analysis,
+      files: outcome.analysis.files.map((file) =>
+        file.analysis_failure === undefined
+          ? file
+          : {
+              ...file,
+              analysis_failure: {
+                ...file.analysis_failure,
+                reason: "failure ".repeat(2000),
+              },
+            },
+      ),
+    };
+    const limited = buildImmutableJavaScriptArtifactGraphSteps(
+      snapshot,
+      files,
+      enlarged,
+      admission(),
+    );
+    expect(() => {
+      while (!limited.next().done) {
+        /* drain until refused */
+      }
+    }).toThrow(/Evidence budget/u);
+  } finally {
+    await reader.close();
+  }
+});
 
 it("uses the first structured observation when paths repeat", async () => {
   const root = await createTestTempDirectory("rea-artifact-graph-index-");

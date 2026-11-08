@@ -621,7 +621,7 @@ These paths appear as contextual `javascript-expression` nodes. An exact `api`
 seed such as `desktop.copy` can trace an exposed member through a unique IPC
 pairing to an external API call. `addListener` is normalized to `on`. Semantic
 projection retains these boundary paths before bulk function definitions, within
-the existing per-file node budget; omitted general semantics remain explicitly
+the per-file semantic budget; omitted general semantics remain explicitly
 partial. Wrapper expansion is bounded by one million visits/substitutions and
 128 nested substitutions, with exhaustion reported as unknown coverage.
 
@@ -773,7 +773,36 @@ After projection, it retains only the lexical module facts and exported return
 shapes needed to build application relationships. Full source IR does not stay
 resident for every file together. Callable ownership and contained-reference
 queries use per-file range indexes, while call sites use exact-range lookups.
-Existing node budgets and coverage reporting remain in effect.
+Semantic facts are bounded by serialized bytes, not node counts. One
+application Evidence may occupy the running heap divided by twelve, at most
+one V8 string: a consumer such as `compare_application_versions` holds two
+records, and measured consumers peak at about six times the Evidence bytes.
+Each source is offered the remaining budget in proportion to its share of the
+unanalyzed source bytes, also capped by the parent's free result heap. Within
+a source, nodes enter the graph when an admitted relation, fingerprint, or
+unknown frontier references them. Callable/fingerprint pairs, binding/definition
+relations, and calls with their endpoints are admitted while indexing, before
+more nodes are staged; later passes offer the remaining relationships, unknown
+frontiers, and unreferenced nodes. The first
+refusal closes that source, which keeps a connected source-ordered prefix.
+
+The application graph also admits its actual retained nodes and edges after
+package resolution, replacing the earlier forecasts. If the graph cannot fit,
+REA returns a resource constraint with the completed artifact inventory instead
+of delivering an oversized or silently incomplete graph. The selected files
+remain available for a narrower analysis. A final bounded serialization check
+also verifies the complete Evidence size before delivery.
+
+`semantic_graph.coverage.files` reports each source's status (`complete`,
+`truncated`, or `unavailable`), the byte budget a truncated source was offered,
+retained bytes and omitted counts for examined facts. When admission stops
+projection before exhaustion, omitted node, relation, fingerprint and frontier
+totals are `null`. Pending nodes and deferred frontiers share a bounded scratch
+reservation; refused relationships never retain only part of their endpoints. The offer derives from the
+analyzing process's heap, so complete sources omit it and identical complete
+results keep identical Evidence across hosts. Families report retained and omitted unknown counts. Page
+`semantic_files` or `semantic_unknowns` with `inspect_analysis_view`, or select
+one source with `source_paths` to give it the whole budget.
 
 Progress identifies the source file being parsed and projected. Cancellation is
 checked between files and throughout result transfer. The owned analyzer can
@@ -820,15 +849,15 @@ default). Reaching it fails the current source with the same memory resource
 failure and reports `worker_process_memory_limit_bytes`, also a coverage limit;
 the next source starts a new analyzer. Bun elsewhere enforces no analyzer limit.
 
-The default semantic capacities are 100000 nodes across the application and
-20000 per source. Large bundles may explicitly select `max_semantic_nodes` and
+Callers may additionally cap semantic nodes with `max_semantic_nodes` and
 `max_semantic_nodes_per_file` (CLI: `--max-semantic-nodes` and
-`--max-semantic-nodes-per-file`), each from 1 to 1000000. The per-file offer is
-also bounded by the remaining application capacity. Raising these controls does
-not bypass worker heap, execution deadline or parent result admission. Truncated
-coverage lists both effective ceilings, `max_semantic_nodes` and
-`max_semantic_nodes_per_file`. The limitation names only the ceiling that
-stopped retention. Omitted relationships remain unknown.
+`--max-semantic-nodes-per-file`), each from 1 to 1000000. Neither has a
+default; omitted, only the serialized byte budget applies. The per-file offer
+is also bounded by the remaining application capacity, and a capped source
+keeps connected admitted facts and reports unexamined omission totals as unknown.
+These controls do not bypass the byte budget, worker heap, execution deadline
+or parent result admission. Truncated coverage lists selected node ceilings;
+the limitation names only the ceiling that stopped retention.
 
 Unknown records have independent defaults of 100000 across the application and
 20000 per source. Select `max_semantic_unknowns` and
@@ -858,7 +887,7 @@ While sources remain, the sequential worker reserves one next compact static
 checkpoint at its 8 MiB bound with the same 6x retention expansion used at
 admission. Earlier checkpoints are already charged to retained bytes; the
 remaining inventory does not multiply the reserve. Streamed file transfers keep the default 512 MiB
-allowance, and can grow with the parent's offered retention budget (8x byte
+allowance, and can grow with the parent's offered retention budget (2x byte
 expansion), up to 2 GiB. Individual records remain bounded to 8 MiB. The 8 MiB
 record ceiling and the 2 GiB file maximum have no runtime override, and raising
 `max_heap_mb` does not raise them. The effective file ceiling follows the
@@ -1040,6 +1069,23 @@ Unresolved HTML references retain their declaration, source range, and resolutio
 reason in the renderer observations.
 HTML script source ranges follow the HTML parser across LF, CRLF, and bare CR
 line endings, preserving UTF-16 columns.
+
+Unavailable sources and coverage rows use the same Evidence admission owner as
+analyzed sources. Complete static fallback records also require a reservation;
+if they cannot fit, their source remains unavailable and remaining analysis stops. If no row fits, `semantic_graph.coverage.omitted_files` counts
+unrepresented sources; their individual coverage remains unknown. Selected sources
+receive semantic capacity before unavailable inventory files. Source paths
+remain available in the application inventory. Exported module observations are
+reserved before the worker receives its remaining semantic graph allowance.
+Application-node links are bound before final graph admission and included in
+`retained_graph_bytes`; dependent facts are refused atomically if linking makes
+them exceed the remaining allowance. Serialized root IDs share that admission.
+`graph_byte_budget` preserves the source's original offer. When final linking
+removes facts or expands them beyond that offer, `final_shared_graph_byte_budget`
+records the separate shared allowance. Export return-shape forecasts count escaped
+path expansion incrementally and stop at available capacity before constructing
+flattened shapes.
+
 Inline JavaScript in local HTML, meaning classic or module `<script>` bodies
 without a `src` attribute, is not analyzed. Embedded SVG scripts use `href`
 (or `xlink:href` when `href` is absent) instead: an existing reference, even

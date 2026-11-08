@@ -1,6 +1,7 @@
 import type {
   JavaScriptSourceAnalysisLimits,
   JavaScriptSourceAnalysisPort,
+  JavaScriptSourceAdmission,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import { JavaScriptAnalysisWorker } from "../../javascript/analysis/JavaScriptAnalysisWorker.js";
 import type { spawnOwnedProviderProcess } from "../../process/ProviderProcess.js";
@@ -44,17 +45,17 @@ export interface JavaScriptSourceAnalysisAcquisition {
 /** Construct the inert artifact analyzer; resources are acquired on the first source. */
 export const createJavaScriptSourceAnalysis = (
   limits: JavaScriptSourceAnalysisLimits,
-  sourceCount: number,
+  sources: number | readonly JavaScriptSourceAdmission[],
   acquisition: JavaScriptSourceAnalysisAcquisition = {},
 ): Promise<JavaScriptSourceAnalysisPort> => {
   if (acquisition.scope === undefined)
     return Promise.resolve(
-      new JavaScriptAnalysisWorker(limits, acquisition.launcher, sourceCount),
+      new JavaScriptAnalysisWorker(limits, acquisition.launcher, sources),
     );
   return checkoutJavaScriptSourceAnalysis(
     acquisition.scope,
     limits,
-    sourceCount,
+    sources,
     acquisition.launcher,
   );
 };
@@ -62,7 +63,7 @@ export const createJavaScriptSourceAnalysis = (
 const checkoutJavaScriptSourceAnalysis = async (
   scope: ArtifactResourceScope,
   limits: JavaScriptSourceAnalysisLimits,
-  sourceCount: number,
+  sources: number | readonly JavaScriptSourceAdmission[],
   launcher: typeof spawnOwnedProviderProcess | undefined,
 ): Promise<JavaScriptSourceAnalysisPort> => {
   registerJavaScriptSourceAnalysisClose(scope);
@@ -70,7 +71,7 @@ const checkoutJavaScriptSourceAnalysis = async (
   if (current !== undefined && !current.busy) {
     if (
       sameLimits(current.limits, limits) &&
-      current.worker.prepareForAnotherAnalysis(sourceCount)
+      current.worker.prepareForAnotherAnalysis(sources)
     ) {
       current.busy = true;
       return new ScopeJavaScriptSourceAnalysis(scope, current.worker);
@@ -101,7 +102,7 @@ const checkoutJavaScriptSourceAnalysis = async (
   const worker = new JavaScriptAnalysisWorker(
     limits,
     launcher,
-    sourceCount,
+    sources,
     workerCleanupFor(scope),
   );
   // A concurrent analysis may have parked another healthy worker while the
@@ -138,11 +139,28 @@ const sameLimits = (
 class ScopeJavaScriptSourceAnalysis implements JavaScriptSourceAnalysisPort {
   #failed = false;
   #closed = false;
+  readonly evidenceBudget: JavaScriptAnalysisWorker["evidenceLedger"];
 
   constructor(
     private readonly scope: ArtifactResourceScope,
     private readonly worker: JavaScriptAnalysisWorker,
-  ) {}
+  ) {
+    this.evidenceBudget = worker.evidenceLedger;
+  }
+
+  releaseApplicationGraphForecast(): void {
+    this.evidenceBudget.releaseForecast();
+  }
+
+  coverageLimits(): ReturnType<JavaScriptSourceAnalysisPort["coverageLimits"]> {
+    return [
+      {
+        name: "javascript_analysis_evidence_budget_bytes",
+        value: this.evidenceBudget.limitBytes,
+        unit: "bytes",
+      },
+    ];
+  }
 
   analyze(
     ...args: Parameters<JavaScriptSourceAnalysisPort["analyze"]>

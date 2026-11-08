@@ -19,28 +19,40 @@ export const projectSemanticFunctionFingerprints = (
 ): JavaScriptSemanticFingerprint[] =>
   ir.functionFingerprints.flatMap((fingerprint) => {
     const callable = callableNodes.get(fingerprint.callableId);
-    if (callable === undefined) return [];
-    return [
-      createJavaScriptSemanticFingerprint(
-        {
-          function_node_id: callable.node_id,
-          algorithm: "rea.javascript-semantic-function",
-          status: fingerprint.status,
-          components: {
-            parameter_arity: fingerprint.components.parameterArity,
-            normalized_ast_sha256: fingerprint.components.normalizedAstSha256,
-            control_flow_sha256: fingerprint.components.controlFlowSha256,
-            relation_shape_sha256: fingerprint.components.relationShapeSha256,
-            literal_set_sha256: fingerprint.components.literalSetSha256,
-            effects: fingerprint.components.effects,
-          },
-          limitations: fingerprint.limitations,
-          evidence: observedSemanticEvidence(
+    return callable === undefined
+      ? []
+      : [
+          projectSemanticFunctionFingerprint(
             file,
-            callable.identity.source_range,
+            fingerprint,
+            callable,
+            evidenceContexts,
           ),
-        },
-        evidenceContexts,
-      ),
-    ];
+        ];
   });
+
+/** Construct the same canonical fingerprint when its callable is indexed. */
+export const projectSemanticFunctionFingerprint = (
+  file: JavaScriptArtifactFile,
+  fingerprint: JavaScriptSemanticIr["functionFingerprints"][number],
+  callable: JavaScriptSemanticGraphNode,
+  evidenceContexts: JavaScriptSemanticEvidenceContextRegistry,
+): JavaScriptSemanticFingerprint =>
+  createJavaScriptSemanticFingerprint(
+    {
+      function_node_id: callable.node_id,
+      algorithm: "rea.javascript-semantic-function",
+      status: fingerprint.status,
+      components: {
+        parameter_arity: fingerprint.components.parameterArity,
+        normalized_ast_sha256: fingerprint.components.normalizedAstSha256,
+        control_flow_sha256: fingerprint.components.controlFlowSha256,
+        relation_shape_sha256: fingerprint.components.relationShapeSha256,
+        literal_set_sha256: fingerprint.components.literalSetSha256,
+        effects: fingerprint.components.effects,
+      },
+      limitations: fingerprint.limitations,
+      evidence: observedSemanticEvidence(file, callable.identity.source_range),
+    },
+    evidenceContexts,
+  );

@@ -1019,6 +1019,11 @@ it("preserves graph commitments and export shapes through worker adoption", asyn
     expect(parseJavaScriptApplicationGraph(graph)).toEqual(graph);
     expect(semantic.application_graph_id).toBe(graph.graph_id);
     expect(semantic.root_artifact_sha256).toBe(snapshot.manifest.root_sha256);
+    expect(
+      semantic.nodes.some(
+        ({ application_node_ids }) => application_node_ids.length > 0,
+      ),
+    ).toBe(true);
     const exported = compact.files.find(
       ({ file }) => file.path === "exports.mjs",
     );
@@ -1060,7 +1065,7 @@ it("preserves graph commitments and export shapes through worker adoption", asyn
       );
       expect(decoded.module).toEqual(module);
       decodedModules.set(analyzed.file.path, decoded.module);
-      transferred.adoptFileProjection(decoded.projection);
+      transferred.adoptFileProjection(analyzed.file, decoded.projection);
       if (!rejectedInvalidTransfer) {
         await rejectInvalidTransfer(
           wirePath,
@@ -1089,6 +1094,7 @@ it("preserves graph commitments and export shapes through worker adoption", asyn
       transferred.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         decodedGraph,
+        [],
       ),
     );
     expect(resealed).toEqual(semantic);
@@ -1608,7 +1614,17 @@ const assertSemanticLinks = (
     ...semanticGraphInput,
     application_graph_id: `jag_${"f".repeat(64)}`,
   });
-  const { electron_summary: summary, ...analysisResult } = result;
+  const {
+    electron_summary: summary,
+    inventory: _inventory,
+    ...analysisResult
+  } = result;
+  expect(
+    javascriptApplicationAnalysisResultSchema.safeParse({
+      ...analysisResult,
+      summary,
+    }).success,
+  ).toBe(true);
   expect(() =>
     javascriptApplicationAnalysisResultSchema.parse({
       ...analysisResult,

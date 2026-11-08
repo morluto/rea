@@ -402,6 +402,7 @@ it("scopes callers unknowns to call relations while preserving graph uncertainty
       omitted_nodes: null,
       omitted_relations: null,
       limits: [],
+      files: [],
       families: JAVASCRIPT_SEMANTIC_RELATION_FAMILIES.map((family) => ({
         family,
         status:
@@ -409,7 +410,8 @@ it("scopes callers unknowns to call relations while preserving graph uncertainty
         retained_relations:
           JAVASCRIPT_SEMANTIC_RELATION_FAMILY[call.relation] === family ? 1 : 0,
         omitted_relations: family === "data-flow" ? null : 0,
-        unknown_ids: family === "data-flow" ? [readUnknown.unknown_id] : [],
+        retained_unknowns: family === "data-flow" ? 1 : 0,
+        omitted_unknowns: 0,
       })),
     },
     limitations: ["One property read remains unresolved."],
@@ -549,7 +551,7 @@ it("rejects complete family coverage with an unlisted retained frontier", () => 
             ...family,
             status: "complete",
             omitted_relations: 0,
-            unknown_ids: [],
+            omitted_unknowns: 0,
           }
         : family,
     ),
@@ -572,7 +574,7 @@ it("rejects complete family coverage with an unlisted retained frontier", () => 
             ...family,
             status: "complete" as const,
             omitted_relations: 0,
-            unknown_ids: [],
+            omitted_unknowns: 0,
           }
         : family,
     ),
@@ -833,10 +835,20 @@ const invalidGraphCases: {
       input.coverage.families = input.coverage.families.map((family) => ({
         ...family,
         retained_relations: family.retained_relations + 1,
-        unknown_ids: [`jsrg_unknown_${"f".repeat(64)}`],
+        retained_unknowns: family.retained_unknowns + 1,
       }));
     },
     message: "Family retained relation count does not match graph content",
+  },
+  {
+    label: "retained unknown counts",
+    change: (input) => {
+      input.coverage.families = input.coverage.families.map((family) => ({
+        ...family,
+        retained_unknowns: family.retained_unknowns + 1,
+      }));
+    },
+    message: "Family retained unknown count does not match graph content",
   },
 ];
 

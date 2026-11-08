@@ -1,0 +1,378 @@
+import { execFileSync } from "node:child_process";
+import { mkdir, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import { expect } from "vitest";
+
+import { parseEvidence } from "../../../src/domain/evidence.js";
+import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/javascript/javascriptApplicationAnalysis.js";
+import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
+import { parseMcpToolError } from "../../fixtures/mcpToolError.js";
+import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
+import { cliTest } from "../../support/cli/cliFixture.js";
+
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "keeps more than 20000 expression operands when no node ceiling is selected",
+  { timeout: 60_000 },
+  async () => {
+    const root = await createTestTempDirectory("rea-js-expression-capacity-");
+    await writeFile(join(root, "app.js"), "input + 1;\n".repeat(10_001));
+    const stdout = execFileSync(
+      process.execPath,
+      [
+        "scripts/rea.mjs",
+        "analyze-javascript-application",
+        root,
+        "--max-semantic-unknowns",
+        "1",
+        "--json",
+      ],
+      {
+        cwd: process.cwd(),
+        env: {
+          ...process.env,
+          NODE_OPTIONS: "--max-old-space-size=1024 --max-semi-space-size=8",
+        },
+        encoding: "utf8",
+        maxBuffer: 64 * 1024 * 1024,
+        timeout: 50_000,
+      },
+    );
+    const graph = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(JSON.parse(stdout)).normalized_result,
+    ).semantic_graph;
+    expect(
+      graph.relations.filter(({ relation }) => relation === "influences"),
+    ).toHaveLength(20_002);
+    expect(
+      graph.coverage.limits.some(({ name }) => name.includes("node_ceiling")),
+    ).toBe(false);
+    expect(graph.coverage.limits).toContainEqual({
+      name: "max_semantic_unknowns",
+      value: 1,
+      unit: "items",
+    });
+  },
+);
+
+// A 448 MiB parent heap gives one Evidence a budget of about 39 MB, which this
+// source's semantic facts exceed while the small source fits its share.
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "bounds semantic facts per source and pages exact coverage and unknowns",
+  { timeout: 90_000 },
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-semantic-budget-");
+    const large = Array.from(
+      { length: 2400 },
+      (_, index) =>
+        `export function method_${String(index)}(input) { const value = input + ${String(index)}; const pair = { value }; return pair.value; }`,
+    ).join("\n");
+    await writeFile(join(root, "a-large.mjs"), large);
+    await writeFile(
+      join(root, "b-small.mjs"),
+      "export const run = (handlers, key) => handlers[key]();\n",
+    );
+    const environment = {
+      HOME: root,
+      XDG_CONFIG_HOME: root,
+      XDG_CACHE_HOME: root,
+      NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+    };
+    const analyzed = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment,
+      timeoutMs: 60_000,
+    });
+    expect(analyzed.exitCode).toBe(0);
+    const evidence = parseEvidence(analyzed.json);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      evidence.normalized_result,
+    );
+    const { coverage } = result.semantic_graph;
+    const [largeCoverage, smallCoverage] = coverage.files;
+    expect(largeCoverage).toMatchObject({
+      module_path: "a-large.mjs",
+      status: "truncated",
+    });
+    expect(smallCoverage).toMatchObject({
+      module_path: "b-small.mjs",
+      status: "complete",
+      omitted_nodes: 0,
+    });
+    if (
+      largeCoverage?.graph_byte_budget == null ||
+      largeCoverage.retained_graph_bytes === null
+    )
+      throw new Error("A truncated source reports its byte budget");
+    // Final linking can add application IDs under the shared allowance.
+    expect(largeCoverage.retained_graph_bytes).toBeLessThanOrEqual(
+      largeCoverage.final_shared_graph_byte_budget ??
+        largeCoverage.graph_byte_budget,
+    );
+    // Projection stopped before all facts were examined; totals stay unknown.
+    expect(largeCoverage.omitted_nodes).toBeNull();
+    expect(largeCoverage.omitted_fingerprints).toBeNull();
+    expect(
+      coverage.families.find(({ family }) => family === "data-flow")
+        ?.omitted_unknowns,
+    ).toBeNull();
+    expect(coverage.limits).toContainEqual(
+      expect.objectContaining({
+        name: "javascript_analysis_evidence_budget_bytes",
+        unit: "bytes",
+      }),
+    );
+    const nodeIds = new Set(
+      result.semantic_graph.nodes.map(({ node_id }) => node_id),
+    );
+    expect(
+      result.semantic_graph.relations.every(
+        ({ source_node_id, target_node_id }) =>
+          nodeIds.has(source_node_id) && nodeIds.has(target_node_id),
+      ),
+    ).toBe(true);
+
+    const view = async (collection: string, offset: number, limit: number) => {
+      const input = join(root, `${collection}-${String(offset)}.json`);
+      await writeFile(
+        input,
+        JSON.stringify({
+          source: { kind: "inline", evidence },
+          view: { kind: "page", collection, offset, limit },
+        }),
+      );
+      const response = await cli.run({
+        arguments: ["inspect-analysis-view", input, "--json"],
+        environment,
+        timeoutMs: 60_000,
+      });
+      expect(response.exitCode).toBe(0);
+      return response.json;
+    };
+    expect(await view("semantic_files", 1, 1)).toMatchObject({
+      normalized_result: {
+        kind: "page",
+        items: [smallCoverage],
+        coverage: { total: 2, next_offset: null, exhausted: true },
+      },
+    });
+    // The large source closed its budget before its frontiers were offered, so
+    // the retained frontiers all belong to the small source.
+    expect(
+      coverage.files[0]?.unknowns.every(({ retained }) => retained === 0),
+    ).toBe(true);
+    expect(await view("semantic_unknowns", 0, 1)).toMatchObject({
+      normalized_result: {
+        kind: "page",
+        items: [
+          {
+            module_path: "b-small.mjs",
+            unknown_id: result.semantic_graph.unknowns[0]?.unknown_id,
+          },
+        ],
+        coverage: {
+          examined: 1,
+          total: result.semantic_graph.unknowns.length,
+          next_offset: 1,
+        },
+      },
+    });
+  },
+);
+
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "refuses expanded package-resolution facts before exceeding the Evidence budget",
+  { timeout: 120_000 },
+  async ({ cli }) => {
+    const root = await createTestTempDirectory(
+      "rea-js-package-resolution-budget-",
+    );
+    const packageRoot = join(root, "node_modules", "proof-pkg");
+    await mkdir(packageRoot, { recursive: true });
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({
+        name: "proof-pkg",
+        exports: { "./item": "x".repeat(150_000) },
+      }),
+    );
+    await writeFile(join(root, "app.mjs"), 'import "proof-pkg/item";');
+    const withinBudget = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(withinBudget.exitCode).toBe(0);
+    const small = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(withinBudget.json).normalized_result,
+    );
+    expect(
+      small.graph.edges.some(({ evidence }) =>
+        evidence.limitations.some((limitation) =>
+          limitation.includes("x".repeat(150_000)),
+        ),
+      ),
+    ).toBe(true);
+    await writeFile(
+      join(root, "app.mjs"),
+      Array.from(
+        { length: 150 },
+        (_, index) => `import "proof-pkg/item"; // ${String(index)}`,
+      ).join("\n"),
+    );
+    const result = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(result.exitCode).toBe(1);
+    expect(result.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reason: expect.stringContaining(
+          "Application graph facts exceed the remaining Evidence budget",
+        ),
+        partial_observation: { kind: "artifact-inventory" },
+      },
+    });
+    const { call } = await connectLocalToolsMcp({
+      NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+    });
+    const response = await call("analyze_javascript_application", {
+      input_path: root,
+      format: "directory",
+    });
+    expect(response.isError).toBe(true);
+    expect(parseMcpToolError(response)).toMatchObject({
+      error: {
+        code: "resource_constraint",
+        details: {
+          reason: expect.stringContaining(
+            "Application graph facts exceed the remaining Evidence budget",
+          ),
+          partial_observation: { kind: "artifact-inventory" },
+        },
+      },
+    });
+    const exportsMap = Object.fromEntries(
+      Array.from({ length: 2500 }, (_, index) => [
+        `./${String(index).padStart(5, "0")}${"x".repeat(60)}`,
+        "./target.js",
+      ]),
+    );
+    await writeFile(
+      join(packageRoot, "package.json"),
+      JSON.stringify({ name: "proof-pkg", exports: exportsMap }),
+    );
+    await writeFile(
+      join(root, "app.mjs"),
+      Array.from(
+        { length: 150 },
+        (_, index) => `import "proof-pkg/missing"; // ${String(index)}`,
+      ).join("\n"),
+    );
+    const missingKey = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        NODE_OPTIONS: "--max-old-space-size=448 --max-semi-space-size=8",
+      },
+      timeoutMs: 90_000,
+    });
+    expect(missingKey.exitCode).toBe(1);
+    expect(missingKey.json).toMatchObject({
+      code: "resource_constraint",
+      details: {
+        reason: expect.stringContaining(
+          "Application graph facts exceed the remaining Evidence budget",
+        ),
+        partial_observation: { kind: "artifact-inventory" },
+      },
+    });
+  },
+);
+
+cliTest.skipIf(process.versions.bun !== undefined)(
+  "refuses exported application facts that exceed the Evidence budget",
+  { timeout: 180_000 },
+  async ({ cli }) => {
+    const root = await createTestTempDirectory("rea-js-application-budget-");
+    // Each export emits about 6 KB of export, return-shape and relationship
+    // records: about 50 MB in total.
+    await writeFile(
+      join(root, "exports.mjs"),
+      Array.from(
+        { length: 8000 },
+        (_, index) =>
+          `export function method_${String(index)}(input) { const value = input + ${String(index)}; const pair = { value }; return pair.value; }`,
+      ).join("\n"),
+    );
+    const heapOptions = "--max-old-space-size=448 --max-semi-space-size=8";
+    const analyzed = await cli.run({
+      arguments: ["analyze-javascript-application", root, "--json"],
+      environment: {
+        HOME: root,
+        XDG_CONFIG_HOME: root,
+        XDG_CACHE_HOME: root,
+        NODE_OPTIONS: heapOptions,
+      },
+      timeoutMs: 150_000,
+    });
+    expect(analyzed.exitCode).toBe(0);
+    const result = javascriptApplicationAnalysisResultSchema.parse(
+      parseEvidence(analyzed.json).normalized_result,
+    );
+    expect(result.limitations).toContainEqual(
+      expect.stringContaining(
+        "source file(s) have analysis or application projection failures",
+      ),
+    );
+    expect(result.graph.nodes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "unknown",
+          identity: expect.objectContaining({
+            namespace: "static-parse-scope",
+          }),
+          observations: expect.arrayContaining([
+            expect.objectContaining({
+              properties: expect.objectContaining({
+                path: expect.stringContaining("exports.mjs"),
+                limitation: expect.stringContaining(
+                  "Exported application facts exceed the remaining Evidence budget",
+                ),
+                analysis_failure: expect.objectContaining({
+                  code: "resource_constraint",
+                }),
+              }),
+            }),
+          ]),
+        }),
+      ]),
+    );
+    expect(
+      result.graph.nodes.some(({ observations }) =>
+        observations.some(
+          ({ properties }) => properties.semantic_role === "export-binding",
+        ),
+      ),
+    ).toBe(false);
+    // The parent offers one Evidence a twelfth of its heap limit.
+    const heapLimit = Number(
+      execFileSync(
+        process.execPath,
+        [
+          ...heapOptions.split(" "),
+          "-p",
+          "require('node:v8').getHeapStatistics().heap_size_limit",
+        ],
+        { encoding: "utf8" },
+      ),
+    );
+    expect(Buffer.byteLength(analyzed.stdout)).toBeLessThanOrEqual(
+      Math.floor(heapLimit / 12),
+    );
+  },
+);

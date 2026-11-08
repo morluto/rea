@@ -13,17 +13,25 @@ import { writeJavaScriptAnalysisSourceTransfer } from "./JavaScriptAnalysisSourc
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 import { getHeapStatistics } from "node:v8";
+import { JavaScriptEvidenceLedger } from "./JavaScriptEvidenceLedger.js";
 import { z } from "zod";
 import type { JavaScriptArtifactFile } from "../../domain/javascript/javascriptArtifactFiles.js";
 import type { JavaScriptStaticAnalysis } from "../../domain/javascript/javascriptStaticAnalysisTypes.js";
-import { estimateJavaScriptStaticApplicationProjection } from "../../domain/javascript/javascriptApplicationProjectionResources.js";
+import type { ApplicationCoverage } from "../../domain/javascript/javascriptApplicationEvidenceSchemas.js";
+import {
+  estimateJavaScriptModuleApplicationProjection,
+  estimateJavaScriptStaticApplicationProjectionSizes,
+} from "../../domain/javascript/javascriptApplicationProjectionResources.js";
 import type { JavaScriptModuleSemanticIr } from "../../domain/javascript/javascriptModuleSemanticIr.js";
 import type {
   JavaScriptAnalyzedSource,
+  JavaScriptEvidenceAdmission,
   JavaScriptSourceAnalysisFailure,
   JavaScriptSourceAnalysisLimits,
+  JavaScriptSourceAdmission,
   JavaScriptRevokedStaticProjection,
 } from "../../domain/javascript/javascriptSourceAnalysis.js";
+import { semanticSourceBudget } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import type { JavaScriptPackageType } from "../../domain/javascript/javascriptSourceParser.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
@@ -60,6 +68,7 @@ import {
 import {
   readJavaScriptAnalysisTransfer,
   JAVASCRIPT_ANALYSIS_TRANSFER_RECORD_BYTES,
+  javaScriptApplicationProjectionRetentionBytes,
   javaScriptForwardedTransferRemediation,
   javaScriptTransferRetentionBytes,
 } from "./JavaScriptAnalysisTransfer.js";
@@ -134,12 +143,28 @@ export class JavaScriptAnalysisWorker {
     sourceIndex: number;
     path: string;
     bytes: number;
+    forecastBytes: number;
+    fallbackBytes: number;
   }[] = [];
   #revokedStaticProjections: JavaScriptRevokedStaticProjection[] = [];
   #nextSourceIndex = 0;
   #applicationProjectionFailure: AnalysisResourceConstraintError | undefined;
   #parentCapacityExhaustion: Readonly<Record<string, number>> | undefined;
   #sourcesRemaining: number | undefined;
+  /** Source bytes of every file not yet analyzed; semantic facts grow with them. */
+  #sourceBytesRemaining: number;
+  #sourceRoots: readonly number[] = [];
+  #sourceRootBytesRemaining = 0;
+  #evidenceLedger = new JavaScriptEvidenceLedger();
+  get evidenceLedger(): JavaScriptEvidenceLedger {
+    return this.#evidenceLedger;
+  }
+  get evidenceBudget(): JavaScriptEvidenceAdmission {
+    return this.#evidenceLedger;
+  }
+  releaseApplicationGraphForecast(): void {
+    this.#evidenceLedger.releaseForecast();
+  }
   #deadline: ProviderStartupDeadline | undefined;
   #resultBudgetBytes = 0;
   #staticCapacityBytes = 0;
@@ -184,7 +209,7 @@ export class JavaScriptAnalysisWorker {
   constructor(
     readonly limits: JavaScriptSourceAnalysisLimits = DEFAULTS,
     readonly launcher: typeof spawnOwnedProviderProcess = spawnOwnedProviderProcess,
-    sourceCount?: number,
+    sources?: number | readonly JavaScriptSourceAdmission[],
     workerCleanup: WorkerCleanupRegistry = processWorkerCleanup,
   ) {
     this.#workerCleanup = workerCleanup;
@@ -210,14 +235,20 @@ export class JavaScriptAnalysisWorker {
       throw new RangeError(
         "JavaScript worker requires valid heap and execution limits",
       );
-    if (
-      sourceCount !== undefined &&
-      (!Number.isSafeInteger(sourceCount) || sourceCount < 0)
-    )
-      throw new RangeError(
-        "JavaScript worker source count must be a nonnegative safe integer",
-      );
-    this.#sourcesRemaining = sourceCount;
+    this.#sourcesRemaining =
+      typeof sources === "number" ? sources : sources?.length;
+    this.#sourceBytesRemaining =
+      typeof sources === "number"
+        ? 0
+        : (sources?.reduce((total, { bytes }) => total + bytes, 0) ?? 0);
+    this.#sourceRoots =
+      typeof sources === "number"
+        ? []
+        : (sources?.map(({ rootBytes }) => rootBytes) ?? []);
+    this.#sourceRootBytesRemaining = this.#sourceRoots.reduce(
+      (total, bytes) => total + bytes,
+      0,
+    );
     this.#processMemoryLimitBytes = javaScriptWorkerMemoryLimitBytes(
       limits.heapMb,
     );
@@ -246,13 +277,29 @@ export class JavaScriptAnalysisWorker {
    * Reset per-analysis admission for one idle process. The worker heap limit
    * stays the one selected at launch; callers must not reuse across limits.
    */
-  prepareForAnotherAnalysis(sourceCount: number): boolean {
+  prepareForAnotherAnalysis(
+    sources: number | readonly JavaScriptSourceAdmission[],
+  ): boolean {
     if (!this.canReuse()) return false;
+    const sourceCount = typeof sources === "number" ? sources : sources.length;
     if (!Number.isSafeInteger(sourceCount) || sourceCount < 0)
       throw new RangeError(
         "JavaScript worker source count must be a nonnegative safe integer",
       );
     this.#sourcesRemaining = sourceCount;
+    this.#sourceBytesRemaining =
+      typeof sources === "number"
+        ? 0
+        : sources.reduce((total, { bytes }) => total + bytes, 0);
+    this.#sourceRoots =
+      typeof sources === "number"
+        ? []
+        : sources.map(({ rootBytes }) => rootBytes);
+    this.#sourceRootBytesRemaining = this.#sourceRoots.reduce(
+      (total, bytes) => total + bytes,
+      0,
+    );
+    this.#evidenceLedger = new JavaScriptEvidenceLedger();
     this.#estimatedRetainedBytes = 0;
     this.#staticProjectionReservations = [];
     this.#revokedStaticProjections = [];
@@ -303,11 +350,14 @@ export class JavaScriptAnalysisWorker {
     let projection: JavaScriptSemanticFileProjection | null = null;
     const id = randomUUID();
     const sourceIndex = this.#nextSourceIndex++;
+    this.#sourceRootBytesRemaining -= this.#sourceRoots[sourceIndex] ?? 0;
     this.#applicationProjectionFailure = undefined;
     this.#parentCapacityExhaustion = undefined;
     this.#revokedStaticProjections = [];
     if (this.#sourcesRemaining !== undefined)
       this.#sourcesRemaining = Math.max(0, this.#sourcesRemaining - 1);
+    const sourceBytesRemaining = this.#sourceBytesRemaining;
+    this.#sourceBytesRemaining = Math.max(0, sourceBytesRemaining - file.bytes);
     let deadline: ProviderStartupDeadline | undefined;
     let result: Result<
       JavaScriptAnalyzedSource,
@@ -407,14 +457,24 @@ export class JavaScriptAnalysisWorker {
           const exhausted = this.#parentCapacityFailure(file.path);
           if (exhausted !== undefined) throw exhausted;
           offeredResultBudget =
-            this.#applicationProjectionFailure !== undefined &&
-            this.#sourcesRemaining !== undefined &&
-            this.#sourcesRemaining > 0
+            this.#applicationProjectionFailure !== undefined
               ? 0
               : this.#remainingResultBudget();
           const admission = javaScriptWorkerAdmissionSchema.parse({
             id,
             semantic_result_budget_bytes: offeredResultBudget,
+            semantic_graph_bytes:
+              offeredResultBudget === 0
+                ? 0
+                : this.#evidenceShare(
+                    file.bytes,
+                    sourceBytesRemaining,
+                    response.semantic_root_bytes,
+                  ),
+            evidence_available_bytes:
+              offeredResultBudget === 0
+                ? 0
+                : this.evidenceBudget.remainingBytes(),
           });
           await new Promise<void>((resolve, reject) =>
             stdin.write(`${JSON.stringify(admission)}\n`, (error) =>
@@ -498,8 +558,50 @@ export class JavaScriptAnalysisWorker {
         );
         module = decoded.module;
         projection = decoded.projection;
+        const application = estimateJavaScriptModuleApplicationProjection(
+          module,
+          file.path,
+          this.evidenceBudget.remainingBytes(),
+        );
+        const applicationRetention =
+          javaScriptApplicationProjectionRetentionBytes(application);
+        if (
+          moduleEstimate +
+            (retainGraph ? graphEstimate : 0) +
+            applicationRetention >
+            remaining ||
+          !this.#evidenceLedger.reserveForecast(application.bytes)
+        ) {
+          module = null;
+          projection = null;
+          throw new AnalysisResourceConstraintError(
+            OPERATION,
+            "memory",
+            "Exported application facts exceed the remaining Evidence budget",
+            {
+              ...this.#limits(),
+              application_projection_estimated_bytes_lower_bound:
+                application.bytes,
+            },
+          );
+        }
+        const semanticBytes =
+          decoded.projection?.coverage.retained_graph_bytes ?? 0;
+        if (!this.evidenceBudget.reserveBytes(semanticBytes)) {
+          this.#evidenceLedger.releaseForecastBytes(application.bytes);
+          module = null;
+          projection = null;
+          throw new AnalysisResourceConstraintError(
+            OPERATION,
+            "memory",
+            "Semantic and application facts exceed the remaining Evidence budget",
+            this.#limits(),
+          );
+        }
         this.#estimatedRetainedBytes +=
-          moduleEstimate + (retainGraph ? graphEstimate : 0);
+          moduleEstimate +
+          (retainGraph ? graphEstimate : 0) +
+          applicationRetention;
         result = retainGraph
           ? ok({ javascript, module, projection: decoded.projection })
           : err({
@@ -831,6 +933,9 @@ export class JavaScriptAnalysisWorker {
         const revoked = this.#staticProjectionReservations.splice(start);
         for (const reservation of revoked) {
           this.#estimatedRetainedBytes -= reservation.bytes;
+          this.#evidenceLedger.releaseForecastBytes(
+            reservation.forecastBytes - reservation.fallbackBytes,
+          );
           this.#revokedStaticProjections.push({
             sourceIndex: reservation.sourceIndex,
             error: new AnalysisResourceConstraintError(
@@ -862,20 +967,57 @@ export class JavaScriptAnalysisWorker {
           }
         : undefined;
     this.#estimatedRetainedBytes += retainedBytes;
-    const expandedBytes = estimateJavaScriptStaticApplicationProjection(
-      facts,
-      bytes,
-      sourcePath,
-    );
+    const { retentionBytes: expandedBytes, evidenceBytes } =
+      estimateJavaScriptStaticApplicationProjectionSizes(
+        facts,
+        bytes,
+        sourcePath,
+      );
     const availableResultBudget = this.#remainingResultBudget();
-    if (expandedBytes <= availableResultBudget) {
+    // The worker serialized this same schema-validated checkpoint; the parent
+    // validates it again without changing its JSON representation.
+    const fallbackBytes = bytes + 2048 + Buffer.byteLength(sourcePath) * 4;
+    const fallbackRetentionBytes =
+      bytes * 4 + 2048 + Buffer.byteLength(sourcePath) * 4;
+    const forecastBytes = Math.max(evidenceBytes, fallbackBytes);
+    if (
+      expandedBytes <= availableResultBudget &&
+      this.#evidenceLedger.reserveForecast(forecastBytes)
+    ) {
       this.#estimatedRetainedBytes += expandedBytes;
       this.#staticProjectionReservations.push({
         sourceIndex,
         path: sourcePath,
         bytes: expandedBytes,
+        forecastBytes,
+        fallbackBytes,
       });
-    } else
+    } else {
+      // The fallback is an observation containing the complete static record,
+      // not a license to bypass the shared Evidence owner. No module facts are
+      // requested after choosing it, so the file observation cannot expand again.
+      if (
+        fallbackRetentionBytes > availableResultBudget ||
+        !this.#evidenceLedger.reserveForecast(fallbackBytes)
+      ) {
+        this.#parentCapacityExhaustion = {
+          static_fallback_required_bytes: fallbackBytes,
+        };
+        throw new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          `Static facts for ${sourcePath} exceed the remaining Evidence capacity; remaining sources were not analyzed`,
+          {
+            ...this.#limits(),
+            parent_result_budget_exhausted: true,
+            static_fallback_required_bytes: fallbackBytes,
+            static_fallback_retention_bytes: fallbackRetentionBytes,
+            parent_available_result_budget_bytes: availableResultBudget,
+            evidence_available_bytes: this.evidenceBudget.remainingBytes(),
+          },
+        );
+      }
+      this.#estimatedRetainedBytes += fallbackRetentionBytes;
       this.#applicationProjectionFailure = new AnalysisResourceConstraintError(
         OPERATION,
         "memory",
@@ -889,7 +1031,41 @@ export class JavaScriptAnalysisWorker {
           remediationAction: `Read the complete static facts on the file node or analyze fewer source files. Expanded application relationships exceed the parent result budget. ${JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION}`,
         },
       );
+    }
     return facts;
+  }
+
+  /** Limits that offered each source its serialized semantic-fact budget. */
+  coverageLimits(): ApplicationCoverage["limits"] {
+    return [
+      {
+        name: "javascript_analysis_evidence_budget_bytes",
+        value: this.#evidenceLedger.limitBytes,
+        unit: "bytes",
+      },
+    ];
+  }
+
+  /**
+   * This source's module root, which projection admits before any fact, plus
+   * a share of the rest of the remaining Evidence budget in proportion to its
+   * bytes among the sources not yet analyzed, since further semantic facts
+   * grow with source length. Bytes an earlier source left unused remain
+   * available to later sources.
+   */
+  #evidenceShare(
+    bytes: number,
+    sourceBytesRemaining: number,
+    rootBytes: number,
+  ): number {
+    return semanticSourceBudget({
+      remaining: this.evidenceBudget.remainingBytes(),
+      rootBytes,
+      laterRootBytes: this.#sourceRootBytesRemaining,
+      sourceBytes: bytes,
+      sourceBytesRemaining,
+      laterSources: this.#sourcesRemaining,
+    });
   }
 
   #parentCapacityFailure(

@@ -255,10 +255,10 @@ export const projectBinaryLayoutView = (
       ),
     );
   assertOwnedView<PageAnalysisView>(view, "page");
-  if (view.collection === "modules")
+  if (view.collection !== "sections" && view.collection !== "symbols")
     return err(
       layoutIncompatible(
-        "modules collection applies to analyze_javascript_application Evidence.",
+        `${view.collection} collection applies to analyze_javascript_application Evidence.`,
       ),
     );
   const rows =

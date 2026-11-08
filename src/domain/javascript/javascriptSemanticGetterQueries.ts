@@ -5,7 +5,7 @@ import type { JavaScriptSemanticAnalysisState } from "./javascriptSemanticState.
 import { SEMANTIC_GETTER_EXPANSION_LIMIT } from "./javascriptSemanticResourceLimits.js";
 
 export interface GetterInvocation {
-  readonly getter: t.ObjectMethod | t.ClassMethod;
+  readonly getter: t.ObjectMethod | t.ClassMethod | t.ClassPrivateMethod;
   readonly owner: t.ObjectExpression | t.ClassDeclaration | t.ClassExpression;
   readonly receiver?: GetterInvocation["owner"];
 }

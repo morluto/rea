@@ -18,6 +18,7 @@ import {
 } from "../../../support/javascriptApplicationScope.js";
 import { createJavaScriptArtifactReader } from "../../../../src/artifacts/javascript/JavaScriptArtifactReader.js";
 import { createJavaScriptSourceAnalysis } from "../../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { semanticModuleRootBytes } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { analyzeAndAdoptJavaScriptArtifactFiles } from "../../../../src/application/javascript/JavaScriptArtifactAnalysis.js";
 import { createJavaScriptSemanticGraphProjection } from "../../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { immutableArtifactGraph } from "../../../fixtures/javascriptArtifactGraph.js";
@@ -44,7 +45,12 @@ describe("JavaScript source selection cancellation boundary", () => {
       );
       const worker = await createJavaScriptSourceAnalysis(
         { heapMb: 512, timeoutMs: 30_000 },
-        1,
+        files.files
+          .filter(({ path }) => sourcePaths.includes(path))
+          .map((file) => ({
+            bytes: file.bytes,
+            rootBytes: semanticModuleRootBytes(file),
+          })),
       );
       let outcome: Awaited<
         ReturnType<typeof analyzeAndAdoptJavaScriptArtifactFiles>
@@ -259,6 +265,25 @@ const expectSkippedStructuredSource = (
 };
 
 describe("Selected JavaScript source failure diagnostics", () => {
+  it("retains semantic coverage for a static-only syntax failure", async () => {
+    const root = await createTestTempDirectory(
+      "rea-js-parse-failure-coverage-",
+    );
+    await writeFile(join(root, "broken.mjs"), "export const value = ;");
+    const response = await analyzeJavaScriptApplication({ input_path: root });
+    if (!response.ok) throw response.error;
+    const analysis = javascriptApplicationAnalysisResultSchema.parse(
+      response.value.normalized_result,
+    );
+    expect(analysis.statistics.parse_failures).toBe(1);
+    expect(analysis.semantic_graph.coverage.files).toContainEqual(
+      expect.objectContaining({
+        module_path: "broken.mjs",
+        status: "unavailable",
+      }),
+    );
+  });
+
   it("analyzes selected files in first-request order and reports only selected progress", async () => {
     const root = await createTestTempDirectory("rea-js-selected-priority-");
     await writeJavaScriptSourceSelectionFixture(root);
@@ -554,6 +579,52 @@ describe("JavaScript application cleanup diagnostics", () => {
       partialObservation,
     });
   });
+});
+
+it("reserves node capacity for a selected source before earlier unselected inventory", async () => {
+  const root = await createTestTempDirectory("rea-js-selected-capacity-");
+  await writeFile(join(root, "a-unselected.mjs"), "export const unused = 1;");
+  await writeFile(join(root, "z-selected.mjs"), "");
+  const result = await analyzeJavaScriptApplication({
+    input_path: root,
+    source_paths: ["z-selected.mjs"],
+    max_semantic_nodes: 1,
+  });
+  if (!result.ok) throw result.error;
+  const analysis = javascriptApplicationAnalysisResultSchema.parse(
+    result.value.normalized_result,
+  );
+  expect(
+    analysis.semantic_graph.nodes.map(({ identity }) => identity.module_path),
+  ).toEqual(["z-selected.mjs"]);
+  expect(analysis.semantic_graph.coverage.truncated).toBe(true);
+  expect(analysis.semantic_graph.coverage.files).toContainEqual(
+    expect.objectContaining({
+      module_path: "z-selected.mjs",
+      status: "complete",
+    }),
+  );
+  expect(analysis.semantic_graph.coverage.limits).toContainEqual(
+    expect.objectContaining({ name: "semantic_graph_node_ceiling", value: 1 }),
+  );
+});
+
+it("offers an empty source its module root before a later source's share", async () => {
+  const root = await createTestTempDirectory("rea-js-empty-source-share-");
+  await writeFile(join(root, "a-empty.mjs"), "");
+  await writeFile(join(root, "b-main.mjs"), "export const value = 1;\n");
+  const result = await analyzeJavaScriptApplication({ input_path: root });
+  if (!result.ok) throw result.error;
+  const analysis = javascriptApplicationAnalysisResultSchema.parse(
+    result.value.normalized_result,
+  );
+  expect(analysis.semantic_graph.coverage.truncated).toBe(false);
+  expect(analysis.semantic_graph.coverage.files).toContainEqual(
+    expect.objectContaining({ module_path: "a-empty.mjs", status: "complete" }),
+  );
+  expect(
+    analysis.semantic_graph.nodes.filter(({ kind }) => kind === "module"),
+  ).toHaveLength(2);
 });
 
 describe("JavaScript application symbolic coverage", () => {

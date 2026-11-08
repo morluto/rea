@@ -1,5 +1,6 @@
 import type {
   JavaScriptSemanticEvidenceContext,
+  JavaScriptSemanticFileProjectionCoverage,
   JavaScriptSemanticFingerprint,
   JavaScriptSemanticGraphNode,
   JavaScriptSemanticGraphRelation,
@@ -16,11 +17,12 @@ export interface JavaScriptSemanticFileProjection {
   readonly unknowns: readonly JavaScriptSemanticGraphUnknown[];
   readonly omittedUnknownOccurrences?: readonly JavaScriptSemanticUnknownOmission[];
   readonly fingerprints: readonly JavaScriptSemanticFingerprint[];
+  readonly coverage: JavaScriptSemanticFileProjectionCoverage;
   readonly nodesTruncated: boolean;
 }
 
 /** Independent retained capacities offered to one source projection. */
 export interface JavaScriptSemanticProjectionCapacity {
-  readonly nodes: number;
+  readonly nodes: number | null;
   readonly unknowns: number;
 }

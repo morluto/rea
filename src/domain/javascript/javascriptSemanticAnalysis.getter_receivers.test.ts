@@ -194,3 +194,702 @@ describe("getter receiver mutation aliases (#1665, #2654)", () => {
     ).toMatchObject({ status: "literal", value: 1 });
   });
 });
+
+describe("getters reached through unknown receiver keys", () => {
+  // Undici-style classes read `this[symbol].name` in every getter. Each
+  // unknown key can select any getter again, which enumerated every getter
+  // ordering and overflowed the stack on Grok Bot's main process bundle.
+  const getters = Array.from(
+    { length: 24 },
+    (_, index) =>
+      `get g${String(index)}() { return this[k].n${String(index)}; }`,
+  ).join(" ");
+  it.each([
+    ["one unknown hop", "new R().g7.x = 2;"],
+    ["a second unknown hop", "new R().g7.n3.x = 2;"],
+  ])("bounds expansion and keeps writes through %s", (_shape, write) => {
+    const start = performance.now();
+    const value = resultValue(
+      `const k = Symbol("state"); const shared = { x: 1 }; class R { constructor() { this[k] = { n7: shared }; } ${getters} } ${write} return shared.x;`,
+    );
+    expect(performance.now() - start).toBeLessThan(2000);
+    expect(value?.status).toBe("unknown");
+  });
+
+  it("keeps a literal no getter can return", () => {
+    expect(
+      resultValue(
+        `const k = Symbol("state"); const shared = { x: 1 }; const other = { x: 1 }; class R { constructor() { this[k] = { n7: other }; } ${getters} } new R().g7.n3.x = 2; return shared.x;`,
+      ),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("carries the active getter cycle guard through method-return widening", () => {
+    const value = resultValue(`const shared = { x: 1 };
+    class R {
+      constructor() { this[k1] = { x: shared }; }
+      method() { return this[k3].x; }
+      get s() { return this.method(); }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new R().a.x = 2;
+    return shared.x;`);
+    expect(value?.status).toBe("unknown");
+  });
+});
+
+it("terminates widening through an unresolved super property on an empty base", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class A {}
+    class B extends A {
+      get s() { return super[key]; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.value = 2;
+    return shared.value;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+
+it("keeps the base lookup owner when widening an unknown super property", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class A { get base() { return { container: { alias: shared } }; } }
+    class B extends A {
+      get a() { return this[k1].alias; }
+      get b() { return super[k2].container; }
+    }
+    new B().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("follows static properties of a class-valued field during getter widening", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class R {
+      child = class { static container = { alias: shared }; };
+      get a() { return this[k1].alias; }
+      get b() { return this[k2].container; }
+    }
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("terminates growing loop-carried destructuring paths without widening unrelated objects", () => {
+  expect(
+    resultValue(`
+    const untouched = { value: 1 };
+    const input = { x: {} };
+    var a = input, b = input;
+    for (let i = 0; i < 2; i++) { var { x: a } = b; var { x: b } = a; }
+    class R { child = a; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    new R().a.value = 2;
+    return untouched.value;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+it("follows a selected instance through an instance getter", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class Child { get container() { return { alias: shared }; } }
+    class Holder { get selected() { return new Child(); } }
+    const { selected } = new Holder();
+    class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("follows a long alias chain to a destructured instance during getter widening", () => {
+  const aliases = ["const a0 = { selected: new Child() };"];
+  for (let index = 1; index <= 100; index++)
+    aliases.push(`const a${String(index)} = a${String(index - 1)};`);
+  expect(
+    resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      ${aliases.join("\n")}
+      const { selected } = a100;
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+  ).toBe("unknown");
+});
+
+it("considers a replacement before delayed instance-field evaluation", () => {
+  expect(
+    resultValue(`
+    const shared = { value: 1 };
+    class Child { get container() { return { alias: shared }; } }
+    let child = {};
+    class R { child = child; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+    child = new Child();
+    new R().a.value = 2;
+    return shared.value;
+  `)?.status,
+  ).toBe("unknown");
+});
+describe("getter widening across object and instance ownership", () => {
+  it("follows a super getter even when an instance field hides ordinary lookup", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      class Base { get s() { return new Child(); } }
+      class R extends Base {
+        s = {};
+        get t() { return super.s; }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps an unknown computed getter when the empty-name field exists", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      class R {
+        "" = {};
+        get [name]() { return new Child(); }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps an object getter's method receiver separate from the enclosing class", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        method() { return shared; }
+        child = { method() { return {}; }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("follows a nested instance returned by the object's own method", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { method() { return new Child(); }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("bounds recursive object method results without escaping unrelated objects", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        child = { method() { return this.method(); }, get container() { return this.method(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+  it("follows an instance returned by an object getter", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { get container() { return new Child(); } };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("does not widen a prototype getter hidden by an own instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class R {
+        s = {};
+        get s() { return shared; }
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("does not widen an object getter replaced by a later data property", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { alias = shared; }
+      class R {
+        child = { get container() { return new Child(); }, container: {} };
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("does not widen an inherited getter hidden by an instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Base { get s() { return shared; } }
+      class R extends Base {
+        s = {};
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+});
+
+describe("nested instances reached during getter widening", () => {
+  it.each(["new Child()", "child"])(
+    "retains aliases reached through %s during widening",
+    (initializer) => {
+      expect(
+        resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const child = new Child();
+      class R {
+        child = ${initializer};
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+      ).toBe("unknown");
+    },
+  );
+
+  it("does not widen an unselected sibling of a destructured field", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      const { selected } = { selected: {}, unrelated: shared };
+      class R { child = selected; get a() { return this[k1].x; } get b() { return this[k2].y; } }
+      new R().a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("follows a nested instance selected by destructuring", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const { selected } = { selected: new Child(), unrelated: {} };
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("follows a nested instance from a destructuring fallback", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const { selected = new Child() } = {};
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("preserves a selected rest property's nested instance", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const { skipped, ...selected } = { skipped: {}, child: new Child() };
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("does not widen excluded properties from a destructured rest", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      const { skipped, ...selected } = { skipped: shared, child: {} };
+      class R { child = selected; get a() { return this[k1].x; } get b() { return this[k2].y; } }
+      new R().a.x = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("preserves an array selection while widening a nested instance", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const [selected] = [new Child(), {}];
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      const [selected] = [{}, shared];
+      class R { child = selected; get a() { return this[k1].x; } get b() { return this[k2].y; } }
+      new R().a.x = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("honors an array rest offset when widening receiver values", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      const [skipped, ...selected] = [shared, {}];
+      class R { child = selected; get a() { return this[k1].x; } get b() { return this[k2].y; } }
+      new R().a.x = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { get container() { return { alias: shared }; } }
+      const [skipped, ...selected] = [{}, new Child()];
+      class R { child = selected; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+      new R().a.value = 2;
+      return shared.value;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("bounds cyclic nested instances without escaping unrelated objects", () => {
+    expect(
+      resultValue(`
+      const shared = { value: 1 };
+      class Child { next = flag ? new Child() : null; get container() { return {}; } }
+      class R {
+        child = new Child();
+        get a() { return this[k1].alias; }
+        get b() { return this[k2].container; }
+      }
+      new R().a.value = 2;
+      return shared.value;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+});
+
+describe("method dispatch during getter widening", () => {
+  it("uses the overriding method for a widened this call", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method() { return {}; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+
+  it("starts widened super calls at the getter's declaring class", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method() { return {}; }
+        get s() { return super.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("keeps a possible computed override during widened dispatch", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return {}; } }
+      class B extends A {
+        [key]() { return shared; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("ignores an earlier computed method overwritten by a known method", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class R {
+        [key]() { return shared; }
+        method() { return {}; }
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new R().a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+});
+
+describe("instance field calls through widened getters", () => {
+  it.each([
+    ["() => ({})", "shared", "literal"],
+    ["() => shared", "{}", "unknown"],
+    ["flag ? () => shared : () => ({})", "{}", "unknown"],
+    ["other || (() => shared)", "{}", "unknown"],
+  ])(
+    "uses an instance field override returning %s",
+    (initializer, baseResult, expected) => {
+      expect(
+        resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return ${baseResult}; } }
+      class B extends A {
+        method = ${initializer};
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+      ).toBe(expected);
+    },
+  );
+
+  it("keeps super method lookup separate from instance field overrides", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class A { method() { return shared; } }
+      class B extends A {
+        method = () => ({});
+        get s() { return super.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+
+  it("follows the receiver of an invoked instance field", () => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        value = shared;
+        method = () => this.value;
+        get s() { return this.method(); }
+        get a() { return this[k1].x; }
+        get b() { return this[k2].y; }
+      }
+      new B().a.x = 2;
+      return shared.x;
+    `)?.status,
+    ).toBe("unknown");
+  });
+});
+
+describe("static field calls through widened getters", () => {
+  it.each([
+    "static method = () => ({}); static method() { return shared; }",
+    "static method() { return shared; } static method = () => ({});",
+  ])("keeps static fields ahead of methods in either order: %s", (members) => {
+    expect(
+      resultValue(`
+      const shared = { x: 1 };
+      class B {
+        ${members}
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      B.a.x = 2;
+      return shared.x;
+    `),
+    ).toMatchObject({ status: "literal", value: 1 });
+  });
+  it.each([
+    ["() => ({})", "shared", "literal"],
+    ["() => shared", "{}", "unknown"],
+  ])(
+    "uses a static field override returning %s",
+    (initializer, baseResult, expected) => {
+      expect(
+        resultValue(`
+      const shared = { x: 1 };
+      class A { static method() { return ${baseResult}; } }
+      class B extends A {
+        static method = ${initializer};
+        static get s() { return this.method(); }
+        static get a() { return this[k1].x; }
+        static get b() { return this[k2].y; }
+      }
+      B.a.x = 2;
+      return shared.x;
+    `)?.status,
+      ).toBe(expected);
+    },
+  );
+});
+
+it("widens private receiver aliases through repeated unknown getter reads", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class R {
+      #state = { y: { x: shared } };
+      get s() { return this.#state; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new R().a.x = 2;
+    return shared.x;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("does not invoke ordinary or private method returns while widening a getter property read", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class R {
+      method() { return shared; }
+      #privateMethod() { return shared; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new R().a.x = 2;
+    return shared.x;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});
+
+it("widens values returned by directly called private methods", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class R {
+      #read() { return shared; }
+      get s() { return this.#read(); }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new R().a.x = 2;
+    return shared.x;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("resolves a private method in its declaring class when widening an inherited getter", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class A {
+      #read() { return shared; }
+      get s() { return this.#read(); }
+    }
+    class B extends A {
+      #read() { return {}; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.x = 2;
+    return shared.x;
+  `)?.status,
+  ).toBe("unknown");
+});
+
+it("does not confuse a subclass private method with an inherited getter's method", () => {
+  expect(
+    resultValue(`
+    const shared = { x: 1 };
+    class A {
+      #read() { return {}; }
+      get s() { return this.#read(); }
+    }
+    class B extends A {
+      #read() { return shared; }
+      get a() { return this[k1].x; }
+      get b() { return this[k2].y; }
+    }
+    new B().a.x = 2;
+    return shared.x;
+  `),
+  ).toMatchObject({ status: "literal", value: 1 });
+});

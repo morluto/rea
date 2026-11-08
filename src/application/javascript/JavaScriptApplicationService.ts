@@ -16,7 +16,10 @@ import {
 import {
   AnalysisAccessDeniedError,
   AnalysisOutputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
+import { jsonParts } from "../../domain/jsonSerialization.js";
+import { javaScriptEvidenceBudgetBytes } from "../../process/JavaScriptEvidenceBudget.js";
 import { ArtifactOperationError } from "../../domain/artifactOperationError.js";
 import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import type { Evidence } from "../../domain/evidence.js";
@@ -37,6 +40,33 @@ import {
 import { JAVASCRIPT_APPLICATION_PROVIDER } from "../../domain/investigationProviders.js";
 
 const OPERATION = "analyze_javascript_application" as const;
+
+/** Verify the complete delivery without allocating a document-sized string. */
+function* enforceEvidenceBudget(evidence: Evidence): Generator<void, void> {
+  const limit = javaScriptEvidenceBudgetBytes();
+  // The CLI terminates its compact JSON document with a newline.
+  let bytes = 1;
+  for (const part of jsonParts(evidence)) {
+    bytes += Buffer.byteLength(part);
+    if (bytes > limit)
+      throw new AnalysisResourceConstraintError(
+        OPERATION,
+        "memory",
+        "Completed application Evidence exceeds the Evidence budget",
+        {
+          evidence_bytes_at_least: bytes,
+          evidence_budget_bytes: limit,
+          input_path: evidence.subject?.local_path ?? null,
+          root_artifact_sha256: evidence.subject?.digest?.sha256 ?? null,
+        },
+        {
+          remediationAction:
+            "Analyze fewer sources or a smaller artifact; the oversized Evidence was not delivered.",
+        },
+      );
+    yield;
+  }
+}
 
 /** Execution options plus the composition root's environment for admission settings. */
 export interface JavaScriptApplicationOptions extends ExecutionOptions {
@@ -95,7 +125,11 @@ export const analyzeJavaScriptApplicationValidated = async (
       acceptedAdmission,
       overrides,
     );
-    const { electron_summary: summary, ...application } = reconstructed;
+    const {
+      electron_summary: summary,
+      inventory: _inventory,
+      ...application
+    } = reconstructed;
     await options.progress?.report({
       phase: "validate_javascript_application_result",
       completed: 0,
@@ -124,6 +158,10 @@ export const analyzeJavaScriptApplicationValidated = async (
       options.signal,
       options.progress,
     );
+    await completeJavaScriptAnalysisSteps(
+      enforceEvidenceBudget(evidence),
+      options.signal,
+    );
     await checkpointJavaScriptAnalysis(options.signal);
     await options.progress?.report({
       phase: "analyze_javascript_application",
@@ -142,7 +180,11 @@ export const analyzeJavaScriptApplicationValidated = async (
     ) {
       try {
         if (result === undefined) {
-          const { electron_summary: summary, ...application } = reconstructed;
+          const {
+            electron_summary: summary,
+            inventory: _inventory,
+            ...application
+          } = reconstructed;
           result = await completeJavaScriptAnalysisSteps(
             parseOwnedJavaScriptApplicationAnalysisSteps({
               ...application,
@@ -156,6 +198,7 @@ export const analyzeJavaScriptApplicationValidated = async (
             input,
             result,
           );
+        await completeJavaScriptAnalysisSteps(enforceEvidenceBudget(evidence));
         return err(
           translateArtifactFailure(OPERATION, cause).retainPartialObservation(
             evidence,
@@ -168,6 +211,15 @@ export const analyzeJavaScriptApplicationValidated = async (
       }
     }
     // Preserve execution constraints and their completed partial Evidence.
+    if (
+      cause instanceof AnalysisResourceConstraintError &&
+      reconstructed !== undefined &&
+      cause.partialObservation === undefined
+    )
+      cause.retainPartialObservation({
+        kind: "artifact-inventory",
+        inventory: reconstructed.inventory,
+      });
     if (cause instanceof AnalysisError) return err(cause);
     if (cause instanceof ArtifactReaderFailure)
       return err(translateArtifactFailure(OPERATION, cause));

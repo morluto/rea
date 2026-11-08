@@ -8,6 +8,7 @@ import { withVerifierCleanup } from "../../../scripts/lib/verifier-cleanup.mjs";
 import { awaitAcknowledgement } from "../../fixtures/lifecycleAcknowledgement.js";
 import { JavaScriptAnalysisWorker } from "../../../src/javascript/analysis/JavaScriptAnalysisWorker.js";
 import { createJavaScriptSourceAnalysis } from "../../../src/artifacts/javascript/JavaScriptSourceAnalysis.js";
+import { semanticModuleRootBytes } from "../../../src/application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { cleanupOwnedProcessGroup } from "../../../src/process/ProcessOwnership.js";
 import { ProcessOwnershipEvidenceOwner } from "../../../src/process/ProcessOwnershipEvidence.js";
@@ -187,6 +188,95 @@ it("reuses one owned worker across analyses on the same resource scope", async (
     expect(launches).toHaveLength(3);
   } finally {
     await scope.close();
+  }
+});
+
+it("keeps Evidence admission with its analysis when a worker is reused", async () => {
+  const scope = new ArtifactResourceScope();
+  const limits = { heapMb: 128, timeoutMs: 30_000 };
+  const firstFile = source("first-budget.mjs", "export const value = 1;");
+  const secondFile = source("second-budget.mjs", "export const value = 2;");
+  try {
+    const first = await createJavaScriptSourceAnalysis(
+      limits,
+      [
+        {
+          bytes: firstFile.bytes,
+          rootBytes: semanticModuleRootBytes(firstFile),
+        },
+      ],
+      {
+        scope,
+      },
+    );
+    const firstResult = await first.analyze(firstFile, {
+      nodes: 100,
+      unknowns: 100,
+    });
+    if (!firstResult.ok) throw firstResult.error.error;
+    const firstBudget = first.evidenceBudget!;
+    const beforeRelease = firstBudget.remainingBytes();
+    await first.close();
+
+    const second = await createJavaScriptSourceAnalysis(
+      limits,
+      [
+        {
+          bytes: secondFile.bytes,
+          rootBytes: semanticModuleRootBytes(secondFile),
+        },
+      ],
+      {
+        scope,
+      },
+    );
+    try {
+      const secondResult = await second.analyze(secondFile, {
+        nodes: 100,
+        unknowns: 100,
+      });
+      if (!secondResult.ok) throw secondResult.error.error;
+      const secondBudget = second.evidenceBudget!;
+      expect(secondBudget).not.toBe(firstBudget);
+      const secondRemaining = secondBudget.remainingBytes();
+      first.releaseApplicationGraphForecast!();
+      expect(firstBudget.remainingBytes()).toBeGreaterThan(beforeRelease);
+      expect(secondBudget.remainingBytes()).toBe(secondRemaining);
+    } finally {
+      await second.close();
+    }
+  } finally {
+    await scope.close();
+  }
+});
+
+it("projects the roots of both selected sources through a shared worker", async () => {
+  const files = [
+    source("first.mjs", "export const a = 1;"),
+    source("second-source.mjs", "export const b = 2;"),
+  ];
+  const worker = await createJavaScriptSourceAnalysis(
+    { heapMb: 128, timeoutMs: 30_000 },
+    files.map((file) => ({
+      bytes: file.bytes,
+      rootBytes: semanticModuleRootBytes(file),
+    })),
+  );
+  try {
+    for (const file of files) {
+      const result = await worker.analyze(file, { nodes: 100, unknowns: 100 });
+      if (!result.ok) throw result.error.error;
+      expect(result.value.projection?.roots).toHaveLength(1);
+      expect(result.value.projection?.nodes).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            identity: expect.objectContaining({ module_path: file.path }),
+          }),
+        ]),
+      );
+    }
+  } finally {
+    await worker.close();
   }
 });
 
@@ -771,6 +861,33 @@ require("node:readline").createInterface({ input: process.stdin }).once("line", 
     }
   },
 );
+
+it("does not retain a complete static checkpoint outside the shared Evidence ceiling", async () => {
+  const worker = new JavaScriptAnalysisWorker({
+    heapMb: 128,
+    timeoutMs: 30_000,
+  });
+  const available = worker.evidenceBudget.remainingBytes();
+  expect(worker.evidenceBudget.reserveBytes(available)).toBe(true);
+  try {
+    const result = await worker.analyze(
+      source(
+        "imports.mjs",
+        "import value from 'dependency'; export { value };",
+      ),
+      { nodes: 100, unknowns: 100 },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected Evidence capacity failure");
+    expect(result.error.javascript).toBeNull();
+    expect(result.error.error).toMatchObject({
+      reportedLimits: { parent_result_budget_exhausted: true },
+    });
+    expect(worker.evidenceBudget.remainingBytes()).toBe(0);
+  } finally {
+    await worker.close();
+  }
+});
 
 it("retains legacy routes and a bounded route-fact prefix inside one checkpoint budget", async () => {
   const count = 12000;

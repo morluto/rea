@@ -1,3 +1,4 @@
+import { estimateJavaScriptModuleApplicationProjection } from "../domain/javascript/javascriptApplicationProjectionResources.js";
 import { moduleResolutionModeForJavaScriptReference } from "../domain/javascript/javascriptModuleResolutionMode.js";
 import { parseJavaScriptSource } from "../domain/javascript/javascriptSourceParser.js";
 import { analyzeParsedJavaScriptStaticSourceSteps } from "../domain/javascript/javascriptStaticAnalysis.js";
@@ -5,11 +6,16 @@ import { analyzeParsedJavaScriptSemanticsSteps } from "../domain/javascript/java
 import { failedJavaScriptStaticAnalysis } from "../domain/javascript/javascriptStaticAnalysisHelpers.js";
 import { projectJavaScriptModuleSemantics } from "../domain/javascript/javascriptModuleSemanticIr.js";
 import {
+  javaScriptApplicationProjectionRetentionBytes,
+  javaScriptGraphBytesWithinRetention,
   javaScriptTransferByteBudget,
   measureJavaScriptModuleTransfer,
 } from "../javascript/analysis/JavaScriptAnalysisTransfer.js";
 import { AnalysisResourceConstraintError } from "../domain/analysisErrorCore.js";
-import { projectJavaScriptSemanticFileSteps } from "../application/javascript/JavaScriptSemanticGraphBuilder.js";
+import {
+  projectJavaScriptSemanticFileSteps,
+  semanticModuleRootBytes,
+} from "../application/javascript/JavaScriptSemanticGraphBuilder.js";
 import { completeJavaScriptAnalysisSteps } from "../application/javascript/JavaScriptAnalysisControl.js";
 import {
   serveJavaScriptAnalysisWorker,
@@ -28,7 +34,7 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
   await callbacks.phase("parse");
   let parsed = parseJavaScriptSource(file.text.value, file.path, packageType);
   if (parsed === null) {
-    await callbacks.checkpoint(failedJavaScriptStaticAnalysis());
+    await callbacks.checkpoint(failedJavaScriptStaticAnalysis(), 0);
     return null;
   }
   await callbacks.phase("static");
@@ -39,23 +45,30 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
     // Only declarations cross this preliminary pass. The normal pass owns
     // full static/semantic facts and their result reservations.
     const empty = failedJavaScriptStaticAnalysis();
-    await callbacks.checkpoint({
-      ...empty,
-      parse_status: facts.parse_status,
-      parse_error_count: facts.parse_error_count,
-      ...(facts.analysis_coverage === undefined
-        ? {}
-        : { analysis_coverage: facts.analysis_coverage }),
-      visited_ast_nodes: facts.visited_ast_nodes,
-      limitations: facts.limitations,
-      electron: {
-        ...empty.electron,
-        browser_windows: facts.electron.browser_windows,
+    await callbacks.checkpoint(
+      {
+        ...empty,
+        parse_status: facts.parse_status,
+        parse_error_count: facts.parse_error_count,
+        ...(facts.analysis_coverage === undefined
+          ? {}
+          : { analysis_coverage: facts.analysis_coverage }),
+        visited_ast_nodes: facts.visited_ast_nodes,
+        limitations: facts.limitations,
+        electron: {
+          ...empty.electron,
+          browser_windows: facts.electron.browser_windows,
+        },
       },
-    });
+      0,
+    );
     return null;
   }
-  const resultBudgetBytes = await callbacks.checkpoint(facts);
+  const admission = await callbacks.checkpoint(
+    facts,
+    semanticModuleRootBytes(file),
+  );
+  const resultBudgetBytes = admission.resultBytes;
   if (facts.parse_status === "failed") return null;
   if (resultBudgetBytes === 0)
     throw new AnalysisResourceConstraintError(
@@ -89,10 +102,27 @@ const analyze: JavaScriptSourceWorkerAnalyzer = async (
       },
     );
   await callbacks.phase("projection");
+  // Application facts are required with the module and are charged to the
+  // unreserved Evidence; semantic facts receive what they leave, up to their
+  // share, and the retained capacity left after both.
+  const application = estimateJavaScriptModuleApplicationProjection(
+    module,
+    file.path,
+    admission.evidenceBytes,
+  );
   const projection = await completeJavaScriptAnalysisSteps(
     projectJavaScriptSemanticFileSteps(
       file,
       ir,
+      Math.min(
+        admission.graphBytes,
+        Math.max(0, admission.evidenceBytes - application.bytes),
+        javaScriptGraphBytesWithinRetention(
+          resultBudgetBytes -
+            measured.retentionBytes -
+            javaScriptApplicationProjectionRetentionBytes(application),
+        ),
+      ),
       capacity,
       facts.electron.call_paths,
     ),

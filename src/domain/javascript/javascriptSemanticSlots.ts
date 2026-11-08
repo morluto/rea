@@ -103,3 +103,29 @@ export const semanticPropertyPointer = (path: readonly string[]): string =>
   path
     .map((key) => `/${key.replaceAll("~", "~0").replaceAll("/", "~1")}`)
     .join("");
+
+/** Count one pointer component's JSON content without constructing escaped strings. */
+export const semanticPropertyPointerComponentJsonBytes = (
+  key: string,
+  allowance: number,
+): number => {
+  let bytes = 1; // Leading slash; surrounding JSON quotes belong to the record.
+  for (const character of key) {
+    const code = character.codePointAt(0) ?? 0;
+    bytes +=
+      character === "~" ||
+      character === "/" ||
+      character === "\\" ||
+      character === '"'
+        ? 2
+        : code < 32
+          ? [8, 9, 10, 12, 13].includes(code)
+            ? 2
+            : 6
+          : code >= 0xd800 && code <= 0xdfff
+            ? 6
+            : Buffer.byteLength(character);
+    if (bytes > allowance) return allowance + 1;
+  }
+  return bytes;
+};

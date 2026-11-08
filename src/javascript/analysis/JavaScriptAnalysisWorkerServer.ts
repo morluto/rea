@@ -33,6 +33,16 @@ import {
   type JavaScriptWorkerMessage,
 } from "./JavaScriptAnalysisWorkerProtocol.js";
 
+/** Parent capacity offered after static facts were retained. */
+export interface JavaScriptWorkerSemanticAdmission {
+  /** Heap the parent can retain for module facts and the semantic graph. */
+  readonly resultBytes: number;
+  /** Serialized semantic-fact bytes this source may add to the Evidence. */
+  readonly graphBytes: number;
+  /** Unreserved Evidence bytes for required module facts and semantic facts. */
+  readonly evidenceBytes: number;
+}
+
 /** Trusted composition callback; this provider owns framing and temporary I/O. */
 export interface JavaScriptSourceWorkerAnalyzer {
   (
@@ -42,7 +52,14 @@ export interface JavaScriptSourceWorkerAnalyzer {
       readonly phase: (
         phase: "parse" | "static" | "semantic" | "projection",
       ) => Promise<void>;
-      readonly checkpoint: (facts: JavaScriptStaticAnalysis) => Promise<number>;
+      /**
+       * Retain static facts and report the module-root bytes projection
+       * requires first; resolve the parent's offered semantic budgets.
+       */
+      readonly checkpoint: (
+        facts: JavaScriptStaticAnalysis,
+        semanticRootBytes: number,
+      ) => Promise<JavaScriptWorkerSemanticAdmission>;
     },
     packageType: JavaScriptPackageType,
     purpose: "analysis" | "preload-discovery",
@@ -128,7 +145,7 @@ const analyzeJob = async (
       { nodes: request.node_budget, unknowns: request.unknown_budget },
       {
         phase: async (phase) => send({ kind: "phase", id: request.id, phase }),
-        checkpoint: async (facts) => {
+        checkpoint: async (facts, semanticRootBytes) => {
           let value = javaScriptWorkerStaticAnalysisSchema.parse(facts);
           if (value.routes !== undefined) {
             const { routes, ...existing } = value;
@@ -173,6 +190,7 @@ const analyzeJob = async (
             id: request.id,
             bytes,
             sha256: createHash("sha256").update(text).digest("hex"),
+            semantic_root_bytes: semanticRootBytes,
           });
           const next = await requests.next();
           if (next.done || !next.value.ok)
@@ -186,7 +204,11 @@ const analyzeJob = async (
               "JavaScript worker admission names a different source job",
             );
           resultBudgetBytes = admission.semantic_result_budget_bytes;
-          return resultBudgetBytes;
+          return {
+            resultBytes: resultBudgetBytes,
+            graphBytes: admission.semantic_graph_bytes,
+            evidenceBytes: admission.evidence_available_bytes,
+          };
         },
       },
       request.package_type,

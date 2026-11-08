@@ -1,4 +1,8 @@
-import type { JavaScriptSemanticIr } from "./javascriptSemanticIr.js";
+import type {
+  JavaScriptModuleOrigin,
+  JavaScriptSemanticIr,
+  JavaScriptSemanticModuleLink,
+} from "./javascriptSemanticIr.js";
 
 /** Module facts needed after file-local semantic projection has finished. */
 export type JavaScriptModuleSemanticIr = Pick<
@@ -33,4 +37,37 @@ export const projectJavaScriptModuleSemantics = (
     coverage: ir.coverage,
     limitations: ir.limitations,
   };
+};
+
+/** Links that expose a binding of their module. */
+export const isJavaScriptExportLink = (
+  link: JavaScriptSemanticModuleLink,
+): boolean =>
+  link.kind === "export" ||
+  link.kind === "re-export" ||
+  link.kind === "commonjs-export";
+
+/** The module an export re-exposes, directly or through one module-bound local. */
+export const javaScriptExportModuleOrigin = (
+  ir: Pick<JavaScriptModuleSemanticIr, "scopes" | "bindings">,
+  link: JavaScriptSemanticModuleLink,
+): JavaScriptModuleOrigin | null => {
+  if (link.specifier !== null)
+    return {
+      ...(link.resolutionMode === undefined
+        ? {}
+        : { resolutionMode: link.resolutionMode }),
+      specifier: link.specifier,
+      importedPath: link.importedName === null ? [] : [link.importedName],
+    };
+  if (link.localName === null) return null;
+  const program = ir.scopes.find(({ kind }) => kind === "program");
+  const binding = ir.bindings.find(
+    ({ name, scopeId }) =>
+      name === link.localName && scopeId === program?.scopeId,
+  );
+  return binding?.provenance.status === "module" &&
+    binding.provenance.origins.length === 1
+    ? (binding.provenance.origins[0] ?? null)
+    : null;
 };

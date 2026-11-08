@@ -23,7 +23,6 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { semanticPrimitiveSet } from "./javascriptSemanticPrimitives.js";
-import { JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS } from "./javascriptAnalysisResourceControls.js";
 
 type DerivedSemanticAnalysis = Pick<
   JavaScriptSemanticIr,
@@ -62,7 +61,7 @@ export function* collectJavaScriptDerivedSemanticsSteps(
   callables: readonly JavaScriptSemanticCallable[],
   references: readonly JavaScriptSemanticReference[],
   parserPartial: boolean,
-  expressionNodeBudget: number = JAVASCRIPT_ANALYSIS_RESOURCE_DEFAULTS.semanticNodesPerFile,
+  expressionNodeBudget: number | null = null,
 ): Generator<void, DerivedSemanticAnalysis> {
   const calls = collectJavaScriptSemanticCalls(program, state, callables);
   yield;
@@ -111,7 +110,7 @@ export function* collectJavaScriptDerivedSemanticsSteps(
     program,
     state,
     callables,
-    expressionNodeBudget,
+    expressionNodeBudget ?? Number.POSITIVE_INFINITY,
   );
   const initializerFlows = expressionFlows.initializers;
   const functionFingerprints =

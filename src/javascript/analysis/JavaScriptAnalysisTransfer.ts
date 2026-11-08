@@ -55,19 +55,51 @@ export const javaScriptAnalysisTransferDescriptorSchema = z.strictObject({
 });
 type Descriptor = z.output<typeof javaScriptAnalysisTransferDescriptorSchema>;
 
-/** Conservative retained-object and sealing expansion for validated transfer rows. */
+/**
+ * Retained-object expansion for validated transfer rows.
+ *
+ * Measured on Node 26 by parsing the semantic and application graph arrays of
+ * a complete Grok Bot app.asar analysis: retained heap was 1.23x to 1.42x of
+ * their JSON bytes. The parent result budget is already half of the free heap,
+ * which leaves the other half for sealing and serialization copies.
+ */
+const TRANSFER_RETENTION_EXPANSION = 2;
 export const javaScriptTransferRetentionBytes = (
   bytes: number,
   records: number,
-): number => bytes * 8 + records * 64;
+): number => bytes * TRANSFER_RETENTION_EXPANSION + records * 64;
 
-/** Larger streamed files require corresponding parent admission capacity. */
+/**
+ * Retained objects for forecast application facts. The serialized forecast
+ * measured 1.71x to 1.87x the emitted JSON, above the retained-object
+ * expansion of parsed graph arrays, so only per-record overhead is added.
+ */
+export const javaScriptApplicationProjectionRetentionBytes = (estimate: {
+  readonly bytes: number;
+  readonly records: number;
+}): number => estimate.bytes + estimate.records * 64;
+
+/**
+ * Serialized semantic-fact bytes whose transfer rows fit a retention budget.
+ *
+ * Each row adds at most 32 bytes of framing and 64 bytes of retained overhead
+ * to a fact of at least 100 serialized bytes, so retention stays below four
+ * times the fact bytes.
+ */
+export const javaScriptGraphBytesWithinRetention = (
+  retentionBytes: number,
+): number => Math.max(0, Math.floor(retentionBytes / 4));
+
+/** Larger streamed files require corresponding parent retention capacity. */
 export const javaScriptTransferByteBudget = (
   resultBudgetBytes: number,
 ): number =>
   Math.min(
     MAX_TRANSFER_BYTES,
-    Math.max(TRANSFER_BYTES, Math.floor(resultBudgetBytes / 8)),
+    Math.max(
+      TRANSFER_BYTES,
+      Math.floor(resultBudgetBytes / TRANSFER_RETENTION_EXPANSION),
+    ),
   );
 
 /**
@@ -242,6 +274,7 @@ export const writeJavaScriptAnalysisTransfer = async (
       kind: "projection-header",
       value: {
         roots: projection.roots,
+        coverage: projection.coverage,
         nodesTruncated: projection.nodesTruncated,
         ...(projection.omittedUnknownOccurrences === undefined
           ? {}
@@ -313,9 +346,10 @@ export async function readJavaScriptAnalysisTransfer(
     capacity !== null &&
     [capacity.nodes, capacity.unknowns].some(
       (value) =>
-        !Number.isSafeInteger(value) ||
-        value < 0 ||
-        value > JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM,
+        value !== null &&
+        (!Number.isSafeInteger(value) ||
+          value < 0 ||
+          value > JAVASCRIPT_SEMANTIC_ITEM_MAXIMUM),
     )
   )
     throw new RangeError(
@@ -469,7 +503,7 @@ export async function readJavaScriptAnalysisTransfer(
                 throw new TypeError(
                   "JavaScript transfer node belongs to a different artifact source",
                 );
-              if (capacity !== null && nodes.length >= capacity.nodes)
+              if (capacity?.nodes != null && nodes.length >= capacity.nodes)
                 throw new TypeError(
                   "JavaScript transfer nodes exceed the offered capacity",
                 );

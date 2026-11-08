@@ -16,6 +16,31 @@ import {
   traverseJavaScriptAstSteps,
 } from "./javascriptSemanticTraversal.js";
 
+it("does not impose a hidden expression ceiling when node capacity is omitted", () => {
+  const parsed = parseJavaScriptSource("input + 1;\n".repeat(10_001));
+  if (parsed === null) throw new Error("Expected parsed source");
+  const unbounded = completeSemanticSteps(
+    analyzeParsedJavaScriptSemanticsSteps(parsed, "import", null),
+  );
+  expect(unbounded.expressionFlowsTruncated).toBe(false);
+  expect(
+    unbounded.expressionFlows.reduce(
+      (count, flow) => count + flow.operands.length,
+      0,
+    ),
+  ).toBe(20_002);
+  const limited = completeSemanticSteps(
+    analyzeParsedJavaScriptSemanticsSteps(parsed, "import", 50),
+  );
+  expect(limited.expressionFlowsTruncated).toBe(true);
+  expect(
+    limited.expressionFlows.reduce(
+      (count, flow) => count + flow.operands.length,
+      0,
+    ),
+  ).toBeLessThanOrEqual(50);
+});
+
 it("bounds repeated capture checks while preserving unindexed and escaped unknowns", () => {
   const count = 128;
   const parsed = parseJavaScriptSource(

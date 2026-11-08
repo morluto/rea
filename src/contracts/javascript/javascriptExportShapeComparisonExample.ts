@@ -231,8 +231,10 @@ const exampleEvidence = (property: "count" | "total") => {
         status: "unknown",
         retained_relations: 0,
         omitted_relations: null,
-        unknown_ids: [],
+        retained_unknowns: 0,
+        omitted_unknowns: null,
       })),
+      files: [],
     },
     limitations,
   });

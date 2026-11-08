@@ -820,7 +820,26 @@ it("projects JavaScript summary and preserves selected module observations", () 
 });
 
 it("projects typed module facts without source bodies and keeps source coverage independent of paging", () => {
-  const analysis = analysisViewJavaScriptAnalysisWithSource();
+  const original = analysisViewJavaScriptAnalysisWithSource();
+  const { graph_id: _graphId, ...semanticGraph } = original.semantic_graph;
+  const sourceFile = {
+    module_path: "renderer.js",
+    artifact_sha256: "a".repeat(64),
+    status: "complete" as const,
+    graph_byte_budget: null,
+    retained_graph_bytes: null,
+    omitted_nodes: 0,
+    omitted_relations: 0,
+    omitted_fingerprints: 0,
+    unknowns: [],
+  };
+  const analysis = {
+    ...original,
+    semantic_graph: createJavaScriptSemanticGraph({
+      ...semanticGraph,
+      coverage: { ...semanticGraph.coverage, files: [sourceFile] },
+    }),
+  };
   const parent = javascriptParent(analysis);
   const input = inspectAnalysisViewInputSchema.parse({
     source: { kind: "retained-evidence", evidence_id: parent.evidenceId },
@@ -855,6 +874,16 @@ it("projects typed module facts without source bodies and keeps source coverage 
     application: analysis.graph.coverage,
     semantic: { status: analysis.semantic_graph.coverage.status },
   });
+  expect(projected.value.source_coverage.semantic).not.toHaveProperty("files");
+  const filesPage = projectAnalysisView(parent, {
+    kind: "page",
+    collection: "semantic_files",
+    offset: 0,
+    limit: 1,
+  });
+  if (!filesPage.ok) throw filesPage.error;
+  if (filesPage.value.kind !== "page") throw new Error("expected page view");
+  expect(filesPage.value.items).toEqual([sourceFile]);
   expect(JSON.stringify(projected.value.rows)).not.toMatch(
     /secret|should not leak|observations/,
   );

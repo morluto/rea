@@ -126,7 +126,7 @@ export function* projectSemanticExpressionInfluence(
   },
 ): Generator<void, void> {
   if (context.ir.expressionFlowsTruncated)
-    context.state.fileNodesDropped = true;
+    context.state.fileBudget?.markNodeLimitReached();
   const key = javascriptSourceRangeKey;
   const expressions = new Map<string, JavaScriptSemanticGraphNode>();
   const usedExpressions = new Set<string>();

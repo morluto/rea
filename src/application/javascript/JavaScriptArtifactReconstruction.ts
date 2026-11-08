@@ -18,6 +18,7 @@ import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
   AnalysisUnsupportedTargetError,
 } from "../../domain/analysisErrorCore.js";
 import { createJavaScriptArtifactReader as createReader } from "../../artifacts/javascript/JavaScriptArtifactReader.js";
@@ -47,7 +48,10 @@ import { readJavaScriptArtifactFiles } from "../../artifacts/javascript/JavaScri
 import { buildImmutableJavaScriptArtifactGraphSteps } from "./JavaScriptArtifactGraphBuilder.js";
 import { scanCanonicalArtifactInventoryInScope } from "../../artifacts/inventory/scanCanonical.js";
 import { createJavaScriptNextAppContext } from "./JavaScriptNextAppContext.js";
-import { createJavaScriptSemanticGraphProjection } from "./JavaScriptSemanticGraphBuilder.js";
+import {
+  createJavaScriptSemanticGraphProjection,
+  semanticModuleRootBytes,
+} from "./JavaScriptSemanticGraphBuilder.js";
 import type { ProgressReporter } from "../ProgressReporter.js";
 import {
   checkpointJavaScriptAnalysis,
@@ -56,6 +60,8 @@ import {
 
 /** Application-layer result retaining local diagnostics outside the canonical graph. */
 export interface JavaScriptArtifactReconstructionResult {
+  /** Inventory retained for a later delivery refusal, not part of application Evidence. */
+  readonly inventory: ArtifactInventorySnapshot;
   readonly route_inventory?: JavaScriptRouteInventory;
   readonly input_path: string;
   readonly format: "asar" | "directory";
@@ -167,20 +173,6 @@ export const reconstructJavaScriptArtifact = async (
         "parse_javascript_sources",
         `Processing ${String(files.files.length - (files.source_selection?.unselected_files ?? 0))} selected application files`,
       );
-      const semanticProjection = createJavaScriptSemanticGraphProjection({
-        ...(input.max_semantic_unknowns === undefined
-          ? {}
-          : { totalUnknowns: input.max_semantic_unknowns }),
-        ...(input.max_semantic_unknowns_per_file === undefined
-          ? {}
-          : { fileUnknowns: input.max_semantic_unknowns_per_file }),
-        ...(input.max_semantic_nodes === undefined
-          ? {}
-          : { totalNodes: input.max_semantic_nodes }),
-        ...(input.max_semantic_nodes_per_file === undefined
-          ? {}
-          : { fileNodes: input.max_semantic_nodes_per_file }),
-      });
       const sourceLimits = {
         heapMb:
           input.max_heap_mb ??
@@ -197,12 +189,43 @@ export const reconstructJavaScriptArtifact = async (
         scope,
         signal,
       );
+      const admissions = await completeJavaScriptAnalysisSteps(
+        (function* () {
+          const measured: { bytes: number; rootBytes: number }[] = [];
+          for (const file of files.files) {
+            yield;
+            if (file.kind === "javascript" && file.text.included)
+              measured.push({
+                bytes: file.bytes,
+                rootBytes: semanticModuleRootBytes(file),
+              });
+          }
+          return measured;
+        })(),
+        signal,
+      );
       const worker = await createJavaScriptSourceAnalysis(
         sourceLimits,
-        files.files.filter(
-          (file) => file.kind === "javascript" && file.text.included,
-        ).length,
+        admissions,
         { scope },
+      );
+      const semanticProjection = createJavaScriptSemanticGraphProjection(
+        {
+          ...(input.max_semantic_unknowns === undefined
+            ? {}
+            : { totalUnknowns: input.max_semantic_unknowns }),
+          ...(input.max_semantic_unknowns_per_file === undefined
+            ? {}
+            : { fileUnknowns: input.max_semantic_unknowns_per_file }),
+          ...(input.max_semantic_nodes === undefined
+            ? {}
+            : { totalNodes: input.max_semantic_nodes }),
+          ...(input.max_semantic_nodes_per_file === undefined
+            ? {}
+            : { fileNodes: input.max_semantic_nodes_per_file }),
+        },
+        worker.evidenceBudget,
+        snapshot.manifest.root_sha256,
       );
       let outcome;
       let cleanupFailure: AnalysisError | undefined;
@@ -281,10 +304,35 @@ export const reconstructJavaScriptArtifact = async (
         "build_javascript_application_graph",
         "Constructing application and Electron boundary relationships",
       );
+      // The worker reserved projections before package resolution existed. The
+      // graph owner now charges the retained records instead of both estimates
+      // and actual records. Keep space for the surrounding result and Evidence.
+      worker.releaseApplicationGraphForecast?.();
+      const outerBytes =
+        16 * 1024 +
+        Buffer.byteLength(
+          JSON.stringify({
+            input_path: path,
+            integrity_contradictions: snapshot.integrity_contradictions,
+            source_selection: files.source_selection ?? null,
+            limitations: analysis.limitations,
+          }),
+        );
+      if (
+        worker.evidenceBudget !== undefined &&
+        !worker.evidenceBudget.reserveBytes(outerBytes)
+      )
+        throw new AnalysisResourceConstraintError(
+          OPERATION,
+          "memory",
+          "Application result metadata exceeds the remaining Evidence budget",
+          { required_bytes: outerBytes },
+        );
       const applicationGraphSteps = buildImmutableJavaScriptArtifactGraphSteps(
         snapshot,
         files,
         analysis,
+        worker.evidenceBudget,
       );
       await reportCompletedPhase(
         "seal_javascript_application_graph",
@@ -300,6 +348,7 @@ export const reconstructJavaScriptArtifact = async (
       const semanticGraphSteps = semanticProjection.finishImmutableSteps(
         snapshot.manifest.root_sha256,
         graph,
+        worker.coverageLimits(),
       );
       await reportCompletedPhase(
         "seal_javascript_semantic_graph",
@@ -320,6 +369,7 @@ export const reconstructJavaScriptArtifact = async (
         snapshot.coverage,
       );
       const completed = {
+        inventory: snapshot,
         route_inventory: await completeJavaScriptAnalysisSteps(
           buildJavaScriptRouteInventorySteps([
             ...analysis.files
@@ -407,7 +457,11 @@ export const reconstructJavaScriptArtifact = async (
                 OPERATION,
               ).bindCleanupDependencies([interruption, cleanupFailure]);
       if (failure !== null) {
-        const { electron_summary: summary, ...application } = completed;
+        const {
+          electron_summary: summary,
+          inventory: _inventory,
+          ...application
+        } = completed;
         const partial = await completeJavaScriptAnalysisSteps(
           parseOwnedJavaScriptApplicationAnalysisSteps({
             ...application,
@@ -424,6 +478,14 @@ export const reconstructJavaScriptArtifact = async (
       }
       reconstructionOutcome = { kind: "completed", result: completed };
     } catch (cause: unknown) {
+      if (
+        cause instanceof AnalysisResourceConstraintError &&
+        cause.partialObservation === undefined
+      )
+        cause.retainPartialObservation({
+          kind: "artifact-inventory",
+          inventory: snapshot,
+        });
       reconstructionOutcome = { kind: "failed", cause };
     }
     if (readerOpen) {

@@ -8,13 +8,7 @@ import { connectLocalToolsMcp } from "../../fixtures/localToolsMcp.js";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-cliTest.for(["CLI", "stdio MCP"] as const)(
-  "keeps getter receiver mutations uncertain in exported Evidence through %s",
-  async (surface, { cli }) => {
-    const root = await createTestTempDirectory("rea-getter-receivers-");
-    await writeFile(
-      join(root, "app.mjs"),
-      `
+const GETTER_FIXTURE = `
 export function self() {
   const box = { x: 1, get self() { return this; } };
   box.self.x = 2;
@@ -85,8 +79,60 @@ export function untouched() {
   box.self.y = 2;
   return box.x;
 }
-`,
-    );
+export function nestedObjectGetter() {
+  const shared = { value: 1 };
+  class Child { alias = shared; }
+  class R { child = { get container() { return new Child(); } }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2;
+  return shared.value;
+}
+export function shadowedGetter() {
+  const shared = { value: 1 };
+  class R { s = {}; get s() { return shared; } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2;
+  return shared.value;
+}
+export function superGetter() {
+  const shared = { value: 1 };
+  class Child { get container() { return { alias: shared }; } }
+  class Base { get s() { return new Child(); } }
+  class R extends Base { s = {}; get t() { return super.s; } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+export function computedGetter() {
+  const shared = { value: 1 };
+  class Child { get container() { return { alias: shared }; } }
+  class R { "" = {}; get [name]() { return new Child(); } get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+export function objectReceiver() {
+  const shared = { value: 1 };
+  class R { method() { return shared; } child = { method() { return {}; }, get container() { return this.method(); } }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+export function emptySuper() {
+  const shared = { value: 1 };
+  class A {} class B extends A { get s() { return super[key]; } get a() { return this[k1].x; } get b() { return this[k2].y; } }
+  new B().a.value = 2; return shared.value;
+}
+export function dynamicSuper() {
+  const shared = { value: 1 };
+  class A { get base() { return { container: { alias: shared } }; } }
+  class B extends A { get a() { return this[k1].alias; } get b() { return super[k2].container; } }
+  new B().a.value = 2; return shared.value;
+}
+export function classValuedField() {
+  const shared = { value: 1 };
+  class R { child = class { static container = { alias: shared }; }; get a() { return this[k1].alias; } get b() { return this[k2].container; } }
+  new R().a.value = 2; return shared.value;
+}
+`;
+
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "keeps getter receiver mutations uncertain in exported Evidence through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-getter-receivers-");
+    await writeFile(join(root, "app.mjs"), GETTER_FIXTURE);
     let document: unknown;
     if (surface === "CLI") {
       const response = await cli.run({
@@ -120,6 +166,14 @@ export function untouched() {
       ["replacementKeepsOldObject", "literal"],
       ["replacementMutatesCapturedObject", "unknown"],
       ["untouched", "literal"],
+      ["nestedObjectGetter", "unknown"],
+      ["shadowedGetter", "literal"],
+      ["superGetter", "unknown"],
+      ["computedGetter", "unknown"],
+      ["objectReceiver", "literal"],
+      ["emptySuper", "literal"],
+      ["dynamicSuper", "unknown"],
+      ["classValuedField", "unknown"],
     ] as const) {
       const projection = graph.nodes
         .flatMap(({ observations }) => observations)

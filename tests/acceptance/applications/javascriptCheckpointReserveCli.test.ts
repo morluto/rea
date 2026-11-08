@@ -9,55 +9,12 @@ import { javascriptApplicationAnalysisResultSchema } from "../../../src/domain/j
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
 import { cliTest } from "../../support/cli/cliFixture.js";
 
-const assertRetainedMemoryFailure = (value: unknown, path: string): void => {
-  const parsed = z
-    .object({
-      code: z.literal("resource_constraint"),
-      message: z.string(),
-      details: z.object({
-        operation: z.literal("analyze_javascript_application"),
-        resource: z.literal("memory"),
-        reported_limits: z.record(z.string(), z.unknown()),
-      }),
-      remediation: z.object({ action: z.string() }),
-    })
-    .safeParse(value);
-  if (!parsed.success)
-    throw new Error(
-      `Expected a typed memory constraint for ${path}; got ${JSON.stringify(value)}`,
-      { cause: parsed.error },
-    );
-  const failure = parsed.data;
-  const limits = failure.details.reported_limits;
-  const graphAdmission = z
-    .object({
-      parent_available_result_budget_bytes: z.number(),
-      module_retention_estimate_bytes: z.number(),
-      graph_retention_estimate_bytes: z.number(),
-    })
-    .safeParse(limits);
-  if (graphAdmission.success) {
-    expect(
-      graphAdmission.data.module_retention_estimate_bytes +
-        graphAdmission.data.graph_retention_estimate_bytes,
-    ).toBeGreaterThan(graphAdmission.data.parent_available_result_budget_bytes);
-    expect(failure.message).toContain(
-      `Semantic graph for ${path} exceeds the parent's remaining result budget`,
-    );
-    expect(failure.remediation.action).toContain("parent result budget");
-    expect(failure.remediation.action).toContain(
-      "retained static and module facts",
-    );
-    return;
-  }
-};
-
 cliTest.skipIf(process.versions.bun !== undefined).for([
   { laterSources: 1, heapMb: 640, methodsCount: 400, retainGraph: true },
   { laterSources: 10, heapMb: 640, methodsCount: 400, retainGraph: true },
-  // Exercise retained evidence and later checkpoints under real heap pressure.
-  // The controlled worker test proves graph-only admission independently of GC.
-  { laterSources: 1, heapMb: 448, methodsCount: 600, retainGraph: false },
+  // The parent cannot retain this whole graph after reserving transient
+  // decoding and the next checkpoint, so it offers a byte budget instead.
+  { laterSources: 1, heapMb: 448, methodsCount: 1200, retainGraph: false },
 ])(
   "preserves evidence with $laterSources later checkpoints and a $heapMb MiB parent heap",
   { timeout: 90_000 },
@@ -111,19 +68,41 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
       ({ kind, identity }) =>
         kind === "function" && identity.module_path === "a-large.mjs",
     );
-    if (retainGraph)
+    const largeCoverage = result.semantic_graph.coverage.files.find(
+      ({ module_path }) => module_path === "a-large.mjs",
+    );
+    if (retainGraph) {
       expect(methods.map(({ label }) => label).sort()).toEqual(
         Array.from(
           { length: methodsCount },
           (_, index) => `method_${String(index)}`,
         ).sort(),
       );
-    else {
-      expect(methods).toHaveLength(0);
-      expect([
-        result.graph.coverage.status,
-        result.semantic_graph.coverage.status,
-      ]).toContain("partial");
+      expect(largeCoverage?.status).toBe("complete");
+    } else {
+      // Functions are projected first, so a truncated source keeps them.
+      expect(methods.length).toBeGreaterThan(0);
+      expect(largeCoverage).toMatchObject({ status: "truncated" });
+      if (
+        largeCoverage?.graph_byte_budget == null ||
+        largeCoverage.retained_graph_bytes === null
+      )
+        throw new Error("A truncated source reports its exact budget use");
+      expect(largeCoverage.retained_graph_bytes).toBeLessThanOrEqual(
+        largeCoverage.final_shared_graph_byte_budget ??
+          largeCoverage.graph_byte_budget,
+      );
+      expect(largeCoverage.omitted_nodes).toBeNull();
+      expect(result.semantic_graph.coverage).toMatchObject({
+        status: "partial",
+        truncated: true,
+        omitted_nodes: largeCoverage.omitted_nodes,
+      });
+      expect(result.semantic_graph.coverage.limits).toContainEqual(
+        expect.objectContaining({
+          name: "javascript_analysis_evidence_budget_bytes",
+        }),
+      );
     }
     expect(
       result.semantic_graph.nodes.some(
@@ -150,22 +129,8 @@ cliTest.skipIf(process.versions.bun !== undefined).for([
           }),
         ]),
       );
-      if (retainGraph) expect(failures).toEqual([]);
+      expect(failures).toEqual([]);
       expect(await readFile(join(root, name), "utf8")).toBe(text);
-      if (!retainGraph && name === "a-large.mjs") {
-        const failureRecord = failures.find(
-          ({ kind, identity, path }) =>
-            kind === "unknown" &&
-            path === name &&
-            identity.strategy === "artifact-local-key" &&
-            identity.artifact_sha256 === digest &&
-            identity.namespace === "static-parse-scope" &&
-            identity.key === `analyze-javascript-source:${name}`,
-        );
-        if (failureRecord === undefined)
-          throw new Error(`Missing analysis failure for ${name}`);
-        assertRetainedMemoryFailure(failureRecord.failure, name);
-      }
     }
     expect(response.stderr).not.toMatch(/FATAL ERROR:.*heap/iu);
   },

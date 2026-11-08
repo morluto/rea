@@ -380,6 +380,7 @@ it("retains a failed source analyzer until shutdown can verify its release", asy
       async close() {
         if (!releaseAllowed) throw failure;
       },
+      coverageLimits: () => [],
     },
   };
   expect(await scope.release(owner)).toMatchObject({

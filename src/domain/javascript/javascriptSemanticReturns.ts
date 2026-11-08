@@ -3,6 +3,7 @@ import * as t from "@babel/types";
 import {
   semanticContainer,
   semanticPropertyPointer,
+  semanticPropertyPointerComponentJsonBytes,
 } from "./javascriptSemanticSlots.js";
 
 import type {
@@ -286,4 +287,50 @@ const flattenValue = (
       coverage,
       slot.presence,
     );
+};
+
+/** Count flattened records and repeated escaped paths without allocating either. */
+export const estimateSemanticReturnValueBytes = (
+  value: JavaScriptSemanticValue,
+  allowance: number,
+): number => {
+  let bytes = 0;
+  const visit = (
+    current: JavaScriptSemanticValue,
+    pathBytes: number,
+    present: boolean,
+  ): boolean => {
+    // Record punctuation, property names, status and coverage overhead.
+    bytes += 192 + pathBytes;
+    if (bytes > allowance) return false;
+    const container = present ? semanticContainer(current) : null;
+    if (container === null) {
+      const payload =
+        "reason" in current
+          ? current.reason
+          : current.status === "literal"
+            ? current.value
+            : current.status === "union"
+              ? current.values
+              : null;
+      bytes += Buffer.byteLength(JSON.stringify(payload));
+      return bytes <= allowance;
+    }
+    for (const slot of container.slots) {
+      const componentBytes = semanticPropertyPointerComponentJsonBytes(
+        slot.name,
+        Math.max(0, allowance - bytes - pathBytes),
+      );
+      if (
+        !visit(
+          slot.value,
+          pathBytes + componentBytes,
+          slot.presence === "present",
+        )
+      )
+        return false;
+    }
+    return true;
+  };
+  return visit(value, 0, true) ? bytes : allowance + 1;
 };

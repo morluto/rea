@@ -18,6 +18,7 @@ import { compareUnicodeCodePoints } from "../unicodeCodePointOrder.js";
 import {
   SemanticGetterQuery,
   type GetterQueryJob,
+  type GetterInvocation,
 } from "./javascriptSemanticGetterQueries.js";
 import { expandSemanticGetterResult } from "./javascriptSemanticGetterResultWalker.js";
 
@@ -156,6 +157,7 @@ const classPropertyDescriptors = (
 ) => {
   const isStatic = kind === "static";
   const selectedAccessors: t.ClassMethod[] = [];
+  const selectedMethods: t.ClassMethod[] = [];
   const fields: t.ClassProperty[] = [];
   const indexedMembers: {
     readonly member: t.ClassMethod | t.ClassProperty;
@@ -195,6 +197,17 @@ const classPropertyDescriptors = (
     propertyName === null
       ? []
       : indexedMembers.filter(({ key }) => key === propertyName);
+  // Static fields are installed after all methods, regardless of source order.
+  if (
+    propertyName !== null &&
+    !matchingMembers.some(({ member }) => t.isClassProperty(member))
+  )
+    for (const { member, key } of [...indexedMembers].reverse()) {
+      if (key !== null && key !== propertyName) continue;
+      if (t.isClassMethod(member) && member.kind === "method")
+        selectedMethods.push(member);
+      if (key === propertyName) break;
+    }
   const uncertainAccessors = indexedMembers.filter(
     (entry): entry is typeof entry & { member: t.ClassMethod } => {
       const { member, key } = entry;
@@ -241,6 +254,7 @@ const classPropertyDescriptors = (
       selectedAccessors.push(member);
   return {
     accessors: selectedAccessors,
+    methods: selectedMethods,
     fields,
     inherits: matchingMembers.length === 0,
   };
@@ -541,6 +555,67 @@ const privateReceiverProjection = (
   return false;
 };
 
+/** Resolve methods from the lexical super owner or the concrete this receiver. */
+const getterMethodCalls = (
+  invocation: GetterInvocation,
+  callee: t.MemberExpression | t.OptionalMemberExpression,
+  state: JavaScriptSemanticAnalysisState,
+): readonly GetterInvocation[] => {
+  const receiverExpression = unwrapJavaScriptExpression(callee.object).node;
+  const { getter, owner, receiver = owner } = invocation;
+  if (
+    !t.isClass(owner) ||
+    !t.isClass(receiver) ||
+    !(t.isThisExpression(receiverExpression) || t.isSuper(receiverExpression))
+  )
+    return [];
+  const isStatic =
+    (t.isClassMethod(getter) || t.isClassPrivateMethod(getter)) &&
+    getter.static;
+  if (t.isPrivateName(callee.property)) {
+    if (!t.isThisExpression(receiverExpression)) return [];
+    return owner.body.body.flatMap((member): GetterInvocation[] =>
+      t.isClassPrivateMethod(member) &&
+      member.kind === "method" &&
+      member.static === isStatic &&
+      member.key.id.name === (callee.property as t.PrivateName).id.name
+        ? [{ getter: member, owner, receiver }]
+        : [],
+    );
+  }
+  const name = semanticStaticPropertyKey(callee.property, callee.computed);
+  if (name === null) return [];
+  if (
+    t.isThisExpression(receiverExpression) &&
+    !isStatic &&
+    instanceFieldReferences(receiver, name, [], state).definiteNames.has(name)
+  )
+    return [];
+  const pending = t.isSuper(receiverExpression)
+    ? owner.superClass == null
+      ? []
+      : [...semanticClassCandidates(owner.superClass, state)]
+    : [receiver];
+  const seen = new Set<t.Node>();
+  const calls: GetterInvocation[] = [];
+  for (let index = 0; index < pending.length; index++) {
+    const klass = pending[index];
+    if (klass === undefined || seen.has(klass)) continue;
+    seen.add(klass);
+    const descriptors = classPropertyDescriptors(
+      klass,
+      name,
+      isStatic ? "static" : "prototype",
+      state,
+    );
+    for (const method of descriptors.methods)
+      calls.push({ getter: method, owner: klass, receiver });
+    if (descriptors.inherits && klass.superClass != null)
+      pending.push(...semanticClassCandidates(klass.superClass, state));
+  }
+  return calls;
+};
+
 const expandGetterResult = (
   job: GetterQueryJob,
   query: SemanticGetterQuery,
@@ -554,6 +629,8 @@ const expandGetterResult = (
     privateReceiver: (receiver, owner, path, isStatic) =>
       privateReceiverProjection(receiver, owner, path, isStatic, state),
     bases: (node) => semanticClassCandidates(node, state),
+    methodCalls: (invocation, callee) =>
+      getterMethodCalls(invocation, callee, state),
   });
 };
 

@@ -203,8 +203,8 @@ export const semanticFixtureInput = (
             : family === "request",
       ).length,
       omitted_relations: withUnknown && family === "call-flow" ? null : 0,
-      unknown_ids:
-        dynamic !== null && family === "call-flow" ? [dynamic.unknown_id] : [],
+      retained_unknowns: dynamic !== null && family === "call-flow" ? 1 : 0,
+      omitted_unknowns: withUnknown && family === "call-flow" ? null : 0,
     }),
   );
   const fingerprint = createJavaScriptSemanticFingerprint(
@@ -242,6 +242,7 @@ export const semanticFixtureInput = (
       omitted_relations: withUnknown ? null : 0,
       limits: [],
       families: coverageFamilies,
+      files: [],
     },
     limitations: withUnknown ? ["Dynamic call target remains unknown."] : [],
   };

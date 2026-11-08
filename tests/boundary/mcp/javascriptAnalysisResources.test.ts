@@ -13,6 +13,8 @@ import { UNTRUSTED_CONTENT_INSTRUCTIONS } from "../../../src/server/toolResultEn
 import { toolContract } from "../../../src/contracts/toolContracts.js";
 import { retainedEvidenceReferenceSchema } from "../../../src/domain/evidenceReference.js";
 
+const IMPORTS = 12_000;
+
 it("delivers deadline recovery guidance at initialization before any tool call", async () => {
   const { client, transport } = createResourceClient();
   try {
@@ -36,12 +38,14 @@ it("delivers deadline recovery guidance at initialization before any tool call",
   }
 });
 
-it("accepts more work after application expansion exceeds memory and retains every static finding", async () => {
+it("retains every static finding through public module views when application expansion exceeds memory, then accepts more work", async () => {
   const root = await createTestTempDirectory("rea-js-resource-boundary-");
   const nextRoot = await createTestTempDirectory("rea-js-resource-recovery-");
   await writeFile(join(nextRoot, "main.js"), "export const recovered = 9;\n");
+  // Twelve thousand findings forecast more application relationships than a
+  // 512 MiB parent can retain under its measured expansion.
   const source = Array.from(
-    { length: 4000 },
+    { length: IMPORTS },
     (_, index) =>
       `import { observed as binding${String(index)} } from "./target.js";`,
   ).join("\n");
@@ -162,7 +166,7 @@ it("accepts more work after application expansion exceeds memory and retains eve
         reference.location.start.line,
       ]),
     ).toEqual(
-      Array.from({ length: 4000 }, (_, index) => ["./target.js", index + 1]),
+      Array.from({ length: IMPORTS }, (_, index) => ["./target.js", index + 1]),
     );
     expect(
       createHash("sha256")

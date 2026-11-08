@@ -13,6 +13,7 @@ import {
 } from "../../domain/javascript/javascriptApplicationGraph.js";
 import type { JavaScriptArtifactAnalysis } from "./JavaScriptArtifactAnalysisTypes.js";
 import type { JavaScriptArtifactFileSet } from "../../domain/javascript/javascriptArtifactFiles.js";
+import type { JavaScriptEvidenceAdmission } from "../../domain/javascript/javascriptSourceAnalysis.js";
 import { JavaScriptArtifactGraphAccumulator } from "./JavaScriptArtifactGraphAccumulator.js";
 import {
   HTML_INLINE_SCRIPT_LOCATION_COVERAGE_LIMIT,
@@ -62,6 +63,7 @@ export function* buildImmutableJavaScriptArtifactGraphSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptArtifactAnalysis,
+  budget?: JavaScriptEvidenceAdmission,
 ): Generator<
   void,
   {
@@ -73,6 +75,7 @@ export function* buildImmutableJavaScriptArtifactGraphSteps(
     snapshot,
     fileSet,
     analysis,
+    budget,
   );
   // The input was built here and is not retained, so it can be transferred.
   return {
@@ -85,11 +88,12 @@ function* buildJavaScriptArtifactGraphInputSteps(
   snapshot: ArtifactInventorySnapshot,
   fileSet: JavaScriptArtifactFileSet,
   analysis: JavaScriptArtifactAnalysis,
+  budget?: JavaScriptEvidenceAdmission,
 ): Generator<
   void,
   { readonly graph: unknown; readonly electronSummary: ElectronBoundarySummary }
 > {
-  const accumulator = new JavaScriptArtifactGraphAccumulator();
+  const accumulator = new JavaScriptArtifactGraphAccumulator(budget);
   const root = createJavaScriptArtifactRootNode(accumulator, snapshot);
   const parsedPackages = new Set(
     analysis.packages
@@ -236,32 +240,35 @@ function* buildJavaScriptArtifactGraphInputSteps(
   yield;
   addJavaScriptSourceMapOriginals(projectionContext);
   yield;
+  const metadata = {
+    schema: "JavaScriptApplicationGraph",
+    root_node_ids:
+      packageRoots.length === 0
+        ? [root.node_id]
+        : packageRoots.map(({ node_id: id }) => id),
+    coverage,
+    limitations: [
+      ...bundlerLimitations,
+      ...findingLimitations,
+      ...graphLimitations(context, coverage.status, relationshipOmissions, ipc),
+    ],
+  };
+  const electronSummary = summarizeElectronBoundaries(
+    projectionContext.analysis,
+    ipc,
+    context.directoryPaths,
+    context.analysis,
+  );
+  accumulator.chargeMetadata({ ...metadata, electronSummary });
   return {
-    electronSummary: summarizeElectronBoundaries(
-      projectionContext.analysis,
-      ipc,
-      context.directoryPaths,
-      context.analysis,
-    ),
+    electronSummary,
     graph: {
-      schema: "JavaScriptApplicationGraph",
-      root_node_ids:
-        packageRoots.length === 0
-          ? [root.node_id]
-          : packageRoots.map(({ node_id: id }) => id),
+      schema: metadata.schema,
+      root_node_ids: metadata.root_node_ids,
       nodes: accumulator.nodes(),
       edges: accumulator.edges(),
-      coverage,
-      limitations: [
-        ...bundlerLimitations,
-        ...findingLimitations,
-        ...graphLimitations(
-          context,
-          coverage.status,
-          relationshipOmissions,
-          ipc,
-        ),
-      ],
+      coverage: metadata.coverage,
+      limitations: metadata.limitations,
     },
   };
 }
