@@ -16,11 +16,21 @@ import { searchGuidanceOutputSchema } from "../../../src/contracts/guidanceContr
 
 const HTTP_BOUNDARY_TIMEOUT_MS = 90_000;
 
-const openSession = async (url: URL, name: string) => {
+const openSession = async (
+  url: URL,
+  name: string,
+  mode: "legacy" | "auto" = "legacy",
+) => {
   const transport = new StreamableHTTPClientTransport(url);
-  const client = new Client({ name, version: "1" });
+  const client = new Client(
+    { name, version: "1" },
+    { versionNegotiation: { mode } },
+  );
   onTestFinished(() => client.close());
   await client.connect(transport);
+  // HTTP deliberately composes the legacy server; auto must fall back before
+  // using its session lifecycle and unsolicited catalog-change notifications.
+  expect(client.getNegotiatedProtocolVersion()).toBe("2025-11-25");
   expect(transport.sessionId).toEqual(expect.any(String));
   const { toolDefinition } = await advertisedMcpToolSchemas(
     client,
@@ -67,78 +77,79 @@ const searchGuidance = async (client: Client, query: string) => {
 };
 
 describe("rea mcp --http", () => {
-  processTest(
-    "keeps hot/cold visibility within its HTTP session and refreshes named contracts",
-    async ({ processes }) => {
-      const started = await startListeningProcess(
-        processes,
-        ["mcp", "--http", "--port", "0"],
-        { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
-      );
-      const first = await openSession(started.url, "hot-cold-first");
-      const initialNames = (await first.client.listTools()).tools.map(
-        ({ name }) => name,
-      );
-      expect(initialNames).not.toContain("inspect_analysis_view");
-      expect(initialNames).not.toContain("list_unknowns");
-      let changed = 0;
-      first.client.setNotificationHandler(
-        "notifications/tools/list_changed",
-        () => {
-          changed++;
-        },
-      );
-      const discovered = await first.client.callTool({
-        name: "discover_tools",
-        arguments: { names: ["list_unknowns", "search_guidance"] },
-      });
-      expect(discovered.isError).not.toBe(true);
-      const { toolDefinition } = await advertisedMcpToolSchemas(
-        first.client,
-        "list_unknowns",
-      );
-      expect(changed).toBe(1);
-      expect(
-        (
-          await first.client.callTool(
-            { name: "list_unknowns", arguments: {} },
-            { toolDefinition },
-          )
-        ).isError,
-      ).not.toBe(true);
-      expect(
-        await searchGuidance(first.client, "inspect_analysis_view OpenAPI"),
-      ).toMatchObject({
-        status: "matches",
-        matches: [{ guide: "tools/inspect_analysis_view.md" }],
-      });
-      await first.client.callTool({
-        name: "discover_tools",
-        arguments: { names: ["search_guidance", "list_unknowns"] },
-      });
-      expect(changed).toBe(1);
-      await first.transport.terminateSession();
-      await first.client.close();
-      const second = await openSession(started.url, "hot-cold-second");
-      expect(
-        (await second.client.listTools()).tools.map(({ name }) => name),
-      ).toEqual(initialNames);
-      expect(
-        (
-          await second.client.callTool({
-            name: "discover_tools",
-            arguments: { names: ["search_guidance"] },
-          })
-        ).isError,
-      ).not.toBe(true);
-      expect(
-        (await searchGuidance(second.client, "unmatched_qzxv")).status,
-      ).toBe("no_matches");
-      await expectIdentity(second);
-      await second.transport.terminateSession();
-    },
-    HTTP_BOUNDARY_TIMEOUT_MS,
-  );
+  for (const mode of ["legacy", "auto"] as const)
+    processTest(
+      `${mode} keeps hot/cold visibility within its HTTP session and refreshes named contracts`,
+      async ({ processes }) => {
+        const started = await startListeningProcess(
+          processes,
+          ["mcp", "--http", "--port", "0"],
+          { REA_MCP_TOOL_CATALOG_PROFILE: "hot-cold" },
+        );
+        const first = await openSession(started.url, "hot-cold-first", mode);
+        const initialNames = (await first.client.listTools()).tools.map(
+          ({ name }) => name,
+        );
+        expect(initialNames).not.toContain("inspect_analysis_view");
+        expect(initialNames).not.toContain("list_unknowns");
+        let changed = 0;
+        first.client.setNotificationHandler(
+          "notifications/tools/list_changed",
+          () => {
+            changed++;
+          },
+        );
+        const discovered = await first.client.callTool({
+          name: "discover_tools",
+          arguments: { names: ["list_unknowns", "search_guidance"] },
+        });
+        expect(discovered.isError).not.toBe(true);
+        const { toolDefinition } = await advertisedMcpToolSchemas(
+          first.client,
+          "list_unknowns",
+        );
+        expect(changed).toBe(1);
+        expect(
+          (
+            await first.client.callTool(
+              { name: "list_unknowns", arguments: {} },
+              { toolDefinition },
+            )
+          ).isError,
+        ).not.toBe(true);
+        expect(
+          await searchGuidance(first.client, "inspect_analysis_view OpenAPI"),
+        ).toMatchObject({
+          status: "matches",
+          matches: [{ guide: "tools/inspect_analysis_view.md" }],
+        });
+        await first.client.callTool({
+          name: "discover_tools",
+          arguments: { names: ["search_guidance", "list_unknowns"] },
+        });
+        expect(changed).toBe(1);
+        await first.transport.terminateSession();
+        await first.client.close();
+        const second = await openSession(started.url, "hot-cold-second", mode);
+        expect(
+          (await second.client.listTools()).tools.map(({ name }) => name),
+        ).toEqual(initialNames);
+        expect(
+          (
+            await second.client.callTool({
+              name: "discover_tools",
+              arguments: { names: ["search_guidance"] },
+            })
+          ).isError,
+        ).not.toBe(true);
+        expect(
+          (await searchGuidance(second.client, "unmatched_qzxv")).status,
+        ).toBe("no_matches");
+        await expectIdentity(second);
+        await second.transport.terminateSession();
+      },
+      HTTP_BOUNDARY_TIMEOUT_MS,
+    );
 
   processTest(
     "serves initialize, tools/list, a tool call and DELETE, then keeps serving later clients",
