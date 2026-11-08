@@ -1560,11 +1560,14 @@ const examineProbedText = async (
         ? probe.prefix
         : null;
   if (prefix === null) state.skippedText += 1;
-  // A Node script is read as text even when its later bytes are not, and the
-  // text reader gives it its JavaScript role.
-  else if (
-    hasNodeShebang(prefix) ||
-    (prefix.length > 0 && (!prefix.includes(0) || declaresTextEncoding(prefix)))
+  else if (hasNodeShebang(prefix)) {
+    // The probe already read the header, so the role holds even when the
+    // text allowance is spent before the text reader reads it again.
+    state.examinedScripts.add(memberLocationKey(member.location));
+    await examineTextMember(state, { ...member, kind: "javascript" }, context);
+  } else if (
+    prefix.length > 0 &&
+    (!prefix.includes(0) || declaresTextEncoding(prefix))
   )
     await examineTextMember(state, member, context);
 };

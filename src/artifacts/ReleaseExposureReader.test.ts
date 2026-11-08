@@ -3529,6 +3529,21 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
   });
 
+  it("keeps coverage unknown for a launcher past the spent text allowance", async () => {
+    const root = await shebangRoot();
+    const members =
+      MAX_RELEASE_EXPOSURE_TEXT_BYTES / MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES;
+    for (let index = 0; index < members; index += 1)
+      await writeFile(
+        join(root, `a${String(index)}.txt`),
+        Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, 0x20),
+      );
+    await writeFile(join(root, "z-runner"), script("#!/usr/bin/env node"));
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 0, skipped: 1 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+  });
+
   it("keeps coverage unknown for a script that does not decode", async () => {
     const root = await shebangRoot();
     await writeFile(
