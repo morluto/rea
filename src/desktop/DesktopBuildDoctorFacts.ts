@@ -386,6 +386,16 @@ const hasModelTable = async (
   input: DesktopBuildFactsInput,
 ): Promise<boolean> => {
   try {
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    const candidate = await stat(path);
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
+    if (!candidate.isFile() || candidate.size > CONFIG_BYTES) return false;
     const text = await readRegularFileText(path, {
       signal: input.signal,
       admit: (state) => {
@@ -403,6 +413,10 @@ const hasModelTable = async (
       throw cause;
     }
     if (cause instanceof AnalysisCancelledError) throw cause;
+    if (input.signal.aborted)
+      throw new AnalysisCancelledError("doctor", {
+        cause: input.signal.reason,
+      });
     return false;
   }
 };
