@@ -26,7 +26,7 @@ ${PYTHON_TASK_EVALUATOR}
 results = []
 for case in json.load(sys.stdin):
     items, pointer = case["items"], case["pointer"]
-    located = _locate(items, pointer)
+    located = _locate(items, pointer, "json")
     check = {"id": "absent", "kind": "value_absent", "file": "state.json", "pointer": pointer}
     verdict = evaluate([check], {"state.json": {"format": "json", "view": items, "truncated": False}})[0]
     results.append([located[0], located[1], verdict["result"]])
@@ -41,7 +41,7 @@ print(json.dumps(results))
   );
   expect(results).toEqual(
     cases.map(({ items, pointer }) => {
-      const located = locatePointer(items, pointer, "xml");
+      const located = locatePointer(items, pointer, "json");
       return [
         located.kind,
         located.kind === "value" ? located.value : null,
