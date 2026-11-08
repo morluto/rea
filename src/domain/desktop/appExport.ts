@@ -71,7 +71,7 @@ export interface DesktopAppExportPlan {
   readonly textSeeds: readonly string[];
   /** Seed files' permission bits at the seed where the capture recorded them and they are not the 0644 a written file gets. */
   readonly seedModes: Readonly<Record<string, number>>;
-  /** Home-relative selected aliases that must resolve to an app state path. */
+  /** Home-relative selected aliases that resolve to an app state path. */
   readonly stateAliases?: readonly {
     readonly alias: string;
     readonly target: string;
@@ -80,8 +80,6 @@ export interface DesktopAppExportPlan {
   readonly unseededFiles: readonly string[];
   /** Lock files under the owned paths at the seed, left out of it so a stale one cannot keep the app from starting. */
   readonly leftOutLocks: readonly string[];
-  /** The app's logs in its own state, left out of the seed since they record facts about the capture host. */
-  readonly leftOutLogs: readonly string[];
   /** Folders under the home where files changed during the capture that the bundle neither owns nor seeds. */
   readonly unownedFolders: readonly string[];
   /** Seed files the app keeps for its own running: web engine storage and caches. */
@@ -363,16 +361,15 @@ export const exportedStateFiles = (
     ...(capture.state.state_directories ?? []),
   ]);
   const selected = homePaths(roleFacts(capture).selectedRoots);
-  const usersOwn = [...withRole("document"), ...selected];
-  const leftOut = leftOutFiles(files, stateDirectories, usersOwn, selected);
-  // A lock or log directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the log stay seeded.
+  const isLeftOut = leftOutFiles(files, stateDirectories, selected);
+  // A lock directly in the home or a shared folder must not own that path, as Poedit's `~/poedit.lock` would. One inside the app's own folder still marks the folder, so settings beside the lock stay seeded.
   const marksFolder = (home: string) => {
     const folder = home.split("/").slice(0, -1).join("/");
     return !SHARED_FOLDERS.has(folder);
   };
   const paths = ownedPaths(
     withRole("application_state").filter(
-      (home) => !leftOut.isLeftOut(home) || marksFolder(home),
+      (home) => !isLeftOut(home) || marksFolder(home),
     ),
     withRole("document"),
     stateDirectories,
@@ -385,7 +382,7 @@ export const exportedStateFiles = (
     collisions,
     paths,
     selected,
-    ...leftOut,
+    isLeftOut,
   };
 };
 
@@ -582,10 +579,10 @@ SEED_HOME = ${py(SEED_HOME)}
 PATHS = ${pyList(plan.paths)}
 DCONF = ${py(plan.dconf)}
 TEXT_SEEDS = frozenset(${pyList(plan.textSeeds)})
-STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 SEED_MODES = {${Object.entries(plan.seedModes)
     .map(([home, mode]) => `${py(home)}: 0o${mode.toString(8)}`)
     .join(", ")}}
+STATE_ALIASES = [${(plan.stateAliases ?? []).map(({ alias, target }) => `(${py(alias)}, ${py(target)})`).join(", ")}]
 WINDOW_CLASS = ${py(plan.windowClass)}
 ${PYTHON_HELPERS}
 
@@ -768,7 +765,7 @@ ${DESKTOP_EXPORT_FRAMEWORK_VERSION}.
       : `
 - Not seeded, because the capture did not retain their bytes at the seed: ${homeList(plan.unseededFiles)}.
   Capture again with \`--state-path\` naming them, or a larger \`--max-file-bytes\`, to include them.`
-  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, { locks: plan.leftOutLocks, logs: plan.leftOutLogs })}
+  }${unownedReadmeNotes(plan.unownedFolders, plan.runtimeSeeds, plan.leftOutLocks)}
 - \`tasks/smoke.json\` deploys the app.
 
 ${taskSection.length === 0 ? "Run it with `agent-env run <this folder>`." : "Run the task with `agent-env run <this folder>`, or only the deploy with `--task smoke`."}

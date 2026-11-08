@@ -19,8 +19,6 @@ import { INSTALL_SCRIPT } from "../../domain/desktop/appExportInstall.js";
 import {
   heldOpenLimitation,
   leftOutLocksLimitation,
-  leftOutLogsLimitation,
-  leftOutSeeds,
   trashedFiles,
   runtimeSeeds,
   runtimeSeedsLimitation,
@@ -194,7 +192,8 @@ const planExport = (
   );
   const electron = application.executable.electron_markers.length > 0;
   const stateFiles = exportedStateFiles(capture, state);
-  const { homePath, files, collisions, paths, isLeftOut } = stateFiles;
+  const { homePath, stateAliases, files, collisions, paths, isLeftOut } =
+    stateFiles;
   const { text: dconf, ...dconfScrub } = seedDconf(
     state,
     context.seed,
@@ -239,12 +238,11 @@ const planExport = (
     seedFiles: [...seeds.keys()].sort(),
     textSeeds,
     seedModes: seedModes(capture, seeds, files, context.seed),
-    stateAliases: stateFiles.stateAliases,
+    stateAliases,
     unseededFiles: unseeded.filter((file) => !isLeftOut(file)),
-    ...leftOutSeeds(
-      [...locks, ...unseeded.filter(isLeftOut)],
-      stateFiles.isLeftOutLog,
-    ),
+    leftOutLocks: [
+      ...new Set([...locks, ...unseeded.filter(isLeftOut)]),
+    ].sort(),
     unownedFolders: unownedChangedFolders(files, paths, isLeftOut),
     runtimeSeeds: runtimeSeeds([...seeds.keys()]),
     dconf,
@@ -345,7 +343,6 @@ const exportLimitations = (
   const unowned = unownedFoldersLimitation(plan.unownedFolders);
   const runtime = runtimeSeedsLimitation(plan.runtimeSeeds);
   const locks = leftOutLocksLimitation(plan.leftOutLocks);
-  const logs = leftOutLogsLimitation(plan.leftOutLogs);
   const recovered = recoveryListLimitation(facts.recovered);
   const trashed = trashedFilesLimitation(facts.trashed);
   return [
@@ -359,7 +356,6 @@ const exportLimitations = (
           `${String(plan.unseededFiles.length)} file(s) under the owned paths existed at the seed but were not retained, so they are not seeded.`,
         ]),
     ...(locks === undefined ? [] : [locks]),
-    ...(logs === undefined ? [] : [logs]),
     ...(recovered === undefined ? [] : [recovered]),
     ...(unowned === undefined ? [] : [unowned]),
     ...(runtime === undefined ? [] : [runtime]),
