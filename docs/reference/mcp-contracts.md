@@ -390,7 +390,12 @@ parent operation, use a discovered ID with a compatible `inspect_analysis_view`;
 neither discovery nor retained selection starts a provider. For records without
 a supported view, use `detail: "records"` to retrieve selected complete records,
 or export the bundle to a caller-selected path. Record and bundle delivery are
-subject to the MCP response budget.
+subject to the MCP response budget. Summary rows are not complete records.
+Retained `procedure_pseudo_code` Evidence supports `summary` and
+`native`/`pseudocode` views of the original observation, including
+`view: {kind: "native", facet: "pseudocode", offset: 0, limit: 4096}`;
+pages do not start a provider or create another decompilation. An
+`analyze_function` dossier is a different observation.
 `retention: "complete-record"` describes stored Evidence, while
 `native_dossier.value_flow` independently reports truncation, unavailable or
 unknown metadata. Missing omission counts remain null. Summary output carries
@@ -1009,6 +1014,18 @@ finish without reading relationships, even when neither traversal mode is
 available. Discovery does not block that direct invocation or replace its typed
 partial/error outcomes.
 
+`trace_native_values` includes `value_flow_support` for the provider routed to
+`analyze_function`. `supported` declares that the provider may supply value flow;
+it does not guarantee a model for the selected function. `unavailable` includes
+the provider's reason, and `unknown` means no declaration. The provider ID is
+preserved, or null if no analysis provider is routed. This declaration is separate
+from operation readiness and the availability of call-target resolution. When
+call-target resolution is missing, a direct trace may still return a local graph
+with call-resolution unknowns; even `max_depth: 0` attempts to resolve call sites.
+When support is unknown but the declared operation prerequisites are ready,
+availability can still be true; it does not promise that value flow is present.
+The trace's returned observations and unknowns remain authoritative for that call.
+
 `trace_native_ui_action` reports authored-UI and native-seed modes separately.
 Apple dispatch metadata requires a Mach-O target; another provider may supply
 the symbol-only alternative on other formats. If neither mode is available,
@@ -1062,7 +1079,19 @@ analysis client. `open_binary.provider_id` accepts a concrete provider ID or
 concrete version, selection source, and complete analysis profile through
 `analysis_provider_binding`. Ambiguity and unknown, unavailable, or unsupported
 choices return typed selection details. A selected provider is never replaced
-automatically after a runtime failure.
+automatically after a runtime failure. When the bound route does not declare an
+operation, its error points to `binary_session` with `detail: "complete"` for
+candidate capabilities and an explicit `open_binary` provider choice. A
+candidate's availability does not guarantee support for the selected target;
+switching may discard provider session edits, and retained Evidence does not restore them.
+
+When the selected provider reports `release_verification` in its binding,
+the status compares its reported release version at binding with the provider's
+verified baseline. It does not recheck the executable, authenticate its bytes,
+or guarantee results.
+An unverified release may still be usable; the optional remediation preserves
+the caller's choice. Omission means verification was not reported. Target-free
+discovery does not probe a version solely to populate this fact.
 
 When an admitted `open_binary` attempt fails, `error.details.selection_at_failure`
 records the canonical binary path and SHA-256, resource root (including its

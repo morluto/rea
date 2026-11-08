@@ -69,7 +69,7 @@ const sharedAnalysisSemantics = {
   procedure_file_offset_resolution:
     "address-first-unique-target-source-mapping-v2",
   instruction_flow_evidence: "decoded-return-pcode-v1",
-  instruction_status: "unlisted-address-without-decode-v1",
+  instruction_status: "unlisted-and-containing-code-data-v3",
   instruction_references: "exact-address-incoming-without-synthetic-entry-v3",
   byte_search_coverage: "separate-loaded-overlays-v1",
   function_boundary_observations: "ghidra-function-boundary-limitations-v4",
