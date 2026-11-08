@@ -133,16 +133,49 @@ it("names an unsupported Node.js runtime instead of starting REA", async () => {
   });
 });
 
-it("starts on a Node.js runtime the published engines range admits", async () => {
-  const [major] = process.versions.node.split(".");
+// Floors on both sides of the running release, so a launcher that compared
+// only major versions would fail these cases.
+const [major = 0, minor = 0, patch = 0] = process.versions.node
+  .split(/[.-]/u)
+  .slice(0, 3)
+  .map(Number);
+
+it.each([
+  [`^${major}.${minor}.${patch}`],
+  [`>=${major}.${minor}.${patch}`],
+  [`>=${major - 1}.${minor}.${patch}`],
+  [`>=999.0.0 || ^${major}.0.0`],
+])("starts on a Node.js runtime the engines range %s admits", async (range) => {
   const { root, entry } = await pluginFixture(
     'process.stdout.write("started");',
-    { engines: { node: `>=999.0.0 || ^${major}.0.0` } },
+    { engines: { node: range } },
   );
   const { child, closed } = start(entry, root);
   child.stdin.end();
   expect(await closed).toEqual({ code: 0, stdout: "started", stderr: "" });
 });
+
+it.each([
+  [`^${major}.${minor}.${patch + 1}`],
+  [`^${major}.${minor + 1}.0`],
+  [`>=${major}.${minor}.${patch + 1}`],
+  [`^${major - 1}.${minor}.${patch}`],
+])(
+  "refuses a Node.js runtime the engines range %s does not admit",
+  async (range) => {
+    const { root, entry } = await pluginFixture(
+      'process.stdout.write("unexpected");',
+      { engines: { node: range } },
+    );
+    const { child, closed } = start(entry, root);
+    child.stdin.end();
+    expect(await closed).toEqual({
+      code: 1,
+      stdout: "",
+      stderr: `REA plugin requires Node.js ${range}, but the client started it with ${process.versions.node} at ${process.execPath}; put a supported Node.js first on the PATH the client starts with, then restart the client.\n`,
+    });
+  },
+);
 
 it("does not block a runtime when an engines clause is outside the read grammar", async () => {
   const { root, entry } = await pluginFixture(
