@@ -283,7 +283,9 @@ describe("documents saved gzip-compressed", () => {
     expect(readme).toMatch(/\b1 gzip file\(s\)/u);
     expect(readme).toContain(`\`~/${registry}\``);
   });
+});
 
+describe("gzip seeds as shipped", () => {
   it("checks a recompressed formerly unreadable seed as shipped and scrubs its document", async () => {
     const save = (text: string) =>
       gzipSync(text, { level: text.includes(">1200<") ? 9 : 0 });
