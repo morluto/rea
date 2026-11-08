@@ -10,7 +10,7 @@ afterEach(async () => {
 });
 
 const connect = async (
-  options: { replyBytes?: number; bulk?: boolean } = {},
+  options: { replyBytes?: number; bulk?: boolean; guidance?: boolean } = {},
 ) => {
   const bulkNames = options.bulk
     ? Array.from(
@@ -44,6 +44,7 @@ const connect = async (
     "alpha_sqlite",
     "beta_sqlite",
     "excluded_sqlite",
+    ...(options.guidance ? ["inspect_analysis_view"] : []),
     ...bulkNames,
   ]) {
     const registration = server.registerTool(
@@ -185,6 +186,23 @@ it("loads exact names atomically and emits one notification for a batch", async 
     tools: [{ name: "beta_sqlite" }, { name: "alpha_sqlite" }],
     total_matches: 2,
   });
+  expect(f.changed).toHaveBeenCalledTimes(1);
+});
+
+it("finds deferred tool guidance keywords without advertising that guidance", async () => {
+  const f = await connect({ guidance: true });
+  const found = await f.discover({ query: "generic_method_issues" });
+  expect(found.isError).not.toBe(true);
+  expect(found.structuredContent).toMatchObject({
+    total_matches: 1,
+    tools: [{ name: "inspect_analysis_view" }],
+  });
+  const tool = (await f.client.listTools()).tools.find(
+    ({ name }) => name === "inspect_analysis_view",
+  );
+  expect(tool?.description).toBe(
+    "inspect_analysis_view SQLite database inspection",
+  );
   expect(f.changed).toHaveBeenCalledTimes(1);
 });
 

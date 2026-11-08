@@ -1998,6 +1998,26 @@ the selected advertisement retains.
 
 <a id="hotcold-catalog-discovery"></a>
 
+### Retained-view guidance
+
+`inspect_analysis_view` advertises the shared source, Evidence and paging rules.
+Its format-specific selectors are available on demand through the existing
+guidance tools: search with `{"query":"inspect_analysis_view <format or view kind>"}`,
+then pass a returned locator to `read_guidance_section`. For example, search for
+`inspect_analysis_view OpenAPI` before selecting retained API operations.
+These compiled tool sections ship in the runtime alongside the installed workflow
+guides; they use the same bundle digest, section selection and stale-locator checks.
+They are documentation, not target observations or Evidence. CLI callers use
+`rea guidance --action search --query "inspect_analysis_view OpenAPI"`, then
+`rea guidance --action read --locator <locator>` through the same owner.
+
+In hot/cold catalogs, first discover `search_guidance` and `read_guidance_section`
+by their exact names. Keyword tool discovery also searches the compiled tool
+guidance, so moving a selector out of the advertised description does not remove
+its tool-discovery keywords. Full input/output schemas and canonical validation
+remain unchanged; a full-catalog client does not need catalog refresh to use the
+guidance tools.
+
 ### Hot/cold catalog discovery
 
 `REA_MCP_TOOL_CATALOG_PROFILE=hot-cold` opts into per-connection loading for
@@ -2014,7 +2034,7 @@ that accept `view` can answer a selected first question without loading the
 cross-domain view contract. Complete output schemas and canonical result
 validation are preserved when each tool loads.
 An explicit tool-family scope can remove any of those domain tools.
-`discover_tools` searches canonical names and descriptions using case-insensitive
+`discover_tools` searches canonical names, descriptions and compiled tool guidance using case-insensitive
 words, or accepts exact `names`. It loads the matching page and returns names
 and abbreviated descriptions with their configured input schemas, so the next
 call can use the returned arguments contract. Output schemas remain in

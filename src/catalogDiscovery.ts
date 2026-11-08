@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { createCatalogIdentity } from "./catalogIdentity.js";
+import { TOOL_GUIDANCE } from "./toolGuidance.js";
 
 // Retained views are loaded like producers: their full cross-domain output
 // contract is unnecessary until a task actually queries retained analysis.
@@ -27,7 +28,7 @@ const inputSchema = z
       .trim()
       .optional()
       .describe(
-        "Case-insensitive words matched against tool names and descriptions; all words must match. Omit to browse.",
+        "Case-insensitive words matched against tool names, descriptions and bundled tool guidance; all words must match. Omit to browse.",
       ),
     names: z
       .array(z.string().min(1))
@@ -98,6 +99,7 @@ export const progressiveCatalogIdentity = (
   const policy = {
     profile: "hot-cold",
     hot: [...HOT_TOOL_NAMES],
+    guidance: TOOL_GUIDANCE,
     tool: {
       ...DISCOVER_TOOLS,
       inputSchema: z.toJSONSchema(inputSchema, { io: "input" }),

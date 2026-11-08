@@ -7,6 +7,7 @@ import {
 import { ownedJsonObjectSchema } from "../domain/jsonValue.js";
 import { encodeToolResult } from "./toolResultEncoding.js";
 import type { ToolResultDelivery } from "./ToolResultDelivery.js";
+import { TOOL_GUIDANCE } from "../toolGuidance.js";
 import {
   DISCOVER_TOOLS,
   HOT_TOOL_NAMES,
@@ -40,7 +41,7 @@ export class ProgressiveToolCatalog {
             registered,
             description: (registered.description ?? "").slice(0, 240),
             search:
-              `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""}`.toLowerCase(),
+              `${name} ${name.replaceAll("_", " ")} ${registered.description ?? ""} ${TOOL_GUIDANCE[name]?.content ?? ""}`.toLowerCase(),
           },
         ]),
     );

@@ -49,7 +49,7 @@ export const registerGuidanceCommands = (
   resources: CliGuidanceResources = processGuidanceResources,
 ): void => {
   cli.command(CLI_COMMANDS.guidance, {
-    description: "Search or read the installed REA workflow guidance",
+    description: "Search or read the installed REA workflow and tool guidance",
     args: z.object({}),
     options: z
       .object({

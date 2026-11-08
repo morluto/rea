@@ -2,6 +2,8 @@ import { expect, it } from "vitest";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { readGuidanceSectionInputSchema } from "../contracts/guidanceContracts.js";
 import { MANAGED_SKILL_FILES } from "./SetupSkill.js";
+import { TOOL_GUIDANCE } from "../toolGuidance.js";
+import { parseGuidanceSections } from "./GuidanceSections.js";
 import {
   readGuidanceSectionWithReader,
   searchGuidanceWithReader,
@@ -76,21 +78,33 @@ it("issues readable locators independently of heading length", async () => {
   await resources.close();
 });
 
-it.each([2048, 2049])(
-  "bounds the combined index across guides with %i sections each",
+it.each([4096, 4097])(
+  "bounds the combined skill and tool index at %i sections",
   async (count) => {
     const resources = new ArtifactResourceScope();
+    const compiled = parseGuidanceSections(
+      new Map(
+        Object.values(TOOL_GUIDANCE).map(({ guide, content }) => [
+          guide,
+          content,
+        ]),
+      ),
+    );
+    if (compiled === undefined) throw new Error("Invalid compiled guidance");
+    const remaining = count - compiled.length;
     const result = await searchGuidanceWithReader(
       { query: "needle", limit: 1 },
       async (path) =>
-        path === MANAGED_SKILL_FILES[0] || path === MANAGED_SKILL_FILES[1]
-          ? "# needle\n".repeat(count)
-          : "",
+        path === MANAGED_SKILL_FILES[0]
+          ? "# needle\n".repeat(Math.floor(remaining / 2))
+          : path === MANAGED_SKILL_FILES[1]
+            ? "# needle\n".repeat(Math.ceil(remaining / 2))
+            : "",
       resources,
     );
     expect(result).toMatchObject({
       ok: true,
-      value: { status: count === 2048 ? "matches" : "bundle_unavailable" },
+      value: { status: count === 4096 ? "matches" : "bundle_unavailable" },
     });
     await resources.close();
   },

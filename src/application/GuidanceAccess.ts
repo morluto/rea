@@ -5,6 +5,7 @@ import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { MANAGED_SKILL_FILES, readSkillFile } from "./SetupSkill.js";
 import { PRODUCT_IDENTITY } from "../identity.js";
+import { TOOL_GUIDANCE } from "../toolGuidance.js";
 import {
   MAX_SUBSECTION_POINTERS,
   readGuidanceSectionInputSchema,
@@ -32,6 +33,13 @@ const SKILL_ROOT = `../../skills/${PRODUCT_IDENTITY.skillName}/`;
 const SOURCE = "installed_rea_guidance" as const;
 const MAX_GUIDE_FILE_BYTES = 1_048_576;
 const MAX_GUIDE_BUNDLE_BYTES = 4_194_304;
+const COMPILED_GUIDES = new Map(
+  Object.values(TOOL_GUIDANCE).map(({ guide, content }) => [guide, content]),
+);
+const GUIDANCE_FILES: ReadonlySet<string> = new Set([
+  ...MANAGED_SKILL_FILES,
+  ...COMPILED_GUIDES.keys(),
+]);
 const sha256 = (value: string | Uint8Array): string =>
   createHash("sha256").update(value).digest("hex");
 
@@ -85,8 +93,11 @@ const readBundle = async (
   resources: ArtifactResourceScope,
   operation: string,
 ): Promise<GuidanceBundleRead> => {
-  const files = new Map<string, string>();
-  let bundleBytes = 0;
+  const files = new Map(COMPILED_GUIDES);
+  let bundleBytes = [...files.values()].reduce(
+    (bytes, content) => bytes + Buffer.byteLength(content, "utf8"),
+    0,
+  );
   try {
     for (const relativePath of MANAGED_SKILL_FILES) {
       const content = await readGuide(relativePath);
@@ -712,7 +723,7 @@ const decodeLocator = (locator: string): LocatorIdentity | undefined => {
       typeof item.bundle !== "string" ||
       !/^[a-f0-9]{64}$/u.test(item.bundle) ||
       typeof item.guide !== "string" ||
-      !(MANAGED_SKILL_FILES as readonly string[]).includes(item.guide) ||
+      !GUIDANCE_FILES.has(item.guide) ||
       !Number.isInteger(item.ordinal) ||
       typeof item.section !== "string" ||
       !/^[a-f0-9]{64}$/u.test(item.section)
