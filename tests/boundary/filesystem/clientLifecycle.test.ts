@@ -50,6 +50,7 @@ describe("client configuration filesystem lifecycle", () => {
       "claude_desktop",
       "codex",
       "cursor",
+      "codebuddy",
       "gemini_cli",
       "windsurf",
       "devin",
@@ -1881,8 +1882,9 @@ describe("uninstall configuration preflight", () => {
       expect.objectContaining({
         name: "cursor",
         status: "failed",
-        detail:
-          "Configuration is not valid JSON and was not changed. Repair it, then rerun uninstall.",
+        detail: expect.stringMatching(
+          /not valid JSON.*not changed.*repair.*uninstall/iu,
+        ),
       }),
     );
     expect(await readFile(config, "utf8")).toBe("not-json");

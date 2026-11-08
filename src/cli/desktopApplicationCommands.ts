@@ -12,6 +12,7 @@ import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import { withCommandCancellation } from "./commandCancellation.js";
+import { cliDecimalField } from "./options.js";
 
 /** One-shot complete Evidence can be saved and queried with inspect-analysis-view. */
 export const registerDesktopApplicationCommands = (
@@ -25,15 +26,17 @@ export const registerDesktopApplicationCommands = (
       path: localPathStringSchema.describe("Local installation directory"),
     }),
     options: z.object({
-      max_entries:
-        inspectDesktopApplicationInputSchema.shape.max_entries.describe(
-          "Maximum directory entries to examine; exhaustion leaves partial coverage",
-        ),
+      // Decimal tokens only: numeric coercion would read "0x1" as 1 and
+      // "1e1" as 10. The shared fields keep their bounds and defaults.
+      max_entries: cliDecimalField(
+        inspectDesktopApplicationInputSchema.shape.max_entries,
+      ).describe(
+        "Maximum directory entries to examine; exhaustion leaves partial coverage",
+      ),
       ...analysisEvidenceDeliveryOptions,
-      max_probe_bytes:
-        inspectDesktopApplicationInputSchema.shape.max_probe_bytes.describe(
-          "Maximum total bytes read from selected file ranges",
-        ),
+      max_probe_bytes: cliDecimalField(
+        inspectDesktopApplicationInputSchema.shape.max_probe_bytes,
+      ).describe("Maximum total bytes read from selected file ranges"),
     }),
     run: ({ args, options }) =>
       withCommandCancellation((signal) =>

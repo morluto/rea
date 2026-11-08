@@ -124,17 +124,6 @@ interface SectionWindow {
   readonly truncated: boolean;
 }
 
-/** Probe, then read the one claimed payload. */
-export const locateBunStandaloneGraph = async (
-  handle: FileHandle,
-  fileSize: number,
-  signal?: AbortSignal,
-): Promise<BunStandaloneRecognition> => {
-  const probed = await probeBunStandaloneGraph(handle, fileSize, signal);
-  if (probed.status === "absent" || probed.claim === undefined) return probed;
-  return loadBunStandaloneGraph(handle, probed.claim, signal);
-};
-
 /**
  * Locate at most one graph claim with bounded reads of headers, length
  * prefixes, and suffixes. Payload data is not read. Multiple real claims are

@@ -212,7 +212,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -244,7 +243,6 @@ posixIt.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_client",
       input: {},
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed version output");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -266,7 +264,6 @@ it.each(["stdout", "stderr"] as const)(
       operation: "inspect_pcap_capture",
       input: { path },
     });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected malformed producer encoding");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "unreadable_output",
@@ -926,7 +923,6 @@ it.each([false, true])(
       input: { path },
     });
     try {
-      expect(result.ok).toBe(false);
       if (result.ok) throw new Error("Cleanup failure cannot return success");
       expect(projectAnalysisError(result.error)).toMatchObject({
         code: "cleanup_incomplete",

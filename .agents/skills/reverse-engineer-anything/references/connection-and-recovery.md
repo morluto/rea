@@ -11,7 +11,7 @@ main and an older release expose the same arguments. Tool-name prefixes belong
 to the client: find the canonical REA operation in its actual tool listing and
 server association before concluding that it is absent. A shared prefix alone
 does not establish which server an approval wildcard covers. See
-[client tool names and discovery](https://github.com/morluto/rea/blob/main/docs/client-configuration.md#client-tool-names-and-discovery).
+[client tool names and discovery](https://github.com/morluto/rea/blob/main/docs/getting-started/client-configuration.md#client-tool-names-and-discovery).
 
 ## Choose the remedy from the observed failure
 
@@ -152,7 +152,7 @@ rea setup --client codex --dry-run --json
 ```
 
 Use the current supported client's ID: `claude_code`, `claude_desktop`, `codex`,
-`cursor`, `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`,
+`cursor`, `codebuddy`, `gemini_cli`, `windsurf`, `devin`, `opencode`, `antigravity`,
 `copilot_cli`, `commandcode`, `qwen_code`, `kimi`, `vscode`, `trae`, `workbuddy`, `lm_studio`, `grok_build`, `omp`, `pi`,
 `hermes`, `qoder`, `droid`, `kiro`, `zcode`, `dsh`, `freebuff`, or `grok_bot`. If unknown, inspect `doctor --json` before choosing a
 scope. `grok_bot` uses a chat registration step rather than local `mcp.json`.
