@@ -740,12 +740,28 @@ const limitNativeSample = (
       : layouts.every((folder) =>
           hostRead(preferred.filter((image) => dirname(image.path) === folder)),
         ));
-  const named = kept.filter(
-    (image) => (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
-  );
   // With no named host, any sampled sibling could be it, so none settles alone.
-  const hosts =
-    named.length > 0 ? named : kept.filter((image) => ranked.has(image.path));
+  const hostsAmong = (
+    images: readonly ReleaseExposureNativeImage[],
+  ): ReleaseExposureNativeImage[] => {
+    const named = images.filter(
+      (image) =>
+        (ranked.get(image.path) ?? ANY_SIBLING_RANK) < ANY_SIBLING_RANK,
+    );
+    return named.length > 0
+      ? named
+      : images.filter((image) => ranked.has(image.path));
+  };
+  // A named host settles only its own layout, so each layout chooses its hosts.
+  const layoutFolders = new Set(layouts);
+  const hosts = [
+    ...hostsAmong(
+      kept.filter((image) => !layoutFolders.has(dirname(image.path))),
+    ),
+    ...layouts.flatMap((folder) =>
+      hostsAmong(kept.filter((image) => dirname(image.path) === folder)),
+    ),
+  ];
   return {
     electronExecutableIncluded,
     electronHostPaths: hosts.map((image) => image.path),

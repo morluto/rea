@@ -1029,6 +1029,49 @@ describe("ReleaseExposureService Electron host identity", () => {
     expect((await runAsNode(service))?.status).toBe("unknown");
     expect(electronFuses.inspect).toHaveBeenCalledTimes(4);
   });
+
+  it("keeps safe fuses unknown when a second layout has only an unnamed possible host", async () => {
+    const { service, desktop, electronFuses } = owners(
+      directoryScan(["/work/app/a/a.exe", "/work/app/b/launcher.exe"]),
+    );
+    const report = electronDesktopReport();
+    const second = `dsf_${"ab".repeat(32)}`;
+    desktop.inspect.mockResolvedValue(
+      ok(
+        evidence({
+          ...report,
+          files: [
+            {
+              ...report.files[0],
+              path: "a/resources/app.asar",
+              local_path: "/work/app/a/resources/app.asar",
+            },
+            {
+              ...report.files[0],
+              file_id: second,
+              path: "b/resources/app.asar",
+              local_path: "/work/app/b/resources/app.asar",
+            },
+          ],
+          candidates: [
+            { ...report.candidates[0], basis_file_ids: [FILE, second] },
+          ],
+        }),
+      ),
+    );
+    electronFuses.inspect.mockImplementation(async (input) =>
+      ok(
+        evidence(
+          fuseReport(
+            (input as { path?: string }).path === "/work/app/a/a.exe"
+              ? [slice(0)]
+              : [],
+          ),
+        ),
+      ),
+    );
+    expect((await runAsNode(service))?.status).toBe("unknown");
+  });
 });
 
 const appScan = scan({
