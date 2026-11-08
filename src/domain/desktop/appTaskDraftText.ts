@@ -8,7 +8,6 @@ import {
 } from "./appTaskDraftNoise.js";
 import { isPlacedItem, placedItemCheck } from "./appTaskDraftItems.js";
 import { valueEqualsCheck } from "./appTaskDraftScalars.js";
-import { addedTextChecks } from "./appTaskDraftTextAdded.js";
 import { rankAttributes } from "./attributeRank.js";
 import type { DesktopStateDifference } from "./stateChanges.js";
 import { elementText, isXmlElement, resolvePointer } from "./viewPointer.js";
@@ -529,9 +528,8 @@ const isLaidOutLine = (value: string) =>
 /**
  * The check of an element's whole text: a decimal held as the element's one
  * text node, as a spreadsheet keeps a cell's number, by its value within a
- * tolerance, so another spelling of the number still passes; text that grew
- * by whole lines by those lines, with guards of what it kept; any other text
- * whole.
+ * tolerance, so another spelling of the number still passes; other text
+ * is compared whole.
  */
 export const wholeTextCheck = (
   file: string,
@@ -551,14 +549,10 @@ export const wholeTextCheck = (
   const laidOut = isLaidOutLine(value)
     ? { value: collapseWhitespace(value), normalize_whitespace: true }
     : { value };
-  return (
-    (before === undefined
-      ? undefined
-      : addedTextChecks(file, pointer, before, value)) ?? {
-      check: { kind: "text_equals", file, pointer, ...laidOut },
-      guards: [],
-    }
-  );
+  return {
+    check: { kind: "text_equals", file, pointer, ...laidOut },
+    guards: [],
+  };
 };
 
 /** The element a candidate names in the final view, whole, at the pointer `name` gives it. */
