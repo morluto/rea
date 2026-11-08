@@ -3677,6 +3677,28 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
     expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
   });
 
+  it("reads a UTF-16 .map script target from the text that recognized it", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(
+      join(root, "index.html"),
+      '<script src="main.map"></script>',
+    );
+    const map = JSON.stringify({
+      version: 3,
+      sources: ["src/app.ts"],
+      sourcesContent: ["export {};"],
+      mappings: "",
+    });
+    await writeFile(
+      join(root, "main.map"),
+      Buffer.concat([Buffer.from([0xff, 0xfe]), Buffer.from(map, "utf16le")]),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+  });
+
   it("retracts a linker-map guess when a later page loads the .map as a script", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-html-");
     await writeFile(join(root, "app.map"), "run();\n");

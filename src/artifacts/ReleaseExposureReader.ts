@@ -1194,8 +1194,11 @@ const noteUnreadMap = (
   state.skippedCompanions += 1;
 };
 
-const mayHaveSourceMapPrefix = (prefix: Buffer): boolean => {
-  const text = sourceMapJsonText(prefix.toString("utf8")).trimStart();
+const mayHaveSourceMapPrefix = (prefix: Buffer): boolean =>
+  mayHaveSourceMapText(prefix.toString("utf8"));
+
+const mayHaveSourceMapText = (decoded: string): boolean => {
+  const text = sourceMapJsonText(decoded).trimStart();
   return text.length === 0 || text.startsWith("{");
 };
 
@@ -1241,8 +1244,17 @@ const readSourceMap = (
   map: Pick<MemberView, "logical" | "location">,
   bytes: Buffer,
 ): void => {
+  readSourceMapText(state, map, bytes.toString("utf8"));
+};
+
+/** Read map text already decoded by the member's owner, such as a UTF-16 script. */
+const readSourceMapText = (
+  state: ScanState,
+  map: Pick<MemberView, "logical" | "location">,
+  text: string,
+): void => {
   try {
-    const inspected = inspectSourceMap(bytes.toString("utf8"));
+    const inspected = inspectSourceMap(text);
     const embedded = inspected.declarations.some(
       (declaration) =>
         declaration.content !== null && declaration.content.length > 0,
@@ -1260,7 +1272,7 @@ const readSourceMap = (
     if (cause instanceof SourceMapFormatFailure) {
       let parsed: unknown;
       try {
-        parsed = JSON.parse(sourceMapJsonText(bytes.toString("utf8")));
+        parsed = JSON.parse(sourceMapJsonText(text));
       } catch {
         parsed = undefined;
       }
@@ -1286,7 +1298,7 @@ const readSourceMap = (
     // JSON-looking maps remain unresolved when decoding fails or hits a limit.
     if (
       !isJavaScriptSourceMapName(map.logical) &&
-      !mayHaveSourceMapPrefix(bytes)
+      !mayHaveSourceMapText(text)
     ) {
       noteLinkerMapGuess(state, map.location);
       return;
@@ -1326,15 +1338,19 @@ const scriptHoldsMap = (
   );
 };
 
-/** Read a script member's bytes as the source map they hold. */
+/**
+ * Read a script member as the source map it holds, from the text that
+ * recognized it, so a byte order mark decides the encoding for both reads.
+ */
 const readScriptAsMap = (
   state: ScanState,
   member: MemberView,
   bytes: Buffer,
+  text: string,
 ): void => {
   const { hasSlot } = chargeMapRead(state);
   if (hasSlot && bytes.length <= MAX_RELEASE_EXPOSURE_SOURCE_MAP_BYTES)
-    readSourceMap(state, member, bytes);
+    readSourceMapText(state, member, text);
   else state.skippedMaps += 1;
 };
 
@@ -1373,7 +1389,7 @@ const examineTextMember = async (
     if (holdsScripts(member)) {
       if (text === null) state.skippedMaps += 1;
       else if (scriptHoldsMap(state, member, text.text))
-        readScriptAsMap(state, member, loaded.bytes);
+        readScriptAsMap(state, member, loaded.bytes, text.text);
       else {
         if (isJavaScriptMember(member))
           examineInlineMaps(state, member, text.text, member.logical);
