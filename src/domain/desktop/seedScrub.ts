@@ -11,7 +11,11 @@ import {
   scrubHostIdentity,
   type HostIdentity,
 } from "./hostIdentity.js";
-import { isTextualFormat, textSyntaxFormat } from "./stateFormats.js";
+import {
+  detectStateFormat,
+  isTextualFormat,
+  textSyntaxFormat,
+} from "./stateFormats.js";
 
 /** What the export ships for one seed. */
 export interface SeedScrub {
@@ -452,7 +456,13 @@ export const scrubSeed = (
   const document = gunzip(bytes, MAX_SCRUBBED_BYTES);
   if (!document.ok)
     return { bytes: undefined, holdsIdentity: holdsIdentity(bytes, identity) };
-  const scrub = scrubDocument(document.value, seed, identity);
+  // The captured gzip may have exceeded the view's expansion-ratio limit;
+  // once decoded for shipping, detect its document format at this boundary.
+  const documentSeed =
+    seed.format === null
+      ? { ...seed, format: detectStateFormat(seed.home, document.value) }
+      : seed;
+  const scrub = scrubDocument(document.value, documentSeed, identity);
   if (scrub.bytes === undefined && hasExtraField(bytes))
     return {
       bytes: undefined,

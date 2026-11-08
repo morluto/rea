@@ -243,6 +243,32 @@ describe("documents saved gzip-compressed", () => {
       ).toBe(`<template name="${path.slice("envs/notes/seed/".length)}"/>`);
   });
 
+  it("checks a recompressed formerly unreadable seed as shipped and scrubs its document", async () => {
+    const save = (text: string) =>
+      gzipSync(text, { level: text.includes(">1200<") ? 9 : 0 });
+    const folder = await budgetCapture(save, "x".repeat(60_000));
+    const state = await budgetState(folder);
+    expect(state?.versions[0]).toMatchObject({
+      format: null,
+      compression: "gzip",
+    });
+    expect(state?.versions[0]?.view_error).toContain("expands more than");
+    const { result, directory } = await exportBudget(folder);
+    if (result instanceof Error) throw result;
+    expect(result.normalized_result).toMatchObject({
+      task: { failing_on_seed: ["rent"] },
+      scrubbed_files: [SEED],
+    });
+    const shipped = await readFile(join(directory, SEED));
+    expect(openStateDocument(BUDGET, shipped)).toMatchObject({
+      format: "xml",
+      compression: "gzip",
+    });
+    expect(gunzipSync(shipped).toString("utf8")).toBe(
+      workbook("1200", "user@localhost", "x".repeat(60_000)),
+    );
+  });
+
   it("keeps a seed the app stored uncompressed readable once scrubbed, where deflating it would pass the 100 times a view reads", async () => {
     const stored = (text: string) => gzipSync(text, { level: 0 });
     const comment = "x".repeat(60_000);
