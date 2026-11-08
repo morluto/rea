@@ -211,7 +211,12 @@ it.each(failureCases)(
           ],
         },
         execution_contexts: [
-          { context_key: "1", name: "main", origin: reportedScriptUrl },
+          {
+            context_key: "context_0",
+            execution_context_id: 1,
+            name: "main",
+            origin: reportedScriptUrl,
+          },
         ],
       });
     } finally {

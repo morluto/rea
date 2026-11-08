@@ -1016,3 +1016,31 @@ describe("managed call and field-access relations", () => {
     ).toContain("3 missing-node");
   });
 });
+
+it("keeps unfamiliar field opcodes unknown in managed graph Evidence", () => {
+  const bytes = buildManagedPeFixture({
+    ilBody: tinyIl([0x02, 0x7b, 0x01, 0, 0, 0x04, 0x26, 0x2a]),
+  });
+  const binary = managedPeFixtureTarget(bytes, "/fixture/ManagedCalls.exe");
+  const members = inspectManagedMembersBytes(bytes, binary);
+  const projection = projectManagedApplicationGraphEvidence({
+    managed_members: createEvidence(binary, MANAGED_STATIC_PROVIDER, {
+      operation: "inspect_managed_members",
+      parameters: {},
+      result: {
+        ...members,
+        field_accesses: [
+          { ...members.field_accesses[0]!, opcode: "constructor" },
+        ],
+      },
+      limitations: [],
+    }),
+  });
+  if (!projection.ok) throw projection.error;
+  const result = managedApplicationGraphResultSchema.parse(
+    parseEvidence(projection.value).normalized_result,
+  );
+  expect(
+    result.graph.edges.find((edge) => edge.relation === "accesses")?.properties,
+  ).toMatchObject({ access: ["unknown"], opcodes: { constructor: 1 } });
+});
