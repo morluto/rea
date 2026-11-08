@@ -1,5 +1,6 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
@@ -143,6 +144,56 @@ const exportTask = async (folder: string, checks: unknown[]) => {
   );
   return { result, directory };
 };
+
+it.each([
+  { seedTitle: "done", accepted: false },
+  { seedTitle: "before", accepted: true },
+])(
+  "checks the recompressed gzip archive's real seed view (accepted: $accepted)",
+  async ({ seedTitle, accepted }) => {
+    const archive = (title: string) =>
+      zipArchive([
+        { name: "state.json", data: JSON.stringify({ title }), method: 0 },
+        { name: "padding.txt", data: "x".repeat(60_000), method: 0 },
+      ]);
+    const seed = gzipSync(archive(seedTitle), { level: 9 });
+    const end = gzipSync(archive("done"), { level: 0 });
+    const folder = await archiveCapture([seed, end]);
+    const state = await inspectDesktopApplicationState(folder, readers);
+    if (!("normalized_result" in state)) throw state;
+    const versions = desktopApplicationStateSchema
+      .parse(state.normalized_result)
+      .paths.find((entry) => entry.home_path === LIST)?.versions;
+    expect(versions?.[0]).toMatchObject({
+      format: null,
+      compression: "gzip",
+    });
+    expect(versions?.at(-1)).toMatchObject({
+      format: "zip",
+      compression: "gzip",
+    });
+    const { result } = await exportTask(folder, [
+      {
+        kind: "value_equals",
+        file: LIST,
+        pointer: "/entries/[name=state.json]/view/title",
+        value: "done",
+      },
+    ]);
+    if (accepted) {
+      if (result instanceof Error) throw result;
+      expect(result.normalized_result).toMatchObject({
+        task: { failing_on_seed: ["check-1"] },
+      });
+    } else {
+      expect(result).toBeInstanceOf(Error);
+      expect(
+        (result as Error & { userMessage: string }).userMessage,
+      ).toContain("already passes on the seed");
+    }
+  },
+);
+
 
 describe("documents saved as zip archives", () => {
   it("reads each version into its entries and lists the change by entry and element name", async () => {
