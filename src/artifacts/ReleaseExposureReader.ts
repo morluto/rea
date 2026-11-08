@@ -1649,9 +1649,19 @@ const noteLinkerMapGuess = (state: ScanState, location: string): void => {
   state.linkerMapGuesses.set(key, paths.add(location));
 };
 
-const isDeclaredMap = (state: ScanState, member: MemberView): boolean =>
-  isSourceMap(member.logical, member.kind) ||
-  state.mapTargets.has(memberLocationKey(member.location));
+/**
+ * An owner's stated role or a declaration outranks the member's name, and an
+ * inventory path role is only that name: a `.map` that an owner marks as
+ * JavaScript or a page loads as a script is not a map.
+ */
+const isDeclaredMap = (state: ScanState, member: MemberView): boolean => {
+  if (member.kindStated && member.kind === "source-map") return true;
+  const key = memberLocationKey(member.location);
+  if (state.mapTargets.has(key)) return true;
+  if (member.kind === "javascript" || state.scriptTargets.has(key))
+    return false;
+  return isSourceMap(member.logical, member.kind);
+};
 
 /** A declared map or script target that was never reached was not assessed. */
 const noteUnreachedTargets = (state: ScanState): void => {

@@ -3287,6 +3287,20 @@ describe("ReleaseExposureReader inline map reads", () => {
     );
     expect((await inspect(root)).source_maps.embedded).toBe(1);
   });
+
+  it("reads a SEA entry named .map as JavaScript, not as a linker map", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-map-");
+    await writeFile(
+      join(root, "app"),
+      nodeSeaElf({
+        codePath: "boot.map",
+        main: `//# sourceMappingURL=data:application/json;base64,${map}\n`,
+      }),
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps.embedded).toBe(1);
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
+  });
 });
 
 describe("ReleaseExposureReader Node shebang scripts", () => {
@@ -3492,6 +3506,32 @@ describe("ReleaseExposureReader map target allowance", () => {
     expect(scanned.debug_companions.skipped).toBeGreaterThan(0);
     expect(debugCompanionsStatus(scanned)).toBe("unknown");
     expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+  });
+});
+
+describe("ReleaseExposureReader script roles over a .map name", () => {
+  it("reads a .map script an HTML file loads as JavaScript", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    const map = Buffer.from(
+      JSON.stringify({
+        version: 3,
+        sources: ["src/app.ts"],
+        sourcesContent: ["export {};"],
+        mappings: "",
+      }),
+    ).toString("base64");
+    await writeFile(
+      join(root, "index.html"),
+      '<script src="main.map"></script>',
+    );
+    await writeFile(
+      join(root, "main.map"),
+      `//# sourceMappingURL=data:application/json;base64,${map}\n`,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+    expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
   });
 });
 
