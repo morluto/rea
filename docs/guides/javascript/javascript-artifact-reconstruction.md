@@ -402,6 +402,13 @@ Selected bounded text is then parsed as inert data to recover:
 - utility-process entrypoints and native `.node` binding requests without
   parsing or executing the add-on.
 
+Electron's `net.fetch` and `net.request` contribute network endpoint
+observations when Electron API identity proves the `net` export at the call
+site; the same method on another receiver remains a candidate. `net.fetch`
+resolves its target as the global `fetch` does, including `Request` objects.
+`net.request` treats only a string as its URL, so an options object or URL
+object keeps its expression as a partial endpoint.
+
 Overloaded `.open` calls use lexical receiver facts: ambient browser window and
 document receivers are treated as browsing-context or document operations,
 while locally shadowed receivers can still contribute network endpoint

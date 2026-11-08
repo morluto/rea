@@ -130,6 +130,56 @@ it.each([
   },
 );
 
+const netTarget = '"https://api.example.test/v1/config"';
+
+it.each([
+  [`const { net } = require("electron"); net.fetch(${netTarget});`, true],
+  [`import { net } from "electron/main"; net.request(${netTarget});`, true],
+  [
+    `import * as electron from "electron"; electron.net.fetch(${netTarget});`,
+    true,
+  ],
+  [
+    `const electron = require("electron"); electron.net.request(${netTarget}).end();`,
+    true,
+  ],
+  [`import electron from "electron"; electron.net?.fetch(${netTarget});`, true],
+  [
+    `const { net } = require("electron"); const { fetch } = net; fetch(${netTarget});`,
+    true,
+  ],
+  [
+    `const net = { fetch(value) { return value; } }; net.fetch(${netTarget});`,
+    false,
+  ],
+  [
+    `import { net } from "electron"; function local(net) { net.request(${netTarget}); }`,
+    false,
+  ],
+  [
+    `const { net } = require("electron"); net.fetch = (value) => value; net.fetch(${netTarget});`,
+    false,
+  ],
+  [`const net = require("net"); net.request(${netTarget});`, false],
+])(
+  "observes Electron net requests only through proven module identity: %s",
+  (source, proven) => {
+    const analysis = analyzeJavaScriptStaticSource(source);
+    expect(analysis.parse_error_count).toBe(0);
+    expect(
+      analysis.endpoints.map(({ value, interpretation }) => ({
+        value,
+        interpretation,
+      })),
+    ).toEqual([
+      {
+        value: "https://api.example.test/v1/config",
+        interpretation: proven ? undefined : "candidate",
+      },
+    ]);
+  },
+);
+
 it("recovers APIs through an ES module default import of Electron", () => {
   const analysis = analyzeJavaScriptStaticSource(`
     import electron from "electron";

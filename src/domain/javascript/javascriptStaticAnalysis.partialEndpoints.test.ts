@@ -436,3 +436,72 @@ it("keeps Request objects partial when Request is locally shadowed", () => {
     resolution: "partial",
   });
 });
+
+it("reads Electron net targets with the argument forms each API accepts", () => {
+  expect(
+    endpoints(`
+        import { net } from "electron";
+        const exact = "https://api.example.test/string";
+        const address = new URL("https://api.example.test/url");
+        const input = new Request("https://api.example.test/request");
+        net.fetch(exact);
+        net.fetch(address);
+        net.fetch(input);
+        net.fetch(new Request("https://api.example.test/inline"));
+        net.request(exact);
+        net.request(address);
+        net.request({ method: "POST", url: "https://api.example.test/options" });
+        net.fetch(runtimeUrl);
+        net.fetch.call(net, "https://api.example.test/forwarded");
+      `),
+  ).toEqual([
+    {
+      kind: "network",
+      value: "https://api.example.test/string",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/url",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/request",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/inline",
+      mechanism: "call:net.fetch",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "https://api.example.test/string",
+      mechanism: "call:net.request",
+      resolution: undefined,
+    },
+    {
+      kind: "network",
+      value: "address",
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: '{ method: "POST", url: "https://api.example.test/options" }',
+      mechanism: "call:net.request",
+      resolution: "partial",
+    },
+    {
+      kind: "network",
+      value: "runtimeUrl",
+      mechanism: "call:net.fetch",
+      resolution: "partial",
+    },
+  ]);
+});

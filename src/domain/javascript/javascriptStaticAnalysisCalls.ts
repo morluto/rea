@@ -13,6 +13,7 @@ import {
   stripQueryAndFragment,
 } from "../artifactPathSyntax.js";
 import { sanitizeEndpointCandidate } from "../browserObservation.js";
+import { electronCalleePath } from "./electronStaticAnalysisValues.js";
 import {
   addFindingOnce,
   addLocatedFinding,
@@ -556,7 +557,7 @@ const inspectEndpointCall = (
     if (target === undefined) return;
     const literal =
       stringValue(target) ??
-      (isFetchCall(node, bindings)
+      (requestTargetObjects(node, bindings, context) === "request"
         ? requestConstructorUrl(target, bindings)
         : undefined);
     if (literal !== undefined) {
@@ -648,6 +649,7 @@ const isKnownNetworkRequest = (
   context: FindingContext,
 ): boolean => {
   if (isBrowserNetworkRequest(node, bindings)) return true;
+  if (electronNetRequest(node, context) !== undefined) return true;
   const callee = unwrapJavaScriptExpression(node.callee).node;
   if (
     (t.isCallExpression(node) || t.isOptionalCallExpression(node)) &&
@@ -657,6 +659,45 @@ const isKnownNetworkRequest = (
   )
     return true;
   return false;
+};
+
+/**
+ * Electron's `net.fetch(input)` and `net.request(options)` take their target
+ * first. The shared Electron identity facts must prove the direct callee:
+ * forwarding through `call` or `apply` moves that argument, and the same
+ * method on another receiver remains a candidate.
+ */
+const electronNetRequest = (
+  node: JavaScriptCallLike,
+  context: FindingContext,
+): "fetch" | "request" | undefined => {
+  if (!t.isCallExpression(node) && !t.isOptionalCallExpression(node))
+    return undefined;
+  const path = electronCalleePath(node.callee, context);
+  if (path?.length !== 2 || path[0] !== "net") return undefined;
+  return path[1] === "fetch" || path[1] === "request" ? path[1] : undefined;
+};
+
+/**
+ * Objects that can name a known request's target besides a string. `fetch`
+ * and Electron's `net.fetch` construct a `Request` from a `Request` or a URL
+ * object; other recognized APIs resolve URL objects only. Electron's
+ * `ClientRequest` reads a shallow copy of a non-string argument as options,
+ * and a URL object has no own `url` or `href`, so only a string names a
+ * `net.request` target.
+ */
+type RequestTargetObjects = "request" | "url" | "none";
+
+const requestTargetObjects = (
+  node: JavaScriptCallLike,
+  bindings: JavaScriptSemanticAnalysisState,
+  context: FindingContext,
+): RequestTargetObjects => {
+  const electron = electronNetRequest(node, context);
+  if (electron === "request") return "none";
+  return electron === "fetch" || isFetchCall(node, bindings)
+    ? "request"
+    : "url";
 };
 
 /** Finish queued targets after shared member-mutation facts are indexed. */
@@ -673,7 +714,13 @@ export const finishPartialNetworkEndpoints = (
     }
     const target = argumentNode(node.arguments[0]);
     if (target === undefined) continue;
-    const resolved = resolvedRequestTarget(target, node, bindings, index);
+    const resolved = resolvedRequestTarget(
+      target,
+      node,
+      bindings,
+      index,
+      requestTargetObjects(node, bindings, context),
+    );
     if (resolved !== undefined)
       addEndpoint(context, {
         node,
@@ -709,6 +756,7 @@ const resolvedRequestTarget = (
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
+  objects: RequestTargetObjects,
 ): string | undefined => {
   const reference = requestReferenceNode(node);
   // A toString result is selected before the enclosing request invocation.
@@ -720,7 +768,15 @@ const resolvedRequestTarget = (
   const evaluated = evaluateSemanticExpression(node, bindings);
   if (evaluated.status === "literal" && typeof evaluated.value === "string")
     return evaluated.value;
-  return urlObjectRequestTarget(node, capture, bindings, index);
+  return objects === "none"
+    ? undefined
+    : urlObjectRequestTarget(
+        node,
+        capture,
+        bindings,
+        index,
+        objects === "request",
+      );
 };
 
 const requestInitializerPrecedesSite = (
@@ -764,6 +820,7 @@ const urlObjectRequestTarget = (
   site: t.Node,
   bindings: JavaScriptSemanticAnalysisState,
   index: JavaScriptBindingIndex,
+  requestObjects: boolean,
   seen = new Set<string>(),
   isToString = false,
 ): string | undefined => {
@@ -806,10 +863,11 @@ const urlObjectRequestTarget = (
       site,
       bindings,
       index,
+      requestObjects,
       seen,
       isToString,
     );
-  if (!isToString && isFetchCall(site, bindings)) {
+  if (!isToString && requestObjects) {
     const requestUrl = requestConstructorUrl(initialized, bindings);
     if (requestUrl !== undefined) return requestUrl;
   }
