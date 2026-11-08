@@ -1739,7 +1739,7 @@ describe("ReleaseExposureReader nested packages in a host", () => {
 });
 
 describe("ReleaseExposureReader undecided PE members", () => {
-  it.each(["payload.map", "payload.bin"])(
+  it.each(["payload.map", "payload.bin", "payload.json"])(
     "keeps a large PE member named %s with a late header undecided",
     async (name) => {
       const root = await createTestTempDirectory("rea-release-exposure-pe-");

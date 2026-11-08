@@ -1469,6 +1469,16 @@ const examineTextMember = async (
     noteNestedPackage(state, "asar", member.location);
     return true;
   }
+  // A package member's name is not its format. One kept only as a prefix may
+  // have its PE signature past that prefix, so it stays undecided, as on the
+  // map route; text read in full has no later bytes to decide it.
+  if (
+    loaded.kind === "over_allowance" &&
+    loaded.prefix !== null &&
+    member.packageFormat !== null &&
+    !member.kindStated
+  )
+    noteUndecidedPe(state, member, loaded.prefix);
   return examineLoadedText(
     state,
     scriptRoleOfRead(state, member, loaded),
