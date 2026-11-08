@@ -103,6 +103,7 @@ describe.skipIf(process.platform === "win32")(
   () => {
     for (const kind of [
       "complete",
+      "single-file",
       "partial",
       "missing",
       "unsupported",
@@ -191,9 +192,11 @@ describe.skipIf(process.platform === "win32")(
               join(workspace, env.ARTIFACT_PATH, "index.js"),
               "\nexport const broken = ;\n",
             );
+          if (kind === "single-file")
+            env.ARTIFACT_PATH = "build/rea-ci-demo/index.js";
           if (kind === "missing") env.ARTIFACT_PATH = "build/missing-artifact";
           if (kind === "unsupported")
-            env.ARTIFACT_PATH = "build/rea-ci-demo/index.js";
+            env.ARTIFACT_PATH = "build/rea-ci-demo/package.json";
           const result = await run(analyze);
           expect(result.signal).toBeNull();
           const raw = await readFile(join(reports, "analysis.json"), "utf8");
@@ -213,7 +216,11 @@ describe.skipIf(process.platform === "win32")(
             "This artifact must not be executed.",
           );
           const envelope: unknown = JSON.parse(raw);
-          if (kind === "complete" || kind === "partial") {
+          if (
+            kind === "complete" ||
+            kind === "single-file" ||
+            kind === "partial"
+          ) {
             expect(result.exitCode).toBe(0);
             expect(envelope).toMatchObject({
               ok: true,
