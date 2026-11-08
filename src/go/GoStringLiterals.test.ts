@@ -481,7 +481,7 @@ it("bounds rejected-slice caching across thousands of distinct NUL slices withou
   });
 });
 
-it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors section-loop cancellation", () => {
+it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and honors region and section cancellation", () => {
   const count = 25_000;
   const slotBytes = 16;
   const bytes = Buffer.alloc((count + 1) * slotBytes);
@@ -560,8 +560,20 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
     },
   ]);
 
+  let inRegionLoop = false;
+  let observedRegions = 0;
+  let regionCancelChecks = 0;
   let inSectionLoop = false;
   let observedSections = 0;
+  const trackedLoadRegions = new Proxy(loadRegions, {
+    get(target, property, receiver) {
+      if (typeof property === "string" && /^\d+$/u.test(property)) {
+        inRegionLoop = true;
+        observedRegions += 1;
+      }
+      return Reflect.get(target, property, receiver);
+    },
+  });
   const trackedSections = new Proxy(sections, {
     get(target, property, receiver) {
       if (typeof property === "string" && /^\d+$/u.test(property)) {
@@ -571,6 +583,31 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
       return Reflect.get(target, property, receiver);
     },
   });
+
+  expect(() =>
+    recoverGoStringLiterals(
+      bytes,
+      {
+        ...container,
+        load_regions: trackedLoadRegions,
+        sections: trackedSections,
+      },
+      2000,
+      () => {
+        if (inRegionLoop && !inSectionLoop) {
+          regionCancelChecks += 1;
+          if (regionCancelChecks >= 10)
+            throw new Error("cancelled during region indexing");
+        }
+      },
+    ),
+  ).toThrow("cancelled during region indexing");
+  expect(observedRegions).toBeGreaterThan(0);
+  expect(observedRegions).toBeLessThan(count);
+  expect(observedSections).toBe(0);
+
+  inSectionLoop = false;
+  observedSections = 0;
   expect(() =>
     recoverGoStringLiterals(
       bytes,
@@ -583,3 +620,122 @@ it("indexes 25,000 Mach-O load regions and sections without quadratic stalls and
   ).toThrow("cancelled during section indexing");
   expect(observedSections).toBeLessThan(count);
 });
+
+it.each([
+  { target: "data", mode: "single", expected: ["macho-span-check"] },
+  { target: "data", mode: "touching", expected: ["macho-span-check"] },
+  { target: "data", mode: "overlapping", expected: ["macho-span-check"] },
+  { target: "data", mode: "gap", expected: [] },
+  { target: "data", mode: "unreadable-tail", expected: [] },
+  { target: "rodata", mode: "single", expected: ["macho-span-check"] },
+  { target: "rodata", mode: "touching", expected: ["macho-span-check"] },
+  { target: "rodata", mode: "overlapping", expected: ["macho-span-check"] },
+  { target: "rodata", mode: "gap", expected: [] },
+  { target: "rodata", mode: "unreadable-tail", expected: [] },
+] as const)(
+  "requires contiguous readable Mach-O load_regions for $target ($mode)",
+  ({ target, mode, expected }) => {
+    const literal = "macho-span-check";
+    const bytes = Buffer.alloc(32);
+    bytes.write(literal, 0, "utf8");
+    const roAddr = 0x100000n;
+    const dataAddr = 0x200000n;
+    bytes.writeBigUInt64LE(roAddr, 16);
+    bytes.writeBigUInt64LE(16n, 24);
+
+    const buildRegions = (
+      address: bigint,
+      offset: number,
+      write: boolean,
+      kind: "single" | "touching" | "overlapping" | "gap" | "unreadable-tail",
+    ): LoadRegion[] => {
+      const region = (
+        delta: number,
+        size: number,
+        read: boolean,
+      ): LoadRegion => ({
+        mapping: {
+          address: address + BigInt(delta),
+          offset: offset + delta,
+          size,
+        },
+        memory_size: BigInt(size),
+        read,
+        write,
+        execute: false,
+      });
+      if (kind === "single") return [region(0, 16, true)];
+      if (kind === "touching") return [region(0, 8, true), region(8, 8, true)];
+      if (kind === "overlapping")
+        return [region(0, 12, true), region(4, 12, true)];
+      if (kind === "gap") return [region(0, 6, true), region(10, 6, true)];
+      return [region(0, 8, true), region(8, 8, false)];
+    };
+
+    const roMapping: FileMapping = { address: roAddr, offset: 0, size: 16 };
+    const dataMapping: FileMapping = {
+      address: dataAddr,
+      offset: 16,
+      size: 16,
+    };
+    const container: BinaryContainer = {
+      format: "macho",
+      architecture: "arm64",
+      bits: 64,
+      byte_order: "little",
+      mappings: [roMapping, dataMapping],
+      load_regions: [
+        ...buildRegions(
+          roAddr,
+          0,
+          false,
+          target === "rodata" ? mode : "single",
+        ),
+        ...buildRegions(
+          dataAddr,
+          16,
+          true,
+          target === "data" ? mode : "single",
+        ),
+      ],
+      zero_fills: [],
+      sections: [
+        {
+          format: "macho",
+          name: "__TEXT,__rodata",
+          section_name: "__rodata",
+          type: 0,
+          flags: 0,
+          address: roAddr,
+          declared_range: { offset: 0n, size: 16n },
+          segment_mapping: roMapping,
+          segment_unmapped: false,
+          offset: 0,
+          size: 16,
+          file_backed: true,
+          read_only: true,
+          compressed: false,
+        },
+        {
+          format: "macho",
+          name: "__DATA,__data",
+          section_name: "__data",
+          type: 0,
+          flags: 0,
+          address: dataAddr,
+          declared_range: { offset: 16n, size: 16n },
+          segment_mapping: dataMapping,
+          segment_unmapped: false,
+          offset: 16,
+          size: 16,
+          file_backed: true,
+          read_only: false,
+          compressed: false,
+        },
+      ],
+    };
+
+    const recovered = recoverGoStringLiterals(bytes, container);
+    expect(recovered.items.map((item) => item.value)).toEqual(expected);
+  },
+);
