@@ -176,6 +176,24 @@ class FoldedUrl {
       credentials === null ||
       ["", ":"].includes(joined.slice(credentials.start, credentials.end - 1))
     ) {
+      // A malformed combined value is not proof that credentials are absent.
+      // Preserve redaction already established for the first complete piece;
+      // if a split authority remains undecidable, withhold it as ambiguous.
+      if (URL.parse(joined, "https://rea.invalid") === null) {
+        const first = pieces[0];
+        const safe =
+          first === undefined
+            ? ""
+            : withoutUrlUserInfo(first.value, this.redaction);
+        if (first !== undefined && safe !== first.value) {
+          this.#parts.forEach(({ text, assign }, index) =>
+            assign(
+              index === 0 ? first.text.slice(0, first.indent) + safe : text,
+            ),
+          );
+          return;
+        }
+      }
       this.#parts.forEach(({ text, assign }) => assign(text));
       return;
     }

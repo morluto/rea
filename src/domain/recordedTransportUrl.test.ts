@@ -83,3 +83,15 @@ it("reads only requested path coordinates, retaining empty and raw segments", ()
     ),
   ).toBe("wanted");
 });
+
+it("retains uncertainty for malformed special-scheme authority credentials", () => {
+  expect(
+    parseRecordedTransportUrl(
+      String.raw`https:\\alice:pass@example.test:badport`,
+    ).credentials,
+  ).toBe("ambiguous");
+  expect(
+    parseRecordedTransportUrl(String.raw`https:\\example.test\path@notes/file`)
+      .credentials,
+  ).toBeNull();
+});

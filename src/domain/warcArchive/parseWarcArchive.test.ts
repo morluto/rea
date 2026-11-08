@@ -821,6 +821,38 @@ describe("folded URL headers", () => {
     );
   });
 
+  it("does not restore credentials when a later fold makes the URL invalid", () => {
+    const first = String.raw`https:\\user:pass@example.test`;
+    const archive = parsed(
+      record(
+        "response",
+        [
+          ["WARC-Target-URI", first],
+          ["WARC-Target-URI", `${first}\r\n :badport`],
+        ],
+        `HTTP/1.1 302 Found\r\nLocation: ${first}\r\n :badport\r\n\r\n`,
+      ),
+    );
+    expect(JSON.stringify(archive)).not.toMatch(/user:pass/u);
+  });
+
+  it("reports an undecidable split authority without exposing its fragments", () => {
+    const first = String.raw`https:\\us`;
+    const next = " er:pass@example.test:badport";
+    const archive = parsed(
+      record(
+        "response",
+        [["WARC-Target-URI", `${first}\r\n${next}`]],
+        `HTTP/1.1 302 Found\r\nLocation: ${first}\r\n${next}\r\n\r\n`,
+      ),
+    );
+    expect(JSON.stringify(archive)).not.toMatch(/er:pass/u);
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.diagnostics.map(({ code }) => code)).toContain(
+      "url-credentials-ambiguous",
+    );
+  });
+
   it("preserves URL-like text inside a folded path", () => {
     const archive = parsed(
       record(
@@ -841,7 +873,9 @@ describe("folded URL headers", () => {
       " //alice@notes/file",
     );
   });
+});
 
+describe("incomplete HTTP messages", () => {
   it("omits an unterminated header block instead of reading the body as headers", () => {
     const archive = parsed(
       record(

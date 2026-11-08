@@ -46,12 +46,24 @@ export const parseRecordedTransportUrl = (
     parsed !== null && (parsed.username !== "" || parsed.password !== "");
   const origin =
     absolute !== null && absolute.origin !== "null" ? absolute.origin : null;
-  if (prefix === null)
+  if (prefix === null) {
+    // A malformed special-scheme authority can still visibly contain userinfo.
+    // Its raw span is not reliable when the URL parser could not resolve it.
+    const malformedAuthority =
+      parsed === null
+        ? /^[\x00-\x20]*(?:https?|wss?|ftp|file):[\\/]+([^\\/?#]*)/iu.exec(
+            value,
+          )?.[1]
+        : undefined;
     return {
       origin,
       path: null,
-      credentials: hasCredentials ? "ambiguous" : null,
+      credentials:
+        hasCredentials || malformedAuthority?.includes("@") === true
+          ? "ambiguous"
+          : null,
     };
+  }
 
   const authorityStart = prefix[0].length;
   const protocol =
