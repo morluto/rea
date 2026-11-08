@@ -17,11 +17,13 @@ import {
   RECORD_SCRATCH_BYTES,
   SEGMENT_BYTES,
   readQueryParameterNames,
+  readRecordedHeaderNames,
   readRecordedRequestLine,
   scanRouteTemplate,
   textBytes,
   type RouteRule,
   type RouteTemplate,
+  type RecordedHeaderNames,
   type RecordedRequestLine,
 } from "./webNetworkRouteTemplates.js";
 
@@ -47,6 +49,14 @@ interface GroupState {
   readonly statuses: Set<number>;
   readonly contentTypes: Set<string>;
   readonly queryNames?: Map<string, number[]>;
+  readonly headers?: HeaderNames;
+}
+/** One name surface's retained name-to-ordinal map. */
+type Names = Map<string, number[]>;
+interface HeaderNames {
+  readonly request: Names;
+  readonly cookie: Names;
+  readonly setCookie: Names;
 }
 type Buckets = Map<string, Map<string, Map<string, Map<string, GroupState>>>>;
 
@@ -64,6 +74,14 @@ export interface ApiSurfaceComparisonGroup {
   readonly exactPathOrdinal: (path: string) => number | undefined;
 }
 
+const sortedNames = (names: Names) =>
+  [...names]
+    .sort(([a], [b]) => compare(a, b))
+    .map(([name, record_ordinals]) => ({
+      name,
+      record_ordinals: [...record_ordinals],
+    }));
+
 /** Own group identity, deduplication and admission for the entire projection. */
 export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumulator {
   readonly #buckets: Buckets = new Map();
@@ -77,6 +95,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     private readonly comparison?: {
       readonly operation: string;
     },
+    readonly includeRequestHeaderNames = false,
   ) {
     super(maximumBytes, "API-surface", comparison?.operation);
   }
@@ -107,7 +126,11 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
       if (route === null) return this.overBudget();
       const queryNames = readQueryParameterNames(line.query, this.scratch);
       if (queryNames === null) return this.overBudget();
-      return this.#append(record.ordinal, line, route, queryNames);
+      const headers = this.includeRequestHeaderNames
+        ? readRecordedHeaderNames(record.reported, this.scratch)
+        : undefined;
+      if (headers === null) return this.overBudget();
+      return this.#append(record.ordinal, line, route, queryNames, headers);
     } finally {
       this.releaseTemporary();
     }
@@ -118,6 +141,7 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
     line: Extract<RecordedRequestLine, { readonly kind: "line" }>,
     route: RouteTemplate,
     queryNames: ReadonlySet<string> | undefined,
+    headers: RecordedHeaderNames | undefined,
   ): Result<void, AnalysisError> {
     const { method, origin, path, status } = line;
     const mime = mediaTypeEssence(line.rawMime);
@@ -155,6 +179,20 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
           bytes += ENTRY_BYTES + textBytes(name.length);
       }
     }
+    if (headers !== undefined) {
+      if (group === undefined) bytes += CAPTURE_CONTAINER_BYTES * 3;
+      for (const [surface, names] of [
+        ["request", headers.request],
+        ["cookie", headers.cookie],
+        ["setCookie", headers.setCookie],
+      ] as const) {
+        for (const name of names) {
+          bytes += ENTRY_BYTES; // This name's source ordinal, once per record.
+          if (!group?.headers?.[surface].has(name))
+            bytes += ENTRY_BYTES + textBytes(name.length);
+        }
+      }
+    }
     // Reserve the whole mutation while route scratch is still live. No sets,
     // map entries, arrays or new observed values are retained before admission.
     if (!this.retain(bytes)) return this.overBudget();
@@ -176,6 +214,15 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         statuses: new Set(),
         contentTypes: new Set(),
         ...(queryNames === undefined ? {} : { queryNames: new Map() }),
+        ...(headers === undefined
+          ? {}
+          : {
+              headers: {
+                request: new Map(),
+                cookie: new Map(),
+                setCookie: new Map(),
+              },
+            }),
       };
       const byOrigin = this.#buckets.get(method) ?? new Map();
       this.#buckets.set(method, byOrigin);
@@ -202,6 +249,17 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         else ordinals.push(ordinal);
       }
     }
+    if (group.headers !== undefined && headers !== undefined)
+      for (const [names, selected] of [
+        [group.headers.request, headers.request],
+        [group.headers.cookie, headers.cookie],
+        [group.headers.setCookie, headers.setCookie],
+      ] as const)
+        for (const name of selected) {
+          const ordinals = names.get(name);
+          if (ordinals === undefined) names.set(name, [ordinal]);
+          else ordinals.push(ordinal);
+        }
     return ok(undefined);
   }
 
@@ -258,13 +316,15 @@ export class WebNetworkApiSurfaceAccumulator extends WebNetworkProjectionAccumul
         content_types: [...group.contentTypes].sort(compare),
         ...(group.queryNames === undefined
           ? {}
+          : { query_parameter_names: sortedNames(group.queryNames) }),
+        ...(group.headers === undefined
+          ? {}
           : {
-              query_parameter_names: [...group.queryNames]
-                .sort(([a], [b]) => compare(a, b))
-                .map(([name, record_ordinals]) => ({
-                  name,
-                  record_ordinals: [...record_ordinals],
-                })),
+              request_header_names: {
+                request_headers: sortedNames(group.headers.request),
+                cookie_names: sortedNames(group.headers.cookie),
+                set_cookie_names: sortedNames(group.headers.setCookie),
+              },
             }),
         flags: [
           ...(group.ordinals.length === 1 ? ["single-sample" as const] : []),

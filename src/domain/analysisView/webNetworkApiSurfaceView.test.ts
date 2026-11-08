@@ -15,6 +15,7 @@ const project = (
   limit = 50,
   parameters: unknown = { sensitive_value_count: 0 },
   includeQueryParameterNames?: boolean,
+  includeRequestHeaderNames?: boolean,
 ) => {
   const parent = analysisViewCaptureEvidence(capture);
   return projectAnalysisView(
@@ -35,6 +36,9 @@ const project = (
         : {
             include_query_parameter_names: includeQueryParameterNames,
           }),
+      ...(includeRequestHeaderNames === undefined
+        ? {}
+        : { include_request_header_names: includeRequestHeaderNames }),
     },
   );
 };
@@ -82,6 +86,160 @@ it("selects query names without values, retains source ordinals and leaves defau
   expect(selected.value.parent_evidence_id).toBe(
     omitted.value.parent_evidence_id,
   );
+});
+
+it("selects header, cookie and set-cookie names without values and leaves default groups unchanged", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 3);
+  capture.total_records = 3;
+  const records = [
+    {
+      request: {
+        method: "GET",
+        url: "https://api.test/products",
+        headers: [
+          { name: "Authorization", value: null },
+          { name: "X-Signature", value: "secret-signature-value" },
+          { name: "Accept", value: "application/json" },
+        ],
+        cookies: [
+          { name: "session", value: "secret-cookie-value" },
+          { name: "theme", value: "dark" },
+        ],
+      },
+      response: {
+        status: 200,
+        content: { mimeType: "application/json" },
+        cookies: [{ name: "refresh", value: "secret-set-cookie-value" }],
+      },
+    },
+    {
+      request: {
+        method: "GET",
+        url: "https://api.test/products",
+        headers: [
+          { name: "x-signature", value: "other-secret" },
+          { name: "Accept", value: "text/html" },
+        ],
+        cookies: [{ name: "session", value: "another-secret" }],
+      },
+      response: { status: 200, content: { mimeType: "application/json" } },
+    },
+    {
+      request: {
+        method: "GET",
+        url: "https://api.test/health",
+        headers: [{ name: "Accept", value: "application/json" }],
+      },
+      response: { status: 200, content: { mimeType: "application/json" } },
+    },
+  ];
+  capture.records.forEach((record, index) => {
+    record.reported = records[index]!;
+  });
+  const selected = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    true,
+  );
+  const omitted = project(capture);
+  const disabled = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    false,
+  );
+  if (
+    !selected.ok ||
+    selected.value.kind !== "api-surface" ||
+    !omitted.ok ||
+    omitted.value.kind !== "api-surface" ||
+    !disabled.ok ||
+    disabled.value.kind !== "api-surface"
+  )
+    throw new Error("Expected surfaces");
+  expect(disabled.value.groups).toEqual(omitted.value.groups);
+  for (const group of omitted.value.groups)
+    expect(group).not.toHaveProperty("request_header_names");
+  expect(selected.value.groups[1]).toMatchObject({
+    path_template: "/products",
+    record_ordinals: [0, 1],
+    request_header_names: {
+      request_headers: [
+        { name: "Accept", record_ordinals: [0, 1] },
+        { name: "Authorization", record_ordinals: [0] },
+        { name: "X-Signature", record_ordinals: [0] },
+        { name: "x-signature", record_ordinals: [1] },
+      ],
+      cookie_names: [
+        { name: "session", record_ordinals: [0, 1] },
+        { name: "theme", record_ordinals: [0] },
+      ],
+      set_cookie_names: [{ name: "refresh", record_ordinals: [0] }],
+    },
+  });
+  expect(selected.value.groups[0]).toMatchObject({
+    path_template: "/health",
+    request_header_names: {
+      request_headers: [{ name: "Accept", record_ordinals: [2] }],
+      cookie_names: [],
+      set_cookie_names: [],
+    },
+  });
+  for (const literal of [
+    "secret-signature-value",
+    "other-secret",
+    "secret-cookie-value",
+    "another-secret",
+    "secret-set-cookie-value",
+    "dark",
+  ])
+    expect(JSON.stringify(selected.value)).not.toContain(literal);
+  expect(selected.value.limitations.join(" ")).toContain(
+    "no values are copied",
+  );
+});
+
+it("keeps header names typed when recorded members are malformed", () => {
+  const capture = analysisViewCaptureFixture();
+  capture.records = capture.records.slice(0, 1);
+  capture.total_records = 1;
+  capture.records[0]!.reported = {
+    request: {
+      method: "GET",
+      url: "https://api.test/typed",
+      headers: [
+        { name: "Accept", value: "text/plain" },
+        { name: null, value: "untyped" },
+        { value: "nameless" },
+        "not-an-object",
+      ],
+      cookies: null,
+    },
+    response: { status: 200, content: { mimeType: "text/plain" } },
+  };
+  const result = project(
+    capture,
+    0,
+    50,
+    { sensitive_value_count: 0 },
+    undefined,
+    true,
+  );
+  if (!result.ok || result.value.kind !== "api-surface")
+    throw new Error("Expected surface");
+  expect(result.value.groups[0]?.request_header_names).toEqual({
+    request_headers: [{ name: "Accept", record_ordinals: [0] }],
+    cookie_names: [],
+    set_cookie_names: [],
+  });
+  expect(JSON.stringify(result.value)).not.toContain("untyped");
+  expect(JSON.stringify(result.value)).not.toContain("nameless");
 });
 
 it("preserves decoded empty and Unicode query names, plus distinctions and caller ordinal order", () => {

@@ -46,6 +46,65 @@ export type Reserve = (bytes: number) => boolean;
 const requestSchema = z.object({
   request: z.object({ url: z.unknown(), method: z.unknown() }),
 });
+/** Header names by the surface they appeared in; values are never read. */
+export interface RecordedHeaderNames {
+  readonly request: ReadonlySet<string>;
+  readonly cookie: ReadonlySet<string>;
+  readonly setCookie: ReadonlySet<string>;
+}
+const recordedName = z.string().min(1);
+/** Read one recorded array without letting a malformed member discard the rest. */
+const memberNames = (value: unknown): readonly unknown[] =>
+  Array.isArray(value)
+    ? value.map((member: unknown) =>
+        typeof member === "object" && member !== null && "name" in member
+          ? (member as { readonly name: unknown }).name
+          : undefined,
+      )
+    : [];
+/** Collect header, cookie and set-cookie names; no value member is inspected. */
+export const readRecordedHeaderNames = (
+  reported: unknown,
+  temporary: Reserve,
+): RecordedHeaderNames | null => {
+  const record =
+    typeof reported === "object" && reported !== null
+      ? (reported as { readonly request?: unknown; readonly response?: unknown })
+      : {};
+  const request =
+    typeof record.request === "object" && record.request !== null
+      ? (record.request as { readonly headers?: unknown; readonly cookies?: unknown })
+      : {};
+  const response =
+    typeof record.response === "object" && record.response !== null
+      ? (record.response as { readonly cookies?: unknown })
+      : {};
+  const groups = [
+    memberNames(request.headers),
+    memberNames(request.cookies),
+    memberNames(response.cookies),
+  ];
+  let bytes = RECORD_SCRATCH_BYTES;
+  for (const members of groups) {
+    bytes += members.length * ENTRY_BYTES;
+    for (const member of members)
+      if (typeof member === "string") bytes += textBytes(member.length);
+  }
+  if (!temporary(bytes)) return null;
+  const names = (members: readonly unknown[]) => {
+    const selected = new Set<string>();
+    for (const member of members) {
+      const parsed = recordedName.safeParse(member);
+      if (parsed.success) selected.add(parsed.data);
+    }
+    return selected;
+  };
+  return {
+    request: names(groups[0]!),
+    cookie: names(groups[1]!),
+    setCookie: names(groups[2]!),
+  };
+};
 // Conservative representation allowances, not an enforced V8 heap limit.
 // Fixed charges include the accumulator, bucket/set entries, array growth and
 // page/schema projection. Text includes UTF-16 storage and two worst-case JSON
