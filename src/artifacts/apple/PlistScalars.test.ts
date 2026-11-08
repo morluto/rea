@@ -540,8 +540,12 @@ describe("binary plist numeric association", () => {
       9007199254740992, 9007199254740992,
     ]);
     expect(numbers.limitations()).toEqual([
-      '1 observed integer literal(s) in the original archive exceed the exact range of a JSON number. Decoded numbers may lose integer precision unless represented as { "$plist_type": "integer", "decimal": "<exact digits>" }; the original archive bytes retain those literals.',
-      "2 number(s) beyond the exact integer range remain as decoded because their source integer/real type or reference marker cannot be associated unambiguously; integer precision loss remains possible.",
+      expect.stringMatching(
+        /\b1 observed integer literal.*original archive.*JSON number.*lose integer precision.*\$plist_type.*integer.*decimal.*original archive bytes retain/iu,
+      ),
+      expect.stringMatching(
+        /\b2 number.*integer range.*source integer\/real type.*cannot be associated unambiguously.*precision loss/iu,
+      ),
     ]);
   });
 
@@ -620,3 +624,53 @@ it.each([4n, 0xffffffffffffffffn])(
     ).toThrow("binary plist trailer or object table is invalid");
   },
 );
+
+it("preserves exact pre-table integer precision when a string follows the offset table", () => {
+  const stringRecord = Buffer.from("\x55hello", "latin1");
+  const intRecord = int64(9007199254740993n);
+  const intOffset = 8;
+  const tableOffset = intOffset + intRecord.length;
+  const stringOffset = tableOffset + 2;
+  const trailerOffset = stringOffset + stringRecord.length;
+  const bytes = Buffer.alloc(trailerOffset + 32);
+  Buffer.from("bplist00", "ascii").copy(bytes, 0);
+  intRecord.copy(bytes, intOffset);
+  stringRecord.copy(bytes, stringOffset);
+  bytes[tableOffset] = intOffset;
+  bytes[tableOffset + 1] = stringOffset;
+  bytes[trailerOffset + 6] = 1;
+  bytes[trailerOffset + 7] = 1;
+  bytes.writeBigUInt64BE(2n, trailerOffset + 8);
+  bytes.writeBigUInt64BE(0n, trailerOffset + 16);
+  bytes.writeBigUInt64BE(BigInt(tableOffset), trailerOffset + 24);
+
+  const metadata = scanBinaryPlistScalars(bytes);
+  expect(metadata.literals.incomplete).toBe(false);
+  expect(metadata.literals.unsafeIntegerLiterals).toBe(1);
+  const decimals = metadata.literals.integers.get(Number(9007199254740993n));
+  expect(decimals).toBeDefined();
+  expect([...decimals!]).toEqual(["9007199254740993"]);
+});
+
+it("marks literals incomplete when a numeric scalar follows the offset table", () => {
+  const intRecord = int64(9007199254740993n);
+  const intOffset = 8;
+  const postInt = int64(42n);
+  const tableOffset = intOffset + intRecord.length;
+  const postOffset = tableOffset + 2;
+  const trailerOffset = postOffset + postInt.length;
+  const bytes = Buffer.alloc(trailerOffset + 32);
+  Buffer.from("bplist00", "ascii").copy(bytes, 0);
+  intRecord.copy(bytes, intOffset);
+  postInt.copy(bytes, postOffset);
+  bytes[tableOffset] = intOffset;
+  bytes[tableOffset + 1] = postOffset;
+  bytes[trailerOffset + 6] = 1;
+  bytes[trailerOffset + 7] = 1;
+  bytes.writeBigUInt64BE(2n, trailerOffset + 8);
+  bytes.writeBigUInt64BE(0n, trailerOffset + 16);
+  bytes.writeBigUInt64BE(BigInt(tableOffset), trailerOffset + 24);
+
+  const metadata = scanBinaryPlistScalars(bytes);
+  expect(metadata.literals.incomplete).toBe(true);
+});

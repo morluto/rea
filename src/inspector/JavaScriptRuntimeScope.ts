@@ -14,7 +14,10 @@ import type {
   JavaScriptRuntimeTargetLocation,
 } from "../domain/javascript/javascriptRuntimeObservation.js";
 import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
-import { authorizedElectronFile } from "../browser/ElectronFileScope.js";
+import {
+  authorizedElectronFile,
+  type ElectronFileScope,
+} from "../browser/ElectronFileScope.js";
 
 export type RuntimeLocationDecision =
   | { readonly allowed: true; readonly location: JavaScriptRuntimeLocation }
@@ -56,6 +59,7 @@ export const authorizeRuntimeLocation = async (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "observe_javascript_runtime",
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<RuntimeLocationDecision> => {
   throwIfRuntimeObservationCancelled(signal, operation);
   if (URL.parse(value)?.protocol === "file:") {
@@ -64,6 +68,7 @@ export const authorizeRuntimeLocation = async (
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
     throwIfRuntimeObservationCancelled(signal, operation);
     return filePath === undefined
@@ -114,6 +119,7 @@ export const authorizeRuntimeTargetLocation = async (
     | "observe_javascript_runtime"
     | "list_javascript_runtime_targets" = "list_javascript_runtime_targets",
   asarHeaderAdmission: AsarHeaderAdmission = DEFAULT_ASAR_HEADER_ADMISSION,
+  files?: ElectronFileScope,
 ): Promise<
   | {
       readonly allowed: true;
@@ -132,6 +138,7 @@ export const authorizeRuntimeTargetLocation = async (
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
   const reportedPath = value.slice("file://".length);
   if (!reportedPath.startsWith("/") && !/^[a-z]:[/\\_]/iu.test(reportedPath))
@@ -140,6 +147,7 @@ export const authorizeRuntimeTargetLocation = async (
       signal,
       operation,
       asarHeaderAdmission,
+      files,
     );
 
   // Node concatenates the pathname, then replaces quotes and backslashes with
@@ -151,6 +159,7 @@ export const authorizeRuntimeTargetLocation = async (
         signal,
         operation,
         asarHeaderAdmission,
+        files,
       );
       if (decision.allowed) return decision;
     }

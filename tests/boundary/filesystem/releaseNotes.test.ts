@@ -1,13 +1,14 @@
 import {
   access,
   chmod,
+  copyFile,
   cp,
   mkdir,
   readFile,
   writeFile,
 } from "node:fs/promises";
 import { delimiter, dirname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { z } from "zod";
 import { createTestTempDirectory } from "../../fixtures/temporaryDirectory.js";
@@ -114,6 +115,32 @@ const pluginManifestFor = (
           mcpServers: "./.cursor-plugin/mcp.json",
         }
       : pluginManifest(version, options);
+
+const githubFixture = `#!${process.execPath}
+import { readFileSync } from 'node:fs';
+import { basename } from 'node:path';
+import { fileURLToPath } from 'node:url';
+if (process.argv[1] === fileURLToPath(import.meta.url) || basename(process.execPath).toLowerCase() === 'gh.exe') {
+if (!process.argv.includes('graphql')) {
+  const pr = JSON.parse(readFileSync(new URL('../.git/release-pr.json', import.meta.url), 'utf8'));
+  process.stdout.write(JSON.stringify(process.argv.includes('--slurp') ? [[pr]] : pr));
+  process.exit(0);
+}
+let input = ''; for await (const chunk of process.stdin) input += chunk;
+const request = JSON.parse(input);
+const fixture = JSON.parse(readFileSync(new URL('../github.json', import.meta.url), 'utf8'));
+if (fixture.errors) { process.stdout.write(JSON.stringify({ errors: fixture.errors })); process.exit(0); }
+const result = {};
+if (request.variables.cursor) result.item = fixture.continuations[request.variables.cursor];
+else {
+  for (const match of request.query.matchAll(/(c\\d+): object\\(oid:"([a-f0-9]+)"\\)/g)) result[match[1]] = fixture.commits[match[2]];
+  for (const match of request.query.matchAll(/(p\\d+): pullRequest\\(number:(\\d+)\\)/g)) result[match[1]] = fixture.prs[match[2]];
+}
+if (!Object.keys(result).length || Object.values(result).some(value => !value)) throw new Error('Unmodeled GitHub query');
+process.stdout.write(JSON.stringify({data:{repository:result}}));
+process.exit(0);
+}
+`;
 
 beforeAll(async () => {
   const workspace = await createTestWorkspace("rea-release-notes-seed-");
@@ -237,30 +264,11 @@ beforeAll(async () => {
     },
   };
   await writeFile(join(directory, "github.json"), JSON.stringify(metadata));
-  await writeFile(
-    join(bin, "gh"),
-    `#!${process.execPath}
-import { readFileSync } from 'node:fs';
-if (!process.argv.includes('graphql')) {
-  const pr = JSON.parse(readFileSync(new URL('../.git/release-pr.json', import.meta.url), 'utf8'));
-  process.stdout.write(JSON.stringify(process.argv.includes('--slurp') ? [[pr]] : pr));
-  process.exit(0);
-}
-let input = ''; for await (const chunk of process.stdin) input += chunk;
-const request = JSON.parse(input);
-const fixture = JSON.parse(readFileSync(new URL('../github.json', import.meta.url), 'utf8'));
-if (fixture.errors) { process.stdout.write(JSON.stringify({ errors: fixture.errors })); process.exit(0); }
-const result = {};
-if (request.variables.cursor) result.item = fixture.continuations[request.variables.cursor];
-else {
-  for (const match of request.query.matchAll(/(c\\d+): object\\(oid:"([a-f0-9]+)"\\)/g)) result[match[1]] = fixture.commits[match[2]];
-  for (const match of request.query.matchAll(/(p\\d+): pullRequest\\(number:(\\d+)\\)/g)) result[match[1]] = fixture.prs[match[2]];
-}
-if (!Object.keys(result).length || Object.values(result).some(value => !value)) throw new Error('Unmodeled GitHub query');
-process.stdout.write(JSON.stringify({data:{repository:result}}));
-`,
-  );
+  await writeFile(join(bin, "gh"), githubFixture);
   await chmod(join(bin, "gh"), 0o755);
+  // Windows cannot execute a shebang; preload the fixture in a private Node copy.
+  if (process.platform === "win32")
+    await copyFile(process.execPath, join(bin, "gh.exe"));
   seed = { directory, base, target };
 });
 
@@ -287,6 +295,11 @@ async function fixture() {
       env: {
         ...process.env,
         PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+        ...(process.platform === "win32"
+          ? {
+              NODE_OPTIONS: `${process.env.NODE_OPTIONS ?? ""} --import=${JSON.stringify(pathToFileURL(join(bin, "gh")).href)}`,
+            }
+          : {}),
       },
     });
   await invoke([
@@ -556,16 +569,7 @@ it("accepts Release Please lockfile refreshes without allowing product changes",
     join(f.directory, "package-lock.json"),
     '{"lockfileVersion":3}',
   );
-  await writeFile(
-    join(f.directory, "package-lock.json"),
-    '{"lockfileVersion":3}',
-  );
-  await git(f.directory, [
-    "add",
-    "CHANGELOG.md",
-    "package-lock.json",
-    "package-lock.json",
-  ]);
+  await git(f.directory, ["add", "CHANGELOG.md", "package-lock.json"]);
   await git(f.directory, ["commit", "-m", "chore: release lockfiles"]);
   await f.invoke(["check", "--manifest", f.manifest, "--source", "HEAD"]);
 });

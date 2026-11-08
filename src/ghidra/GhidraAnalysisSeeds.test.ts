@@ -135,9 +135,9 @@ describe("Ghidra seed commitment", () => {
     ).rejects.toMatchObject({
       _tag: "ProviderAdapterError",
       diagnostics: {
-        reason: expect.stringMatching(
-          /changed after the analysis profile was committed/u,
-        ),
+        code: "seed_changed",
+        path: resolved.value.path,
+        reason: "seed_changed",
       },
     });
   });

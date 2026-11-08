@@ -168,6 +168,47 @@ describe("ADB device states", () => {
     });
   });
 
+  it.each([
+    [
+      "without a reason",
+      "no permissions; see [http://developer.android.com/tools/device.html]",
+    ],
+    [
+      "with a reason",
+      "no permissions (user alice is not in the plugdev group); see [http://developer.android.com/tools/device.html]",
+    ],
+  ])("parses adb's no-permissions help text %s", (_name, stateText) => {
+    const { devices, unparsedLines } = parseAdbDevicesOutput(
+      [
+        "List of devices attached",
+        `07ef9c2a               ${stateText} usb:1-1 transport_id:4`,
+        "emulator-5554          device product:sdk model:sdk device:emu transport_id:1",
+        "",
+      ].join("\n"),
+    );
+    expect(unparsedLines).toEqual({ sample: [], total: 0 });
+    expect(devices.map(({ serial, state }) => [serial, state])).toEqual([
+      ["07ef9c2a", "no permissions"],
+      ["emulator-5554", "device"],
+    ]);
+    expect(devices[0]).toMatchObject({
+      transport: "usb",
+      product: null,
+      model: null,
+      device: null,
+      transport_id: 4,
+      kind: "physical",
+    });
+  });
+
+  it("rejects a semicolon after any state other than no permissions", () => {
+    const { devices, unparsedLines } = parseAdbDevicesOutput(
+      "serial-bad-device device; see [url] transport_id:1\n",
+    );
+    expect(devices).toEqual([]);
+    expect(unparsedLines.total).toBe(1);
+  });
+
   it("returns unrecognized lines instead of dropping them", () => {
     const output = [
       "List of devices attached",

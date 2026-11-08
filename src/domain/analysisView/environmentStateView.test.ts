@@ -57,6 +57,7 @@ const parentOf = (
     environmentStateCaptureFixture(),
   ),
 ): AnalysisViewParent => ({
+  predicateType: evidence.predicate_type,
   evidenceId: evidence.evidence_id,
   operation: evidence.operation,
   normalizedResult: evidence.normalized_result,
@@ -1483,8 +1484,8 @@ it.each([
     const before = structuredClone(capture);
     const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
     expect(state.timeline).toBe("recorded-start-time");
-    expect(state.limitations).toContain(
-      "Some records carry no usable request duration; their completion and overlap remain unknown.",
+    expect(state.limitations).toContainEqual(
+      expect.stringMatching(/request duration.*completion.*overlap.*unknown/iu),
     );
     expect(state.documents).toEqual(
       expect.arrayContaining([
@@ -1533,8 +1534,8 @@ it("does not confirm completion of an untimed delete while preserving unrelated 
   const before = structuredClone(result);
   const state = stateOf({ ...source, normalizedResult: result });
   expect(state.timeline).toBe("recorded-start-time");
-  expect(state.limitations).toContain(
-    "Some records carry no usable request duration; their completion and overlap remain unknown.",
+  expect(state.limitations).toContainEqual(
+    expect.stringMatching(/request duration.*completion.*overlap.*unknown/iu),
   );
   expect(state.writes).toContainEqual(
     expect.objectContaining({ tool: "delete_items_by_id", served: false }),

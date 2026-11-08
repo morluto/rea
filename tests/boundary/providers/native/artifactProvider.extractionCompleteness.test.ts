@@ -1,3 +1,4 @@
+import { createOwnedArtifactClient } from "../../../support/artifactClientScope.js";
 import { createHash } from "node:crypto";
 import {
   access,
@@ -13,7 +14,6 @@ import { createPackage, createPackageWithOptions } from "@electron/asar";
 import { expect, it, onTestFinished, vi } from "vitest";
 
 import { parseBinaryTarget } from "../../../../src/application/BinaryTargetResolver.js";
-import { ArtifactProvider } from "../../../../src/artifacts/ArtifactProvider.js";
 import {
   materializeArtifactInventory,
   scanArtifactInventory,
@@ -104,8 +104,7 @@ it.each(["file", "directory"] as const)(
     );
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message:
-        "Inventoried regular artifact entries were not materialized: z/missing.txt",
+      message: expect.stringMatching(/not materialized.*z\/missing\.txt/iu),
     });
     await expect(access(output)).rejects.toThrow();
     expect(
@@ -130,8 +129,9 @@ it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
     onTestFinished(() => chmod(child, 0o755));
     await expect(materialize()).rejects.toMatchObject({
       reason: "integrity",
-      message:
-        "Inventoried regular artifact entries were not materialized: child/selected.txt",
+      message: expect.stringMatching(
+        /not materialized.*child\/selected\.txt/iu,
+      ),
     });
     await expect(access(output)).rejects.toThrow();
     await chmod(child, 0o755);
@@ -187,9 +187,7 @@ it
     expect(result.limitations).toContainEqual(
       expect.stringContaining("not valid UTF-8"),
     );
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(
       result.limitations.some((value) => value.startsWith("All regular files")),
     ).toBe(false);
@@ -229,8 +227,9 @@ it.each(["inventory", "materialization"] as const)(
       stage = "materialization";
       const result = await materialize();
       expect(result.limitations).toContain(limitation);
+      expect(result.coverage.status).toBe("unknown");
       expect(result.limitations).toContainEqual(
-        expect.stringContaining("source traversal coverage is unknown"),
+        expect.stringMatching(/traversal coverage.*unknown.*not.*complete/iu),
       );
       expect(
         result.limitations.some((value) =>
@@ -289,9 +288,7 @@ it("normalizes an NFD omission once across inventory and materialization", async
           value.startsWith("Artifact traversal omitted"),
         ),
       ).toEqual([omission]);
-    expect(result.limitations).toContainEqual(
-      expect.stringContaining("source traversal coverage is unknown"),
-    );
+    expect(result.coverage.status).toBe("unknown");
     expect(await readFile(join(output, "known.txt"), "utf8")).toBe(
       "retained bytes\n",
     );
@@ -429,7 +426,7 @@ const extractDirectory = async (source: string, output: string) => {
 const extractArchive = async (source: string, output: string) => {
   const target = await parseBinaryTarget(source);
   if (!target.ok) throw target.error;
-  return new ArtifactProvider(process.env)
-    .createClient(target.value)
-    .execute("extract_artifact", { output_root: output });
+  return createOwnedArtifactClient(target.value).execute("extract_artifact", {
+    output_root: output,
+  });
 };

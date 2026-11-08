@@ -1,4 +1,4 @@
-export interface AppleIpsFixtureOptions {
+interface AppleIpsFixtureOptions {
   readonly bugType?: string;
   readonly procName?: string;
   readonly uuid?: string;

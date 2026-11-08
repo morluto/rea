@@ -96,12 +96,7 @@ export const scheduleScenarioInteractions = (
           : {
               data:
                 event.type === "input"
-                  ? normalizeProcessText(
-                      event.data,
-                      scenario,
-                      "<no-temporary-root>",
-                      -1,
-                    )
+                  ? normalizeProcessText(event.data, scenario, undefined, -1)
                   : event.type === "resize"
                     ? `${String(event.columns)}x${String(event.rows)}`
                     : event.signal,

@@ -1,3 +1,13 @@
+import { resolveGhidraCheckpoint } from "./GhidraCheckpoint.js";
+import {
+  checkpointCapabilities,
+  CAPABILITIES,
+  existingProjectCapabilities,
+  EXISTING_PROJECT_WINDOWS_REMEDIATION,
+  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+  windowsP0Capabilities,
+  WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
+} from "./GhidraProviderCapabilities.js";
 import {
   existingGhidraAnalysisProfile,
   ghidraPinnedLanguage,
@@ -38,6 +48,8 @@ import {
 } from "../domain/analysisProfile.js";
 import {
   isMachOFormat,
+  RAW_ONLY_ARCHITECTURES,
+  type BinaryArchitecture,
   type BinaryTarget,
 } from "../domain/binaryTargetTypes.js";
 import {
@@ -68,14 +80,7 @@ import {
   isGhidraPspTarget,
 } from "./GhidraPspProfile.js";
 import { resolveGhidraExtensions } from "./extensions/GhidraExtensions.js";
-import {
-  CAPABILITIES,
-  existingProjectCapabilities,
-  EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
-  windowsP0Capabilities,
-  GHIDRA_PROVIDER_IDENTITY,
-  WINDOWS_P0_NATIVE_PE_ARCHITECTURES,
-} from "./GhidraProviderCapabilities.js";
+import { GHIDRA_PROVIDER_IDENTITY } from "./GhidraProviderMetadata.js";
 import {
   createGhidraProviderClient,
   admitGhidraClient,
@@ -87,7 +92,7 @@ import {
   windowsNativeCapabilities,
 } from "../process/WindowsAuthority.js";
 
-const SUPPORTED_ARCHITECTURES = new Set([
+const SUPPORTED_ARCHITECTURES = new Set<BinaryArchitecture>([
   "x86",
   "x86_64",
   "arm",
@@ -99,6 +104,15 @@ const SUPPORTED_ARCHITECTURES = new Set([
   "m68k",
   "hexagon",
 ]);
+
+/** Names every admitted family, so the refusal cannot drift from the set. */
+const admittedArchitecturesText = (): string => {
+  const rawOnly = new Set<BinaryArchitecture>(RAW_ONLY_ARCHITECTURES);
+  const admitted = [...SUPPORTED_ARCHITECTURES];
+  const detected = admitted.filter((family) => !rawOnly.has(family));
+  const raw = admitted.filter((family) => rawOnly.has(family));
+  return `Admitted families: ${detected.join(", ")}; raw-binary only: ${raw.join(", ")}.`;
+};
 
 /** Ghidra candidate backed by an isolated ephemeral headless Program session. */
 export class GhidraProvider implements AnalysisProviderCandidate {
@@ -151,7 +165,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       ? existingProjectCapabilities(platform)
       : platform === "win32"
         ? windowsP0Capabilities()
-        : CAPABILITIES;
+        : this.config.ghidraCheckpointDirectory === undefined
+          ? CAPABILITIES
+          : checkpointCapabilities();
   }
 
   async inspectAvailability(
@@ -194,7 +210,9 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         this.config.ghidraExistingProject !== undefined
           ? existingProjectCapabilities(installation.platform)
           : readiness === undefined
-            ? CAPABILITIES
+            ? this.config.ghidraCheckpointDirectory === undefined
+              ? CAPABILITIES
+              : checkpointCapabilities()
             : windowsP0Capabilities(readiness),
     };
   }
@@ -212,6 +230,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: "unsupported_host",
         reason: EXISTING_PROJECT_WINDOWS_UNAVAILABLE,
+        remediation: EXISTING_PROJECT_WINDOWS_REMEDIATION,
         diagnostics,
       };
     if (installation.status === "available" && readiness?.available === false)
@@ -219,15 +238,13 @@ export class GhidraProvider implements AnalysisProviderCandidate {
         status: "unavailable",
         code: readiness.code,
         reason: readiness.reason,
+        remediation: readiness.remediation,
         diagnostics: {
           ...diagnostics,
           windows_security: jsonObjectSchema.parse(
             windowsNativeCapabilities(installation.platform, readiness),
           ),
-          windows_native_failure: {
-            stage: readiness.failureStage,
-            remediation: readiness.remediation,
-          },
+          windows_native_failure: { stage: readiness.failureStage },
         },
       };
     return installation.status === "available"
@@ -241,6 +258,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
           status: "unavailable",
           code: installation.rejection.code,
           reason: installation.rejection.reason,
+          remediation: installation.rejection.remediation,
           diagnostics,
         };
   }
@@ -296,8 +314,7 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       return {
         status: "unsupported",
         code: "architecture_unsupported",
-        reason:
-          "Ghidra v1 requires a supported x86, x86_64, arm, arm64, MIPS, RISC-V, raw 6502, or raw m68k target profile.",
+        reason: `Ghidra v1 has no ${target.architecture} lane. ${admittedArchitecturesText()}`,
         diagnostics,
       };
     return {
@@ -490,19 +507,75 @@ export class GhidraProvider implements AnalysisProviderCandidate {
       options?.signal,
     );
     if (!seeds.ok) return seeds;
-    if (extensions.value.length === 0 && seeds.value === undefined)
+    if (
+      extensions.value.length === 0 &&
+      seeds.value === undefined &&
+      this.config.ghidraCheckpointDirectory === undefined
+    )
       return resolved;
+    const baseProfile = createAnalysisProfile(resolved.value.profile.provider, {
+      ...resolved.value.profile.parameters,
+      ...(extensions.value.length === 0
+        ? {}
+        : { analysis_extensions: jsonValueSchema.parse(extensions.value) }),
+      ...(seeds.value === undefined
+        ? {}
+        : { analysis_seeds: jsonValueSchema.parse(seeds.value) }),
+    });
+    const checkpointDirectory = this.config.ghidraCheckpointDirectory;
+    if (
+      checkpointDirectory !== undefined &&
+      (installation.platform === "win32" ||
+        target.kind !== "executable" ||
+        !(
+          target.format === "elf" ||
+          target.format === "pe" ||
+          isMachOFormat(target.format)
+        ) ||
+        ghidraPinnedLanguage(target) !== undefined ||
+        extensions.value.length !== 0 ||
+        baseProfile.parameters.loader !== "auto-from-header" ||
+        baseProfile.parameters.psp_extension !== undefined ||
+        seeds.value !== undefined ||
+        this.config.ghidraLanguageOverride !== undefined ||
+        this.config.ghidraDisabledAnalyzers !== undefined)
+    )
+      return err(
+        new ConfigurationError(
+          "Ghidra checkpoints currently support stock ELF/PE/Mach-O imports on Linux/macOS",
+          {
+            settings: [
+              {
+                setting: "REA_GHIDRA_CHECKPOINT_DIR",
+                constraint:
+                  "Select a stock native import on Linux/macOS, or unset this setting for the existing ephemeral workflow.",
+              },
+            ],
+          },
+        ),
+      );
+    const checkpoint =
+      checkpointDirectory === undefined
+        ? undefined
+        : await resolveGhidraCheckpoint(
+            checkpointDirectory,
+            target.sha256,
+            baseProfile,
+            this.#inspectionResources,
+            options?.signal,
+          );
     return ok({
       ...resolved.value,
-      profile: createAnalysisProfile(resolved.value.profile.provider, {
-        ...resolved.value.profile.parameters,
-        ...(extensions.value.length === 0
-          ? {}
-          : { analysis_extensions: jsonValueSchema.parse(extensions.value) }),
-        ...(seeds.value === undefined
-          ? {}
-          : { analysis_seeds: jsonValueSchema.parse(seeds.value) }),
-      }),
+      ...(checkpoint === undefined
+        ? {}
+        : { refreshAfterRetirement: true as const }),
+      profile:
+        checkpoint === undefined
+          ? baseProfile
+          : createAnalysisProfile(baseProfile.provider, {
+              ...baseProfile.parameters,
+              owned_checkpoint: jsonValueSchema.parse(checkpoint),
+            }),
     });
   }
 
@@ -683,7 +756,10 @@ const inspectWindowsP0TargetSupport = (
   // The raw 6502 lane uses the same immutable snapshot and native ownership boundary.
   if (target.format === "raw-binary" && target.architecture === "6502")
     return { status: "supported", code: null, reason: null, diagnostics };
-  // DOL is verified on POSIX hosts only; Windows P0 does not admit it, like the other non-PE lanes.
+  // DOS MZ reuses the host-neutral MzLoader import and its attested load image.
+  if (target.format === "dos-mz")
+    return { status: "supported", code: null, reason: null, diagnostics };
+  // DOL is verified on POSIX hosts only; Windows P0 does not admit it.
   if (target.format === "gamecube-dol")
     return {
       status: "unsupported",
@@ -697,7 +773,7 @@ const inspectWindowsP0TargetSupport = (
       status: "unsupported",
       code: "target_format_unsupported",
       reason:
-        "Windows Ghidra P0 accepts native PE and explicitly selected raw 6502 targets only.",
+        "Windows Ghidra P0 accepts native PE, DOS MZ, and explicitly selected raw 6502 targets only.",
       diagnostics,
     };
   if (!WINDOWS_P0_NATIVE_PE_ARCHITECTURES.includes(target.architecture))

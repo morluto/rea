@@ -194,6 +194,7 @@ const parent = (
     local_path: "/bin/tool",
   },
 ): AnalysisViewParent => ({
+  predicateType: "rea.analysis",
   evidenceId: `ev_${"c".repeat(64)}`,
   operation: "inspect_macho",
   normalizedResult,
@@ -439,7 +440,7 @@ describe("Mach-O analysis views", () => {
       issues: [
         {
           path: ["view"],
-          message: "Mach-O inspection supports summary and macho views.",
+          message: expect.stringMatching(/summary and macho views/iu),
         },
       ],
     });
