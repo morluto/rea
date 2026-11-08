@@ -30,8 +30,10 @@ generation reads the kinds of change.
   unreadable directory or unchecked path, outside recorded exclusions); dconf through
   `dconf dump /` on a private file profile, keeping only
   groups whose path names the application; JSON up to 4 MiB and 500 levels
-  with exact numbers; XML through the shared strict parser with DOCTYPEs
-  refused; key files up to 4 MiB whose every line parses; zip archives by
+  with exact numbers; XML through the shared strict parser, a DOCTYPE read
+  only when it has no internal subset and its DTD never read
+  ([XML text checks](../xml-text-checks/spec.md)); key files up to 4 MiB
+  whose every line parses; zip archives by
   their local file header, as their entries with each entry's own format and
   view ([document views](../document-views/spec.md)); text; binary.
 - Changes between versions are created, deleted, or lines, values, keys or

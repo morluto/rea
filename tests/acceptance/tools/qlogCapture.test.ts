@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { expect, it as runtimeTest } from "vitest";
-import {
-  NODE_CAPTURE_HEAP_ENFORCED,
-  NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES,
-} from "../../../src/browser/history/CaptureRelease.js";
+import { NODE_CAPTURE_HEAP_ENFORCED } from "../../../src/browser/history/CaptureRelease.js";
+import { NODE_CAPTURE_PROCESS_MEMORY_LIMIT_BYTES } from "../../fixtures/captureDecoderLimits.js";
 import { webNetworkCaptureSummaryViewResultSchema } from "../../../src/domain/analysisView/analysisView.js";
 import { parseEvidence } from "../../../src/domain/evidence.js";
 import {

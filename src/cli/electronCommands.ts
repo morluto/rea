@@ -19,6 +19,7 @@ import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { projectInputIssues } from "../domain/inputIssueProjection.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import type { Logger } from "pino";
+import { cliDomainInput } from "./domainInput.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { createElectronFuseService } from "../composition/electronFuses.js";
 import { parseCliJsonInput, resolveCliJsonPaths } from "../cliJsonInput.js";
@@ -256,7 +257,9 @@ const registerElectronTargetList = (
     description:
       "List local file pages exposed by the selected Electron CDP endpoint",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Electron CDP endpoint"),
+      endpoint: cliDomainInput(
+        listElectronTargetsInputSchema.shape.cdp_endpoint,
+      ).describe("Literal-loopback Electron CDP endpoint"),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -299,8 +302,13 @@ const registerElectronPageInspection = (
   cli.command(CLI_COMMANDS.inspectElectronPage, {
     description: "Passively inspect one Electron file page",
     args: z.object({
-      endpoint: z.string().describe("Literal-loopback Electron CDP endpoint"),
-      targetId: z.string().describe("Target ID from list-electron-targets"),
+      endpoint: cliDomainInput(
+        listElectronTargetsInputSchema.shape.cdp_endpoint,
+      ).describe("Literal-loopback Electron CDP endpoint"),
+      targetId: z
+        .string()
+        .min(1)
+        .describe("Target ID from list-electron-targets"),
     }),
     options: electronPageInspectionOptions,
     run: ({ args, options }) =>

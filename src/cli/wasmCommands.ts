@@ -9,6 +9,7 @@ import { z } from "incur";
 import { wasmArtifactModule } from "../composition/wasm.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
+import { cliDecimalField } from "./options.js";
 import type { CliInstance } from "./types.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
@@ -74,7 +75,9 @@ export const registerWasmCommands = (
       path: localPathStringSchema.describe("Local WASM artifact"),
     }),
     options: z.object({
-      commandTimeoutMs: inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      commandTimeoutMs: cliDecimalField(
+        inspectWasmArtifactInputSchema.shape.command_timeout_ms,
+      ),
       glue_paths: wasmArtifactPathsSchema(localPathStringSchema)
         .optional()
         .describe("Selected local JavaScript glue paths"),

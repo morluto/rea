@@ -107,8 +107,13 @@ describe("readElfSymbol", () => {
         strippedImageWithSections([[tag, 0n]]),
         names,
       );
-      expect(control.failures).toEqual([]);
-      expect(control.symbols).toHaveLength(2);
+      expect(control).toEqual({
+        symbols: [
+          { name: names[0], offset: 0x400, size: 52 },
+          { name: names[1], offset: 0x800, size: 52 },
+        ],
+        failures: [],
+      });
       const image = strippedImageWithSections([[tag, 0xffffffffffffffffn]]);
       const original = Buffer.from(image);
       expect(await readElfSymbols(image, names)).toEqual(control);
@@ -198,8 +203,13 @@ describe("dynamic symbols without a SHT_DYNSYM section", () => {
       );
       const names = ["_kDartVmSnapshotData", "_kDartIsolateSnapshotData"];
       const control = await readElfSymbols(original, names);
-      expect(control.failures).toEqual([]);
-      expect(control.symbols).toHaveLength(2);
+      expect(control).toEqual({
+        symbols: [
+          { name: names[0], offset: 0x400, size: 52 },
+          { name: names[1], offset: 0x800, size: 52 },
+        ],
+        failures: [],
+      });
       const before = Buffer.from(image);
       expect(await readElfSymbols(image, names)).toEqual(control);
       expect(Buffer.compare(image, before)).toBe(0);
@@ -555,12 +565,14 @@ it("checks raw symbol precision only after definition and requested-name selecti
     { name: "unselected", value: 64, size: 4 },
     { name: "selected", value: 64, size: 4 },
   ]);
-  const expected = await readElfSymbols(bytes, ["selected"]);
   const sectionTable = Number(bytes.readBigUInt64LE(0x28));
   const symbols = Number(bytes.readBigUInt64LE(sectionTable + 64 + 0x18));
   bytes.writeBigUInt64LE(0xffffffffffffffffn, symbols + 8);
   bytes.writeBigUInt64LE(0xffffffffffffffffn, symbols + 16);
-  expect(await readElfSymbols(bytes, ["selected"])).toEqual(expected);
+  expect(await readElfSymbols(bytes, ["selected"])).toEqual({
+    symbols: [{ name: "selected", offset: 64, size: 4 }],
+    failures: [],
+  });
   expect(await readElfSymbols(bytes, ["unselected"])).toEqual({
     symbols: [],
     failures: [{ reason: "Symbol unselected has unrepresentable bounds" }],
@@ -576,7 +588,6 @@ it("checks raw symbol precision only after definition and requested-name selecti
 
 it("keeps precision admission limited to consumed ELF program fields and types", async () => {
   const original = buildElf64Image([{ name: "selected", value: 64, size: 4 }]);
-  const expected = await readElfSymbols(original, ["selected"]);
   const bytes = appendElfRanges(original, "program", [
     { type: 0x70000001, offset: 0, size: 0 },
   ]);
@@ -587,7 +598,10 @@ it("keeps precision admission limited to consumed ELF program fields and types",
   // The load mapping does not consume physical address, memory size or alignment.
   for (const relative of [24, 40, 48])
     bytes.writeBigUInt64LE(0xffffffffffffffffn, table + relative);
-  expect(await readElfSymbols(bytes, ["selected"])).toEqual(expected);
+  expect(await readElfSymbols(bytes, ["selected"])).toEqual({
+    symbols: [{ name: "selected", offset: 64, size: 4 }],
+    failures: [],
+  });
   bytes.writeBigUInt64LE(0xffffffffffffffffn, table + 32);
   expect(await readElfSymbols(bytes, ["selected"])).toEqual({
     symbols: [],
@@ -597,14 +611,16 @@ it("keeps precision admission limited to consumed ELF program fields and types",
 
 it("keeps section precision checks on consumed declarations and mapping fields", async () => {
   const bytes = buildElf64Image([{ name: "selected", value: 64, size: 4 }]);
-  const expected = await readElfSymbols(bytes, ["selected"]);
   const table = Number(bytes.readBigUInt64LE(40));
   // An unrelated null record may carry uninterpreted declaration words.
   for (const relative of [8, 16, 24, 32, 48, 56])
     bytes.writeBigUInt64LE(0xffffffffffffffffn, table + relative);
   // Alignment is not consumed for this symbol-table mapping.
   bytes.writeBigUInt64LE(0xffffffffffffffffn, table + 64 + 48);
-  expect(await readElfSymbols(bytes, ["selected"])).toEqual(expected);
+  expect(await readElfSymbols(bytes, ["selected"])).toEqual({
+    symbols: [{ name: "selected", offset: 64, size: 4 }],
+    failures: [],
+  });
   bytes.writeBigUInt64LE(0xffffffffffffffffn, table + 64 + 8);
   expect(await readElfSymbols(bytes, ["selected"])).toEqual({
     symbols: [],
@@ -617,7 +633,10 @@ it("keeps section precision checks on consumed declarations and mapping fields",
 it("keeps ignored DT_NULL payloads separate from unsigned tag precision admission", async () => {
   const names = ["_kDartVmSnapshotData"];
   const control = await readElfSymbols(strippedImageWithSections(), names);
-  expect(control.failures).toEqual([]);
+  expect(control).toEqual({
+    symbols: [{ name: names[0], offset: 0x400, size: 52 }],
+    failures: [],
+  });
   expect(
     await readElfSymbols(
       strippedImageWithSections([[0, 0xffffffffffffffffn]]),

@@ -205,6 +205,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(expected).toBe("\ude00😀");
   expect(
     createBoundedProcessTextNormalizer(
       emptyPattern,
@@ -237,6 +238,7 @@ it("counts UTF-8 bytes across replacement boundaries like the final JavaScript s
     "/temporary",
     rootPid,
   );
+  expect(loneExpected).toBe("\ud83dy");
   expect(
     createBoundedProcessTextNormalizer(
       loneSurrogate,
