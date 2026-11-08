@@ -77,6 +77,7 @@ export const perfDiagnosticSchema = z.strictObject({
     "unsupported-attribute-size",
     "truncated-event-attribute",
     "invalid-ids-section",
+    "unsafe-identifier",
     "event-limit-reached",
     "diagnostic-limit-reached",
   ]),

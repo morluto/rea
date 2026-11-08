@@ -149,6 +149,10 @@ describe("parsePerfData event attributes", () => {
       expect.objectContaining({ code: "event-limit-reached" }),
     ]);
     expect(archive.source_coverage.status).toBe("partial");
+    // The third entry's ids were never read, so the retained count is a prefix
+    // and the summary must not claim the recording's identifiers are present.
+    expect(archive.summary.identifiers).toBe(2);
+    expect(archive.summary.identifiers_present).toBe(false);
   });
 
   it("rejects an attribute section past the end of the file", () => {
@@ -289,16 +293,43 @@ describe("parsePerfData attribute widths", () => {
     const idAt = (maxEvents: number) => {
       const archive = parsed(
         buildPerfRecording({
-          entries: [perfEntry({ ids: [1] }), perfEntry({ ids: [2] })],
+          entries: [
+            perfEntry({ ids: [1] }),
+            perfEntry({ ids: [2] }),
+            perfEntry({ ids: [3] }),
+          ],
         }),
         { maxEvents },
       );
+      // Both runs must actually reach the limit, or the ids below would be two
+      // `undefined`s and compare equal no matter what the id contains.
+      expect(archive.diagnostics.map((entry) => entry.code)).toEqual([
+        "event-limit-reached",
+      ]);
       return archive.diagnostics[0]?.diagnostic_id;
     };
     expect(idAt(1)).toBeTruthy();
     // Both runs report the same code at index 0, so the allowance is what
     // keeps the two query-specific facts from sharing an id.
     expect(idAt(1)).not.toBe(idAt(2));
+  });
+
+  it("reports an identifier above the safe integer range instead of dropping it silently", () => {
+    const bytes = buildPerfRecording({
+      entries: [perfEntry({ ids: [1] })],
+    });
+    // The one id array follows the single attribute entry.
+    bytes.writeBigUInt64LE(
+      BigInt("18446744073709551615"),
+      PERF_HEADER_BYTES + PERF_STRIDE,
+    );
+    const archive = parsed(bytes);
+    expect(archive.events[0]?.ids).toEqual([]);
+    expect(archive.summary.identifiers_present).toBe(false);
+    expect(archive.source_coverage.status).toBe("partial");
+    expect(archive.diagnostics).toEqual([
+      expect.objectContaining({ code: "unsafe-identifier", ordinal: 0 }),
+    ]);
   });
 
   it("reports an unrepresentable 64-bit config as unknown rather than truncated", () => {

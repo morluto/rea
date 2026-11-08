@@ -82,7 +82,19 @@ export const deliverApplicationEvidence = async (
       options.recordEvidence,
       execution.sources,
     );
-    if (!sources.ok) return delivery.toCallToolResult(sources, contract);
+    if (!sources.ok) {
+      // The parent is still committed evidence; a source the session refuses
+      // must not hide it from the caller. Keep the cancellation primary, keep
+      // the completed observation inline, and carry the save failure as a
+      // secondary cause.
+      interrupted.retainPartialObservation(parent);
+      interrupted.retainSecondaryFailure(sources.error);
+      return delivery.toPartialErrorToolResult(
+        interrupted,
+        contract.returnsTargetContent,
+        options.recordEvidence,
+      );
+    }
     const retained = delivery.toPartialErrorToolResult(
       interrupted.retainPartialObservation(parent),
       contract.returnsTargetContent,

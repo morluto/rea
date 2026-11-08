@@ -181,6 +181,11 @@ const readEvents = (
           `Stopped at max_events=${state.maxEvents}; later event attributes are not listed.`,
         );
       state.eventLimitReported = true;
+      // The unread entries can carry identifiers this pass never saw, so the
+      // retained list is a prefix, not the recording's identifier inventory.
+      // Leaving `identifiersPresent` set would publish "identifiers are here"
+      // alongside a count that only covers the retained prefix.
+      state.identifiersPresent = false;
       return;
     }
     if (cursor + stride > end) {
@@ -243,6 +248,12 @@ const readEvents = (
           // An identifier above a safe integer is still an identifier; stopping
           // here silently would publish a shorter extent as the whole one.
           if (id === null) {
+            diagnose(
+              state,
+              ordinal,
+              "unsafe-identifier",
+              `The identifier at ${at} exceeds Number.MAX_SAFE_INTEGER, so this and later identifiers in the extent were not retained.`,
+            );
             idsTruncated = true;
             state.identifiersPresent = false;
             break;

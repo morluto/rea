@@ -57,7 +57,10 @@ execution count, CPU time, or evidence that a function ran.
 
 `summary.identifiers_present` is `false` when any entry's id array could not be
 read as declared, so a smaller `summary.identifiers` is not mistaken for a
-complete identifier inventory in that case.
+complete identifier inventory in that case. The same applies when the event
+allowance stops the walk: the groups past the limit were never examined, so
+their identifiers may be missing from the count. An identifier above
+`Number.MAX_SAFE_INTEGER` stops its own extent and reports `unsafe-identifier`.
 
 ## Limits
 
