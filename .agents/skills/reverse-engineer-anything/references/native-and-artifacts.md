@@ -16,7 +16,6 @@ Read the section matching the supplied artifact; other sections are optional.
 - [Managed PE/CLI](#managed-pecli)
 - [DOS COM loader interpretation](#dos-com-loader-interpretation)
 - [Function annotations in Ghidra](#function-annotations-in-ghidra)
-- [Bun standalone executables](#bun-standalone-executables)
 
 For release comparisons on one MCP connection, retain `list_procedures` Evidence
 from each target and reuse its exact IDs after target switches or `close_binary`.
@@ -405,10 +404,6 @@ architecture, provider-owned mapping and selected-image commitments. Equal
 numeric addresses alone cannot establish correspondence; inspect retained
 source Evidence and coverage when the match remains ambiguous.
 
-## Bun standalone executables
-
-Read [Bun standalone executables](packages-and-archives.md#bun-standalone-executables).
-
 ## Other artifact guides
 
 Read the owning page for offline formats, containers or firmware. These explicit
@@ -438,3 +433,4 @@ anchors preserve older links without creating duplicate searchable sections.
 - <a id="godot-pck"></a>[Godot PCK](packages-and-archives.md#godot-pck)
 - <a id="esp-images"></a>[ESP images](firmware-and-raw-images.md#esp-images)
 - <a id="esp-flash-images"></a>[ESP flash images](firmware-and-raw-images.md#esp-flash-images)
+- <a id="bun-standalone-executables"></a>[Bun standalone executables](packages-and-archives.md#bun-standalone-executables)
