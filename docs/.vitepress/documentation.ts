@@ -494,6 +494,11 @@ export const documentationSections = [
         route: "/agent-environments",
       },
       {
+        text: "Android boot and vendor_boot images",
+        source: "android-boot-image.md",
+        route: "/android-boot-image",
+      },
+      {
         text: "APK signature schemes",
         source: "apk-signature.md",
         route: "/apk-signature",

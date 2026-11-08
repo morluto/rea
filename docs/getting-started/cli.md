@@ -374,6 +374,17 @@ rea extract-artifact ./boot.itb --json
 See [U-Boot FIT images](../fit-images.md) for recognition, data sources, hashes
 and limits.
 
+Inspect and extract an Android boot or vendor_boot image:
+
+```sh
+rea inspect-artifact ./boot.img --detail summary --evidence_output boot.json --json
+rea extract-artifact ./vendor_boot.img --json
+```
+
+See [Android boot images](../android-boot-image.md) for header versions 0 through
+4, vendor ramdisk table entries, stored compression, and the unverified AVB
+footer. `ANDROID!` does not record boot versus init_boot versus recovery.
+
 Inspect local model declarations without loading weights:
 
 ```bash

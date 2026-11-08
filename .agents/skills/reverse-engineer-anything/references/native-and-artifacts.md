@@ -773,6 +773,15 @@ Multi-file components retain their aligned physical ranges; the full payload
 is also materialized. Unknown name text retains its original 32 bytes. See
 [U-Boot uImage](https://github.com/morluto/rea/blob/main/docs/uimage.md).
 
+Android boot, init_boot, recovery, and vendor_boot images use the same
+inspection and extraction workflows. `ANDROID!` versions 0-4 and `VNDRBOOT`
+versions 3-4 expose header facts and stored component bytes. The header does
+not record whether an `ANDROID!` image is boot, init_boot, or recovery.
+Command lines and names are target-derived. gzip, lz4, and zstd payloads stay
+stored. The v4 signature and any AVB footer are reported with sizes and are
+not verified. Extract `dtb` and pass that file to `inspect_devicetree`. See
+[Android boot images](https://github.com/morluto/rea/blob/main/docs/android-boot-image.md).
+
 ## ESP images
 
 For an ESP32-family app or bootloader image, `open_binary` then

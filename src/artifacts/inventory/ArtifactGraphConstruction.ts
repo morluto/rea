@@ -1,3 +1,4 @@
+import { hasAndroidBootImageMagic } from "../../domain/androidBootImageFormat.js";
 import { artifactFormatDescriptor } from "../artifactFormats.js";
 import { hasGodotPckHeader } from "../../domain/godotPckFormat.js";
 import { hasUImageMagic } from "../../domain/uimageFormat.js";
@@ -615,6 +616,7 @@ export const classifyArtifactBytes = (
   if (hasWxapkgEncryptedMagic(prefix) || hasWxapkgHeader(prefix))
     return "wxapkg";
   if (hasUImageMagic(prefix)) return "uimage";
+  if (hasAndroidBootImageMagic(prefix)) return "android-boot-image";
   const hexRecords = detectHexRecordEncoding(prefix);
   if (hexRecords !== undefined) return hexRecords;
   if (hasUf2Block(prefix)) return "uf2";
