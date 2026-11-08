@@ -134,6 +134,34 @@ it("rejects YAML that the decoder cannot compose, without inventing declarations
   expect(repeated).toContain("repeats a mapping key");
 });
 
+it("rejects composition failures and non-scalar keys without escaping the Result", async () => {
+  const unresolved = contractError(
+    await importText(
+      "unresolved.yaml",
+      'openapi: 3.0.4\ninfo:\n  title: Owned API\n  version: "1"\npaths: *missing\n',
+      "openapi-yaml",
+    ),
+  );
+  expect(unresolved).toContain("could not be composed");
+
+  const complexKey = contractError(
+    await importText(
+      "complex-key.yaml",
+      [
+        "openapi: 3.0.4",
+        "info:",
+        "  title: Owned API",
+        '  version: "1"',
+        "paths:",
+        "  ? [/pets]",
+        "  : {get: {operationId: op}}",
+      ].join("\n"),
+      "openapi-yaml",
+    ),
+  );
+  expect(complexKey).toContain("non-scalar mapping key");
+});
+
 it("rejects an empty YAML document and non-UTF-8 bytes", async () => {
   expect(
     contractError(await importText("empty.yaml", "", "openapi-yaml")),
