@@ -44,6 +44,7 @@ export const readHostFile = async (
   path: string,
   maximumBytes: number,
   signal: AbortSignal | undefined,
+  preserveCapacity = false,
 ): Promise<Buffer | "missing" | "unreadable"> => {
   const options = {
     symlinks: "follow" as const,
@@ -56,6 +57,8 @@ export const readHostFile = async (
   } catch (cause: unknown) {
     if (cause instanceof RegularFileCleanupFailure)
       throw hostCloseFailure(cause);
+    if (preserveCapacity && cause instanceof RegularFileCapacityError)
+      throw cause;
     signal?.throwIfAborted();
     if (!isRefusedRead(cause)) throw cause;
     return (cause as NodeJS.ErrnoException).code === "ENOENT"

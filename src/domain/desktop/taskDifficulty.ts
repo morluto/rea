@@ -85,7 +85,10 @@ export const nextSolve = (
   if (solves.some((solve) => solve.usd === null))
     return { next: false, stopped: "cost_unknown" };
   const largest = Math.max(0, ...solves.map((solve) => solve.usd ?? 0));
-  return spent(solves) + largest > budgetUsd
+  const projected = spent(solves) + largest;
+  const rounding =
+    Number.EPSILON * Math.max(projected, budgetUsd) * (solves.length + 2);
+  return projected - budgetUsd > rounding
     ? { next: false, stopped: "budget" }
     : { next: true };
 };

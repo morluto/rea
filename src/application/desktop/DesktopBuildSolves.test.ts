@@ -1,5 +1,11 @@
+import {
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+} from "../../desktop/AgentEnvComputer.js";
+import { OwnedStagedOutput } from "../../filesystem/OwnedStagedOutput.js";
+import { DesktopBuildOwnedWork } from "./DesktopBuildOwnedWork.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, truncate, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it, vi } from "vitest";
@@ -62,6 +68,43 @@ const request = (bundle: string, task: string) => ({
 });
 
 describe("measureBuildTask's record of a bundle", () => {
+  it("reports a host capacity refusal rather than claiming the task is missing", async () => {
+    const bundle = await bundleWith("large");
+    await truncate(
+      join(bundle, "tasks", "large.json"),
+      guestFileAnswerWorkingBytes(guestFileAnswerCeiling()) + 1,
+    );
+    const { calls, solver } = counting();
+    const result = await measureBuildTask(
+      request(bundle, "large"),
+      solver,
+      new AbortController().signal,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected capacity refusal");
+    expect(result.error).toMatchObject({
+      _tag: "AnalysisResourceConstraintError",
+      resource: "capacity",
+    });
+    expect(calls).toEqual([]);
+  });
+
+  it("measures an exported task larger than 4 MiB", async () => {
+    const bundle = await bundleWith("large");
+    await writeFile(
+      join(bundle, "tasks", "large.json"),
+      JSON.stringify(["x".repeat(4 * 1024 * 1024)]),
+    );
+    const { calls, solver } = counting();
+    const result = await measureBuildTask(
+      request(bundle, "large"),
+      solver,
+      new AbortController().signal,
+    );
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(3);
+  });
+
   it("keeps both records when two tasks of one bundle are measured at once", async () => {
     const bundle = await bundleWith("add-eggs", "add-bread");
     const { solver } = counting();
@@ -111,6 +154,52 @@ describe("measureBuildTask's record of a bundle", () => {
       expect(await readFile(join(bundle, "README.md"), "utf8")).toBe("# App\n");
     },
   );
+});
+
+it("retains a failed staged write and retries its cleanup on build shutdown", async () => {
+  const bundle = await bundleWith("add-eggs");
+  const work = new DesktopBuildOwnedWork();
+  const primary = new Error("publication failed");
+  const cleanup = new Error("cleanup failed");
+  const close = OwnedStagedOutput.prototype.close;
+  let owner: OwnedStagedOutput | undefined;
+  let attempts = 0;
+  const publication = vi
+    .spyOn(OwnedStagedOutput.prototype, "assertReadyForPublication")
+    .mockRejectedValueOnce(primary);
+  const release = vi
+    .spyOn(OwnedStagedOutput.prototype, "close")
+    .mockImplementation(async function (this: OwnedStagedOutput) {
+      owner = this;
+      if (++attempts === 1) throw cleanup;
+      await close.call(this);
+    });
+  try {
+    const result = await measureBuildTask(
+      request(bundle, "add-eggs"),
+      counting().solver,
+      new AbortController().signal,
+      undefined,
+      work.resources,
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("Expected failure");
+    expect(result.error.cleanupIncomplete).toBe(true);
+    expect(result.error.cleanup?.reason).toContain("cleanup failed");
+    expect(result.error.cause).toMatchObject({
+      outcome: { ok: false, error: primary },
+    });
+    expect(result.error.partialObservation).toMatchObject({
+      solves: [{}, {}, {}],
+    });
+    expect(await work.close()).toEqual([]);
+    expect(result.error.cleanupIncomplete).toBe(false);
+    expect(attempts).toBe(2);
+  } finally {
+    publication.mockRestore();
+    release.mockRestore();
+    await owner?.close();
+  }
 });
 
 it("retains completed paid solves when a later helper cannot be cleaned up", async () => {

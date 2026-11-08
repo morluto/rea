@@ -70,6 +70,15 @@ describe("the adaptive band", () => {
     });
   });
 
+  it("admits an exactly affordable solve without admitting one over budget", () => {
+    const tenth = solve("passed", { usd: 0.1 });
+    expect(nextSolve([tenth, tenth], 0.3)).toEqual({ next: true });
+    expect(nextSolve([tenth, tenth], 0.299999)).toEqual({
+      next: false,
+      stopped: "budget",
+    });
+  });
+
   it("stops before a solve that the largest cost so far would take past the budget", () => {
     const costly = solve("passed", { usd: 1.5 });
     expect(nextSolve([costly, miss], 4)).toEqual({ next: true });

@@ -1,5 +1,11 @@
-import { createHash, randomUUID } from "node:crypto";
-import { rename, rm, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { ArtifactResourceScope } from "../../artifacts/ArtifactResourceScope.js";
+import { RegularFileCapacityError } from "../../filesystem/readStableFileBytes.js";
+import {
+  guestFileAnswerCeiling,
+  guestFileAnswerWorkingBytes,
+} from "../../desktop/AgentEnvComputer.js";
+import { writeTextFile } from "../JsonFiles.js";
 import { join, resolve } from "node:path";
 
 import { z } from "zod";
@@ -8,6 +14,7 @@ import { AnalysisError } from "../../domain/analysisErrorBase.js";
 import {
   AnalysisCancelledError,
   AnalysisInputError,
+  AnalysisResourceConstraintError,
 } from "../../domain/analysisErrorCore.js";
 import {
   difficultyRecord,
@@ -99,19 +106,38 @@ const taskDigest = async (
   signal: AbortSignal,
 ): Promise<Result<string, AnalysisError>> => {
   const paths = [`tasks/${task}.json`, `artifacts/${task}-check/verify.py`];
-  const files = await Promise.all(
-    paths.map((path) => readHostFile(join(bundle, path), FILE_BYTES, signal)),
-  );
-  const missing = paths.filter((_, index) => !Buffer.isBuffer(files[index]));
-  if (missing.length > 0)
-    return err(
-      refused(
-        `The bundle at ${bundle} holds no task ${task}: it has no readable ${missing.join(" or ")}.`,
-        "Name a task the bundle's export wrote, with its steps and verifier.",
-      ),
-    );
   const hash = createHash("sha256");
-  for (const file of files) if (Buffer.isBuffer(file)) hash.update(file);
+  const maximum = guestFileAnswerWorkingBytes(guestFileAnswerCeiling());
+  for (const path of paths) {
+    try {
+      const file = await readHostFile(
+        join(bundle, path),
+        maximum,
+        signal,
+        true,
+      );
+      if (!Buffer.isBuffer(file))
+        return err(
+          refused(
+            `The bundle at ${bundle} holds no readable ${path}.`,
+            "Name a task the bundle's export wrote, with its steps and verifier.",
+          ),
+        );
+      hash.update(file);
+    } catch (cause: unknown) {
+      if (cause instanceof RegularFileCapacityError)
+        return err(
+          new AnalysisResourceConstraintError(
+            MEASURE,
+            "capacity",
+            "Task file exceeds the host read budget",
+            { max_bytes: maximum, path: cause.path },
+            { cause },
+          ),
+        );
+      throw cause;
+    }
+  }
   return ok(hash.digest("hex"));
 };
 
@@ -130,17 +156,6 @@ const solveRecord = (
   instance_id: report.instance_id,
   error: report.error,
 });
-
-/** Write a file of the bundle whole: a partial one is renamed over it only once written. */
-const replaceFile = async (path: string, content: string): Promise<void> => {
-  const partial = `${path}.rea-${randomUUID()}.partial`;
-  try {
-    await writeFile(partial, content);
-    await rename(partial, path);
-  } finally {
-    await rm(partial, { force: true });
-  }
-};
 
 /** The bundle's difficulty records and README as they stand. */
 interface BundleRecords {
@@ -215,17 +230,27 @@ const recordMeasure = (
   task: string,
   record: DifficultyRecord,
   signal: AbortSignal,
+  resources: ArtifactResourceScope,
 ): Promise<Result<string, AnalysisError>> =>
   afterEarlierWrites(bundle, async () => {
     const current = await readRecords(bundle, signal);
     if (!current.ok) return current;
     const tasks = { ...current.value.tasks, [task]: record };
     const path = join(bundle, DIFFICULTY_FILE);
-    await replaceFile(path, `${JSON.stringify({ tasks }, null, 2)}\n`);
-    await replaceFile(
-      join(bundle, README_FILE),
-      withDifficultySection(current.value.readme, difficultySection(tasks)),
+    const saved = await writeTextFile(
+      `${JSON.stringify({ tasks }, null, 2)}\n`,
+      path,
+      true,
+      resources,
     );
+    if (!saved.ok) return saved;
+    const readme = await writeTextFile(
+      withDifficultySection(current.value.readme, difficultySection(tasks)),
+      join(bundle, README_FILE),
+      true,
+      resources,
+    );
+    if (!readme.ok) return readme;
     return ok(path);
   });
 
@@ -240,6 +265,7 @@ export const measureBuildTask = async (
   solver: Solver,
   signal: AbortSignal,
   progress: ProgressReporter = silentProgressReporter,
+  resources: ArtifactResourceScope = new ArtifactResourceScope(),
 ): Promise<Result<MeasuredTask, AnalysisError>> => {
   const solves: SolveRecord[] = [];
   const retainSolves = (failure: AnalysisError): AnalysisError => {
@@ -302,16 +328,9 @@ export const measureBuildTask = async (
       request.task,
       record,
       signal,
+      resources,
     );
-    if (!file.ok)
-      return err(
-        retainSolves(
-          refused(
-            `${request.task} was measured, ${record.band} at ${String(record.passes)} of ${String(record.k)} for $${record.usd.toFixed(2)}, but not recorded: ${file.error.message}`,
-            "Repair the file the message names, then measure again or record this result by hand.",
-          ),
-        ),
-      );
+    if (!file.ok) return err(retainSolves(file.error));
     const { versions: _versions, ...reported } = record;
     return ok({
       bundle: request.bundle,
@@ -349,6 +368,7 @@ export const measureInFreshComputers = async (
     readonly environment: Readonly<NodeJS.ProcessEnv>;
     readonly defaults: BuildComputerDefaults;
     readonly retainCleanup: (owner: ProviderProcessSupervisor) => void;
+    readonly resources: ArtifactResourceScope;
   },
   signal: AbortSignal,
   progress?: ProgressReporter,
@@ -370,5 +390,6 @@ export const measureInFreshComputers = async (
       }),
     signal,
     progress,
+    host.resources,
   );
 };

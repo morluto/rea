@@ -357,6 +357,7 @@ export class DesktopBuildComputers {
           environment: this.environment,
           defaults: this.defaults,
           retainCleanup: (owner) => this.#work.retain(owner),
+          resources: this.#work.resources,
         },
         stopping,
         progress,
