@@ -961,6 +961,83 @@ test("keeps a known provider configuration when only its Java setting is unresol
   }
 });
 
+test("keeps a Qwen PATH expression unresolved for provider readiness", async () => {
+  const home = await createTestTempDirectory("rea-qwen-doctor-path-");
+  const javaHome = await createFakeJdk(home);
+  const jar = join(home, "jadx.jar");
+  await writeJadxJarInventory(jar);
+  await mkdir(join(home, ".qwen"), { recursive: true });
+  await writeFile(
+    join(home, ".qwen/settings.json"),
+    JSON.stringify({
+      mcpServers: {
+        rea: {
+          command: "node",
+          args: ["rea"],
+          env: { PATH: "${PATH}", REA_JADX_MCP_JAR: jar },
+        },
+      },
+    }),
+  );
+  const host = createSystemDoctorHost({
+    HOME: home,
+    PATH: join(javaHome, "bin"),
+  });
+  try {
+    const inspections = await host.providerInspections?.(["qwen_code"]);
+    expect(inspections?.find(({ id }) => id === "jadx")).toMatchObject({
+      configured: true,
+      available: null,
+      checks: [expect.objectContaining({ classification: "unknown" })],
+    });
+  } finally {
+    await host.close?.();
+  }
+});
+
+it.each(["REA_KUNA_COMMAND", "REA_KUNA_JOBS"] as const)(
+  "keeps unresolved %s unknown even with an explicit Kuna cache",
+  async (unknown) => {
+    const home = await createTestTempDirectory("rea-dsh-kuna-unknown-");
+    const kuna = join(home, "kuna");
+    await writeFile(kuna, "#!/bin/sh\nprintf 'kuna 1.833\\n'\n", {
+      mode: 0o700,
+    });
+    await mkdir(join(home, ".dsh"), { recursive: true });
+    await writeFile(
+      join(home, ".dsh/cordis.patch.yml"),
+      [
+        "- insert:",
+        "    - id: rea-mcp",
+        '      name: "@deepseek-ai/dsh-mcp-client"',
+        "      config:",
+        "        serverName: rea",
+        "        transport: stdio",
+        "        command: rea",
+        "        args: [mcp]",
+        "        env:",
+        `          REA_KUNA_CACHE_DIR: ${join(home, "cache")}`,
+        `          REA_KUNA_COMMAND: ${unknown === "REA_KUNA_COMMAND" ? "!!js caller.command" : kuna}`,
+        ...(unknown === "REA_KUNA_JOBS"
+          ? ["          REA_KUNA_JOBS: !!js caller.jobs"]
+          : []),
+        "",
+      ].join("\n"),
+    );
+    const host = createSystemDoctorHost({ HOME: home });
+    try {
+      const inspections = await host.providerInspections?.(["dsh"]);
+      expect(inspections?.find(({ id }) => id === "kuna")).toMatchObject({
+        configured: unknown === "REA_KUNA_COMMAND" ? null : true,
+        available: null,
+        checks: [expect.objectContaining({ classification: "unknown" })],
+      });
+    } finally {
+      await host.close?.();
+    }
+  },
+);
+
 it("probes Kuna when only the unused client PATH is unresolved", async () => {
   const home = await createTestTempDirectory("rea-dsh-doctor-kuna-path-");
   const kuna = join(home, "kuna");
