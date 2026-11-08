@@ -416,6 +416,9 @@ const solveEndpoint = async (
   if (result === undefined || !result.success || result.data.error != null)
     return null;
   const value = result.data.value;
+  // Agentenv's explain command lists an empty env override, while the runtime
+  // getter falls through to the file. The explanation cannot prove that value.
+  if (value === "" && result.data.winner?.kind === "env") return null;
   if (value === null || value === "") return undefined;
   if (typeof value !== "string" || /^(?:env|secret):/u.test(value)) return null;
   return result.data.winner?.kind === "env"

@@ -215,6 +215,22 @@ it.skipIf(process.platform === "win32")(
     expect(
       (
         await readFacts(
+          {
+            ...environment,
+            FAKE_EXPLANATION: JSON.stringify({
+              path: "model.base_url",
+              value: "",
+              error: null,
+              winner: { kind: "env" },
+            }),
+          },
+          [],
+        )
+      ).solveEndpoint,
+    ).toBeNull();
+    expect(
+      (
+        await readFacts(
           { ...environment, FAKE_EXPLANATION: explain("env:MODEL_BASE") },
           [],
         )
