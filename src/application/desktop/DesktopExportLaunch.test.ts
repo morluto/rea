@@ -27,6 +27,11 @@ describe("planLaunch captured paths", () => {
         state_directories: [],
         selected_paths: [
           { path: `${HOME}/Documents/books.db`, physical, kind: "file" },
+          {
+            path: `${HOME}/.config/vendor`,
+            physical: `${HOME}/Documents`,
+            kind: "directory",
+          },
         ],
       },
     } as unknown as DesktopApplicationCapture;
@@ -38,6 +43,7 @@ describe("planLaunch captured paths", () => {
     expect(launch.opens).toEqual({ kind: "captured" });
     expect(launch.command.join(" ")).toContain("Documents/books.db");
     expect(launch.command.join(" ")).not.toContain("/mnt/data/books.db");
+    expect(launch.command.join(" ")).not.toContain(".config/vendor/books.db");
     if (argument.startsWith("file:"))
       expect(launch.command.join(" ")).toContain("?mode=edit#page");
   });
