@@ -407,6 +407,34 @@ const digestOpenHandle = async (
     : err("the dSYM DWARF member changed while being read");
 };
 
+const dwarfDirectoryCleanupPrimary = (
+  state: AdmissionState,
+  dwarfDirectory: string,
+  outcome: {
+    readonly failure: unknown;
+    readonly rejection: DebugCompanionRejection | undefined;
+  },
+): AnalysisCancelledError | BinaryTargetError | undefined => {
+  const { failure, rejection } = outcome;
+  if (failure !== undefined) {
+    return failure instanceof AnalysisCancelledError ||
+      failure instanceof BinaryTargetError
+      ? failure
+      : new BinaryTargetError(
+          dwarfDirectory,
+          "Reading the dSYM DWARF directory failed before directory cleanup",
+          { cause: failure },
+        );
+  }
+  if (rejection !== undefined)
+    return debugCompanionRejectedError(state.targetPath, rejection);
+  if (state.signal?.aborted === true)
+    return new AnalysisCancelledError("resolve_binary_target", {
+      cause: state.signal.reason,
+    });
+  return undefined;
+};
+
 const closeDwarfDirectory = async (
   state: AdmissionState,
   directoryOwner: OwnedDirectoryHandle,
@@ -416,37 +444,25 @@ const closeDwarfDirectory = async (
     readonly rejection: DebugCompanionRejection | undefined;
   },
 ): Promise<void> => {
-  const { failure, rejection } = outcome;
-  const primary =
-    failure !== undefined
-      ? failure instanceof AnalysisCancelledError ||
-        failure instanceof BinaryTargetError
-        ? failure
-        : new BinaryTargetError(
-            dwarfDirectory,
-            "Reading the dSYM DWARF directory failed before directory cleanup",
-            { cause: failure },
-          )
-      : state.signal?.aborted === true
-        ? new AnalysisCancelledError("resolve_binary_target", {
-            cause: state.signal.reason,
-          })
-        : rejection !== undefined
-          ? debugCompanionRejectedError(state.targetPath, rejection)
-          : undefined;
   if (state.resources !== undefined) {
     const cleanup = await state.resources.release({
       kind: "directory-handle",
       handle: directoryOwner,
       resource: dwarfDirectory,
     });
-    if (cleanup.kind === "failed")
+    if (cleanup.kind === "failed") {
+      const primary = dwarfDirectoryCleanupPrimary(
+        state,
+        dwarfDirectory,
+        outcome,
+      );
       throw state.resources.cleanupFailure(
         primary === undefined
           ? { kind: "completed" }
           : { kind: "failed", cause: primary },
         [cleanup],
       );
+    }
     return;
   }
   const lease = AnalysisCleanupLease.forCloseOwner(
@@ -456,6 +472,11 @@ const closeDwarfDirectory = async (
   try {
     await lease.release();
   } catch (cause: unknown) {
+    const primary = dwarfDirectoryCleanupPrimary(
+      state,
+      dwarfDirectory,
+      outcome,
+    );
     throw ArtifactReaderFailure.withCleanup(
       primary ?? cause,
       ArtifactReaderFailure.cleanupObservation(cause, dwarfDirectory),

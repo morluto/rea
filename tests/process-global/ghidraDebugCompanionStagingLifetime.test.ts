@@ -13,6 +13,8 @@ const fault = vi.hoisted(() => ({
   member: "",
   stagedMember: "",
   refuseCloses: false,
+  closeCount: 0,
+  onClose: undefined as ((attempt: number) => void) | undefined,
   refused: [] as FileHandle[],
 }));
 vi.mock("node:fs/promises", async (importOriginal) => {
@@ -27,6 +29,8 @@ vi.mock("node:fs/promises", async (importOriginal) => {
         return handle;
       const close = handle.close.bind(handle);
       handle.close = async () => {
+        fault.closeCount += 1;
+        fault.onClose?.(fault.closeCount);
         if (fault.refuseCloses) {
           fault.refused.push(handle);
           throw new Error("controlled dSYM staging descriptor close failure");
@@ -51,6 +55,8 @@ beforeEach(() => {
   fault.member = "";
   fault.stagedMember = "";
   fault.refuseCloses = false;
+  fault.closeCount = 0;
+  fault.onClose = undefined;
   fault.refused = [];
 });
 
@@ -142,6 +148,36 @@ it("keeps a digest mismatch primary when the later closes also fail", async () =
   expect(primary).toBeInstanceOf(AnalysisArtifactChangedError);
   expect(primary).toMatchObject({
     message: expect.stringContaining("dSYM member digest mismatch"),
+  });
+  expect(resources.hasPending).toBe(true);
+  expect(await readdir(fixture.runtime)).toEqual([]);
+  await resources.close();
+  expect(resources.hasPending).toBe(false);
+});
+
+it("preserves caller cancellation arriving during outer staging close after destination close failed", async () => {
+  const fixture = await stagingFixture();
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const abortReason = new Error("cancelled during outer staging close");
+  fault.refuseCloses = true;
+  fault.onClose = (attempt) => {
+    // Attempt 1 is destination.close(); attempt 2 is source.close().
+    if (attempt === 2) controller.abort(abortReason);
+  };
+  const failure = await settle(
+    stageGhidraDebugCompanion(
+      fixture.companion,
+      fixture.runtime,
+      fixture.snapshot,
+      { resourceScope: resources, signal: controller.signal },
+    ),
+  );
+  fault.refuseCloses = false;
+  expect(failure).toBeInstanceOf(ArtifactFileCleanupFailure);
+  expect(failure).toMatchObject({
+    reason: "cancelled",
+    cancellation: { reason: abortReason },
   });
   expect(resources.hasPending).toBe(true);
   expect(await readdir(fixture.runtime)).toEqual([]);

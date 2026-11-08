@@ -12,6 +12,7 @@ const fault = vi.hoisted(() => ({
   onMemberClose: undefined as ((attempt: number) => void) | undefined,
   dirReadFailure: undefined as Error | undefined,
   dirCloseFailure: undefined as Error | undefined,
+  onDirClose: undefined as ((attempt: number) => void) | undefined,
   onOpendir: undefined as (() => void) | undefined,
   controller: undefined as AbortController | undefined,
 }));
@@ -63,16 +64,23 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       const directory = await original.opendir(...args);
       if (
         fault.dirReadFailure !== undefined ||
-        fault.dirCloseFailure !== undefined
+        fault.dirCloseFailure !== undefined ||
+        fault.onDirClose !== undefined
       ) {
         const originalClose = directory.close.bind(directory);
         let closed = false;
+        let closeAttempt = 0;
         if (fault.dirReadFailure !== undefined) {
           directory.read = (() =>
             Promise.reject(fault.dirReadFailure)) as typeof directory.read;
         }
-        if (fault.dirCloseFailure !== undefined) {
+        if (
+          fault.dirCloseFailure !== undefined ||
+          fault.onDirClose !== undefined
+        ) {
           directory.close = (async () => {
+            closeAttempt += 1;
+            fault.onDirClose?.(closeAttempt);
             if (!closed) {
               closed = true;
               await originalClose();
@@ -109,6 +117,7 @@ beforeEach(() => {
   fault.onMemberClose = undefined;
   fault.dirReadFailure = undefined;
   fault.dirCloseFailure = undefined;
+  fault.onDirClose = undefined;
   fault.onOpendir = undefined;
   fault.controller = undefined;
 });
@@ -320,3 +329,68 @@ it.each([1, 2])(
     expect(resolved.error.cleanupIncomplete).toBe(false);
   },
 );
+
+it.each([true, false])(
+  "preserves the caller abort reason when DWARF directory enumeration succeeds, directory close cancels, and close fails (scoped=%s)",
+  async (useResources) => {
+    const fixture = await admissionFixture();
+    const resources = useResources ? new ArtifactResourceScope() : undefined;
+    const controller = new AbortController();
+    const abortReason = new Error("cancelled during DWARF directory close");
+    fault.dirCloseFailure = errno("EIO");
+    fault.onDirClose = (attempt) => {
+      if (attempt === 1) controller.abort(abortReason);
+    };
+    const resolved = await parseBinaryTarget(fixture.target, {
+      dsymPath: fixture.dsymPath,
+      ...(resources === undefined ? {} : { resources }),
+      signal: controller.signal,
+    });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+    expect(resolved.error.cleanupPrimary).toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    expect(resolved.error.cleanupPrimary?.cause).toBe(abortReason);
+    expect(resolved.error.cleanupIncomplete).toBe(true);
+    expect(resolved.error.cleanupResources).toEqual([fixture.directory]);
+    if (resources !== undefined) {
+      await expect(resources.close()).rejects.toThrow(
+        "Artifact cleanup remains incomplete",
+      );
+      expect(resolved.error.cleanupIncomplete).toBe(true);
+    }
+  },
+);
+
+it("preserves an earlier DWARF directory refusal over cancellation during a failing directory close", async () => {
+  const fixture = await admissionFixture();
+  const emptyDsym = join(fixture.dsymPath, "..", "empty.dSYM");
+  const emptyDwarf = join(emptyDsym, "Contents", "Resources", "DWARF");
+  await mkdir(emptyDwarf, { recursive: true });
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  fault.dirCloseFailure = errno("EIO");
+  fault.onDirClose = (attempt) => {
+    if (attempt === 1)
+      controller.abort(new Error("cancelled after empty-directory refusal"));
+  };
+  const resolved = await parseBinaryTarget(fixture.target, {
+    dsymPath: emptyDsym,
+    resources,
+    signal: controller.signal,
+  });
+  expect(resolved.ok).toBe(false);
+  if (resolved.ok) return;
+  expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error.cleanupPrimary).toBeInstanceOf(BinaryTargetError);
+  expect(resolved.error.cleanupPrimary).toMatchObject({
+    constraint: "debug_companion_rejected",
+    message: expect.stringContaining("contains no DWARF member file"),
+  });
+  expect(resolved.error.cleanupIncomplete).toBe(true);
+  await expect(resources.close()).rejects.toThrow(
+    "Artifact cleanup remains incomplete",
+  );
+});

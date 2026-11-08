@@ -10,12 +10,14 @@ import {
 import type { MachODebugCompanion } from "../domain/binaryTargetTypes.js";
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  ArtifactFileCleanupFailure,
   assertArtifactReadActive,
   mapArtifactFileFailure,
   withArtifactFileHandle,
   withArtifactRegularFile,
 } from "../artifacts/ArtifactFileOperation.js";
 import { readArtifactFileChunks } from "../artifacts/readArtifactFileChunks.js";
+import { RegularFileCleanupFailure } from "../filesystem/OwnedRegularFile.js";
 import {
   NonRegularFileReadError,
   sameRegularFileState,
@@ -120,8 +122,51 @@ export const stageGhidraDebugCompanion = async (
     await rm(stagedBundle, { recursive: true, force: true }).catch(
       () => undefined,
     );
-    throw mapArtifactFileFailure(cause, classifyStagingFailure(companion));
+    throw mapArtifactFileFailure(
+      withCompletedStagingCancellation(cause, signal),
+      classifyStagingFailure(companion),
+    );
   }
+};
+
+const withCompletedStagingCancellation = (
+  cause: unknown,
+  signal: AbortSignal | undefined,
+): unknown => {
+  if (
+    signal?.aborted !== true ||
+    !(cause instanceof ArtifactFileCleanupFailure)
+  )
+    return cause;
+  const physical = cause.fileCleanupFailure;
+  if (physical.outcome.kind === "completed") {
+    if (physical.completionCancellation !== undefined) return cause;
+    return new ArtifactFileCleanupFailure(
+      new RegularFileCleanupFailure({
+        ...physical,
+        completionCancellation: { reason: signal.reason },
+      }),
+      cause.cleanupLease,
+    );
+  }
+  if (
+    physical.operationFailure === undefined &&
+    physical.outcome.cause instanceof ArtifactFileCleanupFailure
+  ) {
+    const inner = withCompletedStagingCancellation(
+      physical.outcome.cause,
+      signal,
+    );
+    if (Object.is(inner, physical.outcome.cause)) return cause;
+    return new ArtifactFileCleanupFailure(
+      new RegularFileCleanupFailure({
+        ...physical,
+        outcome: { kind: "failed", cause: inner },
+      }),
+      cause.cleanupLease,
+    );
+  }
+  return cause;
 };
 
 /** Name the admitted member, not a raw errno, when it vanished after admission. */
