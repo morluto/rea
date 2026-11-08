@@ -460,6 +460,70 @@ it.each(["createReadStream", "createWriteStream"] as const)(
   },
 );
 
+it.each([
+  ["createReadStream", "Readable"],
+  ["createWriteStream", "Writable"],
+] as const)(
+  "retains %s when a shared Stream ancestor member is installed",
+  (method, ancestor) => {
+    // `Readable` and `Writable` both extend `Stream`, so a member installed on that
+    // shared ancestor is inherited by the stream Node builds. Measured on Node
+    // 24.22.1: with `Stream.prototype.start` defined as a getter returning 0,
+    // `createReadStream(p, {start:-1})` returns a handle while the unmutated call
+    // throws `ERR_OUT_OF_RANGE`.
+    const operations = analyzeJavaScriptSemantics(`
+      const { Stream } = require("node:stream");
+      const fs = require("node:fs");
+      Object.defineProperty(Stream.prototype, "start", {
+        get() { return 0; },
+        set() {},
+        configurable: true,
+      });
+      const stream = fs.${method}("input", { start: -1 });
+      stream.close();
+    `).resourceOperations;
+    expect(operations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "acquire",
+          method,
+          resolution: "partial",
+        }),
+        expect.objectContaining({
+          kind: "release",
+          method: "close",
+          resolution: "partial",
+        }),
+      ]),
+    );
+    expect(ancestor.length).toBeGreaterThan(0);
+  },
+);
+
+it("retains a write stream when Buffer is mutated through its prototype constructor", () => {
+  // `Buffer.prototype.constructor` is `Buffer`, so a write through that route replaces
+  // the same predicate the encoding check calls. Measured on Node 24.22.1, with a named
+  // `Buffer as B` import, `B.prototype.constructor.isEncoding = () => true` makes
+  // `createWriteStream(p, {encoding:"nope"})` return a handle. The stream itself is
+  // real, so only the acquisition and its release are asserted, as the neighbouring
+  // validator-mutation cases do.
+  const operations = analyzeJavaScriptSemantics(`
+    const { Buffer: B } = require("node:buffer");
+    const fs = require("node:fs");
+    B.prototype.constructor.isEncoding = () => true;
+    const stream = fs.createWriteStream("input", { encoding: "nope" });
+    stream.close();
+  `).resourceOperations;
+  expect(operations).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({
+        kind: "acquire",
+        method: "createWriteStream",
+      }),
+      expect.objectContaining({ kind: "release", method: "close" }),
+    ]),
+  );
+});
 it("keeps native rejection when the other stream prototype changes or the change is later", () => {
   for (const setup of [
     'Object.defineProperty(fs.WriteStream.prototype, "start", { set(value) {} }); fs.createReadStream("input", { start: -1 });',

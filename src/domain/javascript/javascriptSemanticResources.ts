@@ -122,6 +122,17 @@ export const collectJavaScriptSemanticResources = (
           ],
           candidate.node,
           state,
+        ) ||
+        // `Readable` and `Writable` both extend `Stream`, so a member installed on
+        // that shared ancestor is inherited by the stream Node builds. Measured on
+        // Node 24.22.1: with `Stream.prototype.start` defined as a getter returning 0,
+        // `createReadStream(p, {start:-1})` returns a handle while the unmutated call
+        // throws `ERR_OUT_OF_RANGE`.
+        !builtinModuleSubtreeUnmodified(
+          "stream",
+          ["Stream", "prototype"],
+          candidate.node,
+          state,
         ))
         ? { ...candidate, constructorUncertain: true }
         : candidate,
@@ -370,7 +381,17 @@ const rejectsStreamOptionsLiteral = (
   return false;
 };
 
-/** Stream option admission consults the mutable Buffer predicate. */
+/**
+ * Stream option admission consults the mutable Buffer predicate.
+ *
+ * `Buffer.prototype.constructor` is `Buffer` itself, so a write through that route
+ * replaces the same predicate the encoding check calls. Measured on Node 24.22.1, with a
+ * named `Buffer as B` import, `B.prototype.constructor.isEncoding = () => true` makes
+ * `createWriteStream(p, {encoding:"nope"})` return a handle while the unmutated call
+ * throws `ERR_INVALID_ARG_VALUE`. The recorded mutation path is
+ * `["Buffer","prototype","constructor","isEncoding"]`, which a prefix-only slot query for
+ * `["Buffer","isEncoding"]` never matches, so both routes are consulted.
+ */
 const streamEncodingValidatorUnmodified = (
   node: t.Node,
   state: JavaScriptSemanticAnalysisState,
@@ -389,7 +410,18 @@ const streamEncodingValidatorUnmodified = (
   );
   return (
     !changed &&
-    builtinModuleSlotUnmodified("buffer", ["Buffer", "isEncoding"], node, state)
+    builtinModuleSlotUnmodified(
+      "buffer",
+      ["Buffer", "isEncoding"],
+      node,
+      state,
+    ) &&
+    builtinModuleSubtreeUnmodified(
+      "buffer",
+      ["Buffer", "prototype", "constructor", "isEncoding"],
+      node,
+      state,
+    )
   );
 };
 
