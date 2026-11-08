@@ -574,8 +574,17 @@ The raw Java `is_dead` flag can remain set after Ghidra decodes a live block;
 `block_membership` reports actual syntax-tree membership separately.
 
 The provider dossier itself retains up to 3,000 p-code operations, 64 inputs per
-operation and 12,000 def-use edges, with explicit omitted counts. A `STORE`
-may describe stack memory and does not itself prove persistent state.
+operation and 12,000 def-use edges, with explicit omitted counts. Memory effects
+cover high-p-code `LOAD` and `STORE` operations; direct memory address varnodes
+in other operations are excluded, so an empty effect list does not establish
+that the function accesses no memory. `procedure_references` can supply
+complementary recorded instruction references, with its own coverage limits. A
+`STORE` may describe stack memory and does not itself prove persistent state.
+The Ghidra analysis profile commits to this effect scope. Snapshots from before
+that commitment are rejected; analyze without the snapshot and save a fresh one.
+To keep historical Evidence, copy the old snapshot's `evidence_bundle` object to
+a separate JSON file and import that bundle. Import validates the Evidence; it
+does not replay the old provider analysis.
 
 Jump-table evidence keeps numeric `mappings`, explicit `default_targets`, and
 backing `data_sources` separate. A null case value denotes an unresolved
