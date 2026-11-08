@@ -80,7 +80,10 @@ import {
   GhidraLaunchError,
   type GhidraHeadlessLauncher,
 } from "./GhidraLauncher.js";
-import { AnalysisArtifactChangedError } from "../domain/analysisErrorCore.js";
+import {
+  AnalysisArtifactChangedError,
+  AnalysisCancelledError,
+} from "../domain/analysisErrorCore.js";
 import { GHIDRA_PROJECT_PROFILE_MISMATCH } from "./GhidraProjectSnapshot.js";
 import type { GhidraInstallationHost } from "./GhidraInstallation.js";
 import {
@@ -5942,6 +5945,105 @@ it("reuses readiness only inside its active task and provider lifetime", async (
     await ghidra.closeOwnedResources();
   }
 });
+
+it.each(["retry", "physical", "cleanup", "close"] as const)(
+  "handles %s during an abandoned installation inspection",
+  async (outcome) => {
+    const entered = createDeferred<void>();
+    const aborted = createDeferred<void>();
+    const release = createDeferred<void>();
+    const base = installationHost();
+    let probes = 0;
+    let denyCleanup = outcome === "cleanup";
+    const physical = new AnalysisArtifactChangedError(
+      "ghidra:installation",
+      "/selected/java",
+      "Java changed during inspection",
+    );
+    const ghidra = provider({
+      ...base,
+      probeJava: async (command, environment, options) => {
+        probes++;
+        if (probes === 1) {
+          options.signal?.addEventListener("abort", () => aborted.resolve(), {
+            once: true,
+          });
+          entered.resolve();
+          await release.promise;
+          if (outcome === "physical") return err(physical);
+          if (outcome === "cleanup") {
+            options.resourceOwner?.retain(
+              {
+                close: async () => {
+                  if (denyCleanup) throw new Error("close refused");
+                },
+              },
+              "controlled Java descriptor",
+            );
+            return err(
+              new AnalysisCancelledError("ghidra:installation", {
+                cause: options.signal?.reason,
+                cleanup: {
+                  reason: "close refused",
+                  resources: ["controlled Java descriptor"],
+                },
+              }),
+            );
+          }
+        }
+        return base.probeJava(command, environment, options);
+      },
+    });
+    const controller = new AbortController();
+    const first = ghidra.inspectAvailability({ signal: controller.signal });
+    void first.catch(() => undefined);
+    let second: ReturnType<typeof ghidra.inspectAvailability> | undefined;
+    let closing: ReturnType<typeof ghidra.closeOwnedResources> | undefined;
+    try {
+      await entered.promise;
+      controller.abort("first inspection");
+      await aborted.promise;
+      second = ghidra.inspectAvailability();
+      void second.catch(() => undefined);
+      await Promise.resolve();
+      expect(probes).toBe(1);
+      if (outcome === "close") closing = ghidra.closeOwnedResources();
+      release.resolve();
+      if (outcome === "retry") {
+        await expect(first).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await second).status).toBe("available");
+        expect(probes).toBe(2);
+      } else if (outcome === "physical") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisArtifactChangedError",
+          path: "/selected/java",
+        });
+        expect(probes).toBe(1);
+      } else if (outcome === "cleanup") {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+          cleanupIncomplete: true,
+          cleanupResources: ["controlled Java descriptor"],
+        });
+        expect(probes).toBe(1);
+      } else {
+        await expect(second).rejects.toMatchObject({
+          _tag: "AnalysisCancelledError",
+        });
+        expect((await closing)?.ok).toBe(true);
+        expect(probes).toBe(1);
+      }
+    } finally {
+      controller.abort();
+      release.resolve();
+      await Promise.allSettled([first, second, closing]);
+      denyCleanup = false;
+      expect((await ghidra.closeOwnedResources()).ok).toBe(true);
+    }
+  },
+);
 
 it("refuses a changed installation before creating a target-bound native client", async () => {
   let release = "12.1.4",
