@@ -5,6 +5,9 @@ import { createTestTempDirectory } from "../../tests/fixtures/temporaryDirectory
 import { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import * as owned from "../process/OwnedCommand.js";
 import { runDesktopBuildOwnedCommand } from "./DesktopBuildOwnedCommand.js";
+import { systemDesktopBuildSetupHost } from "./DesktopBuildSetupHost.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
+import { awaitAcknowledgement } from "../../tests/fixtures/lifecycleAcknowledgement.js";
 
 it("retains a failed cleanup and its partial archive until the same owner succeeds", async () => {
   const root = await createTestTempDirectory("rea-pack-cleanup-retry-");
@@ -91,7 +94,10 @@ it("keeps cancellation and partial output when cleanup fails during finalization
       partialPath: partial,
       signal: controller.signal,
     }).catch((cause: unknown) => cause);
-    expect(failure).toMatchObject({
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError)) throw failure;
+    expect(failure.cause).toBe(reason);
+    expect(failure.secondaryFailures[0]?.cause).toMatchObject({
       message: expect.stringContaining("cleanup is incomplete"),
       cause: { reason: "cancelled", cancellation: { reason } },
     });
@@ -99,6 +105,79 @@ it("keeps cancellation and partial output when cleanup fails during finalization
     await resources.retryCleanup();
     await expect(stat(partial)).rejects.toMatchObject({ code: "ENOENT" });
   } finally {
+    mocked.mockRestore();
+    await resources.close();
+  }
+});
+
+it("retains an observed command failure when cancellation arrives during its cleanup", async () => {
+  const resources = new ArtifactResourceScope();
+  const controller = new AbortController();
+  const reason = new Error("cancel during cleanup");
+  let entered!: () => void;
+  let release!: () => void;
+  const cleanupEntered = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const cleanupRelease = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const snapshot = {
+    stdout: { text: "earlier output", bytes: 14, observedBytes: 14 },
+    stderr: { text: "disk full", bytes: 9, observedBytes: 9 },
+    exitCode: 2,
+    signal: null,
+  };
+  const primary = new owned.OwnedCommandFailure(
+    "process",
+    "Command failed",
+    snapshot,
+  );
+  const mocked = vi
+    .spyOn(owned, "runOwnedCommand")
+    .mockImplementation(async () => {
+      entered();
+      await cleanupRelease;
+      throw new owned.OwnedCommandFailure(
+        "process",
+        primary.message,
+        snapshot,
+        null,
+        {
+          cause: primary,
+          cancellation: { reason: controller.signal.reason },
+        },
+      );
+    });
+  const host = systemDesktopBuildSetupHost(
+    {},
+    process.platform,
+    undefined,
+    resources,
+  );
+  const pending = host.installAgentenv("fixture", controller.signal);
+  try {
+    await awaitAcknowledgement(cleanupEntered, pending, "command cleanup");
+    controller.abort(reason);
+    release();
+    const failure: unknown = await pending.catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    if (!(failure instanceof AnalysisCancelledError)) throw failure;
+    expect(failure.cause).toBe(reason);
+    expect(failure.diagnostics).toMatchObject({ command_failure: "process" });
+    expect(failure.capturedOutput).toMatchObject({
+      stdout: "earlier output",
+      stderr: "disk full",
+      exit_code: 2,
+    });
+    expect(failure.secondaryFailures[0]?.cause).toMatchObject({
+      reason: "process",
+      cause: primary,
+    });
+  } finally {
+    controller.abort();
+    release();
+    await Promise.allSettled([pending]);
     mocked.mockRestore();
     await resources.close();
   }
