@@ -21,6 +21,7 @@ const fileCommands = [
   "inspect-pe-resources",
   "inspect-pe-certificates",
   "inspect-native-exports",
+  "inspect-native-data-type",
   "inspect-binary-layout",
   "inspect-recorded-crash",
   "inspect-go-binary",
