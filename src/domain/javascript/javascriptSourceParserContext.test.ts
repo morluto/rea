@@ -97,6 +97,7 @@ it.each([
   "entry.TS",
   "entry.MTS",
   "entry.CTS",
+  ".MJS",
 ])("retains unknown host authority for mixed module syntax in %s", (path) => {
   const { file } = parseRecoveredJavaScript(
     'import {join} from "node:path"; require("./dep.cjs");',

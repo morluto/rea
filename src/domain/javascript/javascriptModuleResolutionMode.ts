@@ -35,11 +35,8 @@ export const hasCaseVariantJavaScriptLoaderSuffix = (
   path?: string,
 ): boolean => {
   if (path === undefined) return false;
-  const suffix = posix.extname(path);
-  return (
-    /\.(?:js|ts|mjs|cjs|mts|cts)$/iu.test(suffix) &&
-    suffix !== suffix.toLowerCase()
-  );
+  const suffix = /\.(?:js|ts|mjs|cjs|mts|cts)$/iu.exec(path)?.[0];
+  return suffix !== undefined && suffix !== suffix.toLowerCase();
 };
 
 /** Loader evidence retained for a source-level module reference. */

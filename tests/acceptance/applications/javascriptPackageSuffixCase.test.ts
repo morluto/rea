@@ -16,6 +16,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "common/entry.TS": source,
       "common/mixed.JS":
         'import {join} from "node:path"; require("./dep.cjs");',
+      "common/.MJS": 'import {join} from "node:path"; require("./dep.cjs");',
       "common/lower.js": source,
       "common/dep.cjs": "module.exports = {};",
       "module/package.json": '{"type":"module"}',
@@ -23,6 +24,7 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "module/entry.TS": source,
       "module/mixed.JS":
         'import {join} from "node:path"; require("./dep.cjs");',
+      "module/.MJS": 'import {join} from "node:path"; require("./dep.cjs");',
       "module/ordinary.js": "console.log('module');",
       "module/main.mjs":
         'import {BrowserWindow} from "electron"; import {fileURLToPath} from "node:url"; new BrowserWindow({webPreferences:{sandbox:false,preload:fileURLToPath(new URL("./entry.JS",import.meta.url))}});',
@@ -36,6 +38,8 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
       "module/entry.TS",
       "common/mixed.JS",
       "module/mixed.JS",
+      "common/.MJS",
+      "module/.MJS",
     ]) {
       const edges = result.graph.edges.filter(
         ({ relation, properties, evidence }) =>
@@ -52,7 +56,12 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         expect(edge.evidence.confidence, source).toBe("low");
       }
     }
-    for (const source of ["common/mixed.JS", "module/mixed.JS"]) {
+    for (const source of [
+      "common/mixed.JS",
+      "module/mixed.JS",
+      "common/.MJS",
+      "module/.MJS",
+    ]) {
       expect(
         result.graph.nodes.flatMap(({ observations }) => observations),
       ).toContainEqual(
