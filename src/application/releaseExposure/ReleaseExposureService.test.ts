@@ -1719,6 +1719,16 @@ describe("ReleaseExposureService Go relative flag paths", () => {
     ]);
   });
 
+  it.each(["--sysroot=private-sdk", "--sysroot private-sdk"])(
+    "keeps the relative compiler sysroot in %s",
+    async (value) => {
+      const report = await goReport(goModule([{ key: "CGO_LDFLAGS", value }]));
+      const check = report.checks.find((item) => item.id === "go.build_paths");
+      expect(check?.status).toBe("exposed");
+      expect(check?.observation.samples).toEqual(["private-sdk"]);
+    },
+  );
+
   it.each([
     ["-Wl,-L,private-sdk -lssl", "private-sdk"],
     ["-Wl,-Lprivate-sdk", "private-sdk"],

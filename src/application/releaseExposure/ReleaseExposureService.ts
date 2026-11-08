@@ -869,7 +869,7 @@ const GO_FLAG_PATH =
  */
 const GO_COMPILER_SETTING = /^(?:CGO_[A-Z]+FLAGS|-gccgoflags)$/u;
 const GO_COMPILER_PATH_FLAG =
-  /^-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*(.*)$/su;
+  /^(?:-(?:idirafter|imacros|include|iprefix|iquote|isysroot|isystem|[BFILT])=?\s*|--sysroot(?:=|\s+|$))(.*)$/su;
 /**
  * Linker options a C compiler forwards through `-Wl,a,b` or `-Xlinker a`. The
  * linker reads its own letters: `-L`, `-T` and `-I` (the ELF interpreter) take
