@@ -3650,6 +3650,36 @@ describe("ReleaseExposureReader script roles over a .map name", () => {
     expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
     expect(scanned.debug_companions).toEqual({ paths: [], skipped: 0 });
   });
+
+  it("retracts a linker-map guess when a later page loads the .map as a script", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-html-");
+    await writeFile(join(root, "app.map"), "run();\n");
+    await writeFile(
+      join(root, "index.html"),
+      '<script src="app.map"></script>',
+    );
+    const archive = join(
+      await createTestTempDirectory("rea-release-exposure-html-"),
+      "app.asar",
+    );
+    await writeFile(
+      archive,
+      asarArchive([
+        { name: "app.map", bytes: Buffer.from("run();\n") },
+        {
+          name: "index.html",
+          bytes: Buffer.from('<script src="app.map"></script>'),
+        },
+      ]),
+    );
+    for (const target of [root, archive]) {
+      const scanned = await inspect(target);
+      expect(scanned.debug_companions.paths).toEqual([]);
+      expect(debugCompanionsStatus(scanned)).not.toBe("exposed");
+      expect(scanned.source_maps.skipped).toBeGreaterThan(0);
+      expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    }
+  });
 });
 
 describe("ReleaseExposureReader HTML script references", () => {

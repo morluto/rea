@@ -759,7 +759,8 @@ interface ScanState {
   companionPaths: Set<string>;
   /**
    * Maps read as non-JSON, by lookup identity, each with its reported spellings,
-   * which symlinks can make differ. A later declaration retracts the guess.
+   * which symlinks can make differ. A later map or script declaration
+   * retracts the guess.
    */
   linkerMapGuesses: Map<string, Set<string>>;
   skippedCompanions: number;
@@ -1561,12 +1562,15 @@ const noteScriptReference = (
 /**
  * A base href is copied into every target it resolves, so a page's paths can
  * outgrow its text many times over. A target past the allowance stays unassessed.
+ * A target already read is not a linker map, whatever its first read guessed,
+ * and its script was not examined, so its source-map coverage stays unknown.
  */
 const noteScriptTarget = (state: ScanState, location: string): void => {
   const target = memberLocationKey(location);
   if (state.examinedScripts.has(target) || state.scriptTargets.has(target))
     return;
   if (state.examinedLocations.has(target) || state.examinedMaps.has(target)) {
+    state.linkerMapGuesses.delete(target);
     state.skippedMaps += 1;
     return;
   }
