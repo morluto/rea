@@ -510,9 +510,23 @@ describe("exportDesktopApplication with a task's readers", () => {
       "utf8",
     );
     expect(verifier).toContain('"reader": "version"');
-    expect(verifier).toContain(
-      '{"id": "version", "arguments": "{\\"id\\":\\"version\\",\\"path\\":\\".local/share/notes/notes.db\\"',
+    const readerLine = verifier.match(
+      /^\s*(\{"id": "version", "arguments": .*\}),$/mu,
     );
+    expect(readerLine).not.toBeNull();
+    const shippedReader = JSON.parse(readerLine?.[1] ?? "null") as {
+      arguments: string[];
+    };
+    expect(shippedReader.arguments.length).toBeGreaterThan(0);
+    expect(shippedReader.arguments.every((part) => typeof part === "string")).toBe(
+      true,
+    );
+    expect(JSON.parse(shippedReader.arguments.join(""))).toMatchObject({
+      id: "version",
+      path: DATABASE,
+      argv: VERSION_READER.argv,
+      output: VERSION_READER.output,
+    });
     const readme = await readFile(join(directory, "README.md"), "utf8");
     expect(readme).toContain("Readers");
     expect(readme).toContain("`version` reads `.local/share/notes/notes.db`");

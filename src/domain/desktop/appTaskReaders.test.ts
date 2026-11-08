@@ -322,10 +322,10 @@ describe("a verifier without readers", () => {
     );
 
     expect(rendered).not.toContain("computer-exec");
-    // The digest rendered by the #9185 parent (55d8f016b7), before readers.
+    // The digest rendered by the #9185 selector parent (9072516c2f), before readers.
     // Older evaluator bodies remain subject to sameTaskVerifier's equivalence rules.
     expect(createHash("sha256").update(rendered).digest("hex")).toBe(
-      "a8962df4368ee4034fe2c53e75014692a21dedeac750661188b9042f37b9b926",
+      "f23f2f374a0fd774d36b76c1cc382d29a748da53647252c9a831493bfa220142",
     );
   });
 });
