@@ -230,6 +230,7 @@ const projectResolvedAnalysisView = (
     analysisProfile: parent.analysis_profile,
     authority: parent.authority,
     environment: parent.environment,
+    rawResult: parent.raw_result,
     normalizedResult:
       immutableJsonSnapshotMember(parent, "normalized_result") ??
       parent.normalized_result,

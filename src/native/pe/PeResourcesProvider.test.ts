@@ -41,7 +41,6 @@ describe("PE resource provider budget reporting", () => {
     const path = join(root, "resource.exe");
     await writeFile(path, peResourceFixture().bytes);
     const result = await inspect(path, { max_file_bytes: 64 });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a refusal");
     expect(result.error).toBeInstanceOf(AnalysisResourceConstraintError);
     expect(result.error).toMatchObject({
@@ -61,7 +60,6 @@ describe("PE resource provider budget reporting", () => {
     const path = join(root, "resource.exe");
     await writeFile(path, peResourceFixture().bytes);
     const result = await inspect(path, { max_entries: 1 });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected a refusal");
     expect(result.error).toMatchObject({
       _tag: "AnalysisResourceConstraintError",

@@ -94,7 +94,6 @@ it("records the selected artifact and the header plus marshal ranges", async () 
     identity,
     inspect: () => Promise.resolve(ok(report)),
   }).inspect({ path: report.artifact.path });
-  expect(result.ok).toBe(true);
   if (!result.ok) throw result.error;
   expect(result.value).toMatchObject({
     confidence: "observed",
@@ -123,7 +122,6 @@ it("retains completed pyc Evidence and the opaque caller reason on late cancella
     { path: report.artifact.path },
     { signal: controller.signal },
   );
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);

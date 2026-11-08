@@ -73,7 +73,7 @@ it.each(["other", 42, null, {}])(
 it.each(["list_procedures", "search_procedures"] as const)(
   "preserves real bridge symbol provenance in %s",
   (operation) => {
-    // Captured from Ghidra 12.1.4 on the source-owned PowerPC DOL fixture.
+    // Symbol captured from Ghidra 12.1.4 on the source-owned PowerPC DOL fixture.
     const rows = [
       {
         address: "0x80003130",
@@ -85,11 +85,7 @@ it.each(["list_procedures", "search_procedures"] as const)(
           type: "function",
           source: "user_defined",
         },
-        ...(operation === "list_procedures"
-          ? {
-              procedure: { external: false, thunk: false, thunk_target: null },
-            }
-          : {}),
+        procedure: { external: false, thunk: false, thunk_target: null },
       },
     ];
     expect(parseGhidraInventoryResult(operation, rows)).toEqual({
@@ -108,7 +104,6 @@ describe("native load-image result projection", () => {
       "inspect_native_load_image",
       observations,
     );
-    expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value.value).toEqual(observations);
     expect(parsed.value.rawResult).toBeUndefined();
@@ -125,7 +120,6 @@ describe("native load-image result projection", () => {
       "inspect_native_load_image",
       observations,
     );
-    expect(parsed.ok).toBe(true);
     if (!parsed.ok) throw parsed.error;
     expect(parsed.value.value).toMatchObject({ entry_context: [] });
   });
@@ -137,7 +131,6 @@ it("validates large masked byte queries at the provider boundary without changin
     mask: "ff00".repeat(1024 * 1024),
   };
   const parsed = parseGhidraInventoryInput("search_bytes", input);
-  expect(parsed.ok).toBe(true);
   if (!parsed.ok) throw parsed.error;
   expect(parsed.value.pattern === input.pattern).toBe(true);
   expect(parsed.value.mask === input.mask).toBe(true);
@@ -367,6 +360,14 @@ const byteSearch = (space = "") => ({
         bytes: 16,
       },
     ],
+    skipped_overlays: [
+      {
+        segment: "overlay",
+        start: `${space}0x0040`,
+        end: `${space}0x004f`,
+        bytes: 16,
+      },
+    ],
   },
   complete: true,
   next_cursor: null as string | null,
@@ -392,6 +393,8 @@ it.each([
   ["uninitialized end", ["searched", "skipped_uninitialized", 0, "end"]],
   ["unloaded start", ["searched", "skipped_not_loaded", 0, "start"]],
   ["unloaded end", ["searched", "skipped_not_loaded", 0, "end"]],
+  ["overlay start", ["searched", "skipped_overlays", 0, "start"]],
+  ["overlay end", ["searched", "skipped_overlays", 0, "end"]],
 ] as const)(
   "rejects noncanonical %s at its owning address field",
   (_label, path) => {
@@ -405,7 +408,6 @@ it.each([
       throw new Error("Expected an address fixture");
     Reflect.set(object as object, field, address.replace("%3A", "%3a"));
     const result = parseGhidraInventoryResult("search_bytes", value);
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected canonical-address refusal");
     expect(result.error.cause).toBeInstanceOf(z.ZodError);
     if (!(result.error.cause instanceof z.ZodError))
