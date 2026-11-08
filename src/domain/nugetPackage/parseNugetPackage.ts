@@ -162,7 +162,11 @@ const licenseOf = (metadata: Element): NugetNuspec["license"] => {
   const licence = childrenNamed(metadata, "license")[0];
   if (licence === undefined) return null;
   const value = licence.textContent ?? "";
-  const type = licence.getAttribute("type") ?? "expression";
+  // Only the two declared kinds are modelled. A missing or unrecognised `type`
+  // (e.g. the deprecated `url` form) is not an expression claim, so it stays
+  // unknown rather than being reported as one; `license_url` carries its value.
+  const type = licence.getAttribute("type");
+  if (type !== "expression" && type !== "file") return null;
   return {
     kind: type === "file" ? "file" : "expression",
     value,

@@ -152,6 +152,22 @@ describe("parseNugetPackage: nuspec metadata", () => {
     });
   });
 
+  it("keeps an unrecognised license type unknown instead of calling it an expression", () => {
+    const nuspec = NUSPEC.replace(
+      '<license type="expression">MIT</license>',
+      '<license type="url">https://example.test/LICENSE</license>',
+    );
+    const nuspecs = parsed(
+      parse([
+        member("Example.Package.nuspec", {
+          bytes: nuspec.length,
+          text: nuspec,
+        }),
+      ]),
+    ).nuspecs;
+    expect(nuspecs[0]?.license).toBeNull();
+  });
+
   it("reads dependencies written directly under <dependencies> as the untargeted group", () => {
     const nuspec = NUSPEC.replace(
       /<dependencies>[\s\S]*<\/dependencies>/,
