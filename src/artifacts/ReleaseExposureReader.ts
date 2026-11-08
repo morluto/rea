@@ -1099,6 +1099,9 @@ const examineMapMember = async (
     ? member
     : { ...member, logical: `${member.logical}.js.map` };
   const read = await readMap(state, declared);
+  const header = read === null ? null : headerOfRead(read.loaded);
+  if (undeclared && read !== null && header !== null && hasNodeShebang(header))
+    return examineShebangMap(state, member, read.hasSlot, context);
   const packaged =
     read === null ? null : packagedFormatOfRead(state, member, read.loaded);
   if (packaged === "asar") {
@@ -1123,6 +1126,33 @@ const examineMapMember = async (
   else state.skippedText += 1;
   return loaded?.kind !== "unread";
 };
+
+/**
+ * An undeclared `.map` that starts with a Node shebang is a script, such as
+ * `runner.map`, so it is not a linker map. Its map slot is returned and the
+ * text reader examines it as JavaScript, which reads its inline maps.
+ */
+const examineShebangMap = async (
+  state: ScanState,
+  member: MemberView,
+  hasSlot: boolean,
+  context: ScanContext,
+): Promise<boolean> => {
+  if (hasSlot) state.mapsRead -= 1;
+  const key = memberLocationKey(member.location);
+  state.examinedMaps.delete(key);
+  state.examinedLocations.add(key);
+  state.examinedScripts.add(key);
+  return examineTextMember(state, { ...member, kind: "javascript" }, context);
+};
+
+/** The first bytes a read returned, or null when it returned none. */
+const headerOfRead = (loaded: MemberRead): Buffer | null =>
+  loaded.kind === "bytes"
+    ? loaded.bytes
+    : loaded.kind === "over_allowance"
+      ? loaded.prefix
+      : null;
 
 /**
  * Take a slot from the map count and return the bytes this read may use. The
@@ -1439,12 +1469,7 @@ const scriptRoleOfRead = (
   loaded: MemberRead,
 ): MemberView => {
   if (holdsScripts(member)) return member;
-  const header =
-    loaded.kind === "bytes"
-      ? loaded.bytes
-      : loaded.kind === "over_allowance"
-        ? loaded.prefix
-        : null;
+  const header = headerOfRead(loaded);
   if (header === null || !hasNodeShebang(header)) return member;
   state.examinedScripts.add(memberLocationKey(member.location));
   return { ...member, kind: "javascript" };

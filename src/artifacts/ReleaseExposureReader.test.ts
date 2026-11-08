@@ -3662,6 +3662,30 @@ describe("ReleaseExposureReader Node shebang scripts", () => {
   });
 });
 
+describe("ReleaseExposureReader Node shebang .map scripts", () => {
+  const mapUrl = `data:application/json;base64,${embeddedSourceMap().toString(
+    "base64",
+  )}`;
+
+  it.each([true, false])(
+    "reads the inline map of a runner.map, selected: %s",
+    async (selected) => {
+      const root = await createTestTempDirectory(
+        "rea-release-exposure-shebang-map-",
+      );
+      const path = join(root, "runner.map");
+      await writeFile(
+        path,
+        `#!/usr/bin/env node\nrun();\n//# sourceMappingURL=${mapUrl}\n`,
+      );
+      const scanned = await inspect(selected ? path : root);
+      expect(scanned.source_maps).toMatchObject({ embedded: 1, skipped: 0 });
+      expect(scanned.debug_companions.paths).toEqual([]);
+      expect(sourceMapSourcesStatus(scanned)).toBe("exposed");
+    },
+  );
+});
+
 describe("ReleaseExposureReader resource admission", () => {
   it("holds one scope admission for a whole audit", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-scope-");
