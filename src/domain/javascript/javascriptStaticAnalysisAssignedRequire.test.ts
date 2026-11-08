@@ -207,3 +207,19 @@ it("keeps electron facts when a loop-aliased defineProperty exhausts alias selec
 it("keeps electron facts for the same path walk without defineProperty", () => {
   expectElectronProbe(loopAliasedPropertyWalk(false));
 });
+
+// A strict check that exhausts the budget still examines queued sources, so a
+// module branch beside the growing alias revokes in either branch order.
+it.each(["(flag?module:r)", "(flag?r:module)"])(
+  "revokes the host delegate through %s after alias selections are exhausted",
+  (receiver) => {
+    const analysis = analyzeJavaScriptStaticSource(
+      `function f(n,e,flag){let r=n,i=0;for(;i<e.length;){let k=e[i];Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});let s=r[k];r=s,i++}${receiver}.require=replacement;return r}let h=require("electron");new h.BrowserWindow({});`,
+    );
+    expect(analysis.parse_error_count).toBe(0);
+    expect(analysis.electron.browser_windows).toHaveLength(0);
+    expect(analysis.references).toEqual([
+      expect.objectContaining({ kind: "require", specifier: null }),
+    ]);
+  },
+);

@@ -1077,6 +1077,9 @@ const hasCommonJsModuleSource = (
   >();
   const examined = new WeakSet<object>();
   let additionalStates = 0;
+  // A strict check that exhausts the budget stops expanding, then examines
+  // the sources already queued. One may still be a retained module identity.
+  let exhausted = false;
   for (let next = pending.pop(); next !== undefined; next = pending.pop()) {
     const value = unwrapJavaScriptExpression(next.node).node;
     const { awaitDepths } = next;
@@ -1091,21 +1094,23 @@ const hasCommonJsModuleSource = (
       contexts.set(value, byMode);
     }
     const path = selections.normalize(context, next.path);
-    // An exhausted walk follows includeUnknown. A retained identity proves
-    // the receiver.
-    if (selections.limited) return includeUnknown;
+    if (selections.limited && !exhausted) {
+      if (includeUnknown) return true;
+      exhausted = true;
+    }
     const pathKey = JSON.stringify(path);
     let identity = context.identities.get(pathKey);
     if (identity === undefined) {
       // Consumption contexts must not provide an unbounded second path to
       // expansion beyond the shared selector budget.
       if (
+        !exhausted &&
         (byMode.size > 1 || context.identities.size > 0) &&
         ++additionalStates > SEMANTIC_ALIAS_SELECTION_LIMIT
       ) {
         state.valueResourceLimits.add("alias-selections");
-        // Same policy as the selector-budget exit above.
-        return includeUnknown;
+        if (includeUnknown) return true;
+        exhausted = true;
       }
       identity = {};
       context.identities.set(pathKey, identity);
@@ -1118,6 +1123,7 @@ const hasCommonJsModuleSource = (
       depths: readonly number[],
       ...sources: ModuleObjectSource[]
     ) => {
+      if (exhausted) return;
       pending.push(
         ...inheritLoaderSourceContext(next, sources).map((source) => ({
           ...source,
