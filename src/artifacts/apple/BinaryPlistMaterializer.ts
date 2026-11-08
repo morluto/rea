@@ -1,6 +1,7 @@
 import { readBinaryPlistLayout } from "./BinaryPlistLayout.js";
 import { parseBinary } from "plist";
 import { markPlistDictionary } from "../../domain/apple/plistUid.js";
+import { byteOrderMarkEncoding } from "../../domain/textByteOrderMark.js";
 import {
   binaryPlistObjectEnd,
   decodeBinaryPlistScalars,
@@ -156,13 +157,27 @@ const storedPlistPayload = (
   return { type, payload: bytes.subarray(start, end) };
 };
 
-/** Decode a payload `storedPlistPayload` found; call only once it fits the budget. */
-const storedPlistText = (type: number, payload: Buffer): string =>
+/** The text a data payload holds, honoring a byte order mark; null when no reader scans it. */
+const storedDataText = (payload: Buffer): string | null => {
+  const encoding = byteOrderMarkEncoding(payload);
+  if (encoding === "utf-32") return null;
+  return encoding === null
+    ? payload.toString("utf8")
+    : new TextDecoder(encoding).decode(payload);
+};
+
+/**
+ * Decode a payload `storedPlistPayload` found; call only once it fits the
+ * budget. Null when its encoding cannot be scanned.
+ */
+const storedPlistText = (type: number, payload: Buffer): string | null =>
   type === 5
     ? payload.toString("latin1")
     : type === 6
       ? Buffer.from(payload).swap16().toString("utf16le")
-      : payload.toString("utf8");
+      : type === 4
+        ? storedDataText(payload)
+        : payload.toString("utf8");
 
 /** The text a binary plist stores; `complete` is false when part of it went unread. */
 export interface BinaryPlistText {
@@ -203,7 +218,9 @@ export const decodeBinaryPlistText = (
       continue;
     }
     decoded += stored.payload.length;
-    texts.push(storedPlistText(stored.type, stored.payload));
+    const text = storedPlistText(stored.type, stored.payload);
+    if (text === null) complete = false;
+    else texts.push(text);
   }
   return { text: texts.join("\n"), complete };
 };

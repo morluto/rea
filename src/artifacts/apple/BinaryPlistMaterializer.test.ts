@@ -227,6 +227,28 @@ it("reads an unreferenced UTF-16BE string and data object", () => {
   expect(complete).toBe(true);
 });
 
+it("honors a byte order mark in a data object", () => {
+  const data = (payload: Buffer): Buffer =>
+    Buffer.concat([Buffer.from([0x4f, 0x10, payload.length]), payload]);
+  const header = "-----BEGIN PRIVATE KEY-----";
+  const little = Buffer.from(`\ufeff${header}`, "utf16le");
+  const big = Buffer.from(little).swap16();
+  for (const payload of [little, big])
+    expect(
+      decodeBinaryPlistText(
+        source([dictionary(1, 2), text("key"), data(payload)]),
+        budget,
+      ),
+    ).toEqual({ text: expect.stringContaining(header), complete: true });
+  const wider = Buffer.from([0xff, 0xfe, 0, 0, 0x6b, 0, 0, 0]);
+  expect(
+    decodeBinaryPlistText(
+      source([dictionary(1, 2), text("key"), data(wider)]),
+      budget,
+    ).complete,
+  ).toBe(false);
+});
+
 it("keeps readable text beside an unreferenced string it cannot read", () => {
   const bytes = source([
     dictionary(1, 2),
