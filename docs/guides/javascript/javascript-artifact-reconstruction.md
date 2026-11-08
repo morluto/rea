@@ -408,6 +408,12 @@ while locally shadowed receivers can still contribute network endpoint
 candidates. A template recovered with a parser error and no cooked value stays
 dynamic; its raw spelling is not treated as a valid JavaScript string.
 
+Method-first `request` calls, as in superagent, needle, and Angular
+`HttpClient`, pass a standard HTTP method, in any letter case, before the
+target. In both `analyze_javascript_application` and `analyze_web_bundle`,
+`request("get", "/api/users")` contributes `/api/users` as the network endpoint
+candidate. When the target is computed, the method token remains the candidate.
+
 RPC client syntax also contributes network endpoint candidates, in both
 `analyze_javascript_application` and `analyze_web_bundle`, distinguished by
 `mechanism`:

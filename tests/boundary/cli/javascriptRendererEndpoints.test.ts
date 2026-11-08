@@ -113,6 +113,39 @@ cliTest(
   },
 );
 
+cliTest.for(["CLI", "stdio MCP"] as const)(
+  "reports the exact target of method-first request calls through %s",
+  async (surface, { cli }) => {
+    const root = await createTestTempDirectory("rea-method-first-request-");
+    await writeFixtureFiles(root, {
+      "api.js": `
+    const BASE = "https://api.example.test";
+    class Api {
+      static request(method, path, body) {
+        return fetch(BASE + path, { method, body: JSON.stringify(body) });
+      }
+    }
+    Api.request("get", "/api/v1/profile");
+    Api.request("POST", "/api/v1/items", { name: "item" });
+    Api.request("delete", \`/api/v1/items/\${id}\`);
+  `,
+    });
+    const result = await analyzeJavaScriptDirectory(surface, cli, root);
+    const requests = result.graph.nodes
+      .filter(({ kind }) => kind === "endpoint")
+      .flatMap(({ observations }) => observations)
+      .filter(({ properties }) => properties.mechanism === "call:Api.request");
+    expect(
+      requests.map(({ properties }) => String(properties.value)).sort(),
+    ).toEqual(["/api/v1/items", "/api/v1/profile", "delete"]);
+    for (const observation of requests)
+      expect(observation).toMatchObject({
+        properties: { interpretation: "candidate" },
+        evidence: { state: "inferred", confidence: "low" },
+      });
+  },
+);
+
 cliTest(
   "preserves binding-backed XHR identity and qualifies replaced open methods",
   async ({ cli }) => {

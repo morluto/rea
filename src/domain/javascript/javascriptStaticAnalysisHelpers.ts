@@ -706,7 +706,15 @@ export const endpointArgument = (
             receiverFact === "extension-state")))
     )
       return undefined;
-    return { kind: "candidate", value };
+    // Method-first clients such as superagent, needle, and Angular
+    // `HttpClient` call `request(method, url)`. When a standard method token
+    // precedes an exact string, that string is the candidate target. With a
+    // computed target, the token itself remains the candidate.
+    const target =
+      method === "request" && XHR_METHODS.has(value.toUpperCase())
+        ? stringValue(args[1])
+        : undefined;
+    return { kind: "candidate", value: target ?? value };
   }
   if (name === "sendBeacon" || name.endsWith(".sendBeacon"))
     return candidate(stringValue(args[0]));
