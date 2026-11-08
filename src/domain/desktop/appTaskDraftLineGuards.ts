@@ -103,7 +103,7 @@ export const lineGuards = (
 /** A run of letters, digits, `_` and `-`, a token a line may hold. */
 const TOKEN = /[\p{L}\d_-]+/gu;
 
-/** Where a line's first value the app generates starts: a UUID, an epoch time, or an id such as Freeplane's `ID_329023692`; -1 when it holds none. */
+/** Where a line's first identifiable generated time or id starts; -1 when it holds none. */
 const volatileAt = (line: string, xmlQuotes: ReadonlySet<number>): number => {
   let end = 0;
   let quote: string | undefined;
@@ -133,7 +133,8 @@ const volatileAt = (line: string, xmlQuotes: ReadonlySet<number>): number => {
       }
     }
     if (
-      isVolatileValue(token, key !== undefined && isBookkeepingName(key)) ||
+      (isVolatileValue(token, key !== undefined && isBookkeepingName(key)) &&
+        !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/iu.test(token)) ||
       /^\p{L}+_\d{6,}$/u.test(token)
     )
       return index;
