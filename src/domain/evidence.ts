@@ -9,6 +9,14 @@ import { canonicalJsonDigestSteps } from "./canonicalJsonDigestSteps.js";
 import { nulFreeStringSchema } from "./localPath.js";
 
 import {
+  DEFAULT_LOGICAL_ROOT_PREFIX,
+  normalizeLogicalPath,
+  normalizeLogicalPrefix,
+  redactEvidenceObservationPathsSteps,
+  type LogicalPathRootMapping,
+  type LogicalPathFields,
+} from "./logicalPathRoot.js";
+import {
   analysisProfileSchema,
   type AnalysisProfileCommitment,
 } from "./analysisProfile.js";
@@ -206,6 +214,8 @@ export interface EvidenceObservationInput {
   readonly operation: string;
   readonly parameters: unknown;
   readonly result: unknown;
+  /** Producer-owned filesystem locations, not names inferred from target data. */
+  readonly logicalPathFields?: LogicalPathFields;
   readonly analysisProfile?: AnalysisProfileCommitment;
   readonly rawResult?: unknown;
   readonly confidence?: "observed" | "derived" | "inferred";
@@ -398,6 +408,8 @@ const rememberImmutableEvidence = (evidence: Evidence): Evidence => {
 /** Ownership policy for the freshly parsed Evidence snapshot. */
 export interface EvidenceCreationOptions {
   readonly immutable?: boolean;
+  /** Opt-in configuration for logical path root redaction at Evidence creation time. */
+  readonly logicalRoot?: LogicalPathRootMapping;
 }
 
 /** Admit payloads into deterministic Evidence bound to an immutable artifact subject. */
@@ -411,6 +423,7 @@ export const createEvidence = (
     target,
     provider,
     observation,
+    options,
   );
   const evidence = {
     ...normalized,
@@ -432,6 +445,7 @@ export function* createImmutableEvidenceSteps(
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservation,
+  options?: EvidenceCreationOptions,
 ): Generator<void, Evidence> {
   if (!isImmutableJsonSnapshot(observation.result))
     throw new TypeError(
@@ -440,10 +454,20 @@ export function* createImmutableEvidenceSteps(
   // The envelope parser below retains its usual diagnostics, using the completed
   // immutable validation rather than traversing the payload synchronously again.
   yield* jsonValueValidationSteps(observation.result);
+  const applied =
+    options?.logicalRoot === undefined
+      ? undefined
+      : yield* applyLogicalRootRedactionSteps(
+          target,
+          observation,
+          options.logicalRoot,
+        );
   const { normalized } = normalizeEvidenceObservation(
     target,
     provider,
     observation,
+    options,
+    applied,
   );
   const digest = yield* canonicalJsonDigestSteps(
     evidenceSemanticContent(normalized),
@@ -454,20 +478,104 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
+interface AppliedLogicalPathRootOutcome {
+  readonly effectiveTarget: EvidenceSubjectTarget | BinaryTarget | undefined;
+  readonly effectiveObservation: EvidenceObservationInput;
+  readonly addedLimitations: readonly string[];
+}
+
+const applyLogicalRootRedaction = (
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): AppliedLogicalPathRootOutcome => {
+  const steps = applyLogicalRootRedactionSteps(target, observation, mapping);
+  for (;;) {
+    const step = steps.next();
+    if (step.done) return step.value;
+  }
+};
+
+function* applyLogicalRootRedactionSteps(
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  observation: EvidenceObservationInput,
+  mapping: LogicalPathRootMapping,
+): Generator<void, AppliedLogicalPathRootOutcome> {
+  let outsideCount = 0;
+  let effectiveTarget = target;
+  if (target !== undefined) {
+    const res = normalizeLogicalPath(target.path, mapping);
+    if (res.kind === "mapped") {
+      effectiveTarget = {
+        ...target,
+        path: res.path,
+      };
+    } else if (res.kind === "outside-root") {
+      outsideCount += 1;
+    } else if (res.kind === "invalid") {
+      throw new Error(res.reason);
+    }
+  }
+
+  const {
+    observation: effectiveObservation,
+    mappedCount,
+    outsideCount: obsOutsideCount,
+  } = yield* redactEvidenceObservationPathsSteps(observation, mapping);
+
+  const totalOutsideCount = outsideCount + obsOutsideCount;
+  const addedLimitations: string[] = [];
+  addedLimitations.push(
+    observation.logicalPathFields === undefined
+      ? "logical-root redaction incomplete; producer did not declare filesystem field locations."
+      : "logical-root mapping covers only producer-declared filesystem fields; other recorded data may contain host paths.",
+  );
+  const prefix = normalizeLogicalPrefix(
+    mapping.logicalPrefix ?? DEFAULT_LOGICAL_ROOT_PREFIX,
+  );
+  if (
+    mappedCount > 0 ||
+    (target !== undefined && effectiveTarget?.path !== target.path)
+  ) {
+    addedLimitations.push(
+      `Local filesystem paths under configured logical root were normalized to '${prefix}' before Evidence sealing.`,
+    );
+  }
+  if (totalOutsideCount > 0) {
+    addedLimitations.push(
+      "logical-root redaction incomplete; host-local path retained.",
+    );
+  }
+
+  return { effectiveTarget, effectiveObservation, addedLimitations };
+}
+
 const normalizeEvidenceObservation = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
+  options?: EvidenceCreationOptions,
+  applied?: AppliedLogicalPathRootOutcome,
 ) => {
+  const { effectiveTarget, effectiveObservation, addedLimitations } =
+    applied ??
+    (options?.logicalRoot !== undefined
+      ? applyLogicalRootRedaction(target, observation, options.logicalRoot)
+      : {
+          effectiveTarget: target,
+          effectiveObservation: observation,
+          addedLimitations: [],
+        });
+
   const subject =
-    target === undefined
+    effectiveTarget === undefined
       ? null
       : {
-          name: basename(target.path) || "artifact",
-          digest: { sha256: target.sha256 },
-          format: target.format,
-          architecture: target.architecture ?? null,
-          local_path: target.path,
+          name: basename(effectiveTarget.path) || "artifact",
+          digest: { sha256: effectiveTarget.sha256 },
+          format: effectiveTarget.format,
+          architecture: effectiveTarget.architecture ?? null,
+          local_path: effectiveTarget.path,
         };
   const semantic = {
     subject:
@@ -483,34 +591,36 @@ const normalizeEvidenceObservation = (
       name: provider.name,
       version: provider.version,
     },
-    analysis_profile: observation.analysisProfile ?? null,
-    predicate_type: observation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
-    operation: observation.operation,
-    parameters: observation.parameters,
-    raw_result: observation.rawResult ?? null,
-    normalized_result: observation.result,
-    confidence: observation.confidence ?? "observed",
-    authority: observation.authority ?? "shipped-artifact",
-    environment: observation.environment ?? null,
+    analysis_profile: effectiveObservation.analysisProfile ?? null,
+    predicate_type:
+      effectiveObservation.predicateType ?? ANALYSIS_EVIDENCE_PREDICATE,
+    operation: effectiveObservation.operation,
+    parameters: effectiveObservation.parameters,
+    raw_result: effectiveObservation.rawResult ?? null,
+    normalized_result: effectiveObservation.result,
+    confidence: effectiveObservation.confidence ?? "observed",
+    authority: effectiveObservation.authority ?? "shipped-artifact",
+    environment: effectiveObservation.environment ?? null,
     limitations: [
-      ...(target === undefined
+      ...(effectiveTarget === undefined
         ? [
-            observation.subjectUnavailableReason ??
+            effectiveObservation.subjectUnavailableReason ??
               "Artifact identity is unavailable for this observation.",
           ]
         : []),
-      ...(observation.limitations ?? []),
+      ...(effectiveObservation.limitations ?? []),
+      ...addedLimitations,
     ],
-    ...(observation.relationshipCoverage === undefined
+    ...(effectiveObservation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
-      : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
-    evidence_links: [...(observation.evidenceLinks ?? [])],
+      : { relationship_coverage: effectiveObservation.relationshipCoverage }),
+    locations: [...(effectiveObservation.locations ?? [])],
+    evidence_links: [...(effectiveObservation.evidenceLinks ?? [])],
   };
   const sharedResult =
-    typeof observation.result === "object" &&
-    observation.result !== null &&
-    isImmutableJsonSnapshot(observation.result);
+    typeof effectiveObservation.result === "object" &&
+    effectiveObservation.result !== null &&
+    isImmutableJsonSnapshot(effectiveObservation.result);
   const selectedSchema = sharedResult
     ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
     : evidenceSchema;

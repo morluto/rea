@@ -214,37 +214,48 @@ function* ownedTreeChildren(value: object): Generator<unknown> {
 export function* freezeOwnedJsonSnapshotSteps<T extends JsonValue>(
   value: T,
 ): Generator<void, T> {
-  const pending: SnapshotEntry[] = [{ value, exiting: false }];
+  const pending: { value: object; children: Iterator<unknown> }[] = [];
   const visited = new Set<object>();
   const ancestors = new Set<object>();
   let examined = 0;
+  const enter = (item: unknown): void => {
+    if (isImmutableJsonSnapshot(item)) return;
+    if (typeof item !== "object" || item === null)
+      throw new TypeError("Immutable JSON snapshots require JSON values");
+    if (ancestors.has(item))
+      throw new TypeError(
+        "Immutable JSON snapshots cannot contain circular references",
+      );
+    if (visited.has(item)) return;
+    if (isProxy(item))
+      throw new TypeError("Immutable JSON snapshots cannot contain proxies");
+    const prototype: unknown = Object.getPrototypeOf(item);
+    if (
+      !Array.isArray(item) &&
+      prototype !== Object.prototype &&
+      prototype !== null
+    )
+      throw new TypeError("Immutable JSON snapshots require ordinary objects");
+    // Lock the container before yielding, so no inspected edge can change.
+    Object.freeze(item);
+    ancestors.add(item);
+    pending.push({ value: item, children: snapshotChildren(item) });
+  };
   try {
+    enter(value);
     while (pending.length > 0) {
       if (examined++ === 4096) {
         examined = 0;
         yield;
       }
-      const entry = pending.pop();
-      if (entry === undefined) break;
-      const item = entry.value;
-      if (entry.exiting && typeof item === "object" && item !== null) {
-        ancestors.delete(item);
-        visited.add(item);
-        continue;
+      const frame = pending[pending.length - 1]!;
+      const next = frame.children.next();
+      if (!next.done) enter(next.value);
+      else {
+        pending.pop();
+        ancestors.delete(frame.value);
+        visited.add(frame.value);
       }
-      if (isImmutableJsonSnapshot(item)) continue;
-      if (typeof item !== "object" || item === null)
-        throw new TypeError("Immutable JSON snapshots require JSON values");
-      if (ancestors.has(item))
-        throw new TypeError(
-          "Immutable JSON snapshots cannot contain circular references",
-        );
-      if (visited.has(item)) continue;
-      ancestors.add(item);
-      pending.push({ value: item, exiting: true });
-      pushSnapshotChildren(item, pending);
-      // Lock every inspected edge before the scheduler can release control.
-      Object.freeze(item);
     }
     if (typeof value === "object" && value !== null)
       immutableSnapshots.add(value);
@@ -253,6 +264,23 @@ export function* freezeOwnedJsonSnapshotSteps<T extends JsonValue>(
     pending.length = 0;
     visited.clear();
     ancestors.clear();
+  }
+}
+
+function* snapshotChildren(item: object): Generator<unknown> {
+  if (Array.isArray(item))
+    for (let index = 0; index < item.length; index += 1) {
+      if (!Object.hasOwn(item, index))
+        throw new TypeError(
+          "Immutable JSON snapshots cannot contain sparse arrays",
+        );
+      yield null;
+    }
+  for (const key of Object.getOwnPropertyNames(item)) {
+    const descriptor = Object.getOwnPropertyDescriptor(item, key);
+    if (descriptor === undefined || !Object.hasOwn(descriptor, "value"))
+      throw new TypeError("Immutable JSON snapshots cannot contain accessors");
+    yield descriptor.value;
   }
 }
 
