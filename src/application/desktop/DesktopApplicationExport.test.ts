@@ -337,9 +337,9 @@ it.each(["settings/notes", "chosen/notes"])(
       },
     });
     if (result instanceof Error) throw result;
-    expect(result.normalized_result.seed_files).toContain(
-      ".config/notes/settings.ini",
-    );
+    expect(result.normalized_result).toMatchObject({
+      seed_files: expect.arrayContaining([".config/notes/settings.ini"]),
+    });
     expect(
       await readFile(
         join(directory, "envs/notes/seed/.config/notes/settings.ini"),
