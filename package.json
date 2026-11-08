@@ -221,6 +221,7 @@
     "verify:ghidra:swift": "npm run build:cached && node scripts/verify-real-ghidra-swift.mjs",
     "verify:ida": "npm run build:cached && node scripts/verify-real-ida.mjs",
     "verify:ghidra:switch": "npm run build:cached && node scripts/verify-real-ghidra-switch.mjs",
+    "verify:ghidra:switch-assertions": "npm run build:cached && node scripts/verify-real-ghidra-switch-assertions.mjs",
     "verify:kuna": "npm run build:cached && node scripts/verify-real-kuna.mjs",
     "verify:ghidra:dos": "npm run build:cached && node scripts/verify-real-ghidra-dos.mjs",
     "verify:ghidra:com": "npm run build:cached && node scripts/verify-real-ghidra-com.mjs",
