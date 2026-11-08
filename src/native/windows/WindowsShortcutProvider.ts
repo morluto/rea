@@ -186,6 +186,7 @@ export class WindowsShortcutProvider implements WindowsShortcutPort {
                 path: ["path"],
                 reason: "invalid_value",
                 message: `Selected shortcut path passes through a directory link or junction, which this offline operation does not follow: ${linkedAncestor}. Select the shortcut by a path without links.`,
+                observed: { linked_ancestor: linkedAncestor },
               },
             ]),
           );

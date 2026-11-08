@@ -230,7 +230,7 @@ describe("Windows shortcut parent directory links", () => {
           {
             path: ["path"],
             reason: "invalid_value",
-            message: expect.stringContaining(`junction, which`),
+            observed: { linked_ancestor: linked },
           },
         ],
       });
@@ -320,7 +320,13 @@ describe("Windows shortcut parent directory links", () => {
       ).toMatchObject({ ok: true });
       expect(
         await provider.inspect(providerInput(`${root}/./alias/./shortcut.lnk`)),
-      ).toMatchObject({ ok: false });
+      ).toMatchObject({
+        ok: false,
+        error: {
+          _tag: "AnalysisInputError",
+          issues: [{ observed: { linked_ancestor: `${root}/alias` } }],
+        },
+      });
     },
   );
 
