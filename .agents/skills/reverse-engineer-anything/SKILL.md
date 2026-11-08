@@ -317,6 +317,16 @@ explicit path or endpoint and do not need it.
   zstd containers are unsupported; decompress into a separate file with an
   external codec utility, then inspect the decompressed `ET_REL` image. See the
   [kernel module guide](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
+- Linux kernel version and build config (`CONFIG_*` options such as
+  `CONFIG_SECURITY_SELINUX`): `inspect_kernel_build_config` with the explicit
+  local `vmlinux`, raw `Image`, x86 `bzImage`, or `configs.ko`. This built-in
+  target-free inspection requires no Linux host or `extract-ikconfig`. Preserve
+  the banner version, config SHA-256, option count, and value kinds; use `name`
+  for one option. An `IKCFG_ST` string is a config only with a valid gzip member
+  and `IKCFG_ED`. An absent config may mean the kernel was built without
+  `CONFIG_IKCONFIG`. Non-gzip payloads are unsupported; decompress externally,
+  then inspect the result. See the
+  [kernel build config guide](https://github.com/morluto/rea/blob/main/docs/kernel-build-config.md).
 - CPython 3.7–3.13 `.pyc` header, nested marshal code objects and bytecode
   identity: `inspect_python_pyc` with the explicit local file. This built-in
   target-free inspection requires no Python installation. Preserve magic,

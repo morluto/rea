@@ -476,6 +476,22 @@ applicable. gzip, xz, and zstd containers are unsupported and name
 utility, then inspect the decompressed file. See
 [Linux kernel modules](../kernel-modules.md).
 
+Read a Linux kernel image's version banner and embedded `CONFIG_IKCONFIG`
+build config without executing it:
+
+```bash
+rea inspect-kernel-build-config /absolute/path/to/vmlinux --json
+rea inspect-kernel-build-config /absolute/path/to/bzImage --name CONFIG_MODULE_SIG --json
+```
+
+The workflow reports the banner version, builder, and compiler, the config
+option count, and paged `CONFIG_*` entries (`y`, `m`, strings, numbers, and
+`not_set`). An `IKCFG_ST` string counts as a config only when a valid gzip
+member follows it and `IKCFG_ED` follows that member. A gzip bzImage payload
+is inflated and searched; other payload codecs are unsupported and name
+`external_decompression` as the next probe. See
+[Linux kernel build config](../kernel-build-config.md).
+
 Inspect a CPython 3.7–3.13 `.pyc` header and nested marshal code objects (3.14 and
 3.15 headers are qualified but their marshal layout is not pinned)
 without executing bytecode or installing Python:

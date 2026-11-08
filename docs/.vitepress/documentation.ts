@@ -566,6 +566,11 @@ export const documentationSections = [
         route: "/javascript-route-inventory",
       },
       {
+        text: "Linux kernel build config",
+        source: "kernel-build-config.md",
+        route: "/kernel-build-config",
+      },
+      {
         text: "Linux kernel modules",
         source: "kernel-modules.md",
         route: "/kernel-modules",

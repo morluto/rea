@@ -1,0 +1,803 @@
+import { createHash } from "node:crypto";
+import { crc32, inflateRawSync } from "node:zlib";
+
+import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { assertArtifactReadActive } from "../../artifacts/ArtifactFileOperation.js";
+import {
+  KERNEL_BUILD_CONFIG_CODECS,
+  KERNEL_BUILD_CONFIG_NUMBER,
+  MAX_KERNEL_BUILD_CONFIG_STRING,
+  type InspectKernelBuildConfigInput,
+  type KernelBuildConfig,
+  type KernelBuildConfigEntry,
+} from "../../domain/native/kernelBuildConfig.js";
+import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
+
+type Report = KernelBuildConfig;
+type Entry = KernelBuildConfigEntry;
+type Space = "file" | "inflated_payload";
+type Located = { space: Space; offset: number; bytes: number };
+type Reason = NonNullable<Report["config"]["reason"]>;
+type Knob = "max_entries" | "max_config_bytes" | "max_payload_bytes";
+
+const IKCFG_ST = Buffer.from("IKCFG_ST");
+const IKCFG_ED = Buffer.from("IKCFG_ED");
+const BANNER_PREFIX = Buffer.from("Linux version ");
+const BANNER_TEXT_BYTES = 512;
+const MAX_NAME_BYTES = 256;
+/** IKCFG_ST + gzip candidates inflated per search; a kernel carries one. */
+const MAX_CONFIG_CANDIDATES = 16;
+/** Total inflated bytes across all candidates, as a multiple of max_config_bytes. */
+const CONFIG_SEARCH_BUDGET_FACTOR = 4;
+/** Printable bytes scanned between cancellation checks. */
+const CANCEL_STRIDE = 0x10000;
+const UNTRUSTED = "target-derived-untrusted" as const;
+
+const sha256 = (bytes: Buffer): string =>
+  createHash("sha256").update(bytes).digest("hex");
+
+const codeOf = (error: unknown): string | null =>
+  error instanceof Error && "code" in error && typeof error.code === "string"
+    ? error.code
+    : null;
+
+const budget = (knob: Knob, limit: number): never => {
+  throw new ArtifactReaderFailure(
+    "limit",
+    `Kernel build config exceeds ${knob} (${String(limit)}).`,
+    { boundary: "capacity" },
+  );
+};
+
+const isElf = (bytes: Buffer): boolean =>
+  bytes.length >= 4 &&
+  bytes[0] === 0x7f &&
+  bytes[1] === 0x45 &&
+  bytes[2] === 0x4c &&
+  bytes[3] === 0x46;
+
+const codecAt = (bytes: Buffer, offset: number) =>
+  kernelCompressionCodecAt(bytes, offset, KERNEL_BUILD_CONFIG_CODECS);
+
+const located = (space: Space, offset: number, bytes: number): Located => ({
+  space,
+  offset,
+  bytes,
+});
+
+type GzipMember =
+  | { readonly kind: "member"; readonly output: Buffer; readonly end: number }
+  /** The deflate stream ended but the CRC-32 or ISIZE trailer does not match. */
+  | {
+      readonly kind: "corrupt";
+      readonly end: number;
+      readonly inflated: number;
+    }
+  /**
+   * `spent` bounds the output inflated before the failure: zero when only the
+   * header was read, otherwise the output budget, since zlib does not report
+   * partial output when it throws.
+   */
+  | { readonly kind: "truncated"; readonly spent: number }
+  | { readonly kind: "invalid"; readonly spent: number }
+  /** The member inflates past `maxOutput`. */
+  | { readonly kind: "limit" };
+
+const CM_DEFLATE = 0x08;
+const FTEXT_RESERVED = 0xe0;
+const FHCRC = 0x02;
+const FEXTRA = 0x04;
+const FNAME = 0x08;
+const FCOMMENT = 0x10;
+
+/** Offset after an RFC 1952 member header, or null when the header ends early. */
+const gzipHeaderEnd = (
+  bytes: Buffer,
+  start: number,
+): number | "invalid" | null => {
+  if (start + 10 > bytes.length) return null;
+  if (bytes[start + 2] !== CM_DEFLATE) return "invalid";
+  const flags = bytes[start + 3] ?? 0;
+  if ((flags & FTEXT_RESERVED) !== 0) return "invalid";
+  let cursor = start + 10;
+  if ((flags & FEXTRA) !== 0) {
+    if (cursor + 2 > bytes.length) return null;
+    cursor += 2 + bytes.readUInt16LE(cursor);
+  }
+  for (const flag of [FNAME, FCOMMENT]) {
+    if ((flags & flag) === 0) continue;
+    const zero = bytes.indexOf(0, cursor);
+    if (zero < 0) return null;
+    cursor = zero + 1;
+  }
+  if ((flags & FHCRC) !== 0) cursor += 2;
+  return cursor > bytes.length ? null : cursor;
+};
+
+/**
+ * Inflate exactly one gzip member at `start` with bounded output, verifying its
+ * CRC-32 and ISIZE trailer. Only `bytes` is read, so the caller bounds the
+ * input by passing a subarray. Bytes after the member are not consumed, so the
+ * caller can require the next bytes to be a marker.
+ */
+const inflateGzipMember = (
+  bytes: Buffer,
+  start: number,
+  maxOutput: number,
+): GzipMember => {
+  const body = gzipHeaderEnd(bytes, start);
+  if (body === null) return { kind: "truncated", spent: 0 };
+  if (body === "invalid") return { kind: "invalid", spent: 0 };
+  let output: Buffer;
+  let consumed: number;
+  try {
+    const inflated = inflateRawSync(bytes.subarray(body), {
+      maxOutputLength: maxOutput,
+      info: true,
+    }) as unknown as { buffer: Buffer; engine: { bytesWritten: number } };
+    output = inflated.buffer;
+    consumed = inflated.engine.bytesWritten;
+  } catch (error) {
+    const code = codeOf(error);
+    if (code === "ERR_BUFFER_TOO_LARGE") return { kind: "limit" };
+    return code === "Z_BUF_ERROR"
+      ? { kind: "truncated", spent: maxOutput }
+      : { kind: "invalid", spent: maxOutput };
+  }
+  const trailer = body + consumed;
+  if (trailer + 8 > bytes.length)
+    return { kind: "truncated", spent: output.length };
+  if (
+    bytes.readUInt32LE(trailer) !== crc32(output) ||
+    bytes.readUInt32LE(trailer + 4) !== output.length >>> 0
+  )
+    return { kind: "corrupt", end: trailer + 8, inflated: output.length };
+  return { kind: "member", output, end: trailer + 8 };
+};
+
+const decoder = new TextDecoder("utf-8", { fatal: true });
+
+const decodeText = (bytes: Buffer): string | null => {
+  for (const value of bytes)
+    if (
+      (value < 0x20 && value !== 0x09 && value !== 0x0a && value !== 0x0d) ||
+      value === 0x7f
+    )
+      return null;
+  try {
+    return decoder.decode(bytes);
+  } catch {
+    return null;
+  }
+};
+
+const unquote = (raw: string): string | null => {
+  if (raw.length < 2 || !raw.startsWith('"') || !raw.endsWith('"')) return null;
+  let value = "";
+  const body = raw.slice(1, -1);
+  for (let index = 0; index < body.length; index += 1) {
+    const char = body[index];
+    if (char === "\\") {
+      const next = body[index + 1];
+      if (next !== "\\" && next !== '"') return null;
+      value += next;
+      index += 1;
+      continue;
+    }
+    if (char === '"') return null;
+    value += char;
+  }
+  return value;
+};
+
+const classifyValue = (
+  raw: string,
+): { kind: Entry["kind"]; value: string } | null => {
+  if (raw === "y" || raw === "m") return { kind: raw, value: raw };
+  if (KERNEL_BUILD_CONFIG_NUMBER.test(raw))
+    return { kind: "number", value: raw };
+  const text = unquote(raw);
+  if (text === null || text.length > MAX_KERNEL_BUILD_CONFIG_STRING)
+    return null;
+  return { kind: "string", value: text };
+};
+
+/**
+ * Strict `.config` grammar: every non-blank line is a comment, a
+ * `# CONFIG_X is not set` line, or `CONFIG_X=value`. Anything else rejects the
+ * whole candidate so ordinary marker strings never read as a config.
+ */
+const parseConfigText = (
+  bytes: Buffer,
+  maxEntries: number,
+  signal: AbortSignal | undefined,
+): readonly Entry[] | null => {
+  const text = decodeText(bytes);
+  if (text === null || text.length === 0) return null;
+  const entries: Entry[] = [];
+  const push = (entry: Entry): void => {
+    if (entries.length >= maxEntries) budget("max_entries", maxEntries);
+    entries.push(entry);
+  };
+  let lines = 0;
+  for (const rawLine of text.split("\n")) {
+    if ((lines++ & 0x3ff) === 0) assertArtifactReadActive(signal);
+    const line = rawLine.endsWith("\r") ? rawLine.slice(0, -1) : rawLine;
+    if (/^[ \t]*$/u.test(line)) continue;
+    const unset = /^# (CONFIG_[A-Za-z0-9_]+) is not set$/u.exec(line);
+    if (unset !== null) {
+      const name = unset[1] ?? "";
+      if (name.length > MAX_NAME_BYTES) return null;
+      push({ name, kind: "not_set", value: null, trust: UNTRUSTED });
+      continue;
+    }
+    if (line.startsWith("#")) continue;
+    const set = /^(CONFIG_[A-Za-z0-9_]+)=(.*)$/u.exec(line);
+    if (set === null) return null;
+    const name = set[1] ?? "";
+    if (name.length > MAX_NAME_BYTES) return null;
+    const value = classifyValue(set[2] ?? "");
+    if (value === null) return null;
+    push({ name, kind: value.kind, value: value.value, trust: UNTRUSTED });
+  }
+  return entries.length === 0 ? null : entries;
+};
+
+interface ConfigBlob {
+  readonly marker: number;
+  readonly gzipStart: number;
+  readonly memberBytes: number;
+}
+
+interface AcceptedConfig extends ConfigBlob {
+  readonly kind: "present";
+  readonly entries: readonly Entry[];
+  readonly sha256: string;
+}
+
+/**
+ * `IKCFG_ST`, a complete gzip member, and `IKCFG_ED` identify a config blob
+ * whose member fails its trailer check or whose text fails the grammar.
+ */
+interface MalformedConfig extends ConfigBlob {
+  readonly kind: "malformed";
+  readonly reason: "config_gzip_invalid" | "config_text_invalid";
+}
+
+/**
+ * The first accepted config wins. Otherwise a framed but unreadable blob is
+ * malformed and a member cut off by the searched bytes is truncated; neither
+ * is reported as absent. Each candidate's inflate input ends at the next
+ * `IKCFG_ED`, since `kernel/configs.c` places that marker right after the
+ * member. At most MAX_CONFIG_CANDIDATES members and CONFIG_SEARCH_BUDGET_FACTOR
+ * times `max_config_bytes` of inflated output are spent; past that the search
+ * is `exhausted` rather than silently stopped.
+ */
+const findConfig = (
+  bytes: Buffer,
+  maxOutput: number,
+  maxEntries: number,
+  signal: AbortSignal | undefined,
+): AcceptedConfig | MalformedConfig | "absent" | "truncated" | "exhausted" => {
+  let from = 0;
+  let truncated = false;
+  let malformed: MalformedConfig | null = null;
+  let candidates = 0;
+  let remaining = maxOutput * CONFIG_SEARCH_BUDGET_FACTOR;
+  let oversized = false;
+  // Next IKCFG_ED at or after the current candidate; -1 once none remains.
+  let closing: number | null = null;
+  for (;;) {
+    assertArtifactReadActive(signal);
+    const marker = bytes.indexOf(IKCFG_ST, from);
+    if (marker < 0) break;
+    from = marker + 1;
+    const gzipAt = marker + IKCFG_ST.length;
+    if (codecAt(bytes, gzipAt) !== "gzip") continue;
+    if (closing === null || (closing >= 0 && closing < gzipAt))
+      closing = bytes.indexOf(IKCFG_ED, gzipAt);
+    // Without a closing marker nothing later can be framed; one truncated
+    // member is enough to report the search incomplete.
+    if (closing < 0 && truncated) break;
+    if (candidates >= MAX_CONFIG_CANDIDATES || remaining === 0)
+      return "exhausted";
+    candidates += 1;
+    const limit = Math.min(maxOutput, remaining);
+    const span = closing < 0 ? bytes : bytes.subarray(0, closing);
+    const member = inflateGzipMember(span, gzipAt, limit);
+    if (member.kind === "limit") {
+      if (limit < maxOutput) return "exhausted";
+      // A member past max_config_bytes may be a decoy, so a later framed
+      // config can still win; the budget failure is raised only if none does.
+      oversized = true;
+      remaining -= limit;
+      continue;
+    }
+    if (member.kind === "member") remaining -= member.output.length;
+    if (member.kind === "corrupt") remaining -= member.inflated;
+    if (member.kind === "truncated" || member.kind === "invalid")
+      remaining -= member.spent;
+    if (member.kind === "truncated") {
+      // A member cut off by its closing marker is not framed by it.
+      if (closing < 0) truncated = true;
+      continue;
+    }
+    if (member.kind === "invalid" || member.end !== closing) continue;
+    const blob = {
+      marker,
+      gzipStart: gzipAt,
+      memberBytes: member.end - gzipAt,
+    };
+    const entries =
+      member.kind === "member"
+        ? parseConfigText(member.output, maxEntries, signal)
+        : null;
+    if (member.kind === "member" && entries !== null)
+      return {
+        kind: "present",
+        ...blob,
+        entries,
+        sha256: sha256(member.output),
+      };
+    malformed ??= {
+      kind: "malformed",
+      ...blob,
+      reason:
+        member.kind === "corrupt"
+          ? "config_gzip_invalid"
+          : "config_text_invalid",
+    };
+  }
+  if (oversized) budget("max_config_bytes", maxOutput);
+  return malformed ?? (truncated ? "truncated" : "absent");
+};
+
+const parseBannerText = (
+  text: string,
+): {
+  version: string;
+  builder: string | null;
+  compiler: string | null;
+} | null => {
+  let rest = text.slice(BANNER_PREFIX.length);
+  const version = /^[0-9][0-9A-Za-z.+_~-]*/u.exec(rest)?.[0];
+  if (version === undefined) return null;
+  rest = rest.slice(version.length);
+  let builder: string | null = null;
+  let compiler: string | null = null;
+  if (rest.startsWith(" (")) {
+    const close = rest.indexOf(")");
+    if (close > 2) {
+      builder = rest.slice(2, close);
+      rest = rest.slice(close + 1);
+    }
+  }
+  if (rest.startsWith(" (")) {
+    const marked = rest.lastIndexOf(") #");
+    if (marked > 2) compiler = rest.slice(2, marked);
+    else if (rest.endsWith(")") && rest.length > 3)
+      compiler = rest.slice(2, -1);
+  }
+  return { version, builder, compiler };
+};
+
+const absentBanner = (status: "absent" | "unknown"): Report["banner"] => ({
+  status,
+  text: null,
+  version: null,
+  builder: null,
+  compiler: null,
+  location: null,
+  trust: UNTRUSTED,
+});
+
+const isPrintable = (value: number): boolean => value >= 0x20 && value <= 0x7e;
+
+/**
+ * First printable, NUL- or newline-terminated `Linux version <digit>...`
+ * string of at most BANNER_TEXT_BYTES. Every hit inside one printable run
+ * shares that run's terminator, so each run is scanned once and the search
+ * resumes after it: the scan is linear in the searched bytes.
+ */
+const findBanner = (
+  bytes: Buffer,
+  space: Space,
+  signal: AbortSignal | undefined,
+): Report["banner"] => {
+  let from = 0;
+  for (;;) {
+    assertArtifactReadActive(signal);
+    const at = bytes.indexOf(BANNER_PREFIX, from);
+    if (at < 0) return absentBanner("absent");
+    let end = at + BANNER_PREFIX.length;
+    while (end < bytes.length && isPrintable(bytes[end] ?? 0)) {
+      end += 1;
+      if (end % CANCEL_STRIDE === 0) assertArtifactReadActive(signal);
+    }
+    from = end + 1;
+    if (end >= bytes.length || (bytes[end] !== 0 && bytes[end] !== 0x0a))
+      continue;
+    // Only hits within BANNER_TEXT_BYTES of the terminator fit the window.
+    const run = bytes.subarray(0, end);
+    for (
+      let hit = run.indexOf(
+        BANNER_PREFIX,
+        Math.max(at, end - BANNER_TEXT_BYTES),
+      );
+      hit >= 0;
+      hit = run.indexOf(BANNER_PREFIX, hit + 1)
+    ) {
+      const first = bytes[hit + BANNER_PREFIX.length] ?? 0;
+      if (first < 0x30 || first > 0x39) continue;
+      const text = bytes.toString("latin1", hit, end);
+      const parsed = parseBannerText(text);
+      if (parsed === null) continue;
+      return {
+        status: "present",
+        text,
+        version: parsed.version,
+        builder: parsed.builder,
+        compiler: parsed.compiler,
+        location: located(space, hit, end - hit),
+        trust: UNTRUSTED,
+      };
+    }
+  }
+};
+
+const baseLimitations = (): string[] => [
+  "This workflow does not execute the image or boot the kernel.",
+  "Banner text and configuration values are target-derived and untrusted.",
+  "A config is accepted only when IKCFG_ST is immediately followed by a gzip member that inflates to config text and is immediately followed by IKCFG_ED. An IKCFG_ST string without that member is not a config. A framed member that fails its trailer check or the config grammar is malformed, not absent.",
+  "An absent banner or config describes only the bytes that were searched; a kernel built without CONFIG_IKCONFIG carries no embedded config.",
+  "Only a gzip payload inside an x86 bzImage setup header is inflated. Other codecs are named and left compressed.",
+];
+
+const emptyConfig = (
+  input: InspectKernelBuildConfigInput,
+  status: Report["config"]["status"],
+  reason: Reason | null,
+): Report["config"] => ({
+  status,
+  reason,
+  marker: null,
+  end_marker: null,
+  gzip: null,
+  sha256: null,
+  option_count: 0,
+  matched_count: 0,
+  offset: input.offset,
+  limit: input.limit,
+  name: input.name ?? null,
+  entries: [],
+});
+
+const blobRanges = (
+  blob: ConfigBlob,
+  space: Space,
+): Pick<Report["config"], "marker" | "gzip" | "end_marker"> => ({
+  marker: located(space, blob.marker, IKCFG_ST.length),
+  gzip: located(space, blob.gzipStart, blob.memberBytes),
+  end_marker: located(
+    space,
+    blob.gzipStart + blob.memberBytes,
+    IKCFG_ED.length,
+  ),
+});
+
+const acceptedConfig = (
+  found: AcceptedConfig,
+  input: InspectKernelBuildConfigInput,
+  space: Space,
+): Report["config"] => {
+  const matched =
+    input.name === undefined
+      ? found.entries
+      : found.entries.filter((entry) => entry.name === input.name);
+  return {
+    status: "present",
+    reason: null,
+    ...blobRanges(found, space),
+    sha256: found.sha256,
+    option_count: found.entries.length,
+    matched_count: matched.length,
+    offset: input.offset,
+    limit: input.limit,
+    name: input.name ?? null,
+    entries: matched.slice(input.offset, input.offset + input.limit),
+  };
+};
+
+interface SearchSpace {
+  readonly bytes: Buffer;
+  readonly space: Space;
+  readonly payload: Report["payload"];
+  readonly extraLimitations: readonly string[];
+}
+
+const reportFromSearch = (
+  artifact: Report["artifact"],
+  format: Report["format"],
+  input: InspectKernelBuildConfigInput,
+  search: SearchSpace,
+  signal: AbortSignal | undefined,
+): Report => {
+  const found = findConfig(
+    search.bytes,
+    input.max_config_bytes,
+    input.max_entries,
+    signal,
+  );
+  const config =
+    found === "truncated"
+      ? emptyConfig(input, "incomplete", "config_gzip_truncated")
+      : found === "exhausted"
+        ? emptyConfig(input, "incomplete", "config_search_exhausted")
+        : found === "absent"
+          ? emptyConfig(input, "absent", null)
+          : found.kind === "malformed"
+            ? {
+                ...emptyConfig(input, "malformed", found.reason),
+                ...blobRanges(found, search.space),
+              }
+            : acceptedConfig(found, input, search.space);
+  const complete = found === "absent" || config.status === "present";
+  return {
+    artifact,
+    format,
+    payload: search.payload,
+    next_probe: null,
+    banner: findBanner(search.bytes, search.space, signal),
+    config,
+    coverage: {
+      status: complete ? "complete" : "incomplete",
+      examined_bytes: search.bytes.length,
+      examined_entries: config.option_count,
+    },
+    limitations: [
+      ...baseLimitations(),
+      ...search.extraLimitations,
+      ...(found === "truncated"
+        ? [
+            "An IKCFG_ST gzip member runs past the searched bytes. The config is incomplete and is not reported as absent.",
+          ]
+        : []),
+      ...(found === "exhausted"
+        ? [
+            `The config search stopped after ${String(MAX_CONFIG_CANDIDATES)} IKCFG_ST gzip candidates or ${String(CONFIG_SEARCH_BUDGET_FACTOR)} times max_config_bytes of inflated output without accepting a config. Candidates after that point were not inflated, so the config is incomplete and is not reported as absent.`,
+          ]
+        : []),
+      ...(config.status === "malformed"
+        ? [
+            config.reason === "config_gzip_invalid"
+              ? "An IKCFG_ST gzip member framed by IKCFG_ED fails its CRC-32 or ISIZE check. The embedded config is unreadable and is not reported as absent."
+              : "An IKCFG_ST gzip member framed by IKCFG_ED inflates to text that is not a .config. The embedded config is unreadable and is not reported as absent.",
+          ]
+        : []),
+    ],
+  };
+};
+
+interface BzImagePayload {
+  readonly offset: number;
+  readonly bytes: number;
+}
+
+/** x86 boot protocol: `HdrS` at 0x202, payload fields from version 2.08. */
+const readBzImage = (
+  bytes: Buffer,
+):
+  | { kind: "none" }
+  | { kind: "unavailable" }
+  | { kind: "truncated"; payload: BzImagePayload }
+  | { kind: "payload"; payload: BzImagePayload } => {
+  if (bytes.length < 0x206 || bytes.toString("latin1", 0x202, 0x206) !== "HdrS")
+    return { kind: "none" };
+  if (bytes.length < 0x250 || bytes.readUInt16LE(0x206) < 0x0208)
+    return { kind: "unavailable" };
+  const setupSects = bytes[0x1f1] === 0 ? 4 : (bytes[0x1f1] ?? 4);
+  const payload = {
+    offset: (setupSects + 1) * 512 + bytes.readUInt32LE(0x248),
+    bytes: bytes.readUInt32LE(0x24c),
+  };
+  if (payload.bytes === 0) return { kind: "unavailable" };
+  return payload.offset > bytes.length ||
+    payload.bytes > bytes.length - payload.offset
+    ? { kind: "truncated", payload }
+    : { kind: "payload", payload };
+};
+
+const closedReport = (
+  artifact: Report["artifact"],
+  format: Report["format"],
+  input: InspectKernelBuildConfigInput,
+  payload: Report["payload"],
+  reason: Reason,
+  status: "incomplete" | "unsupported",
+  limitation: string,
+): Report => ({
+  artifact,
+  format,
+  payload,
+  next_probe:
+    status === "unsupported"
+      ? {
+          operation: "external_decompression",
+          rationale: `Decompress this ${payload.codec ?? "unrecognized"} payload with an external utility into a separate file, then call inspect_kernel_build_config on that file. REA inflates only a gzip payload inside an x86 bzImage.`,
+        }
+      : null,
+  banner: absentBanner("unknown"),
+  config: emptyConfig(input, status, reason),
+  coverage: { status, examined_bytes: 0, examined_entries: 0 },
+  limitations: [...baseLimitations(), limitation],
+});
+
+const NOT_SEARCHED =
+  "The banner and embedded config were not searched and are not reported as absent.";
+
+const bzImageReport = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelBuildConfigInput,
+  header: Exclude<ReturnType<typeof readBzImage>, { kind: "none" }>,
+  signal: AbortSignal | undefined,
+): Report => {
+  if (header.kind === "unavailable")
+    return closedReport(
+      artifact,
+      "file",
+      input,
+      {
+        container: "bzimage",
+        codec: null,
+        status: "unavailable",
+        offset: null,
+        bytes: null,
+        inflated_bytes: null,
+      },
+      "setup_header_payload_unavailable",
+      "incomplete",
+      `The x86 setup header does not carry a usable payload_offset and payload_length (boot protocol 2.08 or later). ${NOT_SEARCHED}`,
+    );
+  if (header.kind === "truncated")
+    return closedReport(
+      artifact,
+      "file",
+      input,
+      {
+        container: "bzimage",
+        codec: null,
+        status: "truncated",
+        offset: null,
+        bytes: null,
+        inflated_bytes: null,
+      },
+      "payload_truncated",
+      "incomplete",
+      `The bzImage payload declared by the setup header extends past the file. ${NOT_SEARCHED}`,
+    );
+  const { payload } = header;
+  const codec = codecAt(bytes, payload.offset);
+  const base = {
+    container: "bzimage" as const,
+    offset: payload.offset,
+    bytes: payload.bytes,
+  };
+  if (codec !== "gzip")
+    return closedReport(
+      artifact,
+      "file",
+      input,
+      { ...base, codec, status: "unsupported", inflated_bytes: null },
+      codec === null
+        ? "unrecognized_payload_codec"
+        : "payload_codec_unsupported",
+      "unsupported",
+      `The bzImage payload codec is ${codec ?? "not recognized"} and was not inflated. ${NOT_SEARCHED}`,
+    );
+  // Only the leading gzip member is inflated; its own ISIZE trailer carries
+  // the length. Bytes after the member inside the payload are not read.
+  assertArtifactReadActive(signal);
+  const member = inflateGzipMember(
+    bytes.subarray(payload.offset, payload.offset + payload.bytes),
+    0,
+    input.max_payload_bytes,
+  );
+  if (member.kind === "limit")
+    budget("max_payload_bytes", input.max_payload_bytes);
+  if (member.kind !== "member")
+    return closedReport(
+      artifact,
+      "file",
+      input,
+      {
+        ...base,
+        codec,
+        status: member.kind === "truncated" ? "truncated" : "malformed",
+        inflated_bytes: null,
+      },
+      member.kind === "truncated"
+        ? "payload_truncated"
+        : "payload_gzip_invalid",
+      "incomplete",
+      member.kind === "truncated"
+        ? `The bzImage gzip payload ends before its gzip member does. ${NOT_SEARCHED}`
+        : `The bzImage gzip payload is not a valid gzip member or fails its CRC-32 or ISIZE check. ${NOT_SEARCHED}`,
+    );
+  return reportFromSearch(
+    artifact,
+    "file",
+    input,
+    {
+      bytes: member.output,
+      space: "inflated_payload",
+      payload: {
+        ...base,
+        codec,
+        status: "inflated",
+        inflated_bytes: member.output.length,
+      },
+      extraLimitations: [
+        "Banner and config locations with space inflated_payload are offsets in the inflated bzImage payload, not file offsets.",
+      ],
+    },
+    signal,
+  );
+};
+
+/**
+ * Read a kernel version banner and an embedded IKCFG build config.
+ * The caller supplies the already bounded file bytes. `signal` is checked
+ * between scan steps and before each inflate; one inflate call runs to its
+ * output bound once started.
+ */
+export const parseKernelBuildConfig = (
+  bytes: Buffer,
+  artifact: Report["artifact"],
+  input: InspectKernelBuildConfigInput,
+  signal?: AbortSignal,
+): Report => {
+  const elf = isElf(bytes);
+  if (!elf) {
+    const header = readBzImage(bytes);
+    if (header.kind !== "none")
+      return bzImageReport(bytes, artifact, input, header, signal);
+    const whole = codecAt(bytes, 0);
+    if (whole !== null)
+      return closedReport(
+        artifact,
+        "file",
+        input,
+        {
+          container: "file",
+          codec: whole,
+          status: "unsupported",
+          offset: 0,
+          bytes: bytes.length,
+          inflated_bytes: null,
+        },
+        "payload_codec_unsupported",
+        "unsupported",
+        `This file starts with a ${whole} stream and has no x86 setup header. It was not inflated. ${NOT_SEARCHED}`,
+      );
+  }
+  return reportFromSearch(
+    artifact,
+    elf ? "elf" : "file",
+    input,
+    {
+      bytes,
+      space: "file",
+      payload: {
+        container: "file",
+        codec: null,
+        status: "uncompressed",
+        offset: null,
+        bytes: null,
+        inflated_bytes: null,
+      },
+      extraLimitations: [],
+    },
+    signal,
+  );
+};

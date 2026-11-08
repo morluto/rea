@@ -216,6 +216,27 @@ container. gzip, xz, and zstd whole-file containers are unsupported and name
 decompress into a separate file, then call `inspect_kernel_module` on that file. See
 [Linux kernel modules](https://github.com/morluto/rea/blob/main/docs/kernel-modules.md).
 
+## Linux kernel build config
+
+Use `inspect_kernel_build_config` for an explicit local kernel image (`vmlinux`
+ELF, raw arm64 `Image`, x86 `bzImage`/`zImage`, or `configs.ko`) when the
+question is which kernel version it is or how it was configured. No
+`open_binary`, Linux host, or `extract-ikconfig` is required. The CLI
+equivalent is `inspect-kernel-build-config PATH`; pass `name` for one exact
+`CONFIG_*` option and `offset`/`limit` to page the rest. Preserve the banner
+version, builder, and compiler, the config SHA-256 and option count, and each
+entry's value kind (`y`, `m`, `string`, `number`, `not_set`). A config is
+accepted only when `IKCFG_ST` is immediately followed by a valid gzip member
+and `IKCFG_ED`, so an ordinary `IKCFG_ST` string is not a config. Offsets with
+`space: "inflated_payload"` are positions in an inflated bzImage payload, not
+file offsets. An absent config describes only the searched bytes; the kernel
+may have been built without `CONFIG_IKCONFIG` or with it as a module. Truncated
+payloads are incomplete, not absent. A framed blob with a bad CRC or non-config
+text is `malformed`, not absent. xz, lz4, lzma, zstd, bzip2, and lzo
+payloads are unsupported and name `external_decompression`: decompress with an
+external utility, then call `inspect_kernel_build_config` on the result. See
+[Linux kernel build config](https://github.com/morluto/rea/blob/main/docs/kernel-build-config.md).
+
 ## CPython pyc files
 
 Use `inspect_python_pyc` for an explicit local CPython 3.7–3.13 `.pyc` when the

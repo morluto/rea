@@ -60,6 +60,10 @@ import {
   inspectKernelModuleInputSchema,
   kernelModuleSchema,
 } from "../../domain/native/kernelModule.js";
+import {
+  inspectKernelBuildConfigInputSchema,
+  kernelBuildConfigSchema,
+} from "../../domain/native/kernelBuildConfig.js";
 
 /** Caller-selected delivery of completed binary layout Evidence. */
 export const inspectBinaryLayoutRequestSchema =
@@ -168,6 +172,28 @@ export const BINARY_DIAGNOSTICS_TOOL_CONTRACTS = [
         title:
           "Inspect Linux kernel module license, vermagic, and dependencies",
         input: { path: "/artifacts/demo.ko" },
+      },
+    ],
+  },
+  {
+    name: "inspect_kernel_build_config",
+    ...toolContractMetadata("inspect_kernel_build_config"),
+    kind: "native-provider",
+    description:
+      "Inspect one explicit local Linux kernel image (vmlinux ELF, raw arm64 Image, x86 bzImage/zImage, or configs.ko) without executing it or opening a disassembler. Returns the `Linux version` banner split into version, builder, and compiler, and the embedded CONFIG_IKCONFIG build config: option count, SHA-256 of the inflated text, and paged CONFIG_* entries with value kind (y, m, string, number, not_set), optionally filtered by exact name. A config is accepted only when IKCFG_ST is immediately followed by a gzip member that inflates to config text and is immediately followed by IKCFG_ED, so an ordinary IKCFG_ST string is not a config. A bzImage gzip payload located through the setup header is inflated with a bounded output budget and searched; xz, lz4, lzma, zstd, bzip2, and lzo payloads are named as unsupported with external_decompression as the next probe. Truncated payloads and gzip members are incomplete, not absent. Reads a stable regular file; exhausted budgets return no partial success. Portable on supported Node hosts.",
+    inputSchema: inspectKernelBuildConfigInputSchema,
+    outputSchema: evidenceResultOf(kernelBuildConfigSchema),
+    examples: [
+      {
+        title: "Read a kernel image's version banner and embedded build config",
+        input: { path: "/artifacts/vmlinux" },
+      },
+      {
+        title: "Check one security option in an embedded kernel config",
+        input: {
+          path: "/artifacts/bzImage",
+          name: "CONFIG_SECURITY_SELINUX",
+        },
       },
     ],
   },

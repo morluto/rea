@@ -66,6 +66,13 @@ export const KERNEL_MODULE_PROVIDER = Object.freeze({
   version: "1",
 } as const);
 
+/** Provider identity for portable, execution-free Linux kernel banner and IKCONFIG decoding. */
+export const KERNEL_BUILD_CONFIG_PROVIDER = Object.freeze({
+  id: "rea-kernel-build-config",
+  name: "REA kernel build config parser",
+  version: "1",
+} as const);
+
 /** Provider identity for execution-free Shannon byte-entropy profiling. */
 export const BYTE_ENTROPY_PROVIDER = Object.freeze({
   id: "byte-entropy",

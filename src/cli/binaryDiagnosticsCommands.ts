@@ -13,6 +13,7 @@ import {
   createAppleIpsService,
   createDevicetreeService,
   createKernelModuleService,
+  createKernelBuildConfigService,
   createPeLoadConfigService,
   createBinaryHardeningService,
   createPeResourcesService,
@@ -34,6 +35,7 @@ import { inspectNativeExportsInputSchema } from "../domain/native/nativeExports.
 import { inspectElfNotesInputSchema } from "../domain/native/elfNotes.js";
 import { inspectAppleIpsInputSchema } from "../domain/native/appleIps.js";
 import { inspectKernelModuleInputSchema } from "../domain/native/kernelModule.js";
+import { inspectKernelBuildConfigInputSchema } from "../domain/native/kernelBuildConfig.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
 import { finishCliEvidenceCommand } from "./cliEvidenceCallerPath.js";
 import { withEvidenceCallerInputPath } from "../domain/evidence.js";
@@ -175,6 +177,64 @@ export const registerBinaryDiagnosticsCommands = (
               kernelModule,
               "rea-kernel-module",
               "inspect_kernel_module",
+              signal,
+            ).then(projectCliAnalysisResult),
+        );
+      }),
+  });
+  cli.command(CLI_COMMANDS.inspectKernelBuildConfig, {
+    description:
+      "Inspect a Linux kernel image's version banner and embedded build config without executing it",
+    args: z.object({
+      path: localPathStringSchema.describe(
+        "Local vmlinux ELF, raw Image, x86 bzImage/zImage, or configs.ko",
+      ),
+    }),
+    options: z.object({
+      maxFileBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_file_bytes,
+      ),
+      maxEntries: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_entries,
+      ),
+      maxConfigBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_config_bytes,
+      ),
+      maxPayloadBytes: cliDecimalField(
+        inspectKernelBuildConfigInputSchema.shape.max_payload_bytes,
+      ),
+      offset: cliDecimalField(inspectKernelBuildConfigInputSchema.shape.offset),
+      limit: cliDecimalField(inspectKernelBuildConfigInputSchema.shape.limit),
+      name: inspectKernelBuildConfigInputSchema.shape.name,
+    }),
+    run: ({ args, options }) =>
+      withCommandCancellation(async (signal) => {
+        const kernelBuildConfig = createKernelBuildConfigService();
+        return await logCliCommand(
+          logger,
+          CLI_COMMANDS.inspectKernelBuildConfig,
+          async () =>
+            finishCliEvidenceCommand(
+              args.path,
+              () =>
+                kernelBuildConfig.inspect(
+                  {
+                    path: absoluteCallerPath(args.path),
+                    max_file_bytes: options.maxFileBytes,
+                    max_entries: options.maxEntries,
+                    max_config_bytes: options.maxConfigBytes,
+                    max_payload_bytes: options.maxPayloadBytes,
+                    offset: options.offset,
+                    limit: options.limit,
+                    ...(options.name === undefined
+                      ? {}
+                      : { name: options.name }),
+                  },
+                  { signal },
+                ),
+              kernelBuildConfig,
+              "rea-kernel-build-config",
+              "inspect_kernel_build_config",
               signal,
             ).then(projectCliAnalysisResult),
         );

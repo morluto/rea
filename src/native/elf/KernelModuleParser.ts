@@ -19,15 +19,14 @@ import type {
   BinaryContainer,
 } from "../metadata/BinaryContainer.js";
 import { readElfImage } from "../metadata/ElfImage.js";
+import { kernelCompressionCodecAt } from "./KernelCompressionCodec.js";
 
 type ElfSection = Extract<ImageSection, { format: "elf" }>;
 type Report = KernelModule;
 type Limitations = string[];
 
 const MAGIC = Buffer.from(MODULE_SIGNATURE_MAGIC, "latin1");
-const GZIP = Buffer.from([0x1f, 0x8b]);
-const XZ = Buffer.from([0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]);
-const ZSTD = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+const MODULE_CODECS = ["gzip", "xz", "zstd"] as const;
 
 const sha256 = (bytes: Buffer): string =>
   createHash("sha256").update(bytes).digest("hex");
@@ -71,16 +70,8 @@ const rawHex = (bytes: Buffer): string | null =>
   bytes.length > MAX_KERNEL_MODULE_RAW_BYTES ? null : bytes.toString("hex");
 
 const compressionCodec = (bytes: Buffer): Report["compression"] => {
-  if (bytes.subarray(0, GZIP.length).equals(GZIP))
-    return { codec: "gzip", status: "unsupported" };
-  if (bytes.length >= XZ.length && bytes.subarray(0, XZ.length).equals(XZ))
-    return { codec: "xz", status: "unsupported" };
-  if (
-    bytes.length >= ZSTD.length &&
-    bytes.subarray(0, ZSTD.length).equals(ZSTD)
-  )
-    return { codec: "zstd", status: "unsupported" };
-  return null;
+  const codec = kernelCompressionCodecAt(bytes, 0, MODULE_CODECS);
+  return codec === null ? null : { codec, status: "unsupported" };
 };
 
 const baseLimitations = (): Limitations => [
