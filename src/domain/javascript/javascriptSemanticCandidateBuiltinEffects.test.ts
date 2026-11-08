@@ -1,7 +1,11 @@
 import { expect, it } from "vitest";
 
 import { analyzeCommonJsSemanticFixture } from "../../../tests/fixtures/javascriptCommonJsAnalysis.js";
-import { analyzeJavaScriptSemantics } from "./javascriptSemanticAnalysis.js";
+import {
+  analyzeJavaScriptSemantics,
+  analyzeParsedJavaScriptSemantics,
+} from "./javascriptSemanticAnalysis.js";
+import { parseJavaScriptSource } from "./javascriptSourceParser.js";
 
 const source = `
 const fs = require('fs');
@@ -52,4 +56,37 @@ it("does not infer a conditional built-in after the selected method is replaced 
     expect(analyzeJavaScriptSemantics(source).configurationOperations).toEqual(
       [],
     );
+});
+
+it("retains conditional built-in use across imported and unknown-loader alternatives", () => {
+  for (const choice of ["builtin : alternate", "alternate : builtin"]) {
+    const source = `import * as builtin from "node:fs"; const alternate = require("fs"); const selected = globalThis.flag ? ${choice}; selected.readFileSync("config.json");`;
+    const parsed = parseJavaScriptSource(source, "entry.MJS");
+    if (parsed === null) throw new Error("fixture did not parse");
+    expect(
+      analyzeParsedJavaScriptSemantics(parsed).configurationOperations,
+    ).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          kind: "file",
+          key: "config.json",
+          builtinAuthority: "candidate",
+        }),
+      ]),
+    );
+  }
+});
+
+it("does not equate mixed alternatives with different identities or replaced methods", () => {
+  for (const source of [
+    'import * as builtin from "node:fs"; const alternate = require("http"); const selected = globalThis.flag ? builtin : alternate; selected.readFileSync("config.json");',
+    'import * as builtin from "node:fs"; const alternate = require("fs"); alternate.readFileSync = globalThis.replacement; const selected = globalThis.flag ? builtin : alternate; selected.readFileSync("config.json");',
+    'import * as builtin from "node:fs"; const alternate = require("fs"); const selected = globalThis.flag ? builtin : alternate; selected.default.readFileSync("config.json");',
+  ]) {
+    const parsed = parseJavaScriptSource(source, "entry.MJS");
+    if (parsed === null) throw new Error("fixture did not parse");
+    expect(
+      analyzeParsedJavaScriptSemantics(parsed).configurationOperations,
+    ).toEqual([]);
+  }
 });

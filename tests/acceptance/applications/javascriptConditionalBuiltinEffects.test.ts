@@ -28,6 +28,10 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
     await writeFile(join(root, "candidate.MJS"), source);
     await writeFile(join(root, "proven.cjs"), source);
     await writeFile(
+      join(root, "mixed.MJS"),
+      `import * as builtin from 'node:fs'; const alternate = require('fs'); const selected = globalThis.flag ? builtin : alternate; selected.readFileSync('mixed.json');`,
+    );
+    await writeFile(
       join(root, "mutation.mjs"),
       `import http from 'http'; require('http').get = custom; http.get('http://example.test');`,
     );
@@ -114,5 +118,24 @@ cliTest.for(["CLI", "stdio MCP"] as const)(
         context_id === conditionalMutation?.evidence.context_id,
     );
     expect(evidence).toMatchObject({ state: "inferred", confidence: "low" });
+    const mixed = graph.nodes.find(
+      (node) =>
+        node.identity.module_path === "mixed.MJS" &&
+        node.kind === "config-source",
+    );
+    expect(mixed?.properties.builtin_authority).toBe("candidate");
+    expect(
+      graph.evidence_contexts.find(
+        ({ context_id }) => context_id === mixed?.evidence.context_id,
+      ),
+    ).toMatchObject({ state: "inferred", confidence: "low" });
+    expect(
+      graph.relations.find(
+        ({ relation, source_node_id, target_node_id }) =>
+          relation === "reads-config" &&
+          (source_node_id === mixed?.node_id ||
+            target_node_id === mixed?.node_id),
+      ),
+    ).toMatchObject({ resolution: "candidate" });
   },
 );

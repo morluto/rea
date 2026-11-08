@@ -362,17 +362,11 @@ const builtinDataEffectCallablePathWithAuthority = (
     return null;
   }
   const provenance = evaluateSemanticProvenance(binding, state);
-  if (
-    provenance.status !== "module" &&
-    !(
-      allowCandidate &&
-      provenance.status === "ambiguous" &&
-      provenance.origins.length === 1 &&
-      provenance.origins[0]?.loaderAuthority === "candidate"
-    )
-  )
-    return null;
-  const origin = builtinNamespaceOrigin(provenance.origins[0]);
+  const sourceOrigin = builtinProvenanceOrigin(provenance, allowCandidate, [
+    method,
+  ]);
+  if (sourceOrigin === undefined) return null;
+  const origin = builtinNamespaceOrigin(sourceOrigin);
   const selected = [...origin.importedPath, method];
   return specifiers.some(
     (specifier) => specifier.replace(/^node:/u, "") === origin.specifier,
@@ -387,14 +381,14 @@ const builtinDataEffectCallablePathWithAuthority = (
       true,
     )?.length === 0 &&
     !requiredModuleChanged(
-      provenance.origins[0].specifier,
+      sourceOrigin.specifier,
       selected,
       callee,
       state,
       true,
       initializer.node,
       allowCandidate,
-      allowCandidate && provenance.origins[0].loaderAuthority !== "candidate",
+      allowCandidate && sourceOrigin.loaderAuthority !== "candidate",
     )
     ? [method]
     : null;
@@ -536,18 +530,14 @@ const computeBuiltinBindingPath = (
     provenanceCapture === undefined
       ? evaluateSemanticProvenance(binding, state)
       : evaluateSemanticProvenanceAtRead(binding, provenanceCapture, state);
-  if (
-    provenance.status !== "module" &&
-    !(
-      allowCandidate &&
-      provenance.status === "ambiguous" &&
-      provenance.origins.length === 1 &&
-      provenance.origins[0]?.loaderAuthority === "candidate"
-    )
-  )
-    return null;
-  const { importedPath } = provenance.origins[0];
-  const namespace = builtinNamespaceOrigin(provenance.origins[0]);
+  const sourceOrigin = builtinProvenanceOrigin(
+    provenance,
+    allowCandidate,
+    selectedPath,
+  );
+  if (sourceOrigin === undefined) return null;
+  const { importedPath } = sourceOrigin;
+  const namespace = builtinNamespaceOrigin(sourceOrigin);
   if (
     !specifiers.some((item) => {
       const name = item.replace(/^node:/u, "");
@@ -682,7 +672,7 @@ const computeBuiltinBindingPath = (
     semanticBuiltinNamespacePath(importedPath)
     ? []
     : builtinNamespaceOrigin({
-        ...provenance.origins[0],
+        ...sourceOrigin,
         importedPath: resolvedPath,
       }).importedPath;
 };
@@ -703,6 +693,37 @@ const builtinNamespaceOrigin = (
         importedPath: importedPath.slice(1),
       }
     : { ...origin, specifier, importedPath };
+};
+
+const builtinProvenanceOrigin = (
+  provenance: ReturnType<typeof evaluateSemanticProvenance>,
+  allowCandidate: boolean,
+  selectedPath: readonly string[],
+): JavaScriptModuleOrigin | undefined => {
+  if (provenance.status === "module") return provenance.origins[0];
+  if (
+    !allowCandidate ||
+    provenance.status !== "ambiguous" ||
+    !provenance.origins.some((origin) => origin.loaderAuthority === "candidate")
+  )
+    return undefined;
+  const first = provenance.origins[0];
+  if (first === undefined) return undefined;
+  if (provenance.origins.length === 1) return first;
+  if (selectedPath[0] === "default") return undefined;
+  const normalized = builtinNamespaceOrigin(first);
+  return provenance.origins.every((origin) => {
+    const other = builtinNamespaceOrigin(origin);
+    return (
+      other.specifier === normalized.specifier &&
+      other.importedPath.length === normalized.importedPath.length &&
+      other.importedPath.every(
+        (part, index) => part === normalized.importedPath[index],
+      )
+    );
+  })
+    ? first
+    : undefined;
 };
 
 const affectsBuiltinPath = (
@@ -941,24 +962,27 @@ const computeOriginalBuiltinReceiver = (
     receiver === undefined
       ? undefined
       : evaluateSemanticProvenance(receiver, state);
+  const receiverMethod = semanticStaticPropertyKey(
+    callee.property,
+    callee.computed,
+  );
   const sourceOrigin =
-    provenance?.status === "module" ||
-    (allowCandidate &&
-      provenance?.status === "ambiguous" &&
-      provenance.origins.length === 1 &&
-      provenance.origins[0]?.loaderAuthority === "candidate")
-      ? provenance.origins[0]
-      : (semanticExpressionModuleOrigin(
-          callee.object,
-          state,
-          new Set(),
-          allowCandidate,
-        ) ??
-        (allowCandidate
-          ? semanticRequireOriginCandidate(callee.object, state)
-          : semanticRequireOrigin(callee.object, state)
-        )?.origin ??
-        semanticGlobalProcessOrigin(callee.object, state));
+    (provenance === undefined || receiverMethod === null
+      ? undefined
+      : builtinProvenanceOrigin(provenance, allowCandidate, [
+          receiverMethod,
+        ])) ??
+    semanticExpressionModuleOrigin(
+      callee.object,
+      state,
+      new Set(),
+      allowCandidate,
+    ) ??
+    (allowCandidate
+      ? semanticRequireOriginCandidate(callee.object, state)
+      : semanticRequireOrigin(callee.object, state)
+    )?.origin ??
+    semanticGlobalProcessOrigin(callee.object, state);
   if (sourceOrigin === undefined) return false;
   const origin = builtinNamespaceOrigin(sourceOrigin);
   const posixReceiver =
@@ -969,14 +993,8 @@ const computeOriginalBuiltinReceiver = (
   const method = semanticStaticPropertyKey(callee.property, callee.computed);
   // ESM namespace/named exports are snapshots, whereas the default object and
   // CommonJS exports share mutable slots with require().
-  const shared =
-    method === null
-      ? undefined
-      : semanticMutableBuiltinOrigin(sourceOrigin, [method]);
-  const identity =
-    shared === undefined
-      ? undefined
-      : semanticRequireExportsIdentity(shared.specifier, shared.path);
+  const sources =
+    provenance === undefined ? [sourceOrigin] : provenance.origins;
   if (
     method === null ||
     !BUILTIN_RECEIVER_METHODS[
@@ -987,23 +1005,35 @@ const computeOriginalBuiltinReceiver = (
         affectsBuiltinPath(path, [method]) &&
         !semanticTopLevelEffectFollowsCapture(node, write, state.parentsByNode),
     ) ||
-    (identity !== undefined &&
-      (
-        builtinEffectIndex(state).writesByModule.get(identity.specifier) ?? []
-      ).some(
-        ({ path, node: write, loaderAuthority }) =>
-          !(
-            allowCandidate &&
-            sourceOrigin.loaderAuthority !== "candidate" &&
-            loaderAuthority === "candidate"
-          ) &&
-          affectsBuiltinPath(path, identity.path) &&
-          !semanticTopLevelEffectFollowsCapture(
-            node,
-            write,
-            state.parentsByNode,
-          ),
-      ))
+    sources.some((source) => {
+      const shared =
+        method === null
+          ? undefined
+          : semanticMutableBuiltinOrigin(source, [method]);
+      const identity =
+        shared === undefined
+          ? undefined
+          : semanticRequireExportsIdentity(shared.specifier, shared.path);
+      return (
+        identity !== undefined &&
+        (
+          builtinEffectIndex(state).writesByModule.get(identity.specifier) ?? []
+        ).some(
+          ({ path, node: write, loaderAuthority }) =>
+            !(
+              allowCandidate &&
+              source.loaderAuthority !== "candidate" &&
+              loaderAuthority === "candidate"
+            ) &&
+            affectsBuiltinPath(path, identity.path) &&
+            !semanticTopLevelEffectFollowsCapture(
+              node,
+              write,
+              state.parentsByNode,
+            ),
+        )
+      );
+    })
   )
     return false;
   return !node.arguments.some((argument) => {
