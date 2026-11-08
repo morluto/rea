@@ -236,6 +236,29 @@ describe("desktop build tool checks", () => {
 });
 
 describe("desktop build registration checks", () => {
+  it("reports differing or unchecked recorded paths instead of healthy", async () => {
+    for (const fact of [
+      { differing: ["REA_AGENT_ENV_COMMAND"] },
+      { unchecked: ["REA_BUILD_COMPUTER_REA_ARCHIVE"] },
+    ]) {
+      const check = await failed(
+        buildHost({
+          registrations: [
+            {
+              client: "claude_code",
+              registered: true,
+              unrecorded: [],
+              unresolved: [],
+              ...fact,
+            },
+          ],
+        }),
+        "desktop_build-registration",
+      );
+      expect(check.detail).toContain(Object.values(fact)[0]![0]);
+      expect(check.details).toMatchObject({ registrations: [fact] });
+    }
+  });
   it("names the registration's missing settings, never their values", async () => {
     const check = await failed(
       buildHost({

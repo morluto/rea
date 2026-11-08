@@ -243,17 +243,31 @@ const registrationFacts = async (
   const selected = input.clientIds.length === 0 ? undefined : input.clientIds;
   const statuses = await input.registrations(
     selected,
-    Object.fromEntries(BUILD_COMPUTER_SETTINGS.map((name) => [name, ""])),
+    Object.fromEntries(
+      BUILD_COMPUTER_SETTINGS.map((name) => [
+        name,
+        input.environment[name] ?? "",
+      ]),
+    ),
   );
   const registered = statuses.filter(({ command }) => command.length > 0);
   const considered = selected ?? registered.map(({ client }) => client);
   return considered.map((client) => {
     const status = registered.find((entry) => entry.client === client);
+    const differing = status?.provider_settings?.differing ?? [];
+    const compared = differing.filter(
+      (name) => (input.environment[name] ?? "") !== "",
+    );
+    const unchecked = differing.filter(
+      (name) => (input.environment[name] ?? "") === "",
+    );
     return {
       client,
       registered: status !== undefined,
       unrecorded: status?.provider_settings?.unrecorded ?? [],
       unresolved: status?.provider_settings?.unresolved ?? [],
+      ...(compared.length === 0 ? {} : { differing: compared }),
+      ...(unchecked.length === 0 ? {} : { unchecked }),
     };
   });
 };

@@ -42,6 +42,51 @@ const readFacts = async (
 };
 
 it.skipIf(process.platform === "win32")(
+  "compares explicitly selected paths and reports unchecked recorded paths by name only",
+  async () => {
+    const { root, bin, home } = await buildHost(
+      "rea-desktop-doctor-registration-",
+    );
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_AGENT_ENV_COMMAND: "/private/old-agent-env",
+              REA_DOCKER_COMMAND: "/private/docker",
+              REA_BUILD_COMPUTER_REA_ARCHIVE: "/private/old-archive",
+            },
+          },
+        },
+      }),
+    );
+    const facts = await readFacts(
+      {
+        HOME: home,
+        USERPROFILE: home,
+        PATH: `${bin}:/usr/bin:/bin`,
+        XDG_CACHE_HOME: join(root, "cache"),
+        REA_AGENT_ENV_COMMAND: "/private/current-agent-env",
+        REA_DOCKER_COMMAND: "/private/docker",
+      },
+      ["claude_code"],
+    );
+    expect(facts.registrations).toMatchObject([
+      {
+        client: "claude_code",
+        registered: true,
+        differing: ["REA_AGENT_ENV_COMMAND"],
+        unchecked: ["REA_BUILD_COMPUTER_REA_ARCHIVE"],
+      },
+    ]);
+    expect(JSON.stringify(facts.registrations)).not.toContain("/private/");
+  },
+);
+
+it.skipIf(process.platform === "win32")(
   "reads a refused daemon and names unrecorded settings without their values",
   async () => {
     const { root, bin, home } = await buildHost("rea-desktop-doctor-facts-");
