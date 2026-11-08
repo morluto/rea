@@ -2,6 +2,8 @@ import { gzipSync } from "node:zlib";
 
 import { describe, expect, it } from "vitest";
 
+import { evaluateTaskChecks } from "./appTaskChecks.js";
+import { VALUE_LIMITS } from "./appTaskDraftValues.js";
 import {
   buildSecretHandleSchema,
   redactSecrets,
@@ -9,6 +11,8 @@ import {
   secretValueRefusal,
   secretsIn,
 } from "./buildSecrets.js";
+import { compactValue, cut } from "./compactValue.js";
+import { CHECK_VALUE_CHARS, DRAFT_VIEW_CHARS } from "./valueCuts.js";
 
 // Made-up test values, never a real credential.
 const VALUE = "e-Plum7 Kite/Throw+away?42";
@@ -125,20 +129,127 @@ describe("build secrets", () => {
     expect(redacted).not.toContain(VALUE);
     expect(redacted).not.toContain(ACCENTED);
   });
+});
 
-  it("hides the part of a value a view cut short, at any length, and its XML-escaped spelling", () => {
-    // A made-up 800-character value, longer than the 600 a draft value keeps.
+describe("build secrets in text REA cut short", () => {
+  it("still hides the start of a secret each of REA's cuts leaves before its ellipsis, at any length", () => {
+    // A made-up 800-character value, longer than any cut keeps.
     const long = `e-${"Fake9Kite".repeat(88)}x`;
     const secrets = [{ handle: "long", value: long }];
-    for (const kept of [600, 37, 1])
-      expect(
-        redactSecrets(`"after": "${long.slice(0, kept)}…"`, secrets),
-        String(kept),
-      ).toBe(`"after": "<secret:long>…"`);
-    const element = `<entry name="pw">${long.slice(0, 590)}…`;
-    expect(redactSecrets(element, secrets)).toBe(
-      '<entry name="pw"><secret:long>…',
+    /** The text redacted as a structured string, as a JSON member and in a result's JSON text. */
+    const hidden = (
+      text: string,
+      expected: string,
+      label: string,
+      known = secrets,
+    ) => {
+      expect(redactSecrets(text, known), label).toBe(expected);
+      expect(redactSecretsInJson({ after: text }, known), label).toEqual({
+        after: expected,
+      });
+      expect(redactSecrets(JSON.stringify({ after: text }), known), label).toBe(
+        JSON.stringify({ after: expected }),
+      );
+    };
+    for (const kept of [600, 190, 37, 1]) {
+      const pad = "a".repeat(600 - kept);
+      hidden(
+        compactValue(`${pad}${long}`, VALUE_LIMITS.chars, "json") as string,
+        `${pad}<secret:long>…`,
+        `draft value ${String(kept)}`,
+      );
+      const tag = `<account><name>${"b".repeat(585 - Math.min(kept, 585))}`;
+      hidden(
+        cut(`${tag}${long}`, VALUE_LIMITS.chars),
+        `${tag}<secret:long>…`,
+        `reference ${String(kept)}`,
+      );
+      const view = "c".repeat(DRAFT_VIEW_CHARS - kept);
+      hidden(
+        cut(`${view}${long}`, DRAFT_VIEW_CHARS),
+        `${view}<secret:long>…`,
+        `view ${String(kept)}`,
+      );
+    }
+    for (const kept of [190, 37, 1]) {
+      // A string's JSON opens with its quote, which the cut keeps first.
+      const pad = "d".repeat(CHECK_VALUE_CHARS - 1 - kept);
+      const [outcome] = evaluateTaskChecks(
+        [
+          {
+            id: "check-1",
+            kind: "value_equals",
+            file: "settings.json",
+            pointer: "/pw",
+            value: "other",
+          },
+        ],
+        new Map([
+          ["settings.json", { format: "json", view: { pw: `${pad}${long}` } }],
+        ]),
+      );
+      const description = outcome?.description ?? "";
+      expect(description).toContain(`"${pad}${long.slice(0, kept)}…`);
+      hidden(
+        description,
+        description.replace(
+          `"${pad}${long.slice(0, kept)}…`,
+          `"${pad}<secret:long>…`,
+        ),
+        `check ${String(kept)}`,
+      );
+    }
+    // A cut inside an escape: an XML value's `&lt;`, and a JSON value's `\"`.
+    const marked = 'e-a&b<c"d-Fake';
+    hidden(
+      compactValue(
+        {
+          name: "p",
+          attributes: {},
+          children: [`${"f".repeat(586)}${marked}`],
+        },
+        VALUE_LIMITS.chars,
+        "xml",
+      ) as string,
+      `<p>${"f".repeat(586)}<secret:xml>…`,
+      "xml escape",
+      [{ handle: "xml", value: marked }],
     );
+    const quoted = 'e-say"hi"\\now-Fake';
+    hidden(
+      compactValue(
+        { pw: `${"g".repeat(585)}${quoted}` },
+        VALUE_LIMITS.chars,
+        "json",
+      ) as string,
+      `{"pw":"${"g".repeat(585)}<secret:quoted>…`,
+      "json escape",
+      [{ handle: "quoted", value: quoted }],
+    );
+  });
+
+  it("leaves ordinary text ending in an ellipsis whole, though it ends as a secret begins", () => {
+    // VALUE and ACCENTED begin with "e", as "Please" and "Open Recent File" end.
+    for (const text of [
+      "Please…",
+      "Open Recent File…",
+      `${"word ".repeat(150)}Please…`,
+    ]) {
+      expect(redactSecrets(text, SECRETS)).toBe(text);
+      expect(redactSecretsInJson({ title: text }, SECRETS)).toEqual({
+        title: text,
+      });
+      expect(redactSecrets(JSON.stringify({ title: text }), SECRETS)).toBe(
+        JSON.stringify({ title: text }),
+      );
+    }
+  });
+});
+
+describe("build secrets in escaped text", () => {
+  it("replaces a value's XML-escaped and twice JSON-escaped spellings", () => {
+    const long = `e-${"Fake9Kite".repeat(88)}x`;
+    const secrets = [{ handle: "long", value: long }];
     const marked = 'e-a&b<c"d-Fake';
     expect(
       redactSecrets(

@@ -235,6 +235,7 @@ const liveComputer = (
         {
           all: () => secrets.all(),
           keep: (handle, bytes) => secrets.keep(handle, bytes),
+          redact: secrets.redact,
         },
       ),
       witness: new DesktopBuildWitness(computer, actions, settle, {

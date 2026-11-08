@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import type { JsonValue } from "../jsonValue.js";
 import { gunzip, isGzip } from "./gzipDocument.js";
+import { endsValueCut } from "./valueCuts.js";
 
 /** A secret's handle: the name of one file in the build host's secrets folder. */
 export const buildSecretHandleSchema = z
@@ -171,20 +172,65 @@ const prefixEndingAt = (
   return length === pattern.length ? 0 : length;
 };
 
-/** Text with the start of a spelling a view cut short, just before the cut's ellipsis, replaced by its handle's placeholder. */
+/** The index of each `…` in `text`. */
+const ellipses = (text: string): number[] => {
+  const found: number[] = [];
+  for (let at = text.indexOf("…"); at !== -1; at = text.indexOf("…", at + 1))
+    found.push(at);
+  return found;
+};
+
+/** A JSON string literal, as a result's JSON text holds each of its strings. */
+const JSON_STRING = /"(?:[^"\\]|\\.)*"/gu;
+
+/** A JSON string literal's text, or undefined when it is not one. */
+const literalText = (literal: string): string | undefined => {
+  try {
+    const value: unknown = JSON.parse(literal);
+    return typeof value === "string" ? value : undefined;
+  } catch {
+    return undefined;
+  }
+};
+
+/** The order, among the `…` of `text`, of each that ends one of REA's cuts: in the text as one string, or in a JSON string literal it holds. */
+const cutOrders = (text: string): ReadonlySet<number> => {
+  const all = ellipses(text);
+  const ends = new Set(all.filter((at) => endsValueCut(text, at)));
+  for (const literal of text.matchAll(JSON_STRING)) {
+    if (!literal[0].includes("…")) continue;
+    const inner = literalText(literal[0]);
+    if (inner === undefined) continue;
+    const kept = ellipses(inner);
+    const spelled = ellipses(literal[0]);
+    // An ellipsis the literal escapes cannot be placed in the text.
+    if (kept.length !== spelled.length) continue;
+    kept.forEach((at, order) => {
+      if (endsValueCut(inner, at))
+        ends.add((spelled[order] ?? 0) + literal.index);
+    });
+  }
+  return new Set(all.flatMap((at, order) => (ends.has(at) ? [order] : [])));
+};
+
+/** Text with the start of a spelling one of REA's cuts left, just before the cut's ellipsis, replaced by its handle's placeholder; `isCut` names those ellipses by their order. */
 const redactCutSpellings = (
   text: string,
   spellings: readonly { readonly handle: string; readonly spelling: string }[],
+  isCut: (order: number) => boolean,
 ): string => {
   if (!text.includes("…")) return text;
   const tables = spellings.map(({ spelling }) => borders(spelling));
   let redacted = "";
   let start = 0;
+  let order = -1;
   for (
     let end = text.indexOf("…");
     end !== -1;
     end = text.indexOf("…", end + 1)
   ) {
+    order += 1;
+    if (!isCut(order)) continue;
     let longest = { length: 0, handle: "" };
     spellings.forEach(({ handle, spelling }, index) => {
       const length = prefixEndingAt(text, end, spelling, tables[index] ?? []);
@@ -197,7 +243,7 @@ const redactCutSpellings = (
   return redacted + text.slice(start);
 };
 
-/** Text with each text spelling of each secret, longest first, replaced by its handle's placeholder, and any start of one a view cut short before its ellipsis. */
+/** Text with each text spelling of each secret, longest first, replaced by its handle's placeholder, and any start of one that one of REA's cuts left before its ellipsis. */
 export const redactSecrets = (
   text: string,
   secrets: readonly KnownSecret[],
@@ -208,13 +254,16 @@ export const redactSecrets = (
       textSpellings(value).map((spelling) => ({ handle, spelling })),
     )
     .sort((left, right) => right.spelling.length - left.spelling.length);
-  return redactCutSpellings(
-    spellings.reduce(
-      (redacted, { handle, spelling }) =>
-        redacted.replaceAll(spelling, secretPlaceholder(handle)),
-      text,
-    ),
-    spellings,
+  const cuts = text.includes("…") ? cutOrders(text) : new Set<number>();
+  const replaced = spellings.reduce(
+    (redacted, { handle, spelling }) =>
+      redacted.replaceAll(spelling, secretPlaceholder(handle)),
+    text,
+  );
+  // A secret holding `…` shifts the order of the rest, so every one then counts as a cut.
+  const placed = ellipses(replaced).length === ellipses(text).length;
+  return redactCutSpellings(replaced, spellings, (order) =>
+    placed ? cuts.has(order) : true,
   );
 };
 

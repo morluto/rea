@@ -6,6 +6,7 @@ import {
   type DesktopTaskCheck,
   type PointerCheck,
 } from "./appTask.js";
+import { cut } from "./compactValue.js";
 import type { DesktopStatePath } from "./desktopState.js";
 import {
   elementText,
@@ -14,6 +15,7 @@ import {
   selectorTest,
   type Located,
 } from "./viewPointer.js";
+import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 import {
   viewlessEntryAt,
   zipArrayLeavesOut,
@@ -53,10 +55,8 @@ const fail = (description: string): Verdict => ({
   passed: false,
   description,
 });
-const shown = (value: JsonValue): string => {
-  const text = JSON.stringify(value);
-  return text.length > 200 ? `${text.slice(0, 200)}…` : text;
-};
+const shown = (value: JsonValue): string =>
+  cut(JSON.stringify(value), CHECK_VALUE_CHARS);
 /** A failure for want of a readable or whole view, not for what the view holds. */
 const unread = (description: string): Verdict => ({
   ...fail(description),

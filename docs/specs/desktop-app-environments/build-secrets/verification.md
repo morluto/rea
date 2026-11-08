@@ -5,7 +5,14 @@
 - `src/domain/desktop/buildSecrets.test.ts`: handles; values too short, too
   long or holding a control character; each spelling found, base64 at every
   alignment in both alphabets and a gzip file's inside included; a near miss
-  and unrelated bytes not found; text and JSON redacted, member names too.
+  and unrelated bytes not found; text and JSON redacted, member names too;
+  the start of a value each of REA's cuts leaves, a draft value's, a
+  reference's, a view's and a check's, hidden at any length and through an
+  XML or JSON escape, as a string, a JSON member and a result's JSON text;
+  ordinary text ending in `…`, such as `Please…`, left whole.
+- `src/application/desktop/DesktopBuildOutputRead.test.ts`: a secret the
+  app's stderr or the capture's progress holds, redacted before the quote of
+  their end cuts it.
 - `src/desktop/BuildSecretFiles.test.ts`: the folder from `XDG_CONFIG_HOME`
   or `~/.config`; a `0600` or `0400` file read without its final line break;
   a file others can read, a symbolic link, a linked folder, a missing file

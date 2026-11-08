@@ -2,6 +2,7 @@ import type { JsonValue } from "../jsonValue.js";
 import { SETTLE_TIMING } from "./appSettle.js";
 import type { DesktopTask } from "./appTask.js";
 import { PYTHON_POINTER } from "./appTaskPythonPointer.js";
+import { CHECK_VALUE_CHARS } from "./valueCuts.js";
 
 /** The verifier's evaluator: the checks' semantics, kept equal to `evaluateTaskChecks`. */
 export const PYTHON_TASK_EVALUATOR = String.raw`
@@ -14,7 +15,7 @@ WHITESPACE_RUN = re.compile(r"[ \t\r\n]+")
 
 def _shown(value) -> str:
     text = json.dumps(value, ensure_ascii=False, separators=(",", ":"))
-    return text if len(text) <= 200 else text[:200] + "…"
+    return text if len(text) <= ${String(CHECK_VALUE_CHARS)} else text[:${String(CHECK_VALUE_CHARS)}] + "…"
 
 
 def _same(actual, expected) -> bool:

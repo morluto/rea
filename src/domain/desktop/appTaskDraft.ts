@@ -32,6 +32,7 @@ import {
   type StateEnds,
 } from "./desktopState.js";
 import { diffNamedMembers, diffStateViews } from "./stateChanges.js";
+import { DRAFT_VIEW_CHARS } from "./valueCuts.js";
 import { escapeToken, resolvePointer } from "./viewPointer.js";
 
 type Version = DesktopStatePath["versions"][number];
@@ -40,7 +41,7 @@ type Suggestion = DesktopTaskCheckInput;
 /** Suggestions per file; an author picks among them. */
 const MAX_SUGGESTIONS = 10;
 const MAX_ITEMS = 200;
-const MAX_CHARS = 2000;
+const MAX_CHARS = DRAFT_VIEW_CHARS;
 /** The most text checks a file gets, and the longest text one compares. */
 const LIMIT = { suggestions: MAX_SUGGESTIONS, chars: MAX_CHARS };
 

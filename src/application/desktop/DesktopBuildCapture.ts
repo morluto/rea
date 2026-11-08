@@ -226,16 +226,18 @@ export class DesktopBuildCapture {
   /** The person's consents, in their words, which the export writes into consent.json. */
   readonly #consents: BuildConsent[] = [];
 
-  /** `secrets` lists the secrets no exported bundle may hold and keeps the withheld files' bytes as secrets. */
+  /** `secrets` lists the secrets no exported bundle may hold, keeps the withheld files' bytes as secrets, and redacts a quote of the app's output before it is cut. */
   constructor(
     private readonly computer: ControlledComputer,
     request: BuildRequest | undefined,
     private readonly secrets: {
       readonly all: () => Promise<readonly KnownSecret[]>;
       readonly keep: (handle: string, bytes: Buffer) => Promise<string>;
+      readonly redact: (text: string) => string;
     } = {
       all: () => Promise.resolve([]),
       keep: (handle) => Promise.resolve(handle),
+      redact: (text) => text,
     },
   ) {
     this.#entry = request?.desktop_entry;
@@ -365,7 +367,7 @@ export class DesktopBuildCapture {
       return err({
         failure: await endedCapture(
           this.computer,
-          { ...STARTING, folder: run.folder },
+          { ...STARTING, folder: run.folder, redact: this.secrets.redact },
           answer,
           signal,
         ),
@@ -427,7 +429,11 @@ export class DesktopBuildCapture {
         return err(
           await endedCapture(
             this.computer,
-            { ...marking(name), folder: run.folder },
+            {
+              ...marking(name),
+              folder: run.folder,
+              redact: this.secrets.redact,
+            },
             answer,
             signal,
           ),
@@ -476,7 +482,7 @@ export class DesktopBuildCapture {
           { timeoutS: 600, signal },
         );
         if (answer.exit_code === undefined || answer.output_bytes === undefined)
-          return err(notAnswered(STOP, answer));
+          return err(notAnswered(STOP, answer, this.secrets.redact));
         run.status = "stopped";
         run.outputBytes = answer.output_bytes;
       }

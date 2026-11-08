@@ -36,5 +36,10 @@
       `appWithheld.test.ts`, `DesktopExportWithheld.test.ts`,
       `DesktopBuildSecrets.test.ts`, `buildSecretsMcp.test.ts`,
       `buildWithheldMcp.test.ts`).
-- [ ] Hide a typed secret before a view cuts a value short, where the whole
-      value and the secrets are both at hand (results and records).
+- [x] Match the start of a secret only before the `…` of one of REA's own
+      cuts, whose lengths the producers share, and redact the app's stderr and
+      the capture's progress before quoting their end (results and records;
+      `buildSecrets.test.ts`, `DesktopBuildOutputRead.test.ts`).
+- [ ] Follow-up: redact each typed secret before anything cuts a value, in the
+      build computer's draft and the export's task checks as on the host, then
+      drop the matching of a cut's start (results and records).

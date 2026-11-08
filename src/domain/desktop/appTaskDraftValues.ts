@@ -26,6 +26,7 @@ import {
   locatePointer,
   resolvePointer,
 } from "./viewPointer.js";
+import { DRAFT_VALUE_CHARS } from "./valueCuts.js";
 
 /** Why a value's pointer cannot go into a check as it is, or why the value is noise. */
 export const VALUE_NOTES = ["by_position", ...NOISE_REASONS] as const;
@@ -97,7 +98,7 @@ export const VALUE_LIMITS = {
   entries: 20,
   fileBytes: 8 * 1024,
   draftBytes: 24 * 1024,
-  chars: 600,
+  chars: DRAFT_VALUE_CHARS,
   references: 5,
 } as const;
 
