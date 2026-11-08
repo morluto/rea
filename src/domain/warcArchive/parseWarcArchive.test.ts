@@ -764,6 +764,27 @@ describe("embedded HTTP message inventory", () => {
 });
 
 describe("folded URL headers", () => {
+  it("does not restore sensitive malformed fields when completing folded URLs", () => {
+    const archive = parsed(
+      record(
+        "response",
+        [
+          [
+            "WARC-Target-URI",
+            "https://example.test/path\r\n Cookie: warc-secret",
+          ],
+        ],
+        "HTTP/1.1 302 Found\r\nLocation: https://example.test/path\r\n Cookie: http-secret\r\n\r\n",
+      ),
+    );
+    expect(JSON.stringify(archive)).not.toMatch(/warc-secret|http-secret/u);
+    expect(archive.records[0]?.malformed_header_lines).toContain(
+      " Cookie: [redacted]",
+    );
+    expect(archive.records[0]?.http?.malformed_header_lines).toContain(
+      " Cookie: [redacted]",
+    );
+  });
   it("redacts credentials in a continuation of a URL header", () => {
     const archive = parsed(
       record(

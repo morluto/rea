@@ -309,11 +309,11 @@ const readHeaderBlock = (
     // A colon was the only check before, so "Bad Name: value" passed and the
     // field was dropped without a diagnostic. Spaces are not allowed in a
     // WARC field name, and an unreported drop is a silent loss.
-    const invalid = colon <= 0 || !FIELD_NAME.test(name);
+    const continuation = /^[ \t]/u.test(text);
+    const invalid = continuation || colon <= 0 || !FIELD_NAME.test(name);
     const first = invalid ? undefined : fields.get(name);
     const malformedLine =
       invalid || (first !== undefined && !REPEATABLE_FIELDS.has(name));
-    const continuation = /^[ \t]/u.test(text);
     if (!continuation) {
       foldedUrl?.finish();
       foldedUrl =
@@ -334,8 +334,13 @@ const readHeaderBlock = (
         if (foldedUrl !== undefined) {
           const prefix = continuation ? "" : text.slice(0, colon + 1);
           const value = continuation ? text : text.slice(colon + 1);
+          const sensitiveBefore = previousSensitive;
           foldedUrl.add(value, (safe) => {
-            malformed[index] = prefix + safe;
+            malformed[index] = sanitizedMalformedHeader(
+              prefix + safe,
+              sensitiveBefore,
+              redaction,
+            );
           });
         }
       } else {
@@ -619,8 +624,13 @@ const readHttpMessage = (
       if (foldedUrl !== undefined) {
         const prefix = continuation ? "" : text.slice(0, colon + 1);
         const value = continuation ? text : text.slice(colon + 1);
+        const sensitiveBefore = previousSensitive;
         foldedUrl.add(value, (safe) => {
-          malformed[index] = prefix + safe;
+          malformed[index] = sanitizedMalformedHeader(
+            prefix + safe,
+            sensitiveBefore,
+            redaction,
+          );
         });
       }
     } else {
