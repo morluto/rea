@@ -353,20 +353,25 @@ const rejectsStreamOptionsLiteral = (
       staticObjectProperty(memberValue, "__proto__").status !== "missing"
     )
       return undefined;
-    // An array literal is normally not a descriptor, but `Object.setPrototypeOf` on
-    // `Array.prototype` can make it `instanceof FileHandle`. Measured on Node 24.22.1
-    // with a real `FileHandle` as that prototype, `createReadStream(p, {fd: []})`
-    // constructs a stream and reads from the descriptor.
+    // An array or regular-expression literal is normally not a descriptor, but
+    // `Object.setPrototypeOf` on `Array.prototype` or `RegExp.prototype` can make it
+    // `instanceof FileHandle`. Measured on Node 24.22.1 with a real `FileHandle` as
+    // either prototype, `createReadStream(p, {fd: []})` and
+    // `createReadStream(p, {fd: /x/})` construct a stream and read from the descriptor.
     if (
       name === "fd" &&
-      t.isArrayExpression(memberValue) &&
-      context.state.prototypeMutationSites.some(
-        (effect) =>
-          effect.owner === "Array" &&
-          semanticEffectTiming(node, effect.node, context.state) !== "after",
+      (t.isArrayExpression(memberValue) || t.isRegExpLiteral(memberValue))
+    ) {
+      const owner = t.isArrayExpression(memberValue) ? "Array" : "RegExp";
+      if (
+        context.state.prototypeMutationSites.some(
+          (effect) =>
+            effect.owner === owner &&
+            semanticEffectTiming(node, effect.node, context.state) !== "after",
+        )
       )
-    )
-      return undefined;
+        return undefined;
+    }
     return streamMemberValue(memberValue, context);
   };
   const rejectsIndex = (

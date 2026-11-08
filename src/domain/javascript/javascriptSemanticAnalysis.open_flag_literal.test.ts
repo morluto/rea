@@ -519,6 +519,34 @@ it("retains a read stream when Array.prototype is set to a FileHandle", () => {
   ).toHaveLength(1);
 });
 
+it("retains a read stream when RegExp.prototype is set to a FileHandle", () => {
+  // A regular-expression literal is not a valid `fd`, but `Object.setPrototypeOf` on
+  // `RegExp.prototype` makes it `instanceof FileHandle`. Measured on Node 24.22.1 with a
+  // real `FileHandle` as that prototype, `createReadStream(p, {fd: /x/})` constructs a
+  // stream and reads from the descriptor.
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    const handle = fs.openSync("input", "r");
+    function seed() {}
+    Object.setPrototypeOf(RegExp.prototype, handle);
+    const stream = fs.createReadStream("input", { fd: /x/ });
+    stream.close();
+  `).resourceOperations;
+  expect(
+    operations.filter(
+      ({ kind, method }) => kind === "acquire" && method === "createReadStream",
+    ),
+  ).toHaveLength(1);
+});
+
+it("still rejects an fd regexp when RegExp.prototype is untouched", () => {
+  const operations = analyzeJavaScriptSemantics(`
+    const fs = require("node:fs");
+    function seed() {}
+    fs.createReadStream("input", { fd: /x/ });
+  `).resourceOperations;
+  expect(operations.filter(({ kind }) => kind === "acquire")).toEqual([]);
+});
 it("still rejects an fd array when Array.prototype is untouched", () => {
   const operations = analyzeJavaScriptSemantics(`
     const fs = require("node:fs");
