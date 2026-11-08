@@ -1315,6 +1315,7 @@
 * **firmware:** cover S-record high address workflows ([#8897](https://github.com/morluto/rea/issues/8897)) ([25b62db](https://github.com/morluto/rea/commit/25b62db838bca5305ef540ae33980778b0918017))
 * **firmware:** keep producer fixtures within supported Node limits ([#7048](https://github.com/morluto/rea/issues/7048)) ([b75419b](https://github.com/morluto/rea/commit/b75419b61e2e11760993b3e60046633e2532cbc4))
 * **firmware:** pin the staging ceiling at the request boundary ([#7775](https://github.com/morluto/rea/issues/7775)) ([4671947](https://github.com/morluto/rea/commit/4671947c97bb661b3507b7691f57227a2757a44f))
+* focus diagnostics and evidence checks on behavior ([#9303](https://github.com/morluto/rea/issues/9303)) ([5044e20](https://github.com/morluto/rea/commit/5044e20171564d201d5fe49c18e2ea6f90c53010))
 * **gdb:** expect configurable stream truncation diagnostics ([#8965](https://github.com/morluto/rea/issues/8965)) ([ce07d35](https://github.com/morluto/rea/commit/ce07d358cdaa3d3f69711d71d1d9e03106b12dbe))
 * **ghidra:** check regex recovery at its owning boundary ([#8578](https://github.com/morluto/rea/issues/8578)) ([2be2d00](https://github.com/morluto/rea/commit/2be2d006b8d4f949dfc58c6952b04d5ba70bd9c0))
 * **ghidra:** check retained historical snapshot evidence ([#8381](https://github.com/morluto/rea/issues/8381)) ([0aaa582](https://github.com/morluto/rea/commit/0aaa5829777d34b988dec955d2a6a0a894e92be1))
