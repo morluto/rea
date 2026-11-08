@@ -130,6 +130,7 @@ import {
   AnalysisArtifactChangedError,
   AnalysisCancelledError,
 } from "../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../src/domain/analysisErrorProjection.js";
 import { BinaryTargetError } from "../../src/domain/configurationErrors.js";
 import {
   RegularFileChangedError,
@@ -681,3 +682,112 @@ it("deduplicates hard-linked member digests by exact 64-bit inode identity witho
     });
   }
 });
+
+it.each(["member", "directory"] as const)(
+  "retains both companion %s and executable cleanup owners when both handles fail to close",
+  async (companionKind) => {
+    const fixture = await admissionFixture();
+    if (companionKind === "member") {
+      const handle = await open(fixture.member, "r+");
+      try {
+        await handle.truncate(1024 * 1024 * 1024 + 1);
+      } finally {
+        await handle.close();
+      }
+    }
+    const resources = new ArtifactResourceScope();
+    let denyTargetClose = true;
+    let denyCompanionClose = true;
+    const companionResource =
+      companionKind === "member" ? fixture.member : fixture.directory;
+    if (companionKind === "directory") {
+      fault.dirReadFailure = errno("EIO");
+      fault.dirCloseFailure = errno("EIO");
+    }
+    fault.onOpenHandle = (openedPath, handle) => {
+      if (
+        openedPath !== fixture.target &&
+        !(companionKind === "member" && openedPath === fixture.member)
+      )
+        return;
+      const originalClose = handle.close.bind(handle);
+      let closed = false;
+      handle.close = async () => {
+        const denied =
+          openedPath === fixture.target ? denyTargetClose : denyCompanionClose;
+        if (denied)
+          throw new Error(
+            openedPath === fixture.target
+              ? "target close denied"
+              : "member close denied",
+          );
+        if (!closed) {
+          closed = true;
+          await originalClose();
+        }
+      };
+    };
+    try {
+      const resolved = await parseBinaryTarget(fixture.target, {
+        dsymPath: fixture.dsymPath,
+        resources,
+      });
+      expect(resolved.ok).toBe(false);
+      if (resolved.ok) return;
+      expect(resolved.error.cleanupIncomplete).toBe(true);
+      expect(resolved.error.cleanupResources).toEqual([
+        companionResource,
+        fixture.target,
+      ]);
+      expect(projectAnalysisError(resolved.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          resources: [companionResource, fixture.target],
+        },
+      });
+
+      // Releasing only the executable handle must leave cleanupIncomplete true
+      // and narrow reported resources to the remaining companion handle.
+      denyTargetClose = false;
+      await expect(resources.retryCleanup()).rejects.toThrow(
+        "Artifact cleanup remains incomplete",
+      );
+      expect(resolved.error.cleanupIncomplete).toBe(true);
+      expect(resolved.error.cleanupResources).toEqual([companionResource]);
+      expect(projectAnalysisError(resolved.error)).toMatchObject({
+        code: "cleanup_incomplete",
+        details: {
+          resources: [companionResource],
+        },
+      });
+
+      if (companionKind === "member") {
+        // Releasing the retryable member handle resolves the composed error and
+        // reveals the underlying member-size rejection.
+        denyCompanionClose = false;
+        await resources.retryCleanup();
+        expect(resolved.error.cleanupIncomplete).toBe(false);
+        expect(resolved.error.cleanupResources).toEqual([]);
+        expect(projectAnalysisError(resolved.error)).toMatchObject({
+          code: "invalid_request",
+          details: {
+            diagnostics: { limit: "dsym_member_size_bytes" },
+          },
+        });
+      } else {
+        // OwnedDirectoryHandle cannot be retried after Dir.close() fails; scope
+        // close keeps the composed error incomplete for the directory handle.
+        await expect(resources.close()).rejects.toThrow(
+          "Artifact cleanup remains incomplete",
+        );
+        expect(resolved.error.cleanupIncomplete).toBe(true);
+        expect(resolved.error.cleanupResources).toEqual([fixture.directory]);
+      }
+    } finally {
+      denyTargetClose = false;
+      denyCompanionClose = false;
+      fault.dirCloseFailure = undefined;
+      if (companionKind === "member") await resources.close();
+    }
+  },
+);

@@ -681,6 +681,68 @@ const finalizedTargetResolution = (
   );
 };
 
+const composeTargetCleanupError = (input: {
+  readonly path: string;
+  readonly reason: string;
+  readonly cause: RetainedRegularFileCleanupFailure | ArtifactReaderFailure;
+  readonly primary:
+    | BinaryTargetError
+    | AnalysisCancelledError
+    | AnalysisArtifactChangedError
+    | undefined;
+  readonly ownCleanup:
+    | { readonly reason: string; readonly resources: readonly string[] }
+    | undefined;
+  readonly extraDiagnostics?: Readonly<Record<string, JsonValue>>;
+}): BinaryTargetError => {
+  const { path, reason, cause, primary, ownCleanup, extraDiagnostics } = input;
+  if (
+    primary !== undefined &&
+    primary.cleanupIncomplete &&
+    ownCleanup !== undefined
+  ) {
+    const ownError = new BinaryTargetError(path, reason, {
+      cause,
+      cleanup: ownCleanup,
+    });
+    bindRegularFileCleanup(cause, ownError);
+    const mergedCleanup = {
+      reason:
+        primary.cleanup?.reason !== undefined
+          ? `${primary.cleanup.reason}; ${ownCleanup.reason}`
+          : ownCleanup.reason,
+      resources: [
+        ...new Set([...primary.cleanupResources, ...ownCleanup.resources]),
+      ],
+    };
+    const error = new BinaryTargetError(path, reason, {
+      cause,
+      cleanupPrimary: primary,
+      cleanup: mergedCleanup,
+      ...childFailureDiagnostics(
+        {
+          primary_error: { error: primary },
+          cleanup_error: { error: ownError },
+        },
+        extraDiagnostics ?? {},
+      ),
+    });
+    error.bindCleanupDependencies([primary, ownError]);
+    return error;
+  }
+  const error = new BinaryTargetError(path, reason, {
+    cause,
+    cleanupPrimary: primary,
+    ...(ownCleanup === undefined ? {} : { cleanup: ownCleanup }),
+    ...childFailureDiagnostics(
+      primary === undefined ? {} : { primary_error: { error: primary } },
+      extraDiagnostics ?? {},
+    ),
+  });
+  bindRegularFileCleanup(cause, error);
+  return error;
+};
+
 const companionDirectoryCleanupError = (
   failure: ArtifactReaderFailure,
   candidate: string,
@@ -695,20 +757,13 @@ const companionDirectoryCleanupError = (
     underlying instanceof AnalysisArtifactChangedError
       ? underlying
       : undefined;
-  const error = new BinaryTargetError(
-    failure.cleanup?.resources[0] ?? candidate,
-    "The debug companion directory handle could not be closed",
-    {
-      cause: failure,
-      cleanupPrimary: primary,
-      ...(failure.cleanup === undefined ? {} : { cleanup: failure.cleanup }),
-      ...childFailureDiagnostics(
-        primary === undefined ? {} : { primary_error: { error: primary } },
-      ),
-    },
-  );
-  bindRegularFileCleanup(failure, error);
-  return error;
+  return composeTargetCleanupError({
+    path: failure.cleanup?.resources[0] ?? candidate,
+    reason: "The debug companion directory handle could not be closed",
+    cause: failure,
+    primary,
+    ownCleanup: failure.cleanup,
+  });
 };
 
 /** Descriptor cleanup retains the physical result and binds its exact release lease. */
@@ -772,25 +827,22 @@ const targetFileCleanupError = (
         ? {}
         : { diagnostics: { completed_target: completedTarget } }),
     });
-  const error = new BinaryTargetError(failure.path, reason, {
+  return composeTargetCleanupError({
+    path: failure.path,
+    reason,
     cause: failure,
-    cleanupPrimary: primary,
-    cleanup: {
+    primary,
+    ownCleanup: {
       reason:
         failure.cleanupCause instanceof Error
           ? failure.cleanupCause.message
           : String(failure.cleanupCause),
       resources: [failure.path],
     },
-    ...childFailureDiagnostics(
-      primary === undefined ? {} : { primary_error: { error: primary } },
-      completedTarget === undefined
-        ? {}
-        : { completed_target: completedTarget },
-    ),
+    ...(completedTarget === undefined
+      ? {}
+      : { extraDiagnostics: { completed_target: completedTarget } }),
   });
-  bindRegularFileCleanup(failure, error);
-  return error;
 };
 
 const targetResolutionFailure = (
