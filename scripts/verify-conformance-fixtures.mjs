@@ -15,7 +15,16 @@ import { completeVerifierRun, createVerifierRun } from "./lib/verifier-run.mjs";
 const exec = promisify(execFile);
 const verifierRun = createVerifierRun();
 const manifestArgument = process.argv[2] ?? "build/conformance/manifest.json";
-const manifestPath = await realpath(resolve(manifestArgument));
+let manifestPath;
+try {
+  manifestPath = await realpath(resolve(manifestArgument));
+} catch (error) {
+  if (error?.code === "ENOENT")
+    throw new Error(
+      `Conformance manifest is missing at ${resolve(manifestArgument)}; run the fixture build before verifying`,
+    );
+  throw error;
+}
 const sourceRoot = await resolveSourceRoot(manifestPath, process.argv[3]);
 const manifest = JSON.parse(await readFile(manifestPath, "utf8"));
 if (
