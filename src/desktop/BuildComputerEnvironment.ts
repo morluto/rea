@@ -56,6 +56,16 @@ export const programOnPath = async (
     : found.path;
 };
 
+/** Resolve a recorded command using the same empty-value fallback as runtime. */
+export const resolveBuildComputerProgram = (
+  value: string | undefined,
+  program: string,
+  environment: Readonly<NodeJS.ProcessEnv>,
+): Promise<string | undefined> =>
+  value === undefined || value === ""
+    ? programOnPath(program, environment)
+    : Promise.resolve(value);
+
 const isFile = (path: string): Promise<boolean> =>
   stat(path).then(
     (entry) => entry.isFile(),
@@ -84,11 +94,19 @@ export const resolveBuildComputerEnvironment = async (
     environment[name] === undefined || environment[name] === "";
   const search = { PATH: sources.searchPath ?? environment.PATH };
   const agentEnv = unset("REA_AGENT_ENV_COMMAND")
-    ? await programOnPath("agent-env", search)
+    ? await resolveBuildComputerProgram(
+        environment.REA_AGENT_ENV_COMMAND,
+        "agent-env",
+        search,
+      )
     : undefined;
   if (agentEnv !== undefined) defaults.REA_AGENT_ENV_COMMAND = agentEnv;
   const docker = unset("REA_DOCKER_COMMAND")
-    ? await programOnPath("docker", search)
+    ? await resolveBuildComputerProgram(
+        environment.REA_DOCKER_COMMAND,
+        "docker",
+        search,
+      )
     : undefined;
   if (docker !== undefined) defaults.REA_DOCKER_COMMAND = docker;
   const archive = defaultBuildComputerArchive(
