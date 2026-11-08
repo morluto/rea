@@ -192,13 +192,109 @@ describe("UUID entry attribution", () => {
       ],
     });
   });
-  it("rejects a universal slice whose header CPU disagrees with the table", () => {
-    // The table declares x86_64; the embedded thin header still says arm64.
-    const container = universalWithSlices([
-      withUuidLoadCommand("55555555-5555-5555-5555-555555555555"),
-    ]);
-    expect(readMachoUuidEntries(container).ok).toBe(false);
-  });
+});
+
+describe("FAT container validation in readMachoUuidEntries", () => {
+  it.each([
+    {
+      name: "slice overlapping the FAT table",
+      container: (() => {
+        const bytes = Buffer.alloc(96);
+        bytes.writeUInt32BE(0xcafebabe, 0);
+        bytes.writeUInt32BE(1, 4);
+        bytes.writeInt32BE(0x01000007, 8);
+        bytes.writeUInt32BE(8, 16); // Overlaps the 28-byte FAT header+table.
+        bytes.writeUInt32BE(56, 20);
+        return bytes;
+      })(),
+      expectedReason: "invalid slice range",
+    },
+    {
+      name: "two overlapping FAT slices",
+      container: (() => {
+        const slice = withUuidLoadCommand(
+          "55555555-5555-5555-5555-555555555555",
+          0x01000007,
+          3,
+        );
+        const bytes = Buffer.alloc(48 + slice.length + 16);
+        bytes.writeUInt32BE(0xcafebabe, 0);
+        bytes.writeUInt32BE(2, 4);
+        bytes.writeInt32BE(0x01000007, 8);
+        bytes.writeInt32BE(3, 12);
+        bytes.writeUInt32BE(48, 16);
+        bytes.writeUInt32BE(slice.length, 20);
+        bytes.writeInt32BE(0x0100000c, 28);
+        bytes.writeInt32BE(0, 32);
+        bytes.writeUInt32BE(64, 36); // Starts inside slice 0 [48, 104).
+        bytes.writeUInt32BE(slice.length, 40);
+        slice.copy(bytes, 48);
+        return bytes;
+      })(),
+      expectedReason: "overlapping slice ranges",
+    },
+    {
+      name: "misaligned FAT slice offset",
+      container: (() => {
+        const slice = withUuidLoadCommand(
+          "55555555-5555-5555-5555-555555555555",
+          0x01000007,
+          3,
+        );
+        const bytes = Buffer.alloc(33 + slice.length);
+        bytes.writeUInt32BE(0xcafebabe, 0);
+        bytes.writeUInt32BE(1, 4);
+        bytes.writeInt32BE(0x01000007, 8);
+        bytes.writeInt32BE(3, 12);
+        bytes.writeUInt32BE(33, 16);
+        bytes.writeUInt32BE(slice.length, 20);
+        bytes.writeUInt32BE(4, 24); // Requires 16-byte alignment.
+        slice.copy(bytes, 33);
+        return bytes;
+      })(),
+      expectedReason: "not aligned",
+    },
+    {
+      name: "header CPU type disagreeing with the FAT table",
+      container: universalWithSlices([
+        withUuidLoadCommand("55555555-5555-5555-5555-555555555555"),
+      ]),
+      expectedReason: "CPU type/subtype disagrees",
+    },
+    {
+      name: "header CPU subtype disagreeing with the FAT table",
+      container: universalWithSlices(
+        [
+          withUuidLoadCommand(
+            "55555555-5555-5555-5555-555555555555",
+            0x01000007,
+            0,
+          ),
+        ],
+        0x01000007,
+        8,
+      ),
+      expectedReason: "CPU type/subtype disagrees",
+    },
+    {
+      name: "4-byte truncated FAT header",
+      container: Buffer.from("cafebabe", "hex"),
+      expectedReason: "FAT header is truncated",
+    },
+    {
+      name: "6-byte truncated FAT header",
+      container: Buffer.from("cafebabe0001", "hex"),
+      expectedReason: "FAT header is truncated",
+    },
+  ])(
+    "rejects a universal container with $name",
+    ({ container, expectedReason }) => {
+      expect(readMachoUuidEntries(container)).toMatchObject({
+        ok: false,
+        error: expect.stringContaining(expectedReason),
+      });
+    },
+  );
   it("reads a UUID declared beyond a 64 KiB load-command span", () => {
     const fillerSize = 8 + 8; // one LC_SOURCE_VERSION-shaped filler command
     const commandCount = Math.ceil((80 * 1024) / fillerSize) + 1;

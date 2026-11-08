@@ -1,11 +1,12 @@
 import { createHash } from "node:crypto";
 import type { Dir, Stats } from "node:fs";
 import { opendir, stat, type FileHandle } from "node:fs/promises";
-import { isAbsolute } from "node:path";
+import { basename, extname, isAbsolute } from "node:path";
 import { AnalysisCleanupLease } from "../artifacts/AnalysisCleanupLease.js";
 import { ArtifactReaderFailure } from "../artifacts/ArtifactReader.js";
 import type { ArtifactResourceScope } from "../artifacts/ArtifactResourceScope.js";
 import {
+  findOverlappingFatSlices,
   readFatContainerHeader,
   validateFatSlice,
 } from "../domain/apple/machoContainer.js";
@@ -40,7 +41,10 @@ import {
   RegularFileOperationCancelled,
   sameRegularFileState,
 } from "../filesystem/RegularFile.js";
-import { appendCallerPath } from "../filesystem/callerPath.js";
+import {
+  absoluteCallerPath,
+  appendCallerPath,
+} from "../filesystem/callerPath.js";
 import { MACHO_ARCHITECTURE_POLICIES } from "../native/MachoArchitectureSelection.js";
 import {
   RetainedRegularFileCleanupFailure,
@@ -339,11 +343,21 @@ export const readMachoFileUuidEntries = async (
     );
   if (container.state === "malformed")
     return err(invalidImage(container.reason));
-  const entries: SliceUuidEntry[] = [];
   for (const slice of container.slices) {
     throwIfCancelled(context.signal);
     const rangeIssue = validateFatSlice(slice, fileSize, container.tableEnd);
     if (rangeIssue !== null) return err(invalidImage(rangeIssue));
+  }
+  const overlap = findOverlappingFatSlices(container.slices);
+  if (overlap !== null)
+    return err(
+      invalidImage(
+        `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+      ),
+    );
+  const entries: SliceUuidEntry[] = [];
+  for (const slice of container.slices) {
+    throwIfCancelled(context.signal);
     const read = await readThinUuidEntry(
       handle,
       { offset: slice.offset, length: slice.size },
@@ -765,6 +779,17 @@ const inspectMemberHandle = async (
   });
 };
 
+const isDsymBundlePath = (dsymPath: string): boolean =>
+  extname(basename(absoluteCallerPath(dsymPath))) === ".dSYM";
+
+const notDsymBundleRejection = (dsymPath: string): DebugCompanionRejection => ({
+  reason: `dsym_path is not a .dSYM bundle directory: ${dsymPath}`,
+  diagnostics: {
+    dsym_path: dsymPath,
+    rejection: "not_dsym_bundle",
+  },
+});
+
 const validateDsymBundleDirectory = async (
   dsymPath: string,
   signal: AbortSignal | undefined,
@@ -775,6 +800,7 @@ const validateDsymBundleDirectory = async (
       reason:
         "dsym_path must be an absolute local filesystem path to a .dSYM bundle",
     });
+  if (!isDsymBundlePath(dsymPath)) return err(notDsymBundleRejection(dsymPath));
   let bundle: Stats;
   try {
     bundle = await stat(dsymPath);
@@ -787,7 +813,7 @@ const validateDsymBundleDirectory = async (
   throwIfCancelled(signal);
   return bundle.isDirectory()
     ? ok(null)
-    : err({ reason: `dsym_path is not a .dSYM bundle directory: ${dsymPath}` });
+    : err(notDsymBundleRejection(dsymPath));
 };
 
 /**

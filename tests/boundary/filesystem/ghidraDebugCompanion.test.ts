@@ -14,6 +14,7 @@ import { join } from "node:path";
 import { expect, it } from "vitest";
 
 import { AnalysisArtifactChangedError } from "../../../src/domain/analysisErrorCore.js";
+import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 
 import {
   admitDebugCompanion,
@@ -341,6 +342,8 @@ it("skips an oversized nonmatching member but refuses an oversized matching memb
   expect(await fixture.admit()).toMatchObject({
     ok: false,
     error: {
+      reason: expect.stringContaining("exceeds the supported size"),
+      remediationAction: expect.stringContaining("no runtime override"),
       diagnostics: {
         limit: "dsym_member_size_bytes",
         maximum_bytes: 1024 * 1024 * 1024,
@@ -351,6 +354,25 @@ it("skips an oversized nonmatching member but refuses an oversized matching memb
     },
   });
 });
+
+it("rejects more than 16 DWARF directory entries with structured limit facts and no-runtime-override remediation", async () => {
+  const fixture = await admissionFixture();
+  for (let index = 0; index < 16; index += 1)
+    await writeFile(join(fixture.directory, `extra-${String(index)}`), "");
+  expect(await fixture.admit()).toMatchObject({
+    ok: false,
+    error: {
+      reason: expect.stringContaining("more than 16 DWARF directory entries"),
+      remediationAction: expect.stringContaining("no runtime override"),
+      diagnostics: {
+        limit: "dsym_dwarf_directory_entries",
+        maximum_entries: 16,
+        runtime_override: false,
+      },
+    },
+  });
+});
+
 it("reports a placeholder target UUID before inspecting companion matches", async () => {
   const fixture = await admissionFixture(
     "00000000-0000-0000-0000-000000000000",
@@ -358,6 +380,7 @@ it("reports a placeholder target UUID before inspecting companion matches", asyn
   expect(await fixture.admit()).toMatchObject({
     ok: false,
     error: {
+      reason: expect.stringContaining("no usable LC_UUID"),
       diagnostics: {
         architecture: "x86_64",
         rejection: "target_uuid_absent",
@@ -436,6 +459,62 @@ it.each(["/", "/."])(
     });
   },
 );
+
+it.each(["pair-nosuffix", "pair-nosuffix/", ".dSYM", "selected.dsym"])(
+  "rejects a directory named %s that is not a .dSYM bundle",
+  async (bundleName) => {
+    const root = await createTestTempDirectory("rea-dsym-bundle-nosuffix-");
+    const folder = join(root, bundleName.replace(/\/$/u, ""));
+    const dsymPath = bundleName.endsWith("/") ? `${folder}/` : folder;
+    const directory = join(folder, "Contents", "Resources", "DWARF");
+    await mkdir(directory, { recursive: true });
+    const target = join(root, "target");
+    const bytes = uuidImage("11111111-2222-3333-4444-555555555555");
+    await writeFile(target, bytes);
+    await writeFile(join(directory, "member"), bytes);
+
+    const rejected = await parseBinaryTarget(target, { dsymPath });
+    expect(rejected.ok).toBe(false);
+    if (rejected.ok) return;
+    expect(projectAnalysisError(rejected.error)).toMatchObject({
+      code: "invalid_request",
+      category: "invalid_input",
+      details: {
+        path: target,
+        constraint: "debug_companion_rejected",
+        reason: `dsym_path is not a .dSYM bundle directory: ${dsymPath}`,
+        diagnostics: {
+          dsym_path: dsymPath,
+          rejection: "not_dsym_bundle",
+        },
+      },
+    });
+  },
+);
+
+it("rejects a regular file named .dSYM as not a .dSYM bundle directory", async () => {
+  const root = await createTestTempDirectory("rea-dsym-regular-file-");
+  const target = join(root, "target");
+  const dsymFile = join(root, "regular.dSYM");
+  await writeFile(target, uuidImage("11111111-2222-3333-4444-555555555555"));
+  await writeFile(dsymFile, "not a directory");
+  const rejected = await parseBinaryTarget(target, { dsymPath: dsymFile });
+  expect(rejected.ok).toBe(false);
+  if (rejected.ok) return;
+  expect(projectAnalysisError(rejected.error)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      path: target,
+      constraint: "debug_companion_rejected",
+      reason: `dsym_path is not a .dSYM bundle directory: ${dsymFile}`,
+      diagnostics: {
+        dsym_path: dsymFile,
+        rejection: "not_dsym_bundle",
+      },
+    },
+  });
+});
 
 it("refuses existingProject + debugCompanion in GhidraClient.start before creating a runtime root or staging the companion", async () => {
   const fixture = await stagingFixture();

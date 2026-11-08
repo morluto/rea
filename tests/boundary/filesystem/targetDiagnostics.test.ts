@@ -565,9 +565,15 @@ describe("debug companion resource limits and mismatch", () => {
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
         code: "invalid_request",
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
         details: {
           path: binary,
           constraint: "debug_companion_rejected",
+          reason: expect.stringContaining(
+            "more than 16 DWARF directory entries",
+          ),
           diagnostics: {
             limit: "dsym_dwarf_directory_entries",
             maximum_entries: 16,
@@ -602,9 +608,13 @@ describe("debug companion resource limits and mismatch", () => {
       const projected = projectAnalysisError(result.error);
       expect(projected).toMatchObject({
         code: "invalid_request",
+        remediation: {
+          action: expect.stringContaining("no runtime override"),
+        },
         details: {
           path: binary,
           constraint: "debug_companion_rejected",
+          reason: expect.stringContaining("exceeds the supported size"),
           diagnostics: {
             limit: "dsym_member_size_bytes",
             maximum_bytes: 1024 * 1024 * 1024,

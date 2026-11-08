@@ -1,4 +1,5 @@
 import {
+  findOverlappingFatSlices,
   readFatContainerHeader,
   readMachoHeaderPrefixFacts,
   validateFatSlice,
@@ -138,7 +139,6 @@ export const readMachoUuidEntries = (
   if (container.state === "needs-data")
     return err("the universal Mach-O container table is truncated");
   if (container.state === "malformed") return err(container.reason);
-  const entries: MachOUuidEntry[] = [];
   for (const declaration of container.slices) {
     const rangeIssue = validateFatSlice(
       declaration,
@@ -146,6 +146,14 @@ export const readMachoUuidEntries = (
       container.tableEnd,
     );
     if (rangeIssue !== null) return err(rangeIssue);
+  }
+  const overlap = findOverlappingFatSlices(container.slices);
+  if (overlap !== null)
+    return err(
+      `FAT architectures ${overlap[0].index} and ${overlap[1].index} have overlapping slice ranges`,
+    );
+  const entries: MachOUuidEntry[] = [];
+  for (const declaration of container.slices) {
     const image = readThinImage(
       bytes,
       declaration.offset,

@@ -28,9 +28,10 @@ rea function /absolute/path/to/pair _pair_sum --provider ghidra --dsym-path /abs
 member carries the target image's `LC_UUID`. Admission rejects the request as
 caller input — `invalid_request` / `invalid_input` with the
 `debug_companion_rejected` constraint — when the bundle is missing, is not a
-bundle, or contains no DWARF member whose UUID matches the target. A target
-without any `LC_UUID` cannot be matched and is rejected explicitly. Omitting
-`dsym_path` keeps today's behavior: the executable is analyzed alone.
+`.dSYM` bundle directory, or contains no DWARF member whose UUID matches the
+target. A target without any `LC_UUID` cannot be matched and is rejected
+explicitly. Omitting `dsym_path` keeps today's behavior: the executable is
+analyzed alone.
 
 `dsym_path` applies only to detected Mach-O executable targets
 (`mach-o` and `mach-o-universal`); pairing it with `format=raw-binary` or
