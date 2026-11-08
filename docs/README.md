@@ -95,7 +95,7 @@ product pages. The VitePress documentation source is this `docs/` tree.
 - [RISC-V ELF analysis through Ghidra](providers/ghidra-riscv.md)
 - [Windows Ghidra P0](providers/windows-ghidra-p0.md)
 - [Headerless raw-binary analysis with Ghidra](providers/raw-binary.md)
-- [Mach-O dSYM companion](dsym.md)
+- [Mach-O dSYM companion](providers/dsym.md)
 - [IDA provider](providers/ida-provider.md)
 - [JEB instrumentation and analysis](providers/jeb-analysis.md)
 

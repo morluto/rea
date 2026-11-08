@@ -9,6 +9,7 @@ const fault = vi.hoisted(() => ({
   openFailure: undefined as Error | undefined,
   memberReadFailure: undefined as Error | undefined,
   memberCloseFailure: undefined as Error | undefined,
+  onMemberClose: undefined as ((attempt: number) => void) | undefined,
   dirReadFailure: undefined as Error | undefined,
   dirCloseFailure: undefined as Error | undefined,
   onOpendir: undefined as (() => void) | undefined,
@@ -33,15 +34,22 @@ vi.mock("node:fs/promises", async (importOriginal) => {
       if (
         args[0] === fault.openPath &&
         (fault.memberReadFailure !== undefined ||
-          fault.memberCloseFailure !== undefined)
+          fault.memberCloseFailure !== undefined ||
+          fault.onMemberClose !== undefined)
       ) {
         const originalClose = handle.close.bind(handle);
+        let closeAttempt = 0;
         if (fault.memberReadFailure !== undefined) {
           handle.read = (() =>
             Promise.reject(fault.memberReadFailure)) as typeof handle.read;
         }
-        if (fault.memberCloseFailure !== undefined) {
+        if (
+          fault.memberCloseFailure !== undefined ||
+          fault.onMemberClose !== undefined
+        ) {
           handle.close = async () => {
+            closeAttempt += 1;
+            fault.onMemberClose?.(closeAttempt);
             if (fault.memberCloseFailure !== undefined)
               throw fault.memberCloseFailure;
             await originalClose();
@@ -98,6 +106,7 @@ beforeEach(() => {
   fault.openFailure = undefined;
   fault.memberReadFailure = undefined;
   fault.memberCloseFailure = undefined;
+  fault.onMemberClose = undefined;
   fault.dirReadFailure = undefined;
   fault.dirCloseFailure = undefined;
   fault.onOpendir = undefined;
@@ -280,3 +289,34 @@ it("preserves a DWARF directory enumeration failure and binds the cleanup lease 
     "Artifact cleanup remains incomplete",
   );
 });
+
+it.each([1, 2])(
+  "preserves the caller abort reason when member read succeeds, close attempt %i cancels, and both close attempts fail",
+  async (cancelAttempt) => {
+    const fixture = await admissionFixture();
+    const resources = new ArtifactResourceScope();
+    const controller = new AbortController();
+    const abortReason = new Error(`cancelled on member close ${cancelAttempt}`);
+    fault.openPath = fixture.member;
+    fault.memberCloseFailure = errno("EIO");
+    fault.onMemberClose = (attempt) => {
+      if (attempt === cancelAttempt) controller.abort(abortReason);
+    };
+    const resolved = await parseBinaryTarget(fixture.target, {
+      dsymPath: fixture.dsymPath,
+      resources,
+      signal: controller.signal,
+    });
+    expect(resolved.ok).toBe(false);
+    if (resolved.ok) return;
+    expect(resolved.error).toBeInstanceOf(BinaryTargetError);
+    expect(resolved.error.cleanupPrimary).toBeInstanceOf(
+      AnalysisCancelledError,
+    );
+    expect(resolved.error.cleanupPrimary?.cause).toBe(abortReason);
+    expect(resolved.error.cleanupIncomplete).toBe(true);
+    fault.memberCloseFailure = undefined;
+    await resources.close();
+    expect(resolved.error.cleanupIncomplete).toBe(false);
+  },
+);

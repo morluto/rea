@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { ok, type Result } from "./result.js";
 import {
   debugCompanionMatches,
+  matchMachOCompanionEntries,
   readMachoUuidEntries,
 } from "./machoDebugCompanion.js";
 
@@ -469,6 +470,51 @@ describe("debug companion UUID matching", () => {
         companionUuids: ["88888888-8888-8888-8888-888888888888", uuid],
       }),
     ).toEqual({ ok: true, value: { uuid } });
+  });
+});
+
+describe("matchMachOCompanionEntries", () => {
+  const uuid = "A1B2C3D4-E5F6-0789-ABCD-EF0123456789";
+  const other = "88888888-8888-8888-8888-888888888888";
+  const selected = { cpuType: 0x0100000c, cpuSubtypeBase: 0, uuid };
+
+  it("matches a unique slice for the selected CPU type and base subtype", () => {
+    expect(
+      matchMachOCompanionEntries(selected, [
+        { cpuType: 0x0100000c, cpuSubtypeBase: 2, uuid: other },
+        { cpuType: 0x0100000c, cpuSubtypeBase: 0, uuid },
+      ]),
+    ).toEqual({ ok: true, value: { status: "matched", uuid } });
+  });
+
+  it.each([
+    [other, uuid],
+    [uuid, other],
+    [null, uuid],
+    [uuid, uuid],
+  ])(
+    "reports ambiguous-slice when duplicate applicable slices (%s, %s) claim the target UUID",
+    (first, second) => {
+      expect(
+        matchMachOCompanionEntries(selected, [
+          { cpuType: 0x0100000c, cpuSubtypeBase: 0, uuid: first },
+          { cpuType: 0x0100000c, cpuSubtypeBase: 0, uuid: second },
+        ]),
+      ).toEqual({ ok: true, value: { status: "ambiguous-slice" } });
+    },
+  );
+
+  it("reports no-match when duplicate applicable slices contain only foreign UUIDs", () => {
+    expect(
+      matchMachOCompanionEntries(selected, [
+        { cpuType: 0x0100000c, cpuSubtypeBase: 0, uuid: other },
+        {
+          cpuType: 0x0100000c,
+          cpuSubtypeBase: 0,
+          uuid: "99999999-9999-9999-9999-999999999999",
+        },
+      ]),
+    ).toEqual({ ok: true, value: { status: "no-match" } });
   });
 });
 

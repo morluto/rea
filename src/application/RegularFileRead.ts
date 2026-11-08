@@ -39,16 +39,27 @@ export class RetainedRegularFileCleanupFailure<
     { readonly kind: "lease" }
   >;
   readonly cleanupLease: AnalysisCleanupLease;
-  constructor(failure: RegularFileCleanupFailure<Value>) {
+  constructor(
+    failure: RegularFileCleanupFailure<Value>,
+    existing?: Pick<
+      RetainedRegularFileCleanupFailure<Value>,
+      "cleanupOwner" | "cleanupLease"
+    >,
+  ) {
     super(failure);
+    const retained =
+      existing ??
+      (failure instanceof RetainedRegularFileCleanupFailure
+        ? failure
+        : undefined);
     this.cleanupLease =
-      failure instanceof RetainedRegularFileCleanupFailure
-        ? failure.cleanupLease
-        : new AnalysisCleanupLease(() => failure.owner.close(), [failure.path]);
-    this.cleanupOwner =
-      failure instanceof RetainedRegularFileCleanupFailure
-        ? failure.cleanupOwner
-        : { kind: "lease", resource: failure.path, lease: this.cleanupLease };
+      retained?.cleanupLease ??
+      new AnalysisCleanupLease(() => failure.owner.close(), [failure.path]);
+    this.cleanupOwner = retained?.cleanupOwner ?? {
+      kind: "lease",
+      resource: failure.path,
+      lease: this.cleanupLease,
+    };
   }
 }
 
@@ -122,10 +133,22 @@ export const retryRegularFileCleanup = async <Value>(
       : new RetainedRegularFileCleanupFailure(failure);
   const released = await resources.release(retained.cleanupOwner);
   if (released.kind === "released") return { outcome };
+  const finalFailure =
+    retained.outcome.kind === "completed" &&
+    retained.completionCancellation === undefined &&
+    signal?.aborted === true
+      ? new RetainedRegularFileCleanupFailure(
+          new RegularFileCleanupFailure({
+            ...retained,
+            completionCancellation: { reason: signal.reason },
+          }),
+          retained,
+        )
+      : retained;
   return {
     outcome,
     cleanupLease: released.lease,
-    failure: retained,
+    failure: finalFailure,
     cleanup: {
       reason: `${failureMessage(failure.cleanupCause)}; retry: ${failureMessage(released.cause)}`,
       resources: [failure.path],

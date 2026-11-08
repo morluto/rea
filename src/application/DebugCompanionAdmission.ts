@@ -23,8 +23,8 @@ import type {
 import { BinaryTargetError } from "../domain/configurationErrors.js";
 import type { JsonValue } from "../domain/jsonValue.js";
 import {
-  debugCompanionMatches,
   machoUuidReads,
+  matchMachOCompanionEntries,
   usableMachOUuid,
   type MachOImageUuid,
 } from "../domain/machoDebugCompanion.js";
@@ -45,7 +45,10 @@ import {
   absoluteCallerPath,
   appendCallerPath,
 } from "../filesystem/callerPath.js";
-import { MACHO_ARCHITECTURE_POLICIES } from "../native/MachoArchitectureSelection.js";
+import {
+  MACHO_ARCHITECTURE_POLICIES,
+  machoSubtypeRank,
+} from "../native/MachoArchitectureSelection.js";
 import {
   RetainedRegularFileCleanupFailure,
   retryRegularFileCleanup,
@@ -111,6 +114,7 @@ interface SelectedSliceUuid {
 interface AdmissionState extends TraversalContext {
   readonly dsymPath: string;
   readonly targetPath: string;
+  readonly architecture: BinaryArchitecture;
   readonly resources: ArtifactResourceScope | undefined;
   readonly digestedIdentities: Map<string, string>;
   digestBudgetBytes: number;
@@ -588,11 +592,38 @@ const selectTargetSliceUuid = async (
         );
   if (!targetEntries.ok) return err(targetEntries.error);
   const policy = MACHO_ARCHITECTURE_POLICIES[input.architecture];
-  for (const { cpuType, cpuSubtypeBase, uuid } of targetEntries.value) {
-    if (policy === undefined || cpuType !== policy.cpuType) continue;
-    if (!usableMachOUuid(uuid)) break;
-    return ok({ cpuType, cpuSubtypeBase, uuid });
+  let best: SliceUuidEntry | undefined;
+  let bestRank = Number.POSITIVE_INFINITY;
+  let ambiguous = false;
+  if (policy !== undefined) {
+    for (const entry of targetEntries.value) {
+      if (entry.cpuType !== policy.cpuType) continue;
+      const rank = machoSubtypeRank(policy, entry.cpuSubtypeBase);
+      if (best !== undefined && rank >= bestRank) {
+        if (rank === bestRank && entry.cpuSubtypeBase === best.cpuSubtypeBase)
+          ambiguous = true;
+        continue;
+      }
+      best = entry;
+      bestRank = rank;
+      ambiguous = false;
+    }
   }
+  if (ambiguous)
+    return err({
+      reason: `the target image declares ambiguous FAT slices for ${input.architecture}`,
+      diagnostics: {
+        dsym_path: state.dsymPath,
+        architecture: input.architecture,
+        rejection: "ambiguous_target_slice",
+      },
+    });
+  if (best !== undefined && usableMachOUuid(best.uuid))
+    return ok({
+      cpuType: best.cpuType,
+      cpuSubtypeBase: best.cpuSubtypeBase,
+      uuid: best.uuid,
+    });
   return err({
     reason: `the target image declares no usable LC_UUID for the selected ${input.architecture} slice`,
     diagnostics: {
@@ -655,16 +686,11 @@ const normalizeMemberCleanupFailure = (
     }
   }
   return new RegularFileCleanupFailure({
-    path: failure.path,
-    owner: failure.owner,
-    cleanupCause: failure.cleanupCause,
+    ...failure,
     outcome:
       primary === undefined
         ? { kind: "completed", value: undefined }
         : { kind: "failed", cause: primary },
-    ...(failure.operationFailure === undefined
-      ? {}
-      : { operationFailure: failure.operationFailure }),
   });
 };
 
@@ -736,18 +762,19 @@ const inspectMemberHandle = async (
     return memberEntries.error.kind === "resource-limit"
       ? err(memberEntries.error)
       : ok(null);
-  const matched = debugCompanionMatches({
-    executableUuids: [selected.uuid],
-    companionUuids: memberEntries.value
-      .filter(
-        ({ cpuType, cpuSubtypeBase }) =>
-          cpuType === selected.cpuType &&
-          cpuSubtypeBase === selected.cpuSubtypeBase,
-      )
-      .map(({ uuid }) => uuid)
-      .filter((uuid): uuid is string => uuid !== null),
-  });
-  if (!matched.ok) return ok(null);
+  const matched = matchMachOCompanionEntries(selected, memberEntries.value);
+  if (!matched.ok || matched.value.status === "no-match") return ok(null);
+  if (matched.value.status === "ambiguous-slice")
+    return err({
+      reason: `dsym DWARF member declares duplicate slices for the selected ${state.architecture} CPU identity, leaving the matching slice ambiguous: ${memberPath}`,
+      diagnostics: {
+        dsym_path: state.dsymPath,
+        member_path: memberPath,
+        architecture: state.architecture,
+        target_uuid: selected.uuid,
+        rejection: "ambiguous_member_slice",
+      },
+    });
   if (initial.size > MEMBER_SIZE_LIMIT_BYTES)
     return err(memberSizeLimit(memberPath, initial.size));
   const identityKey = `${String(initial.dev)}:${String(initial.ino)}:${String(initial.size)}`;
@@ -834,6 +861,7 @@ export const admitDebugCompanion = async (input: {
   const state: AdmissionState = {
     dsymPath: input.dsymPath,
     targetPath: input.targetPath ?? input.dsymPath,
+    architecture: input.architecture,
     resources: input.resources,
     signal: input.signal,
     ledger: { spent: 0 },

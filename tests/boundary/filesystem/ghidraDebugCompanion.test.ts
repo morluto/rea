@@ -644,3 +644,141 @@ it("clamps initial prefix reads to the remaining traversal budget and does not d
     await straddledHandle.close();
   }
 });
+
+const fatContainer = (
+  slices: readonly {
+    readonly cpuType: number;
+    readonly cpuSubtype: number;
+    readonly uuid: string;
+  }[],
+): Buffer => {
+  const firstOffset = 4096;
+  const stride = 4096;
+  const total = firstOffset + slices.length * stride;
+  const bytes = Buffer.alloc(total);
+  bytes.writeUInt32BE(0xcafebabe, 0);
+  bytes.writeUInt32BE(slices.length, 4);
+  slices.forEach((slice, index) => {
+    const entry = 8 + index * 20;
+    const offset = firstOffset + index * stride;
+    bytes.writeUInt32BE(slice.cpuType, entry);
+    bytes.writeUInt32BE(slice.cpuSubtype, entry + 4);
+    bytes.writeUInt32BE(offset, entry + 8);
+    bytes.writeUInt32BE(56, entry + 12);
+    bytes.writeUInt32BE(12, entry + 16);
+    bytes.writeUInt32LE(0xfeedfacf, offset);
+    bytes.writeUInt32LE(slice.cpuType, offset + 4);
+    bytes.writeUInt32LE(slice.cpuSubtype, offset + 8);
+    bytes.writeUInt32LE(2, offset + 12);
+    bytes.writeUInt32LE(1, offset + 16);
+    bytes.writeUInt32LE(24, offset + 20);
+    bytes.writeUInt32LE(0x1b, offset + 32);
+    bytes.writeUInt32LE(24, offset + 36);
+    Buffer.from(slice.uuid.replaceAll("-", ""), "hex").copy(bytes, offset + 40);
+  });
+  return bytes;
+};
+
+it("rejects a universal DWARF member with duplicate applicable slices claiming the target UUID", async () => {
+  const root = await createTestTempDirectory("rea-dsym-ambiguous-member-");
+  const targetUuid = "11111111-2222-3333-4444-555555555555";
+  const otherUuid = "88888888-8888-8888-8888-888888888888";
+  const target = join(root, "target");
+  const thinImage = uuidImage(targetUuid);
+  thinImage.writeUInt32LE(3, 8);
+  await writeFile(target, thinImage);
+
+  const dsymPath = join(root, "selected.dSYM");
+  const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
+  await mkdir(dwarfDir, { recursive: true });
+  const ambiguousMember = join(dwarfDir, "a-universal");
+  await writeFile(
+    ambiguousMember,
+    fatContainer([
+      { cpuType: 0x01000007, cpuSubtype: 3, uuid: otherUuid },
+      { cpuType: 0x01000007, cpuSubtype: 0x80000003, uuid: targetUuid },
+    ]),
+  );
+  await writeFile(join(dwarfDir, "z-thin"), thinImage);
+
+  const rejected = await parseBinaryTarget(target, { dsymPath });
+  expect(rejected.ok).toBe(false);
+  if (rejected.ok) return;
+  expect(projectAnalysisError(rejected.error)).toMatchObject({
+    code: "invalid_request",
+    category: "invalid_input",
+    details: {
+      path: target,
+      constraint: "debug_companion_rejected",
+      diagnostics: {
+        dsym_path: dsymPath,
+        member_path: ambiguousMember,
+        architecture: "x86_64",
+        target_uuid: targetUuid,
+        rejection: "ambiguous_member_slice",
+      },
+    },
+  });
+});
+
+it("prefers ranked subtypes and rejects duplicate target slices in direct admitDebugCompanion calls", async () => {
+  const root = await createTestTempDirectory("rea-dsym-direct-target-slice-");
+  const arm64Uuid = "11111111-2222-3333-4444-555555555555";
+  const arm64eUuid = "22222222-2222-3333-4444-555555555555";
+  const dsymPath = join(root, "selected.dSYM");
+  const dwarfDir = join(dsymPath, "Contents", "Resources", "DWARF");
+  await mkdir(dwarfDir, { recursive: true });
+  const arm64Member = uuidImage(arm64Uuid);
+  arm64Member.writeUInt32LE(0x0100000c, 4);
+  arm64Member.writeUInt32LE(0, 8);
+  await writeFile(join(dwarfDir, "member"), arm64Member);
+
+  const rankedTarget = join(root, "ranked-target");
+  const rankedBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 2, uuid: arm64eUuid },
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+  ]);
+  await writeFile(rankedTarget, rankedBytes);
+  const rankedHandle = await open(rankedTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: rankedHandle,
+        targetSize: rankedBytes.length,
+        architecture: "arm64",
+      }),
+    ).toMatchObject({ ok: true, value: { uuid: arm64Uuid } });
+  } finally {
+    await rankedHandle.close();
+  }
+
+  const ambiguousTarget = join(root, "ambiguous-target");
+  const ambiguousBytes = fatContainer([
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64eUuid },
+    { cpuType: 0x0100000c, cpuSubtype: 0, uuid: arm64Uuid },
+  ]);
+  await writeFile(ambiguousTarget, ambiguousBytes);
+  const ambiguousHandle = await open(ambiguousTarget, "r");
+  try {
+    expect(
+      await admitDebugCompanion({
+        dsymPath,
+        targetHandle: ambiguousHandle,
+        targetSize: ambiguousBytes.length,
+        architecture: "arm64",
+      }),
+    ).toMatchObject({
+      ok: false,
+      error: {
+        diagnostics: {
+          dsym_path: dsymPath,
+          architecture: "arm64",
+          rejection: "ambiguous_target_slice",
+        },
+      },
+    });
+  } finally {
+    await ambiguousHandle.close();
+  }
+});

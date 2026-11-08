@@ -300,7 +300,7 @@ export const documentationSections = [
       },
       {
         text: "Mach-O dSYM companion",
-        source: "dsym.md",
+        source: "providers/dsym.md",
         route: "/dsym",
       },
       {

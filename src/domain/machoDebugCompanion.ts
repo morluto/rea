@@ -201,3 +201,52 @@ export const debugCompanionMatches = (input: {
     "the debug companion's UUID does not match the executable's LC_UUID",
   );
 };
+
+export type MachOCompanionSliceMatch =
+  | { readonly status: "matched"; readonly uuid: string }
+  | { readonly status: "no-match" }
+  | { readonly status: "ambiguous-slice" };
+
+/**
+ * Match a selected target slice against a companion image's slice entries. A
+ * universal companion that repeats the selected CPU type and base subtype
+ * cannot identify which slice a whole-file consumer will load when one of those
+ * slices carries the target UUID, so its applicability is ambiguous rather than
+ * aligned or absent.
+ */
+export const matchMachOCompanionEntries = (
+  selected: {
+    readonly cpuType: number;
+    readonly cpuSubtypeBase: number;
+    readonly uuid: string;
+  },
+  companionEntries: readonly MachOUuidEntry[],
+): Result<MachOCompanionSliceMatch, string> => {
+  if (!usableMachOUuid(selected.uuid))
+    return err("the executable declares no LC_UUID to match against");
+  const applicable = companionEntries.filter(
+    ({ cpuType, cpuSubtypeBase }) =>
+      cpuType === selected.cpuType &&
+      cpuSubtypeBase === selected.cpuSubtypeBase,
+  );
+  if (applicable.length === 0) return ok({ status: "no-match" });
+  if (applicable.length > 1) {
+    const claimsTarget = applicable.some(
+      ({ uuid }) => usableMachOUuid(uuid) && uuid === selected.uuid,
+    );
+    return ok(
+      claimsTarget ? { status: "ambiguous-slice" } : { status: "no-match" },
+    );
+  }
+  const matched = debugCompanionMatches({
+    executableUuids: [selected.uuid],
+    companionUuids: applicable
+      .map(({ uuid }) => uuid)
+      .filter((uuid): uuid is string => uuid !== null),
+  });
+  return ok(
+    matched.ok
+      ? { status: "matched", uuid: matched.value.uuid }
+      : { status: "no-match" },
+  );
+};

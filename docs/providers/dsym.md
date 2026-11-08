@@ -67,10 +67,11 @@ flow.
 - The selected architecture slice of a universal target must be covered by a
   matching member UUID in the bundle; per-slice selection inside the bundle is
   not exposed.
-- A member UUID matches only when it is declared by a member image or slice
-  with the selected target slice's own CPU type and base CPU subtype, so a
+- A member UUID matches only when it is declared by a single member image or
+  slice with the selected target slice's own CPU type and base CPU subtype, so a
   UUID repeated under another CPU (for example an `arm64e` or `x86_64h`
-  sibling) is never staged for the selected slice.
+  sibling) is never staged for the selected slice, and a universal member that
+  repeats the selected CPU identity is rejected as ambiguous rather than staged.
 - Admission examines at most 16 DWARF directory entries, including entries
   that are not regular files. The matched member may be at most 1 GiB, and at
   most 1 GiB is digested across all matching members; hard links and copies
