@@ -748,6 +748,88 @@ it("orders a WITHOUT ROWID table by its primary key, including DESC direction an
   ]);
 });
 
+it("orders by the first rowid spelling the table leaves unshadowed", async () => {
+  // Declaring `rowid` makes that spelling resolve to the stored column, so
+  // ORDER BY rowid would sort by a non-unique value instead of the row id.
+  const path =
+    await createDatabase(`CREATE TABLE shadowed(rowid TEXT, value TEXT);
+    INSERT INTO shadowed(rowid, value) VALUES ('z', 'first'), ('a', 'second'), ('z', 'third');`);
+  const first = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+  });
+  expect(first.rows).toMatchObject({
+    order: "rowid",
+    row_offset: 0,
+    truncated: true,
+    next_row_offset: 2,
+  });
+  expect(
+    first.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([
+    ["z", "first"],
+    ["a", "second"],
+  ]);
+  const second = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "shadowed",
+    row_limit: 2,
+    row_offset: first.rows?.next_row_offset ?? 0,
+  });
+  // The page continues in insertion order rather than re-sorting by the text
+  // column that shadows `rowid`.
+  expect(
+    second.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["z", "third"]]);
+});
+
+it("does not publish a next offset the row-offset rule would refuse", async () => {
+  const path = await createDatabase(
+    `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);
+     INSERT INTO shadowed VALUES ('a', 'a', 'a'), ('b', 'b', 'b');`,
+  );
+  expect(
+    inspectSqliteDatabaseSnapshot(path, {
+      path,
+      table: "shadowed",
+      row_limit: 1,
+    }).rows,
+  ).toMatchObject({
+    order: "unspecified",
+    truncated: true,
+    next_row_offset: null,
+  });
+});
+
+it("discovers a WITHOUT ROWID primary key the inventory projection omits", async () => {
+  const path = await createDatabase(`
+    CREATE TABLE keyed(k INTEGER, label TEXT, PRIMARY KEY(k)) WITHOUT ROWID;
+    INSERT INTO keyed VALUES (2, 'b'), (1, 'a');`);
+  const result = inspectSqliteDatabaseSnapshot(path, {
+    path,
+    table: "keyed",
+    schema_scope: "inventory",
+    columns: ["label"],
+    row_limit: 1,
+  });
+  expect(result.rows).toMatchObject({
+    order: "primary_key",
+    columns: ["label"],
+    truncated: true,
+    next_row_offset: 1,
+  });
+  expect(
+    result.rows?.values.map((row) =>
+      row.map((cell) => ("value" in cell ? cell.value : cell.type)),
+    ),
+  ).toEqual([["a"]]);
+});
+
 it("refuses a row offset when the table shadows rowid and declares no primary key", async () => {
   const path = await createDatabase(
     `CREATE TABLE shadowed(rowid TEXT, _rowid_ TEXT, oid TEXT);

@@ -227,7 +227,7 @@ export const sqliteDatabaseSchema = z
         next_row_offset: nonnegative
           .nullable()
           .describe(
-            "Offset to request for the following page; null when the sampled window reaches the end. Pages compose only while artifact.sha256 and wal.sha256 match",
+            "Offset to request for the following page; null when the sampled window reaches the end or the table has no stated order. Pages compose only while artifact.sha256 and wal.sha256 match",
           ),
       })
       .nullable(),
