@@ -6,7 +6,6 @@ import {
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import {
   fixedAllowanceOptions,
-  fixedAllowanceRemediation,
   type FixedAllowanceKind,
 } from "./fixedAllowanceRemediation.js";
 
@@ -26,6 +25,21 @@ const forbidden = {
   capture: [/available host memory\. Retry/u, /live output may change/u],
   live: [/available host memory\. Retry/u, /unchanged request/u],
   work: [/worker CPU limits and observed signal/u],
+} as const;
+
+const required = {
+  parser:
+    /worker memory limits.*host memory do not raise.*complete input.*unchanged request.*fails/iu,
+  count: /fixed count.*waiting.*does not raise.*unchanged request.*fails/iu,
+  bytes:
+    /fixed byte allowance.*waiting.*does not raise.*unchanged request.*fails/iu,
+  report:
+    /does not leave a completed report or Evidence record.*CLI JSON does not raise.*unchanged request.*fails/iu,
+  input: /complete artifact.*evidence-reply.*does not admit.*do not truncate/iu,
+  capture:
+    /fixed capture allowance.*host memory do not raise.*unchanged request.*fails/iu,
+  live: /fixed capture allowance.*host memory do not raise.*live output may change/iu,
+  work: /fixed work allowance.*CPU time do not raise.*complete artifact.*unchanged request.*fails/iu,
 } as const;
 
 describe("resource constraint recovery shape", () => {
@@ -106,20 +120,10 @@ describe("fixed allowance recovery", () => {
       );
       const projected = projectAnalysisError(error);
       expect(projected.retryable).toBe(false);
-      expect(projected.remediation.action).toBe(
-        fixedAllowanceRemediation(allowance, kind),
-      );
       expect(projected.remediation.action).toContain(allowance);
+      expect(projected.remediation.action).toMatch(required[kind]);
       for (const pattern of forbidden[kind])
         expect(projected.remediation.action).not.toMatch(pattern);
-      if (kind === "live")
-        expect(projected.remediation.action).toContain(
-          "live output may change between requests",
-        );
-      if (kind === "capture")
-        expect(projected.remediation.action).toContain(
-          "Repeating the unchanged request fails the same way.",
-        );
     },
   );
 });

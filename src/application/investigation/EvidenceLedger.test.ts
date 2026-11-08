@@ -3,9 +3,14 @@ import { describe, expect, it } from "vitest";
 import type { BinaryTarget } from "../../domain/binaryTargetTypes.js";
 import {
   createEvidence,
+  MAX_EVIDENCE_JSON_DEPTH,
   withEvidenceCallerInputPath,
 } from "../../domain/evidence.js";
-import { createEvidenceBundle } from "../../domain/evidenceBundle.js";
+import { createAnalysisProfile } from "../../domain/analysisProfile.js";
+import {
+  createEvidenceBundle,
+  MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
+} from "../../domain/evidenceBundle.js";
 import { recordUnknownInputSchema } from "../../domain/residualUnknown.js";
 import { projectAnalysisError } from "../../domain/analysisErrorProjection.js";
 import { EvidenceLedger } from "./EvidenceLedger.js";
@@ -94,39 +99,77 @@ it("replaces auxiliary caller spelling on duplicate import and ignores record ke
 });
 
 it.each(["record", "import"] as const)(
-  "authenticates ceiling-depth mutable Evidence through %s",
+  "authenticates independently bounded mutable Evidence through %s",
   (operation) => {
-    let result: JsonValue = "leaf";
-    for (let depth = 0; depth < MAX_JSON_DEPTH; depth++) result = { result };
-    const evidence = createEvidence(TARGET, PROVIDER, {
-      operation: "health",
-      parameters: {},
-      result,
-    });
-    expect(Object.isFrozen(evidence)).toBe(false);
-    const ledger = new EvidenceLedger();
-    const admitted =
-      operation === "record"
-        ? ledger.record(evidence)
-        : ledger.import(createEvidenceBundle([evidence]));
-    if (!admitted.ok) throw admitted.error;
-    expect(ledger.statistics().evidenceRecords).toBe(1);
-    expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
-      JSON.stringify(evidence),
-    );
-    const overDeep = {
-      ...evidence,
-      normalized_result: { result: evidence.normalized_result },
+    const nested = (depth: number): Record<string, JsonValue> => {
+      let result: JsonValue = "leaf";
+      for (let level = 0; level < depth; level++) result = { result };
+      return result as Record<string, JsonValue>;
     };
-    const rejected =
-      operation === "record"
-        ? ledger.record(overDeep)
-        : ledger.import(createEvidenceBundle([overDeep]));
-    expect(rejected).toMatchObject({
-      ok: false,
-      error: { _tag: "EvidenceIntegrityError" },
-    });
-    expect(ledger.statistics().evidenceRecords).toBe(1);
+    for (const field of [
+      "normalized_result",
+      "raw_result",
+      "parameters",
+      "profile",
+    ] as const) {
+      for (const depth of [999, MAX_JSON_DEPTH]) {
+        const result = nested(depth);
+        const evidence = createEvidence(TARGET, PROVIDER, {
+          operation: "health",
+          parameters: field === "parameters" ? result : {},
+          result: field === "normalized_result" ? result : "small",
+          rawResult: field === "raw_result" ? result : null,
+          ...(field === "profile"
+            ? { analysisProfile: createAnalysisProfile(PROVIDER, result) }
+            : {}),
+        });
+        expect(Object.isFrozen(evidence)).toBe(false);
+        const ledger = new EvidenceLedger();
+        const admitted =
+          operation === "record"
+            ? ledger.record(evidence)
+            : ledger.import(createEvidenceBundle([evidence]));
+        if (!admitted.ok) throw admitted.error;
+        const before = ledger.statistics();
+        const overDeep =
+          field === "profile"
+            ? {
+                ...evidence,
+                analysis_profile: {
+                  ...evidence.analysis_profile!,
+                  parameters: nested(MAX_JSON_DEPTH + 1),
+                },
+              }
+            : { ...evidence, [field]: nested(MAX_JSON_DEPTH + 1) };
+        const rejected =
+          operation === "record"
+            ? ledger.record(overDeep)
+            : ledger.import(createEvidenceBundle([overDeep]));
+        expect(rejected).toMatchObject({
+          ok: false,
+          error: { _tag: "EvidenceIntegrityError" },
+        });
+        if (rejected.ok) throw new Error("Expected over-depth refusal");
+        if (field === "profile")
+          expect(rejected.error.userMessage).toContain(
+            `maximum nesting depth of ${operation === "record" ? MAX_EVIDENCE_JSON_DEPTH : MAX_EVIDENCE_BUNDLE_JSON_DEPTH}`,
+          );
+        else
+          expect(rejected.error.cause).toMatchObject({
+            issues: expect.arrayContaining([
+              expect.objectContaining({
+                message: expect.stringContaining(
+                  "maximum nesting depth of 1000",
+                ),
+              }),
+            ]),
+          });
+        expect(ledger.statistics()).toEqual(before);
+        expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
+          JSON.stringify(evidence),
+        );
+      }
+    }
   },
 );
 

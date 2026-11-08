@@ -47,6 +47,10 @@ import {
 } from "./analysisErrorBase.js";
 import type { AnalysisErrorProjection } from "./analysisErrorProjection.js";
 
+/** Explain how to preserve an observation the session could not retain. */
+export const UNRETAINED_EVIDENCE_EXPORT_GUIDANCE =
+  "Unretained Evidence is not included in the exported investigation; if present in this response, save it separately.";
+
 /** File export when one MCP frame cannot carry the retained session bundle. */
 export const MCP_TRANSPORT_EVIDENCE_EXPORT =
   "Export complete retained session evidence through export_evidence_bundle to a caller-selected path, or use complete CLI JSON output. The connection remains usable.";
@@ -90,6 +94,11 @@ export const analysisErrorRemediationAction = (
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
+  if (
+    error instanceof AnalysisCapabilityUnavailableError &&
+    error.fallbackRemediationAction !== undefined
+  )
+    return error.fallbackRemediationAction;
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return error.published.path === undefined
       ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."

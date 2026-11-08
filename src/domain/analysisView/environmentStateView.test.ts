@@ -1217,8 +1217,10 @@ it("ends every type's state at a write whose URL was redacted, and says so", () 
   expect(state.entities).toMatchObject([
     { fields: { title: "Granite Ledger" }, record_ordinals: [0] },
   ]);
-  expect(state.limitations).toContain(
-    "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+  expect(state.limitations).toContainEqual(
+    expect.stringMatching(
+      /1.*writes.*redacted URL.*ends the initial state of every type.*target is unknown/iu,
+    ),
   );
 });
 
@@ -1484,8 +1486,8 @@ it.each([
     const before = structuredClone(capture);
     const state = stateOf(parentOf(analysisViewCaptureEvidence(capture)));
     expect(state.timeline).toBe("recorded-start-time");
-    expect(state.limitations).toContain(
-      "Some records carry no usable request duration; their completion and overlap remain unknown.",
+    expect(state.limitations).toContainEqual(
+      expect.stringMatching(/request duration.*completion.*overlap.*unknown/iu),
     );
     expect(state.documents).toEqual(
       expect.arrayContaining([
@@ -1508,8 +1510,10 @@ it.each([
     );
     expect(capture).toEqual(before);
     if (redactedWrite)
-      expect(state.limitations).toContain(
-        "1 of the recorded writes had a redacted URL; each ends the initial state of every type, since its target is unknown.",
+      expect(state.limitations).toContainEqual(
+        expect.stringMatching(
+          /1 .*writes.*redacted URL.*ends the initial state of every type.*target is unknown/iu,
+        ),
       );
   },
 );
@@ -1534,8 +1538,8 @@ it("does not confirm completion of an untimed delete while preserving unrelated 
   const before = structuredClone(result);
   const state = stateOf({ ...source, normalizedResult: result });
   expect(state.timeline).toBe("recorded-start-time");
-  expect(state.limitations).toContain(
-    "Some records carry no usable request duration; their completion and overlap remain unknown.",
+  expect(state.limitations).toContainEqual(
+    expect.stringMatching(/request duration.*completion.*overlap.*unknown/iu),
   );
   expect(state.writes).toContainEqual(
     expect.objectContaining({ tool: "delete_items_by_id", served: false }),

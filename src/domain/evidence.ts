@@ -1,4 +1,4 @@
-import { isDeepStrictEqual } from "node:util";
+import { isDeepStrictEqual, types } from "node:util";
 import { basename } from "node:path";
 import { z } from "zod";
 
@@ -34,11 +34,45 @@ import {
   type RelationshipCoverage,
 } from "./relationshipCoverage.js";
 
-/** One record envelope around independently bounded JSON payloads. */
-export const MAX_EVIDENCE_JSON_DEPTH = MAX_JSON_DEPTH + 1;
+/** Record and analysis-profile envelopes around independently bounded JSON payloads. */
+export const MAX_EVIDENCE_JSON_DEPTH = MAX_JSON_DEPTH + 2;
+
+/** Check independently bounded payloads without cloning the borrowed Evidence envelope. */
+export const evidencePayloadValidationIssue = (
+  input: unknown,
+): string | undefined => {
+  for (const field of [
+    "parameters",
+    "raw_result",
+    "normalized_result",
+  ] as const) {
+    const issue = jsonValueValidationIssue(evidenceDataProperty(input, field));
+    if (issue !== undefined) return `${field}: ${issue}`;
+  }
+  const profile = evidenceDataProperty(input, "analysis_profile");
+  if (profile === null) return undefined;
+  const issue = jsonValueValidationIssue(
+    evidenceDataProperty(profile, "parameters"),
+  );
+  return issue === undefined
+    ? undefined
+    : `analysis_profile.parameters: ${issue}`;
+};
+
+/** Invalid containers/accessors yield undefined, which is not an admissible JSON payload. */
+const evidenceDataProperty = (input: unknown, key: string): unknown => {
+  if (typeof input !== "object" || input === null || types.isProxy(input))
+    return undefined;
+  const property = Object.getOwnPropertyDescriptor(input, key);
+  return property !== undefined && Object.hasOwn(property, "value")
+    ? property.value
+    : undefined;
+};
 
 /** Predicate shared by ordinary provider analysis observations. */
 export const ANALYSIS_EVIDENCE_PREDICATE = "rea.analysis";
+export const MISSING_EVIDENCE_SUBJECT_LIMITATION =
+  "Artifact identity is unavailable for this observation.";
 
 /** Provider identity schema shared by evidence-bearing persistence formats. */
 export const providerSchema = z.strictObject({
@@ -458,7 +492,8 @@ export function* createImmutableEvidenceSteps(
   });
 }
 
-const normalizeEvidenceObservation = (
+/** Borrow input collections for admission; callers account for a missing-subject limitation separately. */
+export const evidenceEnvelopeForAdmission = (
   target: EvidenceSubjectTarget | BinaryTarget | undefined,
   provider: EvidenceProvider,
   observation: EvidenceObservationInput,
@@ -473,15 +508,9 @@ const normalizeEvidenceObservation = (
           architecture: target.architecture ?? null,
           local_path: target.path,
         };
-  const semantic = {
-    subject:
-      subject === null
-        ? null
-        : {
-            digest: subject.digest,
-            format: subject.format,
-            architecture: subject.architecture,
-          },
+  return {
+    evidence_id: `ev_${"0".repeat(64)}`,
+    subject,
     provider: {
       id: provider.id,
       name: provider.name,
@@ -496,21 +525,32 @@ const normalizeEvidenceObservation = (
     confidence: observation.confidence ?? "observed",
     authority: observation.authority ?? "shipped-artifact",
     environment: observation.environment ?? null,
-    limitations: [
-      ...(target === undefined
-        ? [
-            observation.subjectUnavailableReason ??
-              "Artifact identity is unavailable for this observation.",
-          ]
-        : []),
-      ...(observation.limitations ?? []),
-    ],
+    limitations: observation.limitations ?? [],
     ...(observation.relationshipCoverage === undefined
       ? { relationship_coverage: null }
       : { relationship_coverage: observation.relationshipCoverage }),
-    locations: [...(observation.locations ?? [])],
-    evidence_links: [...(observation.evidenceLinks ?? [])],
+    locations: observation.locations ?? [],
+    evidence_links: observation.evidenceLinks ?? [],
   };
+};
+
+const normalizeEvidenceObservation = (
+  target: EvidenceSubjectTarget | BinaryTarget | undefined,
+  provider: EvidenceProvider,
+  observation: EvidenceObservationInput,
+) => {
+  const borrowed = evidenceEnvelopeForAdmission(target, provider, observation);
+  const envelope =
+    target === undefined
+      ? {
+          ...borrowed,
+          limitations: [
+            observation.subjectUnavailableReason ??
+              MISSING_EVIDENCE_SUBJECT_LIMITATION,
+            ...borrowed.limitations,
+          ],
+        }
+      : borrowed;
   const sharedResult =
     typeof observation.result === "object" &&
     observation.result !== null &&
@@ -518,11 +558,7 @@ const normalizeEvidenceObservation = (
   const selectedSchema = sharedResult
     ? evidenceSchema.safeExtend({ normalized_result: immutableResultSchema })
     : evidenceSchema;
-  const normalized = selectedSchema.parse({
-    ...semantic,
-    evidence_id: `ev_${"0".repeat(64)}`,
-    subject,
-  });
+  const normalized = selectedSchema.parse(envelope);
   // The envelope has already been parsed into an independent snapshot. Only
   // its derived identifier changes here; parsing again clones the full payload
   // and recomputes the same digest while the previous snapshot is still live.

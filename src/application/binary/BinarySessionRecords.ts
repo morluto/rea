@@ -126,6 +126,23 @@ export abstract class BinarySessionRecords {
     return recorded;
   }
 
+  admitRecoveryObservation(
+    input: unknown,
+    operation: string,
+    additional: {
+      readonly valueBytes: number;
+      readonly serializedUtf16Bytes: number;
+    },
+    maximumDepth?: number,
+  ): Result<void, AnalysisError> {
+    return this.#records.admitRecoveryObservation(
+      input,
+      operation,
+      additional,
+      maximumDepth,
+    );
+  }
+
   hasEvidence(evidenceId: string): boolean {
     return this.#records.hasEvidence(evidenceId);
   }
@@ -323,14 +340,16 @@ export abstract class BinarySessionRecords {
     >,
   ): AnalysisExecution | undefined {
     if (this.#snapshotInvalidated) return undefined;
-    return this.#snapshot.lookup(target, profile, operation, parameters);
+    return this.#snapshot.lookup(target, profile, operation, parameters, (id) =>
+      this.evidenceForAnalysis(id),
+    );
   }
 
   protected recordSnapshot(
     input: Parameters<AnalysisSnapshotCache["record"]>[0],
   ): void {
     if (this.#snapshotInvalidated) return;
-    this.#snapshot.record(input);
+    this.#snapshot.record(input, (id) => this.evidenceForAnalysis(id));
     this.#emitSnapshotChanged();
   }
 

@@ -294,6 +294,7 @@ it.each([true, false])(
       rejectDefault();
     }
     rejectDefault();
+    expect(jsonValueSchema.safeParse(value).success).toBe(false);
     expect(
       jsonValueValidationIssue(
         deepObject(MAX_JSON_DEPTH + 2),

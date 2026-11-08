@@ -19,6 +19,17 @@ export interface InvestigationRetentionPolicy {
   readonly availableAuthenticationBytes?: () => number;
 }
 
+/** Owner admission used before materializing a completed recovery record. */
+export type RecoveryAdmission = (
+  input: unknown,
+  operation: string,
+  additional: {
+    readonly valueBytes: number;
+    readonly serializedUtf16Bytes: number;
+  },
+  maximumDepth?: number,
+) => Result<void, AnalysisError>;
+
 /**
  * Reserve one retained representation, two authentication/canonical working
  * copies and one detached export/control representation from current V8 room.
@@ -42,6 +53,10 @@ export const admitInvestigationAuthentication = (
   input: unknown,
   operation: string,
   policy: InvestigationRetentionPolicy,
+  additional?: {
+    readonly valueBytes: number;
+    readonly serializedUtf16Bytes: number;
+  },
   maximumDepth = MAX_JSON_DEPTH,
 ): Result<void, AnalysisError> => {
   const issue = jsonValueValidationIssue(input, maximumDepth);
@@ -56,6 +71,7 @@ export const admitInvestigationAuthentication = (
     path: "investigation",
     description:
       "Insufficient live heap headroom to authenticate investigation records",
+    ...(additional === undefined ? {} : { additional }),
     ...(policy.availableAuthenticationBytes === undefined
       ? {}
       : { availableBytes: policy.availableAuthenticationBytes() }),

@@ -32,6 +32,7 @@ import { EvidenceLedger } from "../../../src/application/investigation/EvidenceL
 import { ArtifactResourceScope } from "../../../src/artifacts/ArtifactResourceScope.js";
 import { OwnedFileHandle } from "../../../src/filesystem/OwnedFileHandle.js";
 import { OwnedStagedOutput } from "../../../src/filesystem/OwnedStagedOutput.js";
+import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { projectAnalysisError } from "../../../src/domain/analysisErrorProjection.js";
 import {
   createEvidence,
@@ -39,12 +40,12 @@ import {
   withEvidenceCallerInputPath,
 } from "../../../src/domain/evidence.js";
 import { writeTextParts } from "../../../src/application/JsonFiles.js";
-import { JSON_BYTE_ORDER_MARK_MESSAGE } from "../../../src/application/Utf8JsonInput.js";
 import { failFileReadAfterAbort } from "../../support/failFileReadAfterAbort.js";
 import { holdFirstFileRead } from "../../support/holdFirstFileRead.js";
 import { JsonInputPhysicalReadFailure } from "../../../src/application/JsonInputFile.js";
 import {
   createEvidenceBundle,
+  MAX_EVIDENCE_BUNDLE_JSON_DEPTH,
   parseEvidenceBundle,
   serializeEvidenceBundle,
   DuplicateEvidenceRecordError,
@@ -77,42 +78,80 @@ const bundle = (result = true) =>
     ),
   ]);
 
-it("publishes and reimports a mutable bundle with ceiling-depth Evidence", async () => {
-  const root = await createTestTempDirectory("rea-deep-checkpoint-");
-  const path = join(root, "bundle.json");
-  let result: JsonValue = "leaf";
-  for (let depth = 0; depth < MAX_JSON_DEPTH; depth++) result = { result };
-  const evidence = createEvidence(
-    undefined,
-    { id: "fixture", name: "Fixture", version: "1" },
-    {
-      operation: "health",
-      parameters: {},
-      result,
-    },
-  );
-  const value = createEvidenceBundle([evidence]);
-  const published = await writeBundle(value, path, false);
-  if (!published.ok) throw published.error;
-  const original = await readFile(path);
-  const overDeep = createEvidenceBundle([
-    { ...evidence, normalized_result: { result: evidence.normalized_result } },
-  ]);
-  expect(await writeBundle(overDeep, path, true)).toMatchObject({
-    ok: false,
-    error: { _tag: "EvidenceIntegrityError" },
-  });
-  expect((await readFile(path)).equals(original)).toBe(true);
-  const loaded = await readEvidenceBundle(path);
-  if (!loaded.ok) throw loaded.error;
-  const ledger = new EvidenceLedger();
-  const imported = ledger.import(loaded.value);
-  if (!imported.ok) throw imported.error;
-  expect(imported.value.recordsAdded).toBe(1);
-  expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
-    JSON.stringify(evidence),
-  );
-});
+it.each(["normalized_result", "raw_result", "parameters", "profile"] as const)(
+  "publishes and reimports mutable Evidence with bounded %s",
+  async (field) => {
+    const root = await createTestTempDirectory("rea-deep-checkpoint-");
+    const provider = { id: "fixture", name: "Fixture", version: "1" };
+    const nested = (depth: number): Record<string, JsonValue> => {
+      let value: JsonValue = "leaf";
+      for (let level = 0; level < depth; level++) value = { result: value };
+      return value as Record<string, JsonValue>;
+    };
+    for (const depth of [999, MAX_JSON_DEPTH]) {
+      const path = join(root, `bundle-${depth}.json`);
+      const value = nested(depth);
+      const evidence = createEvidence(undefined, provider, {
+        operation: "health",
+        parameters: field === "parameters" ? value : {},
+        result: field === "normalized_result" ? value : "small",
+        rawResult: field === "raw_result" ? value : null,
+        ...(field === "profile"
+          ? { analysisProfile: createAnalysisProfile(provider, value) }
+          : {}),
+      });
+      const published = await writeBundle(
+        createEvidenceBundle([evidence]),
+        path,
+        false,
+      );
+      if (!published.ok) throw published.error;
+      const original = await readFile(path);
+      const badRecord =
+        field === "profile"
+          ? {
+              ...evidence,
+              analysis_profile: {
+                ...evidence.analysis_profile!,
+                parameters: nested(MAX_JSON_DEPTH + 1),
+              },
+            }
+          : { ...evidence, [field]: nested(MAX_JSON_DEPTH + 1) };
+      const rejected = await writeBundle(
+        createEvidenceBundle([badRecord]),
+        path,
+        true,
+      );
+      expect(rejected).toMatchObject({
+        ok: false,
+        error: { _tag: "EvidenceIntegrityError" },
+      });
+      if (rejected.ok) throw new Error("Expected over-depth refusal");
+      if (field === "profile")
+        expect(rejected.error.userMessage).toContain(
+          `maximum nesting depth of ${MAX_EVIDENCE_BUNDLE_JSON_DEPTH}`,
+        );
+      else
+        expect(rejected.error.cause).toMatchObject({
+          issues: expect.arrayContaining([
+            expect.objectContaining({
+              message: expect.stringContaining("maximum nesting depth of 1000"),
+            }),
+          ]),
+        });
+      expect((await readFile(path)).equals(original)).toBe(true);
+      const loaded = await readEvidenceBundle(path);
+      if (!loaded.ok) throw loaded.error;
+      const ledger = new EvidenceLedger();
+      const imported = ledger.import(loaded.value);
+      if (!imported.ok) throw imported.error;
+      expect(imported.value.recordsAdded).toBe(1);
+      expect(JSON.stringify(ledger.get(evidence.evidence_id))).toBe(
+        JSON.stringify(evidence),
+      );
+    }
+  },
+);
 
 it.each(["cycle", "accessor"] as const)(
   "rejects an unowned bundle containing a %s before estimating or publishing it",
@@ -386,13 +425,24 @@ it.each([0, 9 * 1024 * 1024])(
     if (result.ok) throw new Error("Expected strict JSON BOM rejection");
     expect(projectAnalysisError(result.error)).toMatchObject({
       code: "evidence_integrity_mismatch",
-      message: JSON_BYTE_ORDER_MARK_MESSAGE,
-      remediation: { action: JSON_BYTE_ORDER_MARK_MESSAGE },
+      message: expect.stringMatching(
+        /byte-order mark.*UTF-8 without a byte-order mark/iu,
+      ),
+      remediation: {
+        action: expect.stringMatching(
+          /byte-order mark.*UTF-8 without a byte-order mark/iu,
+        ),
+      },
       details: {
         path,
         reason: "invalid-json",
         content_issues: [
-          { reason: "invalid_format", message: JSON_BYTE_ORDER_MARK_MESSAGE },
+          {
+            reason: "invalid_format",
+            message: expect.stringMatching(
+              /byte-order mark.*UTF-8 without a byte-order mark/iu,
+            ),
+          },
         ],
       },
     });

@@ -91,7 +91,6 @@ it("discards unverified desktop byte facts when the admitted root changes during
   );
   try {
     const result = await service.inspect({ path: original });
-    expect(result.ok).toBe(false);
     if (result.ok) throw new Error("Expected root identity failure");
     const report = desktopApplicationSchema.parse(
       parseEvidence(result.error.partialObservation).normalized_result,
