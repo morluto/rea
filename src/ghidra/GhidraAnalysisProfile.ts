@@ -61,6 +61,7 @@ const sharedAnalysisSemantics = {
   function_references: "complete-body-and-entry-reference-manager-v3",
   call_relationship_coverage: "function-body-call-coverage-v5",
   function_dossier_coverage: "observed-facets-and-call-relationships-v1",
+  prototype_conflict_evidence: "x86-32-frame-read-and-stdcall-cleanup-v1",
   string_inventory_evidence: "defined-data-coverage-v1",
   inventory_search_projection: "provider-inventory-facts-v1",
   data_type_observations: "bit-field-base-and-lookup-v1",

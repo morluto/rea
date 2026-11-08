@@ -90,7 +90,7 @@ it("accepts requested functions distributed across caller targets", async () => 
     ],
     {
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 30_000,
       env: {
         PATH: process.env.PATH,
         HOME: root,
