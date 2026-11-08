@@ -439,9 +439,9 @@ const scrubDocument = (
 };
 
 /**
- * Scrub a seed as `scrubDocument` does; a gzip file's document is scrubbed as
- * the format the state view read it as, then compressed again alike on every
- * host whether or not it changed, so no file name, comment or time in the
+ * Scrub a seed as `scrubDocument` does; a gzip file's document uses its
+ * captured format, or the format detected from decoded bytes when unknown,
+ * then is compressed again alike on every host whether or not it changed, so no file name, comment or time in the
  * captured header ships. One already so ships as captured, as do one that
  * does not decompress within the size decoded and one whose document needs no
  * edit but a member of which has an extra field, where BGZF and dictzip index
