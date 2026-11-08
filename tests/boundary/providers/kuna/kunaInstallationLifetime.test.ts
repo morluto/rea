@@ -17,6 +17,7 @@ const gates = vi.hoisted(() => {
     hashClose: createGate(),
     identityRead: createGate(),
     opens: 0,
+    executable: undefined as string | undefined,
     failClose: false,
     holdHashClose: false,
     holdIdentityRead: false,
@@ -33,6 +34,9 @@ vi.mock("../../../../src/filesystem/RegularFile.js", async (importOriginal) => {
     openRegularFile: vi.fn(
       async (...args: Parameters<typeof original.openRegularFile>) => {
         const descriptor = await original.openRegularFile(...args);
+        // The version probe can open Darwin helper-cache files too. Gates and
+        // close refusals belong only to this fixture's Kuna installation.
+        if (args[0] !== gates.executable) return descriptor;
         const { handle } = descriptor;
         const index = gates.opens++;
         const read = handle.read.bind(handle);
@@ -71,6 +75,7 @@ import { session } from "./kunaSessionFixture.js";
 
 beforeEach(() => {
   gates.opens = 0;
+  gates.executable = undefined;
   gates.failClose = false;
   gates.holdHashClose = false;
   gates.holdIdentityRead = false;
@@ -91,6 +96,7 @@ it
   async (phase) => {
     const root = await createTestTempDirectory("rea-kuna-inspection-lifetime-");
     const executable = await writeFakeKuna(root);
+    gates.executable = executable;
     const scope = new ArtifactResourceScope();
     const resourceScope: RetainedResourceScope = {
       retain: (owner, resource) =>
@@ -157,6 +163,7 @@ it
     gates.hashClose.release();
     gates.identityRead.release();
     const fixture = await session("rea-kuna-session-finalization-");
+    gates.executable = fixture.kuna;
     gates.opens = 0;
     gates.hashClose = gates.createGate();
     gates.identityRead = gates.createGate();

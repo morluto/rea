@@ -281,15 +281,22 @@ it
     } satisfies Parameters<typeof validateVerifierJadxConfiguration>[0];
     const script = String.raw`
     import assert from 'node:assert/strict';
+    import { stat } from 'node:fs/promises';
     import { validateVerifierJadxConfiguration } from ${JSON.stringify(new URL("../../../scripts/lib/jadx-configuration-inspection.mjs", import.meta.url).href)};
     import { OwnedFileHandle } from ${JSON.stringify(new URL("../../../dist/filesystem/OwnedFileHandle.js", import.meta.url).href)};
     import { ArtifactResourceRetryFailure } from ${JSON.stringify(new URL("../../../dist/artifacts/ArtifactResourceScope.js", import.meta.url).href)};
     const [serializedConfiguration, mode] = process.argv.slice(1);
     const configuration = JSON.parse(serializedConfiguration);
+    const archiveIdentity = await stat(configuration.jar, { bigint: true });
     const handles = new Set();
     let attempts = 0, denied = true;
     const originalClose = OwnedFileHandle.prototype.close;
     OwnedFileHandle.prototype.close = async function () {
+      if (this.handle.fd < 0) return originalClose.call(this);
+      const identity = await this.handle.stat({ bigint: true });
+      // Java probing can close helper-cache files. Refuse only the archive's
+      // actual descriptor, regardless of cache location or path spelling.
+      if (identity.dev !== archiveIdentity.dev || identity.ino !== archiveIdentity.ino) return originalClose.call(this);
       handles.add(this.handle); attempts++;
       if ((mode === 'retry-close' && attempts === 1) || (mode === 'retained-close' && denied)) throw new Error('controlled archive close refusal');
       return originalClose.call(this);
