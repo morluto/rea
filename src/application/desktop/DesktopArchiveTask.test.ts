@@ -187,13 +187,12 @@ it.each([
       });
     } else {
       expect(result).toBeInstanceOf(Error);
-      expect(
-        (result as Error & { userMessage: string }).userMessage,
-      ).toContain("already passes on the seed");
+      expect((result as Error & { userMessage: string }).userMessage).toContain(
+        "already passes on the seed",
+      );
     }
   },
 );
-
 
 describe("documents saved as zip archives", () => {
   it("reads each version into its entries and lists the change by entry and element name", async () => {
