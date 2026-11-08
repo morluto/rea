@@ -1,6 +1,7 @@
 import { basename, dirname, posix, win32 } from "node:path";
 
 import { ArtifactReaderFailure } from "../../artifacts/ArtifactReader.js";
+import { appendCallerPath } from "../../filesystem/callerPath.js";
 import type { ExecutionOptions } from "../AnalysisProvider.js";
 import type { DesktopApplicationService } from "../artifacts/DesktopApplicationService.js";
 import type { ElectronFuseService } from "../electron/ElectronFuseService.js";
@@ -664,7 +665,13 @@ const callerPath = (
     localPath.startsWith(canonicalRoot) &&
     (separator === "/" || separator === "\\")
   )
-    return `${selectedPath}${localPath.slice(canonicalRoot.length)}`;
+    // A selected `/work/app/` must still yield `/work/app/resources/...`, so
+    // the archive's layout folder matches the inventoried images' parent.
+    return appendCallerPath(
+      selectedPath,
+      localPath.slice(canonicalRoot.length + 1),
+      separator === "\\" ? "win32" : "linux",
+    );
   return localPath;
 };
 
