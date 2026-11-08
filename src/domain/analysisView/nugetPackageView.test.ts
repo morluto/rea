@@ -138,3 +138,29 @@ it("refuses a view the package Evidence does not model", () => {
   );
   expect(projected.ok).toBe(false);
 });
+
+it("bounds the repeated nuspec rows and counts what it omitted", () => {
+  const many = report();
+  many.nuspecs = Array.from({ length: 25 }, (_unused, index) =>
+    nuspec(
+      `libs/${String(index)}/Example.nuspec`,
+      `Example.Package.${String(index)}`,
+    ),
+  );
+  many.summary = { ...many.summary, nuspecs: many.nuspecs.length };
+  const projected = projectAnalysisView(
+    { ...parent(), normalizedResult: freezeJsonSnapshot(many) },
+    analysisViewRequestSchema.parse({ kind: "summary" }),
+  );
+  if (!projected.ok) throw projected.error;
+  if (projected.value.kind !== "summary")
+    throw new Error("Expected a summary view");
+  const summary = projected.value.summary as {
+    nuspecs: unknown[];
+    nuspec_count: number;
+    nuspecs_omitted: number;
+  };
+  expect(summary.nuspecs).toHaveLength(20);
+  expect(summary.nuspec_count).toBe(25);
+  expect(summary.nuspecs_omitted).toBe(5);
+});

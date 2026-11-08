@@ -362,12 +362,23 @@ const nuspecOf = (
   });
 };
 
-const assetOf = (member: NugetArchiveMember): NugetAsset => {
+const assetOf = (
+  member: NugetArchiveMember,
+  occurrence: number,
+): NugetAsset => {
   // `path` is documented as the member path as stored, so classification reads
   // a normalised copy while the published value keeps the archive's spelling.
   const classifiable = normalisePath(member.path);
   return {
-    asset_id: digest("nuget_asset", classifiable),
+    // Identity follows the stored spelling and the occurrence, not the
+    // classified copy: `lib\net8.0\Foo.dll` and `lib/net8.0/Foo.dll` are two
+    // archive members, and duplicate spellings are two occurrences of one.
+    asset_id: digest(
+      "nuget_asset",
+      member.path,
+      member.sourcePath ?? "",
+      occurrence,
+    ),
     path: member.path,
     bytes: member.bytes,
     kind: assembleKind(classifiable),
@@ -400,6 +411,9 @@ export const parseNugetPackage = (
   // set: a fully read package with a `./` member is not a partial package.
   const normalisations = new Set<string>();
   let admitted = 0;
+  // Occurrence index per stored spelling, so duplicate members stay distinct
+  // and the same archive always yields the same ids.
+  const countedPaths = new Map<string, number>();
 
   for (const member of members) {
     // `members` is already the admitted slice, so the allowance applies to the
@@ -441,7 +455,8 @@ export const parseNugetPackage = (
       nuspecMembers += 1;
       nuspecOf(member, nuspecs, budget);
     }
-    assets.push(assetOf(member));
+    assets.push(assetOf(member, countedPaths.get(member.path) ?? 0));
+    countedPaths.set(member.path, (countedPaths.get(member.path) ?? 0) + 1);
     admitted += 1;
   }
 
@@ -467,7 +482,9 @@ export const parseNugetPackage = (
   // A member name the reader could not verify makes the inventory a prefix in
   // two ways: this pass kept every read member but cannot trust their spelling,
   // and any member past the allowance was never read at all.
-  const nameUnverified = members.some((member) => member.nameVerified === false);
+  const nameUnverified = members.some(
+    (member) => member.nameVerified === false,
+  );
   const partial =
     truncated ||
     nameUnverified ||

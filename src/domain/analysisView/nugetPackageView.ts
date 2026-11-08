@@ -26,6 +26,8 @@ export const nugetPackageSummarySchema = z.strictObject({
     }),
   ),
   nuspec_count: z.int().nonnegative(),
+  /** Nuspec rows this summary did not repeat; the parent lists all of them. */
+  nuspecs_omitted: z.int().nonnegative(),
   asset_counts: z.strictObject(
     Object.fromEntries(
       nugetPackageSchema.shape.assets.element.shape.kind.options.map((kind) => [
@@ -49,6 +51,15 @@ const readReport = createAnalysisViewResultReader(nugetPackageSchema);
  * fit a single reply; the parent Evidence stays the complete list.
  */
 const VIEW_DIAGNOSTIC_LIMIT = 100;
+
+/**
+ * The summary has no paging companion either, so it repeats only the first
+ * nuspec rows. Each row keeps free-text fields (`id`, `authors`, license,
+ * repository) that can approach the member allowance, so an unbounded list
+ * would grow the reply without a smaller page to ask for. `nuspecs_omitted`
+ * and the parent Evidence carry the rest.
+ */
+const VIEW_NUSPEC_LIMIT = 20;
 
 /** Project retained declaration and inventory facts without reopening the package. */
 export const projectNugetPackageView = (
@@ -98,11 +109,17 @@ export const projectNugetPackageView = (
     artifact: { path: report.artifact.path, sha256: report.artifact.sha256 },
     summary: {
       artifact: report.artifact,
-      nuspecs: report.nuspecs.map(
-        ({ dependency_groups: _groups, description: _description, ...rest }) =>
-          rest,
-      ),
+      nuspecs: report.nuspecs
+        .slice(0, VIEW_NUSPEC_LIMIT)
+        .map(
+          ({
+            dependency_groups: _groups,
+            description: _description,
+            ...rest
+          }) => rest,
+        ),
       nuspec_count: report.nuspecs.length,
+      nuspecs_omitted: Math.max(0, report.nuspecs.length - VIEW_NUSPEC_LIMIT),
       asset_counts: assetCounts,
       asset_count: report.assets.length,
       assemblies: report.summary.assemblies,

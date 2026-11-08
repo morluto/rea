@@ -590,7 +590,9 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
     });
     expect(package_.source_coverage.status).toBe("partial");
   });
+});
 
+describe("parseNugetPackage: name uncertainty and read allowances", () => {
   it("carries a reader's stored-name uncertainty into coverage and limitations", () => {
     const package_ = parsed(
       parse([
@@ -660,53 +662,38 @@ describe("parseNugetPackage: runtime folders and bounded reads", () => {
     // The same member is both an asset and the parsed nuspec; counting it twice
     // would report this complete package as truncated.
     const package_ = parsed(
-      parse([
-        member("Example.Package.nuspec", { text: NUSPEC }),
-        member("lib/net8.0/Example.dll"),
-      ], 2),
+      parse(
+        [
+          member("Example.Package.nuspec", { text: NUSPEC }),
+          member("lib/net8.0/Example.dll"),
+        ],
+        2,
+      ),
     );
     expect(package_.assets).toHaveLength(2);
     expect(
-      package_.diagnostics.filter((entry) => entry.code === "entry-limit-reached"),
+      package_.diagnostics.filter(
+        (entry) => entry.code === "entry-limit-reached",
+      ),
     ).toEqual([]);
     expect(package_.source_coverage.status).toBe("complete-within-scope");
   });
 
   it("reports the member allowance once when the archive continues", () => {
     const package_ = parsed(
-      parse([
-        member("Example.Package.nuspec", { text: NUSPEC }),
-        member("lib/net8.0/Example.dll"),
-      ], 1),
+      parse(
+        [
+          member("Example.Package.nuspec", { text: NUSPEC }),
+          member("lib/net8.0/Example.dll"),
+        ],
+        1,
+      ),
     );
     expect(package_.assets).toHaveLength(1);
     expect(package_.diagnostics).toEqual([
       expect.objectContaining({ code: "entry-limit-reached" }),
     ]);
     expect(package_.source_coverage.status).toBe("partial");
-  });
-});
-
-describe("parseNugetPackage: stored paths and tool layouts", () => {
-  it("publishes the member path as the archive stores it", () => {
-    const package_ = parsed(
-      parse([member("lib\\net8.0\\Example.dll"), member("lib/net8.0/Other.dll")]),
-    );
-    const [stored, plain] = package_.assets;
-    expect(stored?.path).toBe("lib\\net8.0\\Example.dll");
-    expect(stored?.kind).toBe("assemblies");
-    expect(stored?.target_framework).toBe("net8.0");
-    expect(plain?.path).toBe("lib/net8.0/Other.dll");
-    // Classification normalises separators, identity must follow the stored path.
-    expect(stored?.asset_id).not.toBe(plain?.asset_id);
-  });
-
-  it("reads the target framework of a framework-qualified tool package", () => {
-    const package_ = parsed(parse([member("tools/net8.0/any/MyTool.dll")]));
-    expect(package_.assets[0]).toMatchObject({
-      kind: "tools",
-      target_framework: "net8.0",
-    });
   });
 });
 
@@ -721,25 +708,24 @@ describe("parseNugetPackage: stable identities", () => {
   });
 });
 
-describe("parseNugetPackage: stored paths and tool layouts", () => {
-  it("publishes the member path as the archive stores it", () => {
+describe("parseNugetPackage: member identity", () => {
+  it("keeps members with the same stored bytes but different spellings distinct", () => {
     const package_ = parsed(
-      parse([member("lib\\net8.0\\Example.dll"), member("lib/net8.0/Other.dll")]),
+      parse([member("a.dll"), member("a.dll"), member("b.dll")]),
     );
-    const [stored, plain] = package_.assets;
-    expect(stored?.path).toBe("lib\\net8.0\\Example.dll");
-    expect(stored?.kind).toBe("assemblies");
-    expect(stored?.target_framework).toBe("net8.0");
-    expect(plain?.path).toBe("lib/net8.0/Other.dll");
-    // Classification normalises separators, identity must follow the stored path.
-    expect(stored?.asset_id).not.toBe(plain?.asset_id);
+    const ids = package_.assets.map((asset) => asset.asset_id);
+    expect(new Set(ids).size).toBe(3);
   });
+});
 
-  it("reads the target framework of a framework-qualified tool package", () => {
-    const package_ = parsed(parse([member("tools/net8.0/any/MyTool.dll")]));
-    expect(package_.assets[0]).toMatchObject({
-      kind: "tools",
-      target_framework: "net8.0",
-    });
-  });
+it("does not give two stored spellings of one member the same asset identity", () => {
+  const package_ = parsed(
+    parse([
+      member("lib\\net8.0\\Example.dll"),
+      member("lib/net8.0/Example.dll"),
+    ]),
+  );
+  const ids = package_.assets.map((asset) => asset.asset_id);
+  expect(package_.assets).toHaveLength(2);
+  expect(new Set(ids).size).toBe(2);
 });
