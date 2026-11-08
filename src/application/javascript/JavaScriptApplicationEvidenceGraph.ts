@@ -40,12 +40,18 @@ export interface ApplicationGraphEvidenceSource {
   readonly semanticGraph: JavaScriptSemanticGraph | null;
 }
 
-/** Only static application inputs validate a subject against the graph artifact. */
+/** Carry a subject only when it identifies the graph's root artifact. */
 export const applicationGraphSubjectTarget = (
   source: ApplicationGraphEvidenceSource,
 ): EvidenceSubjectTarget | undefined => {
+  const subject = source.evidence.subject;
   return evidenceSubjectTarget(
-    source.kind === "static-application" ? source.evidence.subject : null,
+    source.kind === "static-application" ||
+      (source.kind === "managed-application" &&
+        subject?.format === "pe" &&
+        subject.digest.sha256 === source.rootArtifactSha256)
+      ? subject
+      : null,
   );
 };
 
