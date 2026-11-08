@@ -156,3 +156,54 @@ it("revokes the host delegate after a destructured module receiver write", () =>
     expect.objectContaining({ kind: "require", specifier: null }),
   ]);
 });
+
+it("revokes the host delegate after a dynamic defineProperty on module", () => {
+  const analysis = analyzeJavaScriptStaticSource(
+    `Object.defineProperty(module,key,{value:x});require('./shared.cjs');`,
+  );
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.references).toEqual([
+    expect.objectContaining({ kind: "require", specifier: null }),
+  ]);
+});
+
+// Zod's issue formatter (`r = s` after `Object.defineProperty(r, k, …)`)
+// exhausts the alias-selection budget. A strict module check stays unproven.
+const loopAliasedPropertyWalk = (defineProperty: boolean): string => {
+  const step = defineProperty
+    ? "Object.prototype.hasOwnProperty.call(r,k)||Object.defineProperty(r,k,{value:{_errors:[]}});"
+    : "Object.prototype.hasOwnProperty.call(r,k);";
+  return `let h=require("electron");function f(n,e){let r=n,i=0;for(;i<e.length;){let k=e[i];${step}let s=r[k];r=s,i++}return r}new h.BrowserWindow({webPreferences:{sandbox:!0}});h.ipcMain.handle(\`x:y\`,()=>1);`;
+};
+
+const expectElectronProbe = (
+  source: string,
+): ReturnType<typeof analyzeJavaScriptStaticSource> => {
+  const analysis = analyzeJavaScriptStaticSource(source);
+  expect(analysis.parse_error_count).toBe(0);
+  expect(analysis.electron.browser_windows).toHaveLength(1);
+  expect(analysis.electron.ipc).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ channel: "x:y", side: "main" }),
+    ]),
+  );
+  expect(analysis.references).toEqual(
+    expect.arrayContaining([
+      expect.objectContaining({ kind: "require", specifier: "electron" }),
+    ]),
+  );
+  return analysis;
+};
+
+it("keeps electron facts when a loop-aliased defineProperty exhausts alias selections", () => {
+  const analysis = expectElectronProbe(loopAliasedPropertyWalk(true));
+  expect(analysis.analysis_coverage).toMatchObject({
+    examination: {
+      semantic_resource_limits: expect.arrayContaining(["alias-selections"]),
+    },
+  });
+});
+
+it("keeps electron facts for the same path walk without defineProperty", () => {
+  expectElectronProbe(loopAliasedPropertyWalk(false));
+});
