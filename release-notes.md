@@ -131,6 +131,7 @@
 * **mcp:** guide agents from argument-name mistakes in procedure and search tools ([#2146](https://github.com/morluto/rea/issues/2146)) ([#8649](https://github.com/morluto/rea/issues/8649)) ([7e9cf83](https://github.com/morluto/rea/commit/7e9cf83fcabf942921824658fb68da839a798d7e))
 * **mcp:** page retained incoming reference addresses ([#8591](https://github.com/morluto/rea/issues/8591)) ([55078b9](https://github.com/morluto/rea/commit/55078b9f575528e451c888d8b7a85da2f188bbb7))
 * **mcp:** page retained instruction references ([#8594](https://github.com/morluto/rea/issues/8594)) ([71f680d](https://github.com/morluto/rea/commit/71f680d7c1aa7a45ba0325fe87b104744b0c105f))
+* **mcp:** refresh provider candidates without switching ([#8487](https://github.com/morluto/rea/issues/8487)) ([0b028cc](https://github.com/morluto/rea/commit/0b028cc75a1bb080e03606fd132b12d11a8dbdc4))
 * **mcp:** report provider release verification in session ([#8485](https://github.com/morluto/rea/issues/8485)) ([aa2c1c6](https://github.com/morluto/rea/commit/aa2c1c61cee3f08ca8df9c77c9beef56810c9777))
 * **mcp:** scope advertised tools by family ([#7228](https://github.com/morluto/rea/issues/7228)) ([b675073](https://github.com/morluto/rea/commit/b675073b731dc3209f59578fad5ca8fe85b104cc))
 * **mcp:** support compact output schema advertisements ([#7218](https://github.com/morluto/rea/issues/7218)) ([9085222](https://github.com/morluto/rea/commit/9085222ca1b5a636d4835a48b8bfed03da461b4f))
