@@ -25,7 +25,9 @@ import {
 } from "./analysisEvidenceDelivery.js";
 
 const deliverySchema = z.object({
-  detail: analysisEvidenceDeliveryOptions.detail,
+  // This operation has no summary reader in the analysis-view registry, so a
+  // summary request would be refused after the whole recording was parsed.
+  detail: z.literal("complete").default("complete"),
 });
 
 /** One-shot publication keeps the complete inventory for later offline pages. */
