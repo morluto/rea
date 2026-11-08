@@ -116,7 +116,11 @@ export interface SetupHost {
   macosVersion(): Promise<string | undefined>;
   linuxDistribution(): Promise<LinuxDistribution | undefined>;
   initialSetupState(scope?: DoctorScope): Promise<SetupInitialState>;
-  installHopper(replaceExisting: boolean): Promise<SetupHopperInstallResult>;
+  /** Cancellation stops downloads and later steps; a started package transaction finishes. */
+  installHopper(
+    replaceExisting: boolean,
+    signal?: AbortSignal,
+  ): Promise<SetupHopperInstallResult>;
   /** Retry retained owners. Returned or thrown errors with explicit cleanup
    * owners follow live release state; ownerless failures remain unconfirmed.
    * runSetup does not observe later direct calls to a caller-supplied host. */

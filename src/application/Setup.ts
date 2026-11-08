@@ -33,6 +33,7 @@ import {
 } from "../domain/analysisErrorBase.js";
 import { setupCleanupError, setupCleanupReason } from "./SetupCleanupOwner.js";
 import { analysisErrorWithCleanupFailure } from "../domain/analysisErrorCleanup.js";
+import { AnalysisCancelledError } from "../domain/analysisErrorCore.js";
 import { assertSetupActive } from "./SetupCancellation.js";
 import type { SetupSkillInstallError } from "./SetupSkill.js";
 import { planDesktopBuild } from "./SetupDesktopBuild.js";
@@ -78,6 +79,16 @@ export const runSetup = async (
     );
   }
   if (result === undefined) throw new Error("Setup returned no result.");
+  // Cancellation observed only during the final doctor or cleanup is not success.
+  if (
+    cleanup === undefined &&
+    result.status === "ready" &&
+    options.signal?.aborted === true
+  )
+    throw new AnalysisCancelledError("setup", {
+      cause: options.signal.reason,
+      diagnostics: { applied_actions: [...result.appliedActions] },
+    });
   if (cleanup === undefined) return result;
   const cleanupReason = setupCleanupReason(cleanup);
   const cleanupReport: AnalysisCleanupObservation = {
@@ -467,7 +478,10 @@ const installHopperAction = async (input: {
     label,
     state: "started",
   });
-  const installed = await input.host.installHopper(input.options.installHopper);
+  const installed = await input.host.installHopper(
+    input.options.installHopper,
+    input.options.signal,
+  );
   if (installed.status === "failed") {
     emitProgress(input.options, {
       actionId: "install_hopper",
