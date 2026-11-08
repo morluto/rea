@@ -266,7 +266,8 @@ const assertResultEvidenceLinksInEnvelope = (
   evidence: Evidence,
   path: readonly (string | number)[],
   resultLabel:
-    "Runtime reconciliation result" | "Managed application graph result",
+    | "Runtime reconciliation result"
+    | "Managed application graph result",
 ): void => {
   const unmatchedLink = resultEvidenceLinks.find(
     (evidenceId) => !evidence.evidence_links.includes(evidenceId),
