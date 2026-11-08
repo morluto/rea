@@ -1,6 +1,12 @@
 import { expect, it, vi } from "vitest";
 
-import { createEvidence, type Evidence } from "../../domain/evidence.js";
+import {
+  createEvidence,
+  parseEvidence,
+  rebindEvidenceToTargetPath,
+  type Evidence,
+} from "../../domain/evidence.js";
+import { ok } from "../../domain/result.js";
 import {
   JAVASCRIPT_APPLICATION_VERSION_COMPARISON_EXAMPLE,
   JAVASCRIPT_FEATURE_TRACE_EXAMPLE,
@@ -14,6 +20,10 @@ import {
 } from "./JavaScriptApplicationWorkflowService.js";
 import { reconcileJavaScriptRuntimeEvidence } from "./JavaScriptRuntimeReconciliationService.js";
 import { traceJavaScriptSemanticsEvidence } from "./JavaScriptSemanticTraceService.js";
+import {
+  inspectAnalysisView,
+  projectRetainedAnalysis,
+} from "../analysisView/AnalysisViewService.js";
 
 const reference = ({ evidence_id }: Evidence) => ({
   kind: "retained-evidence" as const,
@@ -26,7 +36,7 @@ const native = createEvidence(
   { operation: "procedure_info", parameters: {}, result: {} },
 );
 
-it("preserves the verified application subject in both trace workflows", () => {
+it("preserves the verified application subject in both trace workflows", async () => {
   const original = JAVASCRIPT_FEATURE_TRACE_EXAMPLE.application;
   if (original.subject === null)
     throw new Error("Expected application subject");
@@ -66,6 +76,36 @@ it("preserves the verified application subject in both trace workflows", () => {
       "Artifact identity is unavailable for this observation.",
     );
   }
+  if (!feature.ok) throw feature.error;
+  const view = await inspectAnalysisView({
+    source: { kind: "inline", evidence: feature.value.evidence },
+    view: { kind: "summary" },
+  });
+  if (!view.ok) throw view.error;
+  expect(view.value.subject).toEqual(application.subject);
+  const selected = parseEvidence({
+    ...feature.value.evidence,
+    subject: { ...feature.value.evidence.subject, name: "selected display" },
+  });
+  const retained = projectRetainedAnalysis(
+    selected,
+    {
+      recordEvidence: () => ok("added"),
+      evidenceById: () => feature.value.evidence,
+    },
+    { kind: "summary" },
+  );
+  if (!retained.ok) throw retained.error;
+  expect(retained.value.subject?.name).toBe("selected display");
+  expect(
+    rebindEvidenceToTargetPath(feature.value.evidence, {
+      path: application.subject!.local_path,
+      sha256: "f".repeat(64),
+      format: application.subject!.format,
+      architecture: "x86_64",
+      name: "wrong artifact",
+    }),
+  ).toBe(feature.value.evidence);
 });
 
 it("does not attribute a multi-source reconciliation graph to its envelope subject", () => {

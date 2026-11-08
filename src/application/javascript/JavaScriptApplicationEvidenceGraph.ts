@@ -5,6 +5,7 @@ import {
 } from "../../domain/investigationProviders.js";
 import {
   isImmutableEvidence,
+  evidenceSubjectTarget,
   type Evidence,
   type EvidenceSubjectTarget,
 } from "../../domain/evidence.js";
@@ -43,19 +44,9 @@ export interface ApplicationGraphEvidenceSource {
 export const applicationGraphSubjectTarget = (
   source: ApplicationGraphEvidenceSource,
 ): EvidenceSubjectTarget | undefined => {
-  const subject =
-    source.kind === "static-application" ? source.evidence.subject : null;
-  return subject === null
-    ? undefined
-    : {
-        path: subject.local_path,
-        sha256: subject.digest.sha256,
-        format: subject.format,
-        name: subject.name,
-        ...(subject.architecture === null
-          ? {}
-          : { architecture: subject.architecture }),
-      };
+  return evidenceSubjectTarget(
+    source.kind === "static-application" ? source.evidence.subject : null,
+  );
 };
 
 /** Caller-owned Evidence failed validation at the application graph boundary. */

@@ -188,14 +188,36 @@ export interface EvidenceSubjectTarget {
   readonly name?: string;
 }
 
+/** Preserve the complete subject when deriving a new Evidence observation. */
+export const evidenceSubjectTarget = (
+  subject: Evidence["subject"],
+): EvidenceSubjectTarget | undefined =>
+  subject === null
+    ? undefined
+    : {
+        path: subject.local_path,
+        sha256: subject.digest.sha256,
+        format: subject.format,
+        name: subject.name,
+        ...(subject.architecture === null
+          ? {}
+          : { architecture: subject.architecture }),
+      };
+
+const sameEvidenceSubjectTargetIdentity = (
+  subject: EvidenceSubjectTarget,
+  target: EvidenceSubjectTarget,
+): boolean =>
+  subject.sha256 === target.sha256 &&
+  subject.format === target.format &&
+  (subject.architecture ?? null) === (target.architecture ?? null);
+
 /** Rebind a matching immutable artifact subject to the caller's selected path. */
 export const rebindEvidenceSubjectTargetPath = (
   subject: EvidenceSubjectTarget,
   target: EvidenceSubjectTarget,
 ): EvidenceSubjectTarget =>
-  subject.sha256 === target.sha256 &&
-  subject.format === target.format &&
-  (subject.architecture ?? null) === (target.architecture ?? null)
+  sameEvidenceSubjectTargetIdentity(subject, target)
     ? { ...subject, path: target.path }
     : subject;
 
@@ -326,21 +348,18 @@ export const rebindEvidenceToTargetPath = (
 ): Evidence => {
   const subject = evidence.subject;
   if (subject === null) return evidence;
-  const rebound = rebindEvidenceSubjectTargetPath(
-    {
-      path: subject.local_path,
-      sha256: subject.digest.sha256,
-      format: subject.format,
-      ...(subject.architecture === null
-        ? {}
-        : { architecture: subject.architecture }),
-    },
-    target,
-  );
-  if (rebound.path === subject.local_path) return evidence;
+  if (
+    !sameEvidenceSubjectTargetIdentity(evidenceSubjectTarget(subject)!, target)
+  )
+    return evidence;
+  if (
+    target.path === subject.local_path &&
+    (target.name === undefined || target.name === subject.name)
+  )
+    return evidence;
   const reboundSubject = subjectSchema.parse({
     ...subject,
-    name: basename(target.path) || "artifact",
+    name: target.name ?? (basename(target.path) || "artifact"),
     local_path: target.path,
   });
   const reboundEvidence = { ...evidence, subject: reboundSubject };
