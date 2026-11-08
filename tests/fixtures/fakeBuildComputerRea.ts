@@ -119,6 +119,16 @@ elif command == "describe-desktop-application-task":
     with open(output(args[0], "DRAFT")) as handle:
         sys.stdout.write(handle.read())
 elif command == "export-desktop-application":
+    if "--schema" in args:
+        if os.environ.get("FAKE_REA_SCHEMA_FAILURE"):
+            print("runtime cannot load its export command", file=sys.stderr)
+            sys.exit(23)
+        with open(os.environ["FAKE_REA_SCHEMA"]) as handle:
+            schema = json.load(handle)
+        if os.environ.get("FAKE_REA_OLD_EXPORT"):
+            schema["options"]["properties"].pop("syntheticSeed", None)
+        print(json.dumps(schema))
+        sys.exit(0)
     for path in options(args, "--task"):
         with open(path) as handle:
             note("tasks.jsonl", json.load(handle))
@@ -139,8 +149,15 @@ import re
 import sys
 
 with open(os.environ["APT_CONFIG"]) as handle:
-    lists = re.search(r'Dir::State::Lists "([^"]+)"', handle.read()).group(1)
+    conf = handle.read()
+lists = re.search(r'Dir::State::Lists "([^"]+)"', conf).group(1)
 code = int(os.environ.get("FAKE_APT_EXIT", "0"))
+if os.environ.get("FAKE_APT_EMPTY") and 'APT::Update::Error-Mode "any"' in conf and not os.environ.get("FAKE_APT_IGNORE_ERROR_MODE"):
+    print("Err:1 http://archive.ubuntu.com/ubuntu noble InRelease")
+    print("E: Failed to fetch http://archive.ubuntu.com/ubuntu/dists/noble/InRelease  Temporary failure resolving 'archive.ubuntu.com'")
+    sys.exit(100)
+if os.environ.get("FAKE_APT_EMPTY"):
+    sys.exit(0)
 if code != 0 and os.environ.get("FAKE_APT_PARTIAL"):
     open(os.path.join(lists, "archive.ubuntu.com_ubuntu_dists_noble_main_binary-amd64_Packages.lz4"), "w").close()
 if code != 0:
@@ -159,6 +176,7 @@ export interface FakeReaOutputs {
   readonly draft: string;
   readonly export: string;
   readonly bundle: string;
+  readonly schema: string;
 }
 
 export interface FakeBuildComputerRea {
@@ -198,6 +216,7 @@ export const fakeBuildComputerRea = async (
       FAKE_REA_DRAFT: outputs.draft,
       FAKE_REA_EXPORT: outputs.export,
       FAKE_REA_BUNDLE: outputs.bundle,
+      FAKE_REA_SCHEMA: outputs.schema,
     },
     notes: async (name) => {
       const path = join(notes, name);

@@ -374,7 +374,7 @@ describe("a container in a list named for its tag", () => {
     const file = xmlDraft(book("376.9"), book("418.65"));
 
     expect(file.suggested.map(pointerOf)).toEqual([
-      "/root/children/[name=Sheets]/children/[name=Sheet][>Name=Budget]/children/[name=Cells]/children/[name=Cell][@Col=3]/children/0",
+      "/root/children/[name=Sheets]/children/[name=Sheet][>Name=Budget]/children/[name=Cells]/children/[name=Cell][@Col=3]",
     ]);
     const another = book("418.65", "<Sheet><Name>Notes</Name><Cells/></Sheet>");
     expect(passing(FILE, xml(another), file.suggested)).toEqual([true]);
@@ -517,5 +517,18 @@ describe("entries an app numbers by where it saves them", () => {
         pointerOf(check)?.startsWith(lesson),
       ),
     ).toBe(false);
+  });
+});
+
+describe("elements keyed only by an id a save numbered with six digits", () => {
+  const notes = (hello: string) =>
+    `<notes><p xml:id="id123456">${hello}</p><p xml:id="id654321">There</p></notes>`;
+
+  it("checks the edited paragraph by that id, counted once", () => {
+    const file = xmlDraft(notes("Hello"), notes("Hi"));
+
+    expect(file.suggested.map(pointerOf)).toEqual([
+      "/root/children/[name=p][@xml:id=id123456]",
+    ]);
   });
 });

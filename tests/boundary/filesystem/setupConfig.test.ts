@@ -610,7 +610,6 @@ describe("JSON client configuration shape diagnostics", () => {
       };
       await writeFile(configPath, original);
       const read = await readConfigurationFile(configPath, "json");
-      expect(read.ok).toBe(false);
       if (read.ok) throw new Error("expected malformed configuration");
       expect(read.error.detail).toBe(
         `Configuration ${configPath} is malformed: ${problem}`,

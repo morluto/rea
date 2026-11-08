@@ -394,7 +394,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
     if (!replay.ok) throw replay.error;
     expect(replay.value.limitations).toContain(limitation);
     expect(replay.value.limitations).toContainEqual(
-      expect.stringContaining("Loaded from a local REA analysis snapshot"),
+      expect.stringMatching(/snapshot.*did not re.run the provider/iu),
     );
   } finally {
     await harness.close();
@@ -403,6 +403,7 @@ it("retains missing PDB coverage in empty PE name-search Evidence and snapshot r
 
 it("retains defined-string coverage in empty and matching search Evidence", async () => {
   let output = jsonValueSchema.parse([]);
+  let stringCoverage: string | undefined;
   const harness = await connectGhidraMcp("ghidra-string-coverage", () =>
     Promise.resolve(ok(output)),
   );
@@ -425,14 +426,25 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       expect(evidence.analysis_profile?.parameters).toMatchObject({
         string_inventory_evidence: "defined-data-coverage-v1",
       });
-      expect(evidence.limitations).toContainEqual(
-        expect.stringMatching(
-          /Only Ghidra-defined string Data.*empty search does not establish/u,
+      const coverage = evidence.limitations.find((limitation) =>
+        /Only Ghidra-defined string Data.*empty search does not establish/u.test(
+          limitation,
         ),
       );
+      if (coverage === undefined) throw new Error("Missing string coverage");
+      if (stringCoverage !== undefined) expect(coverage).toBe(stringCoverage);
+      stringCoverage = coverage;
     }
     output = jsonValueSchema.parse([
-      { address: "0x401000", value: "projection cache ignored" },
+      {
+        address: "0x401000",
+        value: "projection cache ignored",
+        string: {
+          encoding: "US-ASCII",
+          termination: "present_or_not_required",
+          byte_length: 25,
+        },
+      },
     ]);
     const matched = await harness.mcp.callTool({
       name: "search_strings",
@@ -443,8 +455,9 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
       matched.structuredContent,
     );
     expect(evidence.normalized_result).toEqual(output);
+    expect(evidence.limitations).toContain(stringCoverage);
     expect(evidence.limitations).toContainEqual(
-      expect.stringContaining("Completeness applies to that inventory"),
+      expect.stringMatching(/completeness applies to that inventory/iu),
     );
     output = jsonValueSchema.parse([]);
     const procedures = await harness.mcp.callTool({
@@ -454,7 +467,7 @@ it("retains defined-string coverage in empty and matching search Evidence", asyn
     expect(
       sessionEvidence(harness.session, procedures.structuredContent)
         .limitations,
-    ).not.toContainEqual(expect.stringContaining("Ghidra-defined string Data"));
+    ).not.toContainEqual(expect.stringMatching(/Ghidra.defined string Data/iu));
   } finally {
     await harness.close();
   }
@@ -515,6 +528,31 @@ it("rejects contradictory provider output before emitting MCP Evidence", async (
         name: "search_strings",
         arguments: { pattern: "needle" },
         output: [{ address: "0x401000" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [{ address: "0x401000", value: "needle" }],
+      },
+      {
+        name: "search_strings",
+        arguments: { pattern: "needle" },
+        output: [
+          {
+            address: "0x401000",
+            value: "needle",
+            string: {
+              encoding: "UTF-8",
+              termination: "present_or_not_required",
+              byte_length: -1,
+            },
+          },
+        ],
+      },
+      {
+        name: "search_procedures",
+        arguments: { pattern: "fixture" },
+        output: [{ address: "0x401000", value: "fixture_main" }],
       },
       {
         name: "read_function_instructions",
@@ -583,6 +621,7 @@ it("returns a procedure once with the exact-entry names its search matched", asy
     address,
     value,
     symbol: primary,
+    procedure: { external: false, thunk: false, thunk_target: null },
     ...(matched_aliases === undefined ? {} : { matched_aliases }),
   });
   let output = jsonValueSchema.parse([
@@ -659,9 +698,14 @@ it("keeps a namespaced entry name that matched by its leaf spelling", async () =
     {
       address: "0x101400",
       value: "outer::impl",
+      procedure: { external: false, thunk: false, thunk_target: null },
       matched_aliases: ["ns::audit_alias"],
     },
-    { address: "0x101440", value: "alpha::same" },
+    {
+      address: "0x101440",
+      value: "alpha::same",
+      procedure: { external: false, thunk: false, thunk_target: null },
+    },
   ]);
   const harness = await connectGhidraMcp("ghidra-namespaced-aliases", () =>
     Promise.resolve(ok(output)),

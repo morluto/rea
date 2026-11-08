@@ -172,9 +172,11 @@ The class declares:
   Files the capture recorded under a symlinked state directory's physical
   spelling are mapped back to the innermost such directory's home spelling,
   unless that spelling is outside the captured home, as when the home itself is
-  a symbolic link. When two files map to one home path, the export uses the one
-  present before the capture, else the first by path, and a limitation names
-  the other.
+  a symbolic link. When a selected link names an application state directory,
+  the bundle seeds the application's state path and restores the selected
+  alias at boot. Selections nested under that alias are seeded under the same
+  state path. An existing incompatible alias stops setup without replacing it. When two files map to one home path, the export uses the one present
+  before the capture, else the first by path, and a limitation names the other.
 - Data hooks, because declaring any hook switches off agentenv's default data
   plane: the class seeds the home once per boot and keeps it as the initial
   state with `keep_initial`, `data/add` and `data/reset` call agentenv's `add`
@@ -491,8 +493,8 @@ the view of the document inside it, with `"compression": "gzip"` beside its
 format, decompressed with Python's `zlib` within the same entry size and ratio
 limits, its members joined as REA joins them. A JSON file
 holding a number JavaScript cannot read exactly, such as an integer above 2^53,
-or nested more than 500 levels deep, gets an `error` instead of a view, as in
-REA, while text that is not one JSON
+or whose retained value nests more than 500 levels deep, gets an `error` instead of a view, as in
+REA. Duplicate keys keep their last value before the depth check. Text that is not one JSON
 document, such as JSON Lines, stays text. Format detection follows REA's
 rules. Files larger than 64 MiB get an `error` instead of a view
 and are not read. XML is read with Python's `expat` twice: with namespace

@@ -1,6 +1,7 @@
 import type { JsonValue } from "../jsonValue.js";
 import type { DesktopTaskCheckInput } from "./appTask.js";
 import {
+  isBookkeepingName,
   isRenumberedKey,
   isStamp,
   isVolatileValue,
@@ -95,7 +96,7 @@ const selectable = (key: string, value: JsonValue | undefined) =>
   !value.includes("][") &&
   !isStamp(value) &&
   !isPlaceholder(value) &&
-  !isVolatileValue(value);
+  !isVolatileValue(value, isBookkeepingName(key));
 
 /**
  * The selector naming a nested record alone among its list's: an
@@ -160,7 +161,7 @@ const checkedKeys = (
       isIdentifyingAttribute(key) ||
       isPlaceholder(value) ||
       isStamp(value) ||
-      isVolatileValue(value) ||
+      isVolatileValue(value, isBookkeepingName(key)) ||
       isViewStateName(key) ||
       isRenumberedKey(key) ||
       new Set(all).size < 2 ||

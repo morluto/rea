@@ -27,9 +27,6 @@ import {
 } from "./DesktopOutputTree.js";
 
 const EXPORT = "export_build_environment";
-/** The most bytes the tasks take in the controller's one JSON argument, which Linux caps at 128 KiB. */
-const TASK_ARGUMENT_BYTES = 96 * 1024;
-
 const exportResultSchema = z.looseObject({
   environment: z.string(),
   tasks: z.array(jsonValueSchema),
@@ -144,17 +141,8 @@ export const exportBuild = async (
       `${JSON.stringify(task, null, 2)}\n`,
     ]),
   );
-  const taskBytes = Buffer.byteLength(JSON.stringify(taskFiles));
-  if (taskBytes > TASK_ARGUMENT_BYTES)
-    return err(
-      refused(
-        EXPORT,
-        `The tasks take ${String(taskBytes)} bytes in the command REA runs in the computer, more than the ${String(TASK_ARGUMENT_BYTES)} it allows them.`,
-        "Shorten the tasks' prompts or checks, or export fewer tasks, and export again.",
-      ),
-    );
   try {
-    const bytes = await runRea(
+    const { stdoutBytes: bytes } = await runRea(
       computer,
       [
         "export-desktop-application",

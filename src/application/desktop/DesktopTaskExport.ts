@@ -52,7 +52,7 @@ const DRAFT =
 /** What the export knows of the app: its name, owned paths, captured home, host identity, state files by home path and the checkpoints it reads. */
 type TaskTarget = Pick<
   DesktopAppExportPlan,
-  "name" | "paths" | "capturedHome" | "title" | "aptPackage" | "seedFiles"
+  "name" | "paths" | "capturedHome" | "title" | "aptPackage"
 > & {
   readonly files: ReadonlyMap<string, DesktopStatePath>;
   readonly identity: HostIdentity;
@@ -60,8 +60,10 @@ type TaskTarget = Pick<
   readonly ends: StateEnds;
   /** The capture's checkpoint names, by position. */
   readonly checkpoints: readonly string[];
-  /** Views of the seeds the export rewrites, as it ships them. */
+  /** Views of the text seeds the export rewrites, as it ships them. */
   readonly seedViews: ReadonlyMap<string, TaskFileView>;
+  /** Home paths the bundle actually ships, including files that are not text. */
+  readonly seeded: ReadonlySet<string>;
 };
 
 /** What the export says of one task it kept. */
@@ -176,6 +178,17 @@ const targetProblem = (
     : undefined;
 };
 
+/**
+ * A seed check's view of one file. A file the bundle does not ship is absent,
+ * including a lock the capture saw. A shipped text file uses the scrubbed
+ * view; any other shipped file uses the captured view.
+ */
+export const shippedSeedCheckView = (
+  seeded: boolean,
+  shipped: TaskFileView | undefined,
+  captured: TaskFileView | undefined,
+): TaskFileView | undefined => (seeded ? (shipped ?? captured) : undefined);
+
 /** Views of every file at a checkpoint's position, or at the seed as the bundle ships it. */
 const viewsAt = (
   target: TaskTarget,
@@ -183,14 +196,18 @@ const viewsAt = (
 ): ReadonlyMap<string, TaskFileView> => {
   const views = new Map<string, TaskFileView>();
   const seed = at === "seed";
-  const shipped = new Set(target.seedFiles);
   for (const [home, path] of target.files) {
-    // The seed reads as the bundle ships it: without a file it does not seed, such as a lock, a log or one not retained.
-    if (seed && !shipped.has(home)) continue;
     const version = versionAt(path, seed ? target.ends.seed : at);
-    const rewritten = seed ? target.seedViews.get(home) : undefined;
-    const view =
-      rewritten ?? (version === undefined ? undefined : versionView(version));
+    // A file not retained at the seed is not seeded, so the computer starts without it.
+    if (seed && version?.present === true && version.sha256 === null) continue;
+    const captured = version === undefined ? undefined : versionView(version);
+    const view = seed
+      ? shippedSeedCheckView(
+          target.seeded.has(home),
+          target.seedViews.get(home),
+          captured,
+        )
+      : captured;
     if (view !== undefined) views.set(home, view);
   }
   return views;
@@ -235,7 +252,7 @@ const ids = (checks: readonly string[]) =>
   checks.map((id) => `\`${id}\``).join(", ");
 
 /** Whether a prompt names the app by its title, environment or package, in any letter case. */
-const namesApp = (
+export const namesApp = (
   prompt: string,
   {
     title,
@@ -243,10 +260,13 @@ const namesApp = (
     aptPackage,
   }: Pick<TaskTarget, "title" | "name" | "aptPackage">,
 ): boolean => {
-  const said = prompt.toLowerCase();
-  return [title, name, aptPackage].some((app) =>
-    said.includes(app.toLowerCase()),
-  );
+  return [title, name, aptPackage].some((app) => {
+    const spelled = app.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+    return new RegExp(
+      `(?<![\\p{L}\\p{N}_])${spelled}(?![\\p{L}\\p{N}_])`,
+      "iu",
+    ).test(prompt);
+  });
 };
 
 /** The checkpoint a task's near miss is taken at. */

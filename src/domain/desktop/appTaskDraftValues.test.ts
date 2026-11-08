@@ -82,6 +82,20 @@ describe("draftTaskFiles values", () => {
     expect(cut?.before).toBe(`${"x".repeat(600)}…`);
   });
 
+  it("does not mark a JSON object key as by position when the path looks like an index", () => {
+    const file = draftOf({
+      "settings.json": statePath(
+        "application_state",
+        "json",
+        { children: {} },
+        { children: { "1": "later" } },
+      ),
+    })[0];
+    const added = file?.values.find((value) => value.kind === "added");
+    expect(added?.pointer).toBe("/children/1");
+    expect(added?.note).toBeUndefined();
+  });
+
   it("notes a run of text added or removed in mixed content as by position, since only its index reaches it", () => {
     const document = (lead: string) =>
       `<abiword><section><p xid="1" style="Normal">${lead}<c props="font-weight:bold">Budget</c> is due Friday.</p></section></abiword>`;
@@ -135,6 +149,75 @@ describe("draftTaskFiles values", () => {
       drafted[0]?.values.length ?? 0,
     );
   });
+});
+
+it("preserves JSON objects whose keys resemble XML and archive views", () => {
+  const xmlLike = {
+    name: "Cell",
+    attributes: {},
+    children: ["437.8"],
+    label: "keep me",
+  };
+  const archiveLike = {
+    name: "book",
+    sha256: "abc",
+    view: {},
+    label: "keep me",
+  };
+  const file = draftOf({
+    "settings.json": statePath(
+      "application_state",
+      "json",
+      {},
+      { xmlLike, archiveLike },
+    ),
+  })[0];
+  expect(
+    file?.values.find(({ pointer }) => pointer === "/xmlLike")?.after,
+  ).toBe(JSON.stringify(xmlLike));
+  expect(
+    file?.values.find(({ pointer }) => pointer === "/archiveLike")?.after,
+  ).toBe(JSON.stringify(archiveLike));
+});
+
+it("uses the entry format for JSON within an archive", () => {
+  const element = {
+    name: "Cell",
+    attributes: {},
+    children: ["437.8"],
+    label: "keep me",
+  };
+  const archive = (contents: unknown) => {
+    const bytes = new TextEncoder().encode(JSON.stringify(contents));
+    return zipView(
+      [
+        zipEntry(
+          {
+            name: "state.json",
+            size: bytes.length,
+            compressedSize: bytes.length,
+            method: 8,
+            encrypted: false,
+          },
+          bytes,
+        ),
+      ],
+      1,
+    );
+  };
+  const file = draftOf({
+    "Documents/state.zip": statePath(
+      "document",
+      "zip",
+      archive({}),
+      archive({ element }),
+    ),
+  })[0];
+  const value = file?.values.find(({ pointer }) =>
+    pointer.endsWith("/view/element"),
+  );
+  expect(value?.after).toBe(JSON.stringify(element));
+  expect(value?.refers_to).toBeUndefined();
 });
 
 describe("draftTaskFiles values' text and references", () => {
@@ -202,7 +285,13 @@ describe("draftTaskFiles values' text and references", () => {
         changed_count: 1,
         removed_count: 0,
       },
-      { ends, listed: () => true, noise: () => undefined },
+      {
+        ends,
+        listed: () => true,
+        noise: () => undefined,
+        format: () => "xml",
+        referenceRoots: (view) => (view === null ? [] : [view]),
+      },
     );
     const elapsed = performance.now() - started;
 

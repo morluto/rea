@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { access, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { access, mkdir, rename, rm, stat } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { DoctorHost } from "../application/Doctor.js";
@@ -195,7 +195,8 @@ const absoluteSettings = async (
 
 /**
  * Per client, the build settings its registration records with a value of its
- * own: an archive REA packed for another version is setup's, not the user's.
+ * own: an archive REA packed for another version is setup's, not the user's,
+ * whether or not it is still on disk.
  */
 const recordedSettings = async (
   { environment, platform, registrations }: SetupContext,
@@ -203,45 +204,27 @@ const recordedSettings = async (
   settings: Readonly<Record<string, string>>,
 ): Promise<Record<string, readonly string[]>> => {
   if (registrations === undefined || clientIds.length === 0) return {};
-  const statuses = await registrations(clientIds, settings);
-  const owned = await ownedArchives(environment, platform, settings[ARCHIVE]);
+  const directory = buildComputerArchiveDirectory(environment, platform);
+  const setupArchive = (name: string, value: string) =>
+    name === ARCHIVE &&
+    value !== settings[ARCHIVE] &&
+    dirname(resolve(value)) === directory &&
+    /^rea-.+\.tar\.xz$/u.test(basename(value));
+  // Every name is compared, so a runner not installed yet still reads as unrecorded.
+  const compared = {
+    ...Object.fromEntries(BUILD_COMPUTER_SETTINGS.map((name) => [name, ""])),
+    ...settings,
+  };
+  const statuses = await registrations(clientIds, compared, setupArchive);
   const recorded: Record<string, string[]> = {};
   for (const status of statuses) {
     if (!clientIds.includes(status.client) || status.command.length === 0)
       continue;
-    const unrecorded = status.provider_settings?.unrecorded ?? [];
+    const gaps = status.provider_settings;
+    const replaced = [...(gaps?.unrecorded ?? []), ...(gaps?.owned ?? [])];
     recorded[status.client] = BUILD_COMPUTER_SETTINGS.filter(
-      (name) => !unrecorded.includes(name),
+      (name) => !replaced.includes(name),
     );
   }
-  for (const archive of owned) {
-    const pinned = await registrations(clientIds, { [ARCHIVE]: archive });
-    for (const status of pinned) {
-      const gaps = status.provider_settings;
-      const recordsIt =
-        gaps === undefined ||
-        ![...gaps.unrecorded, ...gaps.differing, ...gaps.unresolved].includes(
-          ARCHIVE,
-        );
-      if (recordsIt && recorded[status.client] !== undefined)
-        recorded[status.client] = recorded[status.client]!.filter(
-          (name) => name !== ARCHIVE,
-        );
-    }
-  }
   return recorded;
-};
-
-/** Archives setup packed for other REA versions. */
-const ownedArchives = async (
-  environment: Readonly<NodeJS.ProcessEnv>,
-  platform: NodeJS.Platform,
-  current: string | undefined,
-): Promise<readonly string[]> => {
-  const directory = buildComputerArchiveDirectory(environment, platform);
-  const names = await readdir(directory).catch(() => [] as string[]);
-  return names
-    .filter((name) => /^rea-.+\.tar\.xz$/u.test(name))
-    .map((name) => join(directory, name))
-    .filter((path) => path !== current);
 };

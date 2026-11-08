@@ -176,7 +176,7 @@ const draftBetween = async (
   signal: AbortSignal,
 ): Promise<Pick<LaterDraft, "draft" | "draft_refusal">> => {
   const stdout = `${folder}/${ends.file}`;
-  const bytes = await runRea(
+  const { stdoutBytes: bytes } = await runRea(
     computer,
     [
       "describe-desktop-application-task",

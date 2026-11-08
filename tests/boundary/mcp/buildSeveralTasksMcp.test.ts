@@ -87,12 +87,13 @@ it("drafts each later task from the end before it, and exports every task checke
   expect(await rea.notes("tasks.jsonl")).toEqual([ADD_EGGS, ADD_BREAD]);
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
   expect(calls.map(({ argv }) => argv[0])).toEqual([
+    "export-desktop-application",
     "capture-desktop-application",
     "describe-desktop-application-task",
     "describe-desktop-application-task",
     "export-desktop-application",
   ]);
-  expect(calls[2]?.argv).toEqual(
+  expect(calls[3]?.argv).toEqual(
     expect.arrayContaining([
       "--seed-checkpoint",
       "end",
@@ -100,7 +101,7 @@ it("drafts each later task from the end before it, and exports every task checke
       "end-add-bread",
     ]),
   );
-  expect(calls[3]?.argv).toEqual(
+  expect(calls[4]?.argv).toEqual(
     expect.arrayContaining([
       "--task-end",
       "add-eggs=end",
@@ -127,7 +128,10 @@ it("refuses an export naming an end checkpoint the capture did not take, before 
   expect(refused.error.code).toBe("invalid_request");
   expect(refused.error.message).toContain("end-bread");
   const calls = (await rea.notes("calls.jsonl")) as { argv: string[] }[];
-  expect(calls.map(({ argv }) => argv[0])).not.toContain(
-    "export-desktop-application",
-  );
+  expect(
+    calls.some(
+      ({ argv }) =>
+        argv[0] === "export-desktop-application" && !argv.includes("--schema"),
+    ),
+  ).toBe(false);
 });

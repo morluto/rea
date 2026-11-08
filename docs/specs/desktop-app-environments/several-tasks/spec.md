@@ -36,8 +36,7 @@ then witnessed on its own fresh computer of the bundle.
   `{task, end_checkpoint}`, the end `end` by default, and refuses an end the
   stopped capture did not take before running anything in the computer. It
   writes each task to its own file in the computer and passes each task's
-  end as `--task-end`; the tasks together must fit in 96 KiB as passed. Its
-  result's `tasks` is the export's.
+  end as `--task-end`. Its result's `tasks` is the export's.
 - `stop_build_capture` returns `later_drafts`: one per checkpoint named
   `end-<task name>` taken after `end`, drafted with
   `describe-desktop-application-task` from the end checkpoint before it, so

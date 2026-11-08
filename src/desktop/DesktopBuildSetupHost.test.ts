@@ -12,11 +12,12 @@ const program = (path: string, body: string) =>
   writeFile(path, `#!/bin/sh\n${body}\n`, { mode: 0o755 });
 
 it.skipIf(process.platform === "win32").each([
-  ["an archive setup packed for another version", false],
-  ["an archive the user chose", true],
+  ["an archive setup packed for another version", false, true],
+  ["an archive setup packed for another version, since deleted", false, false],
+  ["an archive the user chose", true, true],
 ] as const)(
   "replaces only setup's own archive in a registration: %s",
-  async (_, kept) => {
+  async (_, kept, present) => {
     const root = await createTestTempDirectory("rea-desktop-setup-facts-");
     const bin = join(root, "bin");
     const home = join(root, "home");
@@ -32,7 +33,7 @@ it.skipIf(process.platform === "win32").each([
       `[ "$1 $2 $3" = "tool dir --bin" ] && echo ${join(home, ".local/bin")}`,
     );
     const previous = join(owned, "rea-6.7.0.tar.xz");
-    await writeFile(previous, "packed by an earlier setup");
+    if (present) await writeFile(previous, "packed by an earlier setup");
     await writeFile(
       join(home, ".claude.json"),
       JSON.stringify({
@@ -84,6 +85,54 @@ it.skipIf(process.platform === "win32").each([
             ? ["REA_DOCKER_COMMAND", "REA_BUILD_COMPUTER_REA_ARCHIVE"]
             : ["REA_DOCKER_COMMAND"],
         },
+      });
+    } finally {
+      await doctor.close?.();
+    }
+  },
+);
+
+it.skipIf(process.platform === "win32")(
+  "counts the runner as unrecorded where a registration lacks it and it is not installed yet",
+  async () => {
+    const root = await createTestTempDirectory("rea-desktop-setup-runner-");
+    const bin = join(root, "bin");
+    const home = join(root, "home");
+    await mkdir(bin);
+    await mkdir(home);
+    await program(join(bin, "docker"), "exit 0");
+    await writeFile(
+      join(home, ".claude.json"),
+      JSON.stringify({
+        mcpServers: {
+          rea: {
+            command: process.execPath,
+            args: ["/opt/rea/scripts/rea.mjs", "mcp"],
+            env: {
+              REA_DOCKER_COMMAND: "/custom/docker",
+              REA_BUILD_COMPUTER_REA_ARCHIVE: "/srv/rea-mine.tar.xz",
+            },
+          },
+        },
+      }),
+    );
+    const environment = {
+      HOME: home,
+      USERPROFILE: home,
+      PATH: bin,
+      XDG_CACHE_HOME: join(root, "cache"),
+    };
+    const doctor = systemDoctorHost({ environment, platform: "linux" });
+    try {
+      const facts = await systemDesktopBuildSetupHost(
+        environment,
+        "linux",
+        doctor.clientRegistrations,
+      ).facts(["claude_code"]);
+
+      expect(facts.settings).not.toHaveProperty("REA_AGENT_ENV_COMMAND");
+      expect(facts.recorded).toEqual({
+        claude_code: ["REA_DOCKER_COMMAND", "REA_BUILD_COMPUTER_REA_ARCHIVE"],
       });
     } finally {
       await doctor.close?.();

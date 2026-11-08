@@ -28,7 +28,10 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
 ## Build
 
 1. `start_build_computer` from a request. REA is installed in the computer.
-2. `start_build_capture`. REA writes an apt configuration under
+2. `start_build_capture`. REA first checks the installed runtime's export
+   schema for synthetic-seed support. If the archive is too old, repack a
+   current REA, update `REA_BUILD_COMPUTER_REA_ARCHIVE`, restart the REA MCP
+   server and start a new build computer. REA then writes an apt configuration under
    `~/.rea-build/apt` and runs `apt-get update` as the computer's user, so the
    capture finds the package's sources (`package_lists` counts the lists,
    and `package_lists_error` gives apt's exit status and last lines when the
@@ -91,7 +94,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    `uncheckable_changes` when the app's keys in dconf were read and changed,
    listing the database in `files`, since no check reads dconf (a version
    the capture kept no copy of, as it keeps none of the database at the
-   start, counts as holding none of the app's keys);
+   start, is `unreadable_changes`, not an empty key list);
    `unreadable_changes` when a dconf database changed but REA could not read
    it, such as without `dconf-cli`, with the read `error`, so whose keys
    changed is unknown; and `no_document` when no file has the document role.
@@ -116,8 +119,7 @@ See [desktop builds](https://github.com/morluto/rea/blob/main/.agents/skills/rev
    --end-checkpoint end` and each task's `--task-end`, so it seeds what was
    saved at `seed`, scrubs the
    computer's host name and user from it, and refuses a task whose checks
-   all pass on the seed. Tasks larger than 96 KiB in all as REA passes them to the
-   computer are refused before anything runs. It also passes `--synthetic-seed`, since the agent
+   all pass on the seed. It also passes `--synthetic-seed`, since the agent
    made the seed for the task, so the README does not call it the user's real
    data. When the seed holds exactly one document and the app's desktop entry
    takes files, the bundle's app opens that document at launch. A file moved
