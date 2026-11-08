@@ -207,7 +207,9 @@ describe("draftDesktopApplicationTask notes", () => {
     // Music/e.txt and the shared font cache are counted, not listed.
     expect(unowned?.more).toBe(2);
   });
+});
 
+describe("draftDesktopApplicationTask notes for retained dconf state", () => {
   it("says a change the app saved only in dconf is one no check reads, rather than that nothing changed", async () => {
     /** The seed-and-end capture whose only change from seed to end is the dconf database's, to `after`. */
     const savedInDconf = (after: string): DesktopApplicationCapture => {
