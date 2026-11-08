@@ -11,6 +11,7 @@ import { err, ok } from "../domain/result.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { cliDecimalField } from "./options.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
@@ -144,10 +145,12 @@ const registerDesktopExportCommand = (
     description:
       "Export a desktop application capture folder as an agentenv computer app bundle: class, env.toml, skill and seed",
     args: z.object({
-      capture: z
-        .string()
-        .describe("Folder written by capture-desktop-application"),
-      directory: z.string().describe("New or empty bundle directory"),
+      capture: localPathStringSchema.describe(
+        "Folder written by capture-desktop-application",
+      ),
+      directory: localPathStringSchema.describe(
+        "New or empty bundle directory",
+      ),
     }),
     options: z.object({
       name: z

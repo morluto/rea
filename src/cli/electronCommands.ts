@@ -31,6 +31,7 @@ import {
 } from "./javascriptApplicationAnalysis.js";
 import { withCommandCancellation } from "./commandCancellation.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { finishAnalysisCommand } from "./finishAnalysisCommand.js";
 import type { ElectronActiveObservationPort } from "../application/javascript/ElectronActiveObservationPort.js";
 import {
@@ -64,11 +65,9 @@ const registerElectronFuseCommand = (
     description:
       "Inspect packaged Electron fuse bytes without launching the application",
     args: z.object({
-      path: z
-        .string()
-        .describe(
-          "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
-        ),
+      path: localPathStringSchema.describe(
+        "Local Electron .app, Electron Framework binary, PE executable, or ELF executable",
+      ),
     }),
     run: ({ args }) =>
       withCommandCancellation((signal) =>
@@ -344,7 +343,9 @@ const registerJavaScriptApplicationCommand = (
     description:
       "Statically reconstruct a local JavaScript/Electron application",
     args: z.object({
-      path: z.string().describe("ASAR or extracted application path"),
+      path: localPathStringSchema.describe(
+        "ASAR or extracted application path",
+      ),
     }),
     options: javascriptApplicationOptions,
     run: ({ args, options }) =>
@@ -367,9 +368,7 @@ const registerJavaScriptApplicationCommand = (
             if (!sourcePaths.ok) return sourcePaths.error;
             return runCliJavaScriptApplicationAnalysis(
               {
-                // An empty path names no file; leave it for input validation.
-                input_path:
-                  args.path === "" ? args.path : absoluteCallerPath(args.path),
+                input_path: absoluteCallerPath(args.path),
                 format: options.artifactFormat,
                 integrity_policy: options.integrityPolicy,
                 ...(options.maxSemanticNodes === undefined

@@ -42,9 +42,27 @@ cliTest(
       { arguments: ["decompile-all", "", "--output", "out"], field: "path" },
       { arguments: ["observe-native-calls", "", "{}"], field: "path" },
       { arguments: ["inspect-evm-interface", "", "hex"], field: "path" },
+      { arguments: ["inspect-electron-fuses", ""], field: "path" },
+      { arguments: ["analyze-javascript-application", ""], field: "path" },
       {
         arguments: ["inspect-web-network-capture", "", "har"],
         field: "capturePath",
+      },
+      {
+        arguments: ["trace-web-source-location", "", "0", "map", "url", "1", "0"],
+        field: "manifestPath",
+      },
+      {
+        arguments: ["trace-web-source-location", "manifest", "0", "", "url", "1", "0"],
+        field: "sourceMapPath",
+      },
+      {
+        arguments: ["export-desktop-application", "", "out"],
+        field: "capture",
+      },
+      {
+        arguments: ["export-desktop-application", "capture", ""],
+        field: "directory",
       },
     ];
     for (const selection of selections) {

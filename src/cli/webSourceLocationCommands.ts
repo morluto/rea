@@ -2,6 +2,7 @@ import { projectCliAnalysisResult } from "./projectCliAnalysisResult.js";
 import { z } from "incur";
 import { createWebSourceLocationService } from "../composition/webSourceLocations.js";
 import { webSourceLocationInputSchema } from "../domain/webSourceLocation.js";
+import { localPathStringSchema } from "../domain/localPath.js";
 import { CLI_COMMANDS } from "../cliCommandNames.js";
 import { logCliCommand } from "../cliLogging.js";
 import type { Logger } from "pino";
@@ -21,13 +22,15 @@ export const registerWebSourceLocationCommands = (
     description:
       "Trace one retained script position through an explicitly selected local source map",
     args: z.object({
-      manifestPath: z
-        .string()
-        .describe("Absolute export_web_scripts manifest path"),
+      manifestPath: localPathStringSchema.describe(
+        "Absolute export_web_scripts manifest path",
+      ),
       scriptIndex: cliIntegerArgument(0).describe(
         "Zero-based manifest script index",
       ),
-      sourceMapPath: z.string().describe("Absolute local source-map path"),
+      sourceMapPath: localPathStringSchema.describe(
+        "Absolute local source-map path",
+      ),
       sourceMapUrl: z
         .string()
         .describe("Absolute source-map URL context; no fetch"),
