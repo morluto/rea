@@ -226,19 +226,38 @@ describe("variable-declared bootstrap loader recovery", () => {
     [
       "var named FunctionExpression loader dispatching inner self-name",
       `(() => {
-        var m = {
-          91288: ${EXTERNAL_ELECTRON},
-          85425: (_u, _e, r) => { r(91288).ipcMain.handle("PING", () => {}); }
-        }, c = {};
-        var loader = function req(id) {
-          var hit = c[id];
-          if (hit !== undefined) return hit.exports;
-          var mod = (c[id] = { exports: {} });
-          return m[id](mod, mod.exports, req), mod.exports;
-        };
-        loader(85425);
-      })();`,
+          var m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcMain.handle("PING", () => {}); }
+          }, c = {};
+          var loader = function req(id) {
+            var hit = c[id];
+            if (hit !== undefined) return hit.exports;
+            var mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, req), mod.exports;
+          };
+          loader(85425);
+        })();`,
       "loader",
+    ],
+    [
+      "const arrow loader preceded by uncomputed module-table property key matching loader name",
+      `(() => {
+          const meta = { r: true };
+          void meta.r;
+          const m = {
+            r: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r("r").ipcMain.handle("PING", () => {}); }
+          }, c = {};
+          const r = (id) => {
+            const hit = c[id];
+            if (hit !== undefined) return hit.exports;
+            const mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
+      "r",
     ],
   ])(
     "recovers variable-declared bootstrap loaders (%s)",
@@ -382,11 +401,80 @@ describe("bundled Electron module destructuring and member aliases", () => {
       rspackGetterBundle(
         `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
         `
+            const electron_1 = r(91288);
+            const { ipcMain } = electron_1;
+            ipcMain.handle = () => {};
+            ipcMain.handle("OVERWRITTEN", () => {});
+          `,
+      ),
+    );
+  });
+
+  it("recovers deferred reads inside hoisted functions declared before bundled imports while rejecting same-activation pre-init reads", () => {
+    const deferredSource = rspackGetterBundle(
+      `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+      `
+          function report() {
+            const { ipcRenderer } = electron_1;
+            ipcRenderer.send("READY");
+          }
+          function openDeferredWindow() {
+            const { BrowserWindow } = electronDefault();
+            new BrowserWindow({ webPreferences: { preload: "./deferred-preload.js" } });
+          }
           const electron_1 = r(91288);
-          const { ipcMain } = electron_1;
-          ipcMain.handle = () => {};
-          ipcMain.handle("OVERWRITTEN", () => {});
+          const electronDefault = r.n(electron_1);
+          report();
+          openDeferredWindow();
         `,
+    );
+    const sent: string[] = [];
+    let windows = 0;
+    runInNewContext(deferredSource, {
+      require: (specifier: string) => {
+        expect(specifier).toBe("electron");
+        return {
+          BrowserWindow: class {
+            constructor() {
+              windows += 1;
+            }
+          },
+          ipcRenderer: {
+            send(channel: string) {
+              sent.push(channel);
+            },
+          },
+        };
+      },
+    });
+    expect(sent).toEqual(["READY"]);
+    expect(windows).toBe(1);
+
+    const analysis = analyzeJavaScriptStaticSource(deferredSource);
+    expect(analysis.electron.browser_windows).toMatchObject([
+      { preload_path: "./deferred-preload.js" },
+    ]);
+    expect(analysis.electron.ipc).toMatchObject([
+      { channel: "READY", side: "renderer", operation: "send" },
+    ]);
+
+    expectNoDirectElectron(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            var { ipcRenderer } = electron_1;
+            var electron_1 = r(91288);
+            ipcRenderer.send("PRE_INIT");
+          `,
+      ),
+    );
+
+    expectNoDirectElectron(
+      rspackGetterBundle(
+        `(e) => { var t = e && e.__esModule ? () => e.default : () => e; return r.d(t, { a: t }), t; }`,
+        `
+            var electron_1 = (r.n(electron_1)().ipcRenderer.send("SELF_INIT"), r(91288));
+          `,
       ),
     );
   });
@@ -548,16 +636,31 @@ describe("Rspack enclosing-block and variable-loader soundness rejections", () =
     [
       "variable-declared loader is referenced before initialization",
       `(() => {
-        var m = {
-          91288: ${EXTERNAL_ELECTRON},
-          85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
-        }, c = {};
-        r(85425);
-        var r = function(id) {
-          var mod = (c[id] = { exports: {} });
-          return m[id](mod, mod.exports, r), mod.exports;
-        };
-      })();`,
+          var m = {
+            91288: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          r(85425);
+          var r = function(id) {
+            var mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+        })();`,
+      true,
+    ],
+    [
+      "variable-declared loader is read in a computed module-table key before initialization",
+      `(() => {
+          var m = {
+            [r]: ${EXTERNAL_ELECTRON},
+            85425: (_u, _e, r) => { r(91288).ipcRenderer.send("TAMPERED"); }
+          }, c = {};
+          var r = function(id) {
+            var mod = (c[id] = { exports: {} });
+            return m[id](mod, mod.exports, r), mod.exports;
+          };
+          r(85425);
+        })();`,
       true,
     ],
   ])("rejects recovery when %s", (_label, source, alsoRejectsRegistration) => {

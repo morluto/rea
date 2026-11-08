@@ -6,7 +6,11 @@ import {
   unwrapJavaScriptExpression,
 } from "./javascriptAstValues.js";
 import { moduleFactory } from "./javascriptStaticAnalysisHelpers.js";
-import { traverseJavaScriptAst } from "./javascriptSemanticTraversal.js";
+import { semanticIdentifierRole } from "./javascriptSemanticProjection.js";
+import {
+  traverseJavaScriptAst,
+  traverseJavaScriptValueAst,
+} from "./javascriptSemanticTraversal.js";
 import {
   resolveSemanticBindingState,
   semanticStableInitializer,
@@ -258,13 +262,15 @@ const hasTopLevelReferenceBeforeInitializer = (
 ): boolean => {
   const readyAt = declarator.end ?? Number.POSITIVE_INFINITY;
   let before = false;
-  traverseJavaScriptAst(body, {
+  traverseJavaScriptValueAst(body, state.erasedSyntaxNodes, {
     skip: (node) => before || t.isFunction(node),
-    enter: (node) => {
+    enter: (node, parent, readAncestors) => {
       if (
         !t.isIdentifier(node) ||
+        parent === null ||
         node === declarator.id ||
-        (node.start ?? -1) >= readyAt
+        (node.start ?? -1) >= readyAt ||
+        semanticIdentifierRole(node, parent, readAncestors) === null
       )
         return;
       if (bindingId(state, node) === targetBindingId) before = true;

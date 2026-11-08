@@ -235,6 +235,21 @@ const resolveBundledInteropGetterOrigin = (
     : undefined;
 };
 
+const nodeContains = (
+  container: t.Node,
+  descendant: t.Node,
+  parents: WeakMap<t.Node, t.Node>,
+): boolean => {
+  for (
+    let current: t.Node | undefined = descendant;
+    current !== undefined;
+    current = parents.get(current)
+  ) {
+    if (current === container) return true;
+  }
+  return false;
+};
+
 const readBundledAliasInitializer = (
   identifier: t.Identifier,
   state: JavaScriptSemanticAnalysisState,
@@ -264,10 +279,15 @@ const readBundledAliasInitializer = (
     semanticOpaqueBindingReadMayHaveChanged(binding, identifier, state)
   )
     return undefined;
-  const initializer = semanticStableInitializer(binding, state);
+  const { binding: snapshot } = semanticBindingAtRead(
+    binding,
+    identifier,
+    state,
+  );
+  const initializer = semanticStableInitializer(snapshot, state);
   return initializer === undefined ||
-    (initializer.node.end ?? Number.POSITIVE_INFINITY) >=
-      (identifier.start ?? -1)
+    snapshot.referenceInitializers.some(({ assignment }) => assignment) ||
+    nodeContains(initializer.node, identifier, state.parentsByNode)
     ? undefined
     : {
         node: initializer.node,
