@@ -532,7 +532,7 @@ export class JavaScriptAnalysisWorker {
       if (this.#primaryFailure?.kind === "memory")
         throw this.#projectPrimaryFailure(file.path);
     } catch (cause: unknown) {
-      const error = this.#failure(cause, file.path, deadline, signal);
+      let error = this.#failure(cause, file.path, deadline, signal);
       if (
         this.#primaryFailure !== undefined &&
         deadline?.interruption === "cancelled"
@@ -543,6 +543,7 @@ export class JavaScriptAnalysisWorker {
             capturedOutput: this.#captured(),
           }),
         );
+      error = this.#withParentCapacityFailure(file.path, error);
       this.#lastFailure = error;
       // Complete checkpoints remain readable after a child crash or cancellation.
       const cleanup = await this.#stop(error);
@@ -556,6 +557,7 @@ export class JavaScriptAnalysisWorker {
         } catch (checkpointCause: unknown) {
           void checkpointCause;
         }
+        error = this.#withParentCapacityFailure(file.path, error);
       }
       result = err({ error: cleanup ?? error, javascript, module, projection });
     } finally {
@@ -909,6 +911,21 @@ export class JavaScriptAnalysisWorker {
       {
         remediationAction: JAVASCRIPT_PARENT_RESULT_BUDGET_REMEDIATION,
       },
+    );
+  }
+
+  #withParentCapacityFailure(
+    path: string,
+    error: AnalysisError,
+  ): AnalysisError {
+    if (
+      error instanceof AnalysisCancelledError ||
+      (error instanceof AnalysisResourceConstraintError &&
+        error.reportedLimits?.parent_result_budget_exhausted === true)
+    )
+      return error;
+    return (
+      this.#parentCapacityFailure(path)?.retainSecondaryFailure(error) ?? error
     );
   }
 
