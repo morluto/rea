@@ -279,6 +279,7 @@
     "verify:deepseek-client": "npm run build:cached && node scripts/verify-deepseek-client.mjs",
     "probe:windows-capabilities": "npm run build:cached && node scripts/windows-capabilities.mjs",
     "verify:published": "node scripts/verify-published-package.mjs",
+    "verify:release:checkpoint": "node scripts/verify-release-checkpoint.mjs",
     "config:print": "node scripts/print-mcp-config.mjs",
     "evidence:generate": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run artifacts:managed-evidence",
     "evidence:check": "node scripts/check-dependency-install.mjs && node scripts/run-exclusive.mjs artifacts node scripts/run-turbo.mjs run evidence:check:built",
