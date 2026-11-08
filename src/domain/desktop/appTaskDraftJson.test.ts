@@ -115,7 +115,9 @@ describe("draftTaskFiles for records in a JSON array, as TreeLine saves its node
       "/items/[uid=00000069da2511f1a0ba3971baf6a808]/done",
     ]);
   });
+});
 
+describe("draftTaskFiles for named records in a JSON array", () => {
   it("names a kept record by its uid, so the edit's check holds in whatever order the app saves the records, and guards their count", () => {
     const file = drafted(
       outline([GUNS, SPQR]),
