@@ -40,8 +40,24 @@ const KEY_ALGORITHMS = [
   "6086480165030403",
   "6086480165030404",
 ];
-/** The algorithm identifiers that encrypt a private key: PKCS #5 and PKCS #12 password-based encryption. */
-const ENCRYPTION_ALGORITHMS = ["2a864886f70d0105", "2a864886f70d010c01"];
+/** The algorithm identifiers that encrypt a private key, exactly: PKCS #5 PBES1 and PBES2 and PKCS #12 password-based encryption, never PBKDF2 or PBMAC1. */
+const ENCRYPTION_ALGORITHMS = [
+  "2a864886f70d010501",
+  "2a864886f70d010503",
+  "2a864886f70d010504",
+  "2a864886f70d010506",
+  "2a864886f70d01050a",
+  "2a864886f70d01050b",
+  "2a864886f70d01050d",
+  "2a864886f70d010c0101",
+  "2a864886f70d010c0102",
+  "2a864886f70d010c0103",
+  "2a864886f70d010c0104",
+  "2a864886f70d010c0105",
+  "2a864886f70d010c0106",
+];
+/** The fewest bytes an encrypted key's encryptedData holds: the smallest PrivateKeyInfo, an X25519 or Ed25519 key's 48 bytes. */
+const MIN_ENCRYPTED_KEY_BYTES = 48;
 
 const isOneOf = (oid: string, starts: readonly string[]) =>
   starts.some((start) => oid.startsWith(start));
@@ -64,6 +80,24 @@ const isKeyAfterVersion = (
   return second.tag === 0x04 && version === 1 && size >= 20 && size <= 72;
 };
 
+/** Whether the encryptedData after an encrypted key's algorithm can hold a key; a partial read without its header goes by the room the outer element declares. */
+const holdsEncryptedKey = (
+  bytes: Uint8Array,
+  outer: DerElement,
+  algorithm: DerElement,
+  whole: boolean,
+  fits: (element: DerElement | undefined) => element is DerElement,
+): boolean => {
+  const data = elementAt(bytes, algorithm.end);
+  if (data === undefined)
+    return !whole && outer.end - algorithm.end >= 2 + MIN_ENCRYPTED_KEY_BYTES;
+  return (
+    fits(data) &&
+    data.tag === 0x04 &&
+    data.end - data.start >= MIN_ENCRYPTED_KEY_BYTES
+  );
+};
+
 /** Whether DER at `at` begins a PKCS #8, PKCS #1 or SEC 1 private key, read from its first elements; `whole` asks that they fit in `bytes`. */
 const isPrivateKeyAt = (
   bytes: Uint8Array,
@@ -81,7 +115,8 @@ const isPrivateKeyAt = (
     return (
       fits(oid) &&
       oid.tag === 0x06 &&
-      isOneOf(hex(bytes, oid), ENCRYPTION_ALGORITHMS)
+      ENCRYPTION_ALGORITHMS.includes(hex(bytes, oid)) &&
+      holdsEncryptedKey(bytes, outer, first, whole, fits)
     );
   }
   if (first.tag !== 0x02 || first.end - first.start !== 1) return false;

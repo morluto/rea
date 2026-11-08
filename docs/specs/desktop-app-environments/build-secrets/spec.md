@@ -80,11 +80,13 @@ to seed it, and a credential REA finds by its shape never ships unasked.
   recorded; the CLI refuses `--seed-withheld` without one in `--consent`.
 - Credentials by shape: PEM private keys and DER ones, in base64 or raw, in
   PKCS#8 (plain or encrypted), PKCS#1 or SEC1, URL user info, `sk-` keys,
-  GitHub, AWS, Slack, Google and Hugging Face tokens, and JWTs. Every build
-  tool result shows each as `<credential:<kind>>`, the draft included. The
-  export refuses a bundle whose seed holds one, also in UTF-16 or inside a
-  gzip file, unless the file was seeded with consent, naming each file and
-  kind, never the value.
+  GitHub, AWS, Slack, Google and Hugging Face tokens, and JWTs. An encrypted
+  key counts only under a password-based encryption scheme with at least 48
+  bytes of encrypted data, the smallest key's size, so NSS's `key4.db`
+  password check is not one. Every build tool result shows each as
+  `<credential:<kind>>`, the draft included. The export refuses a bundle
+  whose seed holds one, also in UTF-16 or inside a gzip file, unless the file
+  was seeded with consent, naming each file and kind, never the value.
 
 ## Non-goals
 

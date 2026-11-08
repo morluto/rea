@@ -93,6 +93,52 @@ const lines = (base64: string, separator: string) =>
 /** UTF-16 big-endian bytes of `text`. */
 const utf16be = (text: string) => Buffer.from(text, "utf16le").swap16();
 
+/** A DER element: its tag, its definite length, then its content. */
+const tlv = (tag: number, ...content: Buffer[]) => {
+  const body = Buffer.concat(content);
+  const length =
+    body.length < 0x80
+      ? [body.length]
+      : body.length < 0x100
+        ? [0x81, body.length]
+        : [0x82, body.length >> 8, body.length & 0xff];
+  return Buffer.concat([Buffer.from([tag, ...length]), body]);
+};
+const oid = (content: string) => tlv(0x06, Buffer.from(content, "hex"));
+const PBES2 = "2a864886f70d01050d";
+const PBKDF2 = "2a864886f70d01050c";
+const PBMAC1 = "2a864886f70d01050e";
+
+/** A made-up EncryptedPrivateKeyInfo shape under `algorithm`, PBES2's PBKDF2 and AES-256-CBC parameters inside, with `encrypted` bytes of encryptedData; NSS's key4.db password check is this with PBES2 and 16. */
+const encryptedKeyShape = (algorithm: string, encrypted: number) =>
+  tlv(
+    0x30,
+    tlv(
+      0x30,
+      oid(algorithm),
+      tlv(
+        0x30,
+        tlv(
+          0x30,
+          oid(PBKDF2),
+          tlv(
+            0x30,
+            tlv(0x04, Buffer.alloc(32, 0x11)),
+            tlv(0x02, Buffer.from([0x01])),
+            tlv(0x02, Buffer.from([0x20])),
+            tlv(0x30, oid("2a864886f70d0209")),
+          ),
+        ),
+        tlv(0x30, oid("60864801650304012a"), tlv(0x04, Buffer.alloc(14, 0x22))),
+      ),
+    ),
+    tlv(0x04, Buffer.alloc(encrypted, 0x33)),
+  );
+
+/** `value` stored in a made-up SQLite file, as key4.db keeps its rows. */
+const inSqlite = (value: Buffer) =>
+  Buffer.concat([Buffer.from("SQLite format 3\0"), Buffer.alloc(4080), value]);
+
 it("scans a large base64 payload without exhausting the stack", () => {
   expect(credentialsIn(`image=${"A".repeat(16_777_216)}`)).toEqual([]);
   expect(
@@ -258,6 +304,33 @@ describe("credential patterns", () => {
       );
     }
     expect(credentialsInBytes(Buffer.concat(noise))).toEqual([]);
+  });
+
+  it("finds no private key in NSS's key4.db password check, an encrypted-key shape too short to hold one", () => {
+    const check = encryptedKeyShape(PBES2, 16);
+    expect(check).toHaveLength(132);
+    expect(check.subarray(0, 16).toString("hex")).toBe(
+      `308181306d0609${PBES2}`,
+    );
+    expect(credentialsInBytes(inSqlite(check))).toEqual([]);
+    expect(credentialsIn(check.toString("base64"))).toEqual([]);
+  });
+
+  it("finds an encrypted private key once its encryptedData holds at least the smallest key's 48 bytes", () => {
+    const short = encryptedKeyShape(PBES2, 47);
+    const key = encryptedKeyShape(PBES2, 48);
+    expect(credentialsInBytes(inSqlite(short))).toEqual([]);
+    expect(credentialsInBytes(inSqlite(key))).toEqual(["private-key"]);
+    expect(credentialsIn(short.toString("base64"))).toEqual([]);
+    expect(credentialsIn(key.toString("base64"))).toEqual(["private-key"]);
+  });
+
+  it("finds no encrypted private key under a key derivation or MAC algorithm", () => {
+    for (const algorithm of [PBKDF2, PBMAC1]) {
+      const shape = encryptedKeyShape(algorithm, 64);
+      expect(credentialsInBytes(inSqlite(shape)), algorithm).toEqual([]);
+      expect(credentialsIn(shape.toString("base64")), algorithm).toEqual([]);
+    }
   });
 
   it("reads UTF-16 files of either byte order, with or without a byte order mark, inside gzip too", () => {
