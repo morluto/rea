@@ -1363,6 +1363,15 @@ const examineTextMember = async (
   if (isCssMember(member)) state.skippedMaps += 1;
   const remaining = MAX_RELEASE_EXPOSURE_TEXT_BYTES - state.textBytes;
   if (remaining <= 0) {
+    // A packaged member's name is not its format, so one whose header was
+    // never read may be a native image or package, as an unread `.bin` may.
+    if (member.packageFormat !== null && !member.kindStated) {
+      state.coverageUnknown = true;
+      pushLimitation(
+        state,
+        `Did not read ${member.location} past the text allowance to rule out a native image or package.`,
+      );
+    }
     state.skippedText += 1;
     if (holdsScripts(member)) state.skippedMaps += 1;
     return true;

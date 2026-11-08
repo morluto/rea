@@ -3980,6 +3980,30 @@ describe("ReleaseExposureReader cumulative text allowance", () => {
     expect(scanned.textLocations).toEqual([]);
   });
 
+  it("keeps an unclassified package member past the allowance unknown", async () => {
+    const root = await createTestTempDirectory("rea-release-exposure-text-");
+    const inner = asarArchive([
+      { name: "app.js.map", bytes: embeddedSourceMap() },
+    ]);
+    await writeFile(
+      join(root, "app.dll"),
+      dotnetBundleFixture([
+        ...Array.from({ length: MEMBERS_PAST_ALLOWANCE }, (_, index) => ({
+          path: `m${String(index)}.txt`,
+          bytes: Buffer.alloc(MAX_RELEASE_EXPOSURE_TEXT_MEMBER_BYTES, 0x20),
+          compressed: true,
+        })),
+        { path: "payload.json", bytes: inner },
+      ]).bytes,
+    );
+    const scanned = await inspect(root);
+    expect(scanned.coverage).toBe("unknown");
+    expect(sourceMapSourcesStatus(scanned)).toBe("unknown");
+    expect(scanned.limitations).toContain(
+      `Did not read ${join(root, "app.dll")}/payload.json past the text allowance to rule out a native image or package.`,
+    );
+  });
+
   it("charges only the probe for an oversized file on disk", async () => {
     const root = await createTestTempDirectory("rea-release-exposure-disk-");
     for (let index = 0; index < MEMBERS_PAST_ALLOWANCE; index += 1)
