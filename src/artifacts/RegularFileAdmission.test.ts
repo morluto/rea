@@ -44,7 +44,12 @@ it("returns the original validated metadata snapshot with its actual descriptor"
     });
     return handle;
   });
-  const descriptor = await openRegularFile(path, { symlinks: "reject" });
+  // The test just wrote this file. Settling its fresh Windows ChangeTime would
+  // replace the first observation, so admit it as written on every host.
+  const descriptor = await openRegularFile(path, {
+    symlinks: "reject",
+    changeTime: "as-written",
+  });
   try {
     expect(descriptor.handle).toBe(opened);
     expect(descriptor.initial).toBe(validated);
