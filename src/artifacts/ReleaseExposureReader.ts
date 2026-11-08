@@ -1,4 +1,5 @@
 import { isUtf8 } from "node:buffer";
+import { createHash } from "node:crypto";
 import type { Dirent } from "node:fs";
 import { lstat, mkdtemp, opendir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -1889,6 +1890,7 @@ const readOccurrence = async (
       containerPath,
       containerFormat,
       shaOf(container, nodeSha),
+      shaOf(occurrence, nodeSha),
       occurrence,
       ordinals,
       containers,
@@ -2286,6 +2288,7 @@ const readContainerMember = async (
   parentPath: string,
   parentFormat: string,
   expectedSha256: string | undefined,
+  memberSha256: string | undefined,
   occurrence: InventoryOccurrence,
   ordinals: ReadonlyMap<string, number>,
   containers: Map<string, OpenContainer>,
@@ -2310,12 +2313,21 @@ const readContainerMember = async (
       ordinals.get(occurrence.occurrence_id) ?? 0
     ];
     if (entry === undefined || entry.kind !== "file") return { kind: "unread" };
+    // The container digest binds packed members to the captured snapshot. An
+    // unpacked member is read from its companion on disk, so it is bound to
+    // the digest inventory recorded for that member instead.
     return await readEntryBytes(
       container.reader,
       entry,
       budget,
       state,
       input.signal,
+      entry.unpacked === true && memberSha256 !== undefined
+        ? {
+            sha256: memberSha256,
+            changed: `ASAR member changed before interpretation: ${occurrence.logical_path}`,
+          }
+        : undefined,
     );
   } catch (cause) {
     rethrowReadFailure(cause);
@@ -2407,18 +2419,27 @@ const readEntryBytes = async (
   budget: number,
   state: ScanState,
   signal: AbortSignal | undefined,
+  expected?: ExpectedMemberDigest,
 ): Promise<MemberRead> => {
   const stream = await reader.open(entry, signal);
-  return readStreamBounded(stream, budget, state, signal);
+  return readStreamBounded(stream, budget, state, signal, expected);
 };
+
+/** An inventoried digest the member's complete bytes must still match. */
+interface ExpectedMemberDigest {
+  readonly sha256: string;
+  readonly changed: string;
+}
 
 const readStreamBounded = async (
   stream: Readable,
   budget: number,
   state: ScanState,
   signal: AbortSignal | undefined,
+  expected?: ExpectedMemberDigest,
 ): Promise<MemberRead> => {
   const chunks: Buffer[] = [];
+  const hash = expected === undefined ? undefined : createHash("sha256");
   let total = 0;
   let overBudget = false;
   let failure: unknown;
@@ -2427,14 +2448,23 @@ const readStreamBounded = async (
       if (signal?.aborted)
         throw new AnalysisCancelledError(OPERATION, { cause: signal.reason });
       const piece = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+      hash?.update(piece);
+      // Past the allowance only the digest check still reads the bytes.
+      if (overBudget) continue;
       chunks.push(piece);
       total += piece.length;
       state.memberBytesRead += piece.length;
       if (total > budget) {
         overBudget = true;
-        break;
+        if (hash === undefined) break;
       }
     }
+    if (
+      expected !== undefined &&
+      hash !== undefined &&
+      hash.digest("hex") !== expected.sha256
+    )
+      throw new ArtifactReaderFailure("integrity", expected.changed);
   } catch (cause) {
     failure = cause;
   }

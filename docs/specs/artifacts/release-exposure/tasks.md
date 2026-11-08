@@ -7,3 +7,4 @@
 - [x] Verify real fixtures with `npm run verify:release-exposure`.
 - [x] Document current behavior in the release exposure guide.
 - [x] Accept decimal `--max-file-bytes` tokens through `cliDecimalField`.
+- [x] Bind unpacked ASAR member reads to their inventoried digests.

@@ -53,7 +53,7 @@ what was observed, so a team can review or gate a release before it ships.
   `data:` maps, HTML and SVG script loading, debug companions, credential markers
   in text members and binary plists, UTF-16 and NUL handling, read allowances,
   same-name package members, packaged native images and changed bytes after
-  inventory.
+  inventory, including an unpacked ASAR companion replaced after inventory.
 - Service tests cover Electron fuse decisions, Go and Rust metadata, partial
   inventory and cancellation with a partial report.
 - CLI and MCP return the same report; `--max-file-bytes` accepts the documented

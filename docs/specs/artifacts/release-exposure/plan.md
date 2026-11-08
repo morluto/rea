@@ -29,7 +29,10 @@ service.
 
 Every file read is bound to its inventoried digest. A file or container whose
 bytes differ from inventory at read time adds a change diagnostic and leaves the
-affected checks `unknown`. Native images carry their
+affected checks `unknown`. An unpacked ASAR member is read from its companion
+on disk rather than the captured archive, so its bytes are compared with the
+member digest that inventory recorded, and findings cannot mix an inventoried
+release with bytes written later. Native images carry their
 inventory digest into the Go, Rust and fuse reads.
 
 ## Effects and compatibility

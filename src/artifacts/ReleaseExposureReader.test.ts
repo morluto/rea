@@ -3,7 +3,7 @@ import { Readable } from "node:stream";
 import { deflateRawSync } from "node:zlib";
 import type { Dirent } from "node:fs";
 import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 
@@ -731,6 +731,59 @@ describe("ReleaseExposureReader limits", () => {
     expect(
       scanned.pdb.image_paths?.some((path) => path.endsWith("app.exe")),
     ).toBe(true);
+  });
+});
+
+describe("ReleaseExposureReader unpacked ASAR members", () => {
+  it("rejects an unpacked ASAR companion replaced after inventory", async () => {
+    const root = await createTestTempDirectory(
+      "rea-release-exposure-unpacked-",
+    );
+    const archive = join(root, "app.asar");
+    const companion = join(`${archive}.unpacked`, "dist", "notes.txt");
+    const notes = Buffer.from(
+      `-----BEGIN PRIVATE KEY-----\n${PLANTED_KEY}\n-----END PRIVATE KEY-----\n`,
+    );
+    await writeFile(
+      archive,
+      asarHeaderBytes(
+        JSON.stringify({
+          files: {
+            dist: {
+              files: { "notes.txt": { size: notes.length, unpacked: true } },
+            },
+          },
+        }),
+      ),
+    );
+    await mkdir(dirname(companion), { recursive: true });
+    await writeFile(companion, notes);
+    expect((await inspect(archive)).textLocations).toContain("dist/notes.txt");
+
+    const actual = await vi.importActual<
+      typeof import("./inventory/ArtifactInventory.js")
+    >("./inventory/ArtifactInventory.js");
+    inventoryRead.impl = async (...args) => {
+      const inventory = await actual.inventoryArtifactInScope(...args);
+      await writeFile(companion, Buffer.alloc(notes.length, 0x61));
+      return inventory;
+    };
+    const reader = new ReleaseExposureReader();
+    try {
+      const result = await reader.inspect(
+        { path: archive },
+        undefined,
+        ignoreText,
+      );
+      if (result.ok) throw new Error("Expected a failed audit.");
+      expect(result.error).toBeInstanceOf(AnalysisArtifactChangedError);
+      expect(result.error.message).toContain(
+        "ASAR member changed before interpretation: dist/notes.txt",
+      );
+    } finally {
+      inventoryRead.impl = undefined;
+      await reader.close();
+    }
   });
 });
 
