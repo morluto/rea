@@ -1,11 +1,25 @@
+import type { FileHandle } from "node:fs/promises";
 import {
   BUN_OFFSETS_BYTES,
   BUN_RECORD_BYTES_1_3_3,
   BUN_RECORD_BYTES_1_3_9,
   BUN_TRAILER,
+  loadBunStandaloneGraph,
+  probeBunStandaloneGraph,
   type BunLayoutRevision,
+  type BunStandaloneRecognition,
   type BunStringPointer,
 } from "./BunModuleGraphLayout.js";
+
+/** Exercise the same two-stage probe and payload read as the artifact reader. */
+export const locateBunGraphFixture = async (
+  handle: FileHandle,
+  fileSize: number,
+): Promise<BunStandaloneRecognition> => {
+  const probed = await probeBunStandaloneGraph(handle, fileSize);
+  if (probed.status === "absent" || probed.claim === undefined) return probed;
+  return loadBunStandaloneGraph(handle, probed.claim);
+};
 
 export interface BunFixtureModule {
   readonly name?: string | Buffer;

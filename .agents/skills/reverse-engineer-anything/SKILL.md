@@ -1,8 +1,8 @@
 ---
 name: reverse-engineer-anything
-description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
+description: Reverse engineer native, managed, Electron/JavaScript, packaged, firmware, and browser targets with REA, and build agent environments (AgentEnv bundles) of web applications from a live instance or a capture, and of Linux desktop apps with a task from a request. Use shipped-artifact or requested runtime evidence to explain features, compare versions, decompile code, or guide a reconstruction. Skip REA for ordinary source-repository architecture analysis.
 metadata:
-  version: "60"
+  version: "61"
 ---
 
 # REA
@@ -108,7 +108,7 @@ explicit path or endpoint and do not need it.
 - Firmware image: `inspect_firmware_regions` when advertised. Use
   `extract_firmware` when extraction is requested, with a caller-selected new
   absolute output directory. These tools use caller-supplied Binwalk/Unblob on
-  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/firmware-analysis.md).
+  Linux; see the [firmware guide](https://github.com/morluto/rea/blob/main/docs/guides/firmware/firmware-analysis.md).
 - ESP32-family app or bootloader image (`0xE9` magic): `inspect_artifact`
   without a provider; see the ESP section of `references/native-and-artifacts.md`.
 - .NET NativeAOT PE/ELF: native Ghidra analysis. Native code can yield pseudocode;
@@ -140,6 +140,10 @@ explicit path or endpoint and do not need it.
 - Task for a desktop application's exported environment, from a
   `capture-desktop-application` folder: read
   [desktop application tasks](references/environments.md#tasks-for-a-desktop-application-environment).
+- Environment of a Linux desktop app with a task, from a request such as
+  "build me an Inkscape environment where the agent changes a poster's
+  headline": read [desktop builds](references/desktop-build.md). You drive the
+  app on a build computer from `start_build_computer`, then export and witness.
 - Fiddler Everywhere traffic or a native `.saz` capture: read the
   [Fiddler workflow](references/runtime-observation.md#fiddler-everywhere-traffic-debugging).
   Inspect saved SAZ with `inspect_web_network_capture` and `format: "saz"`;
@@ -150,7 +154,7 @@ explicit path or endpoint and do not need it.
   old-generation heap is `REA_CAPTURE_DECODER_OLD_GENERATION_MIB` (default 192 MiB,
   floor 8, maximum 16384), set where REA starts. Host memory and `NODE_OPTIONS` do not
   raise it. See
-  [historical captures](https://github.com/morluto/rea/blob/main/docs/web-network-captures.md) for the exact upstream
+  [historical captures](https://github.com/morluto/rea/blob/main/docs/guides/web/web-network-captures.md) for the exact upstream
   profile and credential exclusions. Qlog support starts with aioquic 1.5.0
   JSON 0.3; stream coverage and endpoint loss declarations do not recover bodies
   or establish network loss. Prefer detail summary, then kind qlog trace/stream
@@ -165,7 +169,7 @@ explicit path or endpoint and do not need it.
   display filters and decode-as rules. Requires Linux, util-linux prlimit and
   TShark 4.x on an absolute `PATH` entry or via the optional absolute
   `REA_TSHARK_COMMAND` override; see
-  [capture guide](https://github.com/morluto/rea/blob/main/docs/packet-captures.md).
+  [capture guide](https://github.com/morluto/rea/blob/main/docs/guides/data/packet-captures.md).
   Packet limits count input packets before filtering. Output defaults to 50 matching
   frames; use `match_offset` / `match_limit` for later pages, or explicit null
   limit for complete matching output. Preserve the source digest across pages.
@@ -173,7 +177,7 @@ explicit path or endpoint and do not need it.
   For address/DNS/SNI/protocol summaries use `inspect_pcap_capture` with MCP
   detail summary, then retained kind pcap pages. Requires Wireshark 4.x tshark
   and capinfos, with Linux prlimit or Windows Job Objects; see
-  [packet summaries](https://github.com/morluto/rea/blob/main/docs/pcap-analysis.md).
+  [packet summaries](https://github.com/morluto/rea/blob/main/docs/guides/data/pcap-analysis.md).
   Select an exact DNS question for address pages; page exhaustion does not prove
   network completeness. This reads recordings and does not acquire traffic.
 - Decoder discovery: `inspect_signal_decoders` searches installed decoder IDs
@@ -181,7 +185,7 @@ explicit path or endpoint and do not need it.
   relevant details before choosing settings; this does not scan hardware.
 - Recorded logic/signal traces: `decode_signal_recording` with explicit decoder,
   channel and protocol settings. On Linux with util-linux prlimit, supply sigrok-cli 0.7.2 through
-  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/signal-recordings.md).
+  `REA_SIGROK_COMMAND`; see [recording guide](https://github.com/morluto/rea/blob/main/docs/guides/signals/signal-recordings.md).
   Output defaults to 50 literal lines; select annotation classes and page with
   `line_offset` / `line_limit`, or explicit null for all remaining output.
   Window counts are display lines, not annotations or samples. Preserve source digests across pages.
@@ -190,7 +194,7 @@ explicit path or endpoint and do not need it.
   through `REA_WABT_BIN_DIRECTORY`; retain exact byte/tool identity and decoded WAT.
   Select JavaScript glue and candidate paths explicitly and preserve URL/path
   ambiguity. No implicit fetch or target execution; WAT is not original source.
-  See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/wasm-artifacts.md).
+  See the [WASM guide](https://github.com/morluto/rea/blob/main/docs/guides/wasm/wasm-artifacts.md).
 - Explicit local Android APK (or ZIP/AAB) signing: `inspect_apk_signature`.
   Prefer its summary or selected signer/digest/lineage page; retain complete
   Evidence and use `inspect_analysis_view` kind `apk-signature` for follow-ups.
@@ -209,13 +213,13 @@ explicit path or endpoint and do not need it.
   Evidence stays retained under its original identity. Use the returned
   `parent_evidence_id` for exact function or `bytecode_hex`/stdout/stderr pages.
   Candidate coverage does not establish interface completeness. See the
-  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/evm-bytecode.md).
+  [EVM bytecode guide](https://github.com/morluto/rea/blob/main/docs/guides/evm/evm-bytecode.md).
 - Embedded Go compiler, module or build-setting metadata: `inspect_go_binary`
   with the explicit local file. This built-in target-free inspection requires no
   Go installation or disassembler. Preserve raw module bytes and source ranges;
   absent metadata does not prove a binary is not Go, and unparsed text records
   remain explicit. See the
-  [Go binary guide](https://github.com/morluto/rea/blob/main/docs/go-binaries.md).
+  [Go binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/go-binaries.md).
 - Embedded CUDA/HIP code objects: `inspect_gpu_code_objects`; inventory targets
   first, then decode selected payloads and query retained GPU Evidence.
 - Bundled GGUF or safetensors model declarations: `inspect_model_artifact`
@@ -332,17 +336,17 @@ explicit path or endpoint and do not need it.
   20 rows; request `schema_scope: "database"` for the complete stored schema. Preserve both database and existing sibling WAL identity; row samples
   report truncation and have unspecified order. Use a quiescent snapshot rather
   than assuming a live database/WAL pair was copied atomically. See the
-  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/sqlite-databases.md).
+  [SQLite guide](https://github.com/morluto/rea/blob/main/docs/guides/data/sqlite-databases.md).
 - Explicit Linux ELF file for offline layout, symbols, relocations or static
   mitigation evidence: `inspect_binary_layout`. This target-free operation uses
   caller-supplied pwntools without opening a disassembler database. Preserve its
   raw locations and inference/coverage limits; see the
-  [offline binary guide](https://github.com/morluto/rea/blob/main/docs/binary-diagnostics.md).
+  [offline binary guide](https://github.com/morluto/rea/blob/main/docs/guides/native/binary-diagnostics.md).
 - Supplied Linux x86-64 ELF core: `inspect_recorded_crash`. Read every recorded
   thread, raw note and source-bound register without opening a live target.
   Historical PIDs do not select live processes. Request `include_debugger_context`
   only when core-only mapping candidates help; see the
-  [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/recorded-crashes.md).
+  [recorded crash guide](https://github.com/morluto/rea/blob/main/docs/guides/native/recorded-crashes.md).
 - PE resource type/name/language trees and static icon group references:
   `inspect_pe_resources` with an explicit path. This portable operation requires
   no active target or engine; opaque payloads retain file ranges and SHA-256.
@@ -358,9 +362,9 @@ The legacy attached profile binds the already-open GUI input by SHA-256 and
 leaves its database open. The modern headless profile creates and closes an
 owned private database without saving. Installation and registration reuse
 [mrexodia/ida-pro-mcp](https://github.com/mrexodia/ida-pro-mcp); see the
-[IDA provider guide](https://github.com/morluto/rea/blob/main/docs/ida-provider.md).
+[IDA provider guide](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md).
 For migration to the separate native IDA MCP plugin, follow the guide's
-[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/ida-provider.md#migrate-a-legacy-attached-registration).
+[legacy attached migration](https://github.com/morluto/rea/blob/main/docs/providers/ida-provider.md#migrate-a-legacy-attached-registration).
 Replace the upstream registration explicitly; modern mrexodia tools are not the
 native profile. Native attachment preserves the database but does not provide
 direct callers; check session availability and the guide's verification limits.
@@ -539,6 +543,8 @@ as complete while required questions remain open.
   [references/environments.md](references/environments.md)
 - Tasks for a desktop application's exported environment:
   [references/environments.md](references/environments.md#tasks-for-a-desktop-application-environment)
+- A desktop app environment from a request, built and witnessed on build
+  computers: [references/desktop-build.md](references/desktop-build.md)
 
 ## Finish the task
 

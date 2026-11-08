@@ -407,9 +407,11 @@ it("preserves a partial MCP error without claiming failed Evidence retention", a
 
   expect(response.isError).toBe(true);
   expect(response.structuredContent?.error?.details).toMatchObject({
-    partial_observation: expect.objectContaining({
-      operation: "execute_rizin_command",
-    }),
+    partial_observation: {
+      kind: "inline-evidence",
+      retention: "unknown",
+      evidence: { operation: "execute_rizin_command" },
+    },
   });
   expect(
     JSON.stringify(response.structuredContent?.error?.details),

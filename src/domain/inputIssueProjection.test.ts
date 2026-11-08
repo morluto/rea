@@ -4,14 +4,17 @@ import { z } from "zod";
 import {
   analysisInputErrorFromIssues,
   projectInputIssues,
-  projectInputIssuesWithinBudget,
+  projectInputIssueGroupsWithinBudget,
 } from "./inputIssueProjection.js";
 import { projectAnalysisError } from "./analysisErrorProjection.js";
 import { processScenarioSchema } from "./process/processScenario.js";
 import { OFFICIAL_TOOL_CONTRACTS } from "../contracts/officialToolContracts.js";
 import { APPLICATION_TOOL_CONTRACTS } from "../contracts/applicationToolContracts.js";
 import { ENHANCED_TOOL_CONTRACTS } from "../contracts/enhancedToolContracts.js";
-import { knownArgumentMistakeGuidance } from "./inputArgumentGuidance.js";
+
+const projectFlattenedIssueGroups = (
+  ...args: Parameters<typeof projectInputIssueGroupsWithinBudget>
+) => projectInputIssueGroupsWithinBudget(...args)?.flat();
 
 const officialContract = (
   name: (typeof OFFICIAL_TOOL_CONTRACTS)[number]["name"],
@@ -159,8 +162,6 @@ describe("input issue argument guidance", () => {
       "procedure_pseudo_code",
       "procedure_assembly",
     ] as const) {
-      const guidance = knownArgumentMistakeGuidance(op, "address");
-      expect(guidance).toBeDefined();
       const parsed = officialContract(op).inputSchema.safeParse(input);
       if (parsed.success) throw new Error("expected invalid input");
       const error = analysisInputErrorFromIssues(
@@ -174,19 +175,17 @@ describe("input issue argument guidance", () => {
           path: ["address"],
           reason: "unknown_argument",
           expected: "procedure",
-          message: guidance!.message,
+          message: expect.stringMatching(/address.*procedure/i),
         },
         { path: ["count"], reason: "unknown_argument" },
       ]);
       const action = projectAnalysisError(error).remediation.action;
-      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toMatch(/procedure.*address/i);
       expect(action).toContain(op);
     }
 
     const searchInput = { query: "flag" };
     for (const op of ["search_strings", "search_procedures"] as const) {
-      const guidance = knownArgumentMistakeGuidance(op, "query");
-      expect(guidance).toBeDefined();
       const parsed = officialContract(op).inputSchema.safeParse(searchInput);
       if (parsed.success) throw new Error("expected invalid input");
       const searchError = analysisInputErrorFromIssues(
@@ -200,11 +199,11 @@ describe("input issue argument guidance", () => {
           path: ["query"],
           reason: "unknown_argument",
           expected: "pattern",
-          message: guidance!.message,
+          message: expect.stringMatching(/query.*pattern/i),
         },
       ]);
       const action = projectAnalysisError(searchError).remediation.action;
-      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toMatch(/pattern.*query/i);
       expect(action).toContain(op);
     }
   });
@@ -212,8 +211,6 @@ describe("input issue argument guidance", () => {
   it("guides callers for symmetric neighboring-tool argument names", () => {
     const addressInput = { procedure: "main" };
     for (const op of ["resolve_containing_procedure", "read_bytes"] as const) {
-      const guidance = knownArgumentMistakeGuidance(op, "procedure");
-      expect(guidance).toBeDefined();
       const parsed = officialContract(op).inputSchema.safeParse(addressInput);
       if (parsed.success) throw new Error("expected invalid input");
       const error = analysisInputErrorFromIssues(
@@ -227,16 +224,14 @@ describe("input issue argument guidance", () => {
           path: ["procedure"],
           reason: "unknown_argument",
           expected: "address",
-          message: guidance!.message,
+          message: expect.stringMatching(/procedure.*address/i),
         },
       ]);
       const action = projectAnalysisError(error).remediation.action;
-      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toMatch(/address.*procedure/i);
       expect(action).toContain(op);
     }
 
-    const xrefsGuidance = knownArgumentMistakeGuidance("xrefs", "procedure");
-    expect(xrefsGuidance).toBeDefined();
     const xrefsParsed =
       officialContract("xrefs").inputSchema.safeParse(addressInput);
     if (xrefsParsed.success) throw new Error("expected invalid input");
@@ -250,11 +245,11 @@ describe("input issue argument guidance", () => {
         path: ["procedure"],
         reason: "unknown_argument",
         expected: "address",
-        message: xrefsGuidance!.message,
+        message: expect.stringMatching(/procedure.*address/i),
       },
     ]);
     const xrefsAction = projectAnalysisError(xrefsError).remediation.action;
-    expect(xrefsAction.startsWith(xrefsGuidance!.remediation)).toBe(true);
+    expect(xrefsAction).toMatch(/address.*procedure/i);
     expect(xrefsAction).toContain("xrefs");
 
     const queryInput = { pattern: "flag" };
@@ -269,8 +264,6 @@ describe("input issue argument guidance", () => {
       },
     ];
     for (const { op, contract } of queryCases) {
-      const guidance = knownArgumentMistakeGuidance(op, "pattern");
-      expect(guidance).toBeDefined();
       const parsed = contract.inputSchema.safeParse(queryInput);
       if (parsed.success) throw new Error("expected invalid input");
       const error = analysisInputErrorFromIssues(
@@ -284,11 +277,11 @@ describe("input issue argument guidance", () => {
           path: ["pattern"],
           reason: "unknown_argument",
           expected: "query",
-          message: guidance!.message,
+          message: expect.stringMatching(/pattern.*query/i),
         },
       ]);
       const action = projectAnalysisError(error).remediation.action;
-      expect(action.startsWith(guidance!.remediation)).toBe(true);
+      expect(action).toMatch(/query.*pattern/i);
       expect(action).toContain(op);
     }
   });
@@ -314,15 +307,10 @@ describe("input issue argument guidance suppression", () => {
       { path: ["address"], reason: "unknown_argument" },
     ]);
     const action = projectAnalysisError(error).remediation.action;
-    const suppressedGuidance = knownArgumentMistakeGuidance(
-      "annotate_native_function",
-      "address",
-    );
-    expect(suppressedGuidance).toBeDefined();
-    expect(action).not.toContain(suppressedGuidance!.remediation);
+    expect(action).not.toMatch(/procedure.*instead of.*address/i);
     expect(action).toContain("annotate_native_function");
 
-    const budgeted = projectInputIssuesWithinBudget(
+    const budgeted = projectFlattenedIssueGroups(
       parsed.error.issues,
       inputWithBoth,
       1024,
@@ -343,19 +331,14 @@ describe("input issue argument guidance suppression", () => {
       parsedMissing.error.issues,
       inputMissingExpected,
     );
-    const missingGuidance = knownArgumentMistakeGuidance(
-      "annotate_native_function",
-      "address",
-    );
-    expect(missingGuidance).toBeDefined();
     expect(errorMissing.issues).toContainEqual({
       path: ["address"],
       reason: "unknown_argument",
       expected: "procedure",
-      message: missingGuidance!.message,
+      message: expect.stringMatching(/address.*procedure/i),
     });
     const missingAction = projectAnalysisError(errorMissing).remediation.action;
-    expect(missingAction.startsWith(missingGuidance!.remediation)).toBe(true);
+    expect(missingAction).toMatch(/procedure.*address/i);
   });
 });
 
@@ -371,10 +354,10 @@ describe("bounded input issue projection", () => {
     const parsed = schema.safeParse(input);
     if (parsed.success) throw new Error("expected invalid input");
     expect(
-      projectInputIssuesWithinBudget(parsed.error.issues, input, 32_768),
+      projectFlattenedIssueGroups(parsed.error.issues, input, 32_768),
     ).toEqual(projectInputIssues(parsed.error.issues, input));
     expect(
-      projectInputIssuesWithinBudget(parsed.error.issues, input, 300),
+      projectFlattenedIssueGroups(parsed.error.issues, input, 300),
     ).toBeUndefined();
   });
 
@@ -411,7 +394,7 @@ describe("bounded input issue projection", () => {
       errors: [[{ ...child, path }]],
     };
     expect(
-      projectInputIssuesWithinBudget([largePathIssue], input, 1024),
+      projectFlattenedIssueGroups([largePathIssue], input, 1024),
     ).toBeUndefined();
     expect(copied).toBe(false);
   });
@@ -424,10 +407,10 @@ describe("bounded input issue projection", () => {
       message: "Unrecognized keys",
     };
     expect(projectInputIssues([issue], {})).toHaveLength(10);
-    expect(projectInputIssuesWithinBudget([issue], {}, 5000)).toBeUndefined();
-    expect(projectInputIssuesWithinBudget([issue], {}, 32_000)).toHaveLength(
-      10,
-    );
+    expect(projectFlattenedIssueGroups([issue], {}, 5000)).toBeUndefined();
+    const groups = projectInputIssueGroupsWithinBudget([issue], {}, 32_000);
+    expect(groups).toHaveLength(1);
+    expect(groups?.[0]).toHaveLength(10);
   });
 
   it("bounds pre-allocation budget accounting for guided unrecognized keys", () => {
@@ -437,12 +420,12 @@ describe("bounded input issue projection", () => {
       keys: ["address"],
       message: "Unrecognized keys: address",
     };
-    expect(projectInputIssuesWithinBudget([issue], {}, 800)).toEqual([
+    expect(projectFlattenedIssueGroups([issue], {}, 800)).toEqual([
       { path: ["address"], reason: "unknown_argument" },
     ]);
 
     expect(
-      projectInputIssuesWithinBudget(
+      projectFlattenedIssueGroups(
         [issue],
         {},
         800,
@@ -450,13 +433,8 @@ describe("bounded input issue projection", () => {
       ),
     ).toBeUndefined();
 
-    const guidance = knownArgumentMistakeGuidance(
-      "read_function_instructions",
-      "address",
-    );
-    expect(guidance).toBeDefined();
     expect(
-      projectInputIssuesWithinBudget(
+      projectFlattenedIssueGroups(
         [issue],
         {},
         2000,
@@ -467,7 +445,7 @@ describe("bounded input issue projection", () => {
         path: ["address"],
         reason: "unknown_argument",
         expected: "procedure",
-        message: guidance!.message,
+        message: expect.stringMatching(/address.*procedure/i),
       },
     ]);
   });

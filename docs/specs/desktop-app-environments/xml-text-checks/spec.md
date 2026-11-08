@@ -55,9 +55,11 @@ verifier's, agree.
   entry of another format; a value that is neither an element, a text node
   (a string among an element's `children`) nor an attribute's value (one among
   its `attributes`), so an element's `name` and the `doctype`'s fields fail;
-  and, as undecided, an element in a view that leaves something out, or a
-  selector searching an array such a view may cut. A text node is whole, so
-  it is decided on a truncated view.
+  and, as undecided, in a view that leaves something out, either check of an
+  element, even one whose kept text holds the value, since the cut may have
+  dropped text from between the runs it kept; a pointer naming nothing; or a
+  selector searching an array such a view may cut. A text node or an
+  attribute's value is whole, so it is decided on a truncated view.
 - Refusals: the task parser refuses the empty pointer, a pointer not starting
   with `/`, an empty `text_contains` value or one that is only whitespace
   with `normalize_whitespace`, and a value that looks like a date and time,

@@ -95,7 +95,7 @@ it.each(commands)(
   "rejects an empty or NUL %s target before resolution and admits explicit .",
   async (command, ...rest) => {
     const { serve, runs } = registry();
-    // docs/cli.md: an empty string never selects the working directory.
+    // docs/getting-started/cli.md: an empty string never selects the working directory.
     expect(await serve([command, "", ...rest])).toMatchObject({
       code: "VALIDATION_ERROR",
       fieldErrors: [
