@@ -312,6 +312,7 @@
 * **ci:** preserve lint diagnostics without source locations ([b45a833](https://github.com/morluto/rea/commit/b45a83368c11d02b9ed2acfeb04a19cac747b611))
 * **ci:** preserve release proposal overflow notes ([2cb2969](https://github.com/morluto/rea/commit/2cb29693c3d574c4898832047fe309ac1ad00e9d))
 * **ci:** preserve the package verifier HTTP boundary ([#8483](https://github.com/morluto/rea/issues/8483)) ([7174635](https://github.com/morluto/rea/commit/71746351d322c847cb6b8bc8e1b21e80491a878e))
+* **ci:** register standalone function bundle verifier ([#9332](https://github.com/morluto/rea/issues/9332)) ([2ac8578](https://github.com/morluto/rea/commit/2ac85788271f8650da0b46d680a41c06e197cde2))
 * **ci:** remove undeclared dependency and handle PTY chunks ([3c05b4d](https://github.com/morluto/rea/commit/3c05b4d3fef94eb91c966ecd675ff97fef3e364e))
 * **ci:** remove unused exports that fail deep static checks ([#8095](https://github.com/morluto/rea/issues/8095)) ([6b68fb6](https://github.com/morluto/rea/commit/6b68fb642a62f42e4e5359717e7f2f80b7938c63))
 * **ci:** repair native fixture and unused export ([429355c](https://github.com/morluto/rea/commit/429355ca4d1078579fca7d286de85c512bed0a96))
