@@ -386,6 +386,8 @@ visible in the ledger and produce diagnostics; they cannot close the obligation.
 A green unit test cannot close a `packaged-process` obligation. A static-only
 source cannot close a runtime or process claim. Marking a claim `blocked` or
 `out-of-scope` records the disposition but does not silently count it as verified.
+A `blocked` claim with an authenticated contradiction keeps status `blocked`,
+but the contradiction still fails the ledger.
 
 A retired obligation (`out-of-scope` or `not-applicable`) stays in the ledger
 with its `required` value unchanged and status `out-of-scope`; its reason is
@@ -395,8 +397,10 @@ obligation still counts toward `required_open` and keeps the ledger `open`:
 retiring claims never makes a ledger `ready`. Proof that was supplied for a
 retired obligation is still checked: a failing fixture or verifier proof on
 its binding reports `fixture-failed` or `verifier-failed` and fails the
-ledger. Contradictions, residual unknowns, unavailable authority, and
-competing reviewed definitions remain visible on it.
+ledger. An authenticated contradiction on a retired obligation reports a
+`contradiction` diagnostic and also fails the ledger. Residual unknowns,
+unavailable authority, and competing reviewed definitions remain visible on
+it.
 
 ### Over-generation
 

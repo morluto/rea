@@ -475,6 +475,70 @@ describe("reconstruction obligation over-generation group", () => {
     expect(ledger.status).toBe("unknown");
   });
 
+  it.each([
+    ["a second retiring review", "out-of-scope"],
+    ["an active review", "active"],
+  ] as const)(
+    "keeps the generated source state when %s also cites observed process Evidence",
+    (_, secondDisposition) => {
+      const flooded = decoyApplication(OBLIGATION_OVERGENERATION_THRESHOLD);
+      const capture = processEvidence();
+      const open = build(request([...flooded.records, capture]));
+      const decoys = open.obligations.filter(({ target }) =>
+        flooded.unknownNodes.some(
+          ({ node_id: nodeId }) => target.application_node_id === nodeId,
+        ),
+      );
+      const total = staticUnbound(open);
+      const ledger = build(
+        request([...flooded.records, capture], {
+          reviewed_obligations: decoys.flatMap(
+            ({ obligation_id: obligationId }) => [
+              {
+                ...reviewedObligation(obligationId, capture.evidence_id),
+                disposition: "not-applicable" as const,
+                disposition_reason: "Decoy channel in dead code.",
+              },
+              secondDisposition === "active"
+                ? reviewedObligation(obligationId, capture.evidence_id)
+                : {
+                    ...reviewedObligation(obligationId, capture.evidence_id),
+                    disposition: secondDisposition,
+                    disposition_reason: "Decoy channel reviewed again.",
+                  },
+            ],
+          ),
+        }),
+      );
+
+      // Every later review of a generated claim attaches its Evidence without
+      // making the claim look observed, so the decoys stay in the count.
+      for (const decoy of decoys) {
+        const retiredDecoy = ledger.obligations.find(
+          ({ obligation_id: id }) => id === decoy.obligation_id,
+        );
+        expect(retiredDecoy).toMatchObject({
+          origin: "generated",
+          status: "out-of-scope",
+          source_state: decoy.source_state,
+        });
+        expect(retiredDecoy?.source_state).not.toBe("observed");
+        expect(retiredDecoy?.diagnostics.map(({ code }) => code)).toContain(
+          "duplicate-definition",
+        );
+        expect(
+          retiredDecoy?.authority_references.map(({ evidence_id: id }) => id),
+        ).toContain(capture.evidence_id);
+      }
+      expect(overgeneration(ledger)).toHaveLength(1);
+      expect(overgeneration(ledger)[0]).toContain(
+        `; ${String(total - decoys.length)} still unreviewed, ${String(decoys.length)} retired by reviewed disposition.`,
+      );
+      expect(ledger.status).toBe("unknown");
+      expect(ledger.coverage.status).toBe("partial");
+    },
+  );
+
   it("does not count static-authority native families as lacking runtime authority", () => {
     const flooded = applicationWithUnknowns(
       Array.from({ length: 25 }, (_, index) => `export-${String(index)}`),

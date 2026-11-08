@@ -177,6 +177,47 @@ describe("reconstruction obligation analyst disposition", () => {
   });
 });
 
+describe("reconstruction obligation blocked claim contradiction", () => {
+  it("fails the ledger when a blocked reviewed claim carries an authenticated contradiction", () => {
+    const review = proofEvidence("blocked-review");
+    const contradicting = proofEvidence("blocked-contradiction");
+    const ledger = build(
+      request([review, contradicting], {
+        reviewed_obligations: [
+          {
+            ...reviewedObligation("obl.review.blocked", review.evidence_id),
+            disposition: "blocked",
+          },
+        ],
+        manifest: {
+          bindings: [],
+          contradictions: [
+            {
+              obligation_id: "obl.review.blocked",
+              evidence_ids: [review.evidence_id, contradicting.evidence_id],
+            },
+          ],
+        },
+      }),
+    );
+
+    // The blocked status ranks ahead of contradicted, but blocking does not
+    // hide the contradiction: contradicted required work fails closure.
+    expect(ledger.obligations[0]).toMatchObject({
+      origin: "reviewed",
+      required: true,
+      status: "blocked",
+    });
+    expect(ledger.obligations[0]?.diagnostics.map(({ code }) => code)).toEqual(
+      expect.arrayContaining(["blocked", "contradiction"]),
+    );
+    expect(ledger.reports.contradicted_obligation_ids).toEqual([
+      "obl.review.blocked",
+    ]);
+    expect(ledger.status).toBe("failed");
+  });
+});
+
 describe("reconstruction obligation retired claim proof", () => {
   it.each([
     ["failing", false, "failed", ["fixture-failed", "not-applicable"]],

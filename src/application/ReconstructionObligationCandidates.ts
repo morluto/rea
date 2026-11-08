@@ -471,9 +471,10 @@ const addCandidate = (
   // generated definition, which is kept rather than redefined. A second
   // retiring record, or one for another obligation version, competes with
   // the definition instead of overwriting the first review.
+  const reviewsGenerated =
+    current.origin === "generated" && candidate.origin === "reviewed";
   const retiresGenerated =
-    current.origin === "generated" &&
-    candidate.origin === "reviewed" &&
+    reviewsGenerated &&
     retiresObligation(candidate.disposition) &&
     !retiresObligation(current.disposition) &&
     candidate.obligation_version === current.obligation_version;
@@ -495,8 +496,9 @@ const addCandidate = (
       (item) => `${item.kind}:${item.evidence_id}:${item.location}`,
     ),
     // Review Evidence is attached but never upgrades the generated claim's
-    // source state: retiring a claim cannot make it look observed.
-    source_state: retiresGenerated
+    // source state: no review, retiring or competing, and no second review
+    // of an already retired claim can make it look observed.
+    source_state: reviewsGenerated
       ? current.source_state
       : sourceState([
           ...current.authority_references,
