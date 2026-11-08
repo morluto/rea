@@ -19,6 +19,7 @@ import {
   isGhidraFunctionOperation,
   type GhidraFunctionOperation,
 } from "../../../src/ghidra/GhidraFunctionValues.js";
+import { limitationsFor } from "../../../src/ghidra/GhidraProviderCapabilities.js";
 
 it.each([
   { pseudocodeAvailable: true, reportsCoverage: true },
@@ -702,8 +703,7 @@ describe("Ghidra MCP evidence parity", () => {
           ]),
         },
         limitations: expect.arrayContaining([
-          expect.stringContaining("default auto-analysis complete"),
-          expect.stringContaining("original executable bytes are unchanged"),
+          ...limitationsFor("analyze_function"),
         ]),
       });
       const directAnalyzed = await new EnhancedTools(session).execute(
