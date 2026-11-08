@@ -409,6 +409,7 @@
 * **decompile:** retain inventory limitations and selection ([#8466](https://github.com/morluto/rea/issues/8466)) ([fc20aeb](https://github.com/morluto/rea/commit/fc20aebb94e16cc9976b5733731eca9e11ed7830))
 * **decompile:** retain limitations across failed resume ([#7913](https://github.com/morluto/rea/issues/7913)) ([5082b50](https://github.com/morluto/rea/commit/5082b50f074e2f3e1ba5534d119ae16566673a36))
 * **deps:** patch fast-uri, qs and HTTP/3 certifi ([#7704](https://github.com/morluto/rea/issues/7704)) ([e556134](https://github.com/morluto/rea/commit/e556134302f055936c0295838d72ebcd5454bc96)), closes [#7700](https://github.com/morluto/rea/issues/7700)
+* **deps:** patch Vite and isolate ASAR tooling ([#9374](https://github.com/morluto/rea/issues/9374)) ([08637b0](https://github.com/morluto/rea/commit/08637b0c24b98ac9b32b925f1237aff57cabe601))
 * **deps:** upgrade zod without narrowing timestamp inputs ([e3066c1](https://github.com/morluto/rea/commit/e3066c1705316b53b08f84814ae929eb6563e511))
 * **desktop:** align exported XML formatting whitespace ([#9020](https://github.com/morluto/rea/issues/9020)) ([d774422](https://github.com/morluto/rea/commit/d77442228d769ba20d7006bf4befea3a4c2f06d9))
 * **desktop:** bound exported task array-index conversion ([#9139](https://github.com/morluto/rea/issues/9139)) ([ee2f5b9](https://github.com/morluto/rea/commit/ee2f5b965a7b5cb0036444330d89fa32302f7845))
