@@ -59,6 +59,24 @@ const desktopOptions = (
 });
 
 describe("desktop setup cancellation", () => {
+  it("retains an action failure reported as cancellation arrives", async () => {
+    const { host } = desktopHost();
+    const controller = new AbortController();
+    const reason = new Error("cancel after failure");
+    host.desktopBuild.packRuntime = async () => {
+      controller.abort(reason);
+      return "packing failed: disk full";
+    };
+    const failure: unknown = await runSetup(
+      desktopOptions(true, { signal: controller.signal }),
+      host,
+    ).catch((cause: unknown) => cause);
+    expect(failure).toBeInstanceOf(AnalysisCancelledError);
+    expect(failure).toMatchObject({
+      cause: reason,
+      diagnostics: { setup_failure: "packing failed: disk full" },
+    });
+  });
   it.each(["install", "pack"] as const)(
     "waits for %s cleanup and stops later setup work after cancellation",
     async (action) => {

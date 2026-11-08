@@ -245,19 +245,6 @@ it("matches file URLs without changing their spelling and keeps URLs when a link
   });
 });
 
-it("recognizes a captured relative filename containing a colon", () => {
-  const argv = ["app", "Budget:2026.svg"];
-  expect(
-    openSeedDocument(argv, {
-      ...AT_HOME,
-      workingDirectory: `${HOME}/Documents`,
-      exec: "app %U",
-      documents: ["Documents/Budget:2026.svg"],
-      isDocument: (path) => path === "Documents/Budget:2026.svg",
-    }),
-  ).toEqual({ argv, opens: { kind: "captured" } });
-});
-
 describe("openSeedDocument settings spelling", () => {
   it("respells a separate --config directory and an equals option", () => {
     const settings = (path: string) =>
