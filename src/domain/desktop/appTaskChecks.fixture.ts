@@ -1464,6 +1464,55 @@ const INSIDE_PATH_CASES: readonly (readonly [
 ])[] = [
   [
     {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/format",
+      value: "xml",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "member_count",
+      file: "Documents/plate.FCStd",
+      pointer: "/entries/[>name=Document.xml]/view/root/children",
+      matching: "[>Property/Float@value=5.0000000000000000]",
+      equals: 1,
+    },
+    true,
+  ],
+  [
+    {
+      kind: "text_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/children/[name=Property]/children/[name=Float]/attributes/value",
+      value: "5.0000000000000000",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/plate.FCStd",
+      pointer:
+        "/entries/[>name=Document.xml]/view/root/children/[>Property~1Float@value=5.0000000000000000]/name",
+      value: "Object",
+    },
+    true,
+  ],
+  [
+    {
+      kind: "value_equals",
+      file: "Documents/shaped.zip",
+      pointer:
+        "/entries/[>name=a.json]/view/nodes/[>data~1Title=New]/data/Title",
+      value: "New",
+    },
+    true,
+  ],
+  [
+    {
       kind: "value_absent",
       file: books,
       pointer: "/nodes/[>data~1Title=The Silk Roads]",

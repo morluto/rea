@@ -64,7 +64,10 @@ const ownEntry = (value: JsonValue): string => {
 interface WalkOptions {
   readonly keyed?: boolean;
   readonly outermost?: boolean;
-  readonly format?: (pointer: string) => string | null | undefined;
+  readonly format?: (
+    pointer: string,
+    older: boolean,
+  ) => string | null | undefined;
 }
 
 /** What a walk notes, and how; `older` when it walks the earlier version against the later one. */
@@ -82,16 +85,29 @@ const keyedMembers = (
     readonly older: boolean;
     readonly list: string;
     readonly format: string | null | undefined;
+    readonly otherFormat: string | null | undefined;
   },
 ) => {
   const others = Array.isArray(other) ? other : [];
+  // Different entry formats cannot share selector semantics. Preserve each
+  // side's resolvable positions instead of inventing cross-format identities.
+  if (
+    Array.isArray(other) &&
+    at.format !== at.otherFormat &&
+    at.format != null &&
+    at.otherFormat != null
+  )
+    return from.map((_item, index) => ({
+      key: String(index),
+      counterpart: others[index],
+    }));
   const hold = holdsTagOnly(at.list);
   const pairing = at.older
     ? pairMembers(others, from, hold, at.format)
     : pairMembers(from, others, hold, at.format);
   const older = at.older;
   const side = older ? pairing.older : pairing.newer;
-  const lookup = memberLookup(other, [], at.format);
+  const lookup = memberLookup(other, [], at.otherFormat);
   return side.keys.map((key, index) => {
     const partner = side.partners[index];
     // Once the array became another type, a member's counterpart is what its pointer names there.
@@ -134,6 +150,11 @@ const walk = (
       list: path.segments.map((segment) => `/${segment}`).join(""),
       format: into.format?.(
         path.segments.map((segment) => `/${segment}`).join(""),
+        into.older === true,
+      ),
+      otherFormat: into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
       ),
     });
     from.forEach((item, index) => {
@@ -144,7 +165,10 @@ const walk = (
     const lookup = memberLookup(
       other,
       [],
-      into.format?.(path.segments.map((segment) => `/${segment}`).join("")),
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
     );
     from.forEach((item, index) =>
       visit(String(index), item, lookup(String(index))),
@@ -154,7 +178,10 @@ const walk = (
     const lookup = memberLookup(
       other,
       Object.keys(from),
-      into.format?.(path.segments.map((segment) => `/${segment}`).join("")),
+      into.format?.(
+        path.segments.map((segment) => `/${segment}`).join(""),
+        into.older !== true,
+      ),
     );
     for (const [key, item] of Object.entries(from))
       visit(key, item, lookup(key));
@@ -420,10 +447,8 @@ export const diffNamedMembers = (
 
 const archiveFormat =
   (after: JsonValue, before: JsonValue) =>
-  (pointer: string): string | undefined => {
-    const current = zipEntryAt(after, pointer);
-    const previous = zipEntryAt(before, pointer);
-    const entry = typeof current === "object" ? current : previous;
+  (pointer: string, older: boolean): string | undefined => {
+    const entry = zipEntryAt(older ? before : after, pointer);
     return typeof entry === "object" &&
       entry !== null &&
       typeof entry.format === "string"

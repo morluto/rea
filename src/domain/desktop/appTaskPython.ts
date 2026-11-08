@@ -199,7 +199,7 @@ def _value(check, entry):
     view, truncated, problem = _view_of(check, entry, None)
     if problem is not None:
         return False, problem
-    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"], _selector_format(entry, view, check["pointer"]))
+    kind, found, searched = ("none", None, []) if entry is None else _locate(view, check["pointer"], entry.get("format"))
     at = f"{check['file']} at {check['pointer']}"
     viewless = _viewless_entry(view, check["pointer"]) if entry is not None and entry.get("format") == "zip" else None
     if viewless is not None:
@@ -236,13 +236,13 @@ def _collapse_whitespace(text: str) -> str:
     return WHITESPACE_RUN.sub(" ", text).strip(" ")
 
 
-def _text_at(view, pointer: str) -> bool:
+def _text_at(view, pointer: str, form) -> bool:
     """Whether a string a pointer reaches is text of the document: a member of an element's children (a text node)
     or attributes (an attribute's value), rather than an element's name or a field of the DOCTYPE."""
     segments = pointer.split("/")
     if len(segments) < 3 or segments[-2] not in ("children", "attributes"):
         return False
-    kind, owner, _ = _locate(view, "/".join(segments[:-2]), "xml")
+    kind, owner, _ = _locate(view, "/".join(segments[:-2]), form)
     return kind == "value" and _is_element(owner)
 
 
@@ -273,7 +273,7 @@ def _whole_text(check, entry):
     form = entry.get("format")
     if form not in ("xml", "zip"):
         return False, f"{check['file']} is read as {form}, not xml"
-    kind, found, searched = _locate(view, check["pointer"], _selector_format(entry, view, check["pointer"]))
+    kind, found, searched = _locate(view, check["pointer"], entry.get("format"))
     viewless = _viewless_entry(view, check["pointer"]) if form == "zip" else None
     if viewless is not None:
         return False, f"{check['file']} entry {viewless[0]} {viewless[1]}"
@@ -292,7 +292,7 @@ def _whole_text(check, entry):
         return False, f"{at} has no value" if found is None else f"{at}: {found}"
     # Only an element has attributes of its own and of its descendants to join.
     attribute = check.get("text_attribute")
-    if not ((attribute is None and _text_at(view, check["pointer"])) if isinstance(found, str) else _is_element(found)):
+    if not ((attribute is None and _text_at(view, check["pointer"], entry.get("format"))) if isinstance(found, str) else _is_element(found)):
         what = "an element, a text node or an attribute value" if attribute is None else "an element"
         return False, f"{at} is {_shown(found)}, not {what}"
     # A text node is whole. An element's text in a cut view may lack what the cut dropped from its middle.
@@ -328,7 +328,7 @@ def _members(check, entry):
     form = None if entry is None else entry.get("format")
     # The empty pointer names the whole view, as a JSON file whose top level is an array.
     kind, found, searched = (("none", None, []) if entry is None else ("value", view, []) if pointer == ""
-                             else _locate(view, pointer, _selector_format(entry, view, pointer)))
+                             else _locate(view, pointer, form))
     at = check["file"] if pointer == "" else f"{check['file']} at {pointer}"
     viewless = _viewless_entry(view, pointer) if form == "zip" else None
     if viewless is not None:
@@ -346,7 +346,8 @@ def _members(check, entry):
         return _undecided(check)
     # The parser refuses a matching that is no selector.
     conditions = None if matching is None else _selector(matching)
-    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions, _selector_format(entry, view, pointer)))
+    matching_form = _selector_format(entry, view, pointer) if matching is not None else None
+    n = len(found) if matching is None else sum(1 for item in found if conditions and _selects(item, conditions, matching_form))
     return _compared(check, n, f"member(s) of {at}" + ("" if matching is None else f" matching {matching}"))
 
 

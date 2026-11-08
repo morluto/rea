@@ -145,6 +145,7 @@ def _locate(view, pointer: str, form):
     """Where a pointer leads: ("value", value), ("none", why or None) or ("unresolved", problem), with the pointers
     to the arrays a selector searched on the way."""
     current, searched = view, []
+    root_form = form
     segments = pointer[1:].split("/")
     for position, segment in enumerate(segments):
         token = segment.replace("~1", "/").replace("~0", "~")
@@ -156,6 +157,8 @@ def _locate(view, pointer: str, form):
                 return kind, found, searched
             current = found
         elif isinstance(current, dict) and token in current:
+            if root_form == "zip" and position == 2 and segments[0] == "entries" and token == "view":
+                form = current.get("format")
             current = current[token]
         else:
             return "none", None, searched

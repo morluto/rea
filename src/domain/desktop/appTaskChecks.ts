@@ -301,11 +301,7 @@ const valueVerdict = (
   const located =
     entry === undefined
       ? NOTHING
-      : locatePointer(
-          read.view,
-          check.pointer,
-          selectorFormat(entry, check.pointer),
-        );
+      : locatePointer(read.view, check.pointer, entry.format);
   const at = `${check.file} at ${check.pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;
@@ -349,11 +345,15 @@ const valueVerdict = (
  * element's `children` (a text node) or `attributes` (an attribute's value),
  * rather than an element's name or a field of the DOCTYPE.
  */
-const isTextAt = (view: JsonValue | null, pointer: string): boolean => {
+const isTextAt = (
+  view: JsonValue | null,
+  pointer: string,
+  format: string | null,
+): boolean => {
   const segments = pointer.split("/");
   const field = segments.at(-2);
   if (field !== "children" && field !== "attributes") return false;
-  const owner = locatePointer(view, segments.slice(0, -2).join("/"), "xml");
+  const owner = locatePointer(view, segments.slice(0, -2).join("/"), format);
   return owner.kind === "value" && isXmlElement(owner.value);
 };
 
@@ -407,11 +407,7 @@ const textVerdict = (
   const zip = entry.format === "zip";
   if (!zip && entry.format !== "xml")
     return fail(`${check.file} is read as ${String(entry.format)}, not xml`);
-  const located = locatePointer(
-    read.view,
-    check.pointer,
-    selectorFormat(entry, check.pointer),
-  );
+  const located = locatePointer(read.view, check.pointer, entry.format);
   const unknown = unreadOrPartial(check, entry.format, read, located);
   if (unknown !== undefined) return unknown;
   const problem = zip ? notXmlEntry(check, read.view) : undefined;
@@ -434,7 +430,8 @@ const textVerdict = (
   const attribute = check.text_attribute;
   if (
     typeof found === "string"
-      ? attribute !== undefined || !isTextAt(read.view, check.pointer)
+      ? attribute !== undefined ||
+        !isTextAt(read.view, check.pointer, entry.format)
       : !isXmlElement(found)
   )
     return fail(
@@ -457,7 +454,7 @@ const memberVerdict = (
   const located: Located =
     entry === undefined
       ? NOTHING
-      : locatePointer(read.view, pointer, selectorFormat(entry, pointer));
+      : locatePointer(read.view, pointer, entry.format);
   const at = pointer === "" ? check.file : `${check.file} at ${pointer}`;
   const unknown = unreadOrPartial(check, entry?.format, read, located);
   if (unknown !== undefined) return unknown;

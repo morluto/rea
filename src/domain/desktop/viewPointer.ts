@@ -217,6 +217,7 @@ export const locatePointer = (
   if (pointer === "")
     return { kind: "value", value: view, searched: [], byPosition: [] };
   let current: JsonValue = view;
+  let currentFormat = format;
   const segments = pointer.slice(1).split("/");
   const steps = { searched: [] as string[], byPosition: [] as string[] };
   for (const [position, segment] of segments.entries()) {
@@ -233,15 +234,24 @@ export const locatePointer = (
         current,
         token,
         position === segments.length - 1,
-        format,
+        currentFormat,
       );
       if ("kind" in step) return { ...step, ...steps };
       if (indexed && typeof step.member === "object" && step.member !== null)
         steps.byPosition.push(array);
       current = step.member;
-    } else if (isRecord(current) && Object.hasOwn(current, token))
+    } else if (isRecord(current) && Object.hasOwn(current, token)) {
+      // The archive entry is metadata until its view is entered.
+      if (
+        format === "zip" &&
+        position === 2 &&
+        segments[0] === "entries" &&
+        token === "view"
+      )
+        currentFormat =
+          typeof current.format === "string" ? current.format : undefined;
       current = current[token] ?? null;
-    else return { kind: "none", ...steps };
+    } else return { kind: "none", ...steps };
   }
   return { kind: "value", value: current, ...steps };
 };
