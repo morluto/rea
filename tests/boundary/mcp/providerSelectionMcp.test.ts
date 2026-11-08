@@ -24,6 +24,7 @@ import {
 } from "../../../src/application/AnalysisProvider.js";
 import { AnalysisProviderRegistry } from "../../../src/application/binary/AnalysisProviderRegistry.js";
 import { composeBinarySession } from "../../../src/application/binary/BinarySessionComposition.js";
+import { undeclaredOperationGuidance } from "../../../src/application/binary/BinarySessionExecution.js";
 import { createAnalysisProfile } from "../../../src/domain/analysisProfile.js";
 import { analysisErrorRemediationAction } from "../../../src/domain/analysisErrorPresentation.js";
 import { AnalysisSnapshotMismatchError } from "../../../src/domain/evidenceErrors.js";
@@ -102,6 +103,48 @@ it("delivers provider-owned diagnostic keys without narrowing their JSON facts",
     throw new Error("Missing serialized session status");
   expect(JSON.parse(text.text)).toEqual(response.structuredContent);
 });
+
+const expectUnknownProviderKeepsBinding = async (
+  mcp: Client,
+  session: ReturnType<typeof composeBinarySession>,
+  workspace: string,
+  target: string,
+  opened: Awaited<ReturnType<Client["callTool"]>>,
+): Promise<void> => {
+  const unknown = await mcp.callTool({
+    name: "open_binary",
+    arguments: { path: target, provider_id: "missing" },
+  });
+  expect(unknown.isError).toBe(true);
+  const refusal = structured(unknown);
+  expect(refusal).toMatchObject({
+    error: {
+      details: {
+        selection_reason: "unknown_provider",
+        target_at_open_completion: structured(opened).result,
+        provider_id_at_open_completion: "beta",
+      },
+    },
+  });
+  expect(
+    structured(
+      await mcp.callTool({
+        name: "binary_session",
+        arguments: {},
+      }),
+    ).result,
+  ).toMatchObject({
+    analysis_provider_binding: { provider: { id: "beta" } },
+  });
+  await checkQueuedSwitchReceipt(
+    mcp,
+    session,
+    target,
+    workspace,
+    opened,
+    refusal,
+  );
+};
 
 describe("provider selection over MCP", () => {
   it("keeps open_binary and binary_session binding semantics exact", async () => {
@@ -195,6 +238,30 @@ describe("provider selection over MCP", () => {
     });
     expect(starts).toEqual(["beta"]);
 
+    const unsupported = await mcp.callTool({
+      name: "read_bytes",
+      arguments: { address: "0x1000", length: 4 },
+    });
+    expect(unsupported.isError).toBe(true);
+    expect(structured(unsupported)).toMatchObject({
+      error: {
+        code: "capability_unavailable",
+        message: expect.stringContaining("read_bytes"),
+        details: { provider_id: "beta", operation: "read_bytes" },
+        remediation: {
+          action: undeclaredOperationGuidance("read_bytes"),
+        },
+      },
+    });
+    const remediation = undeclaredOperationGuidance("read_bytes");
+    expect(parseMcpToolError(unsupported).error.message).not.toContain(
+      remediation,
+    );
+    expect(remediation).toMatch(
+      /binary_session.*complete.*open_binary.*provider_id/u,
+    );
+    expect(starts).toEqual(["beta"]);
+
     const status = structured(
       await mcp.callTool({
         name: "binary_session",
@@ -219,38 +286,12 @@ describe("provider selection over MCP", () => {
       ],
     });
 
-    const unknown = await mcp.callTool({
-      name: "open_binary",
-      arguments: { path: target, provider_id: "missing" },
-    });
-    expect(unknown.isError).toBe(true);
-    const refusal = structured(unknown);
-    expect(refusal).toMatchObject({
-      error: {
-        details: {
-          selection_reason: "unknown_provider",
-          target_at_open_completion: structured(opened).result,
-          provider_id_at_open_completion: "beta",
-        },
-      },
-    });
-    expect(
-      structured(
-        await mcp.callTool({
-          name: "binary_session",
-          arguments: {},
-        }),
-      ).result,
-    ).toMatchObject({
-      analysis_provider_binding: { provider: { id: "beta" } },
-    });
-    await checkQueuedSwitchReceipt(
+    await expectUnknownProviderKeepsBinding(
       mcp,
       session,
-      target,
       directory,
+      target,
       opened,
-      refusal,
     );
   });
 });
@@ -788,6 +829,171 @@ it("reports confirmed snapshot binding differences and keeps the active session"
   });
 });
 
+it.each([true, false])(
+  "offers an entry-comment handoff only when the selected provider admits it (%s)",
+  async (entryCommentAvailable) => {
+    const directory = await createTestTempDirectory("rea-comment-recovery-");
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const selected = candidate("beta", starts);
+    const identity = selected.identity();
+    const annotation = capability(identity);
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...selected,
+          capabilities: () => [
+            capability(identity),
+            entryCommentAvailable
+              ? { ...annotation, operation: "annotate_native_function" }
+              : {
+                  ...annotation,
+                  operation: "annotate_native_function",
+                  available: false,
+                  reason: "Selected analysis is read-only.",
+                  availabilityCode: "open_options_invalid",
+                },
+          ],
+        },
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      { logger: silentLogger },
+    );
+    const mcp = new Client({ name: "comment-recovery", version: "1" });
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    expect(
+      (
+        await mcp.callTool({
+          name: "open_binary",
+          arguments: { path: target, provider_id: "beta" },
+        })
+      ).isError,
+    ).not.toBe(true);
+    for (const [operation, field, flag] of [
+      ["set_comment", "comment", "--comment"],
+      ["set_inline_comment", "inline_comment", "--inline-comment"],
+    ] as const) {
+      const reply = await mcp.callTool({
+        name: operation,
+        arguments: { address: "0x1000", comment: "note" },
+      });
+      const error = parseMcpToolError(reply).error;
+      expect(error.code).toBe("capability_unavailable");
+      expect(error.details).toMatchObject({ provider_id: "beta", operation });
+      expect(error.remediation.action).toBe(
+        undeclaredOperationGuidance(operation, entryCommentAvailable),
+      );
+      if (entryCommentAvailable) {
+        expect(error.remediation.action).toContain("annotate_native_function");
+        expect(error.remediation.action).toContain(field);
+        expect(error.remediation.action).toContain(flag);
+      } else
+        expect(error.remediation.action).not.toContain(
+          "annotate_native_function",
+        );
+    }
+    expect(starts).toEqual([]);
+    const after = structured(
+      await mcp.callTool({ name: "binary_session", arguments: {} }),
+    );
+    expect(after.result).toMatchObject({
+      analysis_provider_binding: { provider: { id: "beta" } },
+    });
+  },
+);
+
+it("keeps containing-function recovery for undeclared comment facets", async () => {
+  const directory = await createTestTempDirectory(
+    "rea-undeclared-comment-facet-",
+  );
+  const target = join(directory, "fixture.hop");
+  await writeFile(target, "fixture");
+  const starts: string[] = [];
+  const selected = candidate("beta", starts);
+  const identity = selected.identity();
+  const session = composeBinarySession(
+    new AnalysisProviderRegistry([
+      {
+        ...selected,
+        capabilities: () => [
+          capability(identity),
+          {
+            ...capability(identity),
+            operation: "resolve_containing_procedure",
+          },
+        ],
+        createClient: (_target, profile) => ({
+          execute: async (operation) =>
+            ok(
+              createAnalysisExecution(
+                operation === "resolve_containing_procedure"
+                  ? {
+                      query_address: "0x1001",
+                      found: true,
+                      procedure: {
+                        address: "0x1000",
+                        name: "entry",
+                        classification: null,
+                        body: { available: false, reason: "not recorded" },
+                      },
+                    }
+                  : "entry",
+                profile?.provider ?? identity,
+              ),
+            ),
+          close: async () => ok(null),
+        }),
+      },
+    ]),
+  );
+  const server = createServer(
+    { kind: "session", session },
+    { logger: silentLogger },
+  );
+  const mcp = new Client({ name: "undeclared-comment-facet", version: "1" });
+  const [clientTransport, serverTransport] =
+    InMemoryTransport.createLinkedPair();
+  resources.push(mcp, server, { close: () => session.close() });
+  await server.connect(serverTransport);
+  await mcp.connect(clientTransport);
+  expect(
+    (
+      await mcp.callTool({
+        name: "open_binary",
+        arguments: { path: target, provider_id: "beta" },
+      })
+    ).isError,
+  ).not.toBe(true);
+  const reply = await mcp.callTool({
+    name: "inspect_address_context",
+    arguments: { address: "0x1001", document: "fixture" },
+  });
+  expect(reply.isError).not.toBe(true);
+  expect(structured(reply)).toMatchObject({
+    result: {
+      comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      inline_comment: {
+        state: "unavailable",
+        remediation: expect.stringContaining("inspect_analysis_view"),
+      },
+      bookmarks: {
+        state: "unavailable",
+        remediation: expect.stringContaining("open_binary"),
+      },
+    },
+  });
+});
+
 const candidate = (
   id: string,
   starts: string[],
@@ -870,6 +1076,100 @@ const structured = (result: CallToolResult): Record<string, unknown> =>
   result.isError === true
     ? parseMcpToolError(result)
     : z.record(z.string(), z.unknown()).parse(result.structuredContent);
+
+it.each(["full", "compact"] as const)(
+  "keeps provider-owned release verification bound to the selected session (%s)",
+  async (profile) => {
+    const directory = await createTestTempDirectory(
+      "rea-provider-verification-",
+    );
+    const target = join(directory, "fixture.hop");
+    await writeFile(target, "fixture");
+    const starts: string[] = [];
+    const alpha = candidate("alpha", starts);
+    const verification = {
+      status: "unverified" as const,
+      basis: "reported_version" as const,
+      reported_version: "1",
+      verified_version: "2",
+      explanation: "The reported version does not authenticate the executable.",
+      remediation:
+        "Continue with the selected version or choose another explicitly.",
+    };
+    const session = composeBinarySession(
+      new AnalysisProviderRegistry([
+        {
+          ...alpha,
+          resolveAnalysisProfile: async (...args) => {
+            const resolved = await alpha.resolveAnalysisProfile(...args);
+            return resolved.ok
+              ? ok({ ...resolved.value, releaseVerification: verification })
+              : resolved;
+          },
+        },
+        candidate("beta", starts),
+      ]),
+    );
+    const server = createServer(
+      { kind: "session", session },
+      {
+        logger: silentLogger,
+        environment: { REA_MCP_OUTPUT_SCHEMA_PROFILE: profile },
+      },
+    );
+    const mcp = new Client(
+      { name: "provider-verification", version: "1" },
+      {
+        jsonSchemaValidator: new AjvJsonSchemaValidator(),
+      },
+    );
+    const [clientTransport, serverTransport] =
+      InMemoryTransport.createLinkedPair();
+    resources.push(mcp, server, { close: () => session.close() });
+    await server.connect(serverTransport);
+    await mcp.connect(clientTransport);
+    const definitions = new Map(
+      (await mcp.listTools()).tools.map((tool) => [tool.name, tool]),
+    );
+    const call = (name: string, args: Record<string, unknown> = {}) => {
+      const definition = definitions.get(name);
+      if (definition === undefined) throw new Error(`Missing tool ${name}`);
+      return mcp.callTool(
+        { name, arguments: args },
+        { toolDefinition: definition },
+      );
+    };
+    expect(structured(await call("binary_session")).result).toMatchObject({
+      analysis_provider_binding: null,
+    });
+    expect(
+      (await call("open_binary", { path: target, provider_id: "alpha" }))
+        .isError,
+    ).toBeFalsy();
+    for (const detail of ["summary", "complete"]) {
+      expect(
+        structured(await call("binary_session", { detail })).result,
+      ).toMatchObject({
+        analysis_provider_binding: {
+          provider: { id: "alpha" },
+          release_verification: verification,
+        },
+      });
+    }
+    expect(
+      (await call("open_binary", { path: target, provider_id: "beta" }))
+        .isError,
+    ).toBeFalsy();
+    const status = toolContract("binary_session").outputSchema.parse(
+      (await call("binary_session")).structuredContent,
+    );
+    expect(status.result.analysis_provider_binding?.provider.id).toBe("beta");
+    expect(status.result.analysis_provider_binding).not.toHaveProperty(
+      "release_verification",
+    );
+    expect((await call("close_binary")).isError).toBeFalsy();
+  },
+);
 
 const checkQueuedSwitchReceipt = async (
   mcp: Client,

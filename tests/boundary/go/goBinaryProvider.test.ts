@@ -82,7 +82,6 @@ it("keeps the header-search budget distinct from a worker CPU limit", async () =
   const path = join(root, "overlapping.elf");
   await writeFile(path, createGoOverlappingElfFixture());
   const result = await new GoBinaryProvider().inspect({ path });
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Overlapping header search must be refused");
   const projected = projectAnalysisError(result.error);
   expect(projected).toMatchObject({

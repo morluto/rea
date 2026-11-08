@@ -139,7 +139,6 @@ it("stops Inspector target authorization after the current stat settles", async 
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Inspector listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -181,7 +180,6 @@ it("stops Electron target authorization after the current stat settles", async (
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
@@ -220,7 +218,6 @@ it("retains a target whose authorization completes before the next abort check",
     { signal: controller.signal },
   );
 
-  expect(result.ok).toBe(false);
   if (result.ok) throw new Error("Expected Electron listing cancellation");
   expect(result.error).toBeInstanceOf(AnalysisCancelledError);
   expect(result.error.cause).toBe(reason);
