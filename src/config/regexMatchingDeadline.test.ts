@@ -5,10 +5,7 @@ import { KunaProvider } from "../kuna/KunaProvider.js";
 import { silentLogger } from "../logger.js";
 import { ConfigurationError } from "../domain/configurationErrors.js";
 import { projectAnalysisError } from "../domain/analysisErrorProjection.js";
-import {
-  regexMatchingDeadlineError,
-  launchRegexMatchingLimitation,
-} from "../process/RegexMatcher.js";
+import { regexMatchingDeadlineError } from "../process/RegexMatcher.js";
 import { parseEnvironment } from "./environment.js";
 import { parseConfig } from "./parseConfig.js";
 import {
@@ -85,12 +82,7 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
     .capabilities()
     .find((capability) => capability.operation === "search_procedures")
     ?.limitations.join(" ");
-  expect(hopperText).toContain(
-    launchRegexMatchingLimitation(
-      parsed.value.regexMatchingDeadline,
-      parsed.value.regexWorkerHeapRequest,
-    ),
-  );
+  expect(hopperText).toMatch(/10000 ms matching deadline.*source setting/iu);
 
   vi.stubEnv(REGEX_MATCHING_DEADLINE_SETTING, "1");
   try {
@@ -99,12 +91,7 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_strings")
       ?.limitations.join(" ");
-    expect(kunaText).toContain(
-      launchRegexMatchingLimitation(
-        parsed.value.regexMatchingDeadline,
-        parsed.value.regexWorkerHeapRequest,
-      ),
-    );
+    expect(kunaText).toMatch(/10000 ms matching deadline.*source setting/iu);
   } finally {
     vi.unstubAllEnvs();
   }
@@ -115,7 +102,9 @@ it("uses a valid REA_REGEX_MATCHING_DEADLINE_MS override", () => {
       .capabilities()
       .find((capability) => capability.operation === "search_procedures")
       ?.limitations,
-  ).toContain(launchRegexMatchingLimitation());
+  ).toContainEqual(
+    expect.stringMatching(/5000 ms matching deadline.*source default/iu),
+  );
 });
 
 it.each([

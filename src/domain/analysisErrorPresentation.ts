@@ -1,4 +1,5 @@
 import { describeResidualUnknownGraphConstraint } from "./residualUnknownGraphError.js";
+import { knownArgumentMistakeRemediation } from "./inputArgumentGuidance.js";
 import {
   AnalysisAccessDeniedError,
   AnalysisArtifactChangedError,
@@ -89,6 +90,11 @@ export const analysisErrorRemediationAction = (
     return "Set environment.service_workers to allow to permit this capture, or remove the service worker registration through the browser. REA never removes existing registrations.";
   if (error instanceof AnalysisCapabilityUnavailableError && error.retryable)
     return "Review details.reason, then retry the same analysis after the condition clears.";
+  if (
+    error instanceof AnalysisCapabilityUnavailableError &&
+    error.fallbackRemediationAction !== undefined
+  )
+    return error.fallbackRemediationAction;
   if (error instanceof EvidenceFileError && error.published !== undefined)
     return error.published.path === undefined
       ? "Resolve the reported staging cleanup failure. Publication completed; its path identity is excluded."
@@ -222,11 +228,18 @@ export const analysisErrorRemediationAction = (
         ? `Correct ${[...new Set(error.settings.map(({ setting }) => setting))].join(", ")} in the environment that starts REA (your shell or the MCP client's registration), then rerun.`
         : analysisErrorUserMessage(error))
     );
-  if (error instanceof AnalysisInputError)
-    return (
-      error.remediationAction ??
-      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`
+  if (error instanceof AnalysisInputError) {
+    const mistakeRemediation = knownArgumentMistakeRemediation(
+      error.operation,
+      error.issues,
     );
+    const baseAction =
+      error.remediationAction ??
+      `Read the declared input schema or CLI usage for ${error.operation}; if using MCP and the catalog may be stale, call tools/list. Correct the listed fields, then retry. Do not repeat the unchanged call.`;
+    return mistakeRemediation === undefined
+      ? baseAction
+      : `${mistakeRemediation} ${baseAction}`;
+  }
   if (
     error instanceof AnalysisOutputError &&
     error.remediationAction !== undefined

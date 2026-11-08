@@ -67,13 +67,76 @@ import { invocationSettingLimit } from "./analysisSettingDefinitions.js";
 export const projectAnalysisError = (
   error: AnalysisError,
   callerLifetime: AnalysisCallerLifetime = "continuing",
-): AnalysisErrorProjection => projectError(error, true, callerLifetime);
+): AnalysisErrorProjection =>
+  projectError(
+    error,
+    { capturedOutput: true, partialObservation: true },
+    callerLifetime,
+  );
 
 /** Cleanup history references output retained by its enclosing error owner. */
 export const projectAnalysisErrorWithoutCapturedOutput = (
   error: AnalysisError,
   callerLifetime: AnalysisCallerLifetime = "continuing",
-): AnalysisErrorProjection => projectError(error, false, callerLifetime);
+): AnalysisErrorProjection =>
+  projectError(
+    error,
+    { capturedOutput: false, partialObservation: true },
+    callerLifetime,
+  );
+
+/** Bounded fallback when the completed observation itself cannot be delivered. */
+export const projectAnalysisErrorWithoutPartialObservation = (
+  error: AnalysisError,
+  callerLifetime: AnalysisCallerLifetime = "continuing",
+): AnalysisErrorProjection =>
+  projectError(
+    error,
+    { capturedOutput: true, partialObservation: false },
+    callerLifetime,
+  );
+
+/** Omit only explicitly unretained Evidence when a complete reply cannot fit. */
+export const omitUnretainedEvidenceFromError = (
+  projected: AnalysisErrorProjection,
+  limit: {
+    readonly constraint: "receive-buffer" | "string-length";
+    readonly bytesAtLeast: number;
+  },
+): AnalysisErrorProjection | undefined => {
+  const partial = projected.details?.partial_observation;
+  if (
+    typeof partial !== "object" ||
+    partial === null ||
+    Array.isArray(partial) ||
+    partial.kind !== "unretained-evidence"
+  )
+    return undefined;
+  const { partial_observation: _partial, ...details } = projected.details!;
+  const evidence = partial.evidence;
+  const evidenceId =
+    typeof evidence === "object" &&
+    evidence !== null &&
+    !Array.isArray(evidence)
+      ? evidence.evidence_id
+      : undefined;
+  return {
+    ...projected,
+    remediation: {
+      action: `${projected.remediation.action} The completed observation was not retained and could not fit within MCP delivery limits.`,
+    },
+    details: {
+      ...details,
+      partial_observation_omitted: {
+        reason: "mcp-response-limit",
+        retention: "unretained",
+        constraint: limit.constraint,
+        original_response_bytes_at_least: limit.bytesAtLeast,
+        ...(typeof evidenceId === "string" ? { evidence_id: evidenceId } : {}),
+      },
+    },
+  };
+};
 
 /** A child failure embedded in a composed error's diagnostics. */
 export interface AnalysisChildFailure {
@@ -95,7 +158,15 @@ export const childFailureDiagnostics = (
   const project = (
     { error, capturedOutput }: AnalysisChildFailure,
     callerLifetime: AnalysisCallerLifetime,
-  ) => projectError(error, capturedOutput !== "omit", callerLifetime);
+  ) =>
+    projectError(
+      error,
+      {
+        capturedOutput: capturedOutput !== "omit",
+        partialObservation: true,
+      },
+      callerLifetime,
+    );
   const continuing = {
     ...diagnostics,
     ...Object.fromEntries(
@@ -137,7 +208,10 @@ const projectionDependsOnCallerLifetime = (error: AnalysisError): boolean => {
 
 const projectError = (
   error: AnalysisError,
-  includeCapturedOutput: boolean,
+  options: {
+    readonly capturedOutput: boolean;
+    readonly partialObservation: boolean;
+  },
   callerLifetime: AnalysisCallerLifetime,
 ): AnalysisErrorProjection => {
   const composed = error;
@@ -218,14 +292,14 @@ const projectError = (
             primaryDetails?.execution_failure ?? underlyingCode,
         }
       : {}),
-    ...(!includeCapturedOutput || capturedOutput === undefined
+    ...(!options.capturedOutput || capturedOutput === undefined
       ? {}
       : {
           captured_output: {
             ...capturedOutput,
           },
         }),
-    ...(partialObservation === undefined
+    ...(!options.partialObservation || partialObservation === undefined
       ? {}
       : {
           partial_observation: isImmutableJsonSnapshot(partialObservation)

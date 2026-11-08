@@ -36,6 +36,7 @@ import { localPathStringSchema } from "../domain/localPath.js";
 import type { ExecutableFormatHint } from "../domain/dosCom.js";
 import { absoluteCallerPath } from "../filesystem/callerPath.js";
 import { registerDecompileDirectoryCommand } from "./decompileDirectoryCommand.js";
+import { decompileAnalysisSelection } from "../contracts/officialToolContracts.js";
 
 const decompileSelectorGuidance = `${addressOrProcedureGuidance} Alternatively, use --file-offset alone.`;
 const namedAddressGuidance = requiredSelectorGuidance(
@@ -197,7 +198,7 @@ const registerDecompileCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.decompile, {
-    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail.`,
+    description: `Read one part of an app as code. ${decompileSelectorGuidance} Equal positional and --procedure values are accepted; conflicts fail. With Ghidra, a space-qualified address such as ram:0x... avoids file-offset fallback; inspect-native-load-image reports the observed default space.`,
     args: z.object({
       path: localPathStringSchema.describe("App or program path"),
       address: z
@@ -221,6 +222,7 @@ const registerDecompileCommand = (
         .describe(
           `Ghidra source-file byte offset; mapped internally to an analysis address. ${decompileSelectorGuidance}`,
         ),
+      analysis: decompileAnalysisSelection,
       snapshot: snapshotSelectionOption,
       ...nativeOpenOptionFields,
     }),
@@ -245,6 +247,9 @@ const registerDecompileCommand = (
                 : "file-offset",
               "procedure_pseudo_code",
             ),
+            ...(options.analysis === undefined
+              ? {}
+              : { analysis: options.analysis }),
           },
           directAnalysisOptionsFromCli(logger, options),
         ).then(projectCliAnalysisResult),
@@ -292,7 +297,7 @@ const registerXrefsCommand = (
   runDirectAnalysis: DirectAnalysis["runDirectAnalysis"],
 ): void => {
   cli.command(CLI_COMMANDS.xrefs, {
-    description: `List bounded references to an analyzed address. ${namedAddressGuidance} ${equalSelectorGuidance}`,
+    description: `List bounded, untyped references to an analyzed address. For typed incoming references, use inspect-native-instruction at the target address where supported. ${namedAddressGuidance} ${equalSelectorGuidance}`,
     args: z.object({
       path: localPathStringSchema.describe("App or program path"),
       address: z
@@ -449,7 +454,11 @@ const registerFunctionCommand = (
                 "analyze_function",
               ),
             },
-            { ...directAnalysisOptionsFromCli(logger, options), signal },
+            {
+              ...directAnalysisOptionsFromCli(logger, options),
+              signal,
+              includeEvidenceSources: options.evidence_output !== undefined,
+            },
           );
           return publishCliAnalysisEvidence(complete, delivery);
         }),

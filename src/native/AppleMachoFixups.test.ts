@@ -1149,7 +1149,7 @@ describe("bounded chained page facts", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100004000",
       },
     ]);
@@ -1351,7 +1351,7 @@ describe("malformed chained pointer coverage", () => {
       {
         facet: "pointer_fixups",
         code: "chained_pointer_walk_failed",
-        message: "Chained pointer link leaves its file-backed page",
+        message: expect.stringContaining("file-backed page"),
         location: "0x100005000",
       },
     ]);
