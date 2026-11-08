@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { Readable } from "node:stream";
-import { deflateRawSync } from "node:zlib";
+import { deflateRawSync, deflateSync } from "node:zlib";
 import type { Dirent } from "node:fs";
 import { mkdir, symlink, truncate, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
@@ -1515,6 +1515,32 @@ describe("ReleaseExposureReader nested packages in a host", () => {
     expect(scanned.limitations.join("\n")).toContain("was not expanded");
     expect(scanned.extractable.readable_members).toBe(1);
   });
+
+  it.each([
+    ["an inflated", false, "complete"],
+    ["a corrupt", true, "unknown"],
+  ])(
+    "settles coverage for %s compressed text member of a host",
+    async (_, corrupt, coverage) => {
+      const root = await createTestTempDirectory("rea-release-exposure-zlib-");
+      const payload = Buffer.from('{"name":"app"}\n');
+      const executable = cArchiveExecutable({
+        carrier: "pe",
+        layout: "2.1",
+        pythonVersion: 310,
+        members: [
+          { name: "payload.json", typeCode: "x", compress: true, payload },
+        ],
+      });
+      // Past the two-byte zlib header, 0xff opens a block of reserved type 3.
+      const stream = executable.indexOf(deflateSync(payload));
+      if (corrupt) executable[stream + 2] = 0xff;
+      await writeFile(join(root, "app.exe"), executable);
+      const scanned = await inspect(root);
+      expect(scanned.coverage).toBe(coverage);
+      expect(scanned.text_members.skipped).toBe(corrupt ? 1 : 0);
+    },
+  );
 
   it("keeps coverage complete past a packaged image with no package", async () => {
     const root = await createTestTempDirectory("rea-release-plain-exe-");

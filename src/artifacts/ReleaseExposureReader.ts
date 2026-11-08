@@ -1340,7 +1340,15 @@ const examineTextMember = async (
   } else {
     // The allowance bounds the read, so a read that yielded no text still spends it.
     state.textBytes += state.memberBytesRead - bytesReadBefore;
-    state.skippedText += 1;
+    // A packaged member's name is not its format, so one whose header was
+    // never read may be a native image or package, as an unread `.bin` may.
+    if (
+      loaded.kind === "unread" &&
+      member.packageFormat !== null &&
+      !member.kindStated
+    )
+      noteUnreadBinary(state, member);
+    else state.skippedText += 1;
     if (holdsScripts(member)) state.skippedMaps += 1;
   }
   return loaded.kind !== "unread";
