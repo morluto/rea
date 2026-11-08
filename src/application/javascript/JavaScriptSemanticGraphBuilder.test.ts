@@ -24,7 +24,11 @@ import { getterExpansionSource } from "../../../tests/fixtures/javascriptGetterE
 import {
   createSemanticGraphProjectionState,
   constructSemanticGraphNode,
+  addSemanticGraphUnknown,
 } from "./JavaScriptSemanticGraphConstruction.js";
+
+import { SemanticFileGraphBudget } from "./JavaScriptSemanticFileGraphBudget.js";
+import { observedSemanticEvidence } from "./JavaScriptSemanticGraphEvidence.js";
 
 const SHA256 = "a".repeat(64);
 
@@ -990,6 +994,42 @@ const BUDGET_SOURCE = Array.from(
   (_, index) =>
     `const value${String(index)} = { a: ${String(index)}, b: input${String(index)} }; handlers[key${String(index)}](value${String(index)});`,
 ).join("\n");
+
+it("does not intern unknown evidence after the file budget closes", () => {
+  const state = createSemanticGraphProjectionState();
+  const file = budgetFile("const value = input;");
+  const node = constructSemanticGraphNode(
+    file,
+    {
+      kind: "module",
+      roleKey: "root",
+      location: null,
+      label: null,
+      functionNodeId: null,
+    },
+    state,
+  );
+  const budget = new SemanticFileGraphBudget(0);
+  state.fileBudget = budget;
+  expect(budget.admitNode(node, state.evidenceContexts)).toBe(false);
+  const before = state.evidenceContexts.contexts;
+  for (let index = 0; index < 100; index += 1)
+    addSemanticGraphUnknown(state, {
+      node_id: node.node_id,
+      family: "data-flow",
+      relation_kinds: ["defines"],
+      reason: "unknown-value",
+      detail: "Unretained unknown",
+      candidate_node_ids: [],
+      evidence: {
+        ...observedSemanticEvidence(file, null),
+        limitations: [`distinct ${String(index)}`],
+      },
+    });
+  expect(state.evidenceContexts.contexts).toEqual(before);
+  expect(state.unknowns.size).toBe(0);
+  expect(budget.incomplete).toBe(true);
+});
 
 it("measures retained facts as their serialized Evidence bytes", () => {
   const projected = projectWithin(BUDGET_SOURCE, Number.MAX_SAFE_INTEGER);

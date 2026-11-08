@@ -439,6 +439,10 @@ export const addSemanticGraphUnknown = (
   },
 ): void => {
   const budget = state.fileBudget;
+  if (budget?.closed === true) {
+    budget.markIncomplete();
+    return;
+  }
   if (
     state.unknownCapacity !== null &&
     state.unknowns.size + (budget?.deferredUnknowns.size ?? 0) >=

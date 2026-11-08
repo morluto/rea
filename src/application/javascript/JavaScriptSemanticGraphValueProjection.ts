@@ -20,10 +20,12 @@ import {
 } from "./JavaScriptSemanticGraphEvidence.js";
 
 /** Project bounded literal values and object slots for exact query seeds. */
-export const projectSemanticValues = (
+export function* projectSemanticValues(
   context: SemanticFlowProjectionContext,
-): void => {
-  for (const binding of context.ir.bindings) {
+): Generator<void, void> {
+  for (const [index, binding] of context.ir.bindings.entries()) {
+    if (index % 64 === 0) yield;
+    if (context.state.fileBudget?.closed === true) return;
     const bindingNode = context.bindingNodes.get(binding.bindingId);
     if (bindingNode === undefined) continue;
     projectValue({
@@ -42,7 +44,7 @@ export const projectSemanticValues = (
         [],
       );
   }
-};
+}
 
 /** Preserve possible initializer flow when later effects make a slot unknown. */
 const projectInitializerCandidates = (
@@ -60,6 +62,7 @@ const projectInitializerCandidates = (
     if (!currentByName.has(property.name))
       currentByName.set(property.name, property);
   for (const initialProperty of initialContainer.slots) {
+    if (context.state.fileBudget?.closed === true) return;
     const currentProperty = currentByName.get(initialProperty.name);
     if (
       initialProperty.presence !== "present" ||
@@ -122,6 +125,7 @@ const projectUnknownInitializer = ({
         ? initial.values
         : [];
   for (const value of values) {
+    if (context.state.fileBudget?.closed === true) return;
     const literal = addLiteralNode(
       context,
       binding,
@@ -151,6 +155,7 @@ const projectUnknownInitializer = ({
   const container = semanticContainer(initial);
   if (container === null) return;
   for (const property of container.slots) {
+    if (context.state.fileBudget?.closed === true) return;
     if (property.presence !== "present") continue;
     const propertyPath = [...path, property.name];
     const slot = semanticPropertySlot(
@@ -203,6 +208,7 @@ const projectValue = (input: ValueProjectionInput): void => {
     });
   } else if (value.status === "union")
     for (const primitive of value.values) {
+      if (context.state.fileBudget?.closed === true) return;
       const literal = addLiteralNode(context, binding, primitive, role);
       addSemanticGraphRelation(context.state, {
         source: literal,
@@ -214,6 +220,7 @@ const projectValue = (input: ValueProjectionInput): void => {
   else if (value.status === "object" || value.status === "array") {
     const container = semanticContainer(value);
     for (const property of container.slots) {
+      if (context.state.fileBudget?.closed === true) return;
       const propertyPath = [...path, property.name];
       const slot = semanticPropertySlot(
         context,
